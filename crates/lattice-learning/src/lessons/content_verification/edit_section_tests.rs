@@ -609,7 +609,7 @@ async fn three_notes(course: &Course) -> Result<TeachingFindingsRepository> {
         {"title":"Section 1","body":section(&figure(7))}
     ],"questions":[]});
     let note = |kind, site, text: &str| SetAside {
-        finding: ReviewFinding::new(kind, Some(site), text),
+        finding: ReviewFinding::of_kind(kind, site, text),
         repairs: 0,
     };
     store

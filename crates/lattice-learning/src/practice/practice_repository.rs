@@ -11,10 +11,6 @@ use serde::{de::DeserializeOwned, Serialize};
 use sqlx::{Row, SqliteConnection, SqlitePool};
 
 mod assistance;
-mod fits;
-pub(crate) use fits::FitState;
-mod profiles;
-pub(crate) use profiles::profile_in;
 mod reads;
 mod sessions;
 mod submissions;
@@ -23,9 +19,6 @@ mod workbench_tests;
 
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
-}
-fn conflict(message: impl Into<String>) -> AppError {
-    AppError::Conflict(message.into())
 }
 fn json<T: Serialize + ?Sized>(value: &T) -> Result<String> {
     serde_json::to_string(value).map_err(|e| AppError::Serialization(e.to_string()))

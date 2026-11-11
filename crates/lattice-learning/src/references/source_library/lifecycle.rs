@@ -38,7 +38,7 @@ impl LearningSourceLibraryRepository {
             .ok_or_else(|| AppError::NotFound("Learning source not found".into()))?;
         let revision = row.revision;
         if revision != req.expected_revision {
-            return Err(conflict("Source changed; reload and retry."));
+            return Err(invalid("Source changed; reload and retry."));
         }
         if row.pending_version_id.as_deref() != Some(&req.version_id) {
             return Err(invalid("Only the pending source version can be adopted."));
@@ -59,7 +59,7 @@ impl LearningSourceLibraryRepository {
             )
             .await?
         {
-            return Err(conflict("Source changed; reload and retry."));
+            return Err(invalid("Source changed; reload and retry."));
         }
         source_operation(
             &req.operation_id,
@@ -111,7 +111,7 @@ impl LearningSourceLibraryRepository {
             .ok_or_else(|| AppError::NotFound("Learning source not found".into()))?;
         let revision = row.revision;
         if revision != req.expected_revision {
-            return Err(conflict("Source changed; reload and retry."));
+            return Err(invalid("Source changed; reload and retry."));
         }
         if row.kind != "web" && req.freshness_policy != LearningSourcePolicy::Fixed {
             return Err(invalid("Document and pasted sources use the fixed policy"));
@@ -132,7 +132,7 @@ impl LearningSourceLibraryRepository {
             )
             .await?
         {
-            return Err(conflict("Source changed; reload and retry."));
+            return Err(invalid("Source changed; reload and retry."));
         }
         source_operation(
             &req.operation_id,
@@ -182,7 +182,7 @@ impl LearningSourceLibraryRepository {
             .await?
             .ok_or_else(|| AppError::NotFound("Learning source not found".into()))?;
         if row.revision != req.expected_revision {
-            return Err(conflict("Source changed; reload and retry."));
+            return Err(invalid("Source changed; reload and retry."));
         }
         if row.deleted_at.is_some() {
             return Err(invalid("This source is already removed."));
@@ -197,7 +197,7 @@ impl LearningSourceLibraryRepository {
         )
         .await?
         {
-            return Err(conflict("Source changed; reload and retry."));
+            return Err(invalid("Source changed; reload and retry."));
         }
         crate::lessons::claim_reviews::source_deleted::reopen_for_deleted_source(
             &mut tx,
@@ -264,7 +264,7 @@ impl LearningSourceLibraryRepository {
             .ok_or_else(|| AppError::NotFound("Learning source not found".into()))?;
         let revision = source.revision;
         if revision != req.expected_revision {
-            return Err(conflict("Source changed; reload and retry."));
+            return Err(invalid("Source changed; reload and retry."));
         }
         if source.deleted_at.is_none() {
             return Err(invalid("Only a removed source can be re-imported."));
@@ -365,7 +365,7 @@ impl LearningSourceLibraryRepository {
         )
         .await?
         {
-            return Err(conflict("Source changed; reload and retry."));
+            return Err(invalid("Source changed; reload and retry."));
         }
         portability_operation(&req.operation_id, &req.program_id, "reimport_source", &hash)
             .record(&mut tx, &Some(&active_version))

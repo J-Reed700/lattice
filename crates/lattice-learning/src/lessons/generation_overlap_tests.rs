@@ -39,6 +39,9 @@ impl Recorder {
 impl LLMPort for Recorder {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let (_, user) = crate::lessons::structured_call::task_messages(request);
+        if let Some(plan) = crate::lessons::course_plan::fixture_response(user) {
+            return Ok(CompletionResponse::from_text(plan));
+        }
         self.requests.lock().unwrap().push(user.to_owned());
         Ok(CompletionResponse::from_text("{\"items\":[]}"))
     }
@@ -110,28 +113,72 @@ fn prepared(
     prepared
 }
 
+/// Plans the course's topics on `planner`.
+pub(crate) async fn plan_course(
+    pool: &SqlitePool,
+    program_id: &str,
+    planner: &dyn LLMPort,
+) -> Result<crate::dto::LearningProgramDto> {
+    let program = LearningRepository::new(pool.clone())
+        .get(program_id)
+        .await?;
+    let revision =
+        crate::lessons::course_plan::outline_revision(&Database::from(pool.clone()), program_id)
+            .await?;
+    crate::lessons::course_plan::ensure(
+        &Database::from(pool.clone()),
+        planner,
+        &program,
+        revision,
+        &Default::default(),
+    )
+    .await?;
+    Ok(program)
+}
+
+/// Plans the course on `planner` and saves the first lesson's prepared,
+/// verified teaching as `job_id`'s checkpoint. Returns the lesson's id.
+pub(crate) async fn save_verified(
+    pool: &SqlitePool,
+    job_id: &str,
+    program_id: &str,
+    planner: &dyn LLMPort,
+) -> Result<String> {
+    let program = plan_course(pool, program_id, planner).await?;
+    let revision =
+        crate::lessons::course_plan::outline_revision(&Database::from(pool.clone()), program_id)
+            .await?;
+    let plan =
+        crate::lessons::course_plan::stored(&Database::from(pool.clone()), &program, revision)
+            .await?
+            .unwrap();
+    let sources = LearningRepository::new(pool.clone())
+        .verification_sources(program_id)
+        .await?;
+    let lesson = &program.modules[0].lessons[0];
+    let prepared = prepared(lesson, &sources[0].id);
+    LearningCurriculumRepository::new(pool.clone())
+        .save_lesson_checkpoint(
+            job_id,
+            &lesson.id,
+            "prepared-v2",
+            serde_json::json!({
+                "plan": crate::content_verification::digest(&serde_json::to_string(&plan)?),
+                "lesson": prepared,
+            }),
+        )
+        .await?;
+    Ok(lesson.id.clone())
+}
+
 /// Runs the course's first lesson job through the real worker and runtime
 /// with its lesson already prepared and verified, as a resumed job has it,
 /// and `model` as the Learning model.
 pub(crate) async fn run_lesson_job(pool: &SqlitePool, model: Arc<Recorder>) -> Result<Published> {
-    let (repo, job) = repository_tests::queued_job(pool).await;
-    let program = LearningRepository::new(pool.clone())
-        .get(&job.program_id)
-        .await?;
-    let sources = LearningRepository::new(pool.clone())
-        .verification_sources(&job.program_id)
-        .await?;
-    let lesson = &program.modules[0].lessons[0];
-    let prepared = prepared(lesson, &sources[0].id);
+    let (_, job) = repository_tests::queued_job(pool).await;
     let store = JobStore::new(pool.clone());
     store.claim(&job.id).await?.unwrap();
-    repo.save_lesson_checkpoint(
-        &job.id,
-        &lesson.id,
-        "prepared-v1",
-        serde_json::to_value(&prepared)?,
-    )
-    .await?;
+    let lesson_id = save_verified(pool, &job.id, &job.program_id, model.as_ref()).await?;
     store.suspend(&job.id).await?;
     let llm: Arc<dyn LLMPort> = model;
     let worker = LessonGenerationWorker {
@@ -150,7 +197,7 @@ pub(crate) async fn run_lesson_job(pool: &SqlitePool, model: Arc<Recorder>) -> R
     run_attempt(worker, &job.id).await?;
     Ok(Published {
         program_id: job.program_id,
-        lesson_id: lesson.id.clone(),
+        lesson_id,
         job_id: job.id,
     })
 }
@@ -555,22 +602,20 @@ async fn the_lesson_worker_runs_inside_its_jobs_rank() -> Result<()> {
             progress_total: 1,
         })
         .await?;
-    let rank_at_load = Arc::new(Mutex::new(None));
-    let entered = Arc::new(tokio::sync::Notify::new());
+    let loads = Arc::new(tokio::sync::watch::channel(Vec::<Option<i64>>::new()).0);
+    let mut seen = loads.subscribe();
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
         database: pool.clone().into(),
         load_llm: {
-            let (rank_at_load, entered) = (rank_at_load.clone(), entered.clone());
+            let loads = loads.clone();
             Arc::new(move || {
-                let (rank_at_load, entered) = (rank_at_load.clone(), entered.clone());
+                let loads = loads.clone();
                 Box::pin(async move {
-                    *rank_at_load.lock().unwrap() = Some(
-                        lattice_core::shared::runtime::jobs::current_rank()
-                            .map(|ticket| ticket.rank()),
-                    );
-                    entered.notify_one();
+                    let rank = lattice_core::shared::runtime::jobs::current_rank()
+                        .map(|ticket| ticket.rank());
+                    loads.send_modify(|seen| seen.push(rank));
                     std::future::pending().await
                 })
             })
@@ -585,11 +630,15 @@ async fn the_lesson_worker_runs_inside_its_jobs_rank() -> Result<()> {
         .register(LESSON_PREPARATION, Arc::new(worker), lesson_job_config())
         .await?;
     runtime.dispatch(&third.id);
-    tokio::time::timeout(std::time::Duration::from_secs(10), entered.notified())
-        .await
-        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        seen.wait_for(|seen| seen.contains(&Some(2))),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     runtime.close();
     runtime.drain().await;
-    assert_eq!(*rank_at_load.lock().unwrap(), Some(Some(2)));
+    assert!(!loads.borrow().contains(&None));
     Ok(())
 }

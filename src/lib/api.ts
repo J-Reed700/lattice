@@ -36,7 +36,4 @@ export const VaultAPI = new Proxy({} as VaultClients, {
     return method;
   },
 });
-
-export { isConflict, newId, unwrap } from './apiResult';
-
 export default VaultAPI;

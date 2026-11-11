@@ -1,11 +1,17 @@
 import { TiptapViewer } from "@/components/TiptapEditor";
-import {
-  INTERVIEW_ROUND_LABELS,
-  modeCopy,
-} from "@/features/learning/practice/practical/ActivityComposer";
+import { modeCopy } from "@/features/learning/practice/practical/ActivityComposer";
 import type {
+  LearningInterviewRoundKind,
   LearningPracticalActivityDto,
 } from "@/lib/bindings";
+
+const roundLabels: Record<LearningInterviewRoundKind, string> = {
+  full_loop: "Full interview loop",
+  technical_deep_dive: "Technical deep-dive",
+  system_design: "System design & architecture",
+  behavioral: "Behavioral & engineering culture",
+  debugging_and_code: "Debugging & code walkthrough",
+};
 
 function websiteLink(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -27,11 +33,11 @@ export function ActivityBrief({
   const companyUrl = websiteLink(activeActivity.interviewPlan?.companyUrl);
   const isInterview = activeActivity.kind === "interview" || Boolean(activeActivity.interviewPlan);
   return (
-    <section className="rounded-2xl border border-border-default bg-surface p-4 sm:p-6 shadow-xs">
+    <section className="rounded-2xl border border-border bg-surface p-4 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full bg-accent-muted px-2.5 py-1 text-xs font-semibold uppercase tracking-wider text-accent">
+            <span className="rounded-full bg-accent/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-wider text-accent">
               {activeActivity.kind.replace("_", " ")}
             </span>
             <span className="text-xs text-text-muted">
@@ -47,32 +53,22 @@ export function ActivityBrief({
           </div>
         </div>
         <span
-          className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium ${
-            activeActivity.runtimeKind === "none"
-              ? "bg-accent-muted text-accent"
-              : activeActivity.runtimeAvailable
-                ? "bg-success-muted text-success-fg"
-                : "bg-warning-muted text-warning-fg"
-          }`}
+          className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium ${activeActivity.runtimeKind === "none" ? "bg-accent/10 text-accent" : activeActivity.runtimeAvailable ? "bg-emerald-500/10 text-emerald-800 dark:text-emerald-200" : "bg-amber-500/10 text-amber-900 dark:text-amber-100"}`}
         >
-          {activeActivity.runtimeKind === "none"
-            ? activeActivity.kind === "interview"
-              ? "Interview practice"
-              : "Review activity"
-            : activeActivity.runtimeAvailable
-              ? "Ready to run"
-              : "Execution unavailable"}
+          {activeActivity.runtimeKind === "none" ? activeActivity.kind === "interview" ? "Interview practice" : "Review activity" : activeActivity.runtimeAvailable
+            ? "Ready to run"
+            : "Execution unavailable"}
         </span>
       </div>
 
       {activeActivity.interviewPlan && (
         <section
           aria-label="Company interview dossier"
-          className="mt-5 min-w-0 rounded-xl border border-border-default bg-surface-sunken p-4 [overflow-wrap:anywhere] sm:p-5"
+          className="mt-5 min-w-0 rounded-xl border border-border bg-background/50 p-4 [overflow-wrap:anywhere] sm:p-5"
         >
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-default pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
             <div className="min-w-0">
-              <div className="text-xxs font-semibold uppercase tracking-[.15em] text-accent">
+              <div className="text-[10px] font-semibold uppercase tracking-[.15em] text-accent">
                 Company Interview Dossier
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -86,8 +82,8 @@ export function ActivityBrief({
               </div>
             </div>
             <div className="flex max-w-full flex-wrap items-center gap-2">
-              <span className="rounded-full bg-accent-muted px-2.5 py-1 text-xs font-medium text-accent">
-                {INTERVIEW_ROUND_LABELS[activeActivity.interviewPlan.roundKind] ||
+              <span className="rounded-full bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent">
+                {roundLabels[activeActivity.interviewPlan.roundKind] ||
                   activeActivity.interviewPlan.roundKind}
               </span>
               {companyUrl && (
@@ -95,13 +91,13 @@ export function ActivityBrief({
                   href={companyUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="max-w-full truncate rounded-full border border-border-default bg-surface px-2.5 py-1 text-xs text-text-muted hover:text-accent sm:max-w-xs"
+                  className="max-w-full truncate rounded-full border border-border bg-surface px-2.5 py-1 text-xs text-text-muted hover:text-accent sm:max-w-xs"
                 >
                   {activeActivity.interviewPlan.companyUrl}
                 </a>
               )}
               {(activeActivity.interviewPlan.researchedSourceVersionIds?.length ?? 0) > 0 ? (
-                <span className="rounded-full bg-success-muted px-2.5 py-1 text-xs font-medium text-success-fg">
+                <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-800 dark:text-emerald-200">
                   {activeActivity.interviewPlan.researchedSourceVersionIds!.length} preparation source(s) in library
                 </span>
               ) : (
@@ -114,126 +110,124 @@ export function ActivityBrief({
             <p className="mt-3 text-xs leading-5 text-text-muted">
               Preparation notes, questions, follow-up probes, and evaluation signals are hidden during unassisted demonstration. The interviewer will ask each question in turn.
             </p>
-          ) : (
-            <>
-              <div className="mt-3">
-                <div className="text-xs font-semibold uppercase tracking-[.14em] text-text-muted">
-                  Company engineering &amp; culture research
-                </div>
-                <div className="mt-2 text-sm leading-6 text-text-secondary">
-                  <TiptapViewer content={activeActivity.interviewPlan.companySummary} images={[]} />
-                </div>
+          ) : <>
+          <div className="mt-3">
+            <div className="text-xs font-semibold uppercase tracking-[.14em] text-text-muted">
+              Company engineering &amp; culture research
+            </div>
+            <div className="mt-2 text-sm leading-6 text-text-secondary">
+              <TiptapViewer content={activeActivity.interviewPlan.companySummary} images={[]} />
+            </div>
+          </div>
+
+          {(activeActivity.interviewPlan.questions?.length ?? 0) > 0 && (
+            <div className="mt-4 border-t border-border pt-4">
+              <div className="mb-3 text-xs font-semibold uppercase tracking-[.14em] text-text-muted">
+                Tailored Interview Questions
               </div>
+              <div className="space-y-3">
+                {activeActivity.interviewPlan.questions!.map((question) => (
+                  <article
+                    key={question.id}
+                    className="rounded-xl border border-border bg-surface p-4"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-accent/10 px-2.5 py-0.5 text-xs font-semibold text-accent">
+                        {roundLabels[question.round] || question.round}
+                      </span>
+                    </div>
+                    <div className="mt-2 text-sm font-semibold text-text-primary">
+                      <TiptapViewer content={question.question} images={[]} />
+                    </div>
+                    <div className="mt-1 text-xs leading-5 text-text-secondary">
+                      <span className="font-semibold text-text-primary">
+                        Company rationale:
+                      </span>{" "}
+                      {question.companyRationale}
+                    </div>
 
-              {(activeActivity.interviewPlan.questions?.length ?? 0) > 0 && (
-                <div className="mt-4 border-t border-border-default pt-4">
-                  <div className="mb-3 text-xs font-semibold uppercase tracking-[.14em] text-text-muted">
-                    Tailored Interview Questions
-                  </div>
-                  <div className="space-y-3">
-                    {activeActivity.interviewPlan.questions!.map((question) => (
-                      <article
-                        key={question.id}
-                        className="rounded-xl border border-border-default bg-surface p-4"
-                      >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="rounded-full bg-accent-muted px-2.5 py-0.5 text-xs font-semibold text-accent">
-                            {INTERVIEW_ROUND_LABELS[question.round] || question.round}
-                          </span>
-                        </div>
-                        <div className="mt-2 text-sm font-semibold text-text-primary">
-                          <TiptapViewer content={question.question} images={[]} />
-                        </div>
-                        <div className="mt-1 text-xs leading-5 text-text-secondary">
-                          <span className="font-semibold text-text-primary">
-                            Company rationale:
-                          </span>{" "}
-                          {question.companyRationale}
-                        </div>
-
-                        <details className="mt-3 border-t border-border-default pt-2 text-xs">
-                          <summary className="cursor-pointer font-medium text-text-secondary hover:text-text-primary">
-                            Study preparation: follow-up probes &amp; evaluation signals
-                          </summary>
-                          <div className="mt-2 grid gap-3 sm:grid-cols-2">
-                            {question.followUpProbes?.length > 0 && (
-                              <div className="rounded-lg bg-surface-sunken p-2.5">
-                                <div className="font-semibold text-text-secondary">
-                                  Interviewer follow-up probes
-                                </div>
-                                <ul className="mt-1 list-inside list-disc space-y-1 text-text-muted">
-                                  {question.followUpProbes.map((probe, idx) => (
-                                    <li key={idx}>{probe}</li>
-                                  ))}
-                                </ul>
+                    <details className="mt-3 border-t border-border pt-2 text-xs">
+                        <summary className="cursor-pointer font-medium text-text-secondary hover:text-text-primary">
+                          Study preparation: follow-up probes &amp; evaluation signals
+                        </summary>
+                        <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                          {question.followUpProbes?.length > 0 && (
+                            <div className="rounded-lg bg-background/50 p-2.5">
+                              <div className="font-semibold text-text-secondary">
+                                Interviewer follow-up probes
                               </div>
-                            )}
-                            {question.evaluationSignals?.length > 0 && (
-                              <div className="rounded-lg bg-surface-sunken p-2.5">
-                                <div className="font-semibold text-text-secondary">
-                                  Evaluation signals
-                                </div>
-                                <ul className="mt-1 list-inside list-disc space-y-1 text-text-muted">
-                                  {question.evaluationSignals.map((sig, idx) => (
-                                    <li key={idx}>{sig}</li>
-                                  ))}
-                                </ul>
+                              <ul className="mt-1 list-inside list-disc space-y-1 text-text-muted">
+                                {question.followUpProbes.map((probe, idx) => (
+                                  <li key={idx}>{probe}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          {question.evaluationSignals?.length > 0 && (
+                            <div className="rounded-lg bg-background/50 p-2.5">
+                              <div className="font-semibold text-text-secondary">
+                                Evaluation signals
                               </div>
-                            )}
-                          </div>
-                        </details>
-                      </article>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
+                              <ul className="mt-1 list-inside list-disc space-y-1 text-text-muted">
+                                {question.evaluationSignals.map((sig, idx) => (
+                                  <li key={idx}>{sig}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                    </details>
+                  </article>
+                ))}
+              </div>
+            </div>
           )}
+          </>}
         </section>
       )}
 
-      <details className="mt-4 border-t border-border-default pt-3">
+      <details className="mt-4 border-t border-border pt-3">
         <summary className="cursor-pointer text-sm font-medium text-text-secondary">Success criteria &amp; allowed help</summary>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <div className="rounded-xl border border-border-default bg-surface-sunken p-4">
-            <div className="text-xs font-semibold uppercase tracking-[.14em] text-text-muted">
-              Help available · {activeActivity.practiceMode}
-            </div>
-            <p className="mt-2 text-xs leading-5 text-text-secondary">
-              {modeCopy[activeActivity.practiceMode]}
-            </p>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {activeActivity.allowedAids.length ? (
-                activeActivity.allowedAids.map((aid) => (
-                  <span
-                    key={aid}
-                    className="rounded-full bg-surface px-2.5 py-1 text-xs text-text-muted"
-                  >
-                    {aid}
-                  </span>
-                ))
-              ) : (
-                <span className="rounded-full bg-surface px-2.5 py-1 text-xs text-text-muted">
-                  No aids recorded
+        <div className="rounded-xl border border-border bg-background/45 p-4">
+          <div className="text-xs font-semibold uppercase tracking-[.14em] text-text-muted">
+            Help available · {activeActivity.practiceMode}
+          </div>
+          <p className="mt-2 text-xs leading-5 text-text-secondary">
+            {modeCopy[activeActivity.practiceMode]}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {activeActivity.allowedAids.length ? (
+              activeActivity.allowedAids.map((aid) => (
+                <span
+                  key={aid}
+                  className="rounded-full bg-surface px-2.5 py-1 text-xs text-text-muted"
+                >
+                  {aid}
                 </span>
-              )}
-            </div>
+              ))
+            ) : (
+              <span className="rounded-full bg-surface px-2.5 py-1 text-xs text-text-muted">
+                No aids recorded
+              </span>
+            )}
           </div>
-          <div className="rounded-xl border border-border-default bg-surface-sunken p-4">
-            <div className="text-xs font-semibold uppercase tracking-[.14em] text-text-muted">
-              What to notice
-            </div>
-            <ul className="mt-2 space-y-1 text-xs leading-5 text-text-secondary">
-              {activeActivity.rubric.map((criterion) => (
-                <li key={criterion.id}>
-                  <span className="font-medium text-text-primary">
-                    {criterion.title}
-                  </span>{" "}
-                  · {criterion.description}
-                </li>
-              ))}
-            </ul>
+        </div>
+        <div className="rounded-xl border border-border bg-background/45 p-4">
+          <div className="text-xs font-semibold uppercase tracking-[.14em] text-text-muted">
+            What to notice
           </div>
+          <ul className="mt-2 space-y-1 text-xs leading-5 text-text-secondary">
+            {activeActivity.rubric.map((criterion) => (
+              <li key={criterion.id}>
+                <span className="font-medium text-text-primary">
+                  {criterion.title}
+                </span>{" "}
+                · {criterion.description}
+              </li>
+            ))}
+          </ul>
+        </div>
         </div>
       </details>
     </section>

@@ -6,7 +6,6 @@ import { BookOpen, Check, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { progressLine, recheckLine } from '@/features/learning/lessons/review/claimReviewCopy';
 import { addedByLabel } from '@/features/learning/lessons/review/claimReviewPresentation';
-import { useRetry } from '@/features/learning/practice/shared/useRetry';
 import { LearningDocumentPicker, type LearningDocumentSelection } from '@/features/learning/sources/LearningDocumentPicker';
 import { SourceCleanup } from '@/features/learning/sources/SourceCleanup';
 import { SourceReader } from '@/features/learning/sources/SourceReader';
@@ -27,7 +26,6 @@ import {
 } from '@/features/learning/sources/useLearningSources';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
 import { fromLearningSource } from '@/features/reading/model/sourceAdapter';
-import { newId } from '@/lib/api';
 import type {
   AddLearningDocumentSourceRequestDto,
   AddLearningTextSourceRequestDto,
@@ -61,6 +59,13 @@ function writePageSize(size: number) {
   try { localStorage.setItem(SOURCE_PAGE_SIZE_KEY, String(size)); } catch { /* The choice still holds until the panel closes. */ }
 }
 
+function newId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+    const random = Math.floor(Math.random() * 16);
+    return (char === 'x' ? random : (random & 0x3) | 0x8).toString(16);
+  });
+}
 function safeHref(value?: string | null) {
   if (!value) return undefined;
   try { const url = new URL(value); return ['https:', 'http:'].includes(url.protocol) ? url.href : undefined; }
@@ -77,6 +82,7 @@ function statusLabel(source: LearningSourceLibraryItemDto) {
   return 'No saved version';
 }
 function isLegacy(source: LearningSourceLibraryItemDto) { return Boolean(source.activeVersion?.truncated || source.activeVersion?.extractionVersion.toLowerCase().includes('legacy')); }
+function isCasConflict(error?: string) { return Boolean(error && /(revision|compare.and.swap|conflict|changed elsewhere|source changed; reload and retry)/i.test(error)); }
 function prettyPolicy(policy: LearningSourcePolicy) { return policy === 'before_use' ? 'Before use' : policy === 'fixed' ? 'Fixed snapshot' : 'Manual checks'; }
 
 export function SourcesPanel({ programId, active = true, onOpenReview }: {
@@ -120,20 +126,13 @@ export function SourcesPanel({ programId, active = true, onOpenReview }: {
   const [pastePublisher, setPastePublisher] = useState('');
   const [pasteText, setPasteText] = useState('');
   const [formError, setFormError] = useState('');
-  const [lastKind, setLastKind] = useState('');
-  const [dismissed, setDismissed] = useState(false);
+  const [retryOperation, setRetryOperation] = useState<RetryOperation | null>(null);
+  const [operationMessage, setOperationMessage] = useState('');
+  const [reloadRequired, setReloadRequired] = useState(false);
+  const retryRef = useRef<RetryOperation | null>(null);
   const preparedAddRef = useRef<RetryOperation | null>(null);
-  const lastItemRef = useRef<RetryOperation | null>(null);
-  const operation = useRetry(async (item: RetryOperation, call: (request: Record<string, unknown>) => Promise<unknown>) => {
-    await call(item.request);
-    lastItemRef.current = null;
-    if (item.kind.startsWith('add-')) setAddOpen(false);
-    return true;
-  });
-  const mutationBusy = operation.busy;
-  const operationMessage = dismissed ? '' : (operation.error ?? '');
-  const reloadRequired = !dismissed && operation.conflict;
-  const retryOperation = operationMessage ? { kind: lastKind } : null;
+  const [mutationBusy, setMutationBusy] = useState(false);
+  const mutationBusyRef = useRef(false);
   const addTriggerRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -194,21 +193,37 @@ export function SourcesPanel({ programId, active = true, onOpenReview }: {
     legacy: sources.filter(isLegacy).length,
   };
 
+  const clearRetry = () => { retryRef.current = null; setRetryOperation(null); setOperationMessage(''); setReloadRequired(false); };
   const perform = async <T extends Record<string, unknown>>(
     kind: string,
     payload: Omit<T, 'operationId'> | T,
     call: (request: T) => Promise<unknown>,
   ) => {
+    if (mutationBusyRef.current) return false;
     const { operationId: providedOperationId, ...requestPayload } = payload as T & { operationId?: string };
     const fingerprint = JSON.stringify(requestPayload);
-    const previous = lastItemRef.current;
-    const item: RetryOperation = previous?.kind === kind && previous.fingerprint === fingerprint
+    const previous = retryRef.current;
+    const retry = previous?.kind === kind && previous.fingerprint === fingerprint
       ? previous
       : { kind, fingerprint, request: { ...requestPayload, operationId: providedOperationId ?? newId() } };
-    lastItemRef.current = item;
-    setLastKind(kind);
-    setDismissed(false);
-    return (await operation.run(item, call as (request: Record<string, unknown>) => Promise<unknown>)) === true;
+    retryRef.current = retry;
+    setRetryOperation(retry);
+    mutationBusyRef.current = true;
+    setMutationBusy(true);
+    setOperationMessage(''); setReloadRequired(false);
+    try {
+      await call(retry.request as T);
+      clearRetry();
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setOperationMessage(message);
+      setReloadRequired(isCasConflict(message));
+      return false;
+    } finally {
+      mutationBusyRef.current = false;
+      setMutationBusy(false);
+    }
   };
 
   const addRequest = <T extends Record<string, unknown>>(
@@ -221,6 +236,7 @@ export function SourcesPanel({ programId, active = true, onOpenReview }: {
       operation = { kind, fingerprint, request: { ...input, sourceId: newId(), versionId: newId(), operationId: newId() } };
       preparedAddRef.current = operation;
     }
+    retryRef.current = { ...operation, fingerprint: JSON.stringify(Object.fromEntries(Object.entries(operation.request).filter(([key]) => key !== 'operationId'))) };
     return operation.request as T;
   };
 
@@ -280,7 +296,7 @@ export function SourcesPanel({ programId, active = true, onOpenReview }: {
   return <div className="min-w-0" data-testid="learning-sources-workspace">
     <header className="mb-4 flex flex-wrap items-end justify-between gap-4 rounded-2xl border border-[#d7c9b8] bg-[#eee8df] p-5 sm:p-7 dark:border-white/10 dark:bg-[#28251f]">
       <div><p className="text-[10px] font-semibold uppercase tracking-[.16em] text-accent">Program materials</p><h2 className="mt-1 font-serif text-2xl text-text-primary sm:text-3xl">Sources</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">Build the reference collection used to write and check your lessons. Saved versions remain available for offline reading.</p></div>
-      <button ref={addTriggerRef} type="button" disabled={mutationBusy} onClick={() => { setFormError(''); setDismissed(true); setAddOpen(true); }} className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-sm font-semibold text-accent-fg disabled:opacity-50"><Plus size={16} /> Add material</button>
+      <button ref={addTriggerRef} type="button" disabled={mutationBusy} onClick={() => { setFormError(''); setOperationMessage(''); setAddOpen(true); }} className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-sm font-semibold text-accent-fg disabled:opacity-50"><Plus size={16} /> Add material</button>
       <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-5">{[
         ['Downloaded', counts.downloaded], ['Pinned', counts.pinned], ['Update available', counts.updates], ['Failed checks', counts.failed], ['Incomplete captures', counts.legacy],
       ].map(([label, count]) => <div key={label} className="rounded-xl border border-white/70 bg-white/50 px-3 py-2.5 dark:border-white/10 dark:bg-black/10"><div className="text-[9px] font-semibold uppercase tracking-wider text-text-muted">{label}</div><div className="mt-1 font-serif text-xl tabular-nums text-text-primary">{count}</div></div>)}</div>
@@ -293,7 +309,7 @@ export function SourcesPanel({ programId, active = true, onOpenReview }: {
 
     <SourceCleanup programId={programId} notSources={workspace.data?.notSources ?? []} unusedResearch={workspace.data?.unusedResearch ?? []} />
 
-    {(operationMessage || reloadRequired) && <div role="alert" className="mb-4 rounded-xl border border-danger-muted bg-danger-muted p-4 text-sm text-danger-fg"><p>{reloadRequired ? 'This source changed elsewhere. Reload the latest version before trying again.' : operationMessage}</p><div className="mt-3 flex flex-wrap gap-2">{retryOperation && !reloadRequired && <button type="button" onClick={operation.retry} className="rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg">Try again</button>}{reloadRequired && <button type="button" onClick={() => { setDismissed(true); void workspace.refetch(); }} className="rounded-full border border-danger-fg px-4 py-2 text-xs font-semibold">Reload sources</button>}</div></div>}
+    {(operationMessage || reloadRequired) && <div role="alert" className="mb-4 rounded-xl border border-rose-500/20 bg-rose-500/5 p-4 text-sm text-rose-800"><p>{reloadRequired ? 'This source changed elsewhere. Reload the latest version before trying again.' : operationMessage}</p><div className="mt-3 flex flex-wrap gap-2">{retryOperation && !reloadRequired && <button type="button" onClick={() => void replay()} className="rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg">Retry same operation</button>}{reloadRequired && <button type="button" onClick={() => { clearRetry(); void workspace.refetch(); }} className="rounded-full border border-rose-700/30 px-4 py-2 text-xs font-semibold">Reload sources</button>}</div></div>}
 
     <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(230px,0.36fr)_minmax(0,1fr)]">
       <aside className="min-w-0 rounded-2xl border border-border bg-surface p-4 sm:p-5">
@@ -349,7 +365,7 @@ export function SourcesPanel({ programId, active = true, onOpenReview }: {
 
     {query && search.data?.length ? <section className="mt-4 rounded-2xl border border-border bg-surface p-4 sm:p-5"><h3 className="text-xs font-semibold uppercase tracking-wider text-text-muted">Matches in saved text</h3><div className="mt-3 grid gap-2 md:grid-cols-2">{search.data.map((result) => <button type="button" key={`${result.sourceId}-${result.versionId}`} onClick={() => openSource(result.sourceId, result.versionId)} className="rounded-xl border border-border bg-background p-3 text-left hover:border-accent/40"><span className="block text-xs font-medium text-text-primary">{result.title}</span><span className="mt-1 line-clamp-3 block whitespace-pre-wrap text-xs leading-5 text-text-secondary">{result.excerpt}</span></button>)}</div></section> : null}
 
-    <Dialog open={addOpen} onOpenChange={(open) => { if (!open) setAddOpen(false); }}><DialogContent ref={dialogRef} unstyled hideClose aria-describedby={undefined} tabIndex={-1} overlayClassName="fixed inset-0 z-50 bg-black/45" className="fixed bottom-0 left-1/2 z-50 max-h-[92dvh] w-full max-w-2xl overflow-auto rounded-t-2xl border border-border bg-surface p-5 shadow-2xl [translate:-50%_0] sm:bottom-auto sm:top-1/2 sm:w-[calc(100%-32px)] sm:rounded-2xl sm:p-7 sm:[translate:-50%_-50%]" onOpenAutoFocus={(event) => { event.preventDefault(); dialogRef.current?.querySelector<HTMLElement>('[data-add-focus]')?.focus(); }} onCloseAutoFocus={(event) => { event.preventDefault(); addTriggerRef.current?.focus(); }} onEscapeKeyDown={(event) => { if (mutationBusy) event.preventDefault(); }} onPointerDownOutside={(event) => { if (mutationBusy) event.preventDefault(); }}><div className="flex items-start justify-between gap-4"><div><div className="text-[10px] font-semibold uppercase tracking-[.16em] text-accent">Add to this program</div><DialogTitle asChild><h3 className="mt-1 font-serif text-2xl text-text-primary">Bring in a source</h3></DialogTitle><p className="mt-2 text-xs leading-5 text-text-muted">Sources are saved as immutable versions. Reading and search use the captured text.</p></div><button type="button" aria-label="Close add material" disabled={mutationBusy} onClick={() => setAddOpen(false)} className="rounded-full p-2 text-text-muted hover:bg-background disabled:opacity-50"><X size={17} /></button></div>
+    <Dialog open={addOpen} onOpenChange={(open) => { if (!open) setAddOpen(false); }}><DialogContent ref={dialogRef} unstyled hideClose aria-describedby={undefined} tabIndex={-1} overlayClassName="fixed inset-0 z-50 bg-black/45" className="fixed bottom-0 left-1/2 z-50 max-h-[92dvh] w-full max-w-2xl overflow-auto rounded-t-2xl border border-border bg-surface p-5 shadow-2xl [translate:-50%_0] sm:bottom-auto sm:top-1/2 sm:w-[calc(100%-32px)] sm:rounded-2xl sm:p-7 sm:[translate:-50%_-50%]" onOpenAutoFocus={(event) => { event.preventDefault(); dialogRef.current?.querySelector<HTMLElement>('[data-add-focus]')?.focus(); }} onCloseAutoFocus={(event) => { event.preventDefault(); addTriggerRef.current?.focus(); }} onEscapeKeyDown={(event) => { if (mutationBusyRef.current) event.preventDefault(); }} onPointerDownOutside={(event) => { if (mutationBusyRef.current) event.preventDefault(); }}><div className="flex items-start justify-between gap-4"><div><div className="text-[10px] font-semibold uppercase tracking-[.16em] text-accent">Add to this program</div><DialogTitle asChild><h3 className="mt-1 font-serif text-2xl text-text-primary">Bring in a source</h3></DialogTitle><p className="mt-2 text-xs leading-5 text-text-muted">Sources are saved as immutable versions. Reading and search use the captured text.</p></div><button type="button" aria-label="Close add material" disabled={mutationBusy} onClick={() => setAddOpen(false)} className="rounded-full p-2 text-text-muted hover:bg-background disabled:opacity-50"><X size={17} /></button></div>
       <div className="mt-5 grid grid-cols-3 gap-2" role="group" aria-label="Material type">{([['web', 'Web page'], ['document', 'Library document'], ['paste', 'Paste text']] as const).map(([kind, label]) => <button key={kind} type="button" disabled={mutationBusy} aria-pressed={addKind === kind} onClick={() => { setAddKind(kind); setFormError(''); }} className={`rounded-xl border px-2 py-3 text-xs font-medium disabled:opacity-50 ${addKind === kind ? 'border-accent/40 bg-accent/5 text-accent' : 'border-border bg-background text-text-muted'}`}>{label}</button>)}</div>
       {addKind === 'web' && <div className="mt-5 space-y-4"><p className="rounded-xl bg-background p-3 text-xs leading-5 text-text-secondary">Lattice captures readable page text for this program. The reader never fetches the page in your browser; you can open the canonical reference separately.</p><label className="block text-xs font-medium text-text-secondary" htmlFor="source-url">Web address<input id="source-url" data-add-focus type="url" value={webUrl} onChange={(event) => setWebUrl(event.target.value)} placeholder="https://example.org/article" className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-3 text-sm" /></label><label className="block text-xs font-medium text-text-secondary" htmlFor="new-source-policy">Freshness policy<select id="new-source-policy" value={webPolicy} onChange={(event) => setWebPolicy(event.target.value as LearningSourcePolicy)} className="mt-2 w-full min-w-0 max-w-full rounded-xl border border-border bg-background px-3 py-3 text-sm"><option value="fixed">Fixed snapshot · intentionally pinned</option><option value="manual">Manual · I decide when to check</option><option value="before_use">Before use · check before lesson preparation</option></select></label></div>}
       {addKind === 'document' && <div className="mt-5 space-y-3"><p className="rounded-xl bg-background p-3 text-xs leading-5 text-text-secondary">Choose an indexed document from a Space. Studio saves a snapshot for this course; later changes to the document do not rewrite it.</p><LearningDocumentPicker selected={selectedDocuments} onChange={setSelectedDocuments} limit={1} /></div>}
@@ -357,7 +373,7 @@ export function SourcesPanel({ programId, active = true, onOpenReview }: {
       {formError && <p role="alert" className="mt-4 rounded-lg bg-rose-500/5 p-3 text-xs text-rose-700">{formError}</p>}{operationMessage && retryOperation?.kind.startsWith('add-') && <p role="alert" className="mt-3 text-xs text-rose-700">{operationMessage} You can retry the same submission without creating a duplicate.</p>}
       <label className="mt-4 flex items-center gap-2 text-xs text-text-secondary"><input type="checkbox" checked={checkWaiting} disabled={mutationBusy} onChange={(event) => setCheckWaiting(event.target.checked)} className="h-3.5 w-3.5 accent-accent" />Check the waiting statements against it</label>
       {mutationBusy && recheckProgress && <p role="status" className="mt-3 truncate text-xs text-text-secondary" title={progressLine(recheckProgress)}>{progressLine(recheckProgress)}</p>}
-      <div className="mt-6 flex flex-wrap justify-end gap-2 border-t border-border pt-4"><button type="button" disabled={mutationBusy} onClick={() => setAddOpen(false)} className="rounded-full border border-border px-4 py-2.5 text-xs text-text-secondary disabled:opacity-50">Cancel</button><button type="button" disabled={mutationBusy} onClick={() => void submitAdd()} className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-xs font-semibold text-accent-fg disabled:opacity-50"><Upload size={14} />{mutationBusy ? 'Saving…' : retryOperation?.kind.startsWith('add-') ? 'Try again' : 'Save source'}</button></div>
+      <div className="mt-6 flex flex-wrap justify-end gap-2 border-t border-border pt-4"><button type="button" disabled={mutationBusy} onClick={() => setAddOpen(false)} className="rounded-full border border-border px-4 py-2.5 text-xs text-text-secondary disabled:opacity-50">Cancel</button><button type="button" disabled={mutationBusy} onClick={() => void submitAdd()} className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-xs font-semibold text-accent-fg disabled:opacity-50"><Upload size={14} />{mutationBusy ? 'Saving…' : retryOperation?.kind.startsWith('add-') ? 'Retry save source' : 'Save source'}</button></div>
     </DialogContent></Dialog>
 
     <FilePreviewModal
@@ -366,4 +382,33 @@ export function SourcesPanel({ programId, active = true, onOpenReview }: {
       source={selected ? fromLearningSource(selected, detail.data).source : null}
     />
   </div>;
+
+  async function replay() {
+    const item = retryRef.current;
+    if (!item || mutationBusyRef.current) return;
+    mutationBusyRef.current = true;
+    setMutationBusy(true);
+    try {
+      const sourceId = String(item.request.sourceId ?? '');
+      const table: Record<string, (request: Record<string, unknown>) => Promise<unknown>> = {
+        'add-web': (request) => addWeb.mutateAsync(request as AddLearningWebSourceRequestDto),
+        'add-document': (request) => addDocument.mutateAsync(request as AddLearningDocumentSourceRequestDto),
+        'add-text': (request) => addText.mutateAsync(request as AddLearningTextSourceRequestDto),
+        [`refresh:${sourceId}`]: (request) => refresh.mutateAsync(request as unknown as RefreshLearningSourceRequestDto),
+        [`adopt:${sourceId}`]: (request) => adopt.mutateAsync(request as unknown as AdoptLearningSourceVersionRequestDto),
+        [`policy:${sourceId}`]: (request) => updatePolicy.mutateAsync(request as unknown as UpdateLearningSourcePolicyRequestDto),
+      };
+      const call = table[item.kind];
+      if (!call) return;
+      await call(item.request);
+      clearRetry();
+      if (item.kind.startsWith('add-')) setAddOpen(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setOperationMessage(message); setReloadRequired(isCasConflict(message));
+    } finally {
+      mutationBusyRef.current = false;
+      setMutationBusy(false);
+    }
+  }
 }

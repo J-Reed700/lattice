@@ -20,7 +20,7 @@ const NOTE = 'border-transparent bg-accent-muted text-accent';
 
 export const MODE_LABEL: Record<AttemptMode, string> = {
   practice: 'Practice',
-  interview: 'Timed',
+  interview: 'Interview',
   rapid: 'Rapid',
 };
 
@@ -34,8 +34,8 @@ export const ALSO_VALID_NOT_RAISED: Words = { label: 'Not raised', tone: NOTE };
 
 export const FINDING_OUTCOME: Record<FindingResultKind, Words> = {
   matches: { label: 'Matches', tone: GOOD },
-  valid_extra: { label: 'Also valid', tone: NOTE },
-  false_positive: { label: 'Not an issue', tone: BAD },
+  valid_extra: { label: 'Valid extra', tone: NOTE },
+  false_positive: { label: 'False positive', tone: BAD },
 };
 
 export const FIX_OUTCOME: Record<FixOutcome, Words> = {

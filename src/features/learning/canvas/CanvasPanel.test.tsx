@@ -16,7 +16,7 @@ const api = vi.hoisted(() => ({
   createLearningCanvasSnapshot: vi.fn(), restoreLearningCanvasSnapshot: vi.fn(),
   exportScene: vi.fn(),
 }));
-vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: api }));
+vi.mock('@/lib/api', () => ({ default: api }));
 vi.mock('@excalidraw/excalidraw', () => ({ serializeAsJSON: (elements: unknown[], _state: unknown, _files: unknown, source: string) => JSON.stringify({ type: 'excalidraw', version: 2, source, elements, appState: {}, files: {} }) }));
 vi.mock('@/features/learning/canvas/CanvasSurface', async () => {
   const React = await import('react');
@@ -34,7 +34,7 @@ vi.mock('@/features/learning/canvas/CanvasSurface', async () => {
 });
 
 const ok = <T,>(data: T) => ({ ok: true as const, data });
-const fail = (error: string, code?: string) => ({ ok: false as const, error, ...(code ? { details: { code, message: error } } : {}) });
+const fail = (error: string) => ({ ok: false as const, error });
 const textElement = { id: 'text-1', type: 'text', isDeleted: false, text: 'A drawn idea' };
 const emptyScene = { type: 'excalidraw', version: 2, source: 'test', elements: [], appState: {}, files: {} };
 const scene = (elements: object[]) => ({ ...emptyScene, elements });
@@ -197,7 +197,7 @@ describe('Learning Studio Canvas workspace', () => {
 
   it('flushes before switching canvases and keeps the source editor selected on save failure', async () => {
     const user = userEvent.setup();
-    api.saveLearningCanvas.mockResolvedValueOnce(fail('Canvas changed; reload and retry.', 'CONFLICT'));
+    api.saveLearningCanvas.mockResolvedValueOnce(fail('revision conflict'));
     mount(workspace([canvas(), canvas('canvas-2', { title: 'Second sketch' })]));
     await screen.findByTestId('mock-canvas');
     fireEvent.change(screen.getByLabelText('Canvas title'), { target: { value: 'Unsaved title' } });
@@ -206,17 +206,6 @@ describe('Learning Studio Canvas workspace', () => {
     expect(screen.getByLabelText('Canvas title')).toHaveValue('Unsaved title');
     expect(screen.getByRole('button', { name: 'Canvas: First sketch' })).toHaveAttribute('aria-pressed', 'true');
     await user.click(screen.getByRole('button', { name: 'Reload latest' }));
-  });
-
-  it('treats a save failure that only says the canvas changed as a plain error', async () => {
-    const user = userEvent.setup();
-    api.saveLearningCanvas.mockResolvedValueOnce(fail('Canvas changed since you opened it', 'INTERNAL_ERROR'));
-    mount(workspace([canvas()]));
-    await screen.findByTestId('mock-canvas');
-    await user.click(screen.getByRole('button', { name: 'Add text element' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Canvas changed since you opened it');
-    expect(screen.queryByRole('button', { name: 'Reload latest' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
   });
 
   it('creates checkpoints and warns before restoring an immutable version', async () => {

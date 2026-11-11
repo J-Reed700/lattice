@@ -1,6 +1,8 @@
 //! Unpublished candidate checkpoints for durable lesson jobs. A checkpoint is
-//! never publication approval. Completed teaching checks may be reused only
-//! for identical content and inputs; factual verification remains required.
+//! never publication approval. A completed teaching check is reused only for
+//! identical content and inputs; what a teaching review judged follows the
+//! job's inputs, so a later review of a changed draft starts from it. Factual
+//! verification remains required.
 use crate::curriculum_repository::LearningCurriculumRepository;
 use crate::dto::LearningSourceDto;
 use lattice_core::shared::error::Result;
@@ -29,7 +31,8 @@ pub struct Draft {
     /// Failed checks and evidence for a pending rewrite, never approval.
     #[serde(default)]
     pub pending_repair: Option<String>,
-    /// What decides when a teaching review that repairs this draft stops.
+    /// What a teaching review of this job judged and what decides when it
+    /// stops; it carries to the job's later drafts.
     #[serde(default)]
     pub teaching_passes: Option<String>,
 }
@@ -71,6 +74,11 @@ tokio::task_local! { static CURRENT: Context; }
 
 pub(crate) fn active() -> bool {
     CURRENT.try_with(|_| ()).is_ok()
+}
+
+/// The lesson a running preparation is writing, for logs.
+pub(crate) fn lesson_id() -> Option<String> {
+    CURRENT.try_with(|context| context.lesson_id.clone()).ok()
 }
 
 /// The job and lesson a running preparation writes its drafts for, and the
@@ -213,22 +221,22 @@ async fn save_checkpoint(
         .unwrap_or_else(|e| e.into_inner())
         .clone();
     if let Some(input_hash) = hash {
-        let previous = context
+        let same_input = context
             .repo
             .lesson_draft(&context.job_id, &context.lesson_id)
             .await?
-            .filter(|draft| draft.input_hash == input_hash && draft.candidate == candidate);
+            .filter(|draft| draft.input_hash == input_hash);
+        let teaching_state = same_input
+            .as_ref()
+            .and_then(|draft| draft.teaching_passes.clone());
+        let previous = same_input.filter(|draft| draft.candidate == candidate);
         let teaching_receipt = previous
             .as_ref()
             .and_then(|draft| draft.teaching_receipt.clone());
         let claim_inventory = previous
             .as_ref()
             .and_then(|draft| draft.claim_inventory.clone());
-        let teaching_passes = passes_override.or_else(|| {
-            previous
-                .as_ref()
-                .and_then(|draft| draft.teaching_passes.clone())
-        });
+        let teaching_passes = passes_override.or(teaching_state);
         let pending_repair =
             repair_override.unwrap_or_else(|| previous.and_then(|draft| draft.pending_repair));
         let authoring = context
@@ -307,12 +315,22 @@ pub(crate) async fn pending_repair(candidate: &str) -> Result<Option<String>> {
         .and_then(|(_, draft)| draft.pending_repair))
 }
 
-/// The stopping state a teaching review cut short saved with this exact
-/// draft.
-pub(crate) async fn teaching_passes(candidate: &str) -> Result<Option<String>> {
-    Ok(current(candidate)
+/// What the job's teaching reviews saved, whichever draft they saved it with.
+pub(crate) async fn teaching_passes() -> Result<Option<String>> {
+    let Ok(context) = CURRENT.try_with(Clone::clone) else {
+        return Ok(None);
+    };
+    let hash = context
+        .input_hash
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    Ok(context
+        .repo
+        .lesson_draft(&context.job_id, &context.lesson_id)
         .await?
-        .and_then(|(_, draft)| draft.teaching_passes))
+        .filter(|draft| Some(&draft.input_hash) == hash.as_ref())
+        .and_then(|draft| draft.teaching_passes))
 }
 
 pub(crate) async fn record_pending_repair(candidate: &str, repair: String) -> Result<()> {

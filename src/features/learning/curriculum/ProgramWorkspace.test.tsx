@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -20,7 +20,6 @@ vi.mock('@/features/learning/tangents/StudyTangentSelection', () => ({
   StudyTangentSelection: ({ children }: { children: ReactNode }) => children,
   SectionTangentBar: () => null,
 }));
-vi.mock('@/features/voice/hooks/useVoiceConversation', () => ({ useVoiceConversation: () => ({ phase: 'off', toggle: vi.fn() }) }));
 vi.mock('@/features/learning/curriculum/CourseCoach', () => ({ CourseCoach: () => null }));
 // The drills are tested with their own panel; here it only shows which course it is for and counts its mounts.
 const drills = vi.hoisted(() => ({ mounts: 0 }));
@@ -35,18 +34,6 @@ vi.mock('@/features/learning/drills/CourseDrillsPanel', async () => {
     },
   };
 });
-// The Practice page's own data is tested with it; here the course teaches code and has nothing yet.
-vi.mock('@/features/learning/practice/home/practiceHomeApi', () => ({
-  practiceHomeApi: {
-    getProfile: async () => ({ programId: 'program-1', details: '', language: null, interviewAt: null, company: null, role: null, revision: 0 }),
-    saveProfile: vi.fn(),
-    getFit: async () => ({ code: 'fits', reason: null }),
-    checkFit: async () => ({ code: 'fits', reason: null }),
-    due: async () => ({ items: [] }),
-    codingSessions: async () => [],
-    startCodingSession: vi.fn(),
-  },
-}));
 // The journey's own markup is tested with it; here it only hands the workspace a module or a lesson to open.
 vi.mock('@/features/learning/curriculum/CourseSyllabus', () => ({
   CourseSyllabus: ({ program, onSelect, onSelectModule }: {
@@ -73,7 +60,7 @@ vi.mock('@/features/learning/memory/MemoryPanels', async (importOriginal) => ({
 }));
 
 const api = vi.hoisted(() => ({ plan: vi.fn(), review: vi.fn(), cancel: vi.fn() }));
-vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
+vi.mock('@/lib/api', () => ({ default: {
   getLearningPlan: api.plan,
   getLearningLessonClaimReview: api.review,
   cancelLearningGenerationJob: api.cancel,
@@ -239,52 +226,52 @@ describe('Course page', () => {
     });
   });
 
-  it('has Quizzes as a primary tab, and Practice renders the unified Practice area with five cards', async () => {
+  it('has Quizzes as a primary tab, and Practice keeps only written practice and code', async () => {
     show(program(GOAL));
     const tabs = within(screen.getByRole('tablist', { name: 'Program workspace' })).getAllByRole('tab');
     expect(tabs.map((tab) => tab.textContent)).toEqual(['Lessons', 'Practice', 'Quizzes', 'Recall', 'Notebook', 'Tutor', 'Sources']);
     await userEvent.click(tabs[1]);
-    expect(await screen.findByRole('heading', { level: 3, name: 'Explain' })).toBeVisible();
-    expect(screen.getByRole('heading', { level: 3, name: 'Spot the mistakes' })).toBeVisible();
-    expect(screen.getByRole('heading', { level: 3, name: 'Code' })).toBeVisible();
-    expect(screen.getByRole('heading', { level: 3, name: 'Mock interview' })).toBeVisible();
-    expect(screen.getByRole('heading', { level: 3, name: 'Role-play' })).toBeVisible();
-    expect(screen.queryByRole('tablist', { name: 'Practice activities' })).not.toBeInTheDocument();
+    const practice = await screen.findByRole('tablist', { name: 'Practice activities' });
+    expect(within(practice).getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Written practice', 'Code & simulations', 'Review drills']);
     expect(screen.queryByText(/Quick checks/)).not.toBeInTheDocument();
   });
 
   describe('Review drills', () => {
     const primaryTab = (name: string) => within(screen.getByRole('tablist', { name: 'Program workspace' })).getByRole('tab', { name });
 
-    it('shows the drills of this course, and returns to Practice home on Back to Practice', async () => {
+    it('shows the drills of this course, and not the module and lesson line a drill picks for itself', async () => {
       const user = userEvent.setup();
       show(program(GOAL));
       await user.click(primaryTab('Practice'));
-      expect(await screen.findByRole('heading', { level: 3, name: 'Spot the mistakes' })).toBeVisible();
+      expect(screen.getByText('›')).toBeInTheDocument();
 
-      await user.click(within(screen.getByTestId('card-spot')).getByRole('button', { name: /^Start/ }));
-      expect(await screen.findByText('Review drills of program-1')).toBeVisible();
+      await user.click(screen.getByRole('tab', { name: 'Review drills' }));
+      expect(screen.getByRole('tab', { name: 'Review drills' })).toHaveAttribute('aria-selected', 'true');
+      expect(screen.getByText('Review drills of program-1')).toBeVisible();
+      expect(screen.queryByText('›')).not.toBeInTheDocument();
+      expect(screen.getAllByText('Circulation')).toEqual([
+        screen.getByRole('heading', { level: 2, name: 'Circulation' }),
+      ]);
 
-      await user.click(screen.getByRole('button', { name: 'Back to Practice' }));
-      expect(await screen.findByRole('heading', { level: 3, name: 'Spot the mistakes' })).toBeVisible();
+      await user.click(screen.getByRole('tab', { name: 'Written practice' }));
+      expect(screen.getByText('›')).toBeInTheDocument();
       expect(screen.getByText('Review drills of program-1')).not.toBeVisible();
     });
 
-    it('is mounted once, and stays so while the learner is on Lessons and back', async () => {
+    it('is mounted once, and stays so while the learner is on Written practice or Lessons and back', async () => {
       const user = userEvent.setup();
       show(program(GOAL));
       expect(screen.queryByText('Review drills of program-1')).not.toBeInTheDocument();
       await user.click(primaryTab('Practice'));
       expect(screen.queryByText('Review drills of program-1')).not.toBeInTheDocument();
-
-      await user.click(within(screen.getByTestId('card-spot')).getByRole('button', { name: /^Start/ }));
-      expect(await screen.findByText('Review drills of program-1')).toBeVisible();
+      await user.click(screen.getByRole('tab', { name: 'Review drills' }));
       expect(drills.mounts).toBe(1);
 
+      await user.click(screen.getByRole('tab', { name: 'Written practice' }));
       await user.click(primaryTab('Lessons'));
       expect(screen.getByText('Review drills of program-1')).not.toBeVisible();
-
       await user.click(primaryTab('Practice'));
+      await user.click(screen.getByRole('tab', { name: 'Review drills' }));
       expect(screen.getByText('Review drills of program-1')).toBeVisible();
       expect(drills.mounts).toBe(1);
     });
@@ -292,79 +279,21 @@ describe('Course page', () => {
     it('opens from a destination on that tab', async () => {
       show(program(GOAL), vi.fn(), { programId: 'program-1', tab: 'drills' });
       expect(await screen.findByText('Review drills of program-1')).toBeVisible();
-      expect(primaryTab('Practice')).toHaveAttribute('aria-selected', 'true');
+      expect(screen.getByRole('tab', { name: 'Review drills' })).toHaveAttribute('aria-selected', 'true');
+      expect(screen.queryByText('›')).not.toBeInTheDocument();
     });
 
-    it('reopens on the drills when they were the last Practice screen', async () => {
+    it('is where Practice reopens when it was the last practice view', async () => {
       const user = userEvent.setup();
       show(program(GOAL));
       await user.click(primaryTab('Practice'));
-      await user.click(within(screen.getByTestId('card-spot')).getByRole('button', { name: /^Start/ }));
-      expect(await screen.findByText('Review drills of program-1')).toBeVisible();
-
+      await user.click(screen.getByRole('tab', { name: 'Review drills' }));
       await user.click(primaryTab('Lessons'));
       expect(screen.getByText('Review drills of program-1')).not.toBeVisible();
 
       await user.click(primaryTab('Practice'));
+      expect(screen.getByRole('tab', { name: 'Review drills' })).toHaveAttribute('aria-selected', 'true');
       expect(screen.getByText('Review drills of program-1')).toBeVisible();
-    });
-  });
-
-  describe('the Practice tab', () => {
-    const primaryTab = (name: string) => within(screen.getByRole('tablist', { name: 'Program workspace' })).getByRole('tab', { name });
-
-    it('returns to the written attempt the learner left for another workspace tab', async () => {
-      const user = userEvent.setup();
-      show(program(GOAL));
-      await user.click(primaryTab('Practice'));
-      await user.click(within(await screen.findByTestId('card-explain')).getByRole('button', { name: /^Start/ }));
-      expect(await screen.findByRole('group', { name: 'Written practice mode' })).toBeVisible();
-
-      await user.click(primaryTab('Lessons'));
-      await user.click(primaryTab('Practice'));
-      expect(screen.getByRole('group', { name: 'Written practice mode' })).toBeVisible();
-      expect(screen.queryByTestId('practice-home')).not.toBeInTheDocument();
-    });
-
-    it('returns to the retained screen when Practice is pressed from another tab, even as the render lands before the click', async () => {
-      const user = userEvent.setup();
-      show(program(GOAL));
-      await user.click(primaryTab('Practice'));
-      await user.click(within(await screen.findByTestId('card-explain')).getByRole('button', { name: /^Start/ }));
-      expect(await screen.findByRole('group', { name: 'Written practice mode' })).toBeVisible();
-      await user.click(primaryTab('Lessons'));
-
-      const practice = primaryTab('Practice');
-      fireEvent.mouseDown(practice);
-      await waitFor(() => expect(practice).toHaveAttribute('aria-selected', 'true'));
-      fireEvent.click(practice);
-      expect(screen.getByRole('group', { name: 'Written practice mode' })).toBeVisible();
-      expect(screen.queryByTestId('practice-home')).not.toBeInTheDocument();
-    });
-
-    it('opens the Practice page on Enter on the selected Practice tab', async () => {
-      const user = userEvent.setup();
-      show(program(GOAL));
-      await user.click(primaryTab('Practice'));
-      await user.click(within(await screen.findByTestId('card-explain')).getByRole('button', { name: /^Start/ }));
-      expect(await screen.findByRole('group', { name: 'Written practice mode' })).toBeVisible();
-
-      primaryTab('Practice').focus();
-      await user.keyboard('{Enter}');
-      expect(await screen.findByTestId('practice-home')).toBeVisible();
-      expect(screen.queryByRole('group', { name: 'Written practice mode' })).not.toBeInTheDocument();
-    });
-
-    it('opens the Practice page when Practice is clicked while already selected', async () => {
-      const user = userEvent.setup();
-      show(program(GOAL));
-      await user.click(primaryTab('Practice'));
-      await user.click(within(await screen.findByTestId('card-explain')).getByRole('button', { name: /^Start/ }));
-      expect(await screen.findByRole('group', { name: 'Written practice mode' })).toBeVisible();
-
-      await user.click(primaryTab('Practice'));
-      expect(await screen.findByTestId('practice-home')).toBeVisible();
-      expect(screen.queryByRole('group', { name: 'Written practice mode' })).not.toBeInTheDocument();
     });
   });
 
@@ -395,9 +324,6 @@ describe('Course page', () => {
     show(program(GOAL));
     const tabs = within(screen.getByRole('tablist', { name: 'Program workspace' })).getAllByRole('tab');
     await user.click(tabs[1]);
-    expect(await screen.findByRole('heading', { level: 3, name: 'Explain' })).toBeVisible();
-
-    await user.click(within(screen.getByTestId('card-explain')).getByRole('button', { name: /^Start/ }));
     const practiceModes = await screen.findByRole('group', { name: 'Written practice mode' });
     expect(practiceModes).toBeVisible();
     const feynmanButton = within(practiceModes).getByRole('button', { name: 'Feynman technique (Teach a beginner)' });
@@ -440,7 +366,7 @@ describe('Course page', () => {
       show(twoModules());
       const tabs = within(screen.getByRole('tablist', { name: 'Program workspace' })).getAllByRole('tab');
       await user.click(tabs[1]);
-      await screen.findByRole('heading', { level: 3, name: 'Explain' });
+      await screen.findByRole('tablist', { name: 'Practice activities' });
       await user.click(screen.getByRole('button', { name: 'Journey: Respiration' }));
       expect(await screen.findByRole('heading', { level: 2, name: 'Respiration' })).toBeVisible();
       expect(picked('Module')).toHaveTextContent('Module 2: Respiration');
@@ -466,6 +392,162 @@ describe('Course page', () => {
       expect(picked('Module')).toHaveTextContent('Module 2: Respiration');
       expect(picked('Lesson context')).toHaveTextContent('1. Gas exchange');
       await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: 'start', behavior: 'smooth' }));
+    });
+  });
+});
+
+describe('The course progress line', () => {
+  const MINUTE = 60_000;
+  const lessonJob = (lessonId: string, overrides: Partial<LearningGenerationJob> = {}) => job({ id: `job-${lessonId}`, lessonIds: [lessonId], ...overrides });
+  const finished = (lessonId: string, minutes: number, overrides: Partial<LearningGenerationJob> = {}) => lessonJob(lessonId, {
+    status: 'completed', resultId: lessonId, createdAt: 1_000_000, startedAt: 1_000_000, finishedAt: 1_000_000 + minutes * MINUTE, ...overrides,
+  });
+  const showCourse = (course: LearningProgramDto, jobs: LearningGenerationJob[], onLessonOpened = vi.fn()) => {
+    api.plan.mockResolvedValue({ ok: true, data: { programId: 'program-1', jobs } });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const page = (current: LearningProgramDto) => <QueryClientProvider client={client}>
+      <ProgramWorkspace program={current} onBack={vi.fn()} onOpenProgram={vi.fn()} onAccept={vi.fn()} acceptPending={false}
+        onPrepare={vi.fn()} preparePending={false} onLessonOpened={onLessonOpened} onComplete={vi.fn()} completePending={false} />
+    </QueryClientProvider>;
+    const view = render(page(course));
+    return { onLessonOpened, update: (current: LearningProgramDto) => view.rerender(page(current)) };
+  };
+  /** Four lessons across two modules: lesson-3 ready, the rest outline. Each call returns lessons of its own, so a test may change them. */
+  const course = () => {
+    const base = twoModules();
+    base.modules = base.modules.map((module) => ({ ...module, lessons: module.lessons.map((lesson) => ({ ...lesson })) }));
+    base.modules[1].lessons[0] = { ...gas, preparation: 'ready' } as LearningLessonDto;
+    return base;
+  };
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    api.review.mockResolvedValue({ ok: true, data: null });
+  });
+
+  it('counts the lessons ready, preparing, waiting and needing attention', async () => {
+    showCourse(course(), [lessonJob('lesson-1'), lessonJob('lesson-2', { status: 'pending' }), lessonJob('lesson-4', { status: 'failed', error: 'The model stopped.' })]);
+    expect(await screen.findByText('1 of 4 lessons ready · 1 preparing · 1 waiting · 1 needs attention')).toBeVisible();
+  });
+
+  it('counts a lesson held for review as needing attention, and says need for several', async () => {
+    showCourse(course(), [
+      lessonJob('lesson-1', { status: 'completed', resultId: 'needs_review:lesson-1', finishedAt: 5 }),
+      lessonJob('lesson-2', { status: 'failed', error: 'The model stopped.' }),
+    ]);
+    expect(await screen.findByText('1 of 4 lessons ready · 2 need attention')).toBeVisible();
+  });
+
+  it('leaves out the parts that are zero but the first', async () => {
+    showCourse(course(), [lessonJob('lesson-1', { status: 'pending' }), lessonJob('lesson-2', { status: 'pending' })]);
+    expect(await screen.findByText('1 of 4 lessons ready · 2 waiting')).toBeVisible();
+  });
+
+  it('shows no progress line when nothing is in flight', async () => {
+    showCourse(course(), []);
+    expect(await screen.findByText('Lessons complete')).toBeVisible();
+    expect(screen.queryByText(/lessons ready/)).not.toBeInTheDocument();
+  });
+
+  it('shows the median gap between finished lessons as the pace', async () => {
+    showCourse(course(), [
+      finished('lesson-1', 0), finished('lesson-2', 4), finished('lesson-3', 10), finished('lesson-5', 12),
+      lessonJob('lesson-4', { status: 'pending' }),
+    ]);
+    expect(await screen.findByText('About one lesson every 4 min so far')).toBeVisible();
+  });
+
+  it('leaves the idle time before a batch out of the pace', async () => {
+    const DAY = 24 * 60;
+    showCourse(course(), [
+      finished('lesson-1', 0),
+      finished('lesson-2', DAY + 10, { createdAt: 1_000_000 + DAY * MINUTE }),
+      finished('lesson-3', DAY + 14, { createdAt: 1_000_000 + DAY * MINUTE }),
+      lessonJob('lesson-4', { status: 'pending' }),
+    ]);
+    expect(await screen.findByText('About one lesson every 4 min so far')).toBeVisible();
+  });
+
+  it('shows no pace when the lessons finished apart because nothing was waiting between them', async () => {
+    showCourse(course(), [
+      finished('lesson-1', 0),
+      finished('lesson-2', 60, { createdAt: 1_000_000 + MINUTE }),
+      lessonJob('lesson-4', { status: 'pending' }),
+    ]);
+    expect(await screen.findByText(/lessons ready/)).toBeVisible();
+    expect(screen.queryByText(/About one lesson every/)).not.toBeInTheDocument();
+  });
+
+  it('shows no pace before two lessons have finished, or when a finished job only held its lesson for review', async () => {
+    showCourse(course(), [
+      finished('lesson-1', 0), finished('lesson-2', 4, { resultId: 'needs_review:lesson-2' }),
+      lessonJob('lesson-4', { status: 'pending' }),
+    ]);
+    expect(await screen.findByText(/lessons ready/)).toBeVisible();
+    expect(screen.queryByText(/About one lesson every/)).not.toBeInTheDocument();
+  });
+
+  it('shows each running lesson its own progress', async () => {
+    const running = (checksCompleted: number, checksTotal: number) => ({
+      phase: 'evidence', phaseStartedAt: 1, lastActivityAt: 1, lastCheckpointAt: null, lessonTitle: '', modelName: 'Test model',
+      modelRunning: true, responseCharacters: 0, modelAttempt: 1, verificationPass: 1, checksCompleted, checksTotal, checksReused: 0,
+      newReferences: null, claims: null, recentSteps: [],
+    }) as unknown as LearningGenerationJob['activity'];
+    showCourse(course(), [
+      lessonJob('lesson-1', { activity: running(3, 10) }),
+      lessonJob('lesson-2', { activity: running(7, 20), createdAt: Date.now() }),
+    ]);
+    const inCard = (lessonId: string) => within(document.getElementById(`lesson-${lessonId}`) as HTMLElement);
+    expect(await inCard('lesson-1').findByText('Preparing · 3 of 10 checked')).toBeVisible();
+    expect(await inCard('lesson-2').findByText('Preparing · 7 of 20 checked')).toBeVisible();
+  });
+
+  describe('preparing ahead of the learner', () => {
+    beforeEach(() => {
+      Element.prototype.scrollIntoView = vi.fn();
+    });
+    afterEach(() => {
+      Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+    });
+
+    const withLessonOneReady = () => {
+      const base = course();
+      base.modules[0].lessons[0].preparation = 'ready';
+      return base;
+    };
+
+    it('asks once for the prepared lesson that is open', async () => {
+      const { onLessonOpened } = showCourse(withLessonOneReady(), []);
+      await waitFor(() => expect(onLessonOpened).toHaveBeenCalledWith('lesson-1'));
+      expect(onLessonOpened).toHaveBeenCalledTimes(1);
+    });
+
+    it('asks for a prepared lesson the learner selects, and not for one that is not prepared', async () => {
+      const user = userEvent.setup();
+      const { onLessonOpened } = showCourse(withLessonOneReady(), []);
+      await waitFor(() => expect(onLessonOpened).toHaveBeenCalledTimes(1));
+      await user.click(screen.getByRole('button', { name: 'Journey: Blood vessels' }));
+      await user.click(screen.getByRole('button', { name: 'Journey: Airway defenses' }));
+      await user.click(screen.getByRole('button', { name: 'Journey: Gas exchange' }));
+      await waitFor(() => expect(onLessonOpened).toHaveBeenLastCalledWith('lesson-3'));
+      expect(onLessonOpened.mock.calls).toEqual([['lesson-1'], ['lesson-3']]);
+    });
+
+    it('asks when the open lesson becomes prepared', async () => {
+      const { onLessonOpened, update } = showCourse(course(), []);
+      expect(await screen.findByText('Lessons complete')).toBeVisible();
+      expect(onLessonOpened).not.toHaveBeenCalled();
+      update(withLessonOneReady());
+      await waitFor(() => expect(onLessonOpened).toHaveBeenCalledWith('lesson-1'));
+      expect(onLessonOpened).toHaveBeenCalledTimes(1);
+    });
+
+    it('never asks for a draft course', async () => {
+      const draft = withLessonOneReady();
+      draft.summary.status = 'draft';
+      const { onLessonOpened } = showCourse(draft, []);
+      expect(await screen.findByRole('button', { name: 'Start this course' })).toBeVisible();
+      expect(onLessonOpened).not.toHaveBeenCalled();
     });
   });
 });

@@ -17,7 +17,10 @@ pub use ceiling::{after_rewrite_calls, most_calls};
 pub use graph::{Graph, Node};
 pub use invariants::{violations, Violation};
 pub use standard::{StandardPolicy, STANDARD_POLICY};
-pub use walk::{check_record, decide, rewrite_ahead, walk, walk_from, RecordFault};
+pub use walk::{
+    check_record, decide, next_rewrite, rewrite_ahead, rewrites_given, start, stepped, successor,
+    walk, walk_from, RecordFault,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -75,6 +78,8 @@ pub enum Goal {
     AsTheFieldHasIt,
     /// Narrow the sentence to what its other statements say.
     KeepTheOthers,
+    /// Correct what a veto found wrong in the sentence; keep the rest of it.
+    CorrectWhatWasFound,
 }
 
 /// One thing done to a statement.
@@ -166,6 +171,9 @@ pub enum End {
     Consistent,
     GeneralKnowledge,
     NotAClaim,
+    /// The sources are silent, or the sentence cannot be cut: it stays in the
+    /// lesson as written, published not verified.
+    Unverified,
     Removed {
         /// The sentence could not be cut, so its section goes.
         section_goes: bool,
@@ -195,6 +203,26 @@ impl Target {
     }
 }
 
+/// What a statement that has changed class already does where a first change
+/// would move it again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Otherwise {
+    Node(NodeId),
+    End(End),
+}
+
+impl From<&'static str> for Otherwise {
+    fn from(name: &'static str) -> Self {
+        Self::Node(NodeId(name))
+    }
+}
+
+impl From<End> for Otherwise {
+    fn from(end: End) -> Self {
+        Self::End(end)
+    }
+}
+
 /// What follows an outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Next {
@@ -203,7 +231,7 @@ pub enum Next {
     /// once it has changed class (no class changes twice).
     FirstChange {
         change: Target,
-        otherwise: NodeId,
+        otherwise: Otherwise,
     },
     End(End),
 }
@@ -224,11 +252,12 @@ impl Next {
         Self::Go(Target::EnterAfterRewrite(class))
     }
 
-    /// `change` the first time, then the node named `otherwise`.
-    pub fn first_change(change: Target, otherwise: &'static str) -> Self {
+    /// `change` the first time, then the node named `otherwise` or the end
+    /// given.
+    pub fn first_change(change: Target, otherwise: impl Into<Otherwise>) -> Self {
         Self::FirstChange {
             change,
-            otherwise: NodeId(otherwise),
+            otherwise: otherwise.into(),
         }
     }
 }
@@ -242,6 +271,10 @@ pub struct Position {
     /// The statement's one re-ask of an unreadable answer is spent.
     pub reasked: bool,
     pub node: NodeId,
+    /// The rewrites its sentence can still be given: a rewrite step it takes
+    /// spends one, and so does each machine change of its sentence it
+    /// continues after.
+    pub rewrites_left: u8,
 }
 
 /// One step a statement took and what came of it.

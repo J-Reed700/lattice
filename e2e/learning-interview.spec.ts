@@ -128,12 +128,12 @@ for (const scenario of [{ width: 1280, mode: "practice" }, { width: 390, mode: "
     await expect(turns.getByText("How would you design reliable request processing, part 1?", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Finish interview" })).toBeDisabled();
     await page.getByLabel("Your response").fill("I would store an idempotency key and test concurrent retries.");
-    await page.getByRole("button", { name: "Send" }).click();
+    await page.getByRole("button", { name: "Send simulation turn" }).click();
     await expect(turns.getByText("How would you verify behavior under retries?", { exact: true })).toBeVisible();
     // A longer interview overflows the log; each new question must stay in view.
     for (const answer of ["I would key each upload.", "I would replay the lost response.", "I would compare committed effects.", "I would alert on duplicate keys."]) {
       await page.getByLabel("Your response").fill(answer);
-      await page.getByRole("button", { name: "Send" }).click();
+      await page.getByRole("button", { name: "Send simulation turn" }).click();
       await expect(turns.getByText(answer, { exact: true })).toBeAttached();
     }
     expect(await turns.evaluate((log) => log.scrollHeight > log.clientHeight)).toBe(true);

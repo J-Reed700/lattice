@@ -2,7 +2,7 @@
 use super::{
     check_status_name, engine_name, invalid, json, parse_engine, practical_operation, status_name,
     uuid, workspace_owner_token_from_snapshot, LearningPracticalRepository, PreparedExecution,
-    PreparedHarness, PreparedRun,
+    PreparedRun,
 };
 use crate::embedded_runtime::{BuiltinLabExecutionSpec, LearningBuiltinRuntime};
 use crate::lab_runtime::{
@@ -11,117 +11,15 @@ use crate::lab_runtime::{
 };
 use crate::persistence::{db, now};
 use crate::practical_dto::*;
-use crate::practical_runs::CodingRunStart;
-use crate::practice::coding::dto::CodingRunScope;
-use crate::practice::coding::harness::{harness_for, new_nonce, RunEnd};
-use crate::practice::coding::problem::CaseStatus;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use sqlx::Row;
 use std::collections::HashSet;
 
-/// The harness a coding run reads its output with, and the evaluator files it adds beside the learner's.
-fn coding_harness(coding: &CodingRunStart) -> Result<(PreparedHarness, Vec<LearningLabFile>)> {
-    let harness = harness_for(&coding.spec.language).ok_or_else(|| {
-        AppError::ServiceNotAvailable(format!(
-            "Coding problems in {} cannot be run yet.",
-            coding.spec.language
-        ))
-    })?;
-    let nonce = new_nonce();
-    let evaluator = harness.evaluator(&coding.spec, &coding.cases, &nonce)?;
-    Ok((
-        PreparedHarness {
-            harness,
-            nonce,
-            cases: coding.cases.clone(),
-            mine_ids: coding.mine_ids.clone(),
-        },
-        evaluator,
-    ))
-}
-
-fn scope_name(scope: &CodingRunScope) -> &'static str {
-    match scope {
-        CodingRunScope::Examples => "examples",
-        CodingRunScope::All => "all",
-        CodingRunScope::Input => "input",
-    }
-}
-
-fn run_end(status: &LearningLabRunStatus) -> RunEnd {
-    match status {
-        LearningLabRunStatus::Passed | LearningLabRunStatus::Failed => RunEnd::Finished,
-        LearningLabRunStatus::TimedOut => RunEnd::TimedOut,
-        LearningLabRunStatus::Cancelled | LearningLabRunStatus::RuntimeUnavailable => {
-            RunEnd::Stopped
-        }
-    }
-}
-
-fn case_check_status(status: CaseStatus) -> LearningPracticalCheckStatus {
-    match status {
-        CaseStatus::Passed | CaseStatus::Ran => LearningPracticalCheckStatus::Passed,
-        CaseStatus::Failed => LearningPracticalCheckStatus::Failed,
-        CaseStatus::Error | CaseStatus::TimedOut => LearningPracticalCheckStatus::Error,
-        CaseStatus::NotRun => LearningPracticalCheckStatus::NotRun,
-    }
-}
-
-fn case_message(status: CaseStatus) -> &'static str {
-    match status {
-        CaseStatus::Passed => "Case passed.",
-        CaseStatus::Ran => "Case ran.",
-        CaseStatus::Failed => "Case failed.",
-        CaseStatus::Error => "Case raised an error.",
-        CaseStatus::TimedOut => "Case did not finish in time.",
-        CaseStatus::NotRun => "Case not run.",
-    }
-}
-
-/// One check row per case, in case order, with the merged result as its detail.
-fn case_checks(
-    prepared: &PreparedHarness,
-    execution: &LearningLabExecutionResult,
-) -> Vec<LearningPracticalCheckResultDto> {
-    let results = prepared.harness.results(
-        &prepared.cases,
-        &execution.stdout,
-        &prepared.nonce,
-        run_end(&execution.status),
-    );
-    prepared
-        .cases
-        .iter()
-        .zip(results)
-        .map(|(case, result)| LearningPracticalCheckResultDto {
-            name: case.id.clone(),
-            status: case_check_status(result.status),
-            message: case_message(result.status).into(),
-            duration_ms: result.elapsed_ms.map(|ms| ms as i64),
-            detail: Some(CaseCheckDetailDto {
-                case_id: case.id.clone(),
-                category: case.category.clone(),
-                visibility: case.visibility,
-                scale: case.scale,
-                mine: prepared.mine_ids.contains(&case.id),
-                status: result.status,
-                args: Some(case.args.clone()),
-                expected: case.expected.clone(),
-                actual: result.actual,
-                printed: (!result.printed.is_empty()).then_some(result.printed),
-                error: result.error,
-                elapsed_ms: result.elapsed_ms,
-            }),
-        })
-        .collect()
-}
-
 impl LearningPracticalRepository {
     pub(crate) async fn prepare_run(
         &self,
         request: &StartLearningPracticalRunRequestDto,
-        coding: Option<&CodingRunStart>,
         payload_hash: &str,
     ) -> Result<Option<PreparedRun>> {
         for (value, label) in [
@@ -135,7 +33,6 @@ impl LearningPracticalRepository {
         if let Some(session_id) = request.practice_session_id.as_deref() {
             uuid(session_id, "practice session")?;
         }
-        let evaluator = coding.map(coding_harness).transpose()?;
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
         let operation = practical_operation(
@@ -155,9 +52,7 @@ impl LearningPracticalRepository {
         let activity =
             Self::internal_activity(&mut tx, &request.program_id, &request.activity_id).await?;
         if activity.revision != request.expected_activity_revision {
-            return Err(AppError::Conflict(
-                "Practical activity changed; reload and retry.".into(),
-            ));
+            return Err(invalid("Practical activity changed; reload and retry."));
         }
         if activity.runtime_profile_id.is_some() && !activity.runtime_enabled {
             return Err(AppError::ServiceNotAvailable(
@@ -183,35 +78,12 @@ impl LearningPracticalRepository {
             .filter(|file| file.role == "starter" && file.editable)
             .map(|file| file.path.as_str())
             .collect::<HashSet<_>>();
-        let (protected_files, reserved) = match &evaluator {
-            Some((_, files)) => (
-                files.clone(),
-                files
-                    .iter()
-                    .map(|file| file.path.clone())
-                    .collect::<HashSet<_>>(),
-            ),
-            None => (
-                activity
-                    .files
-                    .iter()
-                    .filter(|file| file.role == "check" || file.role == "reference")
-                    .map(|file| LearningLabFile {
-                        path: file.path.clone(),
-                        content: file.content.clone(),
-                    })
-                    .collect::<Vec<_>>(),
-                activity
-                    .files
-                    .iter()
-                    .filter(|file| file.role != "starter")
-                    .map(|file| file.path.clone())
-                    .collect::<HashSet<_>>(),
-            ),
-        };
-        if evaluator.is_some() && activity.builtin_runtime.is_none() {
-            return Err(invalid("A coding problem runs on a built-in runtime."));
-        }
+        let reserved = activity
+            .files
+            .iter()
+            .filter(|file| file.role != "starter")
+            .map(|file| file.path.as_str())
+            .collect::<HashSet<_>>();
         let learner_paths = request
             .learner_files
             .iter()
@@ -220,17 +92,25 @@ impl LearningPracticalRepository {
         if !required.is_subset(&learner_paths) {
             return Err(invalid("The run is missing an editable starter file."));
         }
-        if learner_paths.iter().any(|path| reserved.contains(*path)) {
+        if learner_paths.iter().any(|path| reserved.contains(path)) {
             return Err(invalid(
                 "Learner files cannot replace reference or evaluator files.",
             ));
         }
+        let protected_files = activity
+            .files
+            .iter()
+            .filter(|file| file.role == "check" || file.role == "reference")
+            .collect::<Vec<_>>();
         let read_only_paths = protected_files
             .iter()
             .map(|file| file.path.clone())
             .collect::<Vec<_>>();
         let mut execution_files = request.learner_files.clone();
-        execution_files.extend(protected_files);
+        execution_files.extend(protected_files.into_iter().map(|file| LearningLabFile {
+            path: file.path.clone(),
+            content: file.content.clone(),
+        }));
         let execution = if let Some(runtime) = activity.builtin_runtime {
             let spec = BuiltinLabExecutionSpec {
                 run_id: request.run_id.clone(),
@@ -278,14 +158,12 @@ impl LearningPracticalRepository {
         let mut run_snapshot = activity.clone();
         run_snapshot.workspace_owner_token = workspace_owner_token.clone();
         let snapshot = json(&run_snapshot)?;
-        sqlx::query("INSERT INTO learning_practical_runs(id,program_id,activity_id,activity_revision,activity_snapshot_json,practice_session_id,operation_id,payload_hash,engine,image_id,status,learner_files_json,created_at,builtin_runtime,builtin_runtime_version,coding_session_id,scope) VALUES(?,?,?,?,?,?,?,?,?,?,'running',?,?,?,?,?,?)")
+        sqlx::query("INSERT INTO learning_practical_runs(id,program_id,activity_id,activity_revision,activity_snapshot_json,practice_session_id,operation_id,payload_hash,engine,image_id,status,learner_files_json,created_at,builtin_runtime,builtin_runtime_version) VALUES(?,?,?,?,?,?,?,?,?,?,'running',?,?,?,?)")
             .bind(&request.run_id).bind(&request.program_id).bind(&request.activity_id)
             .bind(activity.revision).bind(snapshot).bind(&request.practice_session_id)
             .bind(&request.operation_id).bind(payload_hash).bind(activity.runtime_engine.map(engine_name)).bind(&activity.runtime_image_id)
             .bind(json(&request.learner_files)?).bind(timestamp).bind(activity.builtin_runtime.map(LearningBuiltinRuntime::as_str))
             .bind(&activity.builtin_runtime_version)
-            .bind(coding.map(|coding| coding.coding_session_id.as_str()))
-            .bind(coding.map(|coding| scope_name(&coding.scope)))
             .execute(&mut *tx).await.map_err(db)?;
         operation.record(&mut tx, &()).await?;
         tx.commit().await.map_err(db)?;
@@ -297,7 +175,6 @@ impl LearningPracticalRepository {
             practice_mode: activity.practice_mode,
             allowed_aids: activity.allowed_aids,
             workspace_owner_token,
-            harness: evaluator.map(|(harness, _)| harness),
         }))
     }
 
@@ -339,66 +216,29 @@ impl LearningPracticalRepository {
             }
             _ => "The evaluator did not complete.",
         };
-        let cased = prepared
-            .harness
-            .as_ref()
-            .filter(|harness| !harness.cases.is_empty());
-        let (checks, stdout) = match cased {
-            Some(harness) => (
-                case_checks(harness, &execution),
-                harness
-                    .harness
-                    .program_output(&execution.stdout, &harness.nonce),
-            ),
-            None => (
-                vec![LearningPracticalCheckResultDto {
-                    name: "Contained evaluator".into(),
-                    status: check_status,
-                    message: message.into(),
-                    duration_ms: Some(execution.duration_ms),
-                    detail: None,
-                }],
-                execution.stdout.clone(),
-            ),
+        let check = LearningPracticalCheckResultDto {
+            name: "Contained evaluator".into(),
+            status: check_status,
+            message: message.into(),
+            duration_ms: Some(execution.duration_ms),
         };
-        let summary = checks
-            .iter()
-            .cloned()
-            .map(|check| LearningPracticalCheckResultDto {
-                detail: None,
-                ..check
-            })
-            .collect::<Vec<_>>();
         let timestamp = now();
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         let updated = sqlx::query("UPDATE learning_practical_runs SET status=?,stdout=?,stderr=?,output_truncated=?,exit_code=?,duration_ms=?,check_results_json=?,completed_at=? WHERE id=? AND status='running'")
-            .bind(status_name(&status)).bind(&stdout).bind(&execution.stderr)
+            .bind(status_name(&status)).bind(&execution.stdout).bind(&execution.stderr)
             .bind(execution.output_truncated as i64).bind(execution.exit_code.map(i64::from))
-            .bind(execution.duration_ms).bind(json(&summary)?).bind(timestamp)
+            .bind(execution.duration_ms).bind(json(&vec![check.clone()])?).bind(timestamp)
             .bind(&prepared.dto.id).execute(&mut *tx).await.map_err(db)?;
         if updated.rows_affected() == 1 {
-            for (ordinal, check) in checks.iter().enumerate() {
-                let detail_json = check.detail.as_ref().map(json).transpose()?;
-                sqlx::query("INSERT INTO learning_practical_run_checks(run_id,ordinal,name,status,message,duration_ms,detail_json) VALUES(?,?,?,?,?,?,?)")
-                    .bind(&prepared.dto.id)
-                    .bind(ordinal as i64)
-                    .bind(&check.name)
-                    .bind(check_status_name(check.status))
-                    .bind(&check.message)
-                    .bind(check.duration_ms)
-                    .bind(detail_json)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(db)?;
-            }
-            if prepared.harness.is_none()
-                && !matches!(
-                    status,
-                    LearningPracticalRunStatus::RuntimeUnavailable
-                        | LearningPracticalRunStatus::Cancelled
-                        | LearningPracticalRunStatus::TimedOut
-                )
-            {
+            sqlx::query("INSERT INTO learning_practical_run_checks(run_id,ordinal,name,status,message,duration_ms) VALUES(?,0,?,?,?,?)")
+                .bind(&prepared.dto.id).bind(&check.name).bind(check_status_name(check.status))
+                .bind(&check.message).bind(check.duration_ms).execute(&mut *tx).await.map_err(db)?;
+            if !matches!(
+                status,
+                LearningPracticalRunStatus::RuntimeUnavailable
+                    | LearningPracticalRunStatus::Cancelled
+                    | LearningPracticalRunStatus::TimedOut
+            ) {
                 for outcome_id in &prepared.outcome_ids {
                     sqlx::query("INSERT INTO learning_evidence_events(id,program_id,outcome_id,source_kind,source_id,dimension,result,score,observation,evidence_quote,assistance_json,observed_at) VALUES(?,?,?,'practical',?,'application',?,?,?,?,?,?)")
                         .bind(uuid::Uuid::new_v4().to_string()).bind(&prepared.dto.program_id).bind(outcome_id)

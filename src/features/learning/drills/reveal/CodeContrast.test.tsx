@@ -59,7 +59,7 @@ describe('CodeContrast', () => {
     show({ path: 'src/config.py' });
     expect(screen.getByRole('tab', { name: 'src/config.py' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: 'src/limiter.py' })).toHaveAttribute('aria-selected', 'false');
-    expect(screen.getByRole('tabpanel')).toHaveAccessibleName('src/config.py');
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', screen.getByRole('tab', { name: 'src/config.py' }).id);
   });
 
   it('has no tabs for a single file', () => {

@@ -104,22 +104,6 @@ describe('quiz autosave', () => {
     expect(h.save).toHaveBeenCalledTimes(2);
   });
 
-  it('calls a rejected save a conflict by its code, not by words in its message', async () => {
-    h.save
-      .mockRejectedValueOnce(Object.assign(new Error('Stale.'), { details: { code: 'CONFLICT' } }))
-      .mockRejectedValueOnce(new Error('The form changed on disk; reload and retry.'));
-    const { result } = setup();
-    act(() => result.current.update(first.id, { textResponse: 'My answer' }));
-    await act(async () => { expect(await result.current.flush()).toBe(false); });
-    expect(result.current.conflict).toBe(true);
-
-    const other = setup();
-    act(() => other.result.current.update(first.id, { textResponse: 'My answer' }));
-    await act(async () => { expect(await other.result.current.flush()).toBe(false); });
-    expect(other.result.current.conflict).toBe(false);
-    expect(other.result.current.saveError).toBe('The form changed on disk; reload and retry.');
-  });
-
   it('waits for an explicit reload after a revision conflict and keeps local answers', async () => {
     h.save.mockResolvedValueOnce(saved(3)).mockResolvedValueOnce(saved(4));
     const reload = vi.fn(async () => saved(3));

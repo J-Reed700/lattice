@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
 import { learningCanvasKey } from '@/features/learning/api/learningQueryKeys';
-import { unwrap } from '@/lib/api';
 import type {
   CreateLearningCanvasRequestDto,
   CreateLearningCanvasSnapshotRequestDto,
@@ -10,9 +9,13 @@ import type {
   RestoreLearningCanvasSnapshotRequestDto,
   SaveLearningCanvasRequestDto,
 } from '@/lib/bindings';
-import type { ApiResult } from '@/types';
 
 export { learningCanvasKey } from '@/features/learning/api/learningQueryKeys';
+
+function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string }): T {
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+}
 
 export function useLearningCanvas(programId: string) {
   const api = useApi();
@@ -23,7 +26,7 @@ export function useLearningCanvas(programId: string) {
   });
 }
 
-function useCanvasMutation<TRequest>(mutation: (request: TRequest) => Promise<ApiResult<LearningCanvasWorkspaceDto>>) {
+function useCanvasMutation<TRequest>(mutation: (request: TRequest) => Promise<{ ok: true; data: LearningCanvasWorkspaceDto } | { ok: false; error: string }>) {
   const client = useQueryClient();
   return useMutation({
     retry: false,

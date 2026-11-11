@@ -2,21 +2,90 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { FeynmanTechniquePanel } from '@/features/learning/practice/FeynmanTechniquePanel';
-import type * as Wire from '@/lib/bindings';
-import { setDraft, useDraftStore } from '@/shared/drafts/drafts';
+import {
+  analyzeFeynmanExplanation,
+  FeynmanTechniquePanel,
+  lessonPoints,
+} from '@/features/learning/practice/FeynmanTechniquePanel';
+import type { LearningLessonDto, LearningModuleDto, LearningProgramDto } from '@/lib/bindings';
 
-type LearningLessonDto = Wire.LearningLessonDto;
-type LearningModuleDto = Wire.LearningModuleDto;
-type LearningProgramDto = Wire.LearningProgramDto;
+describe('analyzeFeynmanExplanation', () => {
+  const sampleLesson: LearningLessonDto = {
+    id: 'lesson-1',
+    title: 'Photosynthesis Fundamentals',
+    objective: 'Understand how chloroplasts transform solar radiation into glucose',
+    estimatedMinutes: 20,
+    preparation: 'ready',
+    completed: false,
+    blocks: [
+      {
+        kind: 'explanation',
+        title: 'The Chloroplast Engine',
+        body: 'Inside plant cells, chloroplasts contain chlorophyll molecules that absorb photons and synthesize adenosine triphosphate to produce carbohydrates.',
+        sourceIds: ['s1'],
+      },
+    ],
+  };
 
-const reviewCard = vi.hoisted(() => vi.fn());
-vi.mock('@/features/learning/practice/shared/SaveAsReviewCard', () => ({
-  SaveAsReviewCard: (props: Record<string, unknown>) => {
-    reviewCard(props);
-    return <div data-testid="review-card" />;
-  },
-}));
+  it('rates short explanation (< 15 words) as Needs More Explanation', () => {
+    const analysis = analyzeFeynmanExplanation('Plants make food from the sun.', '', sampleLesson);
+    expect(analysis.rating).toBe('Needs More Explanation');
+    expect(analysis.wordCount).toBeLessThan(15);
+  });
+
+  it('flags unexplained domain jargon when no plain-language cues are used', () => {
+    const explanation =
+      'The chloroplasts take photons and synthesize adenosine and carbohydrates without any special tools in the leafy structure of the plant.';
+    const analysis = analyzeFeynmanExplanation(explanation, '', sampleLesson);
+
+    expect(analysis.flaggedJargon.length).toBeGreaterThan(0);
+    expect(analysis.flaggedJargon).toContain('chloroplasts');
+    expect(analysis.rating).toBe('Has Unexplained Jargon');
+    expect(analysis.beginnerQuestions.some((q) => q.includes('chloroplasts'))).toBe(true);
+  });
+
+  it('does not flag jargon when explained using plain-language cues', () => {
+    const explanation =
+      'Plants have tiny solar factories called chloroplasts, which means tiny chambers inside leaves. Sunlight turns into sweet sugar because the cell needs food.';
+    const analysis = analyzeFeynmanExplanation(explanation, 'It works like a solar bakery.', sampleLesson);
+
+    expect(analysis.flaggedJargon).not.toContain('chloroplasts');
+    expect(analysis.hasAnalogy).toBe(true);
+    expect(analysis.denseSentences).toHaveLength(0);
+    expect(analysis.rating).toBe('Simple & Clear');
+  });
+
+  it('flags overly dense sentences (> 28 words)', () => {
+    const longSentence =
+      'When the sun rises in the morning and shines its bright rays onto the green leaves of tall trees standing in the open forest, the cellular machinery inside every single plant begins absorbing each individual packet of light energy and converts it through a sequence of chemical reactions into sweet nourishing fuel.';
+    const analysis = analyzeFeynmanExplanation(longSentence, '', sampleLesson);
+
+    expect(analysis.denseSentences.length).toBeGreaterThan(0);
+    expect(analysis.denseSentences[0]).toBe(longSentence);
+    expect(analysis.rating).toBe('Has Unexplained Jargon');
+  });
+
+  it('detects textbook verbatim overlap against lesson blocks', () => {
+    const copiedText =
+      'Inside plant cells chloroplasts contain chlorophyll molecules that absorb photons and synthesize adenosine triphosphate to produce carbohydrates in every single leaf on the branch.';
+    const analysis = analyzeFeynmanExplanation(copiedText, '', sampleLesson);
+
+    expect(analysis.verbatimOverlapPercent).toBeGreaterThan(20);
+    expect(analysis.verbatimPhrases.length).toBeGreaterThan(0);
+    expect(analysis.rating).toBe('Has Unexplained Jargon');
+  });
+
+  it('generates follow-up questions for missing analogy and unexplained terms', () => {
+    const analysis = analyzeFeynmanExplanation(
+      'The leaf uses chloroplasts to trap sunlight and turn it into basic sugars for cell nourishment.',
+      '',
+      sampleLesson,
+      'Photosynthesis Fundamentals'
+    );
+
+    expect(analysis.beginnerQuestions.some((q) => q.includes('analogy'))).toBe(true);
+  });
+});
 
 describe('FeynmanTechniquePanel UI', () => {
   const mockLesson: LearningLessonDto = {
@@ -67,7 +136,6 @@ describe('FeynmanTechniquePanel UI', () => {
   beforeEach(() => {
     localStorage.clear();
     vi.clearAllMocks();
-    useDraftStore.setState({ drafts: {} });
   });
 
   afterEach(() => {
@@ -162,40 +230,44 @@ describe('FeynmanTechniquePanel UI', () => {
     vi.useRealTimers();
   });
 
-  it('writes nothing on mount, so a draft kept for later is not wiped', () => {
-    setDraft('feynman:prog-1:l-1:explanation', 'Kept for later.');
-    const before = localStorage.getItem('lattice.drafts');
+  it('persists explanation to localStorage, handles manual save, and resets save feedback timer', () => {
+    vi.useFakeTimers();
     render(<FeynmanTechniquePanel program={mockProgram} lesson={mockLesson} module={mockModule} />);
-    expect(screen.getByDisplayValue('Kept for later.')).toBeInTheDocument();
-    expect(localStorage.getItem('lattice.drafts')).toBe(before);
-    expect(localStorage.getItem('lattice.drafts')).toContain('Kept for later.');
+
+    const explanationInput = screen.getByLabelText(/Your plain-language explanation/i);
+    fireEvent.change(explanationInput, {
+      target: { value: 'Persisted plain explanation text.' },
+    });
+
+    const saveButton = screen.getByRole('button', { name: /Save draft/i });
+    fireEvent.click(saveButton);
+
+    expect(screen.getByText('Saved')).toBeInTheDocument();
+    expect(localStorage.getItem('feynman_workbench_prog-1_l-1')).toContain('Persisted plain explanation text.');
+
+    act(() => {
+      vi.advanceTimersByTime(2100);
+    });
+    expect(screen.queryByText('Saved')).not.toBeInTheDocument();
+    vi.useRealTimers();
   });
 
-  it('keeps what is typed in the shared draft store, without a Save draft button', () => {
-    render(<FeynmanTechniquePanel program={mockProgram} lesson={mockLesson} module={mockModule} />);
-    expect(localStorage.getItem('lattice.drafts')).toBeNull();
-    fireEvent.change(screen.getByLabelText(/Your plain-language explanation/i), { target: { value: 'Persisted plain explanation text.' } });
-    fireEvent.change(screen.getByLabelText(/Everyday Analogy/i), { target: { value: 'Like a recipe card.' } });
-    fireEvent.click(screen.getByRole('checkbox', { name: /Speak out loud test/i }));
-    const stored = JSON.parse(localStorage.getItem('lattice.drafts') ?? '{}') as Record<string, string>;
-    expect(stored['feynman:prog-1:l-1:explanation']).toBe('Persisted plain explanation text.');
-    expect(stored['feynman:prog-1:l-1:analogy']).toBe('Like a recipe card.');
-    expect(screen.queryByRole('button', { name: /Save draft/i })).not.toBeInTheDocument();
-    expect(screen.getByText('Draft kept on this device')).toBeVisible();
-  });
-
-  it('restores the explanation, analogy, concept and speak-aloud tick on mount', () => {
-    setDraft('feynman:prog-1:l-1:explanation', 'Stored explanation loaded on mount.');
-    setDraft('feynman:prog-1:l-1:analogy', 'Like a recipe card.');
-    setDraft('feynman:prog-1:l-1:concept', 'Call Stack and Base Case');
-    setDraft('feynman:prog-1:l-1:readAloud', 'yes');
+  it('loads previously stored draft from localStorage on mount', () => {
+    localStorage.setItem(
+      'feynman_workbench_prog-1_l-1',
+      JSON.stringify({
+        explanation: 'Stored explanation loaded on mount.',
+        analogy: 'Like a recipe card.',
+        readAloud: true,
+        concept: 'Call Stack and Base Case',
+      })
+    );
 
     render(<FeynmanTechniquePanel program={mockProgram} lesson={mockLesson} module={mockModule} />);
 
     expect(screen.getByDisplayValue('Stored explanation loaded on mount.')).toBeInTheDocument();
     expect(screen.getByDisplayValue('Like a recipe card.')).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: /Speak out loud test/i })).toBeChecked();
-    expect(screen.getByLabelText(/Choose concept to teach/i)).toHaveValue('Call Stack and Base Case');
   });
 
   it('displays jargon, dense sentences, textbook verbatim alerts, and beginner questions in the UI', () => {
@@ -224,7 +296,8 @@ describe('FeynmanTechniquePanel UI', () => {
   });
 
   it('keeps the lesson closed until the learner has explained it, then checks the explanation against it', () => {
-    render(<FeynmanTechniquePanel program={mockProgram} lesson={mockLesson} module={mockModule} />);
+    const onDraftMissedConcept = vi.fn();
+    render(<FeynmanTechniquePanel program={mockProgram} lesson={mockLesson} module={mockModule} onDraftMissedConcept={onDraftMissedConcept} />);
 
     const compare = screen.getByRole('button', { name: /Compare with the lesson/i });
     expect(compare).toBeDisabled();
@@ -239,20 +312,16 @@ describe('FeynmanTechniquePanel UI', () => {
     expect(explanationInput).toHaveAttribute('readonly');
     expect(screen.getByRole('status')).toHaveTextContent('0 of 1 covered');
 
-    expect(screen.queryByTestId('review-card')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Make a recall card/i }));
-    expect(screen.getByTestId('review-card')).toBeInTheDocument();
-    expect(reviewCard).toHaveBeenCalledWith(expect.objectContaining({
-      programId: 'prog-1',
-      lessonId: 'l-1',
-      front: 'Call Stack and Base Case',
-      back: 'A recursive function calls itself until reaching a termination condition known as the base case.',
-    }));
+    expect(onDraftMissedConcept).toHaveBeenCalledWith(
+      'Call Stack and Base Case',
+      'A recursive function calls itself until reaching a termination condition known as the base case.',
+    );
+    expect(screen.getByRole('button', { name: /Added to recall cards/i })).toBeDisabled();
 
     fireEvent.click(screen.getByRole('checkbox', { name: /Call Stack and Base Case/i }));
     expect(screen.getByRole('status')).toHaveTextContent('1 of 1 covered');
-    expect(screen.queryByTestId('review-card')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Make a recall card/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Added to recall cards|Make a recall card/i })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /Explain it again from memory/i }));
     expect(screen.queryByText(/termination condition known as the base case/)).not.toBeInTheDocument();
@@ -268,5 +337,35 @@ describe('FeynmanTechniquePanel UI', () => {
 
     await user.selectOptions(screen.getByLabelText(/Choose concept to teach/i), 'Call Stack and Base Case');
     expect(screen.getByRole('button', { name: /Compare with the lesson/i })).toBeEnabled();
+  });
+});
+
+describe('lessonPoints', () => {
+  const block = (kind: LearningLessonDto['blocks'][number]['kind'], title: string, body: string) => ({ kind, title, body, sourceIds: [] });
+  const lesson = {
+    id: 'l', title: 'Caching', objective: 'Choose an eviction policy', estimatedMinutes: 20, preparation: 'ready', completed: false,
+    blocks: [
+      block('explanation', 'What eviction is', '- Space is bounded\n- Something must leave when it fills'),
+      block('worked_example', 'An LRU cache, step by step', 'Insert A, B, C; touch A; insert D: B leaves.'),
+      block('check', 'Your turn', 'Which entry leaves?'),
+      block('guided_practice', 'Try it', 'Build one.'),
+    ],
+  } as LearningLessonDto;
+
+  it('checks a named section against its key points, or the whole section when it is prose', () => {
+    expect(lessonPoints('What eviction is', lesson)).toEqual([
+      { title: 'Space is bounded', body: '' },
+      { title: 'Something must leave when it fills', body: '' },
+    ]);
+    expect(lessonPoints('An LRU cache, step by step', lesson)).toEqual([
+      { title: 'An LRU cache, step by step', body: 'Insert A, B, C; touch A; insert D: B leaves.' },
+    ]);
+  });
+
+  it('checks the lesson as a whole against its teaching sections only, and a module against its outcomes', () => {
+    expect(lessonPoints('Caching', lesson).map((point) => point.title)).toEqual(['What eviction is', 'An LRU cache, step by step']);
+    expect(lessonPoints('Anything', null, { outcomes: ['Pick a policy for a workload'] } as LearningModuleDto)).toEqual([
+      { title: 'Pick a policy for a workload', body: '' },
+    ]);
   });
 });

@@ -8,7 +8,7 @@
     clippy::panic
 )]
 use super::*;
-use crate::features::learning::review_findings::{FindingKind, ReviewFinding};
+use crate::features::learning::review_findings::ReviewFinding;
 use crate::features::llm::llama_cpp::LlamaCppLlm;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
@@ -695,10 +695,12 @@ async fn live_teaching_review_evidence_scope() -> Result<()> {
         &system,
         prompt,
         &candidate,
+        crate::features::learning::teaching_review::Scope::default(),
         Some(&progress),
         crate::features::learning::teaching_review::LengthRule::Fail,
     )
-    .await?;
+    .await?
+    .reported;
     std::fs::write(
         directory.join("replay-issues.json"),
         serde_json::to_vec_pretty(&issues)?,
@@ -723,7 +725,7 @@ async fn live_teaching_review_evidence_scope() -> Result<()> {
 
     // Evidence scope must not excuse a demonstrably wrong worked result.
     let wrong = serde_json::json!({"blocks":[{"kind":"explanation","title":"Adding whole numbers","body":"To add two whole numbers, combine their quantities. Worked example: start with two apples and add two more apples. The total is five apples, so 2 + 2 = 5. This is ordinary integer addition, with no rounding or special convention.","rubric":[]}],"questions":[]});
-    let issues = crate::features::learning::teaching_review::review(&model, &system, serde_json::json!({"task":"Review instructional quality","authoringContext":{"goal":"Learn ordinary whole-number addition","sources":[]}}), &wrong, Some(&progress), crate::features::learning::teaching_review::LengthRule::Fail).await?;
+    let issues = crate::features::learning::teaching_review::review(&model, &system, serde_json::json!({"task":"Review instructional quality","authoringContext":{"goal":"Learn ordinary whole-number addition","sources":[]}}), &wrong, crate::features::learning::teaching_review::Scope::default(), Some(&progress), crate::features::learning::teaching_review::LengthRule::Fail).await?.reported;
     std::fs::write(
         directory.join("incorrect-example-issues.json"),
         serde_json::to_vec_pretty(&issues)?,
@@ -835,7 +837,10 @@ async fn live_review_findings_require_evidence() -> Result<()> {
     let issues: Vec<ReviewFinding> =
         serde_json::from_value::<Vec<String>>(review["issues"].clone())?
             .into_iter()
-            .map(|issue| ReviewFinding::new(FindingKind::Teaching, None, issue))
+            .enumerate()
+            .map(|(index, issue)| {
+                ReviewFinding::reviewer(u32::try_from(index).unwrap(), None, issue)
+            })
             .collect();
     let authoring = serde_json::from_str(&draft.authoring.unwrap().prompt)?;
     let candidate = serde_json::from_str(&draft.candidate)?;
@@ -882,7 +887,10 @@ async fn live_review_findings_require_evidence() -> Result<()> {
         let issues: Vec<ReviewFinding> =
             serde_json::from_value::<Vec<String>>(case["issues"].clone())?
                 .into_iter()
-                .map(|issue| ReviewFinding::new(FindingKind::Teaching, None, issue))
+                .enumerate()
+                .map(|(index, issue)| {
+                    ReviewFinding::reviewer(u32::try_from(index).unwrap(), None, issue)
+                })
                 .collect();
         let accepted = review_evidence::check(
             &model,

@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
   refresh: vi.fn(), adopt: vi.fn(), policy: vi.fn(), documents: vi.fn(), refreshFiles: vi.fn(),
 }));
 
-vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
+vi.mock('@/lib/api', () => ({ default: {
   listConversationSpaces: async () => ({ ok: true, data: [] }),
   listSpaceDocuments: async () => ({ ok: true, data: mocks.documents().map((doc: { id: string; fileName: string }) => ({ documentId: doc.id, fileName: doc.fileName, category: null, modifiedAt: null })) }),
   getLearningSourceWorkspace: mocks.workspace,
@@ -55,7 +55,7 @@ const version: LearningSourceVersionDto = {
 };
 const doc: DocumentMetadata = { id: 'doc-1', fileName: 'Field guide.pdf', filePath: '/Field guide.pdf', fileType: 'pdf', category: 'document', language: 'en', modifiedAt: '', indexedAt: '', wordCount: 420 };
 const ok = <T,>(data: T) => ({ ok: true as const, data });
-const fail = (error: string, code?: string) => ({ ok: false as const, error, ...(code ? { details: { code } } : {}) });
+const fail = (error: string) => ({ ok: false as const, error });
 
 function renderSources(initial = workspace, openedVersion = version, onOpenReview?: () => void) {
   mocks.workspace.mockResolvedValue(ok(initial));
@@ -177,26 +177,9 @@ describe('Learning Studio Sources workspace', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Connection interrupted');
     const firstRequest = mocks.addText.mock.calls[0][0];
     expect(firstRequest.operationId).toMatch(/^[0-9a-f]{8}-[0-9a-f-]{27}$/i);
-    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    await user.click(screen.getByRole('button', { name: 'Retry save source' }));
     await waitFor(() => expect(mocks.addText).toHaveBeenCalledTimes(2));
     expect(mocks.addText.mock.calls[1][0]).toEqual(firstRequest);
-  });
-
-  it('keeps the Add dialog open on Escape while a save is in flight', async () => {
-    const user = userEvent.setup();
-    let finish!: (value: ReturnType<typeof ok<LearningSourceWorkspaceDto>>) => void;
-    mocks.addText.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
-    renderSources({ programId: 'program-1', recheck: null, sources: [] });
-    await user.click(await screen.findByRole('button', { name: 'Add material' }));
-    await user.click(screen.getByRole('button', { name: 'Paste text' }));
-    await user.type(screen.getByLabelText('Title'), 'Notes');
-    await user.type(screen.getByLabelText('Saved text'), 'An excerpt.');
-    await user.click(screen.getByRole('button', { name: 'Save source' }));
-    await waitFor(() => expect(mocks.addText).toHaveBeenCalledTimes(1));
-    await user.keyboard('{Escape}');
-    expect(screen.getByLabelText('Title')).toBeVisible();
-    finish(ok({ ...workspace, sources: [] }));
-    await waitFor(() => expect(screen.queryByLabelText('Title')).not.toBeInTheDocument());
   });
 
   it('adding a source checks the waiting statements and links to the review', async () => {
@@ -281,25 +264,15 @@ describe('Learning Studio Sources workspace', () => {
     expect(await screen.findByText(/A changed representation was adopted/)).toBeVisible();
   });
 
-  it('pauses after a conflict reported by the backend and reloads current source state', async () => {
+  it('pauses after a CAS conflict and reloads current source state', async () => {
     const user = userEvent.setup();
-    mocks.policy.mockResolvedValueOnce(fail('Source changed; reload and retry.', 'CONFLICT')).mockResolvedValueOnce(ok(workspace));
+    mocks.policy.mockResolvedValueOnce(fail('Source changed; reload and retry.')).mockResolvedValueOnce(ok(workspace));
     renderSources();
     await user.selectOptions(await screen.findByLabelText('Freshness policy'), 'fixed');
     expect(await screen.findByText(/Reload the latest version/)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Reload sources' }));
     await waitFor(() => expect(mocks.workspace).toHaveBeenCalledTimes(2));
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-  });
-
-  it('treats a message that merely says the source changed as a plain error with Try again', async () => {
-    const user = userEvent.setup();
-    mocks.policy.mockResolvedValueOnce(fail('Source changed; reload and retry.'));
-    renderSources();
-    await user.selectOptions(await screen.findByLabelText('Freshness policy'), 'fixed');
-    expect(await screen.findByRole('alert')).toHaveTextContent('Source changed; reload and retry.');
-    expect(screen.getByRole('button', { name: 'Try again' })).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Reload sources' })).not.toBeInTheDocument();
   });
 
   it('serializes mutations so another source action cannot start while a check is in flight', async () => {
@@ -323,10 +296,10 @@ describe('Learning Studio Sources workspace', () => {
     mocks.refresh.mockResolvedValueOnce(fail('Temporary network error')).mockResolvedValueOnce(ok(multi));
     renderSources(multi);
     await user.click(await screen.findByRole('button', { name: 'Check for changes' }));
-    expect(await screen.findByRole('button', { name: 'Try again' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Retry same operation' })).toBeVisible();
     const first = mocks.refresh.mock.calls[0][0];
     await user.click(screen.getByRole('button', { name: /Second archive/ }));
-    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    await user.click(screen.getByRole('button', { name: 'Retry same operation' }));
     await waitFor(() => expect(mocks.refresh).toHaveBeenCalledTimes(2));
     expect(mocks.refresh.mock.calls[1][0]).toEqual(first);
   });

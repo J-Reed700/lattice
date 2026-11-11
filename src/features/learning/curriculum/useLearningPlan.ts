@@ -18,10 +18,13 @@ import type {
   StartLearningDiagnosticRequestDto,
   SubmitLearningDiagnosticRequestDto,
 } from '@/lib/bindings';
-import { unwrapApiResult as unwrap, type ApiResult } from '@/types/api/result';
 
 
 export { learningPlanKey } from '@/features/learning/api/learningQueryKeys';
+function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string }): T {
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+}
 export function useLearningPlan(programId: string, preparing = false) {
   const api = useApi();
   const client = useQueryClient();
@@ -64,7 +67,7 @@ function usePlanMutation<TRequest>(mutation: (request: TRequest) => ReturnType<t
     },
   });
 }
-function usePlanRefreshMutation<TRequest, TResult>(mutation: (request: TRequest) => Promise<ApiResult<TResult>>) {
+function usePlanRefreshMutation<TRequest, TResult>(mutation: (request: TRequest) => Promise<{ ok: true; data: TResult } | { ok: false; error: string }>) {
   const client = useQueryClient();
   return useMutation({
     retry: false,

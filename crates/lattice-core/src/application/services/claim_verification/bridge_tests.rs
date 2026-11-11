@@ -65,7 +65,7 @@ fn the_prompt_is_the_prompt_of_record_by_its_text_and_by_its_digest() {
     assert_eq!(BRIDGE_SYSTEM, recorded_prompt());
     assert_eq!(
         text_sha256(BRIDGE_SYSTEM),
-        "8fc4942348f7f4d6cbb2512dc340350c6940da0def823cda48d9aa564fb0f386"
+        "c8b758da6f11a83720add10eb0b4641855139bb84f2cee840103b676e6ce31fa"
     );
 }
 
@@ -101,7 +101,13 @@ async fn a_part_wise_check_sends_the_prompt_of_record_and_the_passages_under_the
     let schema = sent[0].json_schema.as_ref().unwrap();
     assert_eq!(
         schema["properties"]["parts"]["items"]["properties"]["kind"]["enum"],
-        json!(["stated", "common", "specific_missing", "contradicted"])
+        json!([
+            "stated",
+            "common",
+            "own",
+            "specific_missing",
+            "contradicted"
+        ])
     );
 }
 
@@ -417,6 +423,76 @@ fn a_common_part_that_names_a_specific_does_not_ground_a_statement_once_guarded(
     assert_eq!(outcome(parts.clone()).ground_outcome(), Outcome::Stands);
     let (guarded, _) = outcome(parts).guarded(names_a_figure);
     assert_eq!(guarded.ground_outcome(), Outcome::Refuted);
+}
+
+const OWN_FIGURES: &str = "The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them.";
+
+#[test]
+fn the_part_wise_judge_is_told_what_the_lesson_s_own_figures_are() {
+    assert!(BRIDGE_SYSTEM.contains(OWN_FIGURES), "{BRIDGE_SYSTEM}");
+}
+
+/// The judgment a scripted model's reply with `parts` comes to, however
+/// many times it is asked.
+async fn judgment_of(parts: Value) -> Answered<ClassJudgment<BridgeOutcome>> {
+    let llm = Scripted::new(vec![
+        reply(parts.clone(), "supported_with_common"),
+        reply(parts, "supported_with_common"),
+    ]);
+    checker(&llm, CheckPolicy::Bridge)
+        .check_bridge("A rule set of 48 checks has 12 that fail.", &passages())
+        .await
+}
+
+#[tokio::test]
+async fn a_part_that_is_the_lesson_s_own_figure_stands_beside_a_stated_one() {
+    let answered = judgment_of(json!([
+        stated("Quillet is a lexer."),
+        unplaced("12 of 48 is 25%", "own")
+    ]))
+    .await;
+    assert!(
+        matches!(answered.judgments, ClassJudgment::Judged(_)),
+        "{:?}",
+        answered.judgments
+    );
+    let read = judged(answered);
+    let (guarded, changed) = read.guarded(names_a_figure);
+    assert!(changed.is_empty());
+    assert_eq!(guarded.outcome(), Outcome::Stands);
+}
+
+#[tokio::test]
+async fn parts_that_are_all_common_or_the_lesson_s_own_are_all_common() {
+    let answered = judgment_of(json!([
+        unplaced("A lexer turns characters into tokens.", "common"),
+        unplaced("12 of 48 is 25%", "own")
+    ]))
+    .await;
+    assert!(
+        matches!(answered.judgments, ClassJudgment::Judged(_)),
+        "{:?}",
+        answered.judgments
+    );
+    let (guarded, changed) = judged(answered).guarded(names_a_figure);
+    assert!(changed.is_empty());
+    assert_eq!(guarded.outcome(), Outcome::AllCommon);
+}
+
+#[tokio::test]
+async fn the_passages_ground_a_statement_with_a_part_of_the_lesson_s_own() {
+    let answered = judgment_of(json!([
+        stated("Quillet is a lexer."),
+        unplaced("12 of 48 is 25%", "own")
+    ]))
+    .await;
+    assert!(
+        matches!(answered.judgments, ClassJudgment::Judged(_)),
+        "{:?}",
+        answered.judgments
+    );
+    let (guarded, _) = judged(answered).guarded(names_a_figure);
+    assert_eq!(guarded.ground_outcome(), Outcome::Stands);
 }
 
 /// The page of `words` words, as one passage.

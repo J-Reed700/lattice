@@ -12,9 +12,7 @@ import { questionLabel } from './practicalWorkbenchHelpers';
 import { SimulationPanel } from './SimulationPanel';
 
 const api = vi.hoisted(() => ({ startLearningSimulation: vi.fn(), sendLearningSimulationTurn: vi.fn(), finishLearningSimulation: vi.fn(), getLearningSourceVersion: vi.fn() }));
-vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: api }));
-vi.mock('@/features/voice/hooks/useVoiceConversation', () => ({ useVoiceConversation: () => ({ phase: 'off', toggle: vi.fn() }) }));
-vi.mock('@/features/speech/hooks/useSpeech', () => ({ useSpeaker: () => vi.fn() }));
+vi.mock('@/lib/api', () => ({ default: api }));
 vi.mock('@/components/TiptapEditor', () => ({ TiptapViewer: ({ content }: { content: string }) => <div>{content}</div> }));
 
 const activity = { id: 'activity-1', revision: 2 } as LearningPracticalActivityDto;
@@ -63,7 +61,7 @@ describe('SimulationPanel', () => {
     const { onSession } = renderPanel(null);
     fireEvent.click(screen.getByRole('button', { name: /Start simulation/ }));
     expect(await screen.findByRole('alert')).toHaveTextContent('model busy');
-    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry same operation' }));
     await waitFor(() => expect(onSession).toHaveBeenCalled());
     const [first, second] = api.startLearningSimulation.mock.calls.map(([request]) => request);
     expect(second.operationId).toBe(first.operationId);
@@ -74,7 +72,7 @@ describe('SimulationPanel', () => {
     api.startLearningSimulation.mockRejectedValueOnce('odd').mockResolvedValue({ ok: true, data: session() });
     renderPanel(null);
     fireEvent.click(screen.getByRole('button', { name: /Start simulation/ }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('odd');
+    expect(await screen.findByRole('alert')).toHaveTextContent('The request could not be completed.');
     fireEvent.change(screen.getByLabelText('Your role'), { target: { value: 'Curator' } });
     fireEvent.click(screen.getByRole('button', { name: /Start simulation/ }));
     await waitFor(() => expect(api.startLearningSimulation).toHaveBeenCalledTimes(2));
@@ -90,7 +88,7 @@ describe('SimulationPanel', () => {
       ] as never,
     }));
     const turns = screen.getAllByRole('article');
-    expect(turns.map((turn) => turn.querySelector('p')?.textContent)).toEqual(['Museum guide', 'Visitor', 'Coach']);
+    expect(turns.map((turn) => turn.querySelector('div')?.textContent)).toEqual(['Museum guide', 'Visitor', 'Coach']);
     expect(screen.getByText('“Paint has worn away.”')).toBeInTheDocument();
     act(() => citationDisplayStore.getState().setVisible(false));
     expect(screen.queryByText('“Paint has worn away.”')).not.toBeInTheDocument();
@@ -115,14 +113,14 @@ describe('SimulationPanel', () => {
     const { onSession } = renderPanel(session());
     expect(screen.getByText('Your first response will begin the conversation.')).toBeInTheDocument();
     const field = screen.getByLabelText('Your response');
-    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send simulation turn' })).toBeDisabled();
     fireEvent.change(field, { target: { value: '  The paint has faded.  ' } });
     fireEvent.keyDown(field, { key: 'Enter' });
     expect(api.sendLearningSimulationTurn).not.toHaveBeenCalled();
     fireEvent.keyDown(field, { key: 'Enter', metaKey: true });
     expect(await screen.findByRole('alert')).toHaveTextContent('conflict');
     expect(field).toHaveValue('  The paint has faded.  ');
-    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry same operation' }));
     await waitFor(() => expect(onSession).toHaveBeenCalledWith(session({ revision: 4 })));
     const [first, second] = api.sendLearningSimulationTurn.mock.calls.map(([request]) => request);
     expect(second).toEqual(first);
@@ -141,7 +139,7 @@ describe('SimulationPanel', () => {
     const { onSession } = renderPanel(session({ turns: [{ id: 'answer', speaker: 'learner', content: 'My answer', citations: [] }] as never }));
     fireEvent.click(screen.getByRole('button', { name: 'Finish simulation' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('grader offline');
-    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry same operation' }));
     await waitFor(() => expect(onSession).toHaveBeenCalled());
     const [first, second] = api.finishLearningSimulation.mock.calls.map(([request]) => request);
     expect(second.operationId).toBe(first.operationId);
@@ -233,7 +231,7 @@ describe('SimulationPanel', () => {
     fireEvent.keyDown(field, { key: 'Enter', metaKey: true });
     await waitFor(() => expect(api.sendLearningSimulationTurn).toHaveBeenCalledTimes(1));
     expect(screen.getByRole('button', { name: 'Finish simulation' })).toBeDisabled();
-    expect(field).toHaveAttribute('readonly');
+    expect(field).toBeDisabled();
     expect(screen.getByRole('status')).toHaveTextContent('responding');
     await act(async () => release({ ok: true, data: session({ revision: 4 }) }));
     await waitFor(() => expect(onSession).toHaveBeenCalledTimes(1));
@@ -248,15 +246,15 @@ describe('SimulationPanel', () => {
       { id: 'a1', speaker: 'learner', content: 'A race in the job queue.', citations: [] },
       { id: 'q2', speaker: 'counterpart', content: 'How did you find it?', citations: [] },
     ] as never }), { ...activity, kind: 'interview' });
-    expect(screen.getByText(/Answering now/)).toBeInTheDocument();
+    expect(screen.getByText(/Answering for/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Your response'), { target: { value: 'Logs, then a repro.' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    expect(await screen.findByText(/Answer sent/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Send simulation turn' }));
+    expect(await screen.findByText(/Answered in/)).toBeInTheDocument();
     await act(async () => release({ ok: false, error: 'response lost' }));
-    expect(await screen.findByText(/Answering now/)).toBeInTheDocument();
+    expect(await screen.findByText(/Answering for/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Finish interview' }));
     await waitFor(() => expect(api.finishLearningSimulation).toHaveBeenCalledTimes(1));
-    expect(screen.queryByText(/Answering now|Answer sent/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Answering for|Answered in/)).not.toBeInTheDocument();
   });
 
   it('requires a learner answer before finishing and uses interview defaults', () => {
@@ -267,38 +265,16 @@ describe('SimulationPanel', () => {
     expect(screen.getByRole('button', { name: 'Finish simulation' })).toBeDisabled();
   });
 
-  it('offers a reload of the simulation, not Try again, when the backend reports a conflict', async () => {
-    api.sendLearningSimulationTurn.mockResolvedValueOnce({ ok: false, error: 'Another window changed this.', details: { code: 'CONFLICT' } });
-    renderPanel(session());
-    fireEvent.change(screen.getByLabelText('Your response'), { target: { value: 'My answer.' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Another window changed this.');
-    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Reload simulation' }));
-    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
-    expect(screen.getByLabelText('Your response')).toHaveValue('My answer.');
-  });
-
-  it('treats a message that merely says "conflict" as a plain error with Try again', async () => {
-    api.sendLearningSimulationTurn.mockResolvedValueOnce({ ok: false, error: 'Changed elsewhere (conflict).' });
-    renderPanel(session());
-    fireEvent.change(screen.getByLabelText('Your response'), { target: { value: 'My answer.' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Changed elsewhere');
-    expect(screen.getByRole('button', { name: 'Try again' })).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Reload simulation' })).not.toBeInTheDocument();
-  });
-
   it('retries the failed turn exactly and preserves a newer draft', async () => {
     api.sendLearningSimulationTurn.mockResolvedValueOnce({ ok: false, error: 'response lost' })
       .mockResolvedValueOnce({ ok: true, data: session({ revision: 4 }) });
     renderPanel(session());
     const field = screen.getByLabelText('Your response');
     fireEvent.change(field, { target: { value: 'The original answer.' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send simulation turn' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('response lost');
     fireEvent.change(field, { target: { value: 'A newer draft I want to keep.' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry same operation' }));
     await waitFor(() => expect(api.sendLearningSimulationTurn).toHaveBeenCalledTimes(2));
     expect(api.sendLearningSimulationTurn.mock.calls[1][0]).toEqual(api.sendLearningSimulationTurn.mock.calls[0][0]);
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());

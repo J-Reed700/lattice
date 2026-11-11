@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { checkWords, commonParts, passageKey, passageNumbersFor } from '@/features/learning/model/evidencePresentation';
+import { checkWords, partsOfKind, passageKey, passageNumbersFor } from '@/features/learning/model/evidencePresentation';
 import type { LearningClaimEvidenceDto, LearningEvidencePassageDto } from '@/lib/bindings';
 
 const passage = (version: string, startByte = 0): LearningEvidencePassageDto => ({
@@ -79,8 +79,8 @@ describe('how a statement was checked, in words', () => {
       { part: 'Quillet is a lexer', kind: 'stated' as const, sourceVersionId: 'v1' },
       { part: 'a lexer turns characters into tokens', kind: 'common' as const, sourceVersionId: null },
     ];
-    expect(commonParts(classed({ parts }))).toEqual(['a lexer turns characters into tokens']);
-    expect(commonParts(classed({ parts: [parts[0]] }))).toEqual([]);
-    expect(commonParts(classed({}))).toEqual([]);
+    expect(partsOfKind(classed({ parts }), 'common')).toEqual(['a lexer turns characters into tokens']);
+    expect(partsOfKind(classed({ parts: [parts[0]] }), 'common')).toEqual([]);
+    expect(partsOfKind(classed({}), 'common')).toEqual([]);
   });
 });

@@ -4,7 +4,7 @@
 //! event, the replayed state and the review's revision in one transaction.
 //! Design: docs/design/2026-10-16-lesson-claim-review.md §3, §7.2, §9.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
@@ -470,4 +470,12 @@ async fn upsert_claim(
     .await
     .map_err(db)?;
     Ok(())
+}
+
+/// The (lesson, question index) pairs of a program whose question finding waits and whose part is unchanged.
+pub(crate) async fn waiting_questions_in(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+) -> Result<HashSet<(String, usize)>> {
+    teaching_findings::waiting_questions(connection, program_id).await
 }

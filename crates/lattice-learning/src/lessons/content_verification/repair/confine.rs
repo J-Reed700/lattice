@@ -8,6 +8,7 @@
 
 use super::super::claim_ledger::ClaimLedger;
 use super::super::*;
+use crate::lessons::repeats;
 use lattice_core::domain::learning::claim_review::{ClaimId, ClaimState};
 use lattice_core::shared::text::segmentation::common_subsequence;
 use lattice_core::shared::text::sentences;
@@ -23,6 +24,10 @@ pub(crate) struct Protected {
     pub(crate) unit: usize,
     pub(crate) field: String,
     pub(crate) quote: String,
+    /// The sentence of a machine's claim the teaching review may repair
+    /// after a claim repair or a user edit (claim sources design §10.3).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) released: bool,
 }
 
 impl Protected {
@@ -31,6 +36,16 @@ impl Protected {
     pub(in crate::lessons::content_verification) fn of_ledger(
         ledger: &ClaimLedger,
         targets: &[ClaimId],
+    ) -> Vec<Self> {
+        Self::releasing(ledger, targets, &[])
+    }
+
+    /// `of_ledger`, the sentences of the `released` claims marked as ones the
+    /// teaching review may repair.
+    pub(in crate::lessons::content_verification) fn releasing(
+        ledger: &ClaimLedger,
+        targets: &[ClaimId],
+        released: &[ClaimId],
     ) -> Vec<Self> {
         ledger
             .entries()
@@ -42,7 +57,10 @@ impl Protected {
                     ClaimState::Removed { .. } | ClaimState::Edited { .. }
                 )
             })
-            .map(|entry| Self::of_location(entry.location()))
+            .map(|entry| Self {
+                released: released.contains(entry.claim_id()),
+                ..Self::of_location(entry.location())
+            })
             .filter(|protected| !protected.quote.trim().is_empty())
             .collect()
     }
@@ -63,6 +81,7 @@ impl Protected {
             unit: location.unit_index,
             field: location.field.clone(),
             quote: location.quote.clone(),
+            released: false,
         }
     }
 }
@@ -100,7 +119,14 @@ pub(crate) fn confine(
     protected: &[Protected],
 ) -> Result<Confined> {
     let mut put_back = Vec::new();
-    let section = confine_at(previous, repaired, "", (targets, protected), &mut put_back)?;
+    let held = repeats::fields_of(previous);
+    let section = confine_at(
+        previous,
+        repaired,
+        "",
+        (targets, protected),
+        (&held, &mut put_back),
+    )?;
     Ok(Confined { section, put_back })
 }
 
@@ -109,7 +135,7 @@ fn confine_at(
     repaired: &Value,
     path: &str,
     (targets, protected): (&[Protected], &[Protected]),
-    put_back: &mut Vec<PutBack>,
+    (held, put_back): (&[(String, Vec<String>)], &mut Vec<PutBack>),
 ) -> Result<Value> {
     let targeted = |path: &str| {
         targets
@@ -135,7 +161,17 @@ fn confine_at(
                 set.iter().map(|item| item.quote.clone()).collect()
             };
             let (mine, passed) = (in_field(targets), in_field(protected));
-            let (text, reverted) = confine_text(before, after, &quotes(&mine), &quotes(&passed))?;
+            let elsewhere: HashSet<&str> = held
+                .iter()
+                .filter(|(field, _)| field != path)
+                .flat_map(|(_, keys)| keys.iter().map(String::as_str))
+                .collect();
+            let (text, reverted) = confine_text(
+                before,
+                after,
+                (&quotes(&mine), &quotes(&passed)),
+                &elsewhere,
+            )?;
             for back in reverted {
                 let mut said: Vec<&str> = Vec::new();
                 for item in back.protected.iter().filter_map(|&at| passed.get(at)) {
@@ -162,7 +198,13 @@ fn confine_at(
             let mut out = serde_json::Map::new();
             for (key, old) in before {
                 let value = match after.get(key) {
-                    Some(new) => confine_at(old, new, &child(key), (targets, protected), put_back)?,
+                    Some(new) => confine_at(
+                        old,
+                        new,
+                        &child(key),
+                        (targets, protected),
+                        (held, &mut *put_back),
+                    )?,
                     None if targeted(&child(key)) => continue,
                     None => old.clone(),
                 };
@@ -185,7 +227,7 @@ fn confine_at(
                     new,
                     &child(&index.to_string()),
                     (targets, protected),
-                    put_back,
+                    (held, &mut *put_back),
                 )
             })
             .collect::<Result<Vec<_>>>()
@@ -264,11 +306,13 @@ fn touching(quotes: &[String], touched: impl Fn(&String) -> bool) -> Vec<usize> 
 
 /// `after` confined to the sentences of `targets` (see [`confine`]), and the
 /// changes it put back because they also rewrote a sentence of `protected`.
+/// A new sentence that `before` or the text `elsewhere` already has is not
+/// kept.
 fn confine_text(
     before: &str,
     after: &str,
-    targets: &[String],
-    protected: &[String],
+    (targets, protected): (&[String], &[String]),
+    elsewhere: &HashSet<&str>,
 ) -> Result<(String, Vec<Reverted>)> {
     if before == after {
         return Ok((after.to_owned(), Vec::new()));
@@ -296,6 +340,8 @@ fn confine_text(
             .get(k)
             .is_some_and(|sentence| failed_texts.contains(sentence))
     };
+    let own: HashSet<String> = repeats::keys(before).into_iter().collect();
+    let mut dropped = false;
     // What comes before the first sentence is whitespace no repair needs.
     let mut out = String::from(old.lead);
     let mut reverted = Vec::new();
@@ -343,8 +389,23 @@ fn confine_text(
             }
             let failed = !on_protected && (on_target || reach().any(repeats_failed));
             if failed {
+                let replaced_keys: HashSet<String> = replaced
+                    .iter()
+                    .filter_map(|&k| old_sentences.get(k))
+                    .flat_map(|sentence| repeats::keys(sentence))
+                    .collect();
                 for k in written {
-                    out.push_str(new.piece(k));
+                    let repeat = new_sentences.get(k).is_some_and(|sentence| {
+                        repeats::keys(sentence).iter().any(|key| {
+                            elsewhere.contains(key.as_str())
+                                || (own.contains(key) && !replaced_keys.contains(key))
+                        })
+                    });
+                    if repeat {
+                        dropped = true;
+                    } else {
+                        out.push_str(new.piece(k));
+                    }
                 }
             } else {
                 for k in replaced {
@@ -364,6 +425,9 @@ fn confine_text(
         return Err(invalid(format!(
             "The repair changed a sentence that already passed (\"{lost}\"); the draft is kept."
         )));
+    }
+    if dropped && !before.ends_with(char::is_whitespace) {
+        out.truncate(out.trim_end().len());
     }
     Ok((out, reverted))
 }

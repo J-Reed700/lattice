@@ -331,6 +331,16 @@ fn a_consistency_check_fits_the_window_only_beside_its_answer() {
     assert!(room > 0 && room < 8_192, "{room}");
 }
 
+#[test]
+fn the_consistency_and_knowledge_judges_are_told_what_the_lesson_s_own_figures_are() {
+    let own_figures = "The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them.";
+    assert!(
+        CONSISTENCY_SYSTEM.contains(own_figures),
+        "{CONSISTENCY_SYSTEM}"
+    );
+    assert!(KNOWLEDGE_SYSTEM.contains(own_figures), "{KNOWLEDGE_SYSTEM}");
+}
+
 #[tokio::test]
 async fn a_reason_past_600_characters_is_kept_whole() {
     let reason = "No passage says otherwise. ".repeat(30).trim().to_string();

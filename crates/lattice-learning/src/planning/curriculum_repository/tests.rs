@@ -97,7 +97,7 @@ async fn real_migration_seeds_uuid_outcomes_and_preview_is_replayable_and_cas_gu
     let mut stale = request;
     stale.operation_id = op_id();
     stale.expected_revision -= 1;
-    crate::tests::assert_conflict(repo.preview(&stale).await);
+    assert!(repo.preview(&stale).await.is_err());
 
     let accept = LearningCurriculumRevisionActionRequestDto {
         operation_id: op_id(),
@@ -107,13 +107,6 @@ async fn real_migration_seeds_uuid_outcomes_and_preview_is_replayable_and_cas_gu
     };
     let accepted_plan = repo.accept_revision(&accept).await?;
     assert_eq!(accepted_plan.accepted_revision.unwrap().id, draft.id);
-    crate::tests::assert_conflict(
-        repo.accept_revision(&LearningCurriculumRevisionActionRequestDto {
-            operation_id: op_id(),
-            ..accept.clone()
-        })
-        .await,
-    );
     let revision_after_accept: i64 =
         sqlx::query_scalar("SELECT revision FROM learning_programs WHERE id=?")
             .bind(&program.summary.id)
@@ -227,94 +220,6 @@ async fn diagnostic_lifecycle_is_idempotent_complete_and_does_not_claim_mastery(
         })
         .await?;
     assert_eq!(skipped.status, LearningDiagnosticStatus::Skipped);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_course_that_changed_since_it_was_loaded_is_reported_as_a_conflict() -> Result<()> {
-    let pool = pool().await?;
-    let program = active_program(&pool).await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
-    let stale = program.summary.revision + 1;
-    crate::tests::assert_conflict(
-        repo.discard_revision(&DiscardLearningCurriculumRevisionRequestDto {
-            operation_id: op_id(),
-            program_id: program.summary.id.clone(),
-            revision_id: op_id(),
-            expected_revision: stale,
-        })
-        .await,
-    );
-    let target = program.modules[1].lessons[1].id.clone();
-    crate::tests::assert_conflict(
-        repo.start_job(&StartLearningGenerationJobRequestDto {
-            operation_id: op_id(),
-            program_id: program.summary.id.clone(),
-            expected_revision: stale,
-            kind: LearningGenerationJobKind::LessonPreparation,
-            request_json: serde_json::json!({"lessonIds":[target]}).to_string(),
-            progress_total: 1,
-        })
-        .await,
-    );
-    crate::tests::assert_conflict(
-        repo.cancel_job(&LearningGenerationJobActionRequestDto {
-            operation_id: op_id(),
-            program_id: program.summary.id.clone(),
-            job_id: op_id(),
-            expected_revision: stale,
-        })
-        .await,
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_starting_point_that_changed_since_it_was_loaded_is_reported_as_a_conflict() -> Result<()>
-{
-    let pool = pool().await?;
-    let program = active_program(&pool).await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
-    let stale = program.summary.revision + 1;
-    crate::tests::assert_conflict(
-        repo.start_diagnostic(&StartLearningDiagnosticRequestDto {
-            operation_id: op_id(),
-            program_id: program.summary.id.clone(),
-            expected_revision: stale,
-        })
-        .await,
-    );
-    crate::tests::assert_conflict(
-        repo.skip_diagnostic(&SkipLearningDiagnosticRequestDto {
-            operation_id: op_id(),
-            program_id: program.summary.id.clone(),
-            expected_revision: stale,
-        })
-        .await,
-    );
-    let active = repo
-        .start_diagnostic(&StartLearningDiagnosticRequestDto {
-            operation_id: op_id(),
-            program_id: program.summary.id.clone(),
-            expected_revision: program.summary.revision,
-        })
-        .await?;
-    let submit = |expected_revision: i64, expected_diagnostic_revision: Option<i64>| {
-        SubmitLearningDiagnosticRequestDto {
-            operation_id: op_id(),
-            program_id: program.summary.id.clone(),
-            diagnostic_id: active.id.clone(),
-            expected_revision,
-            responses: vec![],
-            save_only: true,
-            expected_diagnostic_revision,
-        }
-    };
-    crate::tests::assert_conflict(repo.submit_diagnostic(&submit(stale, None)).await);
-    crate::tests::assert_conflict(
-        repo.submit_diagnostic(&submit(program.summary.revision, Some(99)))
-            .await,
-    );
     Ok(())
 }
 
@@ -892,7 +797,7 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
         .save_lesson_checkpoint(
             &retry.id,
             &target,
-            "prepared-v1",
+            "prepared-v2",
             serde_json::to_value(&good)?,
         )
         .await?;
@@ -908,7 +813,7 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
     assert!(jobs(&pool).claim(&retry.id).await?.is_some());
     let good = serde_json::from_value(
         curriculum
-            .lesson_checkpoint(&retry.id, &target, "prepared-v1")
+            .lesson_checkpoint(&retry.id, &target, "prepared-v2")
             .await?
             .unwrap(),
     )?;
@@ -1271,5 +1176,211 @@ async fn cancelling_a_queued_lesson_and_preparing_the_module_again_requeues_it()
         second_jobs[1].retry_of_job_id.as_deref(),
         Some(first_jobs[1].id.as_str())
     );
+    Ok(())
+}
+
+async fn three_module_program(pool: &SqlitePool) -> Result<LearningProgramDto> {
+    let repo = LearningRepository::new(pool.clone());
+    let mut program = fixture();
+    let mut third = program.modules[1].clone();
+    third.id = crate::test_support::id();
+    third.title = "Module 2".into();
+    for (index, lesson) in third.lessons.iter_mut().enumerate() {
+        lesson.id = crate::test_support::id();
+        lesson.title = format!("Lesson 2-{index}");
+    }
+    program.modules.push(third);
+    program.summary.module_count = 3;
+    program.summary.lesson_count = 6;
+    repo.create(&program).await?;
+    repo.accept(&AcceptLearningProgramRequestDto {
+        program_id: program.summary.id.clone(),
+        expected_revision: 0,
+        title: program.summary.title.clone(),
+    })
+    .await?;
+    repo.get(&program.summary.id).await
+}
+
+fn lessons_across(program: &LearningProgramDto, modules: &[usize]) -> Vec<String> {
+    modules
+        .iter()
+        .flat_map(|module| lesson_ids(program, *module))
+        .collect()
+}
+
+#[tokio::test]
+async fn ahead_of_a_first_module_lesson_admits_the_untried_lessons_of_it_and_the_next_module_in_course_order(
+) -> Result<()> {
+    let pool = pool().await?;
+    let program = three_module_program(&pool).await?;
+    let repo = LearningCurriculumRepository::new(pool.clone());
+    let queued = repo
+        .start_jobs_ahead(&program.summary.id, &lesson_ids(&program, 0)[1])
+        .await?;
+    assert_eq!(
+        lessons_of(&pool, &queued).await?,
+        lessons_across(&program, &[0, 1])
+    );
+    for job in &queued {
+        assert_eq!(job.status, LearningGenerationJobStatus::Pending);
+        assert_eq!(job.progress_total, 1);
+    }
+    assert_eq!(repo.jobs(&program.summary.id).await?.len(), 4);
+    Ok(())
+}
+
+#[tokio::test]
+async fn ahead_of_a_lesson_of_the_last_module_admits_only_that_modules_untried_lessons(
+) -> Result<()> {
+    let pool = pool().await?;
+    let program = three_module_program(&pool).await?;
+    let repo = LearningCurriculumRepository::new(pool.clone());
+    let queued = repo
+        .start_jobs_ahead(&program.summary.id, &lesson_ids(&program, 2)[0])
+        .await?;
+    assert_eq!(lessons_of(&pool, &queued).await?, lesson_ids(&program, 2));
+    assert_eq!(repo.jobs(&program.summary.id).await?.len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn ahead_skips_a_lesson_whose_job_failed_or_was_cancelled_and_a_module_request_still_retries_it(
+) -> Result<()> {
+    let pool = pool().await?;
+    let program = three_module_program(&pool).await?;
+    let repo = LearningCurriculumRepository::new(pool.clone());
+    let first = repo.start_module_jobs(&module_request(&program, 0)).await?;
+    assert_eq!(first.len(), 2);
+    assert!(jobs(&pool).claim(&first[0].id).await?.is_some());
+    jobs(&pool)
+        .fail(&first[0].id, "generation_failed", "The model stopped")
+        .await?;
+    repo.cancel_job(&LearningGenerationJobActionRequestDto {
+        operation_id: op_id(),
+        program_id: program.summary.id.clone(),
+        job_id: first[1].id.clone(),
+        expected_revision: program.summary.revision,
+    })
+    .await?;
+    let ahead = repo
+        .start_jobs_ahead(&program.summary.id, &lesson_ids(&program, 0)[0])
+        .await?;
+    assert_eq!(lessons_of(&pool, &ahead).await?, lesson_ids(&program, 1));
+    assert_eq!(repo.jobs(&program.summary.id).await?.len(), 4);
+
+    let again = repo.start_module_jobs(&module_request(&program, 0)).await?;
+    assert_eq!(again.len(), 2);
+    for (retry, old) in again.iter().zip(&first) {
+        assert_eq!(retry.retry_of_job_id.as_deref(), Some(old.id.as_str()));
+        assert_eq!(retry.status, LearningGenerationJobStatus::Pending);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn ahead_skips_lessons_that_are_ready_completed_or_held_for_review() -> Result<()> {
+    let pool = pool().await?;
+    let program = active_program(&pool).await?;
+    let first = lesson_ids(&program, 0);
+    let second = lesson_ids(&program, 1);
+    make_ready(&pool, &first[0]).await?;
+    sqlx::query("UPDATE learning_lessons SET completed=1 WHERE id=?")
+        .bind(&first[1])
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    let repo = LearningCurriculumRepository::new(pool.clone());
+    let held = repo
+        .start_job(&StartLearningGenerationJobRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            expected_revision: program.summary.revision,
+            kind: LearningGenerationJobKind::LessonPreparation,
+            request_json: serde_json::json!({"lessonIds":[second[0]]}).to_string(),
+            progress_total: 1,
+        })
+        .await?;
+    assert!(jobs(&pool).claim(&held.id).await?.is_some());
+    jobs(&pool)
+        .fail(&held.id, "generation_failed", "Held for review")
+        .await?;
+    sqlx::query("INSERT INTO learning_lesson_reviews(lesson_id,program_id,job_id,state,revision,draft_sha256,checker_model,opened_at,updated_at) VALUES(?,?,?,'needs_review',0,'sha','fixture',1,1)")
+        .bind(&second[0])
+        .bind(&program.summary.id)
+        .bind(&held.id)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    let queued = repo
+        .start_jobs_ahead(&program.summary.id, &first[0])
+        .await?;
+    assert_eq!(lessons_of(&pool, &queued).await?, vec![second[1].clone()]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn calling_ahead_twice_admits_nothing_new() -> Result<()> {
+    let pool = pool().await?;
+    let program = active_program(&pool).await?;
+    let repo = LearningCurriculumRepository::new(pool.clone());
+    let lesson = &lesson_ids(&program, 0)[0];
+    let first = repo.start_jobs_ahead(&program.summary.id, lesson).await?;
+    let again = repo.start_jobs_ahead(&program.summary.id, lesson).await?;
+    assert_eq!(first.len(), 4);
+    assert!(again.is_empty());
+    assert_eq!(repo.jobs(&program.summary.id).await?.len(), 4);
+    Ok(())
+}
+
+#[tokio::test]
+async fn ahead_succeeds_after_the_programs_revision_changed() -> Result<()> {
+    let pool = pool().await?;
+    let program = active_program(&pool).await?;
+    sqlx::query("UPDATE learning_programs SET revision=revision+1 WHERE id=?")
+        .bind(&program.summary.id)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    let repo = LearningCurriculumRepository::new(pool.clone());
+    let error = repo
+        .start_module_jobs(&module_request(&program, 0))
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("Program changed"), "{error}");
+    let queued = repo
+        .start_jobs_ahead(&program.summary.id, &lesson_ids(&program, 0)[0])
+        .await?;
+    assert_eq!(
+        lessons_of(&pool, &queued).await?,
+        lessons_across(&program, &[0, 1])
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn ahead_refuses_a_lesson_of_another_course_and_a_draft_course() -> Result<()> {
+    let pool = pool().await?;
+    let program = active_program(&pool).await?;
+    let other = active_program(&pool).await?;
+    let repo = LearningCurriculumRepository::new(pool.clone());
+    let error = repo
+        .start_jobs_ahead(&program.summary.id, &lesson_ids(&other, 0)[0])
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, AppError::InvalidInput(message) if message == "That lesson is not in this course."),
+        "{error}"
+    );
+
+    let draft = fixture();
+    LearningRepository::new(pool.clone()).create(&draft).await?;
+    let error = repo
+        .start_jobs_ahead(&draft.summary.id, &lesson_ids(&draft, 0)[0])
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("not active"), "{error}");
+    assert!(repo.jobs(&program.summary.id).await?.is_empty());
+    assert!(repo.jobs(&draft.summary.id).await?.is_empty());
     Ok(())
 }

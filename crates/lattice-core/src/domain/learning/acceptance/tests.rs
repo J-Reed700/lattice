@@ -6,27 +6,41 @@ mod record_tests;
 mod standard_tests;
 mod walk_tests;
 
-use super::walk::{follow, start, Moved};
+use super::walk::{follow, Moved};
 use super::*;
 use crate::domain::learning::claim_review::Class;
 
 const REMOVED: Walked = Walked::Ended(End::Removed {
     section_goes: false,
 });
-const REMOVED_WITH_SECTION: Walked = Walked::Ended(End::Removed { section_goes: true });
+const UNVERIFIED: Walked = Walked::Ended(End::Unverified);
 
-fn position(class: Class, changed_class: bool, reasked: bool, node: &'static str) -> Position {
+/// `class`'s `node` with `rewrites_left` rewrites still to give.
+fn position(
+    class: Class,
+    changed_class: bool,
+    reasked: bool,
+    node: &'static str,
+    rewrites_left: u8,
+) -> Position {
     Position {
         class,
         changed_class,
         reasked,
         node: NodeId(node),
+        rewrites_left,
     }
 }
 
 /// A statement left at `node`.
-fn placed(class: Class, changed_class: bool, reasked: bool, node: &'static str) -> Walked {
-    Walked::At(position(class, changed_class, reasked, node))
+fn placed(
+    class: Class,
+    changed_class: bool,
+    reasked: bool,
+    node: &'static str,
+    rewrites_left: u8,
+) -> Walked {
+    Walked::At(position(class, changed_class, reasked, node, rewrites_left))
 }
 
 fn read(reading: Reading, outcome: Outcome) -> Taken {

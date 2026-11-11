@@ -8,7 +8,7 @@ import { ProgramBuilder } from '@/features/learning/curriculum/ProgramBuilder';
 
 
 const api = vi.hoisted(() => ({ spaces: vi.fn(), documents: vi.fn() }));
-vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: { listConversationSpaces: api.spaces, listSpaceDocuments: api.documents } }));
+vi.mock('@/lib/api', () => ({ default: { listConversationSpaces: api.spaces, listSpaceDocuments: api.documents } }));
 
 function show() {
   const generate = vi.fn();

@@ -13,7 +13,7 @@ import type { LearningAssessmentFormDto, LearningProgramDto } from '@/lib/bindin
 vi.mock('@/components/TiptapEditor', () => ({ TiptapViewer: ({ content }: { content: string }) => <div>{content}</div> }));
 
 const api = vi.hoisted(() => ({ save: vi.fn(), submit: vi.fn(), interrupt: vi.fn(), form: vi.fn() }));
-vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
+vi.mock('@/lib/api', () => ({ default: {
   saveLearningAssessmentResponse: api.save, submitLearningAssessmentForm: api.submit, interruptLearningAssessmentForm: api.interrupt, getLearningAssessmentForm: api.form,
 } }));
 

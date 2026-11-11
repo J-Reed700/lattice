@@ -333,7 +333,7 @@ fn interview_prose(content: &str) -> Result<String> {
     Ok(spoken)
 }
 
-pub(crate) fn validate_interviewer_reply(
+pub(super) fn validate_interviewer_reply(
     content: &str,
     session: &crate::practical_dto::LearningSimulationSessionDto,
     plan: &LearningInterviewPlanDto,

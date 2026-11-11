@@ -16,7 +16,6 @@ import type {
   SearchLearningSourcesRequestDto,
   UpdateLearningSourcePolicyRequestDto,
 } from '@/lib/bindings';
-import { unwrapApiResult as unwrap } from '@/types/api/result';
 
 
 export const learningSourcesKey = (programId: string) => ['learning-sources', programId] as const;
@@ -24,6 +23,11 @@ export const learningSourceVersionKey = (request: GetLearningSourceVersionReques
   ['learning-source-version', request?.programId, request?.sourceId, request?.versionId] as const;
 export const learningSourceSearchKey = (request: SearchLearningSourcesRequestDto | null) =>
   ['learning-source-search', request?.programId, request?.query, request?.limit] as const;
+
+function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string }): T {
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+}
 
 export function useLearningSourceWorkspace(programId: string) {
   const api = useApi();

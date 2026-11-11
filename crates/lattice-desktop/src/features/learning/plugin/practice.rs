@@ -1,8 +1,5 @@
 use super::*;
 use lattice_core::shared::error::AppError;
-use lattice_learning::practice::assistance_policy::{
-    written_help, written_level, AssistancePolicy, Help, HelpLevel, WrittenAssistance,
-};
 
 pub(super) fn practice_repo(
     container: &Container,
@@ -150,12 +147,8 @@ pub async fn request_learning_tutor_response(
                 ),
             ));
         }
-        (LearningTutorRequestKind::Hint, Some(_))
-            if written_level(&session.summary.mode) == HelpLevel::HintsOnly
-                && !WrittenAssistance.allows(
-                    written_help(&request.request_kind, request.hint_level.as_ref()),
-                    HelpLevel::HintsOnly,
-                ) =>
+        (LearningTutorRequestKind::Hint, Some(LearningPracticeHintLevel::WorkedExplanation))
+            if session.summary.mode == LearningPracticeMode::Practice =>
         {
             return Err(ApiError::from(
                 lattice_core::shared::error::AppError::InvalidInput(
@@ -259,7 +252,7 @@ pub async fn reveal_learning_practice_solution(
         )
         .await
         .map_err(ApiError::from)?;
-    if !WrittenAssistance.allows(Help::WorkedSolution, written_level(&session.summary.mode)) {
+    if session.summary.mode != LearningPracticeMode::Explore {
         return Err(ApiError::from(
             lattice_core::shared::error::AppError::InvalidInput(
                 "Worked solutions are available only in Explore mode.".into(),
@@ -418,70 +411,4 @@ pub async fn reject_learning_practice_proposal(
         .decide_proposal(&request, false, &hash)
         .await
         .map_err(ApiError::from)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn get_learning_practice_profile(
-    request: GetLearningPracticeProfileRequestDto,
-    container: State<'_, Container>,
-) -> Result<LearningPracticeProfileDto, ApiError> {
-    practice_repo(&container)
-        .get_profile(&request.program_id)
-        .await
-        .map_err(ApiError::from)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn save_learning_practice_profile(
-    request: SaveLearningPracticeProfileRequestDto,
-    container: State<'_, Container>,
-) -> Result<LearningPracticeProfileDto, ApiError> {
-    practice_repo(&container)
-        .save_profile(&request)
-        .await
-        .map_err(ApiError::from)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn get_practice_fit(
-    request: PracticeFitRequestDto,
-    container: State<'_, Container>,
-) -> Result<PracticeFitDto, ApiError> {
-    crate::features::learning::practice_fit::practice_fit(
-        &practice_repo(&container),
-        &request.program_id,
-    )
-    .await
-    .map_err(ApiError::from)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn check_practice_fit(
-    request: PracticeFitRequestDto,
-    container: State<'_, Container>,
-) -> Result<PracticeFitDto, ApiError> {
-    let repo = practice_repo(&container);
-    let known = crate::features::learning::practice_fit::practice_fit(&repo, &request.program_id)
-        .await
-        .map_err(ApiError::from)?;
-    if known.code != CodeFit::Checking {
-        return Ok(known);
-    }
-    let pin = learning_model(
-        &container,
-        model_requirements::practice(),
-        "Checking whether the course teaches code",
-    )
-    .await?;
-    crate::features::learning::practice_fit::check_practice_fit(
-        &repo,
-        pin.llm.as_ref(),
-        &request.program_id,
-    )
-    .await
-    .map_err(ApiError::from)
 }

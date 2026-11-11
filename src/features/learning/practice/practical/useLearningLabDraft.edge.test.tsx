@@ -5,8 +5,7 @@ import { useLearningLabDraft } from '@/features/learning/practice/practical/useL
 import type { LearningLabFile, LearningPracticalDraftDto } from '@/lib/bindings';
 
 const api = vi.hoisted(() => ({ getLearningPracticalDraft: vi.fn(), saveLearningPracticalDraft: vi.fn() }));
-vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: api }));
-const conflict = (message: string) => Object.assign(new Error(message), { details: { code: 'CONFLICT' } });
+vi.mock('@/lib/api', () => ({ default: api }));
 
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const starter: LearningLabFile[] = [{ path: 'recipe.md', content: '# Bread' }];
@@ -97,7 +96,7 @@ describe('useLearningLabDraft edges', () => {
   });
 
   it('reports a failed refresh while keeping local edits or taking the saved version', async () => {
-    api.saveLearningPracticalDraft.mockRejectedValueOnce(conflict('draft revision is stale'));
+    api.saveLearningPracticalDraft.mockRejectedValueOnce(new Error('draft revision is stale'));
     const { result } = setup();
     await waitFor(() => expect(result.current.loadState).toBe('ready'));
     act(() => result.current.setFileContent('recipe.md', '# Rye'));
@@ -118,7 +117,7 @@ describe('useLearningLabDraft edges', () => {
   });
 
   it('keeps local edits clean when they match the saved draft', async () => {
-    api.saveLearningPracticalDraft.mockRejectedValueOnce(conflict('conflict'));
+    api.saveLearningPracticalDraft.mockRejectedValueOnce(new Error('conflict'));
     const { result } = setup();
     await waitFor(() => expect(result.current.loadState).toBe('ready'));
     act(() => result.current.setFileContent('recipe.md', '# Rye'));
