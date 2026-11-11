@@ -4,7 +4,7 @@
 //!
 //! Every call goes through `model_call`: sized to the model's window (a batch
 //! halves until it fits), never timed. Answer keys stay internal.
-use super::item_review::{self, Context, Entry, Findings};
+use super::item_review::{self, Context, Entry, Findings, RepeatOf};
 use crate::assessment_engine::{
     self as engine, LearningAssessmentCandidate, LearningAssessmentKey,
     LearningBlueprintRequirement, LearningItemFormat, LearningNumericKey, LearningRubricCriterion,
@@ -323,7 +323,10 @@ pub struct Authored {
 }
 
 /// An item that was written and dropped, and whether it was dropped as a
-/// repeat: its rewrite was reviewed and only repeats remained.
+/// repeat. A rewrite is a repeat drop when it has no defect and at least one of
+/// its repeats is of a question the bank holds: one the learner already has, or
+/// another new item of the same review that was kept or was itself a repeat
+/// drop. A repeat only of new items dropped for a defect is an ordinary drop.
 struct Dropped {
     reason: String,
     repeat: bool,
@@ -337,10 +340,15 @@ impl Dropped {
         }
     }
 
-    fn of(findings: &Findings) -> Self {
+    /// `held[n]` is whether the new item at position `n` is one the bank holds.
+    fn of(findings: &Findings, held: &[bool]) -> Self {
         Self {
             reason: findings.texts().join(" "),
-            repeat: findings.defects.is_empty(),
+            repeat: findings.defects.is_empty()
+                && findings.repeats.iter().any(|r| match r.of {
+                    RepeatOf::Held => true,
+                    RepeatOf::New(n) => held.get(n).copied().unwrap_or(false),
+                }),
         }
     }
 }
@@ -538,11 +546,15 @@ async fn reviewed_round(
     }
     match review_items(llm, need, &again, &known).await? {
         Ok(second) => {
+            let mut held: Vec<bool> = Vec::new();
             for (item, findings) in again.into_iter().zip(second) {
                 if findings.is_sound() {
                     kept.push(item);
+                    held.push(true);
                 } else {
-                    dropped.push(Dropped::of(&findings));
+                    let drop = Dropped::of(&findings, &held);
+                    held.push(drop.repeat);
+                    dropped.push(drop);
                 }
             }
         }
