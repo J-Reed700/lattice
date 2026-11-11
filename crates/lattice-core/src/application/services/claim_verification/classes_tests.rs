@@ -185,7 +185,7 @@ async fn an_outage_stays_an_error_and_another_policy_makes_no_call() {
         .await;
     assert!(matches!(wrong, ClassJudgment::Unusable));
     let wrong = checker(&llm, CheckPolicy::Consistency)
-        .check_knowledge("S.")
+        .check_knowledge("S.", None)
         .await;
     assert!(matches!(wrong, ClassJudgment::Unusable));
     assert!(llm.sent().is_empty());
@@ -200,7 +200,7 @@ async fn the_knowledge_judge_asks_three_times_at_temperature_and_keeps_every_sam
     ]);
     let outcome = judged(
         checker(&llm, CheckPolicy::Knowledge)
-            .check_knowledge("OCR reads pixels into text.")
+            .check_knowledge("OCR reads pixels into text.", None)
             .await,
     );
     let verdicts: Vec<KnowledgeVerdict> = outcome.samples.iter().map(|s| s.verdict).collect();
@@ -223,6 +223,31 @@ async fn the_knowledge_judge_asks_three_times_at_temperature_and_keeps_every_sam
 }
 
 #[tokio::test]
+async fn a_knowledge_check_with_a_case_sends_the_case_before_the_statement_and_says_what_it_is() {
+    let llm = Scripted::new(vec![
+        answer("true_common"),
+        answer("true_common"),
+        answer("true_common"),
+    ]);
+    let case = "A rope is cut into a piece of 3 units and a piece of 4 units.";
+    judged(
+        checker(&llm, CheckPolicy::Knowledge)
+            .check_knowledge("Together the pieces make 7 units.", Some(case))
+            .await,
+    );
+    let sent = llm.sent();
+    assert_eq!(sent.len(), KNOWLEDGE_SAMPLES);
+    for request in &sent {
+        let (system, user) = messages(request);
+        assert_eq!(system, format!("{KNOWLEDGE_SYSTEM}{KNOWLEDGE_CASE}"));
+        assert_eq!(
+            user,
+            format!("Case:\n{case}\n\nStatement: Together the pieces make 7 units.")
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_sample_that_cannot_be_read_leaves_the_statement_unchecked() {
     let llm = Scripted::new(vec![
         answer("true_common"),
@@ -230,7 +255,7 @@ async fn a_sample_that_cannot_be_read_leaves_the_statement_unchecked() {
         Reply::Text("{}".into()),
     ]);
     let judgment = checker(&llm, CheckPolicy::Knowledge)
-        .check_knowledge("OCR reads pixels into text.")
+        .check_knowledge("OCR reads pixels into text.", None)
         .await;
     assert!(matches!(judgment, ClassJudgment::Unusable), "{judgment:?}");
     assert_eq!(llm.sent().len(), 3, "no further samples after a bad one");
