@@ -147,7 +147,10 @@ pub fn diff_lines(path: &str, old: &str, new: &str) -> Vec<LineChange> {
     changes
 }
 
-fn changes_since(draft: &[LearningLabFile], seen: &[LearningLabFile]) -> Vec<LineChange> {
+pub(crate) fn changes_since(
+    draft: &[LearningLabFile],
+    seen: &[LearningLabFile],
+) -> Vec<LineChange> {
     let mut changes = Vec::new();
     for file in draft {
         let before = seen
