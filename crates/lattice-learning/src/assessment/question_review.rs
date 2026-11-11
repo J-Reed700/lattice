@@ -107,6 +107,9 @@ impl Verdict {
     }
 }
 
+/// What this review decides, in the words the evidence gate is given.
+pub(crate) const DECIDES: &str = "whether the key of a question is right";
+
 /// One finding per question that review faults, placed at that question. A
 /// question is reviewed once: its verdict is saved by what it says, and a
 /// repeat is reviewed again when the questions around it change. A question

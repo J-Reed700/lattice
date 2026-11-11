@@ -862,7 +862,7 @@ async fn live_review_findings_require_evidence() -> Result<()> {
     let accepted = review_evidence::check(
         &model,
         &issues,
-        &[],
+        review_evidence::Beside::NONE,
         &authoring,
         &candidate,
         &references,
@@ -896,7 +896,7 @@ async fn live_review_findings_require_evidence() -> Result<()> {
         let accepted = review_evidence::check(
             &model,
             &issues,
-            &[],
+            review_evidence::Beside::NONE,
             &case["requirements"],
             &case["candidate"],
             &references,
