@@ -199,6 +199,19 @@ fn the_lessons_reviewer_is_not_asked_what_other_checks_own() {
 }
 
 #[test]
+fn a_round_that_only_shows_known_findings_is_told_to_name_the_one_a_report_continues() {
+    let before = lesson(3);
+    let mut after = before.clone();
+    after["blocks"][1]["body"] = json!("Part 1 states another fact.");
+    let round = recheck(&before, &after);
+    assert!(round.asked.is_empty());
+    assert_eq!(round.known.len(), 1);
+    let text = review_instructions(&ReviewTexts::LESSON, &round, true, "A scope.");
+    assert!(text.contains(CONTINUES));
+    assert!(text.contains(KNOWN_FINDINGS));
+}
+
+#[test]
 fn a_lessons_instructions_are_told_to_name_the_open_finding_a_report_continues() {
     let before = lesson(3);
     let mut after = before.clone();

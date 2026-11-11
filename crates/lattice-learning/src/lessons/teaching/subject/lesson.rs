@@ -87,6 +87,20 @@ impl<'a> LessonSubject<'a> {
     }
 
     /// Each reference's id and the digest of its excerpt.
+    fn reference_pairs(&self) -> Vec<(String, String)> {
+        self.references
+            .sources
+            .iter()
+            .map(|source| {
+                (
+                    source.id.clone(),
+                    crate::content_verification::digest(&source.excerpt),
+                )
+            })
+            .collect()
+    }
+
+    /// Each reference's id and the digest of its excerpt, as the reviewer is shown them.
     fn reference_versions(&self) -> Vec<Value> {
         self.references.sources.iter().map(|source| {
             json!({"id":source.id,"contentHash":crate::content_verification::digest(&source.excerpt)})
@@ -122,29 +136,33 @@ impl Subject for LessonSubject<'_> {
         }
     }
 
-    async fn resume(&mut self, candidate: &str) -> Result<()> {
-        // A review cut short resumes with the repairs it had made to this draft.
-        if let Some(saved) = crate::lesson_drafts::teaching_passes(candidate).await? {
+    async fn resume(&mut self, _candidate: &str) -> Result<()> {
+        // A review takes up what the job's earlier reviews judged and spent, whichever draft they saved it with.
+        if let Some(saved) = crate::lesson_drafts::teaching_passes().await? {
             self.passes.resume(&saved);
             self.standing.resume(&saved);
+            self.receipts.resume(&saved);
         }
         Ok(())
     }
 
     fn given(&mut self, llm: &dyn LLMPort, authoring: &Value) {
-        let inputs = json!({"authoringContext":authoring,"correctnessPriority":LESSON_PRIORITY,"referenceVersions":self.reference_versions()});
+        let inputs = json!({"authoringContext":authoring,"correctnessPriority":LESSON_PRIORITY});
         self.standing.under(&crate::teaching_review::basis(
             llm,
             &ReviewTexts::LESSON.joined(),
             LESSON_REVIEW_EVIDENCE_SCOPE,
             &inputs,
         ));
+        let references = self.reference_pairs();
+        self.standing.against(&references);
     }
 
     async fn save(&self, candidate: &str) -> Result<()> {
         let mut saved = self.passes.saved()?;
         if let Some(fields) = saved.as_object_mut() {
             fields.insert("reviewer".into(), self.standing.saved()?);
+            fields.insert("receipts".into(), self.receipts.saved()?);
         }
         crate::lesson_drafts::save_with_passes(candidate, saved.to_string()).await
     }

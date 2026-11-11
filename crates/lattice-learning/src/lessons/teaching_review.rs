@@ -236,7 +236,12 @@ fn passage_text(reviewed: &Value, index: usize, id: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn schema(indices: &[usize], passages: &[Vec<String>], verdict_ids: &[&str]) -> Value {
+fn schema(
+    indices: &[usize],
+    passages: &[Vec<String>],
+    verdict_ids: &[&str],
+    _known_ids: &[&str],
+) -> Value {
     let mut required = Vec::new();
     let mut properties = serde_json::Map::new();
     if !verdict_ids.is_empty() {
@@ -514,6 +519,7 @@ async fn review_sections(
                     .iter()
                     .map(|finding| finding.id.as_str())
                     .collect::<Vec<_>>(),
+                &[],
             ),
             output_tokens: REVIEW_ANSWER_TOKENS,
         };
