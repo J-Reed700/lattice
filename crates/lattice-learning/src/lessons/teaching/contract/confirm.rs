@@ -38,6 +38,7 @@ enum Where {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Standing {
+    asked: bool,
     taught: bool,
     #[serde(rename = "where")]
     place: Where,
@@ -158,7 +159,7 @@ async fn stands(
         "sections":sections,
         "questions":questions,
     });
-    let schema = json!({"type":"object","additionalProperties":false,"required":["taught","where","quote"],"properties":{"taught":{"type":"boolean"},"where":{"type":"string","enum":["thisLesson","earlierLessons","priorKnowledge"]},"quote":{"type":"string"}}});
+    let schema = json!({"type":"object","additionalProperties":false,"required":["asked","taught","where","quote"],"properties":{"asked":{"type":"boolean"},"taught":{"type":"boolean"},"where":{"type":"string","enum":["thisLesson","earlierLessons","priorKnowledge"]},"quote":{"type":"string"}}});
     let answer: Standing = ask(
         llm,
         "the confirming read of a use",
