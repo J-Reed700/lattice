@@ -32,7 +32,11 @@ pub struct CorpusShape {
 }
 
 fn start_of_local_day(now: DateTime<Local>) -> DateTime<Local> {
-    now - now.time().signed_duration_since(NaiveTime::MIN)
+    now.date_naive()
+        .and_time(NaiveTime::MIN)
+        .and_local_timezone(Local)
+        .earliest()
+        .unwrap_or(now - now.time().signed_duration_since(NaiveTime::MIN))
 }
 
 #[async_trait]

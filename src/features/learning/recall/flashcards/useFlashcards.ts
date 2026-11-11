@@ -35,7 +35,7 @@ export function useFlashcardDeck(id: string | null) {
 }
 export function useFlashcardDocuments() {
   const api = useApi();
-  return useQuery({ queryKey: ['documents', 'study'], queryFn: () => data(api.listAllDocuments(10000)), refetchInterval: 15_000 });
+  return useQuery({ queryKey: ['documents', 'study'], queryFn: () => data(api.listAllDocuments()), refetchInterval: 15_000 });
 }
 export function useGenerateFlashcardDeck() {
   const api = useApi();
