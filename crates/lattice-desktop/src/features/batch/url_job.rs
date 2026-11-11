@@ -5,10 +5,7 @@ use super::worker::{ItemImporter, ItemResult};
 use crate::features::web::dto::IngestWebUrlRequestDto;
 use crate::features::web::use_cases::IngestWebUrlUseCase;
 use async_trait::async_trait;
-use lattice_core::shared::{
-    error::{AppError, Result},
-    runtime::jobs::JobContext,
-};
+use lattice_core::shared::{error::Result, runtime::jobs::JobContext};
 use std::sync::Arc;
 
 pub(crate) struct UrlImporter {
@@ -19,12 +16,8 @@ pub(crate) struct UrlImporter {
 #[async_trait]
 impl ItemImporter for UrlImporter {
     async fn prepare(&self, _context: &JobContext) -> Result<()> {
-        (self.load_embedding)().await.map_err(|error| {
-            AppError::ServiceNotAvailable(format!(
-                "Could not load the active embedding model: {error}"
-            ))
-        })?;
-        Ok(())
+        crate::features::embedding::readiness::require_loaded_ready((self.load_embedding)().await)
+            .await
     }
 
     async fn import(&self, context: &JobContext, item: &BatchItem) -> Result<ItemResult> {
