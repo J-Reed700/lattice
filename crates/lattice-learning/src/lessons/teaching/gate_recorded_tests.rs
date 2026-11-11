@@ -323,7 +323,7 @@ async fn the_plan_check_is_asked_again_with_what_the_review_reported() -> Result
     assert_eq!(reported.len(), 1);
     assert_eq!(reported[0]["part"], "Section 1");
     let gate = model.gate.lock().unwrap();
-    assert_eq!(reported[0]["defect"], gate[0]["proposals"][0]);
+    assert_eq!(reported[0]["defect"], gate[0]["proposals"][0]["proposal"]);
     Ok(())
 }
 
