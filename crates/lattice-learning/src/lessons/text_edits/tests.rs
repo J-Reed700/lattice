@@ -524,6 +524,22 @@ fn a_repair_is_told_not_to_come_between_a_sentence_and_one_that_refers_back_to_i
 }
 
 #[test]
+fn the_instructions_name_the_defects_a_repair_corrects_and_not_facts() {
+    for told in [
+        "Use the smallest correction each defect needs and any necessary dependent corrections;",
+        "Make only the changes the defects ask for, and add no unrelated teaching.",
+    ] {
+        assert!(INSTRUCTIONS.contains(told), "{told}");
+    }
+    for old in [
+        "Use the smallest factual correction and any necessary dependent corrections;",
+        "Do not make stylistic changes or add unrelated teaching.",
+    ] {
+        assert!(!INSTRUCTIONS.contains(old), "{old}");
+    }
+}
+
+#[test]
 fn an_edit_adding_a_sentence_too_short_to_quote_that_the_lesson_has_is_applied() {
     let original = json!({"blocks":[
         {"kind":"explanation","body":"The first section opens here. No."},
@@ -722,34 +738,53 @@ fn a_citation_and_a_withdrawn_citation_are_refused_outside_their_findings_part()
 }
 
 #[test]
-fn the_schema_for_findings_names_the_finding_of_every_change() {
+fn the_schema_for_findings_asks_for_one_answer_for_each_finding() {
     let mut original = cited_lesson();
     original["blocks"][0]["citations"] = json!([{"sentence":TIMEOUT,"sourceIndex":0,"quote":"A timeout of 30 seconds applies to each request."}]);
     let lesson = crate::generation::lesson_schema(2);
     let ids = vec!["f1".to_owned(), "f2".to_owned()];
 
     let named = schema_for_findings(&original, &lesson, &ids);
-    let edit = &named["properties"]["edits"]["items"];
+    assert_eq!(named["required"], json!(["answers"]));
+    assert!(named["properties"].get("edits").is_none());
+    let answers = &named["properties"]["answers"];
+    assert_eq!(answers["minItems"], 2);
+    assert_eq!(answers["maxItems"], 2);
+    let entry = &answers["items"];
+    assert_eq!(entry["additionalProperties"], false);
     assert_eq!(
-        edit["properties"]["finding"],
+        entry["required"],
+        json!(["finding", "plan", "edits", "citations", "uncite"])
+    );
+    let order: Vec<&str> = entry["properties"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(order, ["finding", "plan", "edits", "citations", "uncite"]);
+    assert_eq!(
+        entry["properties"]["finding"],
         json!({"type":"string","enum":ids})
     );
-    assert_eq!(
-        edit["required"],
-        json!(["finding", "path", "before", "after"])
-    );
-    let cite = &named["properties"]["citations"]["items"];
-    assert_eq!(cite["properties"]["finding"]["enum"], json!(["f1", "f2"]));
+    assert_eq!(entry["properties"]["plan"], json!({"type":"string"}));
+    assert_eq!(entry["properties"]["edits"]["minItems"], 0);
+    let edit = &entry["properties"]["edits"]["items"];
+    assert_eq!(edit["required"], json!(["path", "before", "after"]));
+    assert!(edit["properties"].get("finding").is_none());
+    let cite = &entry["properties"]["citations"]["items"];
+    assert!(cite["properties"].get("finding").is_none());
     assert_eq!(
         cite["required"],
-        json!(["finding", "path", "sentence", "sourceIndex", "quote"])
+        json!(["path", "sentence", "sourceIndex", "quote"])
     );
     assert_eq!(
-        named["properties"]["uncite"]["items"]["required"],
-        json!(["finding", "path"])
+        entry["properties"]["uncite"]["items"],
+        json!({"type":"object","additionalProperties":false,"required":["path"],"properties":{
+            "path":{"type":"string","enum":["/blocks/0/citations/0"]}}})
     );
-    assert!(named["properties"]["citations"].get("maxItems").is_none());
-    assert!(named["properties"]["uncite"].get("uniqueItems").is_none());
+    assert!(entry["properties"]["citations"].get("maxItems").is_none());
+    assert!(entry["properties"]["uncite"].get("uniqueItems").is_none());
 
     let plain = schema_for(&original, &lesson);
     assert!(plain["properties"]["edits"]["items"]["properties"]
@@ -762,10 +797,20 @@ fn the_schema_for_findings_names_the_finding_of_every_change() {
     assert!(plain["properties"]["citations"].get("maxItems").is_none());
 
     let alone = schema_for_findings(&original, &json!({"type":"object"}), &ids);
-    assert_eq!(alone["required"], json!(["edits"]));
+    let entry = &alone["properties"]["answers"]["items"];
+    assert_eq!(entry["required"], json!(["finding", "plan", "edits"]));
+    assert_eq!(entry["properties"]["finding"]["enum"], json!(["f1", "f2"]));
+}
+
+#[test]
+fn a_lesson_with_no_citation_to_take_back_offers_no_uncite() {
+    let original = cited_lesson();
+    let lesson = crate::generation::lesson_schema(2);
+    let named = schema_for_findings(&original, &lesson, &["f1".to_owned()]);
+    let entry = &named["properties"]["answers"]["items"];
     assert_eq!(
-        alone["properties"]["edits"]["items"]["properties"]["finding"]["enum"],
-        json!(["f1", "f2"])
+        entry["required"],
+        json!(["finding", "plan", "edits", "citations"])
     );
 }
 

@@ -133,11 +133,47 @@ fn recorded_id(index: usize) -> String {
     format!("recorded-{index}")
 }
 
-/// A decision that kept the protocol: its verdict and the finding it
-/// establishes, if any.
-type Kept = (Verdict, Option<ReviewFinding>);
+/// A finding the gate left to a check beside the reviewer that recorded no
+/// such defect.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Left {
+    /// The check's place in `Beside::decides`.
+    pub check: usize,
+    pub finding: ReviewFinding,
+}
 
-/// The findings `raw` establishes. A decision that breaks the protocol fails
+/// What the gate made of the reviewer's findings.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Checked {
+    /// The findings a repair may act on.
+    pub established: Vec<ReviewFinding>,
+    /// The findings left to a check beside the reviewer that recorded no such defect.
+    pub left: Vec<Left>,
+}
+
+/// What one decision made of its finding.
+#[derive(Clone)]
+enum Ruling {
+    Established(ReviewFinding),
+    Left(Left),
+    Neither,
+}
+
+impl Checked {
+    fn add(&mut self, ruling: Ruling) {
+        match ruling {
+            Ruling::Established(finding) => self.established.push(finding),
+            Ruling::Left(left) => self.left.push(left),
+            Ruling::Neither => {}
+        }
+    }
+}
+
+/// A decision that kept the protocol: its verdict and what it made of its
+/// finding.
+type Kept = (Verdict, Ruling);
+
+/// What `raw` makes of the findings. A decision that breaks the protocol fails
 /// the answer, so it is asked for again; on the `last` answer such a decision
 /// gives way to one an earlier answer reached on the same verdict within the
 /// protocol (`kept`), or else leaves its finding not established, as the
@@ -149,7 +185,7 @@ fn accepted(
     evidence: &HashMap<String, EvidenceKind>,
     last: bool,
     kept: &mut HashMap<usize, Kept>,
-) -> Result<Vec<ReviewFinding>> {
+) -> Result<Checked> {
     let Decisions { decisions } = generation::parse_json(raw)?;
     let mut answers: HashMap<&str, Vec<&Finding>> = HashMap::new();
     for decision in &decisions {
@@ -179,7 +215,7 @@ fn accepted(
             return Err(invalid_answer(&problems));
         }
     }
-    let mut actionable = Vec::new();
+    let mut checked = Checked::default();
     let mut broken = None;
     for (index, (issue, key)) in issues.iter().zip(&keys).enumerate() {
         let finding = match answers.get(key.as_str()).map(|found| found.as_slice()) {
@@ -191,18 +227,18 @@ fn accepted(
                 .map(|established| (finding.verdict, established))
         });
         match decided {
-            Ok((verdict, established)) => {
-                actionable.extend(established.clone());
-                kept.insert(index, (verdict, established));
+            Ok((verdict, ruling)) => {
+                checked.add(ruling.clone());
+                kept.insert(index, (verdict, ruling));
             }
             Err(error) if last => {
                 let earlier = kept.get(&index).filter(|(verdict, _)| {
                     finding.is_some_and(|finding| finding.verdict == *verdict)
                 });
                 match earlier {
-                    Some((_, established)) => {
+                    Some((_, ruling)) => {
                         tracing::info!(index, %error, "A review decision broke the protocol when asked again; the first answer's on the same verdict stands");
-                        actionable.extend(established.clone());
+                        checked.add(ruling.clone());
                     }
                     None => {
                         tracing::warn!(index, %error, "A review decision broke the protocol twice; its finding is not established");
@@ -214,18 +250,17 @@ fn accepted(
             }
         }
     }
-    broken.map_or(Ok(actionable), Err)
+    broken.map_or(Ok(checked), Err)
 }
 
-/// `issue` with its site when `finding` establishes it, `None` when it does
-/// not.
+/// What `finding` makes of `issue`: it with its site when established.
 fn decided(
     index: usize,
     issue: &ReviewFinding,
     finding: &Finding,
     beside: Beside<'_>,
     evidence: &HashMap<String, EvidenceKind>,
-) -> Result<Option<ReviewFinding>> {
+) -> Result<Ruling> {
     if let Some(named) = finding.left_to.as_deref().filter(|id| *id != "none") {
         let known = beside
             .recorded
@@ -234,21 +269,24 @@ fn decided(
             .find_map(|(at, known)| (recorded_id(at) == named).then_some(known));
         if let Some(known) = known {
             tracing::info!(finding = %issue.id().as_str(), recorded = %known.id().as_str(), "A reviewer finding that another check already recorded is not repaired twice");
-            return Ok(None);
+            return Ok(Ruling::Neither);
         }
         let decides = beside
             .decides
             .iter()
             .enumerate()
-            .find_map(|(at, decides)| (check_id(at) == named).then_some(*decides));
-        let Some(decides) = decides else {
+            .find_map(|(at, decides)| (check_id(at) == named).then_some((at, *decides)));
+        let Some((check, decides)) = decides else {
             return Err(invalid_finding(
                 index,
                 "leftTo must be none, the id of one of recordedFindings, or the id of one of otherChecks.",
             ));
         };
         tracing::info!(finding = %issue.id().as_str(), check = %decides, "A reviewer finding about what another check decides is left to that check");
-        return Ok(None);
+        return Ok(Ruling::Left(Left {
+            check,
+            finding: issue.clone(),
+        }));
     }
     let ids: HashSet<_> = finding.evidence_ids.iter().collect();
     if ids.len() != finding.evidence_ids.len()
@@ -280,7 +318,7 @@ fn decided(
                 "a not_established decision requires requirementId=null.",
             ));
         }
-        return Ok(None);
+        return Ok(Ruling::Neither);
     }
     let only = |kind| !ids.is_empty() && ids.iter().all(|id| evidence.get(*id) == Some(&kind));
     let grounded = match finding.basis {
@@ -325,7 +363,7 @@ fn decided(
             finding = finding.with_also(second);
         }
     }
-    Ok(Some(finding))
+    Ok(Ruling::Established(finding))
 }
 
 pub async fn check(
@@ -336,9 +374,9 @@ pub async fn check(
     candidate: &Value,
     references: &ReferenceCollection<'_>,
     progress: Option<&crate::outline_progress::OutlineProgress>,
-) -> Result<Vec<ReviewFinding>> {
+) -> Result<Checked> {
     if issues.is_empty() {
-        return Ok(Vec::new());
+        return Ok(Checked::default());
     }
     crate::lesson_progress::stage("Checking review findings against saved references");
     let mut requirements = authoring.clone();
@@ -532,8 +570,8 @@ pub async fn check(
     .await?;
     crate::lesson_progress::stage(format!(
         "Checked review findings: {} need repairs; {} were not established",
-        accepted.len(),
-        issues.len() - accepted.len()
+        accepted.established.len(),
+        issues.len() - accepted.established.len()
     ));
     Ok(accepted)
 }

@@ -33,6 +33,7 @@ fn first(
         false,
         &mut HashMap::new(),
     )
+    .map(|checked| checked.established)
 }
 
 fn placed(findings: Vec<ReviewFinding>) -> Vec<(String, Option<FindingSite>)> {
@@ -103,6 +104,7 @@ async fn a_malformed_actionable_finding_is_asked_for_once_more() -> Result<()> {
                 None
             )
             .await?
+            .established
         ),
         vec![(issues[0].note.clone(), Some(FindingSite::Section(0)))]
     );
@@ -148,7 +150,8 @@ async fn a_decision_broken_again_leaves_its_finding_not_established() -> Result<
         &sources,
         None,
     )
-    .await?;
+    .await?
+    .established;
     assert_eq!(
         placed(established),
         vec![(issues[1].note.clone(), Some(FindingSite::Section(0)))]
@@ -179,7 +182,8 @@ async fn established_from(
         &sources,
         None,
     )
-    .await?;
+    .await?
+    .established;
     assert_eq!(model.prompts.lock().unwrap().len(), 2);
     Ok(established
         .into_iter()
@@ -633,6 +637,12 @@ async fn gate_beside(
     outputs: Vec<String>,
     beside: Beside<'_>,
 ) -> Result<(Vec<Sent>, Vec<ReviewFinding>)> {
+    let (sent, checked) = gate_ruled(outputs, beside).await?;
+    Ok((sent, checked.established))
+}
+
+/// `gate_beside`, with everything the gate made of the proposal.
+async fn gate_ruled(outputs: Vec<String>, beside: Beside<'_>) -> Result<(Vec<Sent>, Checked)> {
     use crate::dto::LearningSourceDto;
     use crate::lessons::course_generation_tests::ScriptedModel;
     let sources = vec![LearningSourceDto {
@@ -650,7 +660,7 @@ async fn gate_beside(
         },
         sent: Default::default(),
     };
-    let established = check(
+    let checked = check(
         &model,
         &proposal("The kettle is described twice."),
         beside,
@@ -660,7 +670,7 @@ async fn gate_beside(
         None,
     )
     .await?;
-    Ok((model.sent.into_inner().unwrap(), established))
+    Ok((model.sent.into_inner().unwrap(), checked))
 }
 
 /// The gate asked while `recorded` stand and no other check is listed.
@@ -870,5 +880,61 @@ async fn a_decision_naming_an_id_that_was_not_offered_is_asked_for_again() -> Re
         assert_eq!(sent.len(), 2, "{unknown}");
         assert_eq!(established.len(), 1, "{unknown}");
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_proposal_left_to_a_check_that_recorded_nothing_is_handed_back_with_the_checks_place(
+) -> Result<()> {
+    let issues = proposal("The kettle is described twice.");
+    let (_, checked) = gate_ruled(
+        vec![gate_decision("actionable", "check-1")],
+        Beside {
+            decides: &DECIDES,
+            recorded: &[],
+        },
+    )
+    .await?;
+    assert!(checked.established.is_empty());
+    assert_eq!(
+        checked.left,
+        vec![Left {
+            check: 1,
+            finding: issues[0].clone()
+        }]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_proposal_left_to_a_recorded_finding_or_to_none_is_not_handed_back() -> Result<()> {
+    let beside = Beside {
+        decides: &DECIDES,
+        recorded: &recorded_findings(),
+    };
+    for left_to in ["recorded-0", "none"] {
+        let (_, checked) =
+            gate_ruled(vec![gate_decision("not_established", left_to)], beside).await?;
+        assert!(checked.left.is_empty(), "{left_to}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_proposal_asked_for_a_second_time_is_handed_back_once() -> Result<()> {
+    let issues = proposal("The kettle is described twice.");
+    let evidence = HashMap::new();
+    let beside = Beside {
+        decides: &DECIDES,
+        recorded: &[],
+    };
+    let raw = gate_decision("actionable", "check-1");
+    let mut kept = HashMap::new();
+    let first = accepted(&raw, &issues, beside, &evidence, false, &mut kept)?;
+    assert_eq!(first.left.len(), 1);
+    // The second answer breaks the protocol for this issue; the first one's ruling stands.
+    let broken = gate_decision("actionable", "check-9");
+    let second = accepted(&broken, &issues, beside, &evidence, true, &mut kept)?;
+    assert_eq!(second.left, first.left);
     Ok(())
 }

@@ -422,6 +422,28 @@ mod tests {
         );
         assert_eq!(sent.finding_ids(), ["reviewer/1", "reviewer/5"]);
     }
+
+    #[test]
+    fn the_edits_form_asks_for_one_answer_for_each_distinct_id_sent() {
+        let first = at(FindingSite::Section(0), "one");
+        let again = at(FindingSite::Section(0), "two");
+        let other = at(FindingSite::Section(2), "three");
+        let schema = json!({"blocks":[{"body":"One."}],"questions":[]});
+        let wording = Wording::default();
+        let sent = request(
+            vec![plain(&first), plain(&again), plain(&other)],
+            &schema,
+            &wording,
+        );
+        let asked = Edits.schema(&sent);
+        let answers = &asked["properties"]["answers"];
+        assert_eq!(answers["minItems"], 2);
+        assert_eq!(answers["maxItems"], 2);
+        assert_eq!(
+            answers["items"]["properties"]["finding"]["enum"],
+            json!(["reviewer/1", "reviewer/5"])
+        );
+    }
 }
 
 #[cfg(test)]
