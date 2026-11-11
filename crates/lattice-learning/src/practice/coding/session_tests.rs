@@ -1,16 +1,13 @@
 //! The session's commands on an in-memory database, with a fake model, a fake runner and a fake clock.
 
-use super::counterpart::CounterpartReply;
-use super::debrief::{Debrief, Debriefer, SessionEvidence};
 use super::dto::*;
 use super::examples::ExampleCheck;
-use super::hints::CodeHint;
-use super::observation::WorkspaceObservation;
-use super::policy::{CodingCue, CodingPolicy};
+use super::policy::CodingCue;
 use super::problem::*;
 use super::records::CodingOp;
-use super::session::{default_budget_seconds, Clock, CodingAids, CodingRuns, CodingSessions};
+use super::session::{CodingAids, CodingRuns, CodingSessions};
 use crate::assessment_engine::LearningRubricCriterion;
+use crate::drills::runner::CodeRunner;
 use crate::dto::LearningPracticeMode;
 use crate::lab_runtime::LearningLabFile;
 use crate::practical_dto::*;
@@ -19,17 +16,28 @@ use crate::practical_generation::{
 };
 use crate::practical_repository::LearningPracticalRepository;
 use crate::practical_runs::CodingRunStart;
+use crate::practice::coding::harness::CaseHarness;
+use crate::practice::kinds::program::budget::ProgramBudget;
+use crate::practice::kinds::program::parts::part_of;
+use crate::practice::kinds::program::shape::difficulty_of;
+use crate::practice::kinds::program::toolchain::Toolchains;
+use crate::practice::session::counterpart::Reply;
+use crate::practice::session::debrief::{Debrief, DebriefRow, Evidence};
+use crate::practice::session::kind::{Budget, Hint, Kind, Kinds};
+use crate::practice::session::observation::Observation;
+use crate::practice::session::policy::{Cue, Policy};
+use crate::practice::session::ports::{Aids, Clock, Debriefer};
+use crate::practice::session::record::DebriefSession;
 use crate::practice::test_support::fixture;
 use crate::repository::LearningRepository;
 use async_trait::async_trait;
-use lattice_core::domain::learning::practice::{
-    ScoreStatus, Scorecard, ScorecardEvidence, ScorecardRow, PROBLEM_PATTERNS,
-};
+use lattice_core::domain::learning::practice::work::{Brief, Exercise, Rung};
+use lattice_core::domain::learning::practice::{ScoreStatus, PROBLEM_PATTERNS};
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 const START: i64 = 1_000_000;
 
@@ -112,6 +120,38 @@ fn problem() -> Problem {
     }
 }
 
+/// What a counterpart's reply says, and the lines of a file it points at.
+struct CounterpartReply {
+    content: String,
+    lines: Vec<u32>,
+    path: Option<String>,
+}
+
+fn default_budget_seconds(difficulty: ProblemDifficulty) -> u32 {
+    let brief = Brief {
+        title: String::new(),
+        difficulty: difficulty_of(difficulty),
+        spec: serde_json::Value::Null,
+    };
+    ProgramBudget.seconds(&brief).unwrap()
+}
+
+struct NoTools;
+
+impl Toolchains for NoTools {
+    fn runner(&self, language: &str) -> Result<Box<dyn CodeRunner>> {
+        Err(AppError::ServiceNotAvailable(format!(
+            "No runtime for {language} in this test."
+        )))
+    }
+
+    fn harness(&self, language: &str) -> Result<Box<dyn CaseHarness>> {
+        Err(AppError::InvalidState(format!(
+            "No harness for {language} in this test."
+        )))
+    }
+}
+
 struct FakeClock(AtomicI64);
 
 impl FakeClock {
@@ -143,10 +183,6 @@ impl FakeAids {
 
 #[async_trait]
 impl CodingAids for FakeAids {
-    fn model_name(&self) -> &str {
-        "fake-model"
-    }
-
     async fn check_example(
         &self,
         _problem: &Problem,
@@ -185,32 +221,53 @@ impl CodingAids for FakeAids {
             elapsed_ms: Some(1),
         })
     }
+}
+
+#[async_trait]
+impl Aids for FakeAids {
+    fn model_name(&self) -> &str {
+        "fake-model"
+    }
 
     async fn hint(
         &self,
-        _problem: &Problem,
-        _observation: &WorkspaceObservation,
-        rung: CodeHintRung,
+        _kind: &Kind,
+        _exercise: &Exercise,
+        _observation: &Observation,
+        rung: Rung,
         _in_role: bool,
-    ) -> Result<CodeHint> {
-        Ok(CodeHint {
+    ) -> Result<Hint> {
+        Ok(Hint {
             rung,
             text: "Look at what the function returns.".into(),
             reason: "The body is still empty.".into(),
-            lines: vec![],
-            path: None,
+            parts: vec![],
         })
     }
 
     async fn reply(
         &self,
-        _problem: &Problem,
-        _policy: &CodingPolicy,
-        _cue: &CodingCue,
-        _observation: &WorkspaceObservation,
-    ) -> Result<Option<CounterpartReply>> {
+        _kind: &Kind,
+        _exercise: &Exercise,
+        _policy: &Policy,
+        _cue: &Cue,
+        _observation: &Observation,
+    ) -> Result<Option<Reply>> {
         self.reply_calls.fetch_add(1, Ordering::SeqCst);
-        self.replies.lock().unwrap().pop_front().unwrap_or(Ok(None))
+        let queued = self
+            .replies
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(None))?;
+        Ok(queued.map(|reply| Reply {
+            content: reply.content,
+            parts: reply
+                .path
+                .iter()
+                .flat_map(|path| reply.lines.iter().map(|line| part_of(path, *line)))
+                .collect(),
+        }))
     }
 }
 
@@ -286,35 +343,35 @@ struct FakeDebriefer {
 
 #[async_trait]
 impl Debriefer for FakeDebriefer {
-    async fn debrief(&self, _evidence: &SessionEvidence) -> Result<Debrief> {
+    async fn debrief(&self, _kind: &Kind, _session: &DebriefSession) -> Result<Debrief> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(Debrief {
-            scorecard: Scorecard {
-                rows: vec![
-                    ScorecardRow {
-                        criterion_id: "code".into(),
-                        title: "Code".into(),
-                        status: ScoreStatus::Observed,
-                        points: Some(3),
-                        max_points: 4,
-                        evidence: vec![ScorecardEvidence::Example { ordinal: 1 }],
-                        feedback: "Clear.".into(),
-                        next_step: "Name the edge cases.".into(),
-                    },
-                    ScorecardRow {
-                        criterion_id: "communication".into(),
-                        title: "Communication".into(),
-                        status: ScoreStatus::InsufficientEvidence,
-                        points: None,
-                        max_points: 4,
-                        evidence: vec![],
-                        feedback: "Nothing to judge.".into(),
-                        next_step: "Talk through the plan.".into(),
-                    },
-                ],
-            },
-            approach: "Multiply by two.".into(),
-            complexity: "O(1) time".into(),
+            rows: vec![
+                DebriefRow {
+                    criterion_id: "code".into(),
+                    title: "Code".into(),
+                    status: ScoreStatus::Observed,
+                    points: Some(3),
+                    max_points: 4,
+                    evidence: vec![Evidence::LearnerCase { ordinal: 1 }],
+                    feedback: "Clear.".into(),
+                    next_step: "Name the edge cases.".into(),
+                },
+                DebriefRow {
+                    criterion_id: "communication".into(),
+                    title: "Communication".into(),
+                    status: ScoreStatus::InsufficientEvidence,
+                    points: None,
+                    max_points: 4,
+                    evidence: vec![],
+                    feedback: "Nothing to judge.".into(),
+                    next_step: "Talk through the plan.".into(),
+                },
+            ],
+            stated: vec![
+                ("approach".into(), "Multiply by two.".into()),
+                ("complexity".into(), "O(1) time".into()),
+            ],
         })
     }
 }
@@ -328,6 +385,7 @@ struct Ctx {
     aids: FakeAids,
     runs: FakeRuns,
     debriefer: FakeDebriefer,
+    kinds: Kinds,
 }
 
 impl Ctx {
@@ -395,13 +453,16 @@ impl Ctx {
             clock: FakeClock(AtomicI64::new(START)),
             aids: FakeAids::default(),
             debriefer: FakeDebriefer::default(),
+            kinds: Kinds::new([crate::practice::kinds::program::kind(Arc::new(NoTools))]).unwrap(),
         }
     }
 
     fn sessions(&self) -> CodingSessions<'_> {
         CodingSessions {
             repo: &self.repo,
+            kinds: &self.kinds,
             aids: &self.aids,
+            own: &self.aids,
             runs: &self.runs,
             debriefer: &self.debriefer,
             clock: &self.clock,

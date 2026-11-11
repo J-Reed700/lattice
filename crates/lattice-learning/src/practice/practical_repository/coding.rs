@@ -17,6 +17,8 @@ use crate::practice::coding::problem::{CodingSetting, CodingTask, Hidden, Proble
 use crate::practice::coding::records::{
     Applied, CodingOp, CodingRow, NewCodingSession, NewHint, RunFinished, StageMove,
 };
+use crate::practice::kinds::program::shape::setting_of;
+use crate::practice::session::budget;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::{Transactions, WriteTx};
 use serde::{de::DeserializeOwned, Serialize};
@@ -273,13 +275,11 @@ impl LearningPracticalRepository {
         if starter.is_empty() {
             return Err(invalid("This coding problem has no starter file."));
         }
-        let budget = match new.setting {
-            CodingSetting::Coached => None,
-            CodingSetting::Mock | CodingSetting::Watched => Some(
-                new.budget_seconds
-                    .unwrap_or_else(|| (new.default_budget_seconds)(problem.spec.difficulty)),
-            ),
-        };
+        let budget = budget::at_start(
+            setting_of(new.setting),
+            new.budget_seconds,
+            (new.default_budget)(&problem)?,
+        );
         let session_id = uuid::Uuid::new_v4().to_string();
         let counterpart = match new.setting {
             CodingSetting::Coached => "Coach",
@@ -833,14 +833,14 @@ impl LearningPracticalRepository {
         })
     }
 
-    /// Changes the setting. Leaving Coached for another setting with no budget gives the session `default_budget`.
+    /// Changes the setting. Leaving Coached for another setting with no budget gives the session `default_budget_seconds`.
     pub async fn change_coding_setting(
         &self,
         program_id: &str,
         session_id: &str,
         op: &CodingOp<'_>,
         setting: CodingSetting,
-        default_budget_seconds: u32,
+        default_budget_seconds: Option<u32>,
         expected_revision: i64,
         at: i64,
     ) -> Result<Applied<()>> {
@@ -855,11 +855,11 @@ impl LearningPracticalRepository {
         let row = open_row_on(&mut tx, program_id, session_id).await?;
         check_revision(&row, expected_revision)?;
         if row.setting != setting {
-            let budget = match (setting, row.budget_seconds) {
-                (CodingSetting::Coached, budget) => budget,
-                (_, None) => Some(default_budget_seconds),
-                (_, budget) => budget,
-            };
+            let budget = budget::after_change(
+                setting_of(setting),
+                row.budget_seconds,
+                default_budget_seconds,
+            );
             sqlx::query(
                 "UPDATE learning_coding_sessions SET setting=?,budget_seconds=? WHERE id=?",
             )

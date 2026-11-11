@@ -1,6 +1,7 @@
 //! Coding sessions: a proven problem, worked through with a coach or an interviewer
 //! (docs/design/2026-11-08-coding-sessions-and-one-practice-area.md).
 
+pub mod checks;
 pub mod counterpart;
 pub mod debrief;
 pub mod dto;
@@ -17,6 +18,7 @@ pub mod records;
 pub mod session;
 pub mod solution_check;
 pub mod source;
+pub mod store;
 
 #[cfg(test)]
 pub(crate) mod golden_support;

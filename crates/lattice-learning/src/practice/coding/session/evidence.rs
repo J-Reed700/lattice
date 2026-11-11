@@ -72,7 +72,7 @@ pub fn outcome_of(bundle: &SessionBundle) -> Result<ProblemOutcome> {
     })
 }
 
-fn result_of(detail: &CaseCheckDetailDto) -> CaseResult {
+pub fn result_of(detail: &CaseCheckDetailDto) -> CaseResult {
     CaseResult {
         case_id: detail.case_id.clone(),
         status: detail.status,

@@ -159,6 +159,17 @@ pub fn case_of(case: &ProblemCase) -> Result<Case> {
     })
 }
 
+/// How the cases a learner writes are compared: the way the first case shown with the brief is.
+pub fn default_compare_of(exercise: &Exercise) -> Result<coding::CaseCompare> {
+    exercise
+        .cases
+        .iter()
+        .find(|case| case.visibility == work::CaseVisibility::Shown)
+        .map_or(Ok(coding::CaseCompare::Exact), |shown| {
+            problem_case_of(shown).map(|case| case.compare)
+        })
+}
+
 pub fn problem_case_of(case: &Case) -> Result<ProblemCase> {
     let body: CaseBody = serde_json::from_value(case.body.clone()).map_err(|error| {
         invalid(

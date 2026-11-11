@@ -3,13 +3,14 @@
 
 use super::dto::{CodeHintRung, CodingRunScope, CodingStage, ExampleVerdict, PatternRatingDto};
 use super::policy::CodingCue;
-use super::problem::{CodingSetting, CodingTask, Problem, ProblemDifficulty};
+use super::problem::{CodingSetting, CodingTask, Problem};
 use crate::lab_runtime::LearningLabFile;
 use crate::practical_dto::{
     CaseCheckDetailDto, LearningPracticalRunStatus, LearningSimulationTurnDto,
 };
 use lattice_core::domain::learning::drills::PatternRating;
 use lattice_core::domain::learning::practice::Scorecard;
+use lattice_core::shared::error::Result;
 
 /// The request a write answers, so the same operation id replays the first answer instead of repeating the work.
 #[derive(Debug, Clone, Copy)]
@@ -111,15 +112,15 @@ pub struct SessionBundle {
 }
 
 /// What a new session needs besides the request's operation.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NewCodingSession<'a> {
     pub program_id: &'a str,
     pub activity_id: &'a str,
     pub setting: CodingSetting,
     /// The learner's choice. Ignored in Coached, which has no budget.
     pub budget_seconds: Option<u32>,
-    /// The budget Mock and Watched take when the learner chose none.
-    pub default_budget_seconds: fn(ProblemDifficulty) -> u32,
+    /// The budget Mock and Watched take when the learner chose none, of the problem the activity holds.
+    pub default_budget: &'a (dyn Fn(&Problem) -> Result<Option<u32>> + Send + Sync),
 }
 
 /// A stage move that was written.

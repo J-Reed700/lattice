@@ -108,7 +108,7 @@ fn stage_in(payload: &Value, key: &str) -> Option<CodingStage> {
         .and_then(|value| serde_json::from_value(value.clone()).ok())
 }
 
-fn event_of(row: &CodingEventRow) -> SessionEvent {
+pub(super) fn event_of(row: &CodingEventRow) -> SessionEvent {
     let kind = match row.kind.as_str() {
         "opened" => EventKind::Opened,
         "closed" => EventKind::Closed,
@@ -122,13 +122,13 @@ fn event_of(row: &CodingEventRow) -> SessionEvent {
     }
 }
 
-fn hint_of(hint: &CodeHintDto) -> SessionHint {
+pub(super) fn hint_of(hint: &CodeHintDto) -> SessionHint {
     SessionHint {
         ordinal: hint.ordinal,
         rung: rung_of(hint.rung),
         text: hint.text.clone(),
         stage: stage_of(hint.stage),
-        check_id: None,
+        check_id: hint.run_id.clone(),
     }
 }
 
@@ -258,7 +258,7 @@ fn stated(debrief: &engine::Debrief, key: &str) -> Result<String> {
         .ok_or_else(|| AppError::InvalidState(format!("The debrief states no {key}.")))
 }
 
-fn debrief_of(debrief: engine::Debrief) -> Result<Debrief> {
+pub(super) fn debrief_of(debrief: engine::Debrief) -> Result<Debrief> {
     let (approach, complexity) = (
         stated(&debrief, "approach")?,
         stated(&debrief, "complexity")?,

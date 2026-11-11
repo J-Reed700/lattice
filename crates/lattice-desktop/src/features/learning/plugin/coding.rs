@@ -8,27 +8,30 @@ use tauri::State;
 use crate::features::learning::practical_repository::LearningPracticalRepository;
 use crate::features::learning::practical_runs::start_coding_run;
 use crate::interfaces::di::Container;
-use lattice_core::application::ports::llm_port::LLMPort;
+use lattice_core::domain::learning::practice::work::{Exercise, Rung};
 use lattice_core::shared::error::{AppError, Result as CoreResult};
 use lattice_core::shared::ipc::ApiError;
 use lattice_learning::drills::runner::{runner_for, CodeRunner};
 use lattice_learning::embedded_runtime::BuiltinRuntimes;
 use lattice_learning::practical_dto::LearningPracticalRunDto;
 use lattice_learning::practical_runs::CodingRunStart;
-use lattice_learning::practice::coding::counterpart::CounterpartReply;
-use lattice_learning::practice::coding::debrief::{
-    CodingDebriefer, Debrief, Debriefer, SessionEvidence,
-};
 use lattice_learning::practice::coding::dto::*;
 use lattice_learning::practice::coding::examples::ExampleCheck;
-use lattice_learning::practice::coding::hints::CodeHint;
 use lattice_learning::practice::coding::jobs::{CODING_BUILD, CODING_BUILD_STEPS};
-use lattice_learning::practice::coding::observation::WorkspaceObservation;
-use lattice_learning::practice::coding::policy::{CodingCue, CodingPolicy};
 use lattice_learning::practice::coding::problem::{CaseResult, Problem};
 use lattice_learning::practice::coding::session::{
-    CodingAids, CodingRuns, CodingSessions, LiveAids, SystemClock,
+    CodingAids, CodingRuns, CodingSessions, LiveCodingAids, SystemClock,
 };
+use lattice_learning::practice::kinds::program::toolchain::BuiltinToolchains;
+use lattice_learning::practice::session::counterpart::Reply;
+use lattice_learning::practice::session::debrief::Debrief;
+use lattice_learning::practice::session::kind::{Hint, Kind, Kinds};
+use lattice_learning::practice::session::live::{LiveAids, LiveDebriefer};
+use lattice_learning::practice::session::observation::Observation;
+use lattice_learning::practice::session::policy::{Cue, Policy};
+use lattice_learning::practice::session::ports::{Aids, Debriefer};
+use lattice_learning::practice::session::record::DebriefSession;
+use std::sync::Arc;
 
 fn repo_of(container: &Container) -> LearningPracticalRepository {
     LearningPracticalRepository::new(container.database().clone())
@@ -45,31 +48,37 @@ struct NoAids;
 
 #[async_trait]
 impl CodingAids for NoAids {
-    fn model_name(&self) -> &str {
-        ""
-    }
     async fn check_example(&self, _: &Problem, _: &[String], _: &str) -> CoreResult<ExampleCheck> {
         unused()
     }
     async fn reference_answer(&self, _: &Problem, _: &[String]) -> CoreResult<CaseResult> {
         unused()
     }
+}
+
+#[async_trait]
+impl Aids for NoAids {
+    fn model_name(&self) -> &str {
+        ""
+    }
     async fn hint(
         &self,
-        _: &Problem,
-        _: &WorkspaceObservation,
-        _: CodeHintRung,
+        _: &Kind,
+        _: &Exercise,
+        _: &Observation,
+        _: Rung,
         _: bool,
-    ) -> CoreResult<CodeHint> {
+    ) -> CoreResult<Hint> {
         unused()
     }
     async fn reply(
         &self,
-        _: &Problem,
-        _: &CodingPolicy,
-        _: &CodingCue,
-        _: &WorkspaceObservation,
-    ) -> CoreResult<Option<CounterpartReply>> {
+        _: &Kind,
+        _: &Exercise,
+        _: &Policy,
+        _: &Cue,
+        _: &Observation,
+    ) -> CoreResult<Option<Reply>> {
         unused()
     }
 }
@@ -79,19 +88,16 @@ struct NoDebrief;
 
 #[async_trait]
 impl Debriefer for NoDebrief {
-    async fn debrief(&self, _: &SessionEvidence) -> CoreResult<Debrief> {
+    async fn debrief(&self, _: &Kind, _: &DebriefSession) -> CoreResult<Debrief> {
         unused()
     }
 }
 
-/// Debriefs with the model a command pinned.
-struct PinnedDebriefer<'a>(&'a dyn LLMPort);
-
-#[async_trait]
-impl Debriefer for PinnedDebriefer<'_> {
-    async fn debrief(&self, evidence: &SessionEvidence) -> CoreResult<Debrief> {
-        CodingDebriefer { llm: self.0 }.debrief(evidence).await
-    }
+/// The kinds of work the app registers, running programs on the built-in runtimes.
+fn kinds_of(runtimes: &BuiltinRuntimes) -> CoreResult<Kinds> {
+    Kinds::new([lattice_learning::practice::kinds::program::kind(Arc::new(
+        BuiltinToolchains::new(runtimes.clone()),
+    ))])
 }
 
 /// Runs a coding run on the built-in runtime and waits for it.
@@ -142,14 +148,17 @@ async fn runner_of(
 
 /// Binds `$sessions` to the session services around `$aids` and `$debriefer`.
 macro_rules! sessions {
-    ($sessions:ident, $container:expr, $runtimes:expr, $repo:expr, $aids:expr, $debriefer:expr) => {
+    ($sessions:ident, $container:expr, $runtimes:expr, $repo:expr, $aids:expr, $own:expr, $debriefer:expr) => {
+        let kinds = kinds_of(&$runtimes).map_err(ApiError::from)?;
         let runs = DesktopRuns {
             container: &$container,
             runtimes: &$runtimes,
         };
         let $sessions = CodingSessions {
             repo: &$repo,
+            kinds: &kinds,
             aids: $aids,
+            own: $own,
             runs: &runs,
             debriefer: $debriefer,
             clock: &SystemClock,
@@ -160,7 +169,7 @@ macro_rules! sessions {
 /// Binds `$sessions` for a command that never reaches the model or the runner.
 macro_rules! plain_sessions {
     ($sessions:ident, $container:expr, $runtimes:expr, $repo:expr) => {
-        sessions!($sessions, $container, $runtimes, $repo, &NoAids, &NoDebrief);
+        sessions!($sessions, $container, $runtimes, $repo, &NoAids, &NoAids, &NoDebrief);
     };
 }
 
@@ -180,10 +189,13 @@ macro_rules! live_sessions {
             .map_err(ApiError::from)?;
         let aids = LiveAids {
             llm: pin.llm.as_ref(),
+            cancel: $container.core.background().token(),
+        };
+        let own = LiveCodingAids {
             runner: runner.as_ref(),
             cancel: $container.core.background().token(),
         };
-        sessions!($sessions, $container, $runtimes, $repo, &aids, $debriefer);
+        sessions!($sessions, $container, $runtimes, $repo, &aids, &own, $debriefer);
     };
 }
 
@@ -413,11 +425,16 @@ pub async fn finish_coding_session(
         .map_err(ApiError::from)?;
     let aids = LiveAids {
         llm: pin.llm.as_ref(),
+        cancel: container.core.background().token(),
+    };
+    let own = LiveCodingAids {
         runner: runner.as_ref(),
         cancel: container.core.background().token(),
     };
-    let debriefer = PinnedDebriefer(pin.llm.as_ref());
-    sessions!(sessions, container, runtimes, repo, &aids, &debriefer);
+    let debriefer = LiveDebriefer {
+        llm: pin.llm.as_ref(),
+    };
+    sessions!(sessions, container, runtimes, repo, &aids, &own, &debriefer);
     sessions.finish(&request).await.map_err(ApiError::from)
 }
 

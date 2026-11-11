@@ -7,11 +7,12 @@ use crate::practice::coding::dto::{
     stages_of, CaseViewDto, ClockDto, CodingDebriefDto, CodingExampleDto, CodingRunDto,
     CodingSessionDto, ExampleCoverageDto, ExampleVerdict, PublicProblemDto, StrongAnswerDto,
 };
-use crate::practice::coding::hints::next_rung;
 use crate::practice::coding::problem::{
     CaseStatus, CaseVisibility, CodingSetting, Hidden, Problem, ProblemCase,
 };
 use crate::practice::coding::records::{SessionBundle, StoredExample, StoredRun};
+use crate::practice::kinds::program::shape::{coding_rung_of, rung_of};
+use crate::practice::session::hints::next_rung;
 use lattice_core::shared::error::{AppError, Result};
 
 /// The settings a session has used, in order, from the one it started in.
@@ -262,7 +263,7 @@ pub fn session_view(bundle: &SessionBundle) -> Result<CodingSessionDto> {
                 )
             })
             .collect(),
-        next_rung: next_rung(&hints),
+        next_rung: coding_rung_of(next_rung(hints.iter().map(|hint| rung_of(hint.rung)))),
         hints,
         turns: bundle.turns.clone(),
         cue_pending: row.pending_cue.is_some(),
