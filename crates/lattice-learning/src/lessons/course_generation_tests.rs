@@ -45,26 +45,6 @@ impl Model {
         if prompt.starts_with("Source passages:") {
             return Ok("supported\nReason: The fixture reference supports the experimental design.\nSource quote: A randomized comparison isolates the intervention.\nSource passage: passage-0".into());
         }
-        if prompt.starts_with("Verify instructional answer keys independently.") {
-            return Ok(json!({"answers":(0..6).map(|index| json!({"index":index,"correctIndices":[0],"reason":"A randomized comparison isolates the intervention."})).collect::<Vec<_>>()} ).to_string());
-        }
-        if prompt.starts_with("Solve quiz questions independently") {
-            let context: serde_json::Value =
-                serde_json::from_str(prompt.rsplit("\n\n").next().unwrap_or("{}"))?;
-            let answers: Vec<_> = context["questions"].as_array().into_iter().flatten().map(|question| json!({"index":question["index"],"reason":"The fixture solution follows the question.","correctIndices":[],"answer":"A fixture answer.","blankAnswers":[],"matches":[],"orderedValues":[]})).collect();
-            return Ok(json!({ "answers": answers }).to_string());
-        }
-        if prompt.starts_with("Review quiz questions one at a time") {
-            let context: serde_json::Value =
-                serde_json::from_str(prompt.rsplit("\n\n").next().unwrap_or("{}"))?;
-            let checks: Vec<_> = context["items"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|item| json!({"id":item["id"],"finding":"","hasDefect":false,"repeats":[]}))
-                .collect();
-            return Ok(json!({ "checks": checks }).to_string());
-        }
         if prompt.starts_with("Review instructional quality.") {
             let context: serde_json::Value =
                 serde_json::from_str(prompt.rsplit("\n\n").next().unwrap_or("{}"))?;
@@ -976,18 +956,22 @@ async fn lesson_review_requires_evidence_for_every_section_and_repairs_reported_
 
 #[tokio::test]
 async fn disputed_answer_keys_are_blinded_repaired_and_checked_again() -> Result<()> {
-    let candidate = json!({"questions":[{"prompt":"What is two plus two?","options":["Three","Four","Five","Six"],"correctIndex":0,"explanation":"AUTHOR_KEY_SECRET","quote":""}]});
+    let candidate = json!({"questions":[{"kind":"quiz","prompt":"What is two plus two?","options":["Three","Four","Five","Six"],"correctIndex":0,"explanation":"AUTHOR_KEY_SECRET","quote":""}]});
     let mut repaired = candidate.clone();
     repaired["questions"][0]["correctIndex"] = json!(1);
     repaired["questions"][0]["explanation"] = json!("Two plus two is four.");
-    let check = json!({"answers":[{"index":0,"correctIndices":[1],"reason":"Adding two pairs produces four items."}]}).to_string();
+    let solved = json!({"answers":[{"index":0,"reason":"Adding two pairs produces four items.","correctIndices":[1],"answer":"","blankAnswers":[],"matches":[],"orderedValues":[]}]}).to_string();
+    let judged =
+        json!({"checks":[{"id":"new-0","finding":"","hasDefect":false,"repeats":[]}]}).to_string();
     let model = ScriptedModel {
         outputs: std::sync::Mutex::new(
             vec![
-                check.clone(),
+                solved.clone(),
+                judged.clone(),
                 json!({"issues":[]}).to_string(),
                 json!({"edits":[{"path":"/questions/0/correctIndex","before":0,"after":1},{"path":"/questions/0/explanation","before":"AUTHOR_KEY_SECRET","after":"Two plus two is four."}]}).to_string(),
-                check,
+                solved,
+                judged,
                 json!({"issues":[]}).to_string(),
             ]
             .into(),
@@ -1012,11 +996,11 @@ async fn disputed_answer_keys_are_blinded_repaired_and_checked_again() -> Result
             .prompts
             .lock()
             .map_err(|_| AppError::InternalError("fixture lock".into()))?;
-        assert_eq!(prompts.len(), 5);
+        assert_eq!(prompts.len(), 7);
         assert!(!prompts[0].contains("AUTHOR_KEY_SECRET"));
         assert!(!prompts[0].contains("\"correctIndex\":"));
-        assert!(prompts[2].contains("disputed or ambiguous answer key"));
-        assert!(prompts[3].starts_with("Verify instructional answer keys independently."));
+        assert!(prompts[3].contains("An independent solution answered options [1]"));
+        assert!(prompts[4].starts_with("Solve quiz questions independently"));
     }
     let incomplete = ScriptedModel {
         outputs: std::sync::Mutex::new(vec![json!({"answers":[]}).to_string()].into()),

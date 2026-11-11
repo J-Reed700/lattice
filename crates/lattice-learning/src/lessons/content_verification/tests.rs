@@ -415,8 +415,36 @@ fn verdict_last(reply: &str, ids: &[String]) -> String {
     }
 }
 
+/// The default answers to the two calls that review a question as a quiz
+/// item: a blind solver that picks the first option, which the fixtures' keys
+/// are, and an item judge that finds nothing in any item.
+pub(crate) fn question_review_response(prompt: &str) -> Option<String> {
+    if prompt.starts_with("Solve quiz questions independently") {
+        let answers: Vec<Value> = context(prompt)["questions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|question| json!({"index":question["index"],"reason":"The fixture's key.","correctIndices":[0],"answer":"","blankAnswers":[],"matches":[],"orderedValues":[]}))
+            .collect();
+        return Some(json!({"answers":answers}).to_string());
+    }
+    if prompt.starts_with("Review quiz questions one at a time") {
+        let checks: Vec<Value> = context(prompt)["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|item| json!({"id":item["id"],"finding":"","hasDefect":false,"repeats":[]}))
+            .collect();
+        return Some(json!({"checks":checks}).to_string());
+    }
+    None
+}
+
 /// Shared with course fixtures so they exercise the additional protocol calls.
 pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
+    if let Some(reply) = question_review_response(prompt) {
+        return Some(reply);
+    }
     if let Some(plan) = crate::lessons::course_plan::fixture_response(prompt) {
         return Some(plan);
     }

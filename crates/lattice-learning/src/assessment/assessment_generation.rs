@@ -344,7 +344,7 @@ impl Dropped {
     fn of(findings: &Findings, held: &[bool]) -> Self {
         Self {
             reason: findings.texts().join(" "),
-            repeat: findings.defects.is_empty()
+            repeat: !findings.has_defect()
                 && findings.repeats.iter().any(|r| match r.of {
                     RepeatOf::Held => true,
                     RepeatOf::New(n) => held.get(n).copied().unwrap_or(false),

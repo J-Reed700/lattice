@@ -37,6 +37,8 @@ pub(crate) struct Context<'a> {
 /// says the bank already holds the decision, not that the item is badly made.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct Findings {
+    /// How the blind solver's answer differed from the key, when it did.
+    pub dispute: Option<String>,
     pub defects: Vec<String>,
     pub repeats: Vec<Repeat>,
 }
@@ -58,13 +60,19 @@ pub(crate) enum RepeatOf {
 
 impl Findings {
     pub fn is_sound(&self) -> bool {
-        self.defects.is_empty() && self.repeats.is_empty()
+        !self.has_defect() && self.repeats.is_empty()
     }
 
-    /// Every finding, defects first, as the repair request and the drop reason carry them.
+    /// Whether the item itself is faulted, as against a repeat of a question.
+    pub fn has_defect(&self) -> bool {
+        self.dispute.is_some() || !self.defects.is_empty()
+    }
+
+    /// Every finding, the dispute and defects first, as the repair request and the drop reason carry them.
     pub fn texts(&self) -> Vec<String> {
-        self.defects
+        self.dispute
             .iter()
+            .chain(&self.defects)
             .cloned()
             .chain(self.repeats.iter().map(|r| r.text.clone()))
             .collect()
@@ -330,7 +338,7 @@ pub(crate) async fn review(
             key_review::compare(entry.item, solution),
             findings.get_mut(position),
         ) {
-            slot.defects.push(reason);
+            slot.dispute = Some(reason);
         }
         items.push(item_json(position, entry, solution));
     }

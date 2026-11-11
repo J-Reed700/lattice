@@ -142,15 +142,8 @@ impl Figures {
             )
             .to_string());
         }
-        if prompt.starts_with("Verify instructional answer keys independently.") {
-            let asked = self::context(prompt)["requestedIndices"].clone();
-            let answers: Vec<Value> = asked
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|index| json!({"index":index,"correctIndices":[0],"reason":"The fixture's key."}))
-                .collect();
-            return Ok(json!({"answers":answers}).to_string());
+        if let Some(reply) = super::question_review_response(prompt) {
+            return Ok(reply);
         }
         if prompt.starts_with("Repair verified lesson defects.") {
             let data = self::context(prompt);

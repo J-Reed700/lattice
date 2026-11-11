@@ -33,6 +33,7 @@ pub use assessment::assessment_generation;
 pub use assessment::assessment_repository;
 pub use assessment::grade_rationale;
 pub(crate) use assessment::key_review;
+pub(crate) use assessment::question_review;
 pub use assessment::quiz_bank_jobs;
 pub use assessment::quiz_blueprints;
 pub use canvas::canvas_repository;

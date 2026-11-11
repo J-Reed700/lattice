@@ -100,7 +100,12 @@ async fn closed_find(
     let blocking = holds_up_review(&structure, None);
     let mut findings = if !blocking {
         quiz_step(Step::CheckingKeys);
-        let mut findings = crate::key_review::check(llm, pass.value).await?;
+        let mut findings = crate::question_review::check(
+            llm,
+            pass.value,
+            crate::question_review::Outcome::of_lesson(pass.authoring),
+        )
+        .await?;
         if let Some(round) = standing.round(pass.value) {
             quiz_step(if round.first {
                 Step::Reviewing
