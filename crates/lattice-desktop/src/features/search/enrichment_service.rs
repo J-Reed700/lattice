@@ -6,7 +6,7 @@
 //! # Responsibilities
 //!
 //! - Fetch document metadata for search result chunks
-//! - Batch processing to avoid SQLite parameter limits (999 max)
+//! - Batch processing to stay inside SQLite's bound-parameter limit
 //! - Parallel processing for performance (4x concurrency)
 //! - Generate content snippets from chunks
 //!
@@ -23,9 +23,12 @@ use crate::features::search::trait_def::SearchEnrichmentServiceTrait;
 use async_trait::async_trait;
 use futures::stream::{self, StreamExt};
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::persistence::bind_limit::rows_per_statement;
 use lattice_core::shared::persistence::Database;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+const IDS_PER_STATEMENT: usize = rows_per_statement(1, 0);
 
 /// Service for enriching search results with document metadata
 pub struct SearchEnrichmentService {
@@ -58,8 +61,8 @@ impl SearchEnrichmentService {
 
     /// Enrich search results with document metadata using parallel batch processing
     ///
-    /// This method processes chunk IDs in batches of 900 to avoid SQLite's 999 parameter limit.
-    /// Batches are processed in parallel with concurrency=4 for optimal performance.
+    /// Chunk IDs are split into batches that fit SQLite's bound-parameter limit,
+    /// and the batches run with concurrency 4.
     pub async fn enrich_results(
         &self,
         chunk_ids: &[String],
@@ -73,12 +76,14 @@ impl SearchEnrichmentService {
             "Starting search result enrichment"
         );
 
-        // Split into batches of 900 (SQLite parameter limit is 999)
-        let batches: Vec<Vec<String>> = chunk_ids.chunks(900).map(|chunk| chunk.to_vec()).collect();
+        let batches: Vec<Vec<String>> = chunk_ids
+            .chunks(IDS_PER_STATEMENT)
+            .map(|chunk| chunk.to_vec())
+            .collect();
 
         tracing::debug!(
             batch_count = batches.len(),
-            batch_size = 900,
+            batch_size = IDS_PER_STATEMENT,
             "Split chunk IDs into batches"
         );
 
@@ -262,12 +267,17 @@ mod tests {
     /// Test batch size calculation
     #[test]
     fn test_batch_calculation() {
-        let chunk_ids: Vec<String> = (0..2500).map(|i| format!("chunk{}", i)).collect();
-        let batches: Vec<Vec<String>> = chunk_ids.chunks(900).map(|chunk| chunk.to_vec()).collect();
+        let chunk_ids: Vec<String> = (0..2 * IDS_PER_STATEMENT + 100)
+            .map(|i| format!("chunk{}", i))
+            .collect();
+        let batches: Vec<Vec<String>> = chunk_ids
+            .chunks(IDS_PER_STATEMENT)
+            .map(|chunk| chunk.to_vec())
+            .collect();
 
-        assert_eq!(batches.len(), 3); // 900 + 900 + 700
-        assert_eq!(batches[0].len(), 900);
-        assert_eq!(batches[1].len(), 900);
-        assert_eq!(batches[2].len(), 700);
+        assert_eq!(batches.len(), 3);
+        assert_eq!(batches[0].len(), IDS_PER_STATEMENT);
+        assert_eq!(batches[1].len(), IDS_PER_STATEMENT);
+        assert_eq!(batches[2].len(), 100);
     }
 }
