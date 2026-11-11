@@ -500,7 +500,7 @@ Tests come first in every step. Nothing is built locally; each step is pushed to
      no kind, and the requests that carry the learner's work (`check_practice_piece`, `ask_practice_hint`,
      `send_practice_turn`, `observe_practice_draft`, `finish_practice_session`) take `files`. The view becomes the
      engine's, built by one function from the engine's `Session` for every kind: the session's own fields, its
-     `kind`, the labels the counterpart also says (the form, each stage, each rung, from `Wording`), a summary of
+     `kind`, the label of each stage (from `Wording`; the screen's other words are the kind's own copy), a summary of
      each check, the hints, the turns, how many misreadings the learner's own cases catch where the kind has such
      cases, and `work`: what the kind's own screen code draws, as one JSON value from a new role, `Screen`. The
      debrief is split the same way: scorecard, counts, misreadings and technique ratings from the engine, the rest
