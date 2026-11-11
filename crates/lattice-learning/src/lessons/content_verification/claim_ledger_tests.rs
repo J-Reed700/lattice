@@ -132,9 +132,9 @@ impl Figures {
                             .iter()
                             .find(|p| p["field"] == "/body" || p["field"] == "/explanation")
                             .unwrap();
-                        let statement = statement_in(passage["text"].as_str().unwrap());
+                        let statement = statement_in(&passage_text(passage));
                         match statement {
-                            Some(statement) => json!({"index":unit["index"],"claims":[{"passageId":passage["id"],"statement":statement}],"nonFactualReason":""}),
+                            Some(statement) => json!({"index":unit["index"],"claims":[{"sentenceId":sentence_id(passage, &statement),"statement":statement}],"nonFactualReason":""}),
                             None => json!({"index":unit["index"],"claims":[],"nonFactualReason":NOTHING_TO_CHECK}),
                         }
                     })
@@ -142,15 +142,8 @@ impl Figures {
             )
             .to_string());
         }
-        if prompt.starts_with("Verify instructional answer keys independently.") {
-            let asked = self::context(prompt)["requestedIndices"].clone();
-            let answers: Vec<Value> = asked
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|index| json!({"index":index,"correctIndices":[0],"reason":"The fixture's key."}))
-                .collect();
-            return Ok(json!({"answers":answers}).to_string());
+        if let Some(reply) = super::question_review_response(prompt) {
+            return Ok(reply);
         }
         if prompt.starts_with("Repair verified lesson defects.") {
             let data = self::context(prompt);

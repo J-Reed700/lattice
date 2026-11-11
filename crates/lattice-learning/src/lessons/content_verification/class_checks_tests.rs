@@ -102,12 +102,12 @@ impl Classes {
                             .iter()
                             .find(|p| p["field"] == "/body")
                             .unwrap();
-                        let text = passage["text"].as_str().unwrap();
+                        let text = passage_text(passage);
                         let claims: Vec<Value> = self
                             .statements
                             .iter()
                             .filter(|statement| text.contains(**statement))
-                            .map(|statement| json!({"passageId":passage["id"],"statement":statement}))
+                            .map(|statement| json!({"sentenceId":sentence_id(passage, statement),"statement":statement}))
                             .collect();
                         json!({"index":unit["index"],"claims":claims,"nonFactualReason":""})
                     })

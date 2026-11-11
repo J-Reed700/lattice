@@ -73,10 +73,11 @@ pub(super) async fn review_material(
         loop {
             let send = match subject.decide(attempt, &value, found.findings.clone())? {
                 Decision::Publish(set_aside) => {
+                    subject.save(&candidate).await?;
                     return Ok(Reviewed {
                         candidate,
                         set_aside,
-                    })
+                    });
                 }
                 Decision::Repair(send) => send,
                 Decision::Review => break,

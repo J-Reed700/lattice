@@ -14,13 +14,14 @@ use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-const EXCERPT: &str = "This saved reference describes the exact behavior of the example tool.";
+pub(super) const EXCERPT: &str =
+    "This saved reference describes the exact behavior of the example tool.";
 
 fn lesson(quote: &str) -> Value {
     json!({"blocks":[{"kind":"explanation","title":"Example","body":"The function returns the number 4 for the sum of two and two. ".repeat(12),"rubric":[],"sourceIndex":0,"quote":quote}],"questions":[]})
 }
 
-fn context() -> String {
+pub(super) fn context() -> String {
     json!({"sources":[{"sourceIndex":0,"excerpt":EXCERPT}]}).to_string()
 }
 
@@ -54,7 +55,7 @@ fn retitle_from(before: &str, after: &str) -> String {
     json!({"edits":[{"path":"/blocks/0/title","before":before,"after":after}]}).to_string()
 }
 
-fn references() -> Vec<crate::dto::LearningSourceDto> {
+pub(super) fn references() -> Vec<crate::dto::LearningSourceDto> {
     vec![crate::dto::LearningSourceDto {
         id: "saved-reference".into(),
         title: "Example reference".into(),
@@ -1339,7 +1340,7 @@ async fn the_same_unusable_repair_twice_leaves_the_finding_waiting_and_the_lesso
     Ok(())
 }
 
-const INPUT: &str = "teaching-review-resume";
+pub(super) const INPUT: &str = "teaching-review-resume";
 
 /// The scripted review, its connection lost on the first call after its first
 /// repair is answered: the recheck. The error leaves the review as a requeue
@@ -1378,11 +1379,6 @@ impl lattice_core::application::ports::llm_port::LLMPort for DropsAfterRepair {
 
 fn retitle_again(after: &str) -> String {
     json!({"edits":[{"path":"/blocks/0/title","before":"Corrected example","after":after}]})
-        .to_string()
-}
-
-fn retitle_a_third_time(after: &str) -> String {
-    json!({"edits":[{"path":"/blocks/0/title","before":"Corrected twice","after":after}]})
         .to_string()
 }
 
@@ -1430,39 +1426,12 @@ fn repairs_asked(llm: &DropsAfterRepair) -> usize {
 /// first repair as a requeue cuts one. The second starts on the draft that
 /// repair saved, after `between` has happened to it. Returns the repairs asked
 /// of the model across both runs and the second run's review.
-///
-/// A draft changed since the repair is reviewed afresh: `afresh` is whether
-/// that is what `between` does, which changes the calls the second run makes.
-async fn cut_short_then_resumed(
-    between: fn(&mut Value),
-    afresh: bool,
-) -> Result<(usize, Reviewed)> {
+async fn cut_short_then_resumed(between: fn(&mut Value)) -> Result<(usize, Reviewed)> {
     let pool = crate::tests::pool().await?;
     let (repo, job, lesson_id) =
         crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
     let llm = DropsAfterRepair {
-        model: model(if afresh {
-            let mut script: Vec<String> = defect_no_repair_fixes().into_iter().take(3).collect();
-            script.extend([
-                review(Some(
-                    "Section 1 still prints the result as the string \"4\" in the new draft.",
-                )),
-                actionable(),
-                retitle_again("Corrected twice"),
-                judged(
-                    Some("Section 1 still prints the result as the string \"4\" after two repairs."),
-                    &[verdict("reviewer/1", "present")],
-                ),
-                retitle_a_third_time("Corrected thrice"),
-                judged(
-                    Some("Section 1 still prints the result as the string \"4\" after three repairs."),
-                    &[verdict("reviewer/1", "present")],
-                ),
-            ]);
-            script
-        } else {
-            defect_no_repair_fixes()
-        }),
+        model: model(defect_no_repair_fixes()),
         repaired: AtomicBool::new(false),
         dropped: AtomicBool::new(false),
     };
@@ -1508,7 +1477,7 @@ async fn cut_short_then_resumed(
 #[tokio::test]
 async fn a_review_cut_short_after_its_first_repair_resumes_with_the_repairs_it_had_made(
 ) -> Result<()> {
-    let (repairs, reviewed) = cut_short_then_resumed(|_| {}, false).await?;
+    let (repairs, reviewed) = cut_short_then_resumed(|_| {}).await?;
     assert_eq!(repairs, 2);
     assert_eq!(reviewed.set_aside.len(), 1);
     let waiting = &reviewed.set_aside[0];
@@ -1517,12 +1486,12 @@ async fn a_review_cut_short_after_its_first_repair_resumes_with_the_repairs_it_h
     Ok(())
 }
 
-/// The repairs a review had made describe the draft it made them to: once a
-/// claim repair has changed that draft, the review starts again.
+/// The repairs a finding has had belong to the finding, not to the draft they
+/// were made to: a claim repair that changed the draft leaves them counted.
 #[tokio::test]
-async fn a_review_cut_short_resumes_afresh_on_a_draft_changed_since_its_repair() -> Result<()> {
-    let (repairs, reviewed) = cut_short_then_resumed(claim_repair, true).await?;
-    assert_eq!(repairs, 3);
+async fn a_review_cut_short_resumes_with_its_repairs_on_a_draft_changed_since() -> Result<()> {
+    let (repairs, reviewed) = cut_short_then_resumed(claim_repair).await?;
+    assert_eq!(repairs, 2);
     assert_eq!(reviewed.set_aside.len(), 1);
     let waiting = &reviewed.set_aside[0];
     assert_eq!(waiting.finding.id().as_str(), "reviewer/1");
@@ -1702,7 +1671,7 @@ fn part_body(index: usize) -> String {
     format!("{name} states one plain fact about the tool. {name} then gives a first idea.")
 }
 
-fn parts_lesson(count: usize) -> Value {
+pub(super) fn parts_lesson(count: usize) -> Value {
     let blocks: Vec<Value> = (0..count)
         .map(|index| {
             json!({
@@ -2024,9 +1993,20 @@ fn shaped_lesson_after_a_cut() -> Value {
     lesson
 }
 
-fn shaped_answers(candidate: &Value) -> String {
+/// The blind solver's answers for the lesson's questions: each picks the first option.
+fn shaped_solutions(candidate: &Value) -> String {
     let count = candidate["questions"].as_array().unwrap().len();
-    json!({"answers":(0..count).map(|index| json!({"index":index,"correctIndices":[0],"reason":"The fixture's key."})).collect::<Vec<_>>()}).to_string()
+    json!({"answers":(0..count).map(|index| json!({"index":index,"reason":"The fixture's key.","correctIndices":[0],"answer":"","blankAnswers":[],"matches":[],"orderedValues":[]})).collect::<Vec<_>>()}).to_string()
+}
+
+/// The item judge's checks for the lesson's questions: sound, except `fault`'s question.
+fn shaped_judgement(candidate: &Value, fault: Option<(usize, &str)>) -> String {
+    let count = candidate["questions"].as_array().unwrap().len();
+    let checks = (0..count).map(|index| {
+        let finding = fault.filter(|(at, _)| *at == index).map_or("", |(_, text)| text);
+        json!({"id":format!("new-{index}"),"finding":finding,"hasDefect":!finding.is_empty(),"repeats":[]})
+    });
+    json!({"checks":checks.collect::<Vec<_>>()}).to_string()
 }
 
 fn shaped_review(candidate: &Value) -> String {
@@ -2038,7 +2018,11 @@ fn shaped_review(candidate: &Value) -> String {
 }
 
 async fn waiting_after_review(candidate: &Value, protected: bool) -> Result<Vec<String>> {
-    let model = model(vec![shaped_answers(candidate), shaped_review(candidate)]);
+    let model = model(vec![
+        shaped_solutions(candidate),
+        shaped_judgement(candidate, None),
+        shaped_review(candidate),
+    ]);
     let sources = references();
     let references = ReferenceCollection::lexical(&sources)?;
     let sentences = [crate::lessons::content_verification::Protected {
@@ -2647,7 +2631,7 @@ async fn a_draft_review_is_told_what_the_writer_was() -> Result<()> {
 /// reviewer from the passages it is shown and the sections and verdicts its
 /// schema allows, the evidence check from the issues it lists, a repair from
 /// `repair`. The reviews and repairs it is sent are kept.
-struct ByRequest {
+pub(super) struct ByRequest {
     /// Whether a passage's words are a defect.
     defective: fn(&str) -> bool,
     /// Whether a section's check reports a defect again that an open finding
@@ -2667,7 +2651,10 @@ fn no_whole_defects(_: &Value, _: usize) -> Vec<&'static str> {
 }
 
 impl ByRequest {
-    fn new(defective: fn(&str) -> bool, repair: fn(&Value, usize) -> Vec<Value>) -> Self {
+    pub(super) fn new(
+        defective: fn(&str) -> bool,
+        repair: fn(&Value, usize) -> Vec<Value>,
+    ) -> Self {
         Self {
             defective,
             restates: false,
@@ -2689,12 +2676,12 @@ impl ByRequest {
     }
 
     /// The review requests, as the JSON each carries.
-    fn reviews(&self) -> Vec<Value> {
+    pub(super) fn reviews(&self) -> Vec<Value> {
         self.seen_reviews.lock().unwrap().clone()
     }
 
     /// The repair requests, as the JSON each carries.
-    fn repairs(&self) -> Vec<Value> {
+    pub(super) fn repairs(&self) -> Vec<Value> {
         self.seen_repairs.lock().unwrap().clone()
     }
 
@@ -2910,7 +2897,7 @@ fn parts_sent(sent: &Value) -> Vec<usize> {
 }
 
 /// An edit of a block's title: a change that fixes nothing.
-fn retitled(sent: &Value, index: usize) -> Value {
+pub(super) fn retitled(sent: &Value, index: usize) -> Value {
     let title = sent["candidate"]["blocks"][index]["title"]
         .as_str()
         .unwrap_or_default();
@@ -3229,7 +3216,7 @@ async fn review_in_the_job(
     .await
 }
 
-fn part_a_is_wrong(text: &str) -> bool {
+pub(super) fn part_a_is_wrong(text: &str) -> bool {
     text.contains("Part A") && text.contains("first idea")
 }
 
@@ -3448,13 +3435,93 @@ fn repair_prompts(model: &ScriptedModel) -> Vec<String> {
 }
 
 #[tokio::test]
+async fn a_lesson_question_the_judge_faults_reaches_the_repair_as_a_finding_at_that_question() {
+    const FAULT: &str = "One option stands apart from the others in length.";
+    let candidate = shaped_lesson();
+    let model = model(vec![
+        shaped_solutions(&candidate),
+        shaped_judgement(&candidate, Some((2, FAULT))),
+        shaped_review(&candidate),
+    ]);
+
+    let _ = review_shaped(&model, &candidate, &[]).await;
+
+    let prompts = model.prompts.lock().unwrap().clone();
+    assert!(
+        prompts.iter().any(|prompt| prompt.contains("issuesToFix")
+            && prompt.contains(&format!("Question 3: {FAULT}"))),
+        "{prompts:?}"
+    );
+}
+
+const REFERENCE_CHECK: &str = "Check whether proposed lesson-review findings";
+
+#[tokio::test]
+async fn a_question_finding_is_repaired_without_the_reference_check() {
+    const FAULT: &str = "One option stands apart from the others in length.";
+    let candidate = shaped_lesson();
+    let model = model(vec![
+        shaped_solutions(&candidate),
+        shaped_judgement(&candidate, Some((2, FAULT))),
+        shaped_review(&candidate),
+        retitle("Unused"),
+    ]);
+
+    let _ = review_shaped(&model, &candidate, &[]).await;
+
+    let prompts = model.prompts.lock().unwrap().clone();
+    assert!(
+        !prompts
+            .iter()
+            .any(|prompt| prompt.starts_with(REFERENCE_CHECK)),
+        "{prompts:?}"
+    );
+    assert!(
+        prompts.iter().any(|prompt| prompt.contains("issuesToFix")
+            && prompt.contains(&format!("Question 3: {FAULT}"))),
+        "{prompts:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_reference_check_is_asked_only_about_the_reviewers_findings() {
+    const FAULT: &str = "One option stands apart from the others in length.";
+    const NOTE: &str = "The first section leaves out a step.";
+    let candidate = shaped_lesson();
+    let checks = (0..candidate["blocks"].as_array().unwrap().len())
+        .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":if index == 0 {NOTE} else {"Reviewed; no teaching defect was found."},"hasDefect":index == 0}))
+        .collect();
+    let model = model(vec![
+        shaped_solutions(&candidate),
+        shaped_judgement(&candidate, Some((2, FAULT))),
+        crate::lessons::course_generation_tests::review_reply(&[], checks, &[]),
+        actionable(),
+    ]);
+
+    let _ = review_shaped(&model, &candidate, &[]).await;
+
+    let prompts = model.prompts.lock().unwrap().clone();
+    let asked: Vec<&String> = prompts
+        .iter()
+        .filter(|prompt| prompt.starts_with(REFERENCE_CHECK))
+        .collect();
+    assert_eq!(asked.len(), 1, "{prompts:?}");
+    let sent: Value = serde_json::from_str(asked[0].rsplit("\n\n").next().unwrap()).unwrap();
+    let proposals = sent["proposals"].as_array().unwrap();
+    assert_eq!(proposals.len(), 1, "{proposals:?}");
+    assert!(proposals[0]["proposal"].as_str().unwrap().contains(NOTE));
+}
+
+#[tokio::test]
 async fn a_copied_sentence_is_repaired_by_one_patch_after_the_content_was_reviewed() -> Result<()> {
     let candidate = lesson_that_copies();
     let model = model(vec![
-        shaped_answers(&candidate),
+        shaped_solutions(&candidate),
+        shaped_judgement(&candidate, None),
         shaped_review(&candidate),
         say_it_yourself(&copied_id()),
-        shaped_answers(&candidate),
+        shaped_solutions(&candidate),
+        shaped_judgement(&candidate, None),
         crate::lessons::course_generation_tests::clean_review(&[0], &[]),
     ]);
 
@@ -3500,10 +3567,12 @@ async fn a_whole_repair_is_sent_only_what_needs_the_whole_lesson_and_the_copied_
     cut["questions"].as_array_mut().unwrap().pop();
     let model = model(vec![
         full.to_string(),
-        shaped_answers(&full),
+        shaped_solutions(&full),
+        shaped_judgement(&full, None),
         shaped_review(&full),
         say_it_yourself(&copied_id()),
-        shaped_answers(&full),
+        shaped_solutions(&full),
+        shaped_judgement(&full, None),
         crate::lessons::course_generation_tests::clean_review(&[0], &[]),
     ]);
 
@@ -3542,10 +3611,12 @@ async fn a_copied_sentence_no_claim_stands_on_is_repaired_by_edits_while_claims_
         released: false,
     }];
     let model = model(vec![
-        shaped_answers(&candidate),
+        shaped_solutions(&candidate),
+        shaped_judgement(&candidate, None),
         shaped_review(&candidate),
         say_it_yourself(&copied_id()),
-        shaped_answers(&candidate),
+        shaped_solutions(&candidate),
+        shaped_judgement(&candidate, None),
         crate::lessons::course_generation_tests::clean_review(&[0], &[]),
     ]);
 
@@ -3641,10 +3712,12 @@ async fn a_whole_repair_is_neither_sent_nor_charged_a_failing_quotation() -> Res
     let fix = json!({"edits":[{"finding":quotation_id,"path":"/blocks/0/quote","before":BAD,"after":EXCERPT}]}).to_string();
     let model = model(vec![
         full.to_string(),
-        shaped_answers(&full),
+        shaped_solutions(&full),
+        shaped_judgement(&full, None),
         shaped_review(&full),
         fix,
-        shaped_answers(&full),
+        shaped_solutions(&full),
+        shaped_judgement(&full, None),
         crate::lessons::course_generation_tests::clean_review(&[0], &[]),
     ]);
 

@@ -4,7 +4,7 @@
 //!
 //! Every call goes through `model_call`: sized to the model's window (a batch
 //! halves until it fits), never timed. Answer keys stay internal.
-use super::item_review::{self, Context, Entry};
+use super::item_review::{self, Context, Entry, Findings, RepeatOf};
 use crate::assessment_engine::{
     self as engine, LearningAssessmentCandidate, LearningAssessmentKey,
     LearningBlueprintRequirement, LearningItemFormat, LearningNumericKey, LearningRubricCriterion,
@@ -322,12 +322,44 @@ pub struct Authored {
     pub dropped: Vec<String>,
 }
 
+/// An item that was written and dropped, and whether it was dropped as a
+/// repeat. A rewrite is a repeat drop when it has no defect and at least one of
+/// its repeats is of a question the bank holds: one the learner already has, or
+/// another new item of the same review that was kept or was itself a repeat
+/// drop. A repeat only of new items dropped for a defect is an ordinary drop.
+struct Dropped {
+    reason: String,
+    repeat: bool,
+}
+
+impl Dropped {
+    fn flawed(reason: String) -> Self {
+        Self {
+            reason,
+            repeat: false,
+        }
+    }
+
+    /// `held[n]` is whether the new item at position `n` is one the bank holds.
+    fn of(findings: &Findings, held: &[bool]) -> Self {
+        Self {
+            reason: findings.texts().join(" "),
+            repeat: !findings.has_defect()
+                && findings.repeats.iter().any(|r| match r.of {
+                    RepeatOf::Held => true,
+                    RepeatOf::New(n) => held.get(n).copied().unwrap_or(false),
+                }),
+        }
+    }
+}
+
 /// Write up to `need.count` items. Each round validates what was written in
 /// code, then reviews it as a question (`item_review`): a blind solve and a
 /// judge read of every item, with one repair for each that has findings and a
 /// second review of the repairs. An item that is still flawed is dropped and
-/// the next round writes in its place. A model that cannot produce a sound
-/// item leaves a smaller bank, never a flawed item.
+/// the next round writes in its place; one that is still only a repeat of a
+/// question the bank holds is dropped and not written again. A model that cannot
+/// produce a sound item leaves a smaller bank, never a flawed item.
 pub async fn author_items(llm: &dyn LLMPort, need: &AuthoringNeed) -> Result<Authored> {
     if need.count == 0 {
         return Ok(Authored::default());
@@ -348,9 +380,10 @@ pub async fn author_items(llm: &dyn LLMPort, need: &AuthoringNeed) -> Result<Aut
     let mut out = Authored::default();
     let mut need = need.clone();
     let mut notes: Vec<String> = Vec::new();
+    let mut repeats = 0;
     // The first request plus two for any shortfall.
     for _round in 0..3 {
-        let remaining = need.count.saturating_sub(out.items.len());
+        let remaining = need.count.saturating_sub(out.items.len() + repeats);
         if remaining == 0 {
             break;
         }
@@ -390,7 +423,8 @@ pub async fn author_items(llm: &dyn LLMPort, need: &AuthoringNeed) -> Result<Aut
             need.existing_prompts.push(item.candidate.prompt.clone());
             out.items.push(item);
         }
-        out.dropped.extend(dropped);
+        repeats += dropped.iter().filter(|d| d.repeat).count();
+        out.dropped.extend(dropped.into_iter().map(|d| d.reason));
         notes.sort();
         notes.dedup();
     }
@@ -399,6 +433,7 @@ pub async fn author_items(llm: &dyn LLMPort, need: &AuthoringNeed) -> Result<Aut
         format = ?need.requirement.format,
         kept = out.items.len(),
         dropped = out.dropped.len(),
+        repeats,
         reasons = ?out.dropped,
         "Quiz items authored"
     );
@@ -412,7 +447,7 @@ async fn review_items(
     need: &AuthoringNeed,
     items: &[AuthoredItem],
     learner_has: &[String],
-) -> Result<std::result::Result<Vec<Vec<String>>, String>> {
+) -> Result<std::result::Result<Vec<Findings>, String>> {
     let candidates: Vec<LearningAssessmentCandidate> =
         items.iter().map(|i| i.candidate.clone().into()).collect();
     let entries: Vec<Entry<'_>> = candidates
@@ -445,21 +480,24 @@ async fn reviewed_round(
     need: &AuthoringNeed,
     collection: &ReferenceCollection<'_>,
     fresh: Vec<AuthoredItem>,
-) -> Result<(Vec<AuthoredItem>, Vec<String>)> {
+) -> Result<(Vec<AuthoredItem>, Vec<Dropped>)> {
     if fresh.is_empty() {
         return Ok((vec![], vec![]));
     }
     let findings = match review_items(llm, need, &fresh, &need.existing_prompts).await? {
         Ok(findings) => findings,
         Err(reason) => {
-            let dropped = std::iter::repeat_n(reason, fresh.len()).collect();
+            let dropped = fresh
+                .iter()
+                .map(|_| Dropped::flawed(reason.clone()))
+                .collect();
             return Ok((vec![], dropped));
         }
     };
     let mut kept = Vec::new();
     let mut flawed = Vec::new();
     for (item, findings) in fresh.into_iter().zip(findings) {
-        if findings.is_empty() {
+        if findings.is_sound() {
             kept.push(item);
         } else {
             flawed.push((item, findings));
@@ -481,7 +519,7 @@ async fn reviewed_round(
                 "instruction": "Write a question in this one's place that has none of these defects.",
                 "question": item.candidate.prompt,
                 "options": item.candidate.options,
-                "findings": findings,
+                "findings": findings.texts(),
             })),
         };
         async move {
@@ -500,7 +538,7 @@ async fn reviewed_round(
     for ((_, findings), repair) in flawed.into_iter().zip(repaired) {
         match repair {
             Some(repair) => again.push(repair),
-            None => dropped.push(findings.join(" ")),
+            None => dropped.push(Dropped::flawed(findings.texts().join(" "))),
         }
     }
     if again.is_empty() {
@@ -508,15 +546,19 @@ async fn reviewed_round(
     }
     match review_items(llm, need, &again, &known).await? {
         Ok(second) => {
+            let mut held: Vec<bool> = Vec::new();
             for (item, findings) in again.into_iter().zip(second) {
-                if findings.is_empty() {
+                if findings.is_sound() {
                     kept.push(item);
+                    held.push(true);
                 } else {
-                    dropped.push(findings.join(" "));
+                    let drop = Dropped::of(&findings, &held);
+                    held.push(drop.repeat);
+                    dropped.push(drop);
                 }
             }
         }
-        Err(reason) => dropped.extend(std::iter::repeat_n(reason, again.len())),
+        Err(reason) => dropped.extend(again.iter().map(|_| Dropped::flawed(reason.clone()))),
     }
     Ok((kept, dropped))
 }

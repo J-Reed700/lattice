@@ -371,12 +371,12 @@ pub(crate) async fn review_lesson<'s>(
 ) -> Result<String> {
     let review_schema = review_schema.into();
     let schema = review_schema.value();
-    let mut sources: Vec<_> = references
+    let mut sources: Vec<(String, String)> = references
         .sources
         .iter()
         .map(|source| {
             (
-                &source.id,
+                source.id.clone(),
                 crate::content_verification::digest(&source.excerpt),
             )
         })
@@ -397,13 +397,7 @@ pub(crate) async fn review_lesson<'s>(
     let unchanged_review = crate::lesson_drafts::checkpoint(&source_key(&candidate))
         .await?
         .and_then(|value| serde_json::from_value::<Vec<(String, String)>>(value).ok())
-        .is_some_and(|saved| {
-            saved.iter().all(|(id, hash)| {
-                sources
-                    .iter()
-                    .any(|(current_id, current_hash)| *current_id == id && current_hash == hash)
-            })
-        });
+        .is_some_and(|saved| standing::references_hold(&saved, &sources));
     let receipt = crate::content_verification::digest(&json!({"policy":"lesson-teaching-review","findingPolicy":crate::review_evidence::POLICY,"sectionReviewPolicy":crate::teaching_review::POLICY,"model":llm.model_name(),"system":system,"prompt":prompt,"schema":schema,"reviewReferenceHashes":sources}).to_string());
     if unchanged_review || crate::lesson_drafts::teaching_completed(&candidate, &receipt).await? {
         if !unchanged_review {
@@ -464,6 +458,8 @@ mod citation_tests;
 mod contract_tests;
 #[cfg(test)]
 mod loop_tests;
+#[cfg(test)]
+mod memory_tests;
 #[cfg(test)]
 mod question_tests;
 #[cfg(test)]

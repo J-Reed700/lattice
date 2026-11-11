@@ -320,4 +320,6 @@ mod repository;
 pub(crate) use repository::{queue_grading_in, queue_lesson_bank_in};
 
 pub use grading::{grade_written_answer, judge_short_answer, QuizGradingWorker};
-pub(crate) use lesson_stage::{lesson_bank_stage, lesson_seed_items, LessonBank};
+pub(crate) use lesson_stage::{
+    lesson_bank_stage, lesson_question_item, lesson_seed_items, LessonBank,
+};

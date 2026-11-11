@@ -18,8 +18,8 @@ use crate::lessons::text_edits::{self, Named};
 use crate::outline_progress::OutlineProgress;
 use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::{
-    new_sentences, part_at, plain_part, sentences_of, FindingId, FindingSite, Held, Origin,
-    ReviewFinding, SetAside,
+    new_sentences, part_at, plain_part, sentences_of, FindingId, FindingSite, Held, ReviewFinding,
+    SetAside,
 };
 use crate::teaching_review::LengthRule;
 use lattice_core::{
@@ -87,6 +87,20 @@ impl<'a> LessonSubject<'a> {
     }
 
     /// Each reference's id and the digest of its excerpt.
+    fn reference_pairs(&self) -> Vec<(String, String)> {
+        self.references
+            .sources
+            .iter()
+            .map(|source| {
+                (
+                    source.id.clone(),
+                    crate::content_verification::digest(&source.excerpt),
+                )
+            })
+            .collect()
+    }
+
+    /// Each reference's id and the digest of its excerpt, as the reviewer is shown them.
     fn reference_versions(&self) -> Vec<Value> {
         self.references.sources.iter().map(|source| {
             json!({"id":source.id,"contentHash":crate::content_verification::digest(&source.excerpt)})
@@ -122,29 +136,33 @@ impl Subject for LessonSubject<'_> {
         }
     }
 
-    async fn resume(&mut self, candidate: &str) -> Result<()> {
-        // A review cut short resumes with the repairs it had made to this draft.
-        if let Some(saved) = crate::lesson_drafts::teaching_passes(candidate).await? {
+    async fn resume(&mut self, _candidate: &str) -> Result<()> {
+        // A review takes up what the job's earlier reviews judged and spent, whichever draft they saved it with.
+        if let Some(saved) = crate::lesson_drafts::teaching_passes().await? {
             self.passes.resume(&saved);
             self.standing.resume(&saved);
+            self.receipts.resume(&saved);
         }
         Ok(())
     }
 
     fn given(&mut self, llm: &dyn LLMPort, authoring: &Value) {
-        let inputs = json!({"authoringContext":authoring,"correctnessPriority":LESSON_PRIORITY,"referenceVersions":self.reference_versions()});
+        let inputs = json!({"authoringContext":authoring,"correctnessPriority":LESSON_PRIORITY});
         self.standing.under(&crate::teaching_review::basis(
             llm,
             &ReviewTexts::LESSON.joined(),
             LESSON_REVIEW_EVIDENCE_SCOPE,
             &inputs,
         ));
+        let references = self.reference_pairs();
+        self.standing.against(&references);
     }
 
     async fn save(&self, candidate: &str) -> Result<()> {
         let mut saved = self.passes.saved()?;
         if let Some(fields) = saved.as_object_mut() {
             fields.insert("reviewer".into(), self.standing.saved()?);
+            fields.insert("receipts".into(), self.receipts.saved()?);
         }
         crate::lesson_drafts::save_with_passes(candidate, saved.to_string()).await
     }
@@ -178,7 +196,12 @@ impl Subject for LessonSubject<'_> {
         self.held_up = blocking;
         let issues = if !blocking {
             self.step(Step::CheckingKeys);
-            let answer_issues = crate::key_review::check(llm, pass.value).await?;
+            let question_issues = crate::question_review::check(
+                llm,
+                pass.value,
+                crate::question_review::Outcome::of_lesson(pass.authoring),
+            )
+            .await?;
             let round = self.standing.round(pass.value);
             self.step(if round.as_ref().is_some_and(|round| round.first) {
                 Step::Reviewing
@@ -215,7 +238,7 @@ impl Subject for LessonSubject<'_> {
                 // The reviewer has seen exactly this lesson: its findings stand.
                 None => (None, against_plan.await?),
             };
-            let mut raised = answer_issues;
+            let mut raised = Vec::new();
             if let (Some(round), Some(judged)) = (&round, judged) {
                 raised.extend(self.standing.judged(pass.value, round, judged));
             }
@@ -228,12 +251,10 @@ impl Subject for LessonSubject<'_> {
                 None,
             )
             .await?;
-            let (new, mut issues): (Vec<_>, Vec<_>) = established
-                .into_iter()
-                .partition(|finding| matches!(finding.origin, Origin::Reviewer { .. }));
             if round.is_some() {
-                self.standing.admit(pass.value, new);
+                self.standing.admit(pass.value, established);
             }
+            let mut issues = question_issues;
             issues.extend(self.standing.open().iter().cloned());
             issues.extend(plan_findings);
             // Stopped structure stays among the findings, so it is still
