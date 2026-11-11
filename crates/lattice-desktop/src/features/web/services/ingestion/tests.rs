@@ -132,27 +132,6 @@ async fn test_ingest_url_with_mock_article() {
     assert_eq!(result.reading_time_minutes, Some(2));
 }
 
-#[tokio::test]
-async fn test_chunk_text() {
-    let service = create_test_service();
-
-    let short_text = "This is a short text.";
-    let chunks = service.chunk_text(short_text).unwrap();
-    assert_eq!(chunks.len(), 1);
-
-    let long_text = "This is a sentence. ".repeat(100);
-    let chunks = service.chunk_text(&long_text).unwrap();
-    assert!(chunks.len() > 1);
-
-    for chunk in chunks {
-        assert!(!chunk.original_content.is_empty());
-        assert!(!chunk.contextualized_content.is_empty());
-        assert!(chunk
-            .contextualized_content
-            .contains(&chunk.original_content));
-    }
-}
-
 #[test]
 fn test_builder_missing_dependencies_returns_error() {
     let result = WebIngestionService::builder().build();
@@ -742,6 +721,32 @@ mod article_vectors {
 
         fn dimension(&self) -> usize {
             12
+        }
+    }
+
+    #[test]
+    fn text_is_chunked_where_the_embedder_splits_it() {
+        let service = WebIngestionService::new(
+            Arc::new(MockArticleExtractorService::new()),
+            Arc::new(MockWebArchiveService),
+            Arc::new(RecordingEmbeddingService::new(40)),
+            Arc::new(RecordingStorage::default()),
+        );
+        assert_eq!(
+            service.chunk_text("This is a short text.").unwrap().len(),
+            1
+        );
+
+        let chunks = service
+            .chunk_text(&"This is a sentence. ".repeat(100))
+            .unwrap();
+        assert_eq!(chunks.len(), 50);
+        for (i, chunk) in chunks.iter().enumerate() {
+            assert_eq!(chunk.chunk_index, i);
+            assert_eq!(
+                chunk.contextualized_content,
+                format!("{}\n\n{}", chunk.context_prefix, chunk.original_content)
+            );
         }
     }
 
