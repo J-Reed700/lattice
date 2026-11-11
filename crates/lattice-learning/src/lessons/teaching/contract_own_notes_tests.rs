@@ -19,6 +19,6 @@ fn the_check_excepts_the_learners_own_notes_from_a_recorded_use() {
 
 #[test]
 fn a_result_saved_under_the_earlier_policy_is_not_the_current_one() {
-    assert_ne!(POLICY, "lesson-contract-v3");
-    assert_eq!(POLICY, "lesson-contract-v4");
+    assert_ne!(POLICY, "lesson-contract-v4");
+    assert_eq!(POLICY, "lesson-contract-v5");
 }

@@ -972,7 +972,7 @@ fn kept_rules(lesson: &Value) -> Vec<Rule> {
 #[test]
 fn a_lesson_whose_findings_wait_is_still_saved_and_passes_the_save_gate() {
     type Mutation = fn(&mut Value);
-    let rows: [(&str, Mutation, Rule); 18] = [
+    let rows: [(&str, Mutation, Rule); 17] = [
         (
             "blank block title",
             |l| l["blocks"][0]["title"] = json!("  "),
@@ -1040,19 +1040,9 @@ fn a_lesson_whose_findings_wait_is_still_saved_and_passes_the_save_gate() {
             Rule::RationaleMissing,
         ),
         (
-            "a question kind missing",
-            |l| {
-                l["questions"]
-                    .as_array_mut()
-                    .unwrap()
-                    .retain(|q| q["kind"] != "test")
-            },
-            Rule::QuestionKinds,
-        ),
-        (
             "no questions at all",
             |l| l["questions"] = json!([]),
-            Rule::QuestionKinds,
+            Rule::NoQuestion,
         ),
         (
             "no explanation",

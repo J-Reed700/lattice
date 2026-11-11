@@ -7,6 +7,12 @@
 //! one that reviews the content. Stopped findings wait for the user, and the
 //! lesson publishes: no teaching-review finding fails a lesson job.
 //!
+//! An attempt that changed nothing for a finding is a miss: no change named it,
+//! or none of its changes could be placed. A miss is charged only when the
+//! finding's attempt before it was a miss too, so of any two attempts in a row
+//! one is charged and a finding is sent at most twice `REPAIRS_PER_FINDING`
+//! repairs.
+//!
 //! A finding is followed by its id (`FindingId`): what raised it and what it
 //! is about, never its wording. Findings with one id are one finding; each id
 //! has its own count of repairs. Every repair can leave a new defect with a
@@ -46,6 +52,11 @@ pub(super) enum Outcome {
 }
 
 impl Outcome {
+    /// The attempt changed nothing for the finding.
+    fn is_miss(&self) -> bool {
+        matches!(self, Self::Unnamed | Self::NotApplied(_))
+    }
+
     /// What became of the attempt, for the user's log.
     fn in_words(&self) -> String {
         match self {
@@ -285,19 +296,20 @@ impl Passes {
 
     /// A repair was sent `finding` and this became of its attempt at it: the
     /// repair is charged to it, unless its edit was only left out for
-    /// overlapping another finding's, or its edits could not be placed for
-    /// the first time since it was last charged.
+    /// overlapping another finding's, or the attempt was a miss and the one
+    /// before it (not counting those left out) was not. Of two attempts in a
+    /// row one is charged, so the review still ends.
     pub fn charge(&mut self, finding: &ReviewFinding, outcome: Outcome) {
         let id = finding.id();
         let attempts = self.attempts.entry(id.clone()).or_default();
-        let refused_before = attempts
+        let missed_before = attempts
             .iter()
             .rev()
             .find(|past| **past != Outcome::Deferred)
-            .is_some_and(|past| matches!(past, Outcome::NotApplied(_)));
-        let first_refusal = matches!(outcome, Outcome::NotApplied(_)) && !refused_before;
+            .is_some_and(Outcome::is_miss);
+        let free_miss = outcome.is_miss() && !missed_before;
         attempts.push(outcome.clone());
-        if outcome == Outcome::Deferred || first_refusal {
+        if outcome == Outcome::Deferred || free_miss {
             self.last.insert(id, outcome);
             return;
         }
@@ -741,9 +753,9 @@ mod tests {
             panic!("expected a repair");
         };
         assert!(passes.spent.is_empty());
-        passes.charge(&send[0], Outcome::Unnamed);
+        passes.charge(&send[0], Outcome::Applied);
         assert_eq!(passes.spent.get(&send[0].id()), Some(&1));
-        assert_eq!(passes.last.get(&send[0].id()), Some(&Outcome::Unnamed));
+        assert_eq!(passes.last.get(&send[0].id()), Some(&Outcome::Applied));
     }
 
     #[test]
@@ -926,3 +938,7 @@ mod tests {
 #[cfg(test)]
 #[path = "passes_refusal_tests.rs"]
 mod refusal_tests;
+
+#[cfg(test)]
+#[path = "passes_misses_tests.rs"]
+mod misses_tests;

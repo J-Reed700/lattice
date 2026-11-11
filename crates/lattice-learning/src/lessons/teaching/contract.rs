@@ -18,6 +18,17 @@ macro_rules! shown {
     };
 }
 
+/// What teaches each kind of thing a part uses: the one definition the confirming read and the note share.
+macro_rules! each_shown {
+    () => {
+        concat!(
+            "for something the learner does or uses, ",
+            shown!(),
+            "; for a term, what it means"
+        )
+    };
+}
+
 /// What needs teaching about a record: the one definition the check, the confirming read and the lesson writer share.
 macro_rules! own_notes {
     () => {
@@ -36,7 +47,7 @@ macro_rules! taught {
 /// When a use has been taught: the one definition the check and the confirming read share.
 macro_rules! use_taught {
     () => {
-        concat!("The lesson has taught it when an earlier part, or this part before or in those words, says ", shown!(), ": words that ask for it and say all of this teach it where it is used. A variant is a new thing: teaching how to do something does not teach doing it another way or with something added. ", own_notes!())
+        concat!("The lesson has taught something the learner does or uses when an earlier part, or this part before or in those words, says ", shown!(), ": words that ask for it and say all of this teach it where it is used. It has taught a term when an earlier part, or this part before or in those words, says what it means. A variant is a new thing: teaching how to do something does not teach doing it another way or with something added. ", own_notes!())
     };
 }
 
@@ -51,7 +62,7 @@ const BRIEF: &str = concat!("Go through the lesson part by part in order. For ea
 /// The room the check's answer is given.
 const ANSWER_TOKENS: usize = 6000;
 
-const POLICY: &str = "lesson-contract-v4";
+const POLICY: &str = "lesson-contract-v5";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -389,7 +400,7 @@ fn findings(
                 subject_of(passage),
                 part.site,
                 format!(
-                    concat!("{} asks the learner to use {} (\"{passage}\"), and nothing before this point in the lesson, the earlier lessons or the learner's prior knowledge has taught it. Teach it in this step, where it is first used (", shown!(), "), or change the step to use only what the lesson has taught (a record asked for in the learner's own notes needs nothing taught)."),
+                    concat!("{} asks the learner to use {} (\"{passage}\"), and nothing before this point in the lesson, the earlier lessons or the learner's prior knowledge has taught it. Teach it in this step, where it is first used (", each_shown!(), "), or change the step to use only what the lesson has taught (a record asked for in the learner's own notes needs nothing taught)."),
                     label(part.site),
                     used.what,
                     passage = passage

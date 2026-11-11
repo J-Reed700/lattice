@@ -153,8 +153,8 @@ pub enum Rule {
     QuestionCount,
     /// The lesson has no explanation section.
     NoExplanation,
-    /// A kind of question is missing.
-    QuestionKinds,
+    /// The lesson has no question.
+    NoQuestion,
     /// A sentence copies the source's wording.
     CopiedWording,
     /// A sentence's citation could not be confirmed.
@@ -209,7 +209,7 @@ impl Rule {
             | Self::SectionMix
             | Self::QuestionCount
             | Self::NoExplanation
-            | Self::QuestionKinds => Remedy::Whole,
+            | Self::NoQuestion => Remedy::Whole,
         }
     }
 }
