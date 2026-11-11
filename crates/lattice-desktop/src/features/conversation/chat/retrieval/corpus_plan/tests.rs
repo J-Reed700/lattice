@@ -594,13 +594,9 @@ async fn live_corpus_retrieval_and_answer() {
         .retrieval_catalog(&scope.document_ids)
         .await
         .unwrap();
-    let settings: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap()).unwrap(),
-    )
-    .unwrap();
-    let config: lattice_core::application::contracts::settings::LLMSettingsDto =
-        serde_json::from_value(settings["settings"]["llm"].clone()).unwrap();
-    let llm = LlamaCppLlm::new(&config).unwrap().into_port().await;
+    let config = crate::tests::live_llama_cpp::settings().unwrap();
+    let header = crate::tests::live_llama_cpp::header(&config.llama_cpp.auth_header_name).unwrap();
+    let llm = LlamaCppLlm::new(&config, header).unwrap().into_port().await;
     let started = Instant::now();
     let plan = plan(
         llm.as_ref(),

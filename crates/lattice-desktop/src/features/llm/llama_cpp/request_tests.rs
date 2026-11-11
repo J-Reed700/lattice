@@ -21,7 +21,7 @@ fn client() -> LlamaCppLlm {
         },
         ..Default::default()
     };
-    LlamaCppLlm::new(&settings).unwrap()
+    LlamaCppLlm::new(&settings, None).unwrap()
 }
 
 /// A bundled server whose model pins `model_thinking`, under the user's

@@ -1,5 +1,6 @@
 use super::*;
 use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
+use lattice_core::application::services::credentials::memory::InMemoryCredentials;
 
 #[test]
 fn generation_settings_are_preserved() {
@@ -56,16 +57,32 @@ async fn loader_with(rows: &[lattice_core::domain::DownloadedModel]) -> ModelLoa
     for row in rows {
         models.save(row).await.unwrap();
     }
-    ModelLoader::new(models.clone(), models, None, LlmRuntime::default())
+    ModelLoader::new(
+        models.clone(),
+        models,
+        None,
+        LlmRuntime::default(),
+        Arc::new(InMemoryCredentials::default()),
+    )
 }
 
 /// A loader whose database must never be asked anything.
 fn loader_without_database() -> ModelLoader {
+    loader_with_credentials(Arc::new(InMemoryCredentials::default()))
+}
+
+fn loader_with_credentials(credentials: Arc<InMemoryCredentials>) -> ModelLoader {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .connect_lazy("sqlite::memory:")
         .unwrap();
     let models = Arc::new(DownloadedModelRepository::new(pool));
-    ModelLoader::new(models.clone(), models, None, LlmRuntime::default())
+    ModelLoader::new(
+        models.clone(),
+        models,
+        None,
+        LlmRuntime::default(),
+        credentials,
+    )
 }
 
 fn downloaded(model_id: &str, path: std::path::PathBuf) -> lattice_core::domain::DownloadedModel {
@@ -267,7 +284,9 @@ fn unusable_sidecar_is_not_reported_as_a_model_failure() {
 async fn a_llama_cpp_model_uses_the_llama_cpp_connection_whatever_else_settings_name() {
     use lattice_core::application::{
         contracts::settings::{LLMProvider, LlamaCppSettingsDto},
+        ports::credentials_port::CredentialsPort,
         ports::llm_port::{CompletionInput, CompletionRequest},
+        services::credentials::CredentialKey,
     };
     use wiremock::{
         matchers::{header, method, path},
@@ -306,8 +325,16 @@ async fn a_llama_cpp_model_uses_the_llama_cpp_connection_whatever_else_settings_
             .expect(1)
             .mount(&server)
             .await;
+        let credentials = Arc::new(InMemoryCredentials::default());
+        credentials
+            .set_api_key(
+                CredentialKey::LlamaCppAuthHeader.as_str(),
+                "Basic test-credential",
+            )
+            .await
+            .unwrap();
         // An uninitialized DB must never be queried for a remote model.
-        let loader = loader_without_database();
+        let loader = loader_with_credentials(credentials);
         let settings = LLMSettingsDto {
             provider,
             ollama_url: server.uri(),
@@ -316,7 +343,6 @@ async fn a_llama_cpp_model_uses_the_llama_cpp_connection_whatever_else_settings_
                 url: server.uri(),
                 model: "stale-llama-cpp-model".into(),
                 auth_header_name: "Authorization".into(),
-                auth_header_value: "Basic test-credential".into(),
             },
             ..Default::default()
         };
@@ -1156,7 +1182,7 @@ mod local_reply_ceiling_on_the_wire {
             },
             ..settings.clone()
         };
-        let client = crate::features::llm::llama_cpp::LlamaCppLlm::new(&settings)
+        let client = crate::features::llm::llama_cpp::LlamaCppLlm::new(&settings, None)
             .unwrap()
             .schedule(&SchedulerRegistry::default())
             .await;

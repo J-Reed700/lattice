@@ -46,7 +46,7 @@ A judge's pass rate is a smoke signal until a person has checked a sample of its
 | `LATTICE_MEMORY_CONTEXT_TOKENS` | The window the memory harness budgets against | 16384, as on 2026-09-26 |
 | `LATTICE_APP_SETTINGS` | The settings file the claim step copies | the app's own |
 
-No committed file names a server address or key. The script never prints the auth values. The claim step's settings copy holds the header; it is written with mode 600 under `artifacts/` and deleted when the step ends.
+No committed file names a server address or key. The script never prints the auth values. The claim step's settings copy holds only the header name; it is written with mode 600 under `artifacts/` and deleted when the step ends. The header value reaches the eval through `LATTICE_LLAMACPP_AUTH_HEADER_VALUE`, set in the eval's own subshell.
 
 ## The steps, in order
 
@@ -123,7 +123,7 @@ These are the places where a suite's docs leave something open or conflict with 
 
 - **Memory runs the release baseline on the remote model.** The latest memory baselines (2026-09-26) are the remote Qwen3.8-27B release baseline and its rerun. The design calls the 9B runs "a harness and pipeline check and the floor for the local tier, not a release baseline" (§24.5).
 - **Memory keeps two time limits.** The harness has no unlimited setting for `LATTICE_EVAL_REQUEST_TIMEOUT_SECS` (with llama.cpp this becomes the app's per-request stall timeout) or `LATTICE_EVAL_COMPACTION_DEADLINE_SECS`. The sweep sets both to 900 s, the 2026-09-26 values, so the run is comparable with that baseline. Removing them would need a harness change. They are the only model-call limits in the sweep.
-- **The claim judge comes from a settings copy.** `live_claim_pairs_eval` reads `settings.llm` from `LATTICE_LLAMACPP_SETTINGS`. The testing doc allows "a settings copy pointing at another server", so the sweep copies the app's settings and sets `llamaCpp.url`, `model`, the auth header and `contextWindow` from the judge's variables. Every other setting stays the app's own.
+- **The claim judge comes from a settings copy.** `live_claim_pairs_eval` reads `settings.llm` from `LATTICE_LLAMACPP_SETTINGS`. The testing doc allows "a settings copy pointing at another server", so the sweep copies the app's settings and sets `llamaCpp.url`, `model`, the auth header name and `contextWindow` from the judge's variables, and passes the header value in `LATTICE_LLAMACPP_AUTH_HEADER_VALUE`. Every other setting stays the app's own.
 - **The course baseline records its own web trace.** The README says a baseline replays "against an empty trace", and the recipe's shared `artifacts/course-eval/traces` may already hold pages. The sweep therefore sets `LATTICE_COURSE_WEB_TRACE` to `artifacts/baseline/<date>/course-web-traces`. A candidate replays that same directory by setting the variable to it.
 - **Course scoring runs without `--claims`.** The README marks it optional. Run `course_eval.py score <results> … --claims` afterwards to judge every claim as well.
 - **The external claim checkers (Granite, MiniCheck, Laguna) are not run.** The sweep measures Lattice's own checker only.

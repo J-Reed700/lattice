@@ -2821,14 +2821,6 @@ async getHuggingfaceTokenStatus() : Promise<Result<HfTokenStatus, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
-async getHuggingfaceToken() : Promise<Result<string | null, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:huggingface|get_huggingface_token") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async deleteHuggingfaceToken() : Promise<Result<null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:huggingface|delete_huggingface_token") };
@@ -3766,6 +3758,10 @@ async getModelLimits(model: ModelRef) : Promise<Result<ModelWindowDto, ApiError>
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Try an Ollama connection. A blank header value tries the one already
+ * stored for the saved server URL.
+ */
 async testOllamaConnection(request: TestOllamaConnectionRequest) : Promise<Result<TestOllamaConnectionResponse, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:settings|test_ollama_connection", { request }) };
@@ -3774,7 +3770,32 @@ async testOllamaConnection(request: TestOllamaConnectionRequest) : Promise<Resul
     else return { status: "error", error: e  as any };
 }
 },
-async testLlamaCppConnection(request: LlamaCppSettingsDto) : Promise<Result<TestOllamaConnectionResponse, ApiError>> {
+/**
+ * Save (`Some`) or clear (`None`, or blank) the authentication header value
+ * of a remote model server. The value goes to the keyring and is never
+ * returned.
+ */
+async saveRemoteAuthHeaderValue(server: RemoteServer, value: string | null) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|save_remote_auth_header_value", { server, value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getRemoteAuthHeaderStatus() : Promise<Result<RemoteAuthStatusDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|get_remote_auth_header_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Try a llama.cpp connection. A blank header value tries the one already
+ * stored for the saved server URL.
+ */
+async testLlamaCppConnection(request: TestLlamaCppConnectionRequest) : Promise<Result<TestOllamaConnectionResponse, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:settings|test_llama_cpp_connection", { request }) };
 } catch (e) {
@@ -7363,10 +7384,6 @@ ollamaUtilityModel: string;
  */
 ollamaAuthHeaderName: string;
 /**
- * Optional Ollama auth header value (e.g., "Bearer ...")
- */
-ollamaAuthHeaderValue: string;
-/**
  * Independent remote llama.cpp connection; switching providers retains both.
  */
 llamaCpp: LlamaCppSettingsDto;
@@ -8918,7 +8935,7 @@ export type ListWorkspaceNotesRequestDto = {
  */
 journalId: string | null }
 export type ListWorkspaceNotesResponseDto = { notes: WorkspaceNoteDto[] }
-export type LlamaCppSettingsDto = { url: string; model: string; authHeaderName: string; authHeaderValue: string }
+export type LlamaCppSettingsDto = { url: string; model: string; authHeaderName: string }
 /**
  * A model loaded right now, for diagnostics.
  */
@@ -9505,6 +9522,15 @@ total_functions: number;
  */
 call_counts: { [key in string]: number } }
 export type ReimportLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; versionId: string; expectedRevision: number; replacementText: string | null }
+/**
+ * Whether each remote server has an authentication header value stored.
+ * The values themselves never leave the keyring.
+ */
+export type RemoteAuthStatusDto = { ollama: boolean; llamaCpp: boolean }
+/**
+ * A model server the user runs and connects to over the network.
+ */
+export type RemoteServer = "ollama" | "llamaCpp"
 export type RemoveConversationFromJournalRequestDto = { journalSpaceId: string; conversationId: string }
 export type RemoveConversationSpaceMemberRequestDto = { spaceId: string; memberId: string }
 /**
@@ -10929,6 +10955,11 @@ export type TeachingSettleDto =
 "source_added"
 export type TestCustomToolRequest = { endpoint: string; queryParam: string; maxResultsParam: string | null; defaultMaxResults: number; query: string; maxResults: number | null }
 export type TestCustomToolResponse = { finalUrl: string; status: number; contentType: string | null; bodyPreview: string }
+/**
+ * A llama.cpp connection to try. The header value may be left blank to try
+ * the one already stored for the saved server URL.
+ */
+export type TestLlamaCppConnectionRequest = { url: string; model?: string; authHeaderName?: string; authHeaderValue?: string }
 export type TestOllamaConnectionRequest = { ollamaUrl: string; authHeaderName?: string; authHeaderValue?: string }
 export type TestOllamaConnectionResponse = { endpoint: string; models: string[] }
 /**
