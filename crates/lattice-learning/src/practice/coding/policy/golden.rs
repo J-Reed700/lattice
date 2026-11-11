@@ -3,7 +3,6 @@
 use super::*;
 use crate::practice::coding::dto::stages_of;
 use crate::practice::coding::golden_support::{assert_golden, rich_observation, Golden};
-use crate::practice::simulation_policy::TurnPolicy;
 
 const SETTINGS: [CodingSetting; 3] = [
     CodingSetting::Coached,
