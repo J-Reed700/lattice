@@ -3454,6 +3454,74 @@ async fn a_lesson_question_the_judge_faults_reaches_the_repair_as_a_finding_at_t
     );
 }
 
+const REFERENCE_CHECK: &str = "Check whether proposed lesson-review findings";
+
+#[tokio::test]
+async fn a_question_finding_is_repaired_without_the_reference_check() {
+    const FAULT: &str = "One option stands apart from the others in length.";
+    let candidate = shaped_lesson();
+    let model = model(vec![
+        shaped_solutions(&candidate),
+        shaped_judgement(&candidate, Some((2, FAULT))),
+        shaped_review(&candidate),
+        retitle("Unused"),
+    ]);
+
+    let _ = review_shaped(&model, &candidate, &[]).await;
+
+    let prompts = model.prompts.lock().unwrap().clone();
+    assert!(
+        !prompts
+            .iter()
+            .any(|prompt| prompt.starts_with(REFERENCE_CHECK)),
+        "{prompts:?}"
+    );
+    assert!(
+        prompts.iter().any(|prompt| prompt.contains("issuesToFix")
+            && prompt.contains(&format!("Question 3: {FAULT}"))),
+        "{prompts:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_reference_check_is_asked_only_about_the_reviewers_findings() {
+    const FAULT: &str = "One option stands apart from the others in length.";
+    const NOTE: &str = "The first section leaves out a step.";
+    let candidate = shaped_lesson();
+    let checks = (0..candidate["blocks"].as_array().unwrap().len())
+        .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":if index == 0 {NOTE} else {"Reviewed; no teaching defect was found."},"hasDefect":index == 0}))
+        .collect();
+    let model = model(vec![
+        shaped_solutions(&candidate),
+        shaped_judgement(&candidate, Some((2, FAULT))),
+        crate::lessons::course_generation_tests::review_reply(&[], checks, &[]),
+        actionable(),
+    ]);
+
+    let _ = review_shaped(&model, &candidate, &[]).await;
+
+    let prompts = model.prompts.lock().unwrap().clone();
+    let asked: Vec<&String> = prompts
+        .iter()
+        .filter(|prompt| prompt.starts_with(REFERENCE_CHECK))
+        .collect();
+    assert_eq!(asked.len(), 1, "{prompts:?}");
+    let sent: Value = serde_json::from_str(
+        asked[0]
+            .rsplit(
+                "
+
+",
+            )
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    let proposals = sent["proposals"].as_array().unwrap();
+    assert_eq!(proposals.len(), 1, "{proposals:?}");
+    assert!(proposals[0]["proposal"].as_str().unwrap().contains(NOTE));
+}
+
 #[tokio::test]
 async fn a_copied_sentence_is_repaired_by_one_patch_after_the_content_was_reviewed() -> Result<()> {
     let candidate = lesson_that_copies();
