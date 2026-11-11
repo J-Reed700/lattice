@@ -99,11 +99,6 @@ impl SecureFileStorage {
             _ => {}
         }
 
-        // TODO: Add more validation
-        // - Check against allowed directories
-        // - Resolve and validate symlinks
-        // - Check file permissions
-
         Ok(())
     }
 }

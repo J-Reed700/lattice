@@ -80,7 +80,6 @@ pub fn jaccard(a: &[String], b: &[String]) -> f32 {
 pub const JACCARD_INHERITANCE_THRESHOLD: f32 = 0.5;
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

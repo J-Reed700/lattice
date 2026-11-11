@@ -129,5 +129,4 @@ fn model_url(base: &str, version: &str, model: &str) -> Option<Url> {
 }
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests;

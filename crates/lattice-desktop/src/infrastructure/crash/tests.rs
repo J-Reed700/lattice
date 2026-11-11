@@ -144,7 +144,6 @@ fn test_crash_writer_directory_creation() {
 }
 
 #[test]
-#[allow(clippy::panic)]
 fn moving_the_crash_directory_after_the_hook_is_installed_takes_effect() {
     const CHILD_DIR: &str = "LATTICE_CRASH_HOOK_TEST_DIR";
     const MESSAGE: &str = "deliberate crash-hook regression test";

@@ -251,7 +251,6 @@ pub(super) fn inverse_stft(magnitude: &[Vec<f32>], phase: &[Vec<f32>]) -> Vec<f3
 }
 
 #[cfg(test)]
-#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

@@ -101,7 +101,6 @@ fn resolve_against_existing_ancestor(path: &Path) -> Result<PathBuf, AppError> {
 }
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
     use super::*;
     use crate::shared::testing::links::{self, LinkKind};

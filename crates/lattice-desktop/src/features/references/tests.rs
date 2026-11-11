@@ -6,7 +6,6 @@
 //! needs neither a `Container` nor a pool.
 
 #![cfg(test)]
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use sqlx::SqlitePool;
 

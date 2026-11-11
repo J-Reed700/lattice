@@ -1,5 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
-
 use super::super::chat::ports::{StoredJournalPage, SynthesisEntries};
 use super::prompts::{format_synthesis_sources, rewrite_citation_ids};
 use super::week_scope::{

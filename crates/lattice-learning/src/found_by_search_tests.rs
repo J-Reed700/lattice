@@ -2,7 +2,6 @@
 //! found (claim classes design §3.5(4)), over a database from before it: a
 //! page an outline saved from the web stays under the admission sweep, as
 //! every outline source was, and a document is left alone.
-#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use crate::source_library::LearningSourceLibraryRepository;
 use lattice_core::shared::persistence::Database;
 use sqlx::migrate::{Migrate, Migrator};

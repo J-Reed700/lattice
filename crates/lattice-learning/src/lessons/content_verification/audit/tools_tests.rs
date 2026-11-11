@@ -3,7 +3,6 @@
 //! work's cited sources reach the search, a query naming several sites is
 //! one search per site, and a need outside the schema is refused without
 //! searching.
-#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
 use std::sync::Mutex;
 

@@ -28,18 +28,6 @@ use tokio::fs;
 struct ArticleMetadata {
     /// Article title
     title: String,
-
-    /// Original URL
-    // reason: required key of the browser extension's metadata.json; keeping it
-    // preserves the parse-time check that the file actually carries a URL.
-    #[allow(dead_code)]
-    url: String,
-
-    /// Optional site name (e.g., "Wikipedia", "Medium")
-    // reason: part of the same metadata.json schema, kept alongside `url`.
-    #[allow(dead_code)]
-    #[serde(default)]
-    site_name: Option<String>,
 }
 
 /// Detector for web articles archived by browser extension
@@ -237,6 +225,21 @@ mod tests {
         let result = WebArticleDetector::get_title(&article_path).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AppError::Serialization(_)));
+    }
+
+    #[tokio::test]
+    async fn a_metadata_file_without_a_url_still_gives_its_title() {
+        let temp_dir = TempDir::new().unwrap();
+        let article_path = temp_dir.path().join("article.md");
+        fs::write(&article_path, "content").unwrap();
+        fs::write(
+            temp_dir.path().join("metadata.json"),
+            r#"{"title": "No Url Article"}"#,
+        )
+        .unwrap();
+
+        let title = WebArticleDetector::get_title(&article_path).await.unwrap();
+        assert_eq!(title, "No Url Article");
     }
 
     #[tokio::test]
