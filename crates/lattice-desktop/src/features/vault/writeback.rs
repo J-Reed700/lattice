@@ -11,6 +11,7 @@ use tokio::sync::Notify;
 use lattice_core::application::ports::NoteIndexSink;
 use lattice_core::application::ports::SettingsReaderPort;
 use lattice_core::application::ports::WorkspaceNotesPort;
+use lattice_core::shared::path_safety::single_file_name;
 use lattice_core::shared::persistence::Database;
 
 /// The note transaction already persisted its outbox entry. A notification
@@ -301,7 +302,7 @@ async fn run_worker(
 }
 
 pub(super) fn safe_note_id(id: &str) -> bool {
-    !id.is_empty() && id != "." && id != ".." && !id.contains(['/', '\\', '\0'])
+    single_file_name(id).is_ok()
 }
 
 async fn settle_write(

@@ -62,7 +62,8 @@ impl ModelPaths {
     /// comes from a frontend-supplied download id, and `Path::join` discards the
     /// base for an absolute component.
     pub fn file_path(&self, filename: &str) -> Result<PathBuf, AppError> {
-        lattice_core::shared::fs::confinement::validate_bare_filename(filename)?;
+        single_file_name(filename)
+            .map_err(|reason| AppError::Security(format!("Filename {reason}: {filename:?}")))?;
 
         let joined = self.unified_path.join(filename);
 

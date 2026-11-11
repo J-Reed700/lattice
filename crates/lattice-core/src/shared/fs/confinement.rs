@@ -110,46 +110,6 @@ fn resolve_against_existing_ancestor(path: &Path) -> Result<PathBuf, AppError> {
     }
 }
 
-/// Reject a filename that is anything other than a single, plain name.
-///
-/// Used where a caller supplies a *file name* rather than a path — an
-/// absolute string or one containing a separator would escape the directory
-/// it is about to be joined onto.
-pub fn validate_bare_filename(name: &str) -> Result<(), AppError> {
-    if name.is_empty() {
-        return Err(AppError::Security("Filename cannot be empty".to_string()));
-    }
-
-    if name.contains('/') || name.contains('\\') {
-        return Err(AppError::Security(format!(
-            "Filename may not contain path separators: {}",
-            name
-        )));
-    }
-
-    if Path::new(name).is_absolute() {
-        return Err(AppError::Security(format!(
-            "Filename may not be an absolute path: {}",
-            name
-        )));
-    }
-
-    if name == "." || name == ".." {
-        return Err(AppError::Security(format!(
-            "Filename may not be a directory reference: {}",
-            name
-        )));
-    }
-
-    if name.contains('\0') {
-        return Err(AppError::Security(
-            "Filename may not contain null bytes".to_string(),
-        ));
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
@@ -214,21 +174,5 @@ mod tests {
     #[test]
     fn rejects_a_junction_pointing_outside_the_root() {
         link_cannot_leave_the_root(LinkKind::Junction);
-    }
-
-    #[test]
-    fn bare_filename_accepts_plain_names() {
-        assert!(validate_bare_filename("model.safetensors").is_ok());
-        assert!(validate_bare_filename("model-00001-of-00002.bin").is_ok());
-    }
-
-    #[test]
-    fn bare_filename_rejects_escapes() {
-        // The SEC-2 case: an absolute filename makes `join` drop the base.
-        assert!(validate_bare_filename("/Users/example/.zshenv").is_err());
-        assert!(validate_bare_filename("../../.zshenv").is_err());
-        assert!(validate_bare_filename("sub/dir.bin").is_err());
-        assert!(validate_bare_filename("..").is_err());
-        assert!(validate_bare_filename("").is_err());
     }
 }
