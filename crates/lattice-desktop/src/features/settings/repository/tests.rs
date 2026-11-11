@@ -935,13 +935,13 @@ async fn store_after_a_failed_migration(value: Option<&str>) -> (TempDir, Arc<Fi
 #[tokio::test]
 async fn a_value_saved_after_a_failed_migration_survives_the_next_start() {
     use lattice_core::application::services::credentials::CredentialKey;
-    let (dir, keyring) = store_after_a_failed_migration(Some("Bearer new")).await;
+    let (dir, keyring) = store_after_a_failed_migration(Some("new-value")).await;
 
     assert_eq!(
         keyring
             .inner
             .stored(CredentialKey::LlamaCppAuthHeader.as_str()),
-        Some("Bearer new".to_string())
+        Some("new-value".to_string())
     );
     let on_disk = fs::read_to_string(dir.path().join(SETTINGS_FILE_NAME))
         .await
