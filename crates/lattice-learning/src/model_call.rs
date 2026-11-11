@@ -20,6 +20,11 @@ tokio::task_local! {
     pub(crate) static PACKED: ();
 }
 
+/// Whether the running call was sent by a packer that sends less on a size refusal.
+pub(crate) fn sent_by_packer() -> bool {
+    PACKED.try_with(|_| ()).is_ok()
+}
+
 /// Whether authoring calls (outline and lesson drafts and their reviews) work
 /// through the task in prose before the schema-constrained answer: asking for
 /// the format while reasoning costs small models their structured-output
