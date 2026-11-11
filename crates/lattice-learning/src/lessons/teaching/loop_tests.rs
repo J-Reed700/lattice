@@ -2168,7 +2168,7 @@ fn the_draft_review_still_reports_a_question_shortfall_and_a_section_shortfall()
 }
 
 #[tokio::test]
-async fn a_lesson_a_cut_left_without_a_test_question_waits_for_one_after_a_protected_review(
+async fn a_lesson_a_cut_left_without_a_test_question_waits_for_nothing_after_a_protected_review(
 ) -> Result<()> {
     let mut candidate = shaped_lesson_after_a_cut();
     candidate["questions"]
@@ -2177,10 +2177,7 @@ async fn a_lesson_a_cut_left_without_a_test_question_waits_for_one_after_a_prote
         .retain(|question| question["kind"] != "test");
     assert_eq!(candidate["questions"].as_array().unwrap().len(), 4);
     let waiting = waiting_after_review(&candidate, true).await?;
-    assert!(
-        waiting.iter().any(|id| id == "structure:lesson"),
-        "{waiting:?}"
-    );
+    assert!(waiting.is_empty(), "{waiting:?}");
     Ok(())
 }
 
