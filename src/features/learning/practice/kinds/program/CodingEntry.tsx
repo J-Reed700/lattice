@@ -7,8 +7,9 @@ import { newId } from '@/lib/api';
 import type * as Wire from '@/lib/bindings';
 import { getErrorMessage } from '@/lib/errorUtils';
 
-import { SETTING_NAMES } from './caseViews';
-import { codingApi } from './codingApi';
+import { programApi } from './programApi';
+import { SETTING_NAMES } from '../../session/practiceNames';
+import { sessionApi } from '../../session/sessionApi';
 
 export interface CodingBuildChoice {
   lessonId?: string | null;
@@ -49,7 +50,7 @@ export function CodingEntry({ programId, choice, onReady, onCancel }: CodingEntr
       setPhase({ kind: 'starting' });
       try {
         const { choice: picked, onReady: ready } = latest.current;
-        const session = await codingApi.startSession({
+        const session = await sessionApi.startSession({
           operationId: startOperationId.current,
           programId,
           activityId: activity,
@@ -87,7 +88,7 @@ export function CodingEntry({ programId, choice, onReady, onCancel }: CodingEntr
   useEffect(() => {
     let cancelled = false;
     const { choice: picked } = latest.current;
-    codingApi
+    programApi
       .startBuild({
         operationId: operationId.current,
         programId,

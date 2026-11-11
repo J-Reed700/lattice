@@ -3,11 +3,11 @@ import { useCallback, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { ArrowLeft } from 'lucide-react';
 
 import { CourseDrillsPanel } from '@/features/learning/drills/CourseDrillsPanel';
-import { CodingEntry } from '@/features/learning/practice/coding/CodingEntry';
-import { CodingSession } from '@/features/learning/practice/coding/CodingSession';
 import { FeynmanTechniquePanel } from '@/features/learning/practice/FeynmanTechniquePanel';
+import { CodingEntry, kinds } from '@/features/learning/practice/kinds';
 import { PracticalWorkbenchPanel } from '@/features/learning/practice/practical/PracticalWorkbenchPanel';
 import { PracticeWorkbenchPanel } from '@/features/learning/practice/PracticeWorkbenchPanel';
+import { PracticeSession } from '@/features/learning/practice/session/PracticeSession';
 import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
 import type * as Wire from '@/lib/bindings';
 import { getErrorMessage } from '@/lib/errorUtils';
@@ -196,7 +196,7 @@ export function PracticeArea({ program, currentLesson, currentModule, view }: Pr
         <CodingEntry programId={programId} choice={view.view.choice} onReady={view.openCoding} onCancel={view.openHome} />
       )}
       {view.view.kind === 'coding' && (
-        <CodingSession key={view.view.sessionId} programId={programId} sessionId={view.view.sessionId} onExit={view.openHome} onTryInterview={tryInterview} />
+        <PracticeSession key={view.view.sessionId} programId={programId} sessionId={view.view.sessionId} kinds={kinds} onExit={view.openHome} onTryInterview={tryInterview} />
       )}
 
       <div role="tabpanel" id={panelId('attempt')} aria-labelledby={tabId('attempt')} hidden={kind !== 'attempt'} className="space-y-4">

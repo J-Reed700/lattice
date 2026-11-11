@@ -4,33 +4,25 @@ import { Check, Lightbulb } from 'lucide-react';
 
 import type * as Wire from '@/lib/bindings';
 
+import type { KindCopy, KindView } from './kind';
+
 export interface HintLadderProps {
-  hints: Wire.PracticeHintDto[];
-  nextRung: Wire.Rung;
+  session: Wire.PracticeSessionDto;
+  copy: Pick<KindCopy, 'rung'>;
+  HintMark: KindView['HintMark'];
   asking?: boolean;
   onAsk: () => void;
 }
 
-const RUNGS: Record<Wire.Rung, { name: string; ask: string }> = {
-  nudge: { name: 'Nudge', ask: 'Get a nudge' },
-  idea: { name: 'Idea', ask: 'Get the idea' },
-  plan: { name: 'Plan', ask: 'Get a plan' },
-  point: { name: 'Point at the line', ask: 'Point at the line' },
-};
-
-function lineList(hint: Wire.PracticeHintDto): string {
-  const where = hint.path ? ` of ${hint.path}` : '';
-  return `Look at line${hint.lines.length === 1 ? '' : 's'} ${hint.lines.join(', ')}${where}`;
-}
-
-export function HintLadder({ hints, nextRung, asking = false, onAsk }: HintLadderProps) {
+export function HintLadder({ session, copy, HintMark, asking = false, onAsk }: HintLadderProps) {
+  const { hints, nextRung } = session;
   const [read, setRead] = useState<ReadonlySet<number>>(new Set());
   const latest = hints[hints.length - 1] as Wire.PracticeHintDto | undefined;
   const latestRead = latest === undefined || read.has(latest.ordinal);
 
   return (
-    <section aria-labelledby="coding-hints-heading" className="rounded-xl border border-border-default bg-surface p-4">
-      <h2 id="coding-hints-heading" className="m-0 font-serif text-lg font-semibold text-text-primary">
+    <section aria-labelledby="practice-hints-heading" className="rounded-xl border border-border-default bg-surface p-4">
+      <h2 id="practice-hints-heading" className="m-0 font-serif text-lg font-semibold text-text-primary">
         Stuck?
       </h2>
       <p className="m-0 mt-1 text-sm text-text-secondary">One hint at a time. Every hint says why it helps.</p>
@@ -41,13 +33,11 @@ export function HintLadder({ hints, nextRung, asking = false, onAsk }: HintLadde
             <li key={hint.ordinal} className="rounded-lg border border-border-subtle bg-surface-sunken p-3">
               <div className="flex items-center gap-2 text-xs font-semibold text-text-secondary">
                 <Lightbulb className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>{RUNGS[hint.rung].name}</span>
+                <span>{copy.rung(hint.rung).name}</span>
               </div>
               <p className="m-0 mt-1.5 text-sm font-medium text-text-primary">{hint.text}</p>
               <p className="m-0 mt-1 text-sm text-text-secondary">Why: {hint.reason}</p>
-              {hint.rung === 'point' && hint.lines.length > 0 ? (
-                <p className="m-0 mt-1 font-mono text-sm text-danger-fg">{lineList(hint)}</p>
-              ) : null}
+              {HintMark ? <HintMark session={session} hint={hint} /> : null}
             </li>
           ))}
         </ol>
@@ -61,7 +51,7 @@ export function HintLadder({ hints, nextRung, asking = false, onAsk }: HintLadde
             onClick={onAsk}
             className="min-h-[44px] cursor-pointer rounded-lg border border-border-default bg-surface px-4 text-sm font-semibold text-text-primary hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {asking ? 'Getting a hint…' : RUNGS[nextRung].ask}
+            {asking ? 'Getting a hint…' : copy.rung(nextRung).ask}
           </button>
         ) : (
           <>
