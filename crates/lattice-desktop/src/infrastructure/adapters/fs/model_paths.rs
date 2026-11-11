@@ -3,6 +3,7 @@
 //! Resolves the configured home directory and enforces filesystem confinement.
 
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::path_safety::single_file_name;
 use std::path::{Path, PathBuf};
 
 /// Infrastructure adapter for model storage paths.
@@ -61,7 +62,8 @@ impl ModelPaths {
     /// comes from a frontend-supplied download id, and `Path::join` discards the
     /// base for an absolute component.
     pub fn file_path(&self, filename: &str) -> Result<PathBuf, AppError> {
-        lattice_core::shared::fs::confinement::validate_bare_filename(filename)?;
+        single_file_name(filename)
+            .map_err(|reason| AppError::Security(format!("Filename {reason}: {filename:?}")))?;
 
         let joined = self.unified_path.join(filename);
 
@@ -114,10 +116,10 @@ impl ModelPaths {
             ));
         }
 
-        if model_id.contains("..") || model_id.contains('/') || model_id.contains('\\') {
-            return Err(AppError::InvalidInput(
-                "Invalid model ID: contains path separators or traversal".to_string(),
-            ));
+        if let Err(reason) = single_file_name(model_id) {
+            return Err(AppError::InvalidInput(format!(
+                "Invalid model ID: not a single plain file name ({reason})"
+            )));
         }
 
         Ok(())
@@ -183,6 +185,15 @@ mod tests {
         assert!(paths.file_path("..").is_err());
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn file_path_refuses_names_windows_reads_as_a_parent_or_a_drive() {
+        let paths = ModelPaths::new("phi-3-mini").expect("valid model id");
+        for name in ["...", ".. ", "C:x"] {
+            assert!(paths.file_path(name).is_err(), "{name:?}");
+        }
+    }
+
     #[test]
     fn file_path_accepts_a_plain_filename_and_stays_under_the_root() {
         let paths = ModelPaths::new("phi-3-mini").expect("valid model id");
@@ -193,6 +204,21 @@ mod tests {
             .expect("canonical root");
         assert!(resolved.starts_with(root));
         assert!(resolved.ends_with("model.gguf"));
+    }
+
+    #[test]
+    fn file_path_accepts_two_dots_inside_a_filename() {
+        let paths = ModelPaths::new("phi-3-mini").expect("valid model id");
+        let resolved = paths
+            .file_path("model..Q4_K_M.gguf")
+            .expect("dots inside a name are fine");
+        assert!(resolved.ends_with("model..Q4_K_M.gguf"));
+    }
+
+    #[test]
+    fn a_model_id_with_two_dots_inside_it_is_valid() {
+        assert!(ModelPaths::validate_model_id("model..v2").is_ok());
+        assert!(ModelPaths::validate_model_id("..").is_err());
     }
 
     #[test]

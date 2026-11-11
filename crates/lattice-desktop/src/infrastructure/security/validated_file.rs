@@ -10,9 +10,12 @@
 // - Platform-specific checks for Windows/Unix
 // - Clear error messages for security debugging
 
+use lattice_core::shared::path_safety::{reject_parent_components, PathUnsafe};
 use std::fs::{File, Metadata};
 use std::io::{self, Read};
-use std::path::{Component, Path, PathBuf};
+#[cfg(windows)]
+use std::path::Component;
+use std::path::{Path, PathBuf};
 
 /// Error type for path validation failures
 #[derive(Debug, thiserror::Error)]
@@ -74,33 +77,18 @@ impl PathSecurityValidator {
             return Err(ValidationError::EmptyPath);
         }
 
-        if let Some(path_str) = path.to_str() {
-            if path_str.contains('\0') {
-                return Err(ValidationError::NullByte);
-            }
-        }
+        reject_parent_components(path).map_err(|reason| match reason {
+            PathUnsafe::NulByte => ValidationError::NullByte,
+            _ => ValidationError::ParentTraversal,
+        })?;
 
+        // Block ADS (Alternate Data Streams): file.txt:stream
+        #[cfg(windows)]
         for component in path.components() {
-            match component {
-                Component::ParentDir => return Err(ValidationError::ParentTraversal),
-                Component::Normal(os_str) => {
-                    if let Some(s) = os_str.to_str() {
-                        if s.contains('\0') {
-                            return Err(ValidationError::NullByte);
-                        }
-
-                        // Windows-specific checks
-                        #[cfg(windows)]
-                        {
-                            // Block ADS (Alternate Data Streams): file.txt:stream
-                            // The colon after the filename allows accessing hidden streams
-                            if s.contains(':') {
-                                return Err(ValidationError::WindowsAds);
-                            }
-                        }
-                    }
+            if let Component::Normal(os_str) = component {
+                if os_str.to_str().is_some_and(|s| s.contains(':')) {
+                    return Err(ValidationError::WindowsAds);
                 }
-                _ => {}
             }
         }
 
@@ -455,6 +443,19 @@ mod tests {
     fn test_path_security_validator_parent_traversal() {
         let path = PathBuf::from("../test.txt");
         let result = PathSecurityValidator::validate(&path);
+        assert!(matches!(result, Err(ValidationError::ParentTraversal)));
+    }
+
+    #[test]
+    fn a_backslash_separated_parent_is_traversal_on_every_platform() {
+        let result = PathSecurityValidator::validate(&PathBuf::from("a\\..\\b"));
+        assert!(matches!(result, Err(ValidationError::ParentTraversal)));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_dots_only_segment_is_traversal_on_windows() {
+        let result = PathSecurityValidator::validate(&PathBuf::from("a\\...\\b"));
         assert!(matches!(result, Err(ValidationError::ParentTraversal)));
     }
 
