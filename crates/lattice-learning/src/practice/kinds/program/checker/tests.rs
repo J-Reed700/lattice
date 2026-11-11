@@ -53,6 +53,7 @@ async fn a_passing_behaviour_reports_what_run_cases_reports() {
     assert_eq!(report.results, run_directly(&tools).await);
     assert!(report.all_passed());
     assert!(report.marks.is_empty());
+    assert_eq!(report.detail, serde_json::Value::Null);
 }
 
 #[tokio::test]

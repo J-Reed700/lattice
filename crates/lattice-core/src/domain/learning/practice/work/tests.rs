@@ -121,6 +121,7 @@ fn report(statuses: &[CaseStatus]) -> CheckReport {
             })
             .collect(),
         marks: Vec::new(),
+        detail: serde_json::Value::Null,
     }
 }
 
@@ -215,6 +216,59 @@ fn stored_names_of_rungs() {
 fn stored_names_of_scopes() {
     assert_eq!(name(CheckScope::Shown), "shown");
     assert_eq!(name(CheckScope::All), "all");
+    assert_eq!(name(CheckScope::Own), "own");
+}
+
+#[test]
+fn stored_names_of_check_statuses() {
+    let names: Vec<String> = [
+        CheckStatus::Pending,
+        CheckStatus::Running,
+        CheckStatus::Passed,
+        CheckStatus::Failed,
+        CheckStatus::TimedOut,
+        CheckStatus::Cancelled,
+        CheckStatus::Interrupted,
+        CheckStatus::Unavailable,
+    ]
+    .into_iter()
+    .map(name)
+    .collect();
+    assert_eq!(
+        names,
+        [
+            "pending",
+            "running",
+            "passed",
+            "failed",
+            "timed_out",
+            "cancelled",
+            "interrupted",
+            "unavailable"
+        ]
+    );
+}
+
+#[test]
+fn stored_names_of_learner_case_verdicts() {
+    let names: Vec<String> = [
+        LearnerCaseVerdict::Right,
+        LearnerCaseVerdict::Wrong,
+        LearnerCaseVerdict::Invalid,
+    ]
+    .into_iter()
+    .map(name)
+    .collect();
+    assert_eq!(names, ["right", "wrong", "invalid"]);
+}
+
+#[test]
+fn a_report_round_trips_with_its_detail() {
+    let mut with_detail = report(&[CaseStatus::Passed]);
+    with_detail.detail = json!({"note": "x"});
+    let text = serde_json::to_string(&with_detail).unwrap();
+    let back: CheckReport = serde_json::from_str(&text).unwrap();
+    assert_eq!(back, with_detail);
 }
 
 #[test]

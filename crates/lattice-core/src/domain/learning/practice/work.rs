@@ -163,6 +163,31 @@ pub enum Spacing {
 pub enum CheckScope {
     Shown,
     All,
+    /// One case the learner supplied; it asks for no verdict.
+    Own,
+}
+
+/// How a check as a whole stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckStatus {
+    Pending,
+    Running,
+    Passed,
+    Failed,
+    TimedOut,
+    Cancelled,
+    Interrupted,
+    Unavailable,
+}
+
+/// What the reference said about a case the learner wrote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum LearnerCaseVerdict {
+    Right,
+    Wrong,
+    Invalid,
 }
 
 /// One state of the work: a draft, a reference, a misreading. The engine stores it and never reads inside it.
@@ -263,6 +288,8 @@ pub struct PartMark {
 pub struct CheckReport {
     pub results: Vec<CaseResult>,
     pub marks: Vec<PartMark>,
+    /// What the kind says about the check beyond its cases; `Null` when it has nothing.
+    pub detail: serde_json::Value,
 }
 
 impl CheckReport {

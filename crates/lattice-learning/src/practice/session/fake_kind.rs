@@ -3,12 +3,12 @@
 //! A case's body is `{"index": i, "expected": "x"}`; it passes when the piece holds that string at that index.
 
 use crate::practice::session::kind::{
-    Checker, Diff, Established, Gaps, Kind, Order, Parts, Showing, Truth, Wording,
+    Checker, Diff, Established, Gaps, Kind, LearnerCases, Order, Parts, Showing, Truth, Wording,
 };
 use async_trait::async_trait;
 use lattice_core::domain::learning::practice::work::{
-    Brief, Case, CaseResult, CaseStatus, Change, ChangeKind, CheckReport, Draft, Exercise, Form,
-    KindId, MarkState, PartMark, PartRef, Piece, Spacing, Stage,
+    Brief, Case, CaseResult, CaseStatus, Change, ChangeKind, CheckReport, Draft, Exercise, KindId,
+    MarkState, PartMark, PartRef, Piece, Spacing,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
@@ -105,7 +105,11 @@ impl Checker for Letters {
                 })
                 .collect(),
         };
-        Ok(CheckReport { results, marks })
+        Ok(CheckReport {
+            results,
+            marks,
+            detail: Value::Null,
+        })
     }
 }
 
@@ -155,16 +159,46 @@ impl Diff for Letters {
 }
 
 impl Showing for Letters {
-    fn brief(&self, brief: &Brief) -> Result<String> {
-        Ok(brief.title.clone())
+    fn brief(&self, brief: &Brief, shown: &[Case]) -> Result<String> {
+        let mut text = format!("Brief: {}\n", brief.title);
+        for case in shown {
+            text.push_str(&format!("Shown: {}\n", case.title));
+        }
+        Ok(text)
     }
 
     fn piece(&self, _brief: &Brief, piece: &Piece) -> Result<String> {
-        Ok(slots_of(piece)?.join(", "))
+        Ok(format!("{}\n", slots_of(piece)?.join(", ")))
     }
 
-    fn result(&self, _brief: &Brief, case: &Case, result: &CaseResult) -> Result<String> {
-        Ok(format!("{}: {:?}", case.title, result.status))
+    fn case(
+        &self,
+        _brief: &Brief,
+        case: &Case,
+        result: Option<&CaseResult>,
+        open: bool,
+    ) -> Result<String> {
+        let mut text = case.title.clone();
+        if let Some(index) = open.then(|| case.body.get("index")).flatten() {
+            text.push_str(&format!(" (slot {index})"));
+        }
+        if let Some(result) = result {
+            text.push_str(&format!(" -> {:?}", result.status));
+        }
+        Ok(text)
+    }
+
+    fn check_notes(&self, _brief: &Brief, detail: &Value) -> Result<Vec<String>> {
+        Ok(detail
+            .get("notes")
+            .and_then(Value::as_array)
+            .map(|notes| {
+                notes
+                    .iter()
+                    .filter_map(|note| note.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default())
     }
 }
 
@@ -172,9 +206,12 @@ impl Wording for Letters {
     fn card(&self) -> String {
         "Letters".to_owned()
     }
+}
 
-    fn stage_label(&self, _brief: &Brief, _form: Form, stage: Stage) -> String {
-        format!("{stage:?}")
+impl LearnerCases for Letters {
+    fn show(&self, _brief: &Brief, body: &Value) -> Result<String> {
+        let letter = body.get("letter").and_then(Value::as_str).unwrap_or("?");
+        Ok(format!("letter {letter}"))
     }
 }
 
@@ -259,6 +296,7 @@ pub(crate) struct FakeKindBuilder {
     reference: Vec<String>,
     gaps: bool,
     order: bool,
+    learner_cases: bool,
     needed: usize,
     ambiguous: Option<String>,
 }
@@ -270,6 +308,7 @@ pub(crate) fn fake_kind(reference: &[&str]) -> FakeKindBuilder {
         reference: reference.iter().map(|slot| (*slot).to_owned()).collect(),
         gaps: false,
         order: false,
+        learner_cases: false,
         needed: 0,
         ambiguous: None,
     }
@@ -283,6 +322,11 @@ impl FakeKindBuilder {
 
     pub(crate) fn with_order(mut self) -> Self {
         self.order = true;
+        self
+    }
+
+    pub(crate) fn with_learner_cases(mut self) -> Self {
+        self.learner_cases = true;
         self
     }
 
@@ -312,7 +356,8 @@ impl FakeKindBuilder {
             showing: roles.clone(),
             truth: roles.clone(),
             gaps: self.gaps.then(|| roles.clone() as Arc<dyn Gaps>),
-            order: self.order.then(|| roles as Arc<dyn Order>),
+            order: self.order.then(|| roles.clone() as Arc<dyn Order>),
+            learner_cases: self.learner_cases.then(|| roles as Arc<dyn LearnerCases>),
         }
     }
 }
