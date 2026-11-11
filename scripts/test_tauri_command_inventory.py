@@ -87,5 +87,21 @@ class OrphanCommandTests(unittest.TestCase):
                 inventory.parse_orphan_baseline(malformed)
 
 
+class SecretCommandTests(unittest.TestCase):
+    def test_a_command_that_returns_a_stored_secret_is_refused(self):
+        handlers = {
+            "huggingface": {"get_huggingface_token_status", "get_huggingface_token"},
+            "settings": {"get_settings"},
+        }
+        problems = inventory.secret_command_problems(handlers)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("huggingface:get_huggingface_token", problems[0])
+
+    def test_status_commands_that_report_only_whether_a_secret_is_set_are_fine(self):
+        self.assertEqual(
+            inventory.secret_command_problems({"huggingface": {"get_huggingface_token_status"}}), []
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

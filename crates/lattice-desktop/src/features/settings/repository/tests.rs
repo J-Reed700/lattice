@@ -717,3 +717,100 @@ async fn the_page_fetch_timeout_is_only_checked_when_pages_are_read() {
         .flatten()
         .any(|message| message.contains("web_page_fetch_timeout_secs")));
 }
+
+const LEGACY_OLLAMA_VALUE: &str = "Bearer legacy-ollama-secret";
+const LEGACY_LLAMA_VALUE: &str = "Basic legacy-llama-secret";
+
+/// A settings directory holding a file written before auth header values
+/// moved to the keyring.
+async fn legacy_settings_dir() -> TempDir {
+    let dir = TempDir::new().unwrap();
+    SettingsRepository::new(dir.path().to_path_buf())
+        .await
+        .unwrap();
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut file: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).await.unwrap()).unwrap();
+    let llm = &mut file["settings"]["llm"];
+    llm["ollamaAuthHeaderName"] = "Authorization".into();
+    llm["ollamaAuthHeaderValue"] = LEGACY_OLLAMA_VALUE.into();
+    llm["llamaCpp"]["authHeaderName"] = "Authorization".into();
+    llm["llamaCpp"]["authHeaderValue"] = LEGACY_LLAMA_VALUE.into();
+    fs::write(&path, serde_json::to_string_pretty(&file).unwrap())
+        .await
+        .unwrap();
+    dir
+}
+
+#[tokio::test]
+async fn a_legacy_auth_header_value_moves_to_the_keyring_and_leaves_the_file() {
+    use crate::features::credentials::keys::CredentialKey;
+    let dir = legacy_settings_dir().await;
+    let keyring = Arc::new(crate::features::credentials::memory::InMemoryCredentials::default());
+
+    let repo = SettingsRepository::with_credentials(dir.path().to_path_buf(), keyring.clone())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        keyring.stored(CredentialKey::OllamaAuthHeader.as_str()),
+        Some(LEGACY_OLLAMA_VALUE.to_string())
+    );
+    assert_eq!(
+        keyring.stored(CredentialKey::LlamaCppAuthHeader.as_str()),
+        Some(LEGACY_LLAMA_VALUE.to_string())
+    );
+    let on_disk = fs::read_to_string(dir.path().join(SETTINGS_FILE_NAME))
+        .await
+        .unwrap();
+    assert!(!on_disk.contains("legacy-ollama-secret"), "{on_disk}");
+    assert!(!on_disk.contains("legacy-llama-secret"), "{on_disk}");
+    assert!(on_disk.contains("Authorization"), "names stay in the file");
+    let loaded = repo.get_all().await.unwrap();
+    assert!(loaded.llm.ollama_auth_header_value.is_empty());
+    assert!(loaded.llm.llama_cpp.auth_header_value.is_empty());
+}
+
+#[tokio::test]
+async fn a_legacy_value_the_keyring_refuses_stays_for_the_next_start() {
+    use crate::features::credentials::keys::CredentialKey;
+    let dir = legacy_settings_dir().await;
+    let locked =
+        Arc::new(crate::features::credentials::memory::InMemoryCredentials::refusing_writes());
+
+    let repo = SettingsRepository::with_credentials(dir.path().to_path_buf(), locked.clone())
+        .await
+        .unwrap();
+    // An unrelated save must not be the thing that loses the secret.
+    let mut settings = repo.get_all().await.unwrap();
+    settings.search.max_results = 33;
+    repo.save_all(&settings).await.unwrap();
+
+    assert_eq!(
+        locked.stored(CredentialKey::OllamaAuthHeader.as_str()),
+        None
+    );
+    let on_disk = fs::read_to_string(dir.path().join(SETTINGS_FILE_NAME))
+        .await
+        .unwrap();
+    assert!(on_disk.contains("legacy-ollama-secret"), "{on_disk}");
+    assert!(on_disk.contains("legacy-llama-secret"), "{on_disk}");
+    assert_eq!(
+        repo.get_all().await.unwrap().llm.ollama_auth_header_value,
+        LEGACY_OLLAMA_VALUE,
+        "the value is still usable for this run"
+    );
+
+    let keyring = Arc::new(crate::features::credentials::memory::InMemoryCredentials::default());
+    SettingsRepository::with_credentials(dir.path().to_path_buf(), keyring.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        keyring.stored(CredentialKey::OllamaAuthHeader.as_str()),
+        Some(LEGACY_OLLAMA_VALUE.to_string())
+    );
+    let on_disk = fs::read_to_string(dir.path().join(SETTINGS_FILE_NAME))
+        .await
+        .unwrap();
+    assert!(!on_disk.contains("legacy-ollama-secret"), "{on_disk}");
+}

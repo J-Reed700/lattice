@@ -18,4 +18,6 @@
 pub mod adapter;
 pub mod di;
 pub mod dto;
+#[cfg(test)]
+pub(crate) mod memory;
 pub mod use_cases;
