@@ -18,14 +18,6 @@ macro_rules! shown {
     };
 }
 
-/// What needs teaching about a record: the one definition the check, the confirming read and the lesson writer share.
-macro_rules! own_notes {
-    () => {
-        ""
-    };
-}
-pub(crate) use own_notes;
-
 /// What it takes for each kind of planned item to be taught: the one definition the check and the confirming read share.
 macro_rules! taught {
     () => {
@@ -583,5 +575,5 @@ pub(super) async fn check(
 mod identity_tests;
 
 #[cfg(test)]
-#[path = "contract_own_notes_tests.rs"]
-mod own_notes_tests;
+#[path = "contract_note_tests.rs"]
+mod note_tests;

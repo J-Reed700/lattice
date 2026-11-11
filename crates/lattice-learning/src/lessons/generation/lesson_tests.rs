@@ -836,7 +836,9 @@ fn the_writer_is_told_question_reasons_say_what_is_true() {
 fn the_writer_teaches_how_a_deliverable_is_recorded() {
     let text = writer_requirements();
     for expected in [
-        "every step a deliverable needs, including how the learner records or saves their work. Writing in the learner's own notes, on paper or wherever they already keep notes, needs nothing taught. A record kept anywhere else (a named file, folder, app or tool) needs the way to make it taught. Teach the way to keep a record anywhere else here, unless an earlier lesson's planned actions teach it, or ask for the record in the learner's own notes.",
+        "every step a deliverable needs, including how the learner records or saves their work",
+        "a deliverable kept anywhere but the learner's own notes needs the way to record it there taught, here or in an earlier lesson's planned actions",
+        "otherwise ask for the record in the learner's own notes",
     ] {
         assert!(text.contains(expected), "missing {expected:?} in {text}");
     }

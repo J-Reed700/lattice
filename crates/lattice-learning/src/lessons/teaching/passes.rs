@@ -917,3 +917,7 @@ mod tests {
         assert_eq!(passes.account(&second).inherited, 1);
     }
 }
+
+#[cfg(test)]
+#[path = "passes_refusal_tests.rs"]
+mod refusal_tests;

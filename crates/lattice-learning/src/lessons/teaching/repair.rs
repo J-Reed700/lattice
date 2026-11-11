@@ -410,3 +410,7 @@ mod tests {
         assert_eq!(sent.finding_ids(), ["reviewer/1", "reviewer/5"]);
     }
 }
+
+#[cfg(test)]
+#[path = "repair_reach_tests.rs"]
+mod reach_tests;
