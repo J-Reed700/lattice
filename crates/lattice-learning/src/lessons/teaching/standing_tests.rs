@@ -505,6 +505,37 @@ fn two_reports_that_continue_one_finding_leave_one_finding_and_no_new_number() {
 }
 
 #[test]
+fn a_report_that_continues_a_known_finding_is_that_finding_restated_and_spends_no_number() {
+    let candidate = lesson(&[FIRST, SECOND]);
+    let (mut standing, fresh) = reviewed(
+        &candidate,
+        vec![report(Some(FindingSite::Section(0)), "Wrong.", Some(FIRST))],
+    );
+    let changed = lesson(&[FIRST, "The second part now states a third."]);
+    let (round, new) = answer(
+        &mut standing,
+        &changed,
+        Vec::new(),
+        vec![continuing(&fresh[0], "Wrong, in new words.", None)],
+    );
+    assert_eq!(round.known.len(), 1);
+    assert!(new.is_empty());
+    assert_eq!(standing.open().len(), 1);
+    assert_eq!(standing.open()[0].id(), fresh[0].id());
+    assert_eq!(standing.open()[0].note, "Wrong.");
+    standing.admit(&changed, new);
+    let again = lesson(&[FIRST, "The second part now states a fourth."]);
+    let (_, later) = answer(
+        &mut standing,
+        &again,
+        Vec::new(),
+        vec![report(Some(FindingSite::Section(1)), "Another.", None)],
+    );
+    assert_eq!(later.len(), 1);
+    assert_eq!(later[0].id().as_str(), "reviewer/2");
+}
+
+#[test]
 fn a_report_that_continues_an_id_that_is_not_open_is_raised_as_new() {
     let candidate = lesson(&[FIRST, SECOND]);
     let (mut standing, fresh) = reviewed(
