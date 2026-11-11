@@ -735,3 +735,19 @@ async fn a_not_established_proposal_naming_a_recorded_finding_stays_so() -> Resu
     assert!(established.is_empty());
     Ok(())
 }
+
+#[tokio::test]
+async fn a_decision_naming_a_recorded_finding_that_was_not_offered_is_asked_for_again() -> Result<()>
+{
+    let (sent, established) = gate_with(
+        vec![
+            gate_decision("actionable", "recorded-7"),
+            gate_decision("actionable", "none"),
+        ],
+        &recorded_findings(),
+    )
+    .await?;
+    assert_eq!(sent.len(), 2);
+    assert_eq!(established.len(), 1);
+    Ok(())
+}
