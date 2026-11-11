@@ -153,8 +153,8 @@ pub enum Rule {
     QuestionCount,
     /// The lesson has no explanation section.
     NoExplanation,
-    /// A kind of question is missing.
-    QuestionKinds,
+    /// The lesson has no question.
+    NoQuestion,
     /// A sentence copies the source's wording.
     CopiedWording,
     /// A sentence's citation could not be confirmed.
@@ -209,7 +209,7 @@ impl Rule {
             | Self::SectionMix
             | Self::QuestionCount
             | Self::NoExplanation
-            | Self::QuestionKinds => Remedy::Whole,
+            | Self::NoQuestion => Remedy::Whole,
         }
     }
 }
@@ -460,6 +460,17 @@ impl ReviewFinding {
                     ..
                 }
             )
+    }
+
+    /// Whether the lesson lacks teaching, which its correction adds without changing any existing sentence.
+    pub fn adds(&self) -> bool {
+        matches!(
+            self.origin,
+            Origin::Plan {
+                check: PlanCheck::Used | PlanCheck::Planned,
+                ..
+            }
+        )
     }
 
     /// This finding's identity: the same across passes while the same defect

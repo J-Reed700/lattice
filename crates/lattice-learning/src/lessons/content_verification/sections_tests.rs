@@ -245,9 +245,7 @@ fn a_lesson_that_loses_more_than_a_third_of_its_sections_or_its_first_explanatio
 }
 
 #[test]
-fn a_lesson_the_cuts_would_leave_without_a_question_of_a_kind_it_asks_is_thin() {
-    // The retry of 2026-11-03 took the only practice question out and could
-    // not save the lesson: a lesson is saved only with every kind of question.
+fn a_lesson_the_cuts_would_leave_without_a_question_of_a_kind_it_asks_is_not_thin() {
     let asked = |kind: &str, prompt: &str| {
         let mut question = question(prompt);
         question["kind"] = json!(kind);
@@ -261,10 +259,10 @@ fn a_lesson_the_cuts_would_leave_without_a_question_of_a_kind_it_asks_is_thin() 
         asked("test", "T?"),
     ]);
 
-    let practice = thin(&lesson, &Going::new([4])).unwrap();
-    assert!(practice.contains("practice question"), "{practice}");
-    // A kind that keeps a question of its own is no loss.
+    assert!(thin(&lesson, &Going::new([4])).is_none());
     assert!(thin(&lesson, &Going::new([5])).is_none());
+    let all = thin(&lesson, &Going::new([4, 5, 6, 7])).unwrap();
+    assert!(all.contains("all of its questions"), "{all}");
 }
 
 #[test]

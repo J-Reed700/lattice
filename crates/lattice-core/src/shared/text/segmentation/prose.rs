@@ -281,7 +281,9 @@ impl Layout {
 /// Where the break UAX #29 put at `at` lands: after the whitespace it leads
 /// into. A break right after its terminator and before a run of `*`, `_`, `~`
 /// or backticks moves past the run, the quotes and brackets after it, and the
-/// whitespace after them, or is dropped (`None`) when text follows directly.
+/// whitespace after them, or is dropped (`None`) when text follows directly. A
+/// break right after an ASCII `.`, `!` or `?` and its closers is dropped too:
+/// a sentence ends at a stop followed by whitespace, not inside a token.
 fn settle(text: &str, at: usize) -> Option<usize> {
     let mut end = at;
     if !text.get(..at)?.ends_with(char::is_whitespace) {
@@ -291,6 +293,12 @@ fn settle(text: &str, at: usize) -> Option<usize> {
             if !text.get(end..)?.starts_with(char::is_whitespace) {
                 return None;
             }
+        } else if text
+            .get(..at)?
+            .trim_end_matches(is_closer)
+            .ends_with(['.', '!', '?'])
+        {
+            return None;
         }
     }
     let end = past(text, end, char::is_whitespace);
