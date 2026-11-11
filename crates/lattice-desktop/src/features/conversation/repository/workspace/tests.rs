@@ -520,3 +520,181 @@ async fn bookmark_search_ranks_each_bookmark_by_its_own_match() {
         .unwrap();
     assert_eq!(message_ids(all), [unrelated, weak, strong]);
 }
+
+#[tokio::test]
+async fn a_better_match_lists_before_a_newer_weaker_one() {
+    let (_directory, repo) = repository().await;
+    let older = repo
+        .create("Kestrel kestrel kestrel", None)
+        .await
+        .unwrap()
+        .id
+        .to_string();
+    let newer = repo
+        .create("Harbor notes", None)
+        .await
+        .unwrap()
+        .id
+        .to_string();
+    repo.add_message(
+        &newer,
+        lattice_core::domain::conversation::MessageRole::User,
+        "a kestrel flew over the quiet harbor today",
+        1,
+        None,
+    )
+    .await
+    .unwrap();
+    for filler in ["Bread", "Milk", "Cheese", "Apples", "Tea", "Rice"] {
+        repo.create(filler, None).await.unwrap();
+    }
+    for (id, updated_at) in [
+        (&older, "2026-01-01T00:00:00Z"),
+        (&newer, "2026-01-02T00:00:00Z"),
+    ] {
+        sqlx::query("UPDATE conversations SET updated_at = ? WHERE id = ?")
+            .bind(updated_at)
+            .bind(id)
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+    }
+
+    let found = repo
+        .list_conversations_explorer(explorer_query(Some("kestrel"), false, None, None))
+        .await
+        .unwrap();
+
+    assert_eq!(titles(&found), ["Kestrel kestrel kestrel", "Harbor notes"]);
+}
+
+#[tokio::test]
+async fn each_explorer_scope_filter_lists_only_its_own_conversations() {
+    let (_directory, repo) = repository().await;
+    let space = ConversationSpaceRepository::new(repo.pool.clone())
+        .create(CreateConversationSpaceRequestDto {
+            name: "Destination".into(),
+            description: None,
+            icon: None,
+            accent_color: None,
+            space_prompt: None,
+            tool_preferences_json: None,
+        })
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO learning_programs
+            (id, title, goal, status, revision, prior_knowledge, minutes_per_session, model_name, created_at)
+         VALUES ('program-1', 'Course', 'Learn', 'active', 1, 'none', 30, 'model', 0)",
+    )
+    .execute(&repo.pool)
+    .await
+    .unwrap();
+    let mut ids = std::collections::HashMap::new();
+    for title in [
+        "In space",
+        "In program",
+        "Saved",
+        "Bookmarked",
+        "Pinned",
+        "Message bookmark",
+        "Plain",
+    ] {
+        let id = repo.create(title, None).await.unwrap().id.to_string();
+        ids.insert(title, id);
+    }
+    for (title, column, value) in [
+        ("In space", "space_id", space.id.as_str()),
+        ("In program", "program_id", "program-1"),
+    ] {
+        sqlx::query(&format!(
+            "UPDATE conversations SET {column} = ? WHERE id = ?"
+        ))
+        .bind(value)
+        .bind(&ids[title])
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+    }
+    for (title, column) in [
+        ("Saved", "is_saved"),
+        ("Bookmarked", "is_bookmarked"),
+        ("Pinned", "is_pinned"),
+    ] {
+        sqlx::query(&format!(
+            "UPDATE conversations SET {column} = 1 WHERE id = ?"
+        ))
+        .bind(&ids[title])
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+    }
+    bookmarked_message(
+        &repo,
+        &ids["Message bookmark"],
+        "remember this",
+        "2026-01-01T00:00:00Z",
+    )
+    .await;
+    let base = || explorer_query(None, false, None, None);
+    let list = |query: ListConversationsExplorerQueryDto| {
+        let repo = &repo;
+        async move {
+            let mut found = titles(&repo.list_conversations_explorer(query).await.unwrap())
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            found.sort();
+            found
+        }
+    };
+
+    assert_eq!(
+        list(ListConversationsExplorerQueryDto {
+            space_id: Some(space.id.clone()),
+            ..base()
+        })
+        .await,
+        ["In space"]
+    );
+    assert_eq!(
+        list(ListConversationsExplorerQueryDto {
+            program_id: Some("program-1".into()),
+            ..base()
+        })
+        .await,
+        ["In program"]
+    );
+    assert_eq!(
+        list(ListConversationsExplorerQueryDto {
+            saved_only: Some(true),
+            ..base()
+        })
+        .await,
+        ["Saved"]
+    );
+    assert_eq!(
+        list(ListConversationsExplorerQueryDto {
+            bookmarked_only: Some(true),
+            ..base()
+        })
+        .await,
+        ["Bookmarked"]
+    );
+    assert_eq!(
+        list(ListConversationsExplorerQueryDto {
+            pinned_only: Some(true),
+            ..base()
+        })
+        .await,
+        ["Pinned"]
+    );
+    assert_eq!(
+        list(ListConversationsExplorerQueryDto {
+            has_message_bookmarks: Some(true),
+            ..base()
+        })
+        .await,
+        ["Message bookmark"]
+    );
+}
