@@ -206,6 +206,11 @@ async fn the_form_read_is_shown_each_question_as_index_prompt_and_options_only()
             .collect();
         keys.sort();
         assert_eq!(keys, ["index", "options", "prompt"]);
+        let options = question["options"].as_array().unwrap();
+        for (index, option) in options.iter().enumerate() {
+            assert_eq!(option["index"], json!(index), "{question}");
+            assert!(option["text"].is_string(), "{question}");
+        }
     }
     assert!(!raw.contains(EXPLANATION), "{raw}");
     assert!(!raw.contains(RATIONALE), "{raw}");
