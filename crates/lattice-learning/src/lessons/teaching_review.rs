@@ -122,8 +122,6 @@ pub struct Verdict {
     pub id: FindingId,
     pub present: bool,
     pub note: String,
-    #[serde(default)]
-    pub quote: String,
 }
 
 /// A defect the reviewer reported, before it has a number.
@@ -572,7 +570,6 @@ async fn review_sections(
                                 id: finding.id.clone(),
                                 present: matches!(entry.verdict, Judgement::Present),
                                 note: entry.note.trim().to_owned(),
-                                quote: String::new(),
                             });
                         }
                         _ => problems.push(format!("{} needs one verdict.", finding.id.as_str())),

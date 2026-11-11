@@ -165,6 +165,18 @@ pub(super) fn citable_texts(part: &Value, question: bool) -> Vec<&str> {
     first.into_iter().chain(reasons).collect()
 }
 
+/// The citation entry for `sentence` in `part`.
+#[allow(dead_code)]
+pub(super) fn citation_entry(
+    _part: &Value,
+    _question: bool,
+    sentence: &str,
+    source_index: Value,
+    quote: &str,
+) -> Option<Value> {
+    Some(json!({"sentence":sentence,"sourceIndex":source_index,"quote":quote}))
+}
+
 /// Appends `cite` to the citations of the block or question it names. Its
 /// sentence must stand in that part's body, or in a question's explanation
 /// or a choice's reason, and the same citation is not listed twice.
@@ -932,3 +944,6 @@ mod copied_tests;
 
 #[cfg(test)]
 mod locate_tests;
+
+#[cfg(test)]
+mod citation_entry_tests;
