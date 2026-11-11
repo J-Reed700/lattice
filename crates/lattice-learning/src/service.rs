@@ -502,6 +502,30 @@ mod tests {
     }
 
     #[test]
+    fn a_prepared_lesson_with_no_question_of_one_kind_is_saved() {
+        let mut program = fixture();
+        program.sources.clear();
+        let lesson_id = program.modules[0].lessons[0].id.clone();
+        let mut lesson = prepared(&lesson_id);
+        let gone: Vec<String> = lesson
+            .questions
+            .iter()
+            .filter(|question| question.kind == crate::dto::LessonQuestionKind::Test)
+            .map(|question| question.id.clone())
+            .collect();
+        assert!(!gone.is_empty());
+        lesson
+            .questions
+            .retain(|question| !gone.contains(&question.id));
+        lesson.keys.retain(|key| !gone.contains(&key.question_id));
+        assert!(!lesson.questions.is_empty());
+        let checked = validate_prepared(&lesson, &program);
+        assert!(checked.is_ok(), "{checked:?}");
+        let saved = validate_generated(&lesson, &program);
+        assert!(saved.is_ok(), "{saved:?}");
+    }
+
+    #[test]
     fn a_question_whose_options_differ_only_by_letter_case_is_accepted() {
         let mut program = fixture();
         program.sources.clear();

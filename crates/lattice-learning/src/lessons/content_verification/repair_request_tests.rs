@@ -314,9 +314,7 @@ async fn a_verification_repair_is_told_the_shape_the_lesson_is_kept_with() -> Re
     );
     let words: Vec<&str> = lines.iter().filter_map(Value::as_str).collect();
     assert!(
-        words
-            .join("\n")
-            .contains("at least one question of each kind"),
+        words.join("\n").contains("at least one question."),
         "{words:?}"
     );
     Ok(())
