@@ -322,12 +322,36 @@ pub struct Authored {
     pub dropped: Vec<String>,
 }
 
+/// An item that was written and dropped, and whether it was dropped as a
+/// repeat: its rewrite was reviewed and only repeats remained.
+struct Dropped {
+    reason: String,
+    repeat: bool,
+}
+
+impl Dropped {
+    fn flawed(reason: String) -> Self {
+        Self {
+            reason,
+            repeat: false,
+        }
+    }
+
+    fn of(findings: &Findings) -> Self {
+        Self {
+            reason: findings.texts().join(" "),
+            repeat: findings.defects.is_empty(),
+        }
+    }
+}
+
 /// Write up to `need.count` items. Each round validates what was written in
 /// code, then reviews it as a question (`item_review`): a blind solve and a
 /// judge read of every item, with one repair for each that has findings and a
 /// second review of the repairs. An item that is still flawed is dropped and
-/// the next round writes in its place. A model that cannot produce a sound
-/// item leaves a smaller bank, never a flawed item.
+/// the next round writes in its place; one that is still only a repeat of a
+/// question the bank holds is dropped and not written again. A model that cannot
+/// produce a sound item leaves a smaller bank, never a flawed item.
 pub async fn author_items(llm: &dyn LLMPort, need: &AuthoringNeed) -> Result<Authored> {
     if need.count == 0 {
         return Ok(Authored::default());
@@ -348,9 +372,10 @@ pub async fn author_items(llm: &dyn LLMPort, need: &AuthoringNeed) -> Result<Aut
     let mut out = Authored::default();
     let mut need = need.clone();
     let mut notes: Vec<String> = Vec::new();
+    let mut repeats = 0;
     // The first request plus two for any shortfall.
     for _round in 0..3 {
-        let remaining = need.count.saturating_sub(out.items.len());
+        let remaining = need.count.saturating_sub(out.items.len() + repeats);
         if remaining == 0 {
             break;
         }
@@ -390,7 +415,8 @@ pub async fn author_items(llm: &dyn LLMPort, need: &AuthoringNeed) -> Result<Aut
             need.existing_prompts.push(item.candidate.prompt.clone());
             out.items.push(item);
         }
-        out.dropped.extend(dropped);
+        repeats += dropped.iter().filter(|d| d.repeat).count();
+        out.dropped.extend(dropped.into_iter().map(|d| d.reason));
         notes.sort();
         notes.dedup();
     }
@@ -399,6 +425,7 @@ pub async fn author_items(llm: &dyn LLMPort, need: &AuthoringNeed) -> Result<Aut
         format = ?need.requirement.format,
         kept = out.items.len(),
         dropped = out.dropped.len(),
+        repeats,
         reasons = ?out.dropped,
         "Quiz items authored"
     );
@@ -445,14 +472,17 @@ async fn reviewed_round(
     need: &AuthoringNeed,
     collection: &ReferenceCollection<'_>,
     fresh: Vec<AuthoredItem>,
-) -> Result<(Vec<AuthoredItem>, Vec<String>)> {
+) -> Result<(Vec<AuthoredItem>, Vec<Dropped>)> {
     if fresh.is_empty() {
         return Ok((vec![], vec![]));
     }
     let findings = match review_items(llm, need, &fresh, &need.existing_prompts).await? {
         Ok(findings) => findings,
         Err(reason) => {
-            let dropped = std::iter::repeat_n(reason, fresh.len()).collect();
+            let dropped = fresh
+                .iter()
+                .map(|_| Dropped::flawed(reason.clone()))
+                .collect();
             return Ok((vec![], dropped));
         }
     };
@@ -500,7 +530,7 @@ async fn reviewed_round(
     for ((_, findings), repair) in flawed.into_iter().zip(repaired) {
         match repair {
             Some(repair) => again.push(repair),
-            None => dropped.push(findings.texts().join(" ")),
+            None => dropped.push(Dropped::flawed(findings.texts().join(" "))),
         }
     }
     if again.is_empty() {
@@ -512,11 +542,11 @@ async fn reviewed_round(
                 if findings.is_sound() {
                     kept.push(item);
                 } else {
-                    dropped.push(findings.texts().join(" "));
+                    dropped.push(Dropped::of(&findings));
                 }
             }
         }
-        Err(reason) => dropped.extend(std::iter::repeat_n(reason, again.len())),
+        Err(reason) => dropped.extend(again.iter().map(|_| Dropped::flawed(reason.clone()))),
     }
     Ok((kept, dropped))
 }

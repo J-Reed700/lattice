@@ -38,6 +38,16 @@ impl Round {
     }
 }
 
+/// Each reference's id and the digest of its excerpt.
+pub(super) type Versions = Vec<(String, String)>;
+
+/// Whether a review reached under the references `recorded` still stands
+/// with `current` ones: a reference added does not unsettle it, one changed or
+/// removed does. The one rule for it, for every review kept across references.
+pub(super) fn references_hold(recorded: &[(String, String)], current: &[(String, String)]) -> bool {
+    recorded.iter().all(|version| current.contains(version))
+}
+
 /// The reviewer's findings on one material.
 pub(super) struct Standing {
     /// Each part's digest when the reviewer last saw it.
@@ -45,6 +55,8 @@ pub(super) struct Standing {
     /// The digest of what the reviewer was given besides the material; empty
     /// until a review.
     basis: String,
+    /// The references the verdicts were reached under; none when not known.
+    versions: Option<Versions>,
     /// The reviewer's findings that are open, in the order raised.
     open: Vec<ReviewFinding>,
     /// For each open finding, the digests of the sentences it is about: its
@@ -59,6 +71,8 @@ struct Saved {
     reviewed: Vec<(FindingSite, String)>,
     #[serde(default)]
     basis: String,
+    #[serde(default)]
+    versions: Option<Versions>,
     open: Vec<ReviewFinding>,
     about: Vec<(FindingId, Vec<String>)>,
     next_number: u32,
@@ -99,6 +113,7 @@ impl Standing {
         Self {
             reviewed: BTreeMap::new(),
             basis: String::new(),
+            versions: None,
             open: held
                 .reviewer
                 .iter()
@@ -128,6 +143,7 @@ impl Standing {
                 .map(|(site, digest)| (*site, digest.clone()))
                 .collect(),
             basis: self.basis.clone(),
+            versions: self.versions.clone(),
             open: self.open.clone(),
             about: self
                 .about
@@ -151,6 +167,7 @@ impl Standing {
         };
         self.reviewed = kept.reviewed.into_iter().collect();
         self.basis = kept.basis;
+        self.versions = kept.versions;
         self.open = kept.open;
         self.about = kept
             .about
@@ -168,6 +185,20 @@ impl Standing {
             self.reviewed.clear();
             self.basis = basis.to_owned();
         }
+    }
+
+    /// Notes the references the reviewer is given. Verdicts reached under
+    /// others stand while `references_hold`; saved state that does not say
+    /// which they were is not trusted.
+    pub fn against(&mut self, current: &[(String, String)]) {
+        let stands = self
+            .versions
+            .as_deref()
+            .is_some_and(|recorded| references_hold(recorded, current));
+        if !stands {
+            self.reviewed.clear();
+        }
+        self.versions = Some(current.to_vec());
     }
 
     /// Whether the part at `site` is not as the reviewer last saw it.

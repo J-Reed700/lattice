@@ -1382,11 +1382,6 @@ fn retitle_again(after: &str) -> String {
         .to_string()
 }
 
-fn retitle_a_third_time(after: &str) -> String {
-    json!({"edits":[{"path":"/blocks/0/title","before":"Corrected twice","after":after}]})
-        .to_string()
-}
-
 /// The defect of `a_defect_no_repair_fixes_waits_after_its_second_repair`: the
 /// calls of two repairs, each rechecked, and the pass that stops at the second.
 /// The reviewer's verdict on a finding is not checked against the evidence
@@ -1431,39 +1426,12 @@ fn repairs_asked(llm: &DropsAfterRepair) -> usize {
 /// first repair as a requeue cuts one. The second starts on the draft that
 /// repair saved, after `between` has happened to it. Returns the repairs asked
 /// of the model across both runs and the second run's review.
-///
-/// A draft changed since the repair is reviewed afresh: `afresh` is whether
-/// that is what `between` does, which changes the calls the second run makes.
-async fn cut_short_then_resumed(
-    between: fn(&mut Value),
-    afresh: bool,
-) -> Result<(usize, Reviewed)> {
+async fn cut_short_then_resumed(between: fn(&mut Value)) -> Result<(usize, Reviewed)> {
     let pool = crate::tests::pool().await?;
     let (repo, job, lesson_id) =
         crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
     let llm = DropsAfterRepair {
-        model: model(if afresh {
-            let mut script: Vec<String> = defect_no_repair_fixes().into_iter().take(3).collect();
-            script.extend([
-                review(Some(
-                    "Section 1 still prints the result as the string \"4\" in the new draft.",
-                )),
-                actionable(),
-                retitle_again("Corrected twice"),
-                judged(
-                    Some("Section 1 still prints the result as the string \"4\" after two repairs."),
-                    &[verdict("reviewer/1", "present")],
-                ),
-                retitle_a_third_time("Corrected thrice"),
-                judged(
-                    Some("Section 1 still prints the result as the string \"4\" after three repairs."),
-                    &[verdict("reviewer/1", "present")],
-                ),
-            ]);
-            script
-        } else {
-            defect_no_repair_fixes()
-        }),
+        model: model(defect_no_repair_fixes()),
         repaired: AtomicBool::new(false),
         dropped: AtomicBool::new(false),
     };
@@ -1509,7 +1477,7 @@ async fn cut_short_then_resumed(
 #[tokio::test]
 async fn a_review_cut_short_after_its_first_repair_resumes_with_the_repairs_it_had_made(
 ) -> Result<()> {
-    let (repairs, reviewed) = cut_short_then_resumed(|_| {}, false).await?;
+    let (repairs, reviewed) = cut_short_then_resumed(|_| {}).await?;
     assert_eq!(repairs, 2);
     assert_eq!(reviewed.set_aside.len(), 1);
     let waiting = &reviewed.set_aside[0];
@@ -1518,12 +1486,12 @@ async fn a_review_cut_short_after_its_first_repair_resumes_with_the_repairs_it_h
     Ok(())
 }
 
-/// The repairs a review had made describe the draft it made them to: once a
-/// claim repair has changed that draft, the review starts again.
+/// The repairs a finding has had belong to the finding, not to the draft they
+/// were made to: a claim repair that changed the draft leaves them counted.
 #[tokio::test]
-async fn a_review_cut_short_resumes_afresh_on_a_draft_changed_since_its_repair() -> Result<()> {
-    let (repairs, reviewed) = cut_short_then_resumed(claim_repair, true).await?;
-    assert_eq!(repairs, 3);
+async fn a_review_cut_short_resumes_with_its_repairs_on_a_draft_changed_since() -> Result<()> {
+    let (repairs, reviewed) = cut_short_then_resumed(claim_repair).await?;
+    assert_eq!(repairs, 2);
     assert_eq!(reviewed.set_aside.len(), 1);
     let waiting = &reviewed.set_aside[0];
     assert_eq!(waiting.finding.id().as_str(), "reviewer/1");

@@ -15,11 +15,6 @@ use lattice_core::application::services::grounded_generation::{
 };
 use lattice_core::shared::error::{AppError, Result};
 
-tokio::task_local! {
-    /// Set while a packer's call runs: a size refusal there makes it send less.
-    pub(crate) static PACKED: ();
-}
-
 /// Whether authoring calls (outline and lesson drafts and their reviews) work
 /// through the task in prose before the schema-constrained answer: asking for
 /// the format while reasoning costs small models their structured-output
@@ -258,7 +253,7 @@ where
         }
         let sent = fit.room;
         let measured = fit.measured;
-        room = match PACKED.scope((), call(fit.request)).await {
+        room = match call(fit.request).await {
             Err(AppError::PromptExceedsWindow {
                 prompt_tokens,
                 counted_exactly,

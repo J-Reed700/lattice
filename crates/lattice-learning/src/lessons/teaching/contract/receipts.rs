@@ -4,6 +4,7 @@
 //! pass cannot unsay it and spend a repair.
 use super::{Hit, Item, Part};
 use crate::lessons::same_text;
+use serde_json::Value;
 use std::collections::BTreeMap;
 
 /// The sentences each taught item was found in, by item id.
@@ -13,6 +14,22 @@ pub(crate) struct Receipts {
 }
 
 impl Receipts {
+    /// The receipts, to keep with the draft.
+    pub(in crate::lessons::teaching) fn saved(&self) -> serde_json::Result<Value> {
+        serde_json::to_value(&self.sentences)
+    }
+
+    /// Takes up the receipts a review saved with the job's draft; a saved string without them leaves them as they were.
+    pub(in crate::lessons::teaching) fn resume(&mut self, saved: &str) {
+        let kept = serde_json::from_str::<Value>(saved)
+            .ok()
+            .and_then(|saved| saved.get("receipts").cloned())
+            .and_then(|kept| serde_json::from_value::<BTreeMap<String, Vec<String>>>(kept).ok());
+        if let Some(kept) = kept {
+            self.sentences = kept;
+        }
+    }
+
     /// Forget every receipt that has a sentence the lesson no longer holds as it was.
     pub(super) fn lapse(&mut self, parts: &[Part]) {
         self.sentences.retain(|_, receipted| {
