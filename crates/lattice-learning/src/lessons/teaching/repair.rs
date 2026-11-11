@@ -433,6 +433,30 @@ mod tests {
     }
 
     #[test]
+    fn an_answer_of_plans_and_no_change_is_accepted_and_changes_nothing() {
+        let finding = at(FindingSite::Section(0), "one");
+        let schema = json!({"blocks":[{"body":"One."}],"questions":[]});
+        let wording = Wording::default();
+        let sent = request(vec![plain(&finding)], &schema, &wording);
+        let raw = json!({"answers":[{"finding":"reviewer/1","plan":"It is right.","edits":[]}]})
+            .to_string();
+        assert!(Edits.accept(&sent, &raw).is_ok());
+        let declined = Edits.repaired(raw).unwrap();
+        assert!(matches!(declined, Repaired::Declined { .. }));
+        if let Repaired::Declined { plans } = &declined {
+            assert_eq!(
+                plans.get("reviewer/1").map(String::as_str),
+                Some("It is right.")
+            );
+        }
+        let sent_findings = [finding];
+        assert_eq!(
+            apply(&schema, declined, &sent_findings, &wording).unwrap(),
+            schema.to_string()
+        );
+    }
+
+    #[test]
     fn the_edits_form_asks_for_one_answer_for_each_distinct_id_sent() {
         let first = at(FindingSite::Section(0), "one");
         let again = at(FindingSite::Section(0), "two");
