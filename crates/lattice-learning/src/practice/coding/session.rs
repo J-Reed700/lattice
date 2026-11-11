@@ -21,7 +21,7 @@ use super::records::{CodingOp, RunFinished};
 use super::store::{session_of, CodingStore};
 use crate::persistence::hash;
 use crate::practical_dto::LearningPracticalRunDto;
-use crate::practical_repository::{validate_learner_turn, LearningPracticalRepository};
+use crate::practical_repository::LearningPracticalRepository;
 use crate::practical_runs::CodingRunStart;
 use crate::practice::kinds::program::shape::{piece_of, scope_of, setting_of, stage_of};
 use crate::practice::session::kind::Kinds;
@@ -333,7 +333,6 @@ impl CodingSessions<'_> {
     }
 
     pub async fn send_turn(&self, request: &SendCodingTurnRequestDto) -> Result<CodingSessionDto> {
-        validate_learner_turn(&request.content)?;
         let payload_hash = hash(request)?;
         let piece = piece_of(&request.files)?;
         let engine = self.engine();
@@ -341,7 +340,7 @@ impl CodingSessions<'_> {
             .send_turn(
                 &at(&request.program_id, &request.session_id),
                 &op(&request.operation_id, "turn", &payload_hash),
-                request.content.trim(),
+                &request.content,
                 &piece,
                 request.spoken,
                 request.expected_revision,

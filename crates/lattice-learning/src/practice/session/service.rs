@@ -1,6 +1,7 @@
 //! The commands of a practice session, for every kind of work: each reads what it needs, makes its model calls and
 //! checks outside any write, and then writes.
 
+use crate::practical_repository::validate_learner_turn;
 use crate::practice::session::hints::next_rung;
 use crate::practice::session::kind::{Kind, Kinds};
 use crate::practice::session::observe::{cases_for, observe, outcome, submit_counts};
@@ -13,6 +14,9 @@ use lattice_core::domain::learning::practice::work::{
     CaseStatus, CheckScope, CheckStatus, Exercise, Piece, Setting, Stage,
 };
 use lattice_core::shared::error::{AppError, Result};
+
+#[cfg(test)]
+mod tests;
 
 /// How long nothing may happen before a watching counterpart is offered the chance to speak: no check, learner turn
 /// or stage move in this time.
@@ -248,6 +252,8 @@ impl PracticeSessions<'_> {
         spoken: bool,
         expected_revision: i64,
     ) -> Result<()> {
+        validate_learner_turn(content)?;
+        let content = content.trim();
         let applied = self
             .store
             .append_turn(at, op, content, piece, expected_revision, self.clock.now())
