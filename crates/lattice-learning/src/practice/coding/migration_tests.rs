@@ -254,3 +254,47 @@ async fn deleting_a_session_removes_its_events_and_examples_and_keeps_its_runs()
             .unwrap();
     assert_eq!(session, None, "the run stays, unlinked");
 }
+
+#[tokio::test]
+async fn the_session_tables_are_named_for_exercise_sessions_and_the_old_names_are_gone() {
+    let pool = memory_pool().await;
+    migrator().run(&pool).await.unwrap();
+    for table in [
+        "learning_exercise_sessions",
+        "learning_exercise_session_events",
+        "learning_exercise_debriefs",
+    ] {
+        assert_eq!(count(&pool, table).await, 0, "{table}");
+    }
+    let tables: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM sqlite_schema WHERE type='table'")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    for gone in [
+        "learning_coding_sessions",
+        "learning_coding_events",
+        "learning_coding_debriefs",
+    ] {
+        assert!(!tables.iter().any(|each| each == gone), "{gone}");
+    }
+    let session_columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('learning_exercise_sessions')")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    for column in ["kind", "form"] {
+        assert!(
+            session_columns.iter().any(|each| each == column),
+            "{column}"
+        );
+    }
+    assert!(!session_columns.iter().any(|each| each == "task"));
+    let run_columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('learning_practical_runs')")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(run_columns.iter().any(|each| each == "exercise_session_id"));
+    assert!(!run_columns.iter().any(|each| each == "coding_session_id"));
+}

@@ -1467,6 +1467,33 @@ async fn a_session_that_passes_every_case_schedules_its_patterns_further_out_tha
 }
 
 #[tokio::test]
+async fn a_session_row_stores_its_kind_form_and_stage_in_the_exercise_words() {
+    let ctx = Ctx::new().await;
+    let session = ctx.start(CodingSetting::Mock).await;
+    let row = || async {
+        sqlx::query_as::<_, (String, String, String)>(
+            "SELECT kind,form,stage FROM learning_exercise_sessions WHERE id=?",
+        )
+        .bind(&session.session_id)
+        .fetch_one(&ctx.pool)
+        .await
+        .unwrap()
+    };
+    assert_eq!(
+        row().await,
+        (
+            "program".to_owned(),
+            "build".to_owned(),
+            "understand".to_owned()
+        )
+    );
+    ctx.move_to(&session, CodingStage::Code, session.revision)
+        .await
+        .unwrap();
+    assert_eq!(row().await.2, "make");
+}
+
+#[tokio::test]
 async fn the_same_finish_operation_replays_and_a_finished_session_takes_no_changes() {
     let ctx = Ctx::new().await;
     let session = ctx.start(CodingSetting::Coached).await;
