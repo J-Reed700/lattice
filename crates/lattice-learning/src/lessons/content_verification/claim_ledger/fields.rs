@@ -80,13 +80,13 @@ pub(crate) fn unit_texts(candidate: &Value) -> Vec<(String, String)> {
     units
 }
 
-/// Where `quote` is in unit `unit`: the first field holding it. A quote of
-/// one sentence is the claim's sentence as it was named and stays. With the
-/// claim's `statement`, a quote of several sentences (a claim an older pass
-/// stored) narrows to the one sentence the statement restates (claim sources
-/// design §18.3), its span the sentence's own place; a statement the locator
-/// cannot place, and a code example (`None`, its quote is the code), keep the
-/// quote.
+/// Where `quote` is in unit `unit`: the first field holding it, at the
+/// earliest place it stands there. A quote of one sentence is the claim's
+/// sentence as it was named and stays. With the claim's `statement`, a quote
+/// of several sentences (a claim an older pass stored) narrows to the one
+/// sentence the statement restates (claim sources design §18.3), its span the
+/// sentence's own place; a statement the locator cannot place, and a code
+/// example (`None`, its quote is the code), keep the quote.
 pub(crate) fn locate(
     candidate: &Value,
     unit: usize,
@@ -142,6 +142,15 @@ pub(crate) fn locate(
             quote: sentence,
             span: Some(span),
         },
-        None => ClaimLocation::locate(unit, kind, field, quote, &text),
+        None => ClaimLocation {
+            span: text
+                .find(quote)
+                .filter(|_| !quote.is_empty())
+                .map(|at| (at, at + quote.len())),
+            unit_index: unit,
+            unit_kind: kind,
+            field,
+            quote: quote.to_owned(),
+        },
     }
 }
