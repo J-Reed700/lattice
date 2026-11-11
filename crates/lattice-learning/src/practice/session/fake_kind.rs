@@ -549,9 +549,8 @@ impl Order for Letters {
 #[async_trait]
 impl Truth for Letters {
     async fn establish(&self, draft: &Draft, cancel: CancellationToken) -> Result<Established> {
-        let report = self
-            .check(&draft.brief, &draft.reference, &draft.cases, cancel)
-            .await?;
+        let report =
+            Checker::check(self, &draft.brief, &draft.reference, &draft.cases, cancel).await?;
         if report.all_passed() {
             return Ok(Established::Right {
                 cases: draft.cases.clone(),
