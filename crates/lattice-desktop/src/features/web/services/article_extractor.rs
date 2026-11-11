@@ -7,10 +7,12 @@ use crate::features::web::services::identity;
 use crate::features::web::services::status_error::status_error;
 use crate::features::web::services::web::{build_public_client, validate_url_resolved};
 use crate::features::web::traits::ArticleExtractorServiceTrait;
+use crate::infrastructure::extraction::markup::{decode_entities, escape_html};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use lattice_core::application::contracts::web::CleanArticle;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::text::normalize_whitespace;
 use lazy_regex::regex;
 use readability_js::Readability;
 use reqwest::Client;
@@ -71,30 +73,6 @@ impl ArticleExtractorService {
             || Self::host_matches_domain(&host, "youtube-nocookie.com")
     }
 
-    /// Decode common HTML entities from metadata values.
-    fn decode_html_entities(&self, text: &str) -> String {
-        text.replace("&amp;", "&")
-            .replace("&quot;", "\"")
-            .replace("&#39;", "'")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&nbsp;", " ")
-    }
-
-    /// Escape text for safe HTML output.
-    fn escape_html(text: &str) -> String {
-        text.replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-            .replace('"', "&quot;")
-            .replace('\'', "&#39;")
-    }
-
-    /// Normalize whitespace to single spaces.
-    fn normalize_whitespace(&self, text: &str) -> String {
-        text.split_whitespace().collect::<Vec<_>>().join(" ")
-    }
-
     /// Read a meta/link content attribute from the first matching selector.
     fn read_attribute_from_selectors(
         &self,
@@ -112,9 +90,9 @@ impl ArticleExtractorService {
                 .select(&selector)
                 .find_map(|element| element.value().attr(attribute))
             {
-                let decoded = self.decode_html_entities(value.trim());
+                let decoded = decode_entities(value.trim());
                 if !decoded.is_empty() {
-                    return Some(self.normalize_whitespace(&decoded));
+                    return Some(normalize_whitespace(&decoded));
                 }
             }
         }
@@ -131,7 +109,7 @@ impl ArticleExtractorService {
             .next()
             .map(|element| element.text().collect::<Vec<_>>().join(" "))?;
 
-        let normalized = self.normalize_whitespace(&self.decode_html_entities(&text));
+        let normalized = normalize_whitespace(&decode_entities(&text));
         if normalized.is_empty() {
             None
         } else {
@@ -215,19 +193,19 @@ impl ArticleExtractorService {
         let reading_time_minutes = self.calculate_reading_time(word_count);
         let excerpt = self.generate_excerpt(&text_content);
 
-        let mut content_parts = vec![format!("<h1>{}</h1>", Self::escape_html(&title))];
+        let mut content_parts = vec![format!("<h1>{}</h1>", escape_html(&title))];
         if let Some(author_value) = &author {
             content_parts.push(format!(
                 "<p><strong>Channel:</strong> {}</p>",
-                Self::escape_html(author_value)
+                escape_html(author_value)
             ));
         }
         if let Some(description_value) = &description {
-            content_parts.push(format!("<p>{}</p>", Self::escape_html(description_value)));
+            content_parts.push(format!("<p>{}</p>", escape_html(description_value)));
         }
         content_parts.push(format!(
             "<p><a href=\"{}\">Watch on YouTube</a></p>",
-            Self::escape_html(final_url)
+            escape_html(final_url)
         ));
 
         Ok(CleanArticle {
@@ -338,7 +316,7 @@ impl ArticleExtractorService {
     fn extract_text(&self, html: &str) -> String {
         // Use compile-time validated regex to avoid runtime panics
         let text = html_tag_regex().replace_all(html, " ");
-        text.split_whitespace().collect::<Vec<_>>().join(" ")
+        normalize_whitespace(&text)
     }
 
     /// Parse ISO 8601 date string to DateTime<Utc>

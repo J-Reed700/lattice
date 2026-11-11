@@ -3,6 +3,7 @@
 
 use crate::infrastructure::extraction::html_text::html_to_text;
 use lattice_core::application::contracts::images::ImageOrigin;
+use lattice_core::shared::text::normalize_whitespace;
 use serde_json::Value;
 
 use super::{extension_for_mime, COMMONS_THUMB_WIDTH};
@@ -116,7 +117,7 @@ pub fn page_title(html: &str) -> Option<String> {
         .next()?
         .text()
         .collect::<String>();
-    let title = collapse(&title);
+    let title = normalize_whitespace(&title);
     (!title.is_empty()).then_some(title)
 }
 
@@ -140,16 +141,12 @@ fn metadata(info: &Value, field: &str) -> Option<String> {
 
 /// HTML to a one-line caption: its readable text, whitespace collapsed.
 pub fn strip_html(html: &str) -> String {
-    collapse(&html_to_text(html))
-}
-
-fn collapse(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    normalize_whitespace(&html_to_text(html))
 }
 
 /// `File:Grey heron (Ardea cinerea).jpg` → `Grey heron (Ardea cinerea)`.
 fn title_caption(title: &str) -> String {
     let name = title.strip_prefix("File:").unwrap_or(title);
     let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
-    collapse(&stem.replace('_', " "))
+    normalize_whitespace(&stem.replace('_', " "))
 }

@@ -234,6 +234,15 @@ fn decode_entity(entity: &str) -> Option<char> {
     })
 }
 
+/// Escape `&`, `<`, `>` and both quote characters for HTML text and attributes.
+pub(crate) fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
 /// Decode a text file's bytes. A BOM decides UTF-8 or UTF-16; otherwise UTF-8
 /// is tried and anything that is not UTF-8 is read as Windows-1252, the
 /// encoding nearly every legacy non-UTF-8 text file on disk uses. Rejecting

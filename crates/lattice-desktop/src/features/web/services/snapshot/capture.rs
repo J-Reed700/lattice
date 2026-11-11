@@ -24,6 +24,7 @@ use crate::features::web::traits::page_snapshot::{
     CaptureError, CaptureMethod, CaptureProgress, CaptureRequest, CapturedPage, PageCapturePort,
     ProgressSink,
 };
+use crate::infrastructure::extraction::html_text::html_to_text;
 
 /// How far into the document to look for `<meta charset>` (the HTML prescan window).
 const META_SNIFF_BYTES: usize = 1024;
@@ -276,57 +277,12 @@ impl HttpPageCapture {
     }
 }
 
-fn strip_tags_and_scripts(html: &str) -> String {
-    // ASCII lowercasing keeps every byte offset, so `html`'s char offsets
-    // index `lower` at the same boundaries.
-    let lower = html.to_ascii_lowercase();
-    let mut out = String::with_capacity(html.len() / 2);
-    let mut in_tag = false;
-    let mut in_script = false;
-    let mut in_style = false;
-    for (i, ch) in html.char_indices() {
-        let opens =
-            |marker: &str| ch == '<' && lower.get(i..).is_some_and(|rest| rest.starts_with(marker));
-        if in_script {
-            if opens("</script") {
-                in_script = false;
-                in_tag = true;
-            }
-            continue;
-        }
-        if in_style {
-            if opens("</style") {
-                in_style = false;
-                in_tag = true;
-            }
-            continue;
-        }
-        if ch == '<' {
-            if opens("<script") {
-                in_script = true;
-            } else if opens("<style") {
-                in_style = true;
-            }
-            in_tag = true;
-            continue;
-        }
-        if in_tag {
-            if ch == '>' {
-                in_tag = false;
-            }
-            continue;
-        }
-        out.push(ch);
-    }
-    out
-}
-
 fn needs_browser_escalation(doc: &Document) -> bool {
     if doc.html.trim().is_empty() {
         return true;
     }
     let vis_len = {
-        let text = strip_tags_and_scripts(&doc.html);
+        let text = html_to_text(&doc.html);
         text.split_whitespace()
             .map(|w| w.len() + 1)
             .sum::<usize>()
