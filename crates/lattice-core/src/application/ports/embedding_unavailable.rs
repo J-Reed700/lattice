@@ -6,12 +6,12 @@ use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 
 /// Why no embedding model is available.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum EmbeddingUnavailable {
     /// No embedding model is installed or active.
     NotInstalled,
-    /// An embedding model is active but loading it failed; carries the error as displayed.
-    FailedToLoad(String),
+    /// An embedding model is active but loading it failed; carries the loader's error.
+    FailedToLoad(AppError),
 }
 
 /// An [`EmbeddingPort`] that is never ready and fails every embedding with its reason.
@@ -29,8 +29,8 @@ impl UnavailableEmbedding {
         Self::new(EmbeddingUnavailable::NotInstalled)
     }
 
-    pub fn failed_to_load(error: impl Into<String>) -> Self {
-        Self::new(EmbeddingUnavailable::FailedToLoad(error.into()))
+    pub fn failed_to_load(error: AppError) -> Self {
+        Self::new(EmbeddingUnavailable::FailedToLoad(error))
     }
 
     fn error(&self) -> AppError {
@@ -38,9 +38,7 @@ impl UnavailableEmbedding {
             EmbeddingUnavailable::NotInstalled => {
                 AppError::AiModelsNotInstalled("AI embedding models not installed".to_string())
             }
-            EmbeddingUnavailable::FailedToLoad(error) => AppError::ModelLoadFailed(format!(
-                "The active embedding model failed to load: {error}"
-            )),
+            EmbeddingUnavailable::FailedToLoad(error) => error.clone(),
         }
     }
 }

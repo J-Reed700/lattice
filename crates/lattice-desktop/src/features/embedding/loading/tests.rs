@@ -160,8 +160,8 @@ async fn an_active_model_whose_file_is_missing_is_not_reported_as_not_installed(
     assert!(
         error
             .to_string()
-            .contains("lattice-missing-embedder-9f3a.gguf"),
-        "the missing file is not named in: {error}"
+            .contains("The file of the active embedding model 'Active embedder' is missing: "),
+        "the model and its missing file are not named in: {error}"
     );
 }
 

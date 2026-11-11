@@ -17,15 +17,17 @@ async fn a_port_with_no_model_installed_reports_models_not_installed() {
 }
 
 #[tokio::test]
-async fn a_port_whose_model_failed_to_load_names_the_failure() {
-    let port = UnavailableEmbedding::failed_to_load("server exited with code 3");
+async fn a_port_whose_model_failed_to_load_returns_the_loaders_own_error() {
+    let port = UnavailableEmbedding::failed_to_load(AppError::ModelLoadFailed(
+        "server exited with code 3".into(),
+    ));
 
     let single = port.embed_single("test").await.unwrap_err();
     let batch = port.embed_batch(&["a".to_string()]).await.unwrap_err();
 
     for error in [single, batch] {
         assert!(matches!(error, AppError::ModelLoadFailed(_)));
-        assert!(error.to_string().contains("server exited with code 3"));
+        assert_eq!(error.to_string(), "server exited with code 3");
     }
 }
 
@@ -35,10 +37,12 @@ async fn an_unavailable_port_is_never_ready() {
         .is_ready()
         .await
         .unwrap());
-    assert!(!UnavailableEmbedding::failed_to_load("x")
-        .is_ready()
-        .await
-        .unwrap());
+    assert!(
+        !UnavailableEmbedding::failed_to_load(AppError::ModelLoadFailed("x".into()))
+            .is_ready()
+            .await
+            .unwrap()
+    );
 }
 
 #[test]

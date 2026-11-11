@@ -61,7 +61,7 @@ impl EmbeddingLoader {
                 model_path.display()
             );
             return Err(AppError::NotFound(format!(
-                "The active embedding model '{}' file is missing: {}",
+                "The file of the active embedding model '{}' is missing: {}",
                 active_model.model_name(),
                 model_path.display()
             )));
@@ -169,9 +169,7 @@ impl EmbeddingLoader {
             Err(e @ AppError::ModelLoadFailed(_)) => Err(e),
             Err(e) => {
                 tracing::warn!("Error loading active embedding model: {}", e);
-                Ok(Arc::new(UnavailableEmbedding::failed_to_load(
-                    e.to_string(),
-                )))
+                Ok(Arc::new(UnavailableEmbedding::failed_to_load(e)))
             }
         }
     }
