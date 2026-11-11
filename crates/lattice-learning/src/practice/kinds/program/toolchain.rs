@@ -17,6 +17,23 @@ pub trait Toolchains: Send + Sync {
     fn harness(&self, language: &str) -> Result<Box<dyn CaseHarness>>;
 }
 
+/// For a reader of a finished session: nothing runs.
+pub struct NoToolchains;
+
+impl Toolchains for NoToolchains {
+    fn runner(&self, language: &str) -> Result<Box<dyn CodeRunner>> {
+        Err(AppError::InvalidState(format!(
+            "A finished session runs no {language}."
+        )))
+    }
+
+    fn harness(&self, language: &str) -> Result<Box<dyn CaseHarness>> {
+        Err(AppError::InvalidState(format!(
+            "A finished session runs no {language}."
+        )))
+    }
+}
+
 /// The built-in runtimes and harnesses.
 pub struct BuiltinToolchains {
     runtimes: BuiltinRuntimes,

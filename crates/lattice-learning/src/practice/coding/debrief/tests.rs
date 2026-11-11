@@ -1,12 +1,14 @@
 use super::*;
-use crate::practice::coding::dto::ExampleVerdict;
+use crate::practice::coding::dto::{CodeHintRung, ExampleVerdict};
 use crate::practice::coding::problem::{
-    CaseCompare, CaseVisibility, Misreading, ProblemCase, ProblemDifficulty, ProblemSignature,
-    ProblemSpec, SignatureParam,
+    CaseCompare, CaseStatus, CaseVisibility, Misreading, ProblemCase, ProblemDifficulty,
+    ProblemSignature, ProblemSpec, SignatureParam,
 };
+use crate::practice::practical_dto::LearningSimulationSpeaker;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
+use lattice_core::domain::learning::practice::ScoreStatus;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Mutex;
 

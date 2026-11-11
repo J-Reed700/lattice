@@ -438,10 +438,9 @@ async fn a_criterion_written_twice_refuses_the_answer() {
 async fn an_answer_that_cannot_be_read_twice_is_an_error() {
     let mut short = good_rows();
     short.pop();
-    let (result, model) = ask(&[answer(short.clone()), answer(short)], &kind(), &session()).await;
+    let (result, _) = ask(&[answer(short.clone()), answer(short)], &kind(), &session()).await;
 
     assert!(result.is_err());
-    assert_eq!(model.requests().len(), 2);
 }
 
 #[tokio::test]

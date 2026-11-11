@@ -1,13 +1,14 @@
 //! How a Program's values are written in the core vocabulary, and back.
 
 use crate::lab_runtime::LearningLabFile;
-use crate::practice::coding::dto::CodeHintRung;
+use crate::practice::coding::dto::{CodeHintRung, CodingRunScope, CodingStage, ExampleVerdict};
 use crate::practice::coding::problem::{
-    self as coding, CodingSetting, Problem, ProblemCase, ProblemSpec,
+    self as coding, CodingSetting, CodingTask, Problem, ProblemCase, ProblemSpec,
 };
 use crate::practice::kinds::program::KIND;
 use lattice_core::domain::learning::practice::work::{
-    self, Brief, Case, Exercise, Form, KindId, Misreading, Piece, Rung, Setting,
+    self, Brief, Case, CheckScope, Exercise, Form, KindId, LearnerCaseVerdict, Misreading, Piece,
+    Rung, Setting, Stage,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
@@ -375,5 +376,76 @@ pub fn rung_of(rung: CodeHintRung) -> Rung {
         CodeHintRung::Idea => Rung::Idea,
         CodeHintRung::Plan => Rung::Plan,
         CodeHintRung::Line => Rung::Point,
+    }
+}
+
+/// The setting of the core vocabulary that a program's coding code calls `setting`.
+pub fn setting_of(setting: CodingSetting) -> Setting {
+    match setting {
+        CodingSetting::Coached => Setting::Coached,
+        CodingSetting::Mock => Setting::Mock,
+        CodingSetting::Watched => Setting::Watched,
+    }
+}
+
+/// The form of a task.
+pub fn form_of(task: CodingTask) -> Form {
+    match task {
+        CodingTask::Problem => Form::Build,
+        CodingTask::BugFix => Form::Repair,
+    }
+}
+
+pub fn stage_of(stage: CodingStage) -> Stage {
+    match stage {
+        CodingStage::Understand => Stage::Understand,
+        CodingStage::Examples => Stage::Examples,
+        CodingStage::Plan => Stage::Plan,
+        CodingStage::Code => Stage::Make,
+        CodingStage::Test => Stage::Check,
+        CodingStage::Review => Stage::Review,
+        CodingStage::Reproduce => Stage::Reproduce,
+        CodingStage::Locate => Stage::Locate,
+        CodingStage::Fix => Stage::Fix,
+        CodingStage::Verify => Stage::Verify,
+    }
+}
+
+pub fn coding_stage_of(stage: Stage) -> CodingStage {
+    match stage {
+        Stage::Understand => CodingStage::Understand,
+        Stage::Examples => CodingStage::Examples,
+        Stage::Plan => CodingStage::Plan,
+        Stage::Make => CodingStage::Code,
+        Stage::Check => CodingStage::Test,
+        Stage::Review => CodingStage::Review,
+        Stage::Reproduce => CodingStage::Reproduce,
+        Stage::Locate => CodingStage::Locate,
+        Stage::Fix => CodingStage::Fix,
+        Stage::Verify => CodingStage::Verify,
+    }
+}
+
+pub fn scope_of(scope: CodingRunScope) -> CheckScope {
+    match scope {
+        CodingRunScope::Examples => CheckScope::Shown,
+        CodingRunScope::All => CheckScope::All,
+        CodingRunScope::Input => CheckScope::Own,
+    }
+}
+
+pub fn coding_scope_of(scope: CheckScope) -> CodingRunScope {
+    match scope {
+        CheckScope::Shown => CodingRunScope::Examples,
+        CheckScope::All => CodingRunScope::All,
+        CheckScope::Own => CodingRunScope::Input,
+    }
+}
+
+pub fn verdict_of(verdict: ExampleVerdict) -> LearnerCaseVerdict {
+    match verdict {
+        ExampleVerdict::Right => LearnerCaseVerdict::Right,
+        ExampleVerdict::Wrong => LearnerCaseVerdict::Wrong,
+        ExampleVerdict::Invalid => LearnerCaseVerdict::Invalid,
     }
 }

@@ -64,6 +64,14 @@ impl Wording for ProgramWording {
         "code".to_owned()
     }
 
+    fn session_noun(&self) -> String {
+        "coding practice session".to_owned()
+    }
+
+    fn check_nouns(&self) -> String {
+        "runs".to_owned()
+    }
+
     fn evidence(&self) -> String {
         "the learner's code, runs and examples".to_owned()
     }
