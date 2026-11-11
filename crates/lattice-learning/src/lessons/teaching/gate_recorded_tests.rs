@@ -291,7 +291,7 @@ async fn what_the_review_reported_about_a_contradiction_is_ruled_on_by_the_plan_
             reporting(REVIEWER_ONLY, 2),
             gate_answer("check-1"),
             repair_edit(),
-            clean(2),
+            clean(1),
         ],
         vec![CONTRACT_NOTHING.to_owned(), contradiction()],
     );
@@ -311,7 +311,7 @@ async fn the_plan_check_is_asked_again_with_what_the_review_reported() -> Result
             reporting(REVIEWER_ONLY, 2),
             gate_answer("check-1"),
             repair_edit(),
-            clean(2),
+            clean(1),
         ],
         vec![CONTRACT_NOTHING.to_owned(), contradiction()],
     );
@@ -352,7 +352,7 @@ async fn a_contradiction_the_reported_ask_lists_is_confirmed_once_before_it_is_r
             reporting(REVIEWER_ONLY, 2),
             gate_answer("check-1"),
             repair_edit(),
-            clean(2),
+            clean(1),
         ],
         vec![CONTRACT_NOTHING.to_owned(), contradiction()],
     );
