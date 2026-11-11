@@ -38,7 +38,22 @@ pub(crate) struct Context<'a> {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct Findings {
     pub defects: Vec<String>,
-    pub repeats: Vec<String>,
+    pub repeats: Vec<Repeat>,
+}
+
+/// A question the item repeats, and the sentence saying so.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Repeat {
+    pub of: RepeatOf,
+    pub text: String,
+}
+
+/// Where the repeated question is: one the learner already has, or an earlier
+/// new item of the same review, by its position among the entries.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum RepeatOf {
+    Held,
+    New(usize),
 }
 
 impl Findings {
@@ -48,7 +63,11 @@ impl Findings {
 
     /// Every finding, defects first, as the repair request and the drop reason carry them.
     pub fn texts(&self) -> Vec<String> {
-        self.defects.iter().chain(&self.repeats).cloned().collect()
+        self.defects
+            .iter()
+            .cloned()
+            .chain(self.repeats.iter().map(|r| r.text.clone()))
+            .collect()
     }
 }
 
@@ -381,9 +400,12 @@ fn add_repeats(
                 if let (Some(prompt), Some(slot)) =
                     (context.learner_has.get(n), findings.get_mut(*position))
                 {
-                    slot.repeats.push(format!(
-                        "It asks for the same decision as a question the learner already has: “{prompt}”."
-                    ));
+                    slot.repeats.push(Repeat {
+                        of: RepeatOf::Held,
+                        text: format!(
+                            "It asks for the same decision as a question the learner already has: “{prompt}”."
+                        ),
+                    });
                 }
             } else if let Some(other) = id
                 .strip_prefix("new-")
@@ -400,10 +422,13 @@ fn add_repeats(
     for (position, earlier) in later {
         for other in earlier {
             if let (Some(entry), Some(slot)) = (entries.get(other), findings.get_mut(position)) {
-                slot.repeats.push(format!(
-                    "It asks for the same decision as another new question: “{}”.",
-                    entry.item.prompt
-                ));
+                slot.repeats.push(Repeat {
+                    of: RepeatOf::New(other),
+                    text: format!(
+                        "It asks for the same decision as another new question: “{}”.",
+                        entry.item.prompt
+                    ),
+                });
             }
         }
     }
