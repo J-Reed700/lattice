@@ -706,3 +706,25 @@ fn a_part_is_sized_from_the_judges_window() {
         chars_within_tokens(window_room, LargeWindow.chars_per_token())
     );
 }
+
+/// The quote is the sentence a verdict rests on, and `founded` reads the
+/// claim's words in it: a long sentence is quoted whole, never cut.
+#[test]
+fn a_long_best_sentence_is_quoted_whole() {
+    let sentence = format!(
+        "In the long trial {}the treated plants showed reduced measured cold tolerance.",
+        "across many sites and seasons ".repeat(20)
+    );
+    assert!(sentence.chars().count() > 600);
+    let sources = [source(&format!(
+        "Unrelated opening line. {sentence} Unrelated closing line."
+    ))];
+    let claims = lexical_pass(
+        "The treated plants showed reduced measured cold tolerance [1].",
+        &sources,
+    );
+
+    let evidence = found(evidence_for(&claims[0], &sources, WIDE));
+
+    assert_eq!(evidence.quote.as_deref(), Some(sentence.as_str()));
+}
