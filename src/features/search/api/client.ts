@@ -119,7 +119,14 @@ export const searchApi = {
   searchDocuments: async (
     options: SearchOptions,
   ): Promise<ApiResult<SearchResult[]>> => {
-    const raw = await apiCall('search_documents', { options });
+    const raw = await apiCall('search_documents', {
+      options: {
+        query: options.query,
+        limit: options.limit ?? null,
+        filter: options.filter ?? null,
+        searchMode: options.searchMode ?? null,
+      },
+    });
     return unwrapSearchResults(raw, 'Document search failed');
   },
 
@@ -146,7 +153,14 @@ export const searchApi = {
   }): Promise<ApiResult<SearchResult[]>> => {
     const result = await apiCall(
       'search_with_recency',
-      { options },
+      {
+        options: {
+          query: options.query,
+          limit: options.limit ?? null,
+          recencyWeight: options.recencyWeight ?? null,
+          maxAgeDays: options.maxAgeDays ?? null,
+        },
+      },
     );
     return unwrapSearchResults(result, 'Recency search failed');
   },
@@ -247,6 +261,7 @@ export const searchApi = {
         query,
         limit: effectiveLimit,
         searchMode: effectiveSearchMode,
+        filter: null,
       },
     });
     return unwrapSearchResults(fallbackRaw, 'Hybrid search failed');
@@ -281,6 +296,7 @@ export const searchApi = {
         query,
         limit: limit || 10,
         searchMode: 'semantic',
+        filter: null,
       },
     });
     return unwrapSearchResults(fallbackRaw, 'Semantic search failed');

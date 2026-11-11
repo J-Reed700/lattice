@@ -47,8 +47,8 @@ vi.mock('@/lib/api', () => ({ default: {
   getLearningPracticeWorkspace: async (programId: string) => ({ ok: true, data: { programId, sessions: [] } }),
   getLearningMemory: mocks.memory,
   listStudyDecks: async () => ({ ok: true, data: [] }),
-  courseIndexOpen: async () => ({ ok: true, data: undefined }),
-  courseIndexClose: async () => ({ ok: true, data: undefined }),
+  courseIndexOpen: async () => ({ ok: true, data: null }),
+  courseIndexClose: async () => ({ ok: true, data: null }),
   // A Learning model is set, so the builder has no model notice of its own to confuse the alerts.
   getSettings: mocks.settings,
   getDownloadedModels: async () => ({ ok: true, data: [] }),

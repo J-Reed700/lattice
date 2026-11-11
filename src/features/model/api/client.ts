@@ -40,7 +40,7 @@ export const modelApi = {
    * @param modelId - Model identifier to set as active
    * @returns Void on success
    */
-  setActiveChatModel: async (modelId: string): Promise<ApiResult<void>> =>
+  setActiveChatModel: async (modelId: string): Promise<ApiResult<null>> =>
     apiCall('set_active_chat_model', { modelId }),
 
   /**
@@ -49,7 +49,7 @@ export const modelApi = {
    *
    * @returns Void on success
    */
-  warmUpActiveChatModel: async (): Promise<ApiResult<void>> =>
+  warmUpActiveChatModel: async (): Promise<ApiResult<null>> =>
     apiCall('warm_up_active_chat_model'),
 
   /**
@@ -60,14 +60,14 @@ export const modelApi = {
    * UI pays that cost up-front so the user's first chat turn doesn't
    * carry it. No-op (returns Ok) when no utility model is configured.
    */
-  warmUpActiveUtilityModel: async (): Promise<ApiResult<void>> =>
+  warmUpActiveUtilityModel: async (): Promise<ApiResult<null>> =>
     apiCall('warm_up_active_utility_model'),
 
   /**
    * Load the Learning model set in Settings, so the first lesson does not
    * pay the cold start. A failure reports why and changes no setting.
    */
-  warmUpLearningModel: async (): Promise<ApiResult<void>> =>
+  warmUpLearningModel: async (): Promise<ApiResult<null>> =>
     apiCall('warm_up_learning_model'),
 
   /**
@@ -101,7 +101,7 @@ export const modelApi = {
    * @param modelId - Model identifier to set as active
    * @returns Void on success
    */
-  setActiveEmbeddingModel: async (modelId: string): Promise<ApiResult<void>> =>
+  setActiveEmbeddingModel: async (modelId: string): Promise<ApiResult<null>> =>
     apiCall('set_active_embedding_model', { modelId }),
 
   /**
@@ -111,7 +111,7 @@ export const modelApi = {
    * @param modelId - Model identifier to set as active utility model
    * @returns Void on success
    */
-  setActiveUtilityModel: async (modelId: string): Promise<ApiResult<void>> =>
+  setActiveUtilityModel: async (modelId: string): Promise<ApiResult<null>> =>
     apiCall('set_active_utility_model', { modelId }),
 
   /**
@@ -119,7 +119,7 @@ export const modelApi = {
    *
    * @returns Void on success
    */
-  clearActiveUtilityModel: async (): Promise<ApiResult<void>> =>
+  clearActiveUtilityModel: async (): Promise<ApiResult<null>> =>
     apiCall('clear_active_utility_model'),
 
   /**
@@ -157,7 +157,7 @@ export const modelApi = {
   deleteDownloadedModel: async (
     modelId: string,
     deleteFile: boolean = false,
-  ): Promise<ApiResult<void>> =>
+  ): Promise<ApiResult<null>> =>
     apiCall('delete_model', { modelId, deleteFile }),
 
   /**
@@ -191,7 +191,7 @@ export const modelApi = {
   deleteModel: async (
     modelId: string,
     deleteFile = true,
-  ): Promise<ApiResult<void>> =>
+  ): Promise<ApiResult<null>> =>
     apiCall('delete_model', { modelId, deleteFile }),
 
   /**
@@ -245,7 +245,7 @@ export const modelApi = {
    *
    * @returns Void on success
    */
-  refreshModelCatalog: async (): Promise<ApiResult<void>> =>
+  refreshModelCatalog: async (): Promise<ApiResult<null>> =>
     apiCall('refresh_model_catalog'),
 
   /**
@@ -272,7 +272,7 @@ export const modelApi = {
    *
    * @returns Void on success
    */
-  clearActiveChatModel: async (): Promise<ApiResult<void>> =>
+  clearActiveChatModel: async (): Promise<ApiResult<null>> =>
     apiCall('clear_active_chat_model'),
 
   /**
@@ -281,7 +281,7 @@ export const modelApi = {
    *
    * @returns Void on success
    */
-  clearActiveEmbeddingModel: async (): Promise<ApiResult<void>> =>
+  clearActiveEmbeddingModel: async (): Promise<ApiResult<null>> =>
     apiCall('clear_active_embedding_model'),
 
   /**

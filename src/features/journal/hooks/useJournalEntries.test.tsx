@@ -39,7 +39,7 @@ beforeEach(() => {
   vi.mocked(VaultAPI.setJournalEntryPinned).mockImplementation(async ({ journalSpaceId, conversationId, pinned }) => {
     const rest = (pins[journalSpaceId] ?? []).filter(id => id !== conversationId);
     pins[journalSpaceId] = pinned ? [conversationId, ...rest] : rest;
-    return { ok: true, data: undefined };
+    return { ok: true, data: null };
   });
   useVaultImportStore.setState({ importTick: 0, lastImportedId: null });
   vi.mocked(VaultAPI.listJournalConversations).mockResolvedValue(response([first, second]));

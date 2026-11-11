@@ -32,8 +32,8 @@ describe('IndexingTab controls', () => {
     vi.clearAllMocks();
     h.settings = indexing();
     h.mutation.isPending = false;
-    h.addWatchFolder.mockResolvedValue({ ok: true, data: undefined });
-    h.removeWatchFolder.mockResolvedValue({ ok: true, data: undefined });
+    h.addWatchFolder.mockResolvedValue({ ok: true, data: null });
+    h.removeWatchFolder.mockResolvedValue({ ok: true, data: null });
   });
 
   afterEach(() => {
@@ -74,7 +74,7 @@ describe('IndexingTab controls', () => {
   describe('watched folders', () => {
     it('adds a picked folder, skipping one already watched, and reports a refusal', async () => {
       vi.mocked(open).mockResolvedValueOnce('/Users/ada/Archive').mockResolvedValueOnce('/Volumes/Notes').mockResolvedValueOnce('/Volumes/Bad');
-      h.addWatchFolder.mockResolvedValueOnce({ ok: true, data: undefined }).mockResolvedValueOnce({ ok: false, error: 'folder unreadable' });
+      h.addWatchFolder.mockResolvedValueOnce({ ok: true, data: null }).mockResolvedValueOnce({ ok: false, error: 'folder unreadable' });
       render(<IndexingTab />);
       await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Add folder' })); });
       expect(h.addWatchFolder).not.toHaveBeenCalled();

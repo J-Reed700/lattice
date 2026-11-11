@@ -142,15 +142,15 @@ export function createVaultAPIMock() {
   const api = {
     // File operations
     indexFile: vi.fn().mockResolvedValue({ success: true }),
-    clearIndexingFailure: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
+    clearIndexingFailure: vi.fn().mockResolvedValue({ ok: true, data: null }),
     deleteDocument: vi.fn().mockResolvedValue({ success: true }),
 
     // Model operations
     downloadModel: vi.fn().mockResolvedValue({ success: true }),
-    warmUpActiveChatModel: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
-    warmUpActiveUtilityModel: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
-    clearActiveChatModel: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
-    clearActiveEmbeddingModel: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
+    warmUpActiveChatModel: vi.fn().mockResolvedValue({ ok: true, data: null }),
+    warmUpActiveUtilityModel: vi.fn().mockResolvedValue({ ok: true, data: null }),
+    clearActiveChatModel: vi.fn().mockResolvedValue({ ok: true, data: null }),
+    clearActiveEmbeddingModel: vi.fn().mockResolvedValue({ ok: true, data: null }),
     checkFirstRunStatus: vi
       .fn()
       .mockResolvedValue({ ok: true, data: JSON.stringify({ needs_setup: false }) }),
@@ -170,7 +170,7 @@ export function createVaultAPIMock() {
     // Settings operations
     getSettings: vi.fn().mockResolvedValue(mockSettings),
     updateSettings: vi.fn().mockResolvedValue(mockSettings),
-    setCloudApiKey: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
+    setCloudApiKey: vi.fn().mockResolvedValue({ ok: true, data: null }),
     getSourcesStatus: vi.fn().mockResolvedValue({ ok: true, data: { finders: [], keys: [] } }),
     saveSourceKey: vi.fn().mockResolvedValue({ ok: true, data: { finders: [], keys: [] } }),
     removeSourceKey: vi.fn().mockResolvedValue({ ok: true, data: { finders: [], keys: [] } }),
@@ -212,7 +212,7 @@ export function createVaultAPIMock() {
     }),
     generateTagsForDocument: vi.fn().mockResolvedValue({ ok: true, data: [] }),
     applyTags: vi.fn().mockResolvedValue({ ok: true, data: [] }),
-    removeTagFromDocument: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
+    removeTagFromDocument: vi.fn().mockResolvedValue({ ok: true, data: null }),
 
     cancelIndexing: vi.fn().mockResolvedValue({ success: true }),
 
@@ -424,8 +424,8 @@ export function createVaultAPIMock() {
     courseIndexStatus: vi
       .fn()
       .mockResolvedValue({ ok: true, data: { state: 'ready', mode: 'hybrid' } }),
-    courseIndexOpen: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
-    courseIndexClose: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
+    courseIndexOpen: vi.fn().mockResolvedValue({ ok: true, data: null }),
+    courseIndexClose: vi.fn().mockResolvedValue({ ok: true, data: null }),
 
     // Learning Tangents
     createLearningTangent: vi

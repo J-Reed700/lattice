@@ -25,7 +25,7 @@ export const settingsApi = {
    * @param path - Absolute path to folder to watch
    * @returns Void on success
    */
-  addWatchFolder: async (path: string): Promise<ApiResult<void>> =>
+  addWatchFolder: async (path: string): Promise<ApiResult<null>> =>
     apiCall('add_watch_folder', { path }),
 
   /**
@@ -35,7 +35,7 @@ export const settingsApi = {
    * @param path - Absolute path to folder to stop watching
    * @returns Void on success
    */
-  removeWatchFolder: async (path: string): Promise<ApiResult<void>> =>
+  removeWatchFolder: async (path: string): Promise<ApiResult<null>> =>
     apiCall('remove_watch_folder', { path }),
 
   /**
@@ -104,7 +104,7 @@ export const settingsApi = {
     apiCall('import_settings', {
       request: {
         settings,
-        merge,
+        merge: merge ?? null,
       },
     }),
 
@@ -185,7 +185,7 @@ export const settingsApi = {
   setCloudApiKey: async (
     provider: string,
     key: string,
-  ): Promise<ApiResult<void>> =>
+  ): Promise<ApiResult<null>> =>
     apiCall('set_cloud_api_key', { provider, key }),
 
   /**

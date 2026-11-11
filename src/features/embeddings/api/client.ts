@@ -1,4 +1,3 @@
-import type * as Wire from '@/lib/bindings';
 import { apiCall } from '@/shared/ipc/transport';
 import type { ApiResult, EmbeddingModelInfo } from '@/types';
 

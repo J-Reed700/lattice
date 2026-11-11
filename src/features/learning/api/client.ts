@@ -237,7 +237,7 @@ export const learningApi = {
   ): Promise<ApiResult<Wire.LearningProgramDto>> =>
     learningCall('complete_learning_lesson', { request }),
 
-  deleteLearningProgram: (id: string): Promise<ApiResult<void>> =>
+  deleteLearningProgram: (id: string): Promise<ApiResult<null>> =>
     learningCall('delete_learning_program', { id }),
 
   getLearningMemory: (id: string): Promise<ApiResult<Wire.LearningMemoryDto>> =>
@@ -675,11 +675,11 @@ export const learningApi = {
     learningCall('course_index_status', { programId }),
 
   /** The course workspace opened: its index embeds ahead of every other until it closes. */
-  courseIndexOpen: (programId: string): Promise<ApiResult<void>> =>
+  courseIndexOpen: (programId: string): Promise<ApiResult<null>> =>
     learningCall('course_index_open', { programId }),
 
   /** The course workspace closed: its index takes turns with the others again. */
-  courseIndexClose: (programId: string): Promise<ApiResult<void>> =>
+  courseIndexClose: (programId: string): Promise<ApiResult<null>> =>
     learningCall('course_index_close', { programId }),
 
   searchLearningSourcesSemantically: (
@@ -733,7 +733,7 @@ export const learningApi = {
 
   setConversationCourse: (
     request: Wire.SetConversationCourseRequestDto,
-  ): Promise<void> =>
+  ): Promise<null> =>
     invokeCommand('set_conversation_course', { request }),
 };
 

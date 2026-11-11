@@ -9,7 +9,7 @@ export const cacheApi = {
    *
    * @returns Void on success
    */
-  clearSearchCache: async (): Promise<ApiResult<void>> =>
+  clearSearchCache: async (): Promise<ApiResult<null>> =>
     apiCall('clear_search_cache'),
 
   /**
@@ -18,7 +18,7 @@ export const cacheApi = {
    *
    * @returns Void on success
    */
-  clearCache: async (): Promise<ApiResult<void>> =>
+  clearCache: async (): Promise<ApiResult<null>> =>
     apiCall('clear_cache'),
 
   /**

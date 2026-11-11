@@ -1,4 +1,3 @@
-import type * as Wire from '@/lib/bindings';
 import { apiCall } from '@/shared/ipc/transport';
 import type { ApiResult, FavoriteDocument } from '@/types';
 
@@ -10,7 +9,7 @@ export const favoritesApi = {
    * @param documentId - Internal document identifier
    * @returns Void on success
    */
-  addFavorite: async (documentId: string): Promise<ApiResult<void>> =>
+  addFavorite: async (documentId: string): Promise<ApiResult<null>> =>
     apiCall('add_favorite', { documentId }),
 
   /**
@@ -20,7 +19,7 @@ export const favoritesApi = {
    * @param documentId - Internal document identifier
    * @returns Void on success
    */
-  removeFavorite: async (documentId: string): Promise<ApiResult<void>> =>
+  removeFavorite: async (documentId: string): Promise<ApiResult<null>> =>
     apiCall('remove_favorite', { documentId }),
 
   /**

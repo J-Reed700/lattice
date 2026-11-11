@@ -28,6 +28,6 @@ export const referencesApi = {
     apiCall('update_passage_reference', { request }),
 
   /** Deletes a saved passage reference. */
-  deletePassageReference: async (id: string): Promise<ApiResult<void>> =>
+  deletePassageReference: async (id: string): Promise<ApiResult<null>> =>
     apiCall('delete_passage_reference', { id }),
 };

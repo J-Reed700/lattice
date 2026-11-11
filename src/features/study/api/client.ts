@@ -31,9 +31,9 @@ export const studyApi = {
 
   updateStudyCard: (
     request: Wire.UpdateStudyCardRequestDto,
-  ): Promise<ApiResult<void>> => studyCall('update_study_card', { request }),
+  ): Promise<ApiResult<null>> => studyCall('update_study_card', { request }),
 
-  deleteStudyDeck: (id: string): Promise<ApiResult<void>> =>
+  deleteStudyDeck: (id: string): Promise<ApiResult<null>> =>
     studyCall('delete_study_deck', { id }),
 
   /** Sets or clears when a deck must be remembered by, such as an interview. */

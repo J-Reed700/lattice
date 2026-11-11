@@ -1,4 +1,3 @@
-import type * as Wire from '@/lib/bindings';
 import { apiCall } from '@/shared/ipc/transport';
 import type { ApiResult, HfTokenStatus } from '@/types';
 
@@ -10,7 +9,7 @@ export const huggingfaceApi = {
    * @param token - HuggingFace API token
    * @returns Void on success
    */
-  setHuggingFaceToken: async (token: string): Promise<ApiResult<void>> =>
+  setHuggingFaceToken: async (token: string): Promise<ApiResult<null>> =>
     apiCall('set_huggingface_token', { token }),
 
   /**
@@ -36,6 +35,6 @@ export const huggingfaceApi = {
    *
    * @returns Void on success
    */
-  deleteHuggingFaceToken: async (): Promise<ApiResult<void>> =>
+  deleteHuggingFaceToken: async (): Promise<ApiResult<null>> =>
     apiCall('delete_huggingface_token'),
 };

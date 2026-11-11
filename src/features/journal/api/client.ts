@@ -92,7 +92,7 @@ export const journalApi = {
   updateDailyNoteContent: async (
     noteId: string,
     content: string,
-  ): Promise<ApiResult<void>> =>
+  ): Promise<ApiResult<null>> =>
     apiCall('update_daily_note_content', {
       request: { noteId, content },
     }),
@@ -120,7 +120,7 @@ export const journalApi = {
     journalId?: string,
   ): Promise<ApiResult<WorkspaceNote>> =>
     apiCall('create_workspace_note', {
-      request: { title, journalId: journalId ?? null },
+      request: { title: title ?? null, journalId: journalId ?? null },
     }),
 
   /** Appends a reference atomically without replacing another editor's note. */
@@ -138,6 +138,6 @@ export const journalApi = {
   /**
    * Deletes a persisted workspace note by id.
    */
-  deleteWorkspaceNote: async (noteId: string): Promise<ApiResult<void>> =>
+  deleteWorkspaceNote: async (noteId: string): Promise<ApiResult<null>> =>
     apiCall('delete_workspace_note', { request: { noteId } }),
 };

@@ -79,7 +79,7 @@ export const documentApi = {
     path: string,
     recursive?: boolean,
     spaceId?: string,
-  ): Promise<ApiResult<void>> =>
+  ): Promise<ApiResult<null>> =>
     apiCall('index_directory', {
       path,
       recursive: recursive ?? true,
@@ -108,7 +108,7 @@ export const documentApi = {
    * @param path - Absolute path to file to reindex
    * @returns Void on success
    */
-  reindexFile: async (path: string): Promise<ApiResult<void>> =>
+  reindexFile: async (path: string): Promise<ApiResult<null>> =>
     apiCall('reindex_file', { path }),
 
   /**
@@ -118,7 +118,7 @@ export const documentApi = {
    * @param path - Absolute path to file to remove
    * @returns Void on success
    */
-  removeIndexedFile: async (path: string): Promise<ApiResult<void>> =>
+  removeIndexedFile: async (path: string): Promise<ApiResult<null>> =>
     apiCall('remove_indexed_file', { path }),
 
   /**
@@ -129,7 +129,7 @@ export const documentApi = {
    * @param documentId - Unique identifier of the document to delete
    * @returns Void on success
    */
-  deleteDocument: async (documentId: string): Promise<ApiResult<void>> =>
+  deleteDocument: async (documentId: string): Promise<ApiResult<null>> =>
     apiCall('delete_document', { documentId }),
 
   /**
@@ -176,15 +176,15 @@ export const documentApi = {
    *
    * @returns Void on success
    */
-  cancelIndexing: async (): Promise<ApiResult<void>> =>
+  cancelIndexing: async (): Promise<ApiResult<null>> =>
     apiCall('cancel_indexing'),
 
   /** Pauses the running index. Both the directory run and the watcher queue stop. */
-  pauseIndexing: async (): Promise<ApiResult<void>> =>
+  pauseIndexing: async (): Promise<ApiResult<null>> =>
     apiCall('pause_indexing'),
 
   /** Resumes a paused index. */
-  resumeIndexing: async (): Promise<ApiResult<void>> =>
+  resumeIndexing: async (): Promise<ApiResult<null>> =>
     apiCall('resume_indexing'),
 
   /**
@@ -195,7 +195,7 @@ export const documentApi = {
    * reappear the moment another surface reads the snapshot. Unknown paths are
    * a no-op on the backend.
    */
-  clearIndexingFailure: async (path: string): Promise<ApiResult<void>> =>
+  clearIndexingFailure: async (path: string): Promise<ApiResult<null>> =>
     apiCall('clear_indexing_failure', { path }),
 
   /**
@@ -223,24 +223,24 @@ export const documentApi = {
   renameCustomCollection: async (
     collectionId: string,
     name: string,
-  ): Promise<ApiResult<void>> =>
+  ): Promise<ApiResult<null>> =>
     apiCall('rename_custom_collection', { collectionId, name }),
 
   moveCustomCollection: async (
     collectionId: string,
     parentId: string | null,
-  ): Promise<ApiResult<void>> =>
+  ): Promise<ApiResult<null>> =>
     apiCall('move_custom_collection', { collectionId, parentId }),
 
   deleteCustomCollection: async (
     collectionId: string,
-  ): Promise<ApiResult<void>> =>
+  ): Promise<ApiResult<null>> =>
     apiCall('delete_custom_collection', { collectionId }),
 
   addDocumentsToCustomCollection: async (
     collectionId: string,
     documentIds: string[],
-  ): Promise<ApiResult<void>> =>
+  ): Promise<ApiResult<null>> =>
     apiCall('add_documents_to_custom_collection', {
       collectionId,
       documentIds,
@@ -249,7 +249,7 @@ export const documentApi = {
   removeDocumentsFromCustomCollection: async (
     collectionId: string,
     documentIds: string[],
-  ): Promise<ApiResult<void>> =>
+  ): Promise<ApiResult<null>> =>
     apiCall('remove_documents_from_custom_collection', {
       collectionId,
       documentIds,
@@ -415,7 +415,7 @@ export const documentApi = {
    * @param path - Absolute path to file
    * @returns Void on success
    */
-  showInFolder: async (path: string): Promise<ApiResult<void>> =>
+  showInFolder: async (path: string): Promise<ApiResult<null>> =>
     apiCall('show_in_folder', { path }),
 
   /**

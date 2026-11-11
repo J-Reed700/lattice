@@ -79,7 +79,7 @@ export const batchApi = {
    * @param jobId - ID of batch job to delete
    * @returns Void on success
    */
-  deleteBatchJob: async (jobId: string): Promise<ApiResult<void>> => {
+  deleteBatchJob: async (jobId: string): Promise<ApiResult<null>> => {
     const result = await apiCall(
       'delete_batch_job',
       { jobId },
@@ -90,7 +90,7 @@ export const batchApi = {
     if (!result.data.success) {
       return { ok: false, error: 'Failed to delete batch job' };
     }
-    return { ok: true, data: undefined };
+    return { ok: true, data: null };
   },
 
   /**

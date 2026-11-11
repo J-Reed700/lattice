@@ -1,4 +1,3 @@
-import type * as Wire from '@/lib/bindings';
 import { apiCall } from '@/shared/ipc/transport';
 import type {
   ApiResult,
@@ -102,6 +101,6 @@ export const mentionApi = {
    * @param mentionId - Internal mention identifier
    * @returns Void on success
    */
-  deleteMention: async (mentionId: string): Promise<ApiResult<void>> =>
+  deleteMention: async (mentionId: string): Promise<ApiResult<null>> =>
     apiCall('delete_mention', { mentionId }),
 };

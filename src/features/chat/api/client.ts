@@ -103,8 +103,8 @@ export const chatApi = {
   ): Promise<ApiResult<ListConversationsResponse>> =>
     apiCall('list_conversations', {
       query: {
-        limit,
-        offset,
+        limit: limit ?? null,
+        offset: offset ?? null,
       },
     }),
 
@@ -213,7 +213,7 @@ export const chatApi = {
   cancelConversationGeneration: async (
     conversationId: string,
     requestId: string,
-  ): Promise<ApiResult<void>> => {
+  ): Promise<ApiResult<null>> => {
     const response = await apiCall(
       'chat_with_conversation',
       {
@@ -224,9 +224,9 @@ export const chatApi = {
       },
     );
     if (!response.ok) {
-      return response as unknown as ApiResult<void>;
+      return response;
     }
-    return { ok: true, data: undefined };
+    return { ok: true, data: null };
   },
 
   /**
@@ -498,7 +498,7 @@ export const chatApi = {
   /** Pins or unpins an entry in one journal; the Chat sidebar's pin is separate. */
   setJournalEntryPinned: (
     request: Wire.SetJournalEntryPinnedRequestDto,
-  ): Promise<ApiResult<void>> =>
+  ): Promise<ApiResult<null>> =>
     apiCall('set_journal_entry_pinned', { request }),
 
   /**

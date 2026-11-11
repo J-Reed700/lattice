@@ -4,7 +4,6 @@ import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query';
 import { listen } from '@tauri-apps/api/event';
 
 import { onJobStatus } from '@/features/jobs/api';
-import type { ActivitySnapshotDto } from '@/lib/bindings';
 import { apiCall } from '@/shared/ipc/transport';
 import { unwrapApiResult } from '@/types/api/result';
 

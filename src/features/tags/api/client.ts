@@ -49,7 +49,7 @@ export const tagsApi = {
    */
   removeTagFromDocument: async (
     request: RemoveTagFromDocumentRequest,
-  ): Promise<ApiResult<void>> =>
+  ): Promise<ApiResult<null>> =>
     apiCall('remove_tag_from_document', {
       request: {
         document_id: request.documentId,

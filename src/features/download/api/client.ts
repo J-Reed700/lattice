@@ -46,7 +46,7 @@ export const downloadApi = {
    * @param downloadId - Unique download identifier
    * @returns Void on success
    */
-  pauseDownload: async (downloadId: string): Promise<ApiResult<void>> =>
+  pauseDownload: async (downloadId: string): Promise<ApiResult<null>> =>
     apiCall('pause_download', { id: downloadId }),
 
   /**
@@ -56,7 +56,7 @@ export const downloadApi = {
    * @param downloadId - Unique download identifier
    * @returns Void on success
    */
-  resumeDownload: async (downloadId: string): Promise<ApiResult<void>> =>
+  resumeDownload: async (downloadId: string): Promise<ApiResult<null>> =>
     apiCall('resume_download', { id: downloadId }),
 
   /**
@@ -76,7 +76,7 @@ export const downloadApi = {
    * @param downloadId - Unique download identifier
    * @returns Void on success
    */
-  cancelDownload: async (downloadId: string): Promise<ApiResult<void>> =>
+  cancelDownload: async (downloadId: string): Promise<ApiResult<null>> =>
     apiCall('cancel_download', { id: downloadId }),
 
   /**
@@ -86,7 +86,7 @@ export const downloadApi = {
    * @param downloadId - Unique download identifier
    * @returns Void on success
    */
-  retryDownload: async (downloadId: string): Promise<ApiResult<void>> =>
+  retryDownload: async (downloadId: string): Promise<ApiResult<null>> =>
     apiCall('retry_download', { id: downloadId }),
 
   /**
@@ -96,7 +96,7 @@ export const downloadApi = {
    * @param downloadId - Unique download identifier
    * @returns Void on success
    */
-  removeDownload: async (downloadId: string): Promise<ApiResult<void>> =>
+  removeDownload: async (downloadId: string): Promise<ApiResult<null>> =>
     apiCall('remove_download', { id: downloadId }),
 
   /**
