@@ -111,3 +111,108 @@ impl Container {
         Arc::clone(self.ai.auto_tag_all_documents_use_case())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::tags::dto::AutoTagRequestDto;
+    use crate::infrastructure::persistence::repositories::DocumentRepository;
+    use async_trait::async_trait;
+    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+    use lattice_core::application::ports::{LLMPort, RepositoryPort};
+    use lattice_core::domain::entities::{chunk::Chunk, Document};
+    use lattice_core::domain::value_objects::Checksum;
+    use lattice_core::shared::error::Result;
+
+    struct Suggests;
+
+    #[async_trait]
+    impl LLMPort for Suggests {
+        async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
+            Ok(CompletionResponse::from_text("rust, ownership"))
+        }
+        fn model_name(&self) -> &str {
+            "suggests"
+        }
+        fn max_context_tokens(&self) -> usize {
+            4096
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    struct Loaded;
+
+    impl LoadedChatModelPort for Loaded {
+        fn current_model(&self) -> Option<Arc<dyn LLMPort>> {
+            Some(Arc::new(Suggests))
+        }
+    }
+
+    #[tokio::test]
+    async fn auto_tagging_applies_tags_only_when_the_document_lock_is_free() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let metadata = Document::new(
+            lattice_core::shared::types::ValidatedFilePath::new(std::path::PathBuf::from(
+                "/notes.txt",
+            ))
+            .unwrap(),
+            "notes.txt".into(),
+            "text/plain".into(),
+            12,
+            Checksum::new("a".repeat(64)).unwrap(),
+        );
+        let chunk = Chunk::new(metadata.id().clone(), "Ownership in Rust".into(), 0);
+        let document = metadata.from_parts(vec![chunk], vec![]).unwrap();
+        let document_id = document.id().as_str().to_string();
+        DocumentRepository::new(pool.clone())
+            .save_batch(std::slice::from_ref(&document))
+            .await
+            .unwrap();
+        let database = Database::from(pool);
+        let tags = build(database.clone());
+        let ai = build_ai(database, Arc::new(Loaded));
+
+        let held = tags
+            .tag_service
+            .acquire_lock_with_timeout(&document_id)
+            .await
+            .unwrap();
+        let auto_tag = ai.auto_tag_all_documents_use_case.clone();
+        let mut tagging = tokio::spawn(async move {
+            auto_tag
+                .execute(AutoTagRequestDto { max_documents: 10 })
+                .await
+        });
+
+        let early = tokio::time::timeout(std::time::Duration::from_millis(300), &mut tagging).await;
+        assert!(
+            early.is_err(),
+            "tags were applied while the document was locked"
+        );
+
+        drop(held);
+        let response = tokio::time::timeout(std::time::Duration::from_secs(10), tagging)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(response.tagged_count, 1);
+        let mut names: Vec<String> = tags
+            .tag_service
+            .get_tags_for_document(&document_id)
+            .await
+            .unwrap()
+            .iter()
+            .map(|tag| tag.name().as_str().to_string())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["ownership", "rust"]);
+    }
+}
