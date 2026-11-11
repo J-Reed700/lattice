@@ -414,7 +414,7 @@ fn field_change(
         if blanks_citation_sentence(path, text, &ranges) {
             return Err((
                 first,
-                format!("edits to {path} would leave the citation's sentence blank; to take the citation back, list its path in uncite."),
+                format!("edits to {path} would leave the citation's sentence blank; to take the citation back, list {} in uncite.", path.strip_suffix("/sentence").unwrap_or(path)),
             ));
         }
         return Ok(Change::Text {
