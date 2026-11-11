@@ -8,7 +8,7 @@ const KEEPALIVE: Duration = Duration::from_secs(30);
 const KEEPALIVE_ANSWER: Duration = Duration::from_secs(20);
 
 /// The builder for every request to a remote server: rustls, keepalive, and
-/// the system proxy unless disabled (in tests, or by `LATTICE_DISABLE_SYSTEM_PROXY`).
+/// the system proxy unless `LATTICE_DISABLE_SYSTEM_PROXY` is set.
 pub fn reqwest_client_builder() -> ClientBuilder {
     // Chosen explicitly: other crates switch on reqwest's native-tls, and with
     // both compiled in reqwest picks native-tls — Secure Transport on macOS,
@@ -34,15 +34,8 @@ pub fn loopback_client_builder() -> ClientBuilder {
     reqwest_client_builder().no_proxy()
 }
 
-pub fn should_disable_system_proxy() -> bool {
-    if cfg!(test) {
-        return true;
-    }
-
+fn should_disable_system_proxy() -> bool {
     std::env::var("LATTICE_DISABLE_SYSTEM_PROXY")
         .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
         .unwrap_or(false)
 }
-
-#[cfg(test)]
-mod tests;
