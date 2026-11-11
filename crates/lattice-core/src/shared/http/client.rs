@@ -41,3 +41,6 @@ pub fn should_disable_system_proxy() -> bool {
         .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
         .unwrap_or(false)
 }
+
+#[cfg(test)]
+mod tests;
