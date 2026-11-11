@@ -576,6 +576,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn owns_refuses_a_backslash_separated_parent_on_every_platform() {
+        let temp_dir = TempDir::new().unwrap();
+        let library_root = temp_dir.path().join("library");
+        let storage = ContentAddressedStorage::with_root(library_root.clone());
+        assert!(!storage.owns(&library_root.join("a\\..\\..\\x")));
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn owns_refuses_a_dots_only_segment_on_windows() {
+        let temp_dir = TempDir::new().unwrap();
+        let library_root = temp_dir.path().join("library");
+        let storage = ContentAddressedStorage::with_root(library_root.clone());
+        assert!(!storage.owns(&library_root.join("...").join("x")));
+    }
+
+    #[tokio::test]
     async fn removes_an_unreferenced_blob_and_its_directory() {
         let temp_dir = TempDir::new().unwrap();
         let library_root = temp_dir.path().join("library");

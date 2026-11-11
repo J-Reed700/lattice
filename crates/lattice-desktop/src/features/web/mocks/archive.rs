@@ -154,6 +154,19 @@ mod tests {
         }
     }
 
+    #[test]
+    fn owns_refuses_a_backslash_separated_parent_on_every_platform() {
+        let mock = MockWebArchiveService::with_base_dir(PathBuf::from("/mock/web-archive"));
+        assert!(!mock.owns(&PathBuf::from("/mock/web-archive").join("a\\..\\..\\x")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn owns_refuses_a_dots_only_segment_on_windows() {
+        let mock = MockWebArchiveService::with_base_dir(PathBuf::from("/mock/web-archive"));
+        assert!(!mock.owns(&PathBuf::from("/mock/web-archive").join("...").join("x")));
+    }
+
     #[tokio::test]
     async fn test_archive_and_load() {
         let mock = MockWebArchiveService::new();

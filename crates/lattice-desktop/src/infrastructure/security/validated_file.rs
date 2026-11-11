@@ -459,6 +459,19 @@ mod tests {
     }
 
     #[test]
+    fn a_backslash_separated_parent_is_traversal_on_every_platform() {
+        let result = PathSecurityValidator::validate(&PathBuf::from("a\\..\\b"));
+        assert!(matches!(result, Err(ValidationError::ParentTraversal)));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_dots_only_segment_is_traversal_on_windows() {
+        let result = PathSecurityValidator::validate(&PathBuf::from("a\\...\\b"));
+        assert!(matches!(result, Err(ValidationError::ParentTraversal)));
+    }
+
+    #[test]
     fn test_scope_enforcer_empty_roots() {
         let result = ScopeEnforcer::new(vec![]);
         assert!(matches!(result, Err(ValidationError::NoAllowedRoots)));
