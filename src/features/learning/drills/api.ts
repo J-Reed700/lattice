@@ -15,6 +15,14 @@ async function invokeCommand<C extends CommandName>(
 
 /** The review drills' commands. Each throws the backend's message when it fails. */
 export const drillsApi = {
+  /** The language the course's practice profile names; none when it names none. */
+  practiceLanguage: async (programId: string): Promise<string | null> => {
+    const profile = await invokeCommand<Wire.LearningPracticeProfileDto>('get_learning_practice_profile', {
+      request: { programId },
+    });
+    return profile.language;
+  },
+
   /** The languages a drill can be written in, in the catalogue's order. */
   codeReviewLanguages: (): Promise<string[]> =>
     invokeCommand('code_review_languages'),

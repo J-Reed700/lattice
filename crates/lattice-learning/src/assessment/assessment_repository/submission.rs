@@ -214,7 +214,9 @@ impl LearningAssessmentRepository {
             return Err(invalid("This quiz was already submitted."));
         }
         if h.get::<i64, _>("revision") != req.expected_revision {
-            return Err(invalid("This quiz changed; reload and retry."));
+            return Err(AppError::Conflict(
+                "This quiz changed; reload and retry.".into(),
+            ));
         }
         let form = Self::form_in(&mut tx, &req.form_id).await?;
         let timestamp = now();
@@ -313,7 +315,9 @@ impl LearningAssessmentRepository {
         }
         let updated = sqlx::query("UPDATE learning_assessment_forms SET status='submitted',revision=revision+1,submitted_at=?,updated_at=? WHERE id=? AND program_id=? AND revision=? AND status IN ('active','interrupted')").bind(timestamp).bind(timestamp).bind(&req.form_id).bind(&req.program_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
         if updated.rows_affected() != 1 {
-            return Err(invalid("This quiz changed; reload and retry."));
+            return Err(AppError::Conflict(
+                "This quiz changed; reload and retry.".into(),
+            ));
         }
         Self::finalize_in(&mut tx, &req.form_id).await?;
         let job = if pending > 0 {

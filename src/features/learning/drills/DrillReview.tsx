@@ -3,14 +3,15 @@ import { useState, type ReactNode } from 'react';
 import { ConfirmDialog } from '@/components/ConfirmDialog/ConfirmDialog';
 import { Button } from '@/components/ui/button';
 import type { ExplorerLineRange } from '@/features/explorer/stores/explorerStore';
+import { ElapsedClock } from '@/features/learning/practice/shared/ElapsedClock';
 import type { CodeReviewSeverity } from '@/lib/bindings';
 
 import { DrillFailure } from './DrillFailure';
 import { drillMeta, kindOf } from './drillMaterial';
 import { describeSpan, lineCount, type DraftFinding } from './findings';
 import { FindingsList } from './FindingsList';
-import { InterviewClock } from './InterviewClock';
 import { MaterialPane } from './MaterialPane';
+import { plural } from './reveal/revealCopy';
 import { ReviewComposer } from './ReviewComposer';
 
 import type { CodeReviewDrill } from './useCodeReviewDrill';
@@ -18,6 +19,19 @@ import type { CodeReviewDrill } from './useCodeReviewDrill';
 interface Picked {
   path: string;
   range: ExplorerLineRange;
+}
+
+function taskLine(passage: boolean, issues: number): string {
+  const thing = passage ? 'error' : 'issue';
+  const material = passage ? 'explanation' : 'code';
+  if (issues === 1) return `Find the ${thing} in this ${material}, and say what is wrong and how to fix it.`;
+  return `Find the ${plural(issues, thing)} in this ${material}, and say what is wrong and how to fix each.`;
+}
+
+/** The time the attempt has run, counted from when it started, against the limit the learner chose. */
+function DrillClock({ startedAt, limitMs }: { startedAt: number; limitMs: number }) {
+  const [elapsedMs] = useState(() => Math.max(0, Date.now() - startedAt));
+  return <ElapsedClock elapsedMs={elapsedMs} running softLimitMs={limitMs} label="Time" />;
 }
 
 /**
@@ -100,7 +114,7 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: Rea
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-3 sm:px-6">
+      <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border-default px-4 py-3 sm:px-6">
         {back}
         <div className="min-w-0">
           <h2 className="truncate font-serif text-lg text-text-primary">{session.drill.title}</h2>
@@ -108,10 +122,14 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: Rea
         </div>
         {session.limitMs !== null && (
           <div className="ml-auto">
-            <InterviewClock startedAt={session.startedAt} limitMs={session.limitMs} />
+            <DrillClock startedAt={session.startedAt} limitMs={session.limitMs} />
           </div>
         )}
       </header>
+
+      <p className="border-b border-border-subtle bg-surface-sunken px-4 py-2 text-xs font-medium text-text-secondary sm:px-6">
+        {taskLine(passage, session.drill.issues)}
+      </p>
 
       <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] lg:grid-rows-[minmax(0,1fr)] lg:overflow-hidden">
         <div className="h-[32rem] min-h-0 lg:h-full">
@@ -150,8 +168,8 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: Rea
             onMove={(finding, delta) => review.move(finding.id, delta)}
           />
 
-          <section aria-labelledby="drill-fix-title" className="rounded-2xl border border-border bg-surface p-4">
-            <h3 id="drill-fix-title" className="text-sm font-medium text-text-primary">Your fix</h3>
+          <section aria-labelledby="drill-fix-title" className="rounded-2xl border border-border-default bg-surface p-4">
+            <h3 id="drill-fix-title" className="text-xs font-semibold text-text-primary">Your fix</h3>
             <p className="mt-1 text-xs leading-5 text-text-secondary">
               {passage
                 ? 'Optional. Rewrite what you think is wrong in your own copy of the explanation, one sentence to a line.'
@@ -172,7 +190,7 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: Rea
             </div>
           </section>
 
-          <div className="sticky bottom-0 mt-auto space-y-3 border-t border-border bg-background pb-1 pt-3">
+          <div className="sticky bottom-0 mt-auto space-y-3 border-t border-border-default bg-bg pb-1 pt-3">
             {failure && <DrillFailure failure={failure} onRetry={retry} />}
             <Button type="button" size="lg" className="w-full" disabled={review.submitting} onClick={handIn}>
               {review.submitting ? 'Submitting…' : 'Submit review'}

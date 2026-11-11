@@ -3,13 +3,13 @@ use crate::outline_linking::{CitationReceipts, LinkLog};
 use crate::outline_references::ReferencePlan;
 use crate::{dto::*, outline_progress::OutlineProgress, repository::LearningRepository};
 use lattice_core::application::ports::WebServiceTrait;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -301,10 +301,7 @@ impl OutlineDraft {
     }
 
     pub fn stamp(&mut self) {
-        self.review.content_hash = format!(
-            "{:x}",
-            Sha256::digest(self.candidate.to_string().as_bytes())
-        );
+        self.review.content_hash = sha256_hex(self.candidate.to_string());
         self.review.updated_at = chrono::Utc::now().timestamp_millis();
     }
 }
@@ -662,7 +659,7 @@ pub async fn repair_saved(
     if program.summary.status != LearningProgramStatus::Draft
         || program.summary.revision != request.expected_revision
     {
-        return Err(AppError::InvalidInput(
+        return Err(AppError::Conflict(
             "The draft changed. Reload it before repairing.".into(),
         ));
     }

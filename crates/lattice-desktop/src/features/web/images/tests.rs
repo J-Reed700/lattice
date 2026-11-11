@@ -308,7 +308,12 @@ fn commons_parse_ranks_by_index_skips_svg_and_tolerates_missing_metadata() {
     );
     assert_eq!(two.license, None);
     assert!(parse_search(&serde_json::json!({"batchcomplete": true})).is_empty());
-    assert_eq!(strip_html("<p>a<br>b</p>"), "ab");
+    assert_eq!(strip_html("<p>a<br>b</p>"), "a b");
+}
+
+#[test]
+fn a_style_block_in_a_description_is_not_caption_text() {
+    assert_eq!(strip_html("<style>.x{}</style>Caption"), "Caption");
 }
 
 // ---- store ----

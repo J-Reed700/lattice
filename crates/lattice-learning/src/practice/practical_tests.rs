@@ -432,10 +432,7 @@ async fn practical_draft_is_revision_scoped_idempotent_and_rejects_private_files
     let mut stale = request.clone();
     stale.operation_id = id();
     stale.expected_draft_revision = 0;
-    assert!(repository
-        .save_draft(&stale, "stale-operation")
-        .await
-        .is_err());
+    crate::tests::assert_conflict(repository.save_draft(&stale, "stale-operation").await);
 
     let mut hidden = request.clone();
     hidden.operation_id = id();
@@ -464,7 +461,33 @@ async fn practical_draft_is_revision_scoped_idempotent_and_rejects_private_files
         .execute(&pool)
         .await
         .map_err(db)?;
-    assert!(repository.get_draft(&scope).await.is_err());
+    crate::tests::assert_conflict(repository.get_draft(&scope).await);
+    let mut old_activity = request.clone();
+    old_activity.operation_id = id();
+    old_activity.expected_draft_revision = 2;
+    crate::tests::assert_conflict(
+        repository
+            .save_draft(&old_activity, "old-activity-revision")
+            .await,
+    );
+    crate::tests::assert_conflict(
+        repository
+            .prepare_run(
+                &StartLearningPracticalRunRequestDto {
+                    operation_id: id(),
+                    run_id: id(),
+                    program_id: program_id.clone(),
+                    activity_id: activity_id.clone(),
+                    expected_activity_revision: 0,
+                    practice_session_id: None,
+                    learner_files: vec![],
+                },
+                None,
+                "stale-run",
+            )
+            .await
+            .map(|_| ()),
+    );
     let next_revision = repository
         .get_draft(&GetLearningPracticalDraftRequestDto {
             activity_revision: 1,
@@ -585,10 +608,38 @@ async fn simulation_uses_cas_replays_mutations_and_records_only_uncertain_eviden
         operation_id: id(),
         ..turn.clone()
     };
-    assert!(repository
-        .append_simulation_turn(&stale, &reply, "stale-payload")
-        .await
-        .is_err());
+    crate::tests::assert_conflict(
+        repository
+            .append_simulation_turn(&stale, &reply, "stale-payload")
+            .await,
+    );
+    crate::tests::assert_conflict(
+        repository
+            .finish_simulation(
+                &FinishLearningSimulationRequestDto {
+                    operation_id: id(),
+                    program_id: program_id.clone(),
+                    session_id: session_id.clone(),
+                    expected_revision: 0,
+                },
+                &reply,
+                "stale-finish",
+            )
+            .await,
+    );
+    crate::tests::assert_conflict(
+        repository
+            .start_simulation(
+                &StartLearningSimulationRequestDto {
+                    operation_id: id(),
+                    session_id: id(),
+                    expected_activity_revision: 99,
+                    ..start.clone()
+                },
+                "stale-start",
+            )
+            .await,
+    );
 
     let submitted = repository
         .finish_simulation(
@@ -742,10 +793,11 @@ async fn runtime_profiles_use_cas_and_restart_recovery_marks_runs_interrupted() 
         operation_id: id(),
         ..update
     };
-    assert!(repository
-        .save_runtime_profile(&stale, "profile-stale")
-        .await
-        .is_err());
+    crate::tests::assert_conflict(
+        repository
+            .save_runtime_profile(&stale, "profile-stale")
+            .await,
+    );
 
     let run_id = id();
     sqlx::query("INSERT INTO learning_practical_runs(id,program_id,activity_id,activity_revision,activity_snapshot_json,practice_session_id,operation_id,payload_hash,engine,image_id,status,learner_files_json,created_at) VALUES(?,?,?,?,?,NULL,?,?,NULL,NULL,'running','[]',?)")
@@ -1700,7 +1752,7 @@ async fn a_learners_long_practical_request_is_held_to_the_chat_limit() -> Result
 #[test]
 fn the_boundary_and_the_checks_behind_it_share_one_limit() {
     use crate::practical_generation::validate_request;
-    use crate::practical_repository::validate_learner_turn;
+    use crate::practice::session::turn::validate_learner_turn;
     use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
     let at_the_limit = "x".repeat(MAX_CHAT_MESSAGE_CHARS);
     let over = "x".repeat(MAX_CHAT_MESSAGE_CHARS + 1);

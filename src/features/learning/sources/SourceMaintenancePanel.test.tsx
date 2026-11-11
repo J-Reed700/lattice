@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SourceMaintenancePanel } from '@/features/learning/sources/SourceMaintenancePanel';
 
 const mocks = vi.hoisted(() => ({ workspace: vi.fn(), version: vi.fn(), search: vi.fn(), selector: vi.fn(), remove: vi.fn(), reimport: vi.fn(), semantic: vi.fn() }));
-vi.mock('@/lib/api', () => ({ default: {
+vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
   getLearningSourceWorkspace: mocks.workspace,
   getLearningSourceVersion: mocks.version,
   searchLearningSources: mocks.search,
@@ -18,7 +18,7 @@ vi.mock('@/lib/api', () => ({ default: {
   searchLearningSourcesSemantically: mocks.semantic,
 } }));
 const ok = <T,>(data: T) => ({ ok: true as const, data });
-const fail = (error: string) => ({ ok: false as const, error });
+const fail = (error: string, code?: string) => ({ ok: false as const, error, ...(code ? { details: { code } } : {}) });
 const source = (deletedAt: number | null = null) => ({ id: 'source-1', kind: 'text', origin: 'Field manual', requestedUrl: null, freshnessPolicy: 'fixed', activeVersionId: deletedAt ? null : 'version-2', pendingVersionId: null, revision: 4, activeVersion: deletedAt ? null : { id: 'version-2', versionNumber: 2, title: 'Field manual', publisher: null, resolvedUrl: null, excerpt: 'A method for checking evidence.', contentSha256: 'sha-two', wordCount: 12, truncated: false, extractionVersion: 'text-v1', acquiredAt: 1_790_000_000_000 }, pendingVersion: null, versions: [{ id: 'version-2', versionNumber: 2, title: 'Field manual', publisher: null, resolvedUrl: null, excerpt: 'A method for checking evidence.', contentSha256: 'sha-two', wordCount: 12, truncated: false, extractionVersion: 'text-v1', acquiredAt: 1_790_000_000_000 }, { id: 'version-1', versionNumber: 1, title: 'Field manual · original', publisher: null, resolvedUrl: null, excerpt: 'Earlier version.', contentSha256: 'sha-one', wordCount: 8, truncated: false, extractionVersion: 'text-v1', acquiredAt: 1_780_000_000_000 }], latestCheck: null, checks: [], createdAt: 1_780_000_000_000, updatedAt: 1_790_000_000_000, deletedAt, deletionReason: deletedAt ? 'Superseded source' : null });
 const workspace = (item = source()) => ({ programId: 'program-1', sources: [item] });
 const fullText = 'Before 🦀 ownership transfers after acknowledgement. After.';
@@ -72,9 +72,37 @@ describe('Learning Studio source continuity', () => {
     expect(request).toMatchObject({ programId: 'program-1', sourceId: 'source-1', expectedRevision: 4, reason: 'Superseded source' });
     // The retry belongs to the failed delete, even if its confirmation is dismissed.
     await user.click(screen.getByRole('button', { name: 'Keep source' }));
-    await user.click(screen.getByRole('button', { name: 'Retry same removal' }));
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(mocks.remove).toHaveBeenCalledTimes(2));
     expect(mocks.remove.mock.calls[1][0]).toEqual(request);
+  });
+
+  it('offers a reload of the source workspace, not Try again, when a removal is refused as a conflict', async () => {
+    const user = userEvent.setup();
+    mocks.remove.mockResolvedValueOnce(fail('This source changed elsewhere.', 'CONFLICT'));
+    renderPanel();
+    await screen.findByRole('textbox', { name: 'Saved source text for Field manual' });
+    await user.click(screen.getByRole('button', { name: 'Remove source' }));
+    await user.type(screen.getByLabelText('Reason for removal'), 'Superseded source');
+    await user.click(screen.getByRole('button', { name: 'Confirm removal' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('This source changed elsewhere.');
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+    const loads = mocks.workspace.mock.calls.length;
+    await user.click(screen.getByRole('button', { name: 'Reload source workspace' }));
+    await waitFor(() => expect(mocks.workspace.mock.calls.length).toBeGreaterThan(loads));
+  });
+
+  it('treats a message that merely says "changed elsewhere" as a plain error with Try again', async () => {
+    const user = userEvent.setup();
+    mocks.remove.mockResolvedValueOnce(fail('This source changed elsewhere.'));
+    renderPanel();
+    await screen.findByRole('textbox', { name: 'Saved source text for Field manual' });
+    await user.click(screen.getByRole('button', { name: 'Remove source' }));
+    await user.type(screen.getByLabelText('Reason for removal'), 'Superseded source');
+    await user.click(screen.getByRole('button', { name: 'Confirm removal' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('This source changed elsewhere.');
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Reload source workspace' })).not.toBeInTheDocument();
   });
 
   it('shows a tombstone and lets the learner restore a selected historical version', async () => {

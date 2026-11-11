@@ -25,9 +25,30 @@ pub fn normalize_web_source_url(url: &str) -> String {
     url.trim().to_ascii_lowercase()
 }
 
+/// The host a URL names, or `None` when it will not parse or has no host.
+pub fn host_of(url: &str) -> Option<String> {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(str::to_owned))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{identity, normalize_web_source_url};
+    use super::{host_of, identity, normalize_web_source_url};
+
+    #[test]
+    fn the_host_of_a_url_is_its_lower_case_host_without_port_or_path() {
+        assert_eq!(
+            host_of("https://Example.com:8080/a?b=c").as_deref(),
+            Some("example.com")
+        );
+    }
+
+    #[test]
+    fn a_url_that_will_not_parse_or_has_no_host_has_no_host() {
+        assert_eq!(host_of("not a url"), None);
+        assert_eq!(host_of("mailto:someone@example.com"), None);
+    }
 
     #[test]
     fn canonicalizes_only_url_components_with_defined_equivalence() {

@@ -9,7 +9,7 @@
 //! keep their state, and the review's record stays honest.
 use super::claim_ledger_tests::{figure, lesson, section, unreadable, Course, Figures};
 use super::GOOD;
-use crate::content_verification::{digest, LessonVerificationReport, Rewritten};
+use crate::content_verification::{LessonVerificationReport, Rewritten};
 use crate::lessons::claim_reviews::dto::ClaimActionRequestDto;
 use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::lessons::claim_reviews::service::{ClaimReviewService, SectionEdit, SectionEditOutcome};
@@ -20,6 +20,7 @@ use lattice_core::domain::learning::claim_review::{
     Actor, ClaimId, ClaimLedgerEntry, ClaimState, Ledger,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Database;
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -404,7 +405,9 @@ async fn the_rewritten_report_drops_findings_with_no_claim_whose_text_is_gone() 
     assert_eq!(report.findings[at].claim_id.as_deref(), Some("mine"));
     assert_eq!(
         report.content_sha256,
-        digest(&json!([before, 0, "A title", "A sentence that stays. Mine is new."]).to_string())
+        sha256_hex(
+            json!([before, 0, "A title", "A sentence that stays. Mine is new."]).to_string()
+        )
     );
     Ok(())
 }

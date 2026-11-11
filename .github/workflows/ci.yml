@@ -342,6 +342,29 @@ jobs:
           path: target/nextest/ci/junit.xml
           if-no-files-found: warn
 
+      # Runs when tests fail too, so a branch gets its bindings in the same run.
+      - name: Write the bindings this build generates
+        id: generated-bindings
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-24.04' && env.REDS != 'true' }}
+        working-directory: crates/lattice-desktop
+        shell: bash
+        run: |
+          cargo build --locked ${{ env.PACKAGE_ARGS }} --features lattice-desktop/bindings-export --bins
+          ../../target/debug/export_bindings
+          cd ../..
+          if git diff --quiet -- src/lib/bindings.ts src/shared/ipc/routes.generated.ts; then exit 0; fi
+          mkdir -p "$RUNNER_TEMP/generated-bindings"
+          cp src/lib/bindings.ts src/shared/ipc/routes.generated.ts "$RUNNER_TEMP/generated-bindings/"
+          git checkout -- src/lib/bindings.ts src/shared/ipc/routes.generated.ts
+          echo "stale=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the generated bindings when the committed ones are stale
+        if: ${{ !cancelled() && steps.generated-bindings.outputs.stale == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-bindings
+          path: ${{ runner.temp }}/generated-bindings/
+
       - name: Execute C#, Rust, React and Python container exercises
         if: matrix.os == 'ubuntu-24.04' && env.REDS != 'true' && (env.PACKAGE_ARGS == '--workspace' || contains(env.PACKAGE_ARGS, 'lattice-learning'))
         working-directory: crates/lattice-desktop

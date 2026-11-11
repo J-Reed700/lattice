@@ -6,13 +6,15 @@ use super::{
 };
 use crate::embedded_runtime::{BuiltinLabExecutionSpec, LearningBuiltinRuntime};
 use crate::lab_runtime::{self, LearningLabExecutionSpec, LearningLabFile, LearningLabLimits};
-use crate::persistence::{db, hash_text, now};
+use crate::persistence::{db, now};
 use crate::practical_dto::*;
 use crate::practical_generation::{
     GeneratedPracticalActivity, PracticalFileRole, INTERVIEW_PLAN_FILE_PATH,
 };
+use crate::practice::coding::problem::{Problem, PROBLEM_FILE_PATH};
 use crate::practice::interview_answers::{InterviewAnswerGuides, INTERVIEW_ANSWERS_FILE_PATH};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashSet;
@@ -109,7 +111,9 @@ impl LearningPracticalRepository {
                 .bind(json(&request.command)?).bind(json(&request.limits)?).bind(timestamp)
                 .bind(&request.profile_id).bind(expected).execute(&mut *tx).await.map_err(db)?;
             if updated.rows_affected() != 1 {
-                return Err(invalid("Runtime profile changed; reload and retry."));
+                return Err(AppError::Conflict(
+                    "Runtime profile changed; reload and retry.".into(),
+                ));
             }
             expected + 1
         } else {
@@ -161,6 +165,27 @@ impl LearningPracticalRepository {
                     "Interview answer evidence must be frozen with the activity.",
                 ));
             }
+        }
+        let problem_file = generated
+            .files
+            .iter()
+            .find(|file| file.path == PROBLEM_FILE_PATH);
+        match (request.kind, problem_file) {
+            (LearningPracticalActivityKind::Exercise, Some(file)) => {
+                if file.role != PracticalFileRole::Check || file.editable {
+                    return Err(invalid(
+                        "A coding problem must remain private and read-only.",
+                    ));
+                }
+                decode::<Problem>(&file.content)?;
+            }
+            (LearningPracticalActivityKind::Exercise, None) => {
+                return Err(invalid("A coding problem needs its saved problem file."));
+            }
+            (_, Some(_)) => {
+                return Err(invalid("Only a coding problem may carry a problem file."));
+            }
+            (_, None) => {}
         }
         if request.builtin_runtime.is_some() && request.runtime_profile_id.is_some() {
             return Err(invalid("Choose one execution environment for an activity."));
@@ -233,8 +258,8 @@ impl LearningPracticalRepository {
         }
         let revision = Self::active_program(&mut tx, &request.program_id).await?;
         if revision != request.expected_program_revision {
-            return Err(invalid(
-                "The learning program changed; regenerate this activity.",
+            return Err(AppError::Conflict(
+                "The learning program changed; regenerate this activity.".into(),
             ));
         }
         let module_id: Option<String> = sqlx::query_scalar(
@@ -321,12 +346,94 @@ impl LearningPracticalRepository {
             };
             sqlx::query("INSERT INTO learning_practical_files(activity_id,ordinal,path,role,content,content_sha256,editable) VALUES(?,?,?,?,?,?,?)")
                 .bind(&request.activity_id).bind(ordinal as i64).bind(&file.path).bind(role)
-                .bind(&file.content).bind(hash_text(&file.content))
+                .bind(&file.content).bind(sha256_hex(&file.content))
                 .bind(file.editable as i64).execute(&mut *tx).await.map_err(db)?;
         }
         operation.record(&mut tx, &0_i64).await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&request.program_id).await
+    }
+
+    /// The lesson a coding build is for: the one asked for, else the program's current lesson, else its first.
+    pub async fn build_lesson(
+        &self,
+        program_id: &str,
+        lesson_id: Option<&str>,
+    ) -> Result<BuildLesson> {
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let wanted = match lesson_id {
+            Some(id) => Some(id.to_owned()),
+            None => sqlx::query_scalar::<_, Option<String>>(
+                "SELECT current_lesson_id FROM learning_programs WHERE id=?",
+            )
+            .bind(program_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db)?
+            .flatten(),
+        };
+        let row = match wanted {
+            Some(id) => {
+                sqlx::query("SELECT id,title,objective FROM learning_lessons WHERE id=? AND program_id=?")
+                    .bind(id)
+                    .bind(program_id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(db)?
+            }
+            None => {
+                sqlx::query("SELECT l.id,l.title,l.objective FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? ORDER BY m.ordinal,l.ordinal LIMIT 1")
+                    .bind(program_id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(db)?
+            }
+        };
+        tx.commit().await.map_err(db)?;
+        let row = row.ok_or_else(|| AppError::NotFound("Learning lesson not found".into()))?;
+        Ok(BuildLesson {
+            id: row.get("id"),
+            title: row.get("title"),
+            objective: row.get("objective"),
+        })
+    }
+
+    /// The revision an activity saved for this program must name.
+    pub async fn program_revision(&self, program_id: &str) -> Result<i64> {
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let revision = Self::active_program(&mut tx, program_id).await;
+        tx.commit().await.map_err(db)?;
+        revision
+    }
+
+    /// The problem a coding activity was saved with, read from its private problem file.
+    pub async fn stored_problem(
+        &self,
+        program_id: &str,
+        activity_id: &str,
+    ) -> Result<StoredProblem> {
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let activity = Self::internal_activity(&mut tx, program_id, activity_id).await;
+        tx.commit().await.map_err(db)?;
+        let activity = activity?;
+        if activity.kind != LearningPracticalActivityKind::Exercise {
+            return Err(invalid("This activity is not a coding problem."));
+        }
+        let file = activity
+            .files
+            .iter()
+            .find(|file| file.path == PROBLEM_FILE_PATH)
+            .filter(|file| file.role == "check" && !file.editable)
+            .ok_or_else(|| {
+                AppError::Database("The coding problem has no saved problem file.".into())
+            })?;
+        Ok(StoredProblem {
+            problem: decode(&file.content)?,
+            lesson_id: activity.lesson_id,
+            outcome_ids: activity.outcome_ids,
+            builtin_runtime: activity.builtin_runtime,
+            builtin_runtime_version: activity.builtin_runtime_version,
+        })
     }
 
     pub(super) async fn internal_activity(
@@ -431,4 +538,22 @@ impl LearningPracticalRepository {
             generator_model: row.get("generator_model"),
         })
     }
+}
+
+/// A lesson as a coding build reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildLesson {
+    pub id: String,
+    pub title: String,
+    pub objective: String,
+}
+
+/// A saved coding problem as the app reads it back, with what the activity recorded beside it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredProblem {
+    pub problem: Problem,
+    pub lesson_id: String,
+    pub outcome_ids: Vec<String>,
+    pub builtin_runtime: Option<LearningBuiltinRuntime>,
+    pub builtin_runtime_version: Option<String>,
 }

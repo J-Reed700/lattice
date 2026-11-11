@@ -1,6 +1,25 @@
 //! Recording assistance: opened sources, tutor turns and revealed solutions.
 use super::*;
+use crate::practice::assistance_policy::{
+    written_help, written_level, AssistancePolicy, Help, HelpLevel, WrittenAssistance,
+};
 use lattice_core::shared::persistence::Transactions;
+
+fn require(
+    help: Help,
+    mode: &LearningPracticeMode,
+    unavailable: &str,
+    restricted: &str,
+) -> Result<()> {
+    let level = written_level(mode);
+    if WrittenAssistance.allows(help, level) {
+        Ok(())
+    } else if level == HelpLevel::NoHelp {
+        Err(invalid(unavailable))
+    } else {
+        Err(invalid(restricted))
+    }
+}
 
 impl LearningPracticeRepository {
     pub async fn open_source(
@@ -43,11 +62,14 @@ impl LearningPracticeRepository {
             return Err(invalid("Submitted practice attempts are immutable."));
         }
         if s.revision != req.expected_revision {
-            return Err(invalid("Practice session changed; reload and retry."));
+            return Err(conflict("Practice session changed; reload and retry."));
         }
-        if s.mode == LearningPracticeMode::Demonstrate {
-            return Err(invalid("Source access is unavailable in Demonstrate mode."));
-        }
+        require(
+            Help::Tutor,
+            &s.mode,
+            "Source access is unavailable in Demonstrate mode.",
+            "Source access is unavailable in Demonstrate mode.",
+        )?;
         if !s.source_version_ids.iter().any(|id| id == &req.version_id) {
             return Err(invalid(
                 "This source version is not frozen into the attempt.",
@@ -68,7 +90,7 @@ impl LearningPracticeRepository {
         let t = now();
         let update=sqlx::query("UPDATE learning_practice_sessions SET revision=revision+1,updated_at=? WHERE program_id=? AND id=? AND revision=? AND status='active'").bind(t).bind(&req.program_id).bind(&req.session_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
         if update.rows_affected() != 1 {
-            return Err(invalid("Practice session changed; reload and retry."));
+            return Err(conflict("Practice session changed; reload and retry."));
         }
         Self::insert_assistance(
             &mut tx,
@@ -126,17 +148,18 @@ impl LearningPracticeRepository {
             return Err(invalid("Submitted practice attempts are immutable."));
         }
         if s.revision != expected_revision {
-            return Err(invalid("Practice session changed; reload and retry."));
+            return Err(conflict("Practice session changed; reload and retry."));
         }
-        if s.mode == LearningPracticeMode::Demonstrate {
-            return Err(invalid(
-                "Tutor assistance is unavailable in Demonstrate mode.",
-            ));
-        }
+        require(
+            written_help(&turn.request_kind, turn.hint_level.as_ref()),
+            &s.mode,
+            "Tutor assistance is unavailable in Demonstrate mode.",
+            "Worked explanations are available only in Explore mode.",
+        )?;
         let t = now();
         let upd=sqlx::query("UPDATE learning_practice_sessions SET revision=revision+1,updated_at=? WHERE program_id=? AND id=? AND revision=? AND status='active'").bind(t).bind(program_id).bind(session_id).bind(expected_revision).execute(&mut *tx).await.map_err(db)?;
         if upd.rows_affected() != 1 {
-            return Err(invalid("Practice session changed; reload and retry."));
+            return Err(conflict("Practice session changed; reload and retry."));
         }
         let citations = json(&turn.citations)?;
         let proposal_ids: Vec<String> = turn.proposals.iter().map(|p| p.id.clone()).collect();
@@ -206,17 +229,18 @@ impl LearningPracticeRepository {
             return Err(invalid("Submitted practice attempts are immutable."));
         }
         if s.revision != req.expected_revision {
-            return Err(invalid("Practice session changed; reload and retry."));
+            return Err(conflict("Practice session changed; reload and retry."));
         }
-        if s.mode == LearningPracticeMode::Demonstrate {
-            return Err(invalid(
-                "Solution reveal is unavailable in Demonstrate mode.",
-            ));
-        }
+        require(
+            Help::WorkedSolution,
+            &s.mode,
+            "Solution reveal is unavailable in Demonstrate mode.",
+            "Worked solutions are available only in Explore mode.",
+        )?;
         let t = now();
         let upd=sqlx::query("UPDATE learning_practice_sessions SET revealed_solution=?,revealed_solution_citations_json=?,revision=revision+1,updated_at=? WHERE program_id=? AND id=? AND revision=? AND status='active'").bind(solution).bind(json(citations)?).bind(t).bind(&req.program_id).bind(&req.session_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
         if upd.rows_affected() != 1 {
-            return Err(invalid("Practice session changed; reload and retry."));
+            return Err(conflict("Practice session changed; reload and retry."));
         }
         Self::insert_assistance(
             &mut tx,

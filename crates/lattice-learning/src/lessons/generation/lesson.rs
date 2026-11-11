@@ -20,6 +20,7 @@ use crate::review_findings::{plain_part, FindingKind, FindingSite, ReviewFinding
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::hash::sha256_hex;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;
@@ -299,7 +300,7 @@ pub async fn prepare_lesson_with_references<'a>(
     // Adding research references must not discard an otherwise identical draft.
     // Retain its original source indices and prompt while all original snapshots
     // remain unchanged. New evidence still participates in factual verification.
-    let scope_hash = crate::content_verification::digest(&serde_json::to_string(&json!({
+    let scope_hash = sha256_hex(&serde_json::to_string(&json!({
         "policy":AUTHORING_POLICY,
         "request":authoring_scope(&bare_prompt)?,
         "revision":crate::lesson_drafts::authoring_revision(program.summary.revision),"model":llm.model_name(),
@@ -380,12 +381,7 @@ pub async fn prepare_lesson_with_references<'a>(
             reference_hashes: active
                 .sources
                 .iter()
-                .map(|source| {
-                    (
-                        source.id.clone(),
-                        crate::content_verification::digest(&source.excerpt),
-                    )
-                })
+                .map(|source| (source.id.clone(), sha256_hex(&source.excerpt)))
                 .collect(),
         });
         expanded = gathered.expanded.take();
@@ -401,10 +397,8 @@ pub async fn prepare_lesson_with_references<'a>(
         "revision":crate::lesson_drafts::authoring_revision(program.summary.revision), "model":llm.model_name(),
         "sources":references.sources,
     }))?;
-    let input_hash = reuse_hash.unwrap_or_else(|| {
-        use sha2::Digest;
-        format!("{:x}", sha2::Sha256::digest(draft_input.as_bytes()))
-    });
+    let input_hash =
+        reuse_hash.unwrap_or_else(|| lattice_core::shared::hash::sha256_hex(&draft_input));
     let raw = if let Some(draft) = crate::lesson_drafts::resume(input_hash).await? {
         crate::lesson_progress::phase(
             crate::lesson_progress::Phase::Writing,
