@@ -16,6 +16,7 @@ pub mod downloaded_models;
 pub mod embedding;
 pub mod model;
 pub mod model_file;
+pub(crate) mod models_table_type;
 
 // Shared repository support.
 #[cfg(any(test, feature = "test-utils"))]
