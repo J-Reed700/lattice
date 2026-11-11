@@ -1,4 +1,5 @@
-//! Vault-wide type mix and recent growth, read straight from the document table.
+//! Library-wide type mix, recent growth and newest indexing time, read straight
+//! from the document table. A chat's attachments are not part of the library.
 //!
 //! Deliberately its own narrow port rather than a method on the document
 //! repository: nothing else needs a grouped count, and the two queries here are
@@ -7,7 +8,7 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Local, NaiveTime, Utc};
 use sqlx::{Row, SqlitePool};
 
 use crate::features::stats::type_label::type_label;
@@ -24,6 +25,14 @@ pub struct CorpusShape {
     /// Label, count — sorted count descending, then label ascending.
     pub by_type: Vec<(String, i64)>,
     pub grown_last_7_days: i64,
+    /// Documents indexed since local midnight.
+    pub grown_today: i64,
+    /// When the newest library document was indexed, if there is one.
+    pub last_indexed_at: Option<String>,
+}
+
+fn start_of_local_day(now: DateTime<Local>) -> DateTime<Local> {
+    now - now.time().signed_duration_since(NaiveTime::MIN)
 }
 
 #[async_trait]
@@ -56,6 +65,7 @@ impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
                    LOWER(COALESCE(file_type, ''))             AS file_type,
                    COUNT(*)                                   AS n
             FROM documents
+            WHERE owner_conversation_id IS NULL
             GROUP BY source_type, file_type
             "#,
         )
@@ -78,15 +88,29 @@ impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
         let mut by_type: Vec<(String, i64)> = buckets.into_iter().collect();
         by_type.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
-        let cutoff = (Utc::now() - Duration::days(GROWTH_WINDOW_DAYS)).to_rfc3339();
-        let grown_last_7_days: i64 =
-            sqlx::query("SELECT COUNT(*) AS n FROM documents WHERE indexed_at >= ?")
-                .bind(&cutoff)
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(|e| AppError::Database(format!("corpus shape growth: {}", e)))?
-                .try_get("n")
-                .unwrap_or(0);
+        let week_cutoff = (Utc::now() - Duration::days(GROWTH_WINDOW_DAYS)).to_rfc3339();
+        let day_cutoff = start_of_local_day(Local::now())
+            .with_timezone(&Utc)
+            .to_rfc3339();
+        let growth = sqlx::query(
+            r#"
+            SELECT COUNT(CASE WHEN indexed_at >= ? THEN 1 END) AS week,
+                   COUNT(CASE WHEN indexed_at >= ? THEN 1 END) AS today,
+                   MAX(indexed_at)                             AS newest
+            FROM documents
+            WHERE owner_conversation_id IS NULL
+            "#,
+        )
+        .bind(&week_cutoff)
+        .bind(&day_cutoff)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| AppError::Database(format!("corpus shape growth: {}", e)))?;
+        let grown_last_7_days: i64 = growth.try_get("week").unwrap_or(0);
+        let grown_today: i64 = growth.try_get("today").unwrap_or(0);
+        let last_indexed_at: Option<String> = growth
+            .try_get("newest")
+            .map_err(|e| AppError::Database(format!("corpus shape newest: {}", e)))?;
         tx.commit()
             .await
             .map_err(|e| AppError::Database(format!("corpus shape commit: {}", e)))?;
@@ -95,6 +119,8 @@ impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
             total,
             by_type,
             grown_last_7_days,
+            grown_today,
+            last_indexed_at,
         })
     }
 }
@@ -198,11 +224,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn today_starts_at_local_midnight_and_the_newest_indexing_time_is_reported() {
+        let pool = pool().await;
+        let now = Local::now();
+        let midnight = start_of_local_day(now);
+        let stamp = |at: DateTime<Local>| at.with_timezone(&Utc).to_rfc3339();
+        let before_midnight = stamp(midnight - Duration::minutes(1));
+        let just_now = stamp(now);
+        insert_doc(&pool, "today", "pdf", "local", &just_now).await;
+        insert_doc(&pool, "yesterday", "pdf", "local", &before_midnight).await;
+        insert_doc(
+            &pool,
+            "chat",
+            "pdf",
+            "local",
+            &stamp(now + Duration::hours(1)),
+        )
+        .await;
+        sqlx::query("UPDATE documents SET owner_conversation_id = 'chat-1' WHERE id = 'chat'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let repo = SqliteCorpusShapeRepository::new(pool);
+        let shape = repo.corpus_shape().await.unwrap();
+
+        assert_eq!(shape.total, 2);
+        assert_eq!(shape.grown_today, 1);
+        assert_eq!(shape.grown_last_7_days, 2);
+        assert_eq!(shape.last_indexed_at, Some(just_now));
+    }
+
+    #[tokio::test]
     async fn empty_vault_reports_zeroes() {
         let repo = SqliteCorpusShapeRepository::new(pool().await);
         let shape = repo.corpus_shape().await.unwrap();
         assert_eq!(shape.total, 0);
         assert!(shape.by_type.is_empty());
         assert_eq!(shape.grown_last_7_days, 0);
+        assert_eq!(shape.grown_today, 0);
+        assert_eq!(shape.last_indexed_at, None);
     }
 }

@@ -383,7 +383,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn find_all_paginated(&self, _limit: usize) -> AppResult<Vec<Document>> {
+        async fn find_all_paginated(
+            &self,
+            _page: lattice_core::shared::persistence::Page,
+        ) -> AppResult<Vec<Document>> {
             Ok(vec![])
         }
     }

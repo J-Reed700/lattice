@@ -205,7 +205,10 @@ impl DocumentRepositoryPort for DddMockDocumentRepository {
         Ok(0)
     }
 
-    async fn find_all_paginated(&self, _limit: usize) -> Result<Vec<Document>> {
+    async fn find_all_paginated(
+        &self,
+        _page: crate::shared::persistence::Page,
+    ) -> Result<Vec<Document>> {
         Ok(vec![])
     }
 }

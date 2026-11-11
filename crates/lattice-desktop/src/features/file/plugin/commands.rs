@@ -6,7 +6,6 @@ use crate::features::file::commands as file_commands;
 use crate::interfaces::commands::document_list;
 use crate::interfaces::di::Container;
 use lattice_core::application::contracts::recent_documents::RecentDocument;
-use lattice_core::shared::error::AppError;
 use lattice_core::shared::ipc::ApiError;
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -23,8 +22,7 @@ pub async fn list_indexed_files(
     limit: Option<usize>,
     container: State<'_, Container>,
 ) -> Result<Vec<String>, ApiError> {
-    let effective_limit = limit.unwrap_or(10000);
-    let documents = document_list::list_all_documents(container, effective_limit)
+    let documents = document_list::list_all_documents(container, limit)
         .await
         .map_err(ApiError::from)?;
 
@@ -34,7 +32,7 @@ pub async fn list_indexed_files(
 #[tauri::command]
 #[specta::specta]
 pub async fn list_all_documents(
-    limit: usize,
+    limit: Option<usize>,
     container: State<'_, Container>,
 ) -> Result<Vec<document_list::DocumentMetadataDto>, ApiError> {
     document_list::list_all_documents(container, limit)
@@ -50,13 +48,15 @@ pub struct CorpusTypeCountDto {
     pub count: i64,
 }
 
-/// Vault-wide type mix and recent growth.
+/// Library-wide type mix, recent growth and the newest indexing time.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CorpusShapeDto {
     pub total: i64,
     pub by_type: Vec<CorpusTypeCountDto>,
     pub grown_last7_days: i64,
+    pub grown_today: i64,
+    pub last_indexed_at: Option<String>,
 }
 
 #[tauri::command]
@@ -79,6 +79,8 @@ pub async fn get_corpus_shape(container: State<'_, Container>) -> Result<CorpusS
             })
             .collect(),
         grown_last7_days: shape.grown_last_7_days,
+        grown_today: shape.grown_today,
+        last_indexed_at: shape.last_indexed_at,
     })
 }
 
@@ -158,6 +160,6 @@ pub async fn get_recent_documents(
         .recent_documents_repository()
         .get_recent_documents(limit)
         .await
-        .map_err(|e| AppError::Other(format!("Failed to get recent documents: {}", e)))?;
+        .map_err(ApiError::from)?;
     Ok(records.into_iter().map(RecentDocument::from).collect())
 }

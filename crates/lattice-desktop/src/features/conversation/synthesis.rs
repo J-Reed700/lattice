@@ -639,7 +639,7 @@ pub async fn synthesize_journal_entries_impl(
 /// Every synthesis not yet saved or dismissed, newest first.
 pub async fn list_journal_syntheses_impl(jobs: &JobRuntime) -> Result<Vec<JournalSynthesisDto>> {
     jobs.store()
-        .list_latest(&[JOURNAL_SYNTHESIS], Page::new(Some(50), None)?)
+        .list_latest(&[JOURNAL_SYNTHESIS], Page::default())
         .await?
         .iter()
         .map(synthesis_dto)

@@ -7,7 +7,7 @@ use lattice_core::application::ports::{DocumentRepositoryPort, RepositoryPort};
 use lattice_core::domain::entities::Document as DocumentEntity;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Page, Transactions};
 use sqlx::SqlitePool;
 
 use super::ops;
@@ -238,9 +238,9 @@ impl DocumentRepositoryPort for SqliteDocumentRepository {
         ops::find_checksum_by_id(&mut conn, document_id).await
     }
 
-    async fn find_all_paginated(&self, limit: usize) -> Result<Vec<DocumentEntity>> {
+    async fn find_all_paginated(&self, page: Page) -> Result<Vec<DocumentEntity>> {
         let mut conn = self.pool.acquire().await?;
-        ops::find_all_paginated(&mut conn, limit).await
+        ops::find_all_paginated(&mut conn, page).await
     }
 }
 

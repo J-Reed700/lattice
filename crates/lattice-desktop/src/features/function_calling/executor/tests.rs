@@ -176,11 +176,11 @@ impl DocumentRepositoryPort for SingleDocumentRepository {
     async fn count_chunks(&self) -> Result<i64> {
         Ok(self.document.chunks().len() as i64)
     }
-    async fn find_all_paginated(&self, limit: usize) -> Result<Vec<Document>> {
-        Ok(vec![self.document.clone()]
-            .into_iter()
-            .take(limit)
-            .collect())
+    async fn find_all_paginated(
+        &self,
+        _page: lattice_core::shared::persistence::Page,
+    ) -> Result<Vec<Document>> {
+        Ok(vec![self.document.clone()])
     }
 }
 impl lattice_core::application::ports::DocumentRepository for SingleDocumentRepository {}

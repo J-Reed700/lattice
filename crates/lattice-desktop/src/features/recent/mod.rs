@@ -7,7 +7,7 @@
 //! ## Public surface
 //!
 //! - `crate::features::recent::dto` — `RecentDocumentDto`,
-//!   `GetRecentDocumentsRequestDto`, `GetRecentDocumentsResponseDto`
+//!   `GetRecentDocumentsResponseDto`
 //! - `crate::features::recent::mapper::RecentDocumentMapper`
 //! - `crate::features::recent::repository::RecentDocumentsRepository`
 //!   (port consumer: `function_calling/executor.rs`)

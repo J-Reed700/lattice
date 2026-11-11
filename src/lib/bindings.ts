@@ -2623,7 +2623,7 @@ async listIndexedFiles(limit: number | null) : Promise<Result<string[], ApiError
     else return { status: "error", error: e  as any };
 }
 },
-async listAllDocuments(limit: number) : Promise<Result<DocumentMetadataDto[], ApiError>> {
+async listAllDocuments(limit: number | null) : Promise<Result<DocumentMetadataDto[], ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:file|list_all_documents", { limit }) };
 } catch (e) {
@@ -6063,9 +6063,9 @@ export type ConversationTangentDto = { conversationId: string; parentConversatio
 contextMessageCount: number }
 export type ConversationWebSourceDto = { id: string; url: string; normalizedUrl: string; title: string | null; excerpt: string | null; relevanceScore: number | null; addedAt: string }
 /**
- * Vault-wide type mix and recent growth.
+ * Library-wide type mix, recent growth and the newest indexing time.
  */
-export type CorpusShapeDto = { total: number; byType: CorpusTypeCountDto[]; grownLast7Days: number }
+export type CorpusShapeDto = { total: number; byType: CorpusTypeCountDto[]; grownLast7Days: number; grownToday: number; lastIndexedAt: string | null }
 /**
  * One row of the vault's type mix.
  */

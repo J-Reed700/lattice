@@ -2,7 +2,7 @@ import { useQuery, type UseQueryOptions } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
 import { describeFailure } from '@/lib/errorHandling';
-import type { DocumentMetadata, RecentDocument } from '@/types';
+import type { RecentDocument } from '@/types';
 import type {
   ConversationDto,
   ConversationJournalDto,
@@ -10,6 +10,8 @@ import type {
 } from '@/types/api/conversation';
 
 const LAST_JOURNAL_SPACE_KEY = 'journal.lastSpaceId';
+const RECENT_DOCUMENTS = 10;
+const TOP_FILE_TYPES = 5;
 
 export interface DashboardConversationSummary {
   id: string;
@@ -92,62 +94,6 @@ function selectRecentChatConversations(
     }));
 }
 
-const FILE_TYPE_LABELS: Record<string, string> = {
-  pdf: 'PDF',
-  md: 'Markdown',
-  markdown: 'Markdown',
-  txt: 'Text',
-  text: 'Text',
-  html: 'Web',
-  htm: 'Web',
-  web_article_html: 'Web',
-  docx: 'Word',
-  doc: 'Word',
-  rtf: 'RTF',
-  odt: 'ODT',
-  csv: 'CSV',
-  json: 'JSON',
-  xlsx: 'Excel',
-  pptx: 'PowerPoint',
-  png: 'Images',
-  jpg: 'Images',
-  jpeg: 'Images',
-  gif: 'Images',
-  webp: 'Images',
-};
-
-function labelForFileType(fileType: string | null | undefined): string {
-  const key = (fileType ?? '').toLowerCase().replace(/^\./, '').trim();
-  if (!key) return 'Other';
-  return FILE_TYPE_LABELS[key] ?? key.toUpperCase();
-}
-
-/** Counts documents by display label; returns the top five, descending. */
-export function summarizeFileTypes(documents: DocumentMetadata[], limit = 5): DashboardFileTypeCount[] {
-  const counts = new Map<string, number>();
-  for (const doc of documents) {
-    const label = labelForFileType(doc.fileType);
-    counts.set(label, (counts.get(label) ?? 0) + 1);
-  }
-  return Array.from(counts.entries())
-    .map(([label, count]) => ({ label, count }))
-    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
-    .slice(0, limit);
-}
-
-function newestIndexedAt(documents: DocumentMetadata[]): string | null {
-  let newest: string | null = null;
-  let newestMs = Number.NEGATIVE_INFINITY;
-  for (const doc of documents) {
-    const ms = new Date(doc.indexedAt).getTime();
-    if (!Number.isNaN(ms) && ms > newestMs) {
-      newestMs = ms;
-      newest = doc.indexedAt;
-    }
-  }
-  return newest;
-}
-
 export const useDashboardQuery = (
   options?: Omit<UseQueryOptions<DashboardData, Error>, 'queryKey' | 'queryFn'>,
 ) => {
@@ -158,6 +104,7 @@ export const useDashboardQuery = (
       const [
         statsResult,
         docsResult,
+        shapeResult,
         systemStatsResult,
         foldersResult,
         conversationsResult,
@@ -165,7 +112,8 @@ export const useDashboardQuery = (
         bookmarksResult,
       ] = await Promise.all([
         api.getIndexingStats(),
-        api.listAllDocuments(10000),
+        api.listAllDocuments(RECENT_DOCUMENTS),
+        api.getCorpusShape(),
         api.getSystemStats(),
         api.getIndexedFolders(),
         api.listConversations(),
@@ -176,8 +124,9 @@ export const useDashboardQuery = (
       // Say why Home could not load: the backend's reason, not a stock line.
       if (!statsResult.ok) throw new Error(describeFailure(statsResult));
       if (!docsResult.ok) throw new Error(describeFailure(docsResult));
+      if (!shapeResult.ok) throw new Error(describeFailure(shapeResult));
 
-      const documents: DocumentMetadata[] = docsResult.data ?? [];
+      const documents = docsResult.data ?? [];
 
       const journals: ConversationJournalDto[] = journalsResult.ok ? journalsResult.data : [];
       const journalSpaceIds = new Set(journals.map((j) => j.id));
@@ -232,29 +181,28 @@ export const useDashboardQuery = (
 
       return {
         stats: {
-          documentCount: statsResult.data?.indexedDocuments || documents.length,
+          documentCount: statsResult.data.indexedDocuments,
           storageBytes,
           folderCount,
-          lastIndexedAt: newestIndexedAt(documents),
-          fileTypes: summarizeFileTypes(documents),
+          lastIndexedAt: shapeResult.data.lastIndexedAt,
+          fileTypes: shapeResult.data.byType
+            .slice(0, TOP_FILE_TYPES)
+            .map(({ type, count }) => ({ label: type, count })),
         },
-        recentDocuments: [...documents]
-          .sort((a, b) => new Date(b.indexedAt).getTime() - new Date(a.indexedAt).getTime())
-          .slice(0, 10)
-          .map((doc) => ({
-            id: doc.id,
-            documentId: doc.id,
-            documentName: doc.fileName,
-            documentPath: doc.filePath,
-            fileType: doc.fileType,
-            lastAccessedAt: doc.indexedAt,
-            accessCount: 0,
-            fileName: doc.fileName,
-            filePath: doc.filePath,
-            indexedAt: doc.indexedAt,
-            modifiedAt: doc.modifiedAt,
-            sizeBytes: 0,
-          })),
+        recentDocuments: documents.map((doc) => ({
+          id: doc.id,
+          documentId: doc.id,
+          documentName: doc.fileName,
+          documentPath: doc.filePath,
+          fileType: doc.fileType,
+          lastAccessedAt: doc.indexedAt,
+          accessCount: 0,
+          fileName: doc.fileName,
+          filePath: doc.filePath,
+          indexedAt: doc.indexedAt,
+          modifiedAt: doc.modifiedAt,
+          sizeBytes: 0,
+        })),
         recentConversations,
         todayJournalEntry,
         preferredJournalSpaceId: preferredJournal?.id ?? null,

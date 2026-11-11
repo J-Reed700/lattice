@@ -32,6 +32,7 @@ export async function installExplorerFixture(page: Page) {
     initialize_database: () => 'ready',
     get_index_progress: () => ({ is_indexing: false, current_file: null, files_processed: 0, total_files: 0, percent_complete: 0, failed: 0, status: 'idle', paused: false, failures: [] }),
     get_indexing_stats: () => ({ indexedDocuments: 0, totalChunks: 0 }),
+    get_corpus_shape: () => ({ total: 0, byType: [], grownLast7Days: 0, grownToday: 0, lastIndexedAt: null }),
     detect_system_capabilities: () => ({ total_ram_gb: 8, cpu_cores: 8, cpu_architecture: 'e2e', gpu_type: 'none', gpu_acceleration: 'none', vram_gb: null, available_disk_gb: 10 }),
     generate_chat_starters: () => ({ fingerprint: '', generatedAt: stamp, starters: [], documentCount: 0 }),
     'dialog|open': () => state.picker,

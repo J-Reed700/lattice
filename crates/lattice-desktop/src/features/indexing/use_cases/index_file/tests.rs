@@ -295,7 +295,10 @@ impl DocumentRepositoryPort for MockDocumentRepo {
         <Self as DocumentRepositoryPort>::delete(self, document_id).await
     }
 
-    async fn find_all_paginated(&self, _limit: usize) -> Result<Vec<Document>> {
+    async fn find_all_paginated(
+        &self,
+        _page: lattice_core::shared::persistence::Page,
+    ) -> Result<Vec<Document>> {
         Ok(vec![])
     }
 }
