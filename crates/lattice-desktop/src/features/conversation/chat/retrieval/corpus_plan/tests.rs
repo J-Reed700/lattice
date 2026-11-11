@@ -137,10 +137,10 @@ async fn exact_section_lookup_preserves_scope_subsections_and_comparison_coverag
 async fn direct_evidence_survives_rewrite_omission_and_unavailable_search_models() {
     use crate::features::search::engine::text_search::SqliteTextSearch;
     use crate::infrastructure::vector_index::USearchVectorIndex;
-    use lattice_core::application::ports::MockEmbeddingPort;
+    use lattice_core::application::ports::UnavailableEmbedding;
     let pool = section_fixture().await;
     let repository = ConversationRepository::new(pool.clone());
-    let embedder = Arc::new(MockEmbeddingPort::new_degraded());
+    let embedder = Arc::new(UnavailableEmbedding::not_installed());
     let index = Arc::new(USearchVectorIndex::new(384, None).unwrap());
     // The fixture deliberately lacks an FTS index too; both search branches fail.
     let hybrid = HybridSearchUseCase::new(
@@ -181,7 +181,7 @@ async fn direct_evidence_survives_rewrite_omission_and_unavailable_search_models
 async fn keyword_search_in_a_named_space_finds_the_chats_attachment() {
     use crate::features::search::engine::text_search::SqliteTextSearch;
     use crate::infrastructure::vector_index::USearchVectorIndex;
-    use lattice_core::application::ports::MockEmbeddingPort;
+    use lattice_core::application::ports::UnavailableEmbedding;
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect(":memory:")
@@ -201,7 +201,7 @@ async fn keyword_search_in_a_named_space_finds_the_chats_attachment() {
         .execute(&pool).await.unwrap();
     let repository = ConversationRepository::new(pool.clone());
     // Degraded embedder: the vector branch fails, so only keyword can answer.
-    let embedder = Arc::new(MockEmbeddingPort::new_degraded());
+    let embedder = Arc::new(UnavailableEmbedding::not_installed());
     let index = Arc::new(USearchVectorIndex::new(384, None).unwrap());
     let hybrid = HybridSearchUseCase::new(
         embedder,
@@ -235,7 +235,7 @@ async fn keyword_search_in_a_named_space_finds_the_chats_attachment() {
 async fn reading_from_the_beginning_reads_half_the_budget_round_robin() {
     use crate::features::search::engine::text_search::SqliteTextSearch;
     use crate::infrastructure::vector_index::USearchVectorIndex;
-    use lattice_core::application::ports::MockEmbeddingPort;
+    use lattice_core::application::ports::UnavailableEmbedding;
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect(":memory:")
@@ -259,7 +259,7 @@ async fn reading_from_the_beginning_reads_half_the_budget_round_robin() {
         }
     }
     let repository = ConversationRepository::new(pool.clone());
-    let embedder = Arc::new(MockEmbeddingPort::new_degraded());
+    let embedder = Arc::new(UnavailableEmbedding::not_installed());
     let index = Arc::new(USearchVectorIndex::new(384, None).unwrap());
     let hybrid = HybridSearchUseCase::new(
         embedder,

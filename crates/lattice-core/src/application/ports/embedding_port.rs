@@ -4,7 +4,7 @@
 //! The app's implementation is a model served by the bundled llama-server
 //! (`features::embedding::llama_cpp`); tests implement it with fakes.
 
-use crate::shared::error::Result;
+use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 
 /// Port for embedding generation services.
@@ -64,6 +64,11 @@ pub trait EmbeddingPort: Send + Sync {
     /// so the chunk-size split would cut nearly every full chunk in two.
     fn window_parts(&self, text: &str) -> Result<Vec<EmbeddingTextChunk>> {
         self.split_text(text, "")
+    }
+
+    /// The error a model that failed to load left behind; `None` for every other port.
+    fn load_failure(&self) -> Option<AppError> {
+        None
     }
 
     /// Identity of the vector space, including model artifacts and preprocessing version.

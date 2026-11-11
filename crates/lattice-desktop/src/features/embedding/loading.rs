@@ -3,7 +3,9 @@
 use crate::features::embedding::llama_cpp::{EmbeddingServerStarter, LlamaEmbeddingService};
 use crate::infrastructure::security::SecurityContext;
 use lattice_core::application::ports::active_models::ActiveModels;
-use lattice_core::application::ports::{EmbeddingIndexBinding, EmbeddingPort};
+use lattice_core::application::ports::{
+    EmbeddingIndexBinding, EmbeddingPort, UnavailableEmbedding,
+};
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 
@@ -19,8 +21,8 @@ impl EmbeddingLoader {
     /// Try to load the active embedding model
     ///
     /// Returns Ok(Some(embedding)) if active model loaded successfully
-    /// Returns Ok(None) if no active model or file doesn't exist
-    /// Returns Err only on unrecoverable errors
+    /// Returns Ok(None) only when no embedding model is active
+    /// Returns Err when an active model cannot be used
     async fn try_load_active_embedding_model(&self) -> Result<Option<Arc<dyn EmbeddingPort>>> {
         let active_model = match self.active_models.get_active_embedding_model().await {
             Ok(Some(model)) => model,
@@ -33,7 +35,7 @@ impl EmbeddingLoader {
                     "Failed to query active embedding model from database: {}",
                     e
                 );
-                return Ok(None);
+                return Err(e);
             }
         };
 
@@ -45,7 +47,12 @@ impl EmbeddingLoader {
 
         let model_path = match active_model.loadable_path() {
             Some(p) => p.to_path_buf(),
-            None => return Ok(None),
+            None => {
+                return Err(AppError::InvalidState(format!(
+                    "The active embedding model '{}' has no file on this machine",
+                    active_model.model_name()
+                )))
+            }
         };
 
         if !model_path.exists() {
@@ -53,7 +60,11 @@ impl EmbeddingLoader {
                 "Active embedding model artifact not found: {} - user may have deleted it manually",
                 model_path.display()
             );
-            return Ok(None);
+            return Err(AppError::NotFound(format!(
+                "The file of the active embedding model '{}' is missing: {}",
+                active_model.model_name(),
+                model_path.display()
+            )));
         }
 
         let models_dir = model_path
@@ -76,7 +87,11 @@ impl EmbeddingLoader {
                 tracing::error!(
                     "Rejecting model load due to security violation (CWE-22: Path Traversal)"
                 );
-                return Ok(None);
+                return Err(AppError::Security(format!(
+                    "The active embedding model '{}' failed path validation: {}",
+                    active_model.model_name(),
+                    e
+                )));
             }
         };
 
@@ -139,28 +154,27 @@ impl EmbeddingLoader {
         }
     }
 
-    pub(crate) async fn load(&self) -> Result<Arc<dyn EmbeddingPort>> {
-        use lattice_core::application::ports::MockEmbeddingPort;
-
+    /// The active embedding model, or the port that says why there is none:
+    /// not installed, or the error that kept the active model from loading.
+    pub(crate) async fn load(&self) -> Arc<dyn EmbeddingPort> {
         tracing::debug!("Step 1: Checking for active downloaded embedding model...");
         match self.try_load_active_embedding_model().await {
             Ok(Some(embedding)) => {
                 tracing::info!("Using active downloaded embedding model");
-                return Ok(embedding);
+                embedding
             }
             Ok(None) => {
-                tracing::debug!("No active embedding model available, using mock...");
-            }
-            Err(e @ AppError::ModelLoadFailed(_)) => {
-                return Err(e);
+                tracing::info!("No active embedding model; embedding is unavailable");
+                tracing::info!("💡 Download an embedding model to enable semantic search features");
+                Arc::new(UnavailableEmbedding::not_installed())
             }
             Err(e) => {
-                tracing::warn!("Error loading active embedding model: {}, using mock...", e);
+                tracing::warn!("Error loading active embedding model: {}", e);
+                Arc::new(UnavailableEmbedding::failed_to_load(e))
             }
         }
-
-        tracing::info!("Using Mock embedding implementation");
-        tracing::info!("💡 Download an embedding model to enable semantic search features");
-        Ok(Arc::new(MockEmbeddingPort::new_degraded()) as Arc<dyn EmbeddingPort>)
     }
 }
+
+#[cfg(test)]
+mod tests;

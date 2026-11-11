@@ -109,6 +109,7 @@ pub struct SettingsImportOutcome {
     pub vault_just_enabled: bool,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 /// Mock implementation for testing.
 #[cfg(any(test, feature = "test-support"))]
 pub struct MockSettingsRepository {

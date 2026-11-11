@@ -30,22 +30,7 @@ use std::sync::Arc;
 pub(crate) async fn require_embedding_ready(
     loaded: AppResult<Arc<dyn EmbeddingPort>>,
 ) -> AppResult<()> {
-    let embedding_service = loaded.map_err(|e| {
-        AppError::ServiceNotAvailable(format!("Could not load the active embedding model: {}", e))
-    })?;
-
-    let is_ready = embedding_service.is_ready().await.map_err(|e| {
-        AppError::ServiceNotAvailable(format!("Failed to verify embedding model readiness: {}", e))
-    })?;
-
-    if !is_ready {
-        return Err(AppError::ServiceNotAvailable(
-            "AI embedding model is not ready yet. Activate an embedding model in Settings → Downloaded and try again."
-                .to_string(),
-        ));
-    }
-
-    Ok(())
+    lattice_core::application::ports::require_loaded_ready(loaded).await
 }
 
 async fn ensure_embedding_ready(container: &Container) -> AppResult<()> {
