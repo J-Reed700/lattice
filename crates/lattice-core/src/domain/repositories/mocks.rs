@@ -73,10 +73,6 @@ impl ChunkRepositoryPort for MockChunkRepository {
         Ok(0)
     }
 
-    async fn count_indexed_documents(&self) -> Result<i64> {
-        Ok(0)
-    }
-
     async fn count_by_document(&self, _document_id: &str) -> Result<i64> {
         Ok(0)
     }

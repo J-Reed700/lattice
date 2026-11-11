@@ -171,11 +171,6 @@ impl ChunkRepositoryPort for ChunkRepository {
         ops::count_all(&mut conn).await
     }
 
-    async fn count_indexed_documents(&self) -> Result<i64> {
-        let mut conn = self.pool.acquire().await?;
-        ops::count_documents_with_chunks(&mut conn).await
-    }
-
     async fn count_by_document(&self, document_id: &str) -> Result<i64> {
         let mut conn = self.pool.acquire().await?;
         ops::count_by_document(&mut conn, document_id)

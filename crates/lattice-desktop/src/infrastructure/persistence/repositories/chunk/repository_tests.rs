@@ -90,7 +90,6 @@ async fn pool_repository_reads_in_index_order_and_by_document() {
         3i64
     );
     assert_eq!(repo.count_all().await.unwrap(), 4);
-    assert_eq!(repo.count_indexed_documents().await.unwrap(), 2);
     assert_eq!(repo.find_all().await.unwrap().len(), 4);
 
     let moss_id = moss.id().as_str().to_owned();
@@ -180,7 +179,6 @@ async fn pool_batches_are_atomic_and_deletes_reach_only_their_targets() {
         .await
         .unwrap();
     assert_eq!(repo.count_all().await.unwrap(), 4);
-    assert_eq!(repo.count_indexed_documents().await.unwrap(), 2);
 
     repo.delete_batch(&[]).await.unwrap();
     let batch_ids = ids(&batch);

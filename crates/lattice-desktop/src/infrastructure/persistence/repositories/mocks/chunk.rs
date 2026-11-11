@@ -102,10 +102,6 @@ impl ChunkRepositoryPort for MockChunkRepository {
         Ok(self.chunks.read().len() as i64)
     }
 
-    async fn count_indexed_documents(&self) -> Result<i64> {
-        Ok(self.document_index.read().len() as i64)
-    }
-
     async fn count_by_document(&self, document_id: &str) -> Result<i64> {
         let document_index = self.document_index.read();
         Ok(document_index

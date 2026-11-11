@@ -256,17 +256,6 @@ pub async fn count_all(conn: &mut SqliteConnection) -> Result<i64> {
     Ok(result)
 }
 
-/// How many documents have at least one chunk.
-pub async fn count_documents_with_chunks(conn: &mut SqliteConnection) -> Result<i64> {
-    sqlx::query_scalar::<_, i64>("SELECT COUNT(DISTINCT document_id) FROM text_chunks")
-        .fetch_one(conn)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to count indexed documents");
-            AppError::Database(format!("Failed to count indexed documents: {}", e))
-        })
-}
-
 pub async fn count(conn: &mut SqliteConnection) -> Result<usize> {
     sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM text_chunks")
         .fetch_one(conn)
