@@ -169,14 +169,9 @@ async fn judge_overturns_a_lexically_supported_contradiction() {
 #[ignore = "requires LATTICE_LLAMACPP_SETTINGS and a reachable model"]
 async fn live_grounding_adversarial_regressions() {
     use crate::features::llm::llama_cpp::LlamaCppLlm;
-    use lattice_core::application::contracts::settings::LLMSettingsDto;
-    let settings: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap()).unwrap(),
-    )
-    .unwrap();
-    let config: LLMSettingsDto =
-        serde_json::from_value(settings["settings"]["llm"].clone()).unwrap();
-    let llm = LlamaCppLlm::new(&config, None).unwrap().into_port().await;
+    let config = crate::tests::live_llama_cpp::settings().unwrap();
+    let header = crate::tests::live_llama_cpp::header(&config.llama_cpp.auth_header_name).unwrap();
+    let llm = LlamaCppLlm::new(&config, header).unwrap().into_port().await;
     let verifier = GroundingVerifier::new(Some(llm));
     let mut evidence =
         source("The design workspace retains hourly file versions for 14 days before expiration.");

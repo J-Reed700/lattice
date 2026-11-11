@@ -13,7 +13,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use lattice_core::application::contracts::settings::LLMSettingsDto;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{
     check_key, overlapping, pattern, validate, Assessment, Drill, DrillFile, Finding,
@@ -271,13 +270,7 @@ fn report(model: Value, graded: &[Graded]) -> Value {
 /// The model the live tests are configured for: the llama.cpp server `LATTICE_LLAMACPP_SETTINGS` describes or, with
 /// `LATTICE_USE_LEARNING_MODEL=1`, the Learning model those settings name, reached as the app reaches it.
 pub(in crate::features::learning::tests) async fn model() -> Result<Arc<dyn LLMPort>> {
-    let path = std::env::var("LATTICE_LLAMACPP_SETTINGS").map_err(|_| {
-        AppError::InvalidConfig(
-            "Set LATTICE_LLAMACPP_SETTINGS to the settings file the live tests read.".into(),
-        )
-    })?;
-    let settings: Value = serde_json::from_slice(&std::fs::read(path)?)?;
-    let mut config: LLMSettingsDto = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let mut config = crate::tests::live_llama_cpp::settings()?;
     let schedulers = SchedulerRegistry::default();
     if std::env::var("LATTICE_USE_LEARNING_MODEL").as_deref() == Ok("1") {
         match config.learning_model.clone() {
@@ -316,7 +309,10 @@ pub(in crate::features::learning::tests) async fn model() -> Result<Arc<dyn LLMP
             }
         }
     }
-    Ok(LlamaCppLlm::new(&config, None)?.schedule(&schedulers).await)
+    let header = crate::tests::live_llama_cpp::header(&config.llama_cpp.auth_header_name)?;
+    Ok(LlamaCppLlm::new(&config, header)?
+        .schedule(&schedulers)
+        .await)
 }
 
 #[tokio::test]

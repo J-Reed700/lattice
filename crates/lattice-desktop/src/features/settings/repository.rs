@@ -571,7 +571,9 @@ impl SettingsRepositoryPort for SettingsRepository {
 
     async fn store_header_value(&self, server: RemoteServer, value: Option<&str>) -> Result<()> {
         let Some(credentials) = &self.credentials else {
-            return Ok(());
+            return Err(AppError::InvalidState(
+                "No credential store to save the authentication header value in".into(),
+            ));
         };
         let _guard = self.write_lock.lock().await;
         self.migrate_legacy_secrets_locked().await?;

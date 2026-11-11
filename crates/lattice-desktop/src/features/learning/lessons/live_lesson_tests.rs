@@ -25,28 +25,6 @@ mod small;
 #[path = "live_web_trace.rs"]
 mod web_trace;
 
-/// The header a live run sends to its llama.cpp server. The settings file
-/// holds the header name; the value comes from the environment.
-fn live_eval_header(
-    name: &str,
-) -> Result<Option<lattice_core::application::ports::llm_port::RemoteHeader>> {
-    let name = name.trim();
-    if name.is_empty() {
-        return Ok(None);
-    }
-    match std::env::var("LATTICE_LLAMACPP_AUTH_HEADER_VALUE") {
-        Ok(value) if !value.trim().is_empty() => Ok(Some(
-            lattice_core::application::ports::llm_port::RemoteHeader {
-                name: name.to_owned(),
-                value: value.trim().to_owned(),
-            },
-        )),
-        _ => Err(AppError::InvalidConfig(format!(
-            "The settings file names the header `{name}`; set LATTICE_LLAMACPP_AUTH_HEADER_VALUE to its value"
-        ))),
-    }
-}
-
 /// The embedding model a live run was given, loaded once, or none. The course
 /// indexes of a live run read it through this.
 struct GivenModel(Option<Arc<dyn lattice_core::application::ports::EmbeddingPort>>);
@@ -76,10 +54,7 @@ async fn live_batched_verification_matches_individual_checks_and_measures_cost()
         ClaimJudgment, ClaimVerdict, LocatedClaim,
     };
     use std::sync::atomic::Ordering;
-    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
-        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
-    )?)?;
-    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let config = crate::tests::live_llama_cpp::settings()?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
     let model = ObservedModel::new(&config, directory.clone(), 0).await?;
@@ -178,10 +153,7 @@ async fn live_batched_verification_matches_individual_checks_and_measures_cost()
 #[ignore = "requires live settings and an artifact directory; makes real model requests"]
 async fn live_coverage_mapping_recovers_existing_claims_without_inventing_missing_ones(
 ) -> Result<()> {
-    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
-        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
-    )?)?;
-    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let config = crate::tests::live_llama_cpp::settings()?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
     let model = ObservedModel::new(&config, directory.clone(), 0).await?;
@@ -293,7 +265,7 @@ impl ObservedModel {
         directory: std::path::PathBuf,
         first_call: usize,
     ) -> Result<Self> {
-        let header = live_eval_header(&settings.llama_cpp.auth_header_name)?;
+        let header = crate::tests::live_llama_cpp::header(&settings.llama_cpp.auth_header_name)?;
         Self::with_header(settings, header, directory, first_call).await
     }
 
@@ -508,10 +480,7 @@ async fn live_source_passage_judgments() -> Result<()> {
         ports::llm_port::SamplingOverride,
         services::claim_verification::{CheckPolicy, ClaimChecker, ClaimJudgment},
     };
-    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
-        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
-    )?)?;
-    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let config = crate::tests::live_llama_cpp::settings()?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
     let model = ObservedModel::new(&config, directory.clone(), 0).await?;
@@ -634,10 +603,7 @@ async fn live_source_passage_judgments() -> Result<()> {
 #[tokio::test]
 #[ignore = "requires explicit live settings and artifact directory; uses committed source-selection controls by default"]
 async fn live_reference_selection() -> Result<()> {
-    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
-        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
-    )?)?;
-    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let config = crate::tests::live_llama_cpp::settings()?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
     let model = ObservedModel::new(&config, directory.clone(), 0).await?;
@@ -686,10 +652,7 @@ async fn live_reference_selection() -> Result<()> {
 #[ignore = "requires explicit live settings, a recorded teaching review and artifact directory"]
 async fn live_teaching_review_evidence_scope() -> Result<()> {
     use lattice_core::application::ports::llm_port::CompletionInput;
-    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
-        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
-    )?)?;
-    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let config = crate::tests::live_llama_cpp::settings()?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
     let model = ObservedModel::new(&config, directory.clone(), 0).await?;
@@ -780,10 +743,7 @@ async fn live_teaching_review_evidence_scope() -> Result<()> {
 #[tokio::test]
 #[ignore = "requires live settings, a recorded coverage audit and artifact directory"]
 async fn live_passage_coverage_preserves_complete_assertions() -> Result<()> {
-    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
-        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
-    )?)?;
-    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let config = crate::tests::live_llama_cpp::settings()?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
     let model = ObservedModel::new(&config, directory.clone(), 0).await?;
@@ -856,10 +816,7 @@ async fn live_passage_coverage_preserves_complete_assertions() -> Result<()> {
 #[ignore = "requires live settings, saved draft, review call, database and artifact directory"]
 async fn live_review_findings_require_evidence() -> Result<()> {
     use crate::features::learning::{reference_collection::ReferenceCollection, review_evidence};
-    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
-        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
-    )?)?;
-    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let config = crate::tests::live_llama_cpp::settings()?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
     let model = ObservedModel::new(&config, directory.clone(), 0).await?;
@@ -1005,10 +962,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         plan_dto::LearningGenerationJobActionRequestDto,
     };
     let _ = tracing_subscriber::fmt().with_env_filter("lattice::features::learning=info,lattice_core::application::services::claim_verification=warn").try_init();
-    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
-        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
-    )?)?;
-    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let config = crate::tests::live_llama_cpp::settings()?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
     let observed = if std::env::var("LATTICE_USE_LEARNING_MODEL").as_deref() == Ok("1") {
