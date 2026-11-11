@@ -481,6 +481,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_readiness_gate_gives_the_error_of_a_port_that_failed_to_load() {
+        let failure = AppError::ModelLoadFailed("weights are corrupt".to_string());
+        let port = Arc::new(UnavailableEmbedding::failed_to_load(failure.clone()));
+
+        let error = require_embedding_ready(Ok(port))
+            .await
+            .expect_err("a model that failed to load is not ready");
+
+        assert_eq!(error.to_string(), failure.to_string());
+    }
+
+    #[tokio::test]
     async fn index_defers_a_path_outside_the_allowed_roots() {
         let f = fixture(
             RecordingIndexUseCase::default(),

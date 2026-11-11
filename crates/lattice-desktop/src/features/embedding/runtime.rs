@@ -178,6 +178,51 @@ mod tests {
         assert!(!port.is_ready().await.unwrap());
     }
 
+    fn failed() -> Arc<dyn EmbeddingPort> {
+        Arc::new(
+            lattice_core::application::ports::UnavailableEmbedding::failed_to_load(
+                AppError::ModelLoadFailed("weights are corrupt".into()),
+            ),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_dynamic_port_over_a_failed_load_reports_the_load_error() {
+        use crate::features::embedding::service::DynamicEmbedding;
+
+        let runtime = Arc::new(EmbeddingRuntime::new());
+        let port = DynamicEmbedding::new(runtime.clone());
+        runtime
+            .get_or_load(|| async { Ok(failed()) })
+            .await
+            .unwrap();
+
+        let error = port.embed_query("text").await.unwrap_err();
+
+        assert!(
+            matches!(&error, AppError::ModelLoadFailed(m) if m == "weights are corrupt"),
+            "the load failure was lost: {error}"
+        );
+        assert!(port.load_failure().is_some());
+    }
+
+    #[tokio::test]
+    async fn a_failed_load_is_not_retried_within_the_cooldown() {
+        let runtime = EmbeddingRuntime::new();
+        let calls = AtomicUsize::new(0);
+        for _ in 0..2 {
+            let port = runtime
+                .get_or_load(|| async {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(failed())
+                })
+                .await
+                .unwrap();
+            assert!(port.load_failure().is_some());
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
     #[tokio::test]
     async fn concurrent_loads_share_a_ready_model() {
         let runtime = EmbeddingRuntime::new();
