@@ -601,3 +601,9 @@ fn do_not_repeat_holds_every_existing_prompt_in_full() {
         );
     }
 }
+
+#[test]
+fn the_quiz_bank_writer_is_asked_for_choices_alike_in_form() {
+    assert!(SYSTEM.contains("Write all the choices of a question alike in form: close in length and detail, the same grammatical shape and opening, none alone hedged or absolute, none alone carrying a reason or an example, and none repeating the question's distinctive words, so that the right one cannot be told from the others without knowing the material."));
+    assert!(!SYSTEM.contains("distractors of similar length"));
+}
