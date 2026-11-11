@@ -1,7 +1,6 @@
 //! The commands of a practice session, for every kind of work: each reads what it needs, makes its model calls and
 //! checks outside any write, and then writes.
 
-use crate::practical_repository::validate_learner_turn;
 use crate::practice::session::hints::next_rung;
 use crate::practice::session::kind::{Kind, Kinds};
 use crate::practice::session::observe::{cases_for, observe, outcome, submit_counts};
@@ -10,6 +9,7 @@ use crate::practice::session::ports::{
     Aids, At, CheckFinished, CheckStart, Checks, Clock, Debriefer, SessionStore,
 };
 use crate::practice::session::record::{Applied, Finish, Help, NewHint, NewSession, Op, Session};
+use crate::practice::session::turn::validate_learner_turn;
 use lattice_core::domain::learning::practice::work::{
     CaseStatus, CheckScope, CheckStatus, Exercise, Piece, Setting, Stage,
 };

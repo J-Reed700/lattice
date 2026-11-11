@@ -1,11 +1,11 @@
 //! Role simulations: starting sessions, appending turns and finishing them.
 use super::{
-    decode, invalid, json, practical_operation, uuid, validate_learner_turn,
-    InternalActivitySnapshot, LearningPracticalRepository, PracticalWorkspaceSnapshot,
-    SimulationTurnWrite,
+    decode, invalid, json, practical_operation, uuid, InternalActivitySnapshot,
+    LearningPracticalRepository, PracticalWorkspaceSnapshot, SimulationTurnWrite,
 };
 use crate::persistence::{db, hash, now};
 use crate::practical_dto::*;
+use crate::practice::session::turn::validate_learner_turn;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use sqlx::Row;

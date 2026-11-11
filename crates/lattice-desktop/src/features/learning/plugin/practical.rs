@@ -457,7 +457,7 @@ pub async fn send_learning_simulation_turn(
             ),
         ));
     }
-    crate::features::learning::practical_repository::validate_learner_turn(&request.content)
+    lattice_learning::practice::session::turn::validate_learner_turn(&request.content)
         .map_err(ApiError::from)?;
     let (activity, source_ids) = repo
         .simulation_session_generation_context(&request.program_id, &session.id)

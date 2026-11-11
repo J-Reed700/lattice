@@ -1752,7 +1752,7 @@ async fn a_learners_long_practical_request_is_held_to_the_chat_limit() -> Result
 #[test]
 fn the_boundary_and_the_checks_behind_it_share_one_limit() {
     use crate::practical_generation::validate_request;
-    use crate::practical_repository::validate_learner_turn;
+    use crate::practice::session::turn::validate_learner_turn;
     use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
     let at_the_limit = "x".repeat(MAX_CHAT_MESSAGE_CHARS);
     let over = "x".repeat(MAX_CHAT_MESSAGE_CHARS + 1);
