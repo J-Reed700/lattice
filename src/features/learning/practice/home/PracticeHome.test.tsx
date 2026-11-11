@@ -2,9 +2,8 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type * as Wire from '@/lib/bindings';
-
 import { PROGRAM_KIND_ID } from '@/features/learning/practice/kinds';
+import type * as Wire from '@/lib/bindings';
 
 import { PracticeHome, type PracticeHomeProps } from './PracticeHome';
 
