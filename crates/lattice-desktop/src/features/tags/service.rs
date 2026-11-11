@@ -81,31 +81,31 @@ impl TagService {
             }),
         }
     }
+}
 
-    /// Merge existing tags with generated tags, removing duplicates (case-insensitive)
-    pub fn merge_tags(existing: Vec<String>, generated: Vec<String>) -> Vec<String> {
-        use std::collections::HashSet;
+/// Merge existing tags with generated tags, removing duplicates (case-insensitive).
+pub fn merge_tags(existing: Vec<String>, generated: Vec<String>) -> Vec<String> {
+    use std::collections::HashSet;
 
-        // Normalize to lowercase for deduplication
-        let mut normalized = HashSet::new();
-        let mut result = Vec::new();
+    // Normalize to lowercase for deduplication
+    let mut normalized = HashSet::new();
+    let mut result = Vec::new();
 
-        for tag in existing {
-            let normalized_tag = tag.to_lowercase();
-            if normalized.insert(normalized_tag) {
-                result.push(tag);
-            }
+    for tag in existing {
+        let normalized_tag = tag.to_lowercase();
+        if normalized.insert(normalized_tag) {
+            result.push(tag);
         }
-
-        for tag in generated {
-            let normalized_tag = tag.to_lowercase();
-            if normalized.insert(normalized_tag) {
-                result.push(tag.to_lowercase());
-            }
-        }
-
-        result
     }
+
+    for tag in generated {
+        let normalized_tag = tag.to_lowercase();
+        if normalized.insert(normalized_tag) {
+            result.push(tag.to_lowercase());
+        }
+    }
+
+    result
 }
 
 #[async_trait]
@@ -265,7 +265,7 @@ impl TagServiceTrait for TagService {
             .collect();
 
         // Merge with existing tags
-        let merged_tags = Self::merge_tags(existing_tag_names, normalized_tags);
+        let merged_tags = merge_tags(existing_tag_names, normalized_tags);
 
         tag_repo
             .add_tags_to_document_by_names(document_id, merged_tags)
@@ -335,96 +335,11 @@ impl TagServiceTrait for TagService {
             })
     }
 
-    async fn generate_tags(
-        &self,
-        document_id: &str,
-        max_tags: usize,
-    ) -> Result<Vec<String>, lattice_core::shared::error::AppError> {
-        Err(lattice_core::shared::error::AppError::ServiceNotAvailable(
-            format!(
-                "Tag generation requires AI model (document_id={}, max_tags={})",
-                document_id, max_tags
-            ),
-        ))
-    }
-
-    async fn auto_tag_all_documents(
-        &self,
-        max_documents: usize,
-    ) -> Result<usize, lattice_core::shared::error::AppError> {
-        Err(lattice_core::shared::error::AppError::ServiceNotAvailable(
-            format!(
-                "Auto-tagging requires AI model (max_documents={})",
-                max_documents
-            ),
-        ))
-    }
-
     async fn acquire_lock_with_timeout(
         &self,
         document_id: &str,
     ) -> Result<DocumentLockGuard, lattice_core::shared::error::AppError> {
         TagService::acquire_lock_with_timeout(self, document_id).await
-    }
-
-    async fn acquire_lock(
-        &self,
-        document_id: &str,
-    ) -> Result<DocumentLockGuard, lattice_core::shared::error::AppError> {
-        TagService::acquire_lock_with_timeout(self, document_id).await
-    }
-
-    async fn get_or_create(
-        &self,
-        name: &str,
-        color: &str,
-    ) -> Result<lattice_core::domain::entities::Tag, lattice_core::shared::error::AppError> {
-        use crate::features::tags::repository::TagRepository;
-
-        if name.is_empty() {
-            return Err(lattice_core::shared::error::AppError::InvalidInput(
-                "A tag needs a name".into(),
-            ));
-        }
-
-        let normalized_name = name.trim().to_lowercase();
-        let tag_repo = TagRepository::new(self.database.clone());
-        tag_repo
-            .get_or_create(&normalized_name, Some(color))
-            .await
-            .map_err(|e| {
-                lattice_core::shared::error::AppError::Database(format!("Failed to get tag: {}", e))
-            })
-    }
-
-    async fn get_all_with_counts(
-        &self,
-    ) -> Result<
-        Vec<lattice_core::application::contracts::tags::TagWithCountDto>,
-        lattice_core::shared::error::AppError,
-    > {
-        self.get_all_tags_with_counts().await
-    }
-
-    fn merge_tags(&self, existing: Vec<String>, generated: Vec<String>) -> Vec<String> {
-        let mut seen_lower = std::collections::HashSet::new();
-        let mut result = Vec::new();
-
-        for tag in existing {
-            let lower = tag.to_lowercase();
-            if seen_lower.insert(lower) {
-                result.push(tag);
-            }
-        }
-
-        for tag in generated {
-            let lower = tag.to_lowercase();
-            if seen_lower.insert(lower) {
-                result.push(tag);
-            }
-        }
-
-        result
     }
 }
 
@@ -443,7 +358,7 @@ mod tests {
             "async".to_string(),
         ];
 
-        let merged = TagService::merge_tags(existing, generated);
+        let merged = merge_tags(existing, generated);
 
         assert_eq!(merged.len(), 4);
         assert!(merged.contains(&"rust".to_string()));
@@ -457,7 +372,7 @@ mod tests {
         let existing: Vec<String> = vec![];
         let generated = vec!["tag1".to_string(), "tag2".to_string()];
 
-        let merged = TagService::merge_tags(existing, generated);
+        let merged = merge_tags(existing, generated);
         assert_eq!(merged.len(), 2);
     }
 
@@ -466,7 +381,7 @@ mod tests {
         let existing = vec!["tag1".to_string(), "tag2".to_string()];
         let generated = vec!["TAG1".to_string(), "Tag2".to_string()];
 
-        let merged = TagService::merge_tags(existing, generated);
+        let merged = merge_tags(existing, generated);
         assert_eq!(merged.len(), 2);
     }
 
@@ -521,10 +436,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_tag_named_at_length_is_found_or_created() {
-        let service = TagService::new(pool_with_tags().await);
+        let repository =
+            crate::features::tags::repository::TagRepository::new(pool_with_tags().await);
         let name = long_tag("found");
 
-        let tag = service.get_or_create(&name, "#6366f1").await.unwrap();
+        let tag = repository
+            .get_or_create(&name, Some("#6366f1"))
+            .await
+            .unwrap();
 
         assert_eq!(tag.name().as_str(), name);
     }

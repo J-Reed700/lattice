@@ -133,7 +133,7 @@ pub async fn start(
 ) -> Res<String> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
-    let client = reqwest::Client::builder().build()?;
+    let client = lattice_core::shared::http::reqwest_client_builder().build()?;
     let upstream = upstream.trim_end_matches('/').to_owned();
     tokio::spawn(async move {
         loop {

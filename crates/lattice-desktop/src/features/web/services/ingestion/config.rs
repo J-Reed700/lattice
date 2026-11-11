@@ -10,7 +10,6 @@ use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::application::ports::IngestedDocumentStorePort;
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
-use tokenizers::Tokenizer;
 
 /// Runtime configuration for web ingestion chunking behavior.
 #[derive(Debug, Clone)]
@@ -65,7 +64,6 @@ pub struct WebIngestionServiceBuilder {
     web_archive: Option<Arc<dyn WebArchiveServiceTrait>>,
     embedding_service: Option<Arc<dyn EmbeddingPort>>,
     index_storage: Option<Arc<dyn IngestedDocumentStorePort>>,
-    tokenizer: Option<Arc<Tokenizer>>,
     vector_search: Option<Arc<dyn lattice_core::application::ports::VectorSearchPort>>,
     query_cache: Option<Arc<dyn lattice_core::application::ports::SearchResultCachePort>>,
     config: WebIngestionConfig,
@@ -78,7 +76,6 @@ impl WebIngestionServiceBuilder {
             web_archive: None,
             embedding_service: None,
             index_storage: None,
-            tokenizer: None,
             vector_search: None,
             query_cache: None,
             config: WebIngestionConfig::default(),
@@ -102,11 +99,6 @@ impl WebIngestionServiceBuilder {
 
     pub fn index_storage(mut self, value: Arc<dyn IngestedDocumentStorePort>) -> Self {
         self.index_storage = Some(value);
-        self
-    }
-
-    pub fn tokenizer(mut self, value: Arc<Tokenizer>) -> Self {
-        self.tokenizer = Some(value);
         self
     }
 
@@ -213,18 +205,12 @@ impl WebIngestionServiceBuilder {
                 "WebIngestionServiceBuilder missing required dependency: index_storage".to_string(),
             )
         })?;
-        let tokenizer = self.tokenizer.ok_or_else(|| {
-            AppError::InvalidConfig(
-                "WebIngestionServiceBuilder missing required dependency: tokenizer".to_string(),
-            )
-        })?;
 
         WebIngestionService::with_config(
             article_extractor,
             web_archive,
             embedding_service,
             index_storage,
-            tokenizer,
             self.config,
         )
         .map(|service| {

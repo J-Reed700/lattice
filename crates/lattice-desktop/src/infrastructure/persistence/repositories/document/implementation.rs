@@ -3,7 +3,7 @@
 //! SQLite pool-based implementation of DocumentRepository that delegates to ops.rs.
 
 use async_trait::async_trait;
-use lattice_core::application::ports::{DocumentRepositoryPort, Filter, RepositoryPort};
+use lattice_core::application::ports::{DocumentRepositoryPort, RepositoryPort};
 use lattice_core::domain::entities::Document as DocumentEntity;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::driver::DriverPool;
@@ -75,17 +75,6 @@ impl RepositoryPort<DocumentEntity> for SqliteDocumentRepository {
         let result = ops::find_by_id(&mut tx, id).await?;
         tx.commit().await?;
         Ok(result)
-    }
-
-    async fn find_by_filter(&self, filter: &dyn Filter) -> Result<Vec<DocumentEntity>> {
-        let filter = filter
-            .as_any()
-            .downcast_ref::<lattice_core::application::ports::DocumentFilter>()
-            .ok_or_else(|| AppError::InvalidInput("Expected DocumentFilter".into()))?;
-        let mut tx = self.pool.begin_read().await?;
-        let documents = ops::find_by_filter(&mut tx, filter).await?;
-        tx.commit().await?;
-        Ok(documents)
     }
 
     async fn find_all(&self) -> Result<Vec<DocumentEntity>> {

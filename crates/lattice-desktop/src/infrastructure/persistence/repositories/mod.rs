@@ -3,7 +3,6 @@
 //! This module contains standalone repositories and domain-scoped transactional
 //! repository modules.
 
-pub mod chunk_repository;
 pub mod document_scope;
 pub mod file_library;
 pub mod mentions;
@@ -23,8 +22,8 @@ pub mod mocks;
 pub mod traits;
 
 // Chunk removed - use lattice_core::domain::entities::chunk::Chunk (DDD)
-pub use chunk_repository::ChunkRepository; // Repository only, not the old Chunk type
-                                           // Document removed - use lattice_core::domain::entities::Document (DDD)
+pub use chunk::ChunkRepository;
+// Document removed - use lattice_core::domain::entities::Document (DDD)
 pub use document::SqliteDocumentRepository as DocumentRepository; // Repository only, not the old Document type
 
 // Type aliases for DI container compatibility

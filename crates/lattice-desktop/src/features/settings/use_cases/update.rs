@@ -52,7 +52,7 @@ impl UpdateSettingsUseCase {
             .update(request.category, request.updates.clone())
             .await?;
 
-        let validation = self.repository.validate(&updated_settings);
+        let validation = updated_settings.validate();
         if !validation.valid {
             return Err(AppError::InvalidInput(format!(
                 "Settings validation failed: {:?}",

@@ -110,15 +110,7 @@ export interface DeleteConversationResponse {
   status: string;
 }
 
-/**
- * Response from listing conversations.
- */
-export interface ListConversationsResponse {
-  /** List of conversations */
-  conversations: ConversationDto[];
-  /** Total count (for pagination) */
-  total: number;
-}
+export type ListConversationsResponse = import('../../lib/bindings').ListConversationsResponseDto;
 
 /**
  * One source a synthesis drew on.
@@ -256,10 +248,7 @@ export interface ListMessageBookmarksQuery {
   offset?: number;
 }
 
-export interface ListMessageBookmarksResponse {
-  bookmarks: ConversationMessageBookmarkDto[];
-  total: number;
-}
+export type ListMessageBookmarksResponse = import('../../lib/bindings').ListMessageBookmarksResponseDto;
 
 export type ConversationLinkedDocumentDto = import('../../lib/bindings').ConversationLinkedDocumentDto;
 

@@ -6,9 +6,7 @@ use std::sync::Arc;
 
 // Application Use Cases - Health
 use crate::features::health::use_cases::HealthCheckUseCase;
-use crate::features::initialization::use_cases::{
-    InitializeDatabaseUseCase, InitializeModelsUseCase,
-};
+use crate::features::initialization::use_cases::InitializeDatabaseUseCase;
 
 // Application Use Cases - Settings
 use crate::features::settings::use_cases::{
@@ -55,9 +53,8 @@ pub struct SystemModule {
     stats: crate::features::stats::di::StatsDi,
     initialization: crate::features::initialization::di::InitializationDi,
 
-    // Retained, not just handed to initialization: the reranker is downloaded
-    // on demand rather than at boot, so a command needs to reach the manager
-    // long after startup is over.
+    // The reranker is downloaded on demand rather than at boot, so a command
+    // needs to reach the manager long after startup is over.
     model_manager: Arc<dyn ModelManagerTrait>,
 
     // System-info adapter stays here — it's a shared infra concern
@@ -89,8 +86,7 @@ impl SystemModule {
 
         let models_path = core.data_dir().join("models");
         let model_manager = Arc::new(ModelManager::new(models_path)?) as Arc<dyn ModelManagerTrait>;
-        let initialization =
-            crate::features::initialization::di::build(database.clone(), model_manager.clone());
+        let initialization = crate::features::initialization::di::build(database.clone());
 
         Ok(Self {
             settings,
@@ -118,10 +114,6 @@ impl SystemModule {
 
     pub fn initialize_database_use_case(&self) -> &Arc<InitializeDatabaseUseCase> {
         &self.initialization.initialize_database_use_case
-    }
-
-    pub fn initialize_models_use_case(&self) -> &Arc<InitializeModelsUseCase> {
-        &self.initialization.initialize_models_use_case
     }
 
     pub fn model_manager(&self) -> &Arc<dyn ModelManagerTrait> {

@@ -9,7 +9,6 @@ use crate::features::web::{WebIngestionResult, WebIngestionServiceTrait};
 use crate::infrastructure::services::mocks::MockModelManager;
 use crate::infrastructure::services::traits::ModelManagerTrait;
 use lattice_core::application::ports::EmbeddingPort;
-use lattice_core::application::ports::TagServiceTrait;
 
 #[tokio::test]
 async fn test_mock_embedding_service() {
@@ -103,28 +102,9 @@ async fn test_mock_tag_service() {
 async fn test_mock_model_manager_defaults() {
     let manager = MockModelManager::new();
 
-    // By default, models should be ready
-    assert!(manager.is_model_ready().await);
+    // By default, the reranker should be ready
     assert!(manager.is_reranker_ready().await);
     assert_eq!(manager.get_download_progress(), Some(1.0));
-
-    let info = manager.get_model_info();
-    assert_eq!(info.name, "mock-model");
-    assert!(info.is_downloaded);
-}
-
-#[tokio::test]
-async fn test_mock_model_manager_ensure_model() {
-    let manager = MockModelManager::new();
-
-    // Initially not ready
-    manager.set_model_ready(false);
-    assert!(!manager.is_model_ready().await);
-
-    // Ensure makes it ready
-    let path = manager.ensure_model_available().await.unwrap();
-    assert!(manager.is_model_ready().await);
-    assert_eq!(path, std::path::PathBuf::from("/mock/models/model.onnx"));
 }
 
 #[tokio::test]
@@ -148,18 +128,8 @@ async fn test_mock_model_manager_ensure_reranker() {
 async fn test_mock_model_manager_paths() {
     let manager = MockModelManager::new();
 
-    let model_path = manager.get_model_path();
-    let tokenizer_path = manager.get_tokenizer_path();
     let reranker_path = manager.get_reranker_path();
 
-    assert_eq!(
-        model_path,
-        std::path::PathBuf::from("/mock/models/model.onnx")
-    );
-    assert_eq!(
-        tokenizer_path,
-        std::path::PathBuf::from("/mock/models/tokenizer.json")
-    );
     assert_eq!(
         reranker_path,
         std::path::PathBuf::from("/mock/models/reranker/reranker.gguf")
@@ -171,10 +141,9 @@ async fn test_mock_model_manager_custom_dir() {
     let custom_dir = std::path::PathBuf::from("/custom/path");
     let manager = MockModelManager::with_model_dir(custom_dir.clone());
 
-    assert_eq!(manager.get_model_path(), custom_dir.join("model.onnx"));
     assert_eq!(
-        manager.get_tokenizer_path(),
-        custom_dir.join("tokenizer.json")
+        manager.get_reranker_path(),
+        custom_dir.join("reranker/reranker.gguf")
     );
 }
 
@@ -202,25 +171,6 @@ async fn test_mock_model_manager_cancel_download() {
     // Cancel should clear progress
     manager.cancel_download();
     assert_eq!(manager.get_download_progress(), None);
-}
-
-#[tokio::test]
-async fn test_mock_model_manager_state_isolation() {
-    let manager = MockModelManager::new();
-
-    // Model and reranker states are independent
-    manager.set_model_ready(true);
-    manager.set_reranker_ready(false);
-
-    assert!(manager.is_model_ready().await);
-    assert!(!manager.is_reranker_ready().await);
-
-    // Flip states
-    manager.set_model_ready(false);
-    manager.set_reranker_ready(true);
-
-    assert!(!manager.is_model_ready().await);
-    assert!(manager.is_reranker_ready().await);
 }
 
 #[tokio::test]

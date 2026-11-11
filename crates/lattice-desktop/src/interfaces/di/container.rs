@@ -305,8 +305,11 @@ impl Container {
         );
         tracing::debug!("SearchModule initialized");
 
-        let library =
-            Arc::new(super::modules::LibraryModule::new(database.clone(), core.clone()).await?);
+        let tag_service = crate::features::tags::di::build_service(database.clone());
+        let library = Arc::new(
+            super::modules::LibraryModule::new(database.clone(), core.clone(), tag_service.clone())
+                .await?,
+        );
         tracing::debug!("LibraryModule initialized");
 
         let file_ops = Arc::new(
@@ -314,6 +317,7 @@ impl Container {
                 database.clone(),
                 core.clone(),
                 extraction_workers.clone(),
+                tag_service.clone(),
             )
             .await?,
         );
@@ -327,6 +331,7 @@ impl Container {
                 llm_endpoint,
                 llm_model,
                 backend_devices,
+                tag_service,
             )
             .await?,
         );

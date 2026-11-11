@@ -16,6 +16,11 @@ impl ApplyTagsUseCase {
         Self { tag_service }
     }
 
+    #[cfg(test)]
+    pub(crate) fn tag_service(&self) -> &Arc<dyn TagServiceTrait> {
+        &self.tag_service
+    }
+
     /// Execute the use case
     pub async fn execute(&self, request: ApplyTagsRequestDto) -> Result<ApplyTagsResponseDto> {
         // Acquire lock for document

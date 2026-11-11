@@ -15,9 +15,8 @@
 //! - **Thread Safety**: Read-modify-write operations are serialized by a mutex
 
 use crate::features::settings::dto::{
-    LLMProvider, SettingsCategory, SettingsDto, ValidationResult,
-    DEFAULT_LLM_STALL_TIMEOUT_SECONDS, MAX_LLM_STALL_TIMEOUT_SECONDS,
-    MIN_LLM_STALL_TIMEOUT_SECONDS,
+    LLMProvider, SettingsCategory, SettingsDto, DEFAULT_LLM_STALL_TIMEOUT_SECONDS,
+    MAX_LLM_STALL_TIMEOUT_SECONDS, MIN_LLM_STALL_TIMEOUT_SECONDS,
 };
 use async_trait::async_trait;
 use lattice_core::application::ports::credentials_port::CredentialsPort;
@@ -28,13 +27,12 @@ use lattice_core::application::services::credentials::CredentialKey;
 use lattice_core::shared::error::{AppError, Result};
 use serde_json;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;
 
 mod file_store;
 use file_store::legacy_secrets;
-mod validation;
 
 /// File name for settings storage.
 const SETTINGS_FILE_NAME: &str = "settings.json";
@@ -183,7 +181,7 @@ impl SettingsRepository {
     /// As [`Self::persist`]; `carry_legacy` keeps a plaintext header value a
     /// failed migration left in the file (see `write_settings_file`).
     async fn persist_with(&self, settings: &SettingsDto, carry_legacy: bool) -> Result<()> {
-        let validation = self.validate_settings(settings);
+        let validation = settings.validate();
         if validation.has_errors() {
             return Err(AppError::ValidationFailed(format!(
                 "Settings validation failed: {:?}",
@@ -319,7 +317,7 @@ impl SettingsRepository {
         let llama_held = self.header_value_stored(RemoteServer::LlamaCpp).await?;
         drop_unbacked_header_names(&mut imported_settings, &existing, ollama_held, llama_held);
 
-        let validation = self.validate_settings(&imported_settings);
+        let validation = imported_settings.validate();
         if validation.has_errors() {
             return Err(AppError::ValidationFailed(format!(
                 "Imported settings validation failed: {:?}",
@@ -565,10 +563,6 @@ impl SettingsRepositoryPort for SettingsRepository {
         self.import_settings(imported_settings, merge).await
     }
 
-    fn validate(&self, settings: &SettingsDto) -> ValidationResult {
-        self.validate_settings(settings)
-    }
-
     async fn store_header_value(&self, server: RemoteServer, value: Option<&str>) -> Result<()> {
         let Some(credentials) = &self.credentials else {
             return Err(AppError::InvalidState(
@@ -582,12 +576,6 @@ impl SettingsRepositoryPort for SettingsRepository {
             Some(value) => credentials.set_api_key(key.as_str(), value).await,
             None => credentials.delete_api_key(key.as_str()).await,
         }
-    }
-
-    fn validate_folder_path(&self, path: &str) -> bool {
-        let path = Path::new(path);
-        // repository-barrier-allow: settings validation checks a user-selected folder resource.
-        path.exists() && path.is_dir()
     }
 }
 

@@ -412,6 +412,17 @@ fn a_lesson_resumes_from_its_job() {
     }
 }
 
+#[test]
+fn a_quiz_job_is_run_recovered_retried_or_recorded_by_its_status() {
+    use QuizJobStep as Step;
+    assert_eq!(quiz_job_step(JobStatus::Pending), Step::Run);
+    assert_eq!(quiz_job_step(JobStatus::Running), Step::Recover);
+    assert_eq!(quiz_job_step(JobStatus::Failed), Step::Retry);
+    assert_eq!(quiz_job_step(JobStatus::Cancelled), Step::Retry);
+    assert_eq!(quiz_job_step(JobStatus::Interrupted), Step::Retry);
+    assert_eq!(quiz_job_step(JobStatus::Completed), Step::Record);
+}
+
 // --- the quiz hooks ----------------------------------------------------------
 
 /// The grading set's deterministic rows are the engine's own arithmetic: the

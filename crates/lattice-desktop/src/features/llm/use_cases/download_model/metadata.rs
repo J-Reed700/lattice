@@ -46,7 +46,7 @@ impl DownloadModelUseCase {
     /// it to the download list. HF returns 200 on HEAD (after redirects) for
     /// existing files and 404 otherwise.
     async fn remote_file_exists(url: &str, auth_token: Option<&str>) -> bool {
-        let client = match reqwest::Client::builder()
+        let client = match lattice_core::shared::http::reqwest_client_builder()
             .timeout(std::time::Duration::from_secs(10))
             .redirect(reqwest::redirect::Policy::limited(5))
             .build()

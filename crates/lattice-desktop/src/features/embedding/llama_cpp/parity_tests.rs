@@ -195,7 +195,8 @@ async fn embedding_parity_with_the_candle_reference() {
     let (facts, policy) = live_facts(&gguf).await;
     let live = LiveServer::start(&gguf, SERVER_SLOTS, facts.window_tokens()).await;
     let prefixes = resolve_prefixes("qwen3-embedding-0.6b", &facts.architecture);
-    let service = LlamaEmbeddingService::connect(Arc::clone(&live.server), facts, policy, prefixes);
+    let service = LlamaEmbeddingService::connect(Arc::clone(&live.server), facts, policy, prefixes)
+        .expect("loopback client");
 
     // The server counts the tokens the chunker sized each passage with.
     for (i, passage) in passages.iter().enumerate() {

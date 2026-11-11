@@ -22,7 +22,9 @@ use lattice_core::application::{
 };
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::http::auth_header_map;
+use lattice_core::shared::http::{
+    auth_header_map, loopback_client_builder, reqwest_client_builder,
+};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -89,7 +91,7 @@ impl LlamaCppLlm {
             ));
         }
         Ok(Self {
-            client: http_client(remote_headers(header)?)?,
+            client: http_client(reqwest_client_builder(), remote_headers(header)?)?,
             base_url,
             config: ServerConfig {
                 model: connection.model.clone(),
@@ -149,7 +151,7 @@ impl LlamaCppLlm {
         bearer.set_sensitive(true);
         headers.insert(AUTHORIZATION, bearer);
         Ok(Self {
-            client: http_client(headers)?,
+            client: http_client(loopback_client_builder(), headers)?,
             base_url: format!("{}/v1", endpoint.trim_end_matches('/')),
             config,
             process: None,
@@ -161,7 +163,7 @@ impl LlamaCppLlm {
         header: Option<RemoteHeader>,
     ) -> Result<Vec<String>> {
         let base_url = connection.validated_base_url()?;
-        let client = http_client(remote_headers(header)?)?;
+        let client = http_client(reqwest_client_builder(), remote_headers(header)?)?;
         let probe_timeout = Duration::from_secs(30);
         let response = client
             .get(format!("{base_url}/models"))
@@ -477,8 +479,8 @@ fn remote_headers(header: Option<RemoteHeader>) -> Result<HeaderMap> {
 
 /// No client-wide read or total timeout: generations are bounded by their time
 /// budget and stall detection, probes by per-request timeouts.
-fn http_client(headers: HeaderMap) -> Result<reqwest::Client> {
-    lattice_core::shared::http::reqwest_client_builder()
+fn http_client(builder: reqwest::ClientBuilder, headers: HeaderMap) -> Result<reqwest::Client> {
+    builder
         .default_headers(headers)
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
