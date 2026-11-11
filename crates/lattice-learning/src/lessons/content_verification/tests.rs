@@ -889,8 +889,8 @@ mod reading_record_tests;
 #[path = "repair_request_tests.rs"]
 mod repair_request_tests;
 
-#[path = "unwrite_tests.rs"]
-mod unwrite_tests;
+#[path = "born_of_repair_tests.rs"]
+mod born_of_repair_tests;
 
 #[path = "apparatus_tests.rs"]
 mod apparatus_tests;
