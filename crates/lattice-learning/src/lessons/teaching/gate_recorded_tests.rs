@@ -46,7 +46,7 @@ impl LLMPort for Routed {
         }
         if !drafting
             && system.starts_with(contract::confirm::SYSTEM)
-            && user.contains(contract::confirm::CLASH_TASK)
+            && user.contains("Confirm that two statements of a lesson contradict each other")
         {
             *self.clash_asked.lock().unwrap() += 1;
             let reply = self.clash_reply.lock().unwrap().clone();

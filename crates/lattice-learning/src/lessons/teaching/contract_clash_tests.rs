@@ -130,7 +130,7 @@ async fn a_contradiction_the_confirming_read_refuses_is_no_finding() -> Result<(
     let result = found(&model, &[], &[]).await?;
     assert!(clashes(&result).is_empty(), "{result:?}");
     assert_eq!(model.requests().len(), 1);
-    assert_eq!(model.requests()[0]["task"], confirm::CLASH_TASK);
+    assert_eq!(model.requests()[0]["task"], "Confirm that two statements of a lesson contradict each other");
     Ok(())
 }
 
@@ -170,7 +170,7 @@ async fn the_confirming_request_gives_both_statements_in_their_parts_and_the_who
     let requests = model.requests();
     assert_eq!(requests.len(), 1);
     let request = &requests[0];
-    assert_eq!(request["task"], confirm::CLASH_TASK);
+    assert_eq!(request["task"], "Confirm that two statements of a lesson contradict each other");
     assert_eq!(
         request["question"],
         format!("Can the first statement, section-0's words '{EMPTY_WORDS}', and the second, section-1's words '{FULL_WORDS}', both be true? If they can, give in case a situation in which both hold. If they cannot, give in case what one says happens or holds that the other says cannot. In case, call them the first and the second statement.")

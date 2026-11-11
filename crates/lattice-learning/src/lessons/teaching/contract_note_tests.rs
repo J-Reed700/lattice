@@ -28,7 +28,6 @@ fn missing_note(belongs: Option<&Part>) -> String {
         taught: Vec::new(),
         missing: vec![(&item, belongs)],
         uses: Vec::new(),
-        clashes: Vec::new(),
     };
     let found = findings(&answer, &settled, &[], &Value::Null, &[]);
     assert_eq!(found.len(), 1);
@@ -66,7 +65,6 @@ fn used_note(protected: &[Protected]) -> String {
             elsewhere: Vec::new(),
             later: None,
         }],
-        clashes: Vec::new(),
     };
     let candidate = json!({"blocks":[{"body":"Alpha holds the line."}],"questions":[]});
     let found = findings(&answer, &settled, &parts, &candidate, protected);
