@@ -12,6 +12,8 @@ pub mod images;
 mod messages;
 mod rename;
 mod space;
+#[cfg(test)]
+mod tests;
 
 pub use delete::{delete_conversation, delete_conversation_impl};
 pub use messages::{get_conversation_messages, get_conversation_messages_impl};

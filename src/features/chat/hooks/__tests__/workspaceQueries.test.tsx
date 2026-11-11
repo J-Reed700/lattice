@@ -88,3 +88,20 @@ describe('sidebar repository queries', () => {
     expect(result.current.error).toBeNull();
   });
 });
+
+describe('sidebar bookmarks', () => {
+  it('asks for every bookmark, with no limit, and keeps the chosen space\'s own', async () => {
+    const bookmark = (id: string, spaceId: string) => ({ id, spaceId });
+    vi.mocked(VaultAPI.listMessageBookmarks).mockResolvedValue({
+      ok: true,
+      data: { bookmarks: [bookmark('a', 'space-one'), bookmark('b', 'space-two')] },
+    } as never);
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useSidebarBookmarksQuery('  notes ', 'space-two'), { wrapper });
+    await waitFor(() => expect(result.current.data).toEqual([bookmark('b', 'space-two')]));
+    const request = vi.mocked(VaultAPI.listMessageBookmarks).mock.calls[0]?.[0];
+    expect(request).toEqual({ query: 'notes' });
+    expect(request).not.toHaveProperty('limit');
+    expect(request).not.toHaveProperty('offset');
+  });
+});

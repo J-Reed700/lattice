@@ -418,3 +418,37 @@ async fn the_explorer_root_round_trips_through_the_conversation_projections() {
         .await
         .is_err());
 }
+
+#[tokio::test]
+async fn find_all_without_a_limit_returns_every_conversation() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let repo = ConversationRepository::new(pool);
+
+    for index in 0..150 {
+        repo.create_conversation(&format!("Chat {index}"), None)
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(repo.find_all(None, None).await.unwrap().len(), 150);
+    assert_eq!(repo.find_all(Some(150), None).await.unwrap().len(), 150);
+    assert_eq!(repo.find_all(None, Some(100)).await.unwrap().len(), 50);
+    assert_eq!(repo.find_all(Some(2), Some(1)).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn find_all_rejects_a_limit_below_one_and_a_negative_offset() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let repo = ConversationRepository::new(pool);
+
+    assert!(matches!(
+        repo.find_all(Some(0), None).await,
+        Err(lattice_core::shared::error::AppError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        repo.find_all(None, Some(-1)).await,
+        Err(lattice_core::shared::error::AppError::InvalidInput(_))
+    ));
+}

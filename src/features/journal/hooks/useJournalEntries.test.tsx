@@ -238,3 +238,12 @@ it('reads the selected entry\'s messages again when a conversation changes elsew
   await act(async () => { await client.invalidateQueries({ queryKey: conversationKeys.all }); });
   await waitFor(() => expect(result.current.selectedMessages).toEqual([fresh]));
 });
+
+it('asks for every entry of the journal, with no limit or offset', async () => {
+  const { result } = renderHook(useJournalEntries, { initialProps: initial });
+  await waitFor(() => expect(result.current.entries).toHaveLength(2));
+  const request = vi.mocked(VaultAPI.listJournalConversations).mock.calls[0]?.[0];
+  expect(request).toEqual({ journalSpaceId: 'journal-a', includeArchived: true });
+  expect(request).not.toHaveProperty('limit');
+  expect(request).not.toHaveProperty('offset');
+});
