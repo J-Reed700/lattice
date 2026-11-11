@@ -21,7 +21,7 @@ export const modelApi = {
    * @returns Array of downloaded model records
    */
   getDownloadedModels: async (): Promise<ApiResult<DownloadedModel[]>> =>
-    apiCall<Wire.DownloadedModelResponse[]>('list_downloaded_models'),
+    apiCall('list_downloaded_models'),
 
   /**
    * Checks if a model is already downloaded.
@@ -31,7 +31,7 @@ export const modelApi = {
    * @returns True if model exists in database
    */
   isModelDownloaded: async (modelId: string): Promise<ApiResult<boolean>> =>
-    apiCall<boolean>('is_model_already_downloaded', { modelId }),
+    apiCall('is_model_already_downloaded', { modelId }),
 
   /**
    * Sets the active chat model.
@@ -41,7 +41,7 @@ export const modelApi = {
    * @returns Void on success
    */
   setActiveChatModel: async (modelId: string): Promise<ApiResult<void>> =>
-    apiCall<void>('set_active_chat_model', { modelId }),
+    apiCall('set_active_chat_model', { modelId }),
 
   /**
    * Warms up the currently active chat model by preloading it into memory.
@@ -50,7 +50,7 @@ export const modelApi = {
    * @returns Void on success
    */
   warmUpActiveChatModel: async (): Promise<ApiResult<void>> =>
-    apiCall<void>('warm_up_active_chat_model'),
+    apiCall('warm_up_active_chat_model'),
 
   /**
    * Eagerly load the currently active utility model into memory.
@@ -61,21 +61,21 @@ export const modelApi = {
    * carry it. No-op (returns Ok) when no utility model is configured.
    */
   warmUpActiveUtilityModel: async (): Promise<ApiResult<void>> =>
-    apiCall<void>('warm_up_active_utility_model'),
+    apiCall('warm_up_active_utility_model'),
 
   /**
    * Load the Learning model set in Settings, so the first lesson does not
    * pay the cold start. A failure reports why and changes no setting.
    */
   warmUpLearningModel: async (): Promise<ApiResult<void>> =>
-    apiCall<void>('warm_up_learning_model'),
+    apiCall('warm_up_learning_model'),
 
   /**
    * The models loaded right now, who holds each, and which fell back to the
    * CPU. Diagnostics, and the "on CPU" state of a model outside a turn.
    */
   listLoadedModels: async (): Promise<ApiResult<Wire.LoadedModelDto[]>> =>
-    apiCall<Wire.LoadedModelDto[]>('list_loaded_models'),
+    apiCall('list_loaded_models'),
 
   /**
    * The last learning work refused because the Learning model's window was
@@ -83,7 +83,7 @@ export const modelApi = {
    * there is none.
    */
   lastLearningWindowShortfall: async (): Promise<ApiResult<Wire.LearningWindowShortfallDto | null>> =>
-    apiCall<Wire.LearningWindowShortfallDto | null>('last_learning_window_shortfall'),
+    apiCall('last_learning_window_shortfall'),
 
   /**
    * Gets the currently active chat model.
@@ -92,7 +92,7 @@ export const modelApi = {
    * @returns Active chat model or null
    */
   getActiveChatModel: async (): Promise<ApiResult<DownloadedModel | null>> =>
-    apiCall<Wire.DownloadedModelResponse | null>('get_active_chat_model'),
+    apiCall('get_active_chat_model'),
 
   /**
    * Sets the active embedding model.
@@ -102,7 +102,7 @@ export const modelApi = {
    * @returns Void on success
    */
   setActiveEmbeddingModel: async (modelId: string): Promise<ApiResult<void>> =>
-    apiCall<void>('set_active_embedding_model', { modelId }),
+    apiCall('set_active_embedding_model', { modelId }),
 
   /**
    * Sets the active utility model (used for HyDE, routing, intent classification).
@@ -112,7 +112,7 @@ export const modelApi = {
    * @returns Void on success
    */
   setActiveUtilityModel: async (modelId: string): Promise<ApiResult<void>> =>
-    apiCall<void>('set_active_utility_model', { modelId }),
+    apiCall('set_active_utility_model', { modelId }),
 
   /**
    * Clears the active utility model — reverts HyDE/router back to the chat model.
@@ -120,7 +120,7 @@ export const modelApi = {
    * @returns Void on success
    */
   clearActiveUtilityModel: async (): Promise<ApiResult<void>> =>
-    apiCall<void>('clear_active_utility_model'),
+    apiCall('clear_active_utility_model'),
 
   /**
    * Gets the currently active embedding model.
@@ -131,20 +131,20 @@ export const modelApi = {
   getActiveEmbeddingModel: async (): Promise<
     ApiResult<DownloadedModel | null>
   > =>
-    apiCall<Wire.DownloadedModelResponse | null>('get_active_embedding_model'),
+    apiCall('get_active_embedding_model'),
 
   /**
    * Absolute path of the local models folder (created on first call).
    */
   getModelDownloadPath: async (): Promise<ApiResult<string>> =>
-    apiCall<string>('get_model_download_path'),
+    apiCall('get_model_download_path'),
 
   getActiveModels: async (): Promise<
     ApiResult<{
       chat_model: DownloadedModel | null;
       embedding_model: DownloadedModel | null;
     }>
-  > => apiCall<Wire.ActiveModels>('get_active_models'),
+  > => apiCall('get_active_models'),
 
   /**
    * Deletes a downloaded model record and optionally its file.
@@ -158,7 +158,7 @@ export const modelApi = {
     modelId: string,
     deleteFile: boolean = false,
   ): Promise<ApiResult<void>> =>
-    apiCall<void>('delete_model', { modelId, deleteFile }),
+    apiCall('delete_model', { modelId, deleteFile }),
 
   /**
    * Gets system hardware capabilities for model selection.
@@ -167,7 +167,7 @@ export const modelApi = {
    * @returns System capabilities including GPU availability and resources
    */
   getSystemCapabilities: async (): Promise<ApiResult<SystemCapabilities>> =>
-    apiCall<Wire.SystemCapabilitiesResponse>('detect_system_capabilities'),
+    apiCall('detect_system_capabilities'),
 
   /**
    * Downloads a model from the catalog.
@@ -179,7 +179,7 @@ export const modelApi = {
   downloadModel: async (
     modelId: string,
   ): Promise<ApiResult<DownloadModelResponse>> =>
-    apiCall<Wire.DownloadModelResponse>('download_model', { modelId }),
+    apiCall('download_model', { modelId }),
 
   /**
    * Deletes a model file from disk.
@@ -192,7 +192,7 @@ export const modelApi = {
     modelId: string,
     deleteFile = true,
   ): Promise<ApiResult<void>> =>
-    apiCall<void>('delete_model', { modelId, deleteFile }),
+    apiCall('delete_model', { modelId, deleteFile }),
 
   /**
    * Detects system capabilities for model compatibility.
@@ -201,7 +201,7 @@ export const modelApi = {
    * @returns Detailed system capabilities
    */
   detectSystemCapabilities: async (): Promise<ApiResult<SystemCapabilities>> =>
-    apiCall<Wire.SystemCapabilitiesResponse>('detect_system_capabilities'),
+    apiCall('detect_system_capabilities'),
 
   /**
    * Gets all models compatible with the current system.
@@ -210,12 +210,9 @@ export const modelApi = {
    * @returns Array of compatible models
    */
   getCompatibleModels: async (
-    category?: string,
+    category: string,
   ): Promise<ApiResult<ModelRecommendation[]>> =>
-    apiCall<Wire.ModelRecommendationDto[]>(
-      'get_compatible_models',
-      category ? { category } : {},
-    ),
+    apiCall('get_compatible_models', { category }),
 
   /**
    * Gets all recommended models across all tasks.
@@ -225,7 +222,7 @@ export const modelApi = {
    */
   getAllRecommendedModels: async (): Promise<
     ApiResult<ModelRecommendation[]>
-  > => apiCall<Wire.ModelRecommendationDto[]>('get_all_recommended_models'),
+  > => apiCall('get_all_recommended_models'),
 
   /**
    * Searches the model catalog by name or description.
@@ -237,10 +234,10 @@ export const modelApi = {
   searchModelCatalog: async (
     request: SearchModelCatalogRequest,
   ): Promise<ApiResult<ModelSearchResult[]>> =>
-    apiCall<Wire.ModelSearchResultDto[]>('search_model_catalog', { request }),
+    apiCall('search_model_catalog', { request }),
 
   getModelVariants: async (repoId: string): Promise<ApiResult<Wire.ModelMetadataDto[]>> =>
-    apiCall<Wire.ModelMetadataDto[]>('get_model_variants', { repoId }),
+    apiCall('get_model_variants', { repoId }),
 
   /**
    * Refreshes the model catalog from remote source.
@@ -249,7 +246,7 @@ export const modelApi = {
    * @returns Void on success
    */
   refreshModelCatalog: async (): Promise<ApiResult<void>> =>
-    apiCall<void>('refresh_model_catalog'),
+    apiCall('refresh_model_catalog'),
 
   /**
    * Clears the cached model catalog data.
@@ -258,7 +255,7 @@ export const modelApi = {
    * @returns Void on success
    */
   clearModelCatalogCache: async (): Promise<ApiResult<number>> =>
-    apiCall<number>('clear_model_catalog_cache'),
+    apiCall('clear_model_catalog_cache'),
 
   /**
    * Gets statistics about the model catalog cache.
@@ -267,7 +264,7 @@ export const modelApi = {
    * @returns Cache statistics
    */
   getModelCatalogStats: async (): Promise<ApiResult<ModelCatalogCacheStats>> =>
-    apiCall<Wire.ModelCatalogStats>('get_model_catalog_stats'),
+    apiCall('get_model_catalog_stats'),
 
   /**
    * Clears the active chat model selection.
@@ -276,7 +273,7 @@ export const modelApi = {
    * @returns Void on success
    */
   clearActiveChatModel: async (): Promise<ApiResult<void>> =>
-    apiCall<void>('clear_active_chat_model'),
+    apiCall('clear_active_chat_model'),
 
   /**
    * Clears the active embedding model selection.
@@ -285,7 +282,7 @@ export const modelApi = {
    * @returns Void on success
    */
   clearActiveEmbeddingModel: async (): Promise<ApiResult<void>> =>
-    apiCall<void>('clear_active_embedding_model'),
+    apiCall('clear_active_embedding_model'),
 
   /**
    * Asks whether this machine still needs the first-run model bundle.
@@ -293,21 +290,21 @@ export const modelApi = {
    * @returns The status as a JSON string (kept small for the backend future)
    */
   checkFirstRunStatus: async (): Promise<ApiResult<string>> =>
-    apiCall<string>('check_first_run_status'),
+    apiCall('check_first_run_status'),
 
   /**
    * The chat models recommended for this computer, best first, each judged
    * by the backend against the memory it would run in.
    */
   recommendChatModels: async (): Promise<ApiResult<Wire.RecommendationDto[]>> =>
-    apiCall<Wire.RecommendationDto[]>('recommend_chat_models'),
+    apiCall('recommend_chat_models'),
 
   /**
    * The backend's verdict for each listed file, in the order asked. `null`
    * means that file's header could not be read.
    */
   readModelFits: async (files: Wire.ModelFileRefDto[]): Promise<ApiResult<(Wire.FitVerdictDto | null)[]>> =>
-    apiCall<(Wire.FitVerdictDto | null)[]>('read_model_fits', { files }),
+    apiCall('read_model_fits', { files }),
 
   /**
    * Starts the first-run download of the recommended embedding model.
@@ -315,14 +312,14 @@ export const modelApi = {
    * @returns The backend's start message
    */
   downloadDefaultEmbeddingModel: async (): Promise<ApiResult<string>> =>
-    apiCall<string>('download_default_embedding_model'),
+    apiCall('download_default_embedding_model'),
 
   /**
    * Lists the files a safetensors-era embedding download left in its model
    * folder, which the llama.cpp runtime never reads, with their size.
    */
   listLeftoverEmbeddingFiles: async (): Promise<ApiResult<Wire.LeftoverEmbeddingFilesDto>> =>
-    apiCall<Wire.LeftoverEmbeddingFilesDto>('list_leftover_embedding_files'),
+    apiCall('list_leftover_embedding_files'),
 
   /**
    * Removes exactly the files `listLeftoverEmbeddingFiles` reports.
@@ -330,5 +327,5 @@ export const modelApi = {
    * @returns What was removed
    */
   removeLeftoverEmbeddingFiles: async (): Promise<ApiResult<Wire.LeftoverEmbeddingFilesDto>> =>
-    apiCall<Wire.LeftoverEmbeddingFilesDto>('remove_leftover_embedding_files'),
+    apiCall('remove_leftover_embedding_files'),
 };

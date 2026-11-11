@@ -2,11 +2,11 @@ import type * as Wire from '@/lib/bindings';
 import { studyActivityCall } from '@/lib/studyActivity';
 import type { CommandName } from '@/shared/ipc/transport';
 
-async function invokeCommand<T>(
-  command: CommandName,
-  args?: Record<string, unknown>,
-): Promise<T> {
-  const result = await studyActivityCall<T>('learning', command, args);
+async function invokeCommand<C extends CommandName>(
+  command: C,
+  args: Wire.CommandArgs[C],
+): Promise<Wire.CommandResults[C]> {
+  const result = await studyActivityCall('learning', command, args);
   if (!result.ok) {
     throw new Error(result.error);
   }

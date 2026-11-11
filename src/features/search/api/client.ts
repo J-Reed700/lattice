@@ -119,7 +119,7 @@ export const searchApi = {
   searchDocuments: async (
     options: SearchOptions,
   ): Promise<ApiResult<SearchResult[]>> => {
-    const raw = await apiCall<unknown>('search_documents', { options });
+    const raw = await apiCall('search_documents', { options });
     return unwrapSearchResults(raw, 'Document search failed');
   },
 
@@ -144,7 +144,7 @@ export const searchApi = {
     recencyWeight?: number;
     maxAgeDays?: number;
   }): Promise<ApiResult<SearchResult[]>> => {
-    const result = await apiCall<Wire.SearchResultDto[]>(
+    const result = await apiCall(
       'search_with_recency',
       { options },
     );
@@ -175,7 +175,7 @@ export const searchApi = {
     limit?: number,
     searchMode?: string,
   ): Promise<ApiResult<SearchResult[][]>> => {
-    const result = await apiCall<Wire.SearchResultDto[][]>('batch_search', {
+    const result = await apiCall('batch_search', {
       queries,
       limit,
       searchMode,
@@ -205,7 +205,7 @@ export const searchApi = {
     query: string,
     limit?: number,
   ): Promise<ApiResult<SearchResult[]>> => {
-    const raw = await apiCall<unknown>('search_fast', {
+    const raw = await apiCall('search_fast', {
       query,
       limit: limit ?? 10,
     });
@@ -228,7 +228,7 @@ export const searchApi = {
   ): Promise<ApiResult<SearchResult[]>> => {
     const effectiveLimit = limit ?? 10;
     const effectiveSearchMode = searchMode ?? 'hybrid';
-    const raw = await apiCall<unknown>('hybrid_search', {
+    const raw = await apiCall('hybrid_search', {
       args: {
         query,
         limit: effectiveLimit,
@@ -242,7 +242,7 @@ export const searchApi = {
 
     // Fallback: use the unified search command path if the direct hybrid command
     // unexpectedly yields an empty payload shape.
-    const fallbackRaw = await apiCall<unknown>('search_documents', {
+    const fallbackRaw = await apiCall('search_documents', {
       options: {
         query,
         limit: effectiveLimit,
@@ -270,13 +270,13 @@ export const searchApi = {
       threshold: null,
       mode: { type: 'vector' },
     };
-    const raw = await apiCall<unknown>('semantic_search', { request });
+    const raw = await apiCall('semantic_search', { request });
     const primary = unwrapSearchResults(raw, 'Semantic search failed');
     if (!primary.ok || primary.data.length > 0) {
       return primary;
     }
 
-    const fallbackRaw = await apiCall<unknown>('search_documents', {
+    const fallbackRaw = await apiCall('search_documents', {
       options: {
         query,
         limit: limit || 10,
@@ -298,7 +298,7 @@ export const searchApi = {
     chunkId: string,
     limit?: number,
   ): Promise<ApiResult<SearchResult[]>> => {
-    const result = await apiCall<Wire.SearchResultDto[]>('find_similar', {
+    const result = await apiCall('find_similar', {
       chunkId,
       limit,
     });
@@ -319,7 +319,7 @@ export const searchApi = {
     documentId: string,
     limit?: number,
   ): Promise<ApiResult<SimilarDocumentDto[]>> =>
-    apiCall<Wire.SimilarDocumentDto[]>('find_similar_documents', {
+    apiCall('find_similar_documents', {
       documentId,
       limit,
     }),
@@ -329,11 +329,11 @@ export const searchApi = {
    * is; until then it returns its first-stage shortlist.
    */
   getRerankerStatus: async (): Promise<ApiResult<Wire.RerankerStatusDto>> =>
-    apiCall<Wire.RerankerStatusDto>('reranker_status'),
+    apiCall('reranker_status'),
 
   /**
    * Fetches the reranker model, after which search reranks.
    */
   downloadReranker: async (): Promise<ApiResult<Wire.RerankerStatusDto>> =>
-    apiCall<Wire.RerankerStatusDto>('download_reranker'),
+    apiCall('download_reranker'),
 };

@@ -59,7 +59,7 @@ export const batchApi = {
     limit?: number,
     offset?: number,
   ): Promise<ApiResult<BatchJobSummary[]>> => {
-    const result = await apiCall<Wire.ListBatchJobsResponseDto>(
+    const result = await apiCall(
       'get_batch_history',
       { request: { limit, offset } },
     );
@@ -80,7 +80,7 @@ export const batchApi = {
    * @returns Void on success
    */
   deleteBatchJob: async (jobId: string): Promise<ApiResult<void>> => {
-    const result = await apiCall<Wire.DeleteBatchJobResponseDto>(
+    const result = await apiCall(
       'delete_batch_job',
       { jobId },
     );
@@ -106,7 +106,7 @@ export const batchApi = {
     itemId?: string,
     replacementPath?: string,
   ): Promise<ApiResult<string>> => {
-    const result = await apiCall<Wire.RetryFailedItemsResponseDto>(
+    const result = await apiCall(
       'retry_failed_items',
       { jobId, itemId, replacementPath },
     );
@@ -126,7 +126,7 @@ export const batchApi = {
   getBatchJobStatus: async (
     jobId: string,
   ): Promise<ApiResult<BatchJobStatus>> => {
-    const result = await apiCall<Wire.BatchJobStatusDto>('get_batch_status', {
+    const result = await apiCall('get_batch_status', {
       request: { jobId },
     });
     if (!result.ok) {
@@ -143,7 +143,7 @@ export const batchApi = {
    * @returns Number of items cancelled
    */
   cancelBatchJob: async (jobId: string): Promise<ApiResult<number>> => {
-    const result = await apiCall<Wire.CancelBatchJobResponseDto>(
+    const result = await apiCall(
       'cancel_batch',
       { request: { jobId } },
     );
@@ -169,7 +169,7 @@ export const batchApi = {
     filePaths: string[],
     ownerConversationId?: string,
   ): Promise<ApiResult<string>> => {
-    const result = await apiCall<Wire.StartBatchFileImportResponseDto>(
+    const result = await apiCall(
       'batch_import_files',
       {
         request: { filePaths, ownerConversationId },
@@ -192,7 +192,7 @@ export const batchApi = {
     urls: string[],
     options?: { extractArticle?: boolean },
   ): Promise<ApiResult<string>> => {
-    const result = await apiCall<Wire.StartBatchUrlImportResponseDto>(
+    const result = await apiCall(
       'batch_import_urls',
       {
         request: {
@@ -217,7 +217,7 @@ export const batchApi = {
     spaceId?: string,
     indexing?: Wire.FileIndexingOptionsDto,
   ): Promise<ApiResult<string>> => {
-    const result = await apiCall<Wire.StartBatchFileImportResponseDto>(
+    const result = await apiCall(
       'batch_import_files',
       {
         request: { filePaths, spaceId, indexing },

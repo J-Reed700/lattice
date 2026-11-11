@@ -1,10 +1,11 @@
 import type * as Wire from '@/lib/bindings';
 import { studyActivityCall } from '@/lib/studyActivity';
+import type { CommandArgs } from '@/lib/bindings';
 import type { CommandName } from '@/shared/ipc/transport';
 import type { ApiResult } from '@/types';
 
-const studyCall = <T>(command: CommandName, args?: Record<string, unknown>) =>
-  studyActivityCall<T>('study', command, args);
+const studyCall = <C extends CommandName>(command: C, args: CommandArgs[C]) =>
+  studyActivityCall('study', command, args);
 
 export const studyApi = {
   /** Builds a comparison table across documents. */

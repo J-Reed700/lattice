@@ -12,11 +12,11 @@ import type {
 export const settingsApi = {
   /** Models available to a provider's saved API key; the key stays native. */
   listCloudModels: async (provider: Wire.CloudProvider): Promise<ApiResult<Wire.CloudModelCatalogDto>> =>
-    apiCall<Wire.CloudModelCatalogDto>('list_cloud_models', { provider }),
+    apiCall('list_cloud_models', { provider }),
 
   /** What a connected model's provider reports it can take. */
   getModelLimits: async (model: Wire.ModelRef): Promise<ApiResult<Wire.ModelWindowDto>> =>
-    apiCall<Wire.ModelWindowDto>('get_model_limits', { model }),
+    apiCall('get_model_limits', { model }),
 
   /**
    * Adds a folder to the file watcher.
@@ -26,7 +26,7 @@ export const settingsApi = {
    * @returns Void on success
    */
   addWatchFolder: async (path: string): Promise<ApiResult<void>> =>
-    apiCall<void>('add_watch_folder', { path }),
+    apiCall('add_watch_folder', { path }),
 
   /**
    * Removes a folder from the file watcher.
@@ -36,7 +36,7 @@ export const settingsApi = {
    * @returns Void on success
    */
   removeWatchFolder: async (path: string): Promise<ApiResult<void>> =>
-    apiCall<void>('remove_watch_folder', { path }),
+    apiCall('remove_watch_folder', { path }),
 
   /**
    * Retrieves all application settings.
@@ -45,7 +45,7 @@ export const settingsApi = {
    * @returns Settings object with all configuration values
    */
   getSettings: async (): Promise<ApiResult<AppSettings>> =>
-    apiCall<AppSettings>('get_settings'),
+    apiCall('get_settings'),
 
   /**
    * Gets settings for a specific category.
@@ -57,7 +57,7 @@ export const settingsApi = {
   getSettingsCategory: async (
     category: string,
   ): Promise<ApiResult<Record<string, unknown>>> =>
-    apiCall<Record<string, unknown>>('get_settings_category', { category }),
+    apiCall('get_settings_category', { category }),
 
   /**
    * Updates one or more settings.
@@ -69,7 +69,7 @@ export const settingsApi = {
   updateSettings: async (
     settings: Wire.UpdateSettingsRequest,
   ): Promise<ApiResult<AppSettings>> =>
-    apiCall<AppSettings>('update_settings', { settings }),
+    apiCall('update_settings', { settings }),
 
   /**
    * Resets all settings to default values.
@@ -78,7 +78,7 @@ export const settingsApi = {
    * @returns Updated settings object
    */
   resetSettings: async (): Promise<ApiResult<AppSettings>> =>
-    apiCall<AppSettings>('reset_settings'),
+    apiCall('reset_settings'),
 
   /**
    * Exports all settings as JSON string.
@@ -87,7 +87,7 @@ export const settingsApi = {
    * @returns JSON string containing all settings
    */
   exportSettings: async (): Promise<ApiResult<string>> =>
-    apiCall<string>('export_settings'),
+    apiCall('export_settings'),
 
   /**
    * Imports settings from a JSON string.
@@ -101,7 +101,7 @@ export const settingsApi = {
     settings: string,
     merge?: boolean,
   ): Promise<ApiResult<AppSettings>> =>
-    apiCall<AppSettings>('import_settings', {
+    apiCall('import_settings', {
       request: {
         settings,
         merge,
@@ -119,7 +119,7 @@ export const settingsApi = {
     filters: Wire.FileFilterDto[],
     contents: string,
   ): Promise<ApiResult<boolean>> =>
-    apiCall<boolean>('save_text_file', { suggestedName, filters, contents }),
+    apiCall('save_text_file', { suggestedName, filters, contents }),
 
   /**
    * Shows the system open dialog and reads the file the user picks as text.
@@ -129,7 +129,7 @@ export const settingsApi = {
   openTextFile: async (
     filters: Wire.FileFilterDto[],
   ): Promise<ApiResult<string | null>> =>
-    apiCall<string | null>('open_text_file', { filters }),
+    apiCall('open_text_file', { filters }),
 
   /**
    * Detects the system theme preference.
@@ -138,7 +138,7 @@ export const settingsApi = {
    * @returns System theme as string ('light' or 'dark')
    */
   getSystemTheme: async (): Promise<ApiResult<string>> =>
-    apiCall<string>('get_system_theme'),
+    apiCall('get_system_theme'),
 
   /**
    * Validates that a folder path exists and is accessible.
@@ -148,13 +148,13 @@ export const settingsApi = {
    * @returns True if path is valid and accessible, false otherwise
    */
   validateFolderPath: async (path: string): Promise<ApiResult<boolean>> =>
-    apiCall<boolean>('validate_folder_path', { path }),
+    apiCall('validate_folder_path', { path }),
 
   /** Checks llama.cpp model discovery and a small chat completion. */
   testLlamaCppConnection: async (
     request: Wire.LlamaCppSettingsDto,
   ): Promise<ApiResult<TestOllamaConnectionResponse>> =>
-    apiCall<Wire.TestOllamaConnectionResponse>('test_llama_cpp_connection', {
+    apiCall('test_llama_cpp_connection', {
       request,
     }),
 
@@ -162,7 +162,7 @@ export const settingsApi = {
   testOllamaConnection: async (
     request: TestOllamaConnectionRequest,
   ): Promise<ApiResult<TestOllamaConnectionResponse>> =>
-    apiCall<Wire.TestOllamaConnectionResponse>('test_ollama_connection', {
+    apiCall('test_ollama_connection', {
       request,
     }),
 
@@ -173,7 +173,7 @@ export const settingsApi = {
   testCustomTool: async (
     request: TestCustomToolRequest,
   ): Promise<ApiResult<TestCustomToolResponse>> =>
-    apiCall<Wire.TestCustomToolResponse>('test_custom_tool', { request }),
+    apiCall('test_custom_tool', { request }),
 
   /**
    * Stores a cloud provider's API key in the system keychain.
@@ -186,14 +186,14 @@ export const settingsApi = {
     provider: string,
     key: string,
   ): Promise<ApiResult<void>> =>
-    apiCall<void>('set_cloud_api_key', { provider, key }),
+    apiCall('set_cloud_api_key', { provider, key }),
 
   /**
    * Settings → Sources: every source finder with its need, privacy line,
    * switch, gate and health, and which key services have a key stored.
    */
   getSourcesStatus: async (): Promise<ApiResult<Wire.SourcesStatusDto>> =>
-    apiCall<Wire.SourcesStatusDto>('get_sources_status'),
+    apiCall('get_sources_status'),
 
   /**
    * Stores a source-finding key in the system keychain. The answer says only
@@ -203,11 +203,11 @@ export const settingsApi = {
     service: Wire.KeyServiceDto,
     key: string,
   ): Promise<ApiResult<Wire.SourcesStatusDto>> =>
-    apiCall<Wire.SourcesStatusDto>('save_source_key', { service, key }),
+    apiCall('save_source_key', { service, key }),
 
   /** Removes a source-finding key from the system keychain. */
   removeSourceKey: async (
     service: Wire.KeyServiceDto,
   ): Promise<ApiResult<Wire.SourcesStatusDto>> =>
-    apiCall<Wire.SourcesStatusDto>('remove_source_key', { service }),
+    apiCall('remove_source_key', { service }),
 };

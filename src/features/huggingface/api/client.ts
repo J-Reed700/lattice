@@ -11,7 +11,7 @@ export const huggingfaceApi = {
    * @returns Void on success
    */
   setHuggingFaceToken: async (token: string): Promise<ApiResult<void>> =>
-    apiCall<void>('set_huggingface_token', { token }),
+    apiCall('set_huggingface_token', { token }),
 
   /**
    * Gets HuggingFace token status (whether it's set).
@@ -20,7 +20,7 @@ export const huggingfaceApi = {
    * @returns Token status object
    */
   getHuggingFaceTokenStatus: async (): Promise<ApiResult<HfTokenStatus>> =>
-    apiCall<Wire.HfTokenStatus>('get_huggingface_token_status'),
+    apiCall('get_huggingface_token_status'),
 
   /**
    * Gets the actual HuggingFace token value.
@@ -29,7 +29,7 @@ export const huggingfaceApi = {
    * @returns Token string or null if not set
    */
   getHuggingFaceToken: async (): Promise<ApiResult<string | null>> =>
-    apiCall<string | null>('get_huggingface_token'),
+    apiCall('get_huggingface_token'),
 
   /**
    * Deletes the stored HuggingFace token from OS keyring.
@@ -37,5 +37,5 @@ export const huggingfaceApi = {
    * @returns Void on success
    */
   deleteHuggingFaceToken: async (): Promise<ApiResult<void>> =>
-    apiCall<void>('delete_huggingface_token'),
+    apiCall('delete_huggingface_token'),
 };

@@ -1,3 +1,4 @@
+import type { CommandArgs, CommandResults } from '@/lib/bindings';
 import { apiCall, type CommandName } from '@/shared/ipc/transport';
 import type { ApiResult } from '@/types';
 
@@ -121,7 +122,8 @@ export function dismissStudyActivity(id?: string) {
 
 /** UI receipts for slow IPC requests, not a second store of course/job data.
  * No request payload, source text, answer, or result is retained here. */
-export function beginStudyActivity(domain: string, command: string, args?: Record<string, unknown>) {
+export function beginStudyActivity(domain: string, command: string, rawArgs?: unknown) {
+  const args = (rawArgs ?? undefined) as Record<string, unknown> | undefined;
   if (!['learning', 'study'].includes(domain) || dedicatedProgress.has(command)) return undefined;
   const request = args?.request as { programId?: unknown; lessonId?: unknown; moduleId?: unknown; formId?: unknown; saveOnly?: boolean } | undefined;
   const description = command === 'submit_learning_diagnostic' && request?.saveOnly
@@ -166,13 +168,13 @@ export function beginStudyActivity(domain: string, command: string, args?: Recor
 }
 
 /** apiCall for a Learning or Study command that publishes a receipt when the request is slow. */
-export async function studyActivityCall<T>(
+export async function studyActivityCall<C extends CommandName>(
   domain: 'learning' | 'study',
-  command: CommandName,
-  args?: Record<string, unknown>,
-): Promise<ApiResult<T>> {
+  command: C,
+  args: CommandArgs[C],
+): Promise<ApiResult<CommandResults[C]>> {
   const activity = beginStudyActivity(domain, command, args);
-  const result = await apiCall<T>(command, args);
+  const result = await apiCall(command, args);
   if (result.ok) activity?.finish(undefined, result.data);
   else activity?.finish(result.error);
   return result;

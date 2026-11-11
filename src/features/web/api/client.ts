@@ -17,7 +17,7 @@ export const webApi = {
    * @returns UrlPreview metadata
    */
   fetchUrlPreview: async (url: string): Promise<ApiResult<UrlPreview>> =>
-    apiCall<Wire.UrlPreview>('fetch_url_preview', { url }),
+    apiCall('fetch_url_preview', { url }),
 
   /**
    * Extracts article content (reader mode) from a URL.
@@ -27,7 +27,7 @@ export const webApi = {
    * @returns CleanArticle content
    */
   extractArticle: async (url: string): Promise<ApiResult<CleanArticle>> =>
-    apiCall<Wire.CleanArticle>('extract_article', { url }),
+    apiCall('extract_article', { url }),
 
   /**
    * Ingests content from a web URL and adds it to the index.
@@ -40,7 +40,7 @@ export const webApi = {
     url: string,
     options?: { spaceId?: string; conversationId?: string },
   ): Promise<ApiResult<WebIngestResponse>> =>
-    apiCall<Wire.WebIngestResponse>('ingest_web_url', {
+    apiCall('ingest_web_url', {
       url,
 
       spaceId: options?.spaceId,
@@ -54,5 +54,5 @@ export const webApi = {
    * Falls back to one validated fetch when the cache no longer holds it.
    */
   readWebPage: async (url: string): Promise<ApiResult<WebPage>> =>
-    apiCall<WebPage>('read_web_page', { url }),
+    apiCall('read_web_page', { url }),
 };

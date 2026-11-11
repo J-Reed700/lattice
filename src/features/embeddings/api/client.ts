@@ -11,7 +11,7 @@ export const embeddingsApi = {
    * @returns Embedding as array of numbers (typically 384 or 768 dimensions)
    */
   generateEmbedding: async (text: string): Promise<ApiResult<number[]>> =>
-    apiCall<number[]>('generate_embedding', { text }),
+    apiCall('generate_embedding', { text }),
 
   /**
    * Generates embeddings for multiple texts in a single batch.
@@ -23,7 +23,7 @@ export const embeddingsApi = {
   generateEmbeddingsBatch: async (
     texts: string[],
   ): Promise<ApiResult<number[][]>> =>
-    apiCall<number[][]>('generate_embeddings_batch', { texts }),
+    apiCall('generate_embeddings_batch', { texts }),
 
   /**
    * Gets information about the loaded embedding model.
@@ -32,5 +32,5 @@ export const embeddingsApi = {
    * @returns Model information object
    */
   getEmbeddingModelInfo: async (): Promise<ApiResult<EmbeddingModelInfo>> =>
-    apiCall<Wire.ModelInfo>('get_embedding_model_info'),
+    apiCall('get_embedding_model_info'),
 };

@@ -33,7 +33,7 @@ export const activityKeys = {
 export const activitySnapshotQueryOptions = () =>
   queryOptions({
     queryKey: activityKeys.snapshot,
-    queryFn: async () => unwrapApiResult(await apiCall<ActivitySnapshotDto>('activity_snapshot')),
+    queryFn: async () => unwrapApiResult(await apiCall('activity_snapshot')),
     // Kept current by the events below, not by refetching on a clock.
     staleTime: Infinity,
     // Nothing listens while Iris is hidden, so a snapshot cached before she is shown again may be old.
