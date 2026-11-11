@@ -60,6 +60,8 @@ pub(super) enum Repaired {
         patch: String,
         plans: BTreeMap<String, String>,
     },
+    /// An answer of plans and no change (edits form).
+    Declined { plans: BTreeMap<String, String> },
     /// The whole material (rewrite form).
     Whole(String),
 }
@@ -141,6 +143,7 @@ pub(super) fn apply(
             text_edits::apply_for(previous, &patch, &Value::Null, wording, &reach(sent))
                 .map(|applied| applied.value.to_string())
         }
+        Repaired::Declined { .. } => Ok(previous.to_string()),
         Repaired::Whole(text) => Ok(text),
     }
 }
@@ -192,6 +195,9 @@ impl Form for Edits {
 
     fn accept(&self, request: &Request<'_>, raw: &str) -> Result<()> {
         let answered = answers::read(raw, &request.finding_ids())?;
+        if !answered.changed {
+            return Ok(());
+        }
         let may_change = reach(request.issues.iter().map(|issue| issue.finding));
         text_edits::apply_for(
             request.candidate,
@@ -204,9 +210,17 @@ impl Form for Edits {
     }
 
     fn repaired(&self, raw: String) -> Result<Repaired> {
-        answers::reread(&raw).map(|answered| Repaired::Patch {
-            patch: answered.patch,
-            plans: answered.plans,
+        answers::reread(&raw).map(|answered| {
+            if answered.changed {
+                Repaired::Patch {
+                    patch: answered.patch,
+                    plans: answered.plans,
+                }
+            } else {
+                Repaired::Declined {
+                    plans: answered.plans,
+                }
+            }
         })
     }
 }

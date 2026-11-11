@@ -382,6 +382,7 @@ impl Subject for LessonSubject<'_> {
             Ok(Repaired::Patch { patch, plans }) => {
                 self.settle_patch(previous, send, &patch, &plans)
             }
+            Ok(Repaired::Declined { plans }) => Ok(self.settle_declined(send, &plans)),
             Ok(Repaired::Whole(text)) => self.settle_whole(previous, send, &text),
             Err(error) => Err(error),
         };
@@ -488,7 +489,7 @@ impl LessonSubject<'_> {
         reads_as_lesson_or_unusable(&value)?;
         let outcomes: Vec<Outcome> = send
             .iter()
-            .map(|finding| outcome_of(finding, (&applied.named, plans), previous, &value))
+            .map(|finding| outcome_of(finding, &applied.named, plans, previous, &value))
             .collect();
         for (finding, outcome) in send.iter().zip(&outcomes) {
             self.passes.charge(finding, outcome.clone());
@@ -516,6 +517,22 @@ impl LessonSubject<'_> {
         } else {
             Made::Changed(value.to_string())
         })
+    }
+
+    /// A repair that gave a plan for each finding and no change: each is
+    /// charged as declined, with the plan it gave.
+    fn settle_declined(
+        &mut self,
+        send: &[ReviewFinding],
+        plans: &BTreeMap<String, String>,
+    ) -> Made {
+        for finding in send {
+            let outcome = plans
+                .get(finding.id().as_str())
+                .map_or(Outcome::Unnamed, |plan| Outcome::Declined(plan.clone()));
+            self.passes.charge(finding, outcome);
+        }
+        Made::Nothing
     }
 
     /// A repair that rewrote the whole lesson names no finding: a finding is
@@ -602,7 +619,8 @@ impl LessonSubject<'_> {
 /// answered.
 fn outcome_of(
     finding: &ReviewFinding,
-    (named, plans): (&BTreeMap<String, Named>, &BTreeMap<String, String>),
+    named: &BTreeMap<String, Named>,
+    plans: &BTreeMap<String, String>,
     previous: &Value,
     value: &Value,
 ) -> Outcome {

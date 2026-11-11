@@ -9,6 +9,8 @@ use std::collections::BTreeMap;
 /// entry, and the plan of each finding's entry.
 pub(super) struct Answered {
     pub patch: String,
+    /// Whether any entry gives an edit, a citation or a withdrawn citation.
+    pub changed: bool,
     pub plans: BTreeMap<String, String>,
 }
 
@@ -104,6 +106,7 @@ fn flatten(entries: Vec<Entry>) -> Answered {
         plans.insert(entry.finding, entry.plan);
     }
     Answered {
+        changed: !(edits.is_empty() && citations.is_empty() && uncite.is_empty()),
         patch: json!({"edits":edits,"citations":citations,"uncite":uncite}).to_string(),
         plans,
     }
