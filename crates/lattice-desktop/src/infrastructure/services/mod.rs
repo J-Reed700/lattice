@@ -2,10 +2,6 @@
 pub mod file_cleanup;
 pub mod file_type_detector;
 pub mod metadata_extraction;
-// Validated path used by FileCleanupService (download manager dep). Distinct
-// from `shared::types::ValidatedFilePath`; do not consolidate without
-// migrating FileCleanupService's API expectations.
-pub mod validated_path;
 
 // Directory-backed service modules
 #[cfg(test)]
