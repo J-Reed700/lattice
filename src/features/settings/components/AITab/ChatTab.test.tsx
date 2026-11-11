@@ -1,7 +1,8 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { deferred } from '@/tests/deferred';
+import { render } from '@/tests/renderWithQueryClient';
 
 import { ChatTab } from './ChatTab';
 
