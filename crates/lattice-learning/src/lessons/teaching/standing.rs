@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::review_findings::{
-    sentences_in, sentences_of, site_sha256, subject_of, FindingId, FindingSite, Held, Origin,
+    sentences_in, sentences_of, site_sha256, subject_of, FindingId, FindingSite, Held,
     ReviewFinding,
 };
 use crate::teaching_review::{label, passages_of, Asked, Judged, Scope};
@@ -269,118 +269,49 @@ impl Standing {
         judged: Judged,
     ) -> Vec<ReviewFinding> {
         let Judged { verdicts, reported } = judged;
-        // A report that names an open finding asked about is that finding.
-        let continued: Vec<Option<FindingId>> = reported
-            .iter()
-            .map(|report| {
-                report.continues.clone().filter(|id| {
-                    round.asked.iter().any(|asked| asked.id == *id)
-                        && self.open.iter().any(|finding| finding.id() == *id)
-                })
-            })
-            .collect();
-        let settled: Vec<(FindingId, bool, String)> = verdicts
-            .into_iter()
-            .map(|verdict| (verdict.id, verdict.present, verdict.note))
-            .collect();
-        let mut decided: BTreeMap<FindingId, (bool, String)> = settled
-            .iter()
-            .map(|(id, present, note)| (id.clone(), (*present, note.clone())))
-            .collect();
-        for id in continued.iter().flatten() {
-            decided
-                .entry(id.clone())
-                .or_insert_with(|| (false, String::new()));
-        }
-        for (id, (present, note)) in decided {
-            let Some(position) = self.open.iter().position(|finding| finding.id() == id) else {
+        let mut present: BTreeSet<FindingId> = BTreeSet::new();
+        for verdict in verdicts {
+            let Some(position) = self
+                .open
+                .iter()
+                .position(|finding| finding.id() == verdict.id)
+            else {
                 continue;
             };
-            let mut reports = reported
-                .iter()
-                .zip(&continued)
-                .filter(|(_, continues)| continues.as_ref() == Some(&id))
-                .map(|(report, _)| report);
-            let report = reports.next();
-            for _ in reports {
-                tracing::info!(
-                    finding = %id.as_str(),
-                    "A second report continues the same open finding and is not kept apart"
-                );
-            }
-            if let Some(report) = report {
-                if report.site.is_some() {
-                    let number = match self.open.get(position).map(|finding| &finding.origin) {
-                        Some(Origin::Reviewer { number }) => *number,
-                        _ => continue,
-                    };
-                    let replaced = report.clone().finding(number);
-                    self.about.insert(
-                        id.clone(),
-                        sentence_digests(&sentences_of(candidate, &replaced)),
-                    );
-                    if let Some(finding) = self.open.get_mut(position) {
-                        *finding = replaced;
-                    }
-                } else {
-                    let now = self
-                        .open
-                        .get(position)
-                        .and_then(|finding| self.passage_now(candidate, finding))
-                        .map(|(_, text)| text);
-                    if let Some(finding) = self.open.get_mut(position) {
-                        finding.note = report.note.clone();
-                        finding.summary = report.summary.clone();
-                        finding.passage = now;
-                    }
-                }
-                continue;
-            }
-            if !present {
+            if !verdict.present {
                 self.open.remove(position);
-                self.about.remove(&id);
+                self.about.remove(&verdict.id);
                 continue;
             }
-            let now = self
-                .open
-                .get(position)
-                .and_then(|finding| self.passage_now(candidate, finding))
-                .map(|(_, text)| text);
-            if let Some(finding) = self.open.get_mut(position) {
-                if !note.is_empty() {
-                    finding.note = note.clone();
-                    finding.summary = note;
-                }
-                finding.passage = now;
-            }
+            let Some(finding) = self.open.get_mut(position) else {
+                continue;
+            };
+            finding.passage = Some(verdict.quote);
+            let written = sentence_digests(&sentences_of(candidate, finding));
+            self.about
+                .entry(verdict.id.clone())
+                .or_default()
+                .extend(written);
+            present.insert(verdict.id);
         }
         let mut fresh = Vec::new();
-        for (report, continues) in reported.into_iter().zip(continued) {
-            if continues.is_some() {
+        for report in reported {
+            if report
+                .continues
+                .as_ref()
+                .is_some_and(|id| present.contains(id))
+            {
+                tracing::info!(
+                    "A report continues an open finding that is still present and is dropped"
+                );
                 continue;
             }
-            let folded = report.passage_id.as_deref().and_then(|passage| {
-                round.asked.iter().find(|asked| {
-                    asked.passage_id.as_deref() == Some(passage)
-                        && settled
-                            .iter()
-                            .any(|(id, present, _)| *present && *id == asked.id)
+            let folded = report.passage_id.as_deref().is_some_and(|passage| {
+                round.asked.iter().any(|asked| {
+                    asked.passage_id.as_deref() == Some(passage) && present.contains(&asked.id)
                 })
             });
-            if let Some(asked) = folded {
-                let blank = settled
-                    .iter()
-                    .any(|(id, _, note)| *id == asked.id && note.is_empty());
-                if let Some(finding) = self
-                    .open
-                    .iter_mut()
-                    .find(|finding| finding.id() == asked.id)
-                {
-                    if blank {
-                        finding.note = report.note;
-                        finding.summary = report.summary;
-                    }
-                }
+            if folded {
                 continue;
             }
             fresh.push(report.finding(self.next_number));

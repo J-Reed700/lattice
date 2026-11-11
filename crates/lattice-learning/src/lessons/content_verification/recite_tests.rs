@@ -578,3 +578,7 @@ fn a_claim_that_draws_on_several_sentences_of_its_quote_cannot_be_cited() -> Res
     assert_eq!(candidate, before);
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "recite_entry_tests.rs"]
+mod entry_tests;

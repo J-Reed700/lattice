@@ -216,8 +216,7 @@ pub(crate) fn gained(
 }
 
 /// What a repair is told about a sentence that copies a source.
-pub(crate) const SAY_IT_YOURSELF: &str =
-    "Say it in the lesson's own words, or put the source's words in double quotation marks.";
+pub(crate) const SAY_IT_YOURSELF: &str = "Say it in the lesson's own words.";
 
 /// A finding for every teaching sentence of `candidate`'s blocks and
 /// questions that copies a quote its part cites or the lesson's `wording`,

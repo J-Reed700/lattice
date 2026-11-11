@@ -3,7 +3,9 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
 use crate::lesson_drafts;
-use crate::lessons::course_generation_tests::{review_reply, verdict, ScriptedModel, Windowed};
+use crate::lessons::course_generation_tests::{
+    present, review_reply, verdict, ScriptedModel, Windowed,
+};
 use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::{FindingKey, Held};
 use lattice_core::application::ports::llm_port::{
@@ -14,6 +16,7 @@ use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
+const NUMBER_FOUR: &str = "The function returns the number 4 for the sum of two and two.";
 pub(super) const EXCERPT: &str =
     "This saved reference describes the exact behavior of the example tool.";
 
@@ -469,7 +472,7 @@ async fn outlines_and_assessments_still_fail_closed_after_one_repair() {
         retitle("Corrected example"),
         judged(
             Some("Section 1 still prints the result as the string \"4\" instead of the number."),
-            &[verdict("reviewer/1", "present")],
+            &[present("reviewer/1", NUMBER_FOUR)],
         ),
     ]);
     assert!(review_and_repair(
@@ -1048,7 +1051,7 @@ async fn one_finding_s_unusable_answer_does_not_stop_the_others() -> Result<()> 
                 &[1],
                 &[],
                 &[
-                    verdict("reviewer/1", "present"),
+                    present("reviewer/1", &fact_of(0)),
                     verdict("reviewer/2", "resolved"),
                 ],
             ),
@@ -1089,7 +1092,7 @@ async fn findings_whose_repair_does_not_fit_wait_and_the_others_are_still_repair
                 &[],
                 &[
                     verdict("reviewer/1", "resolved"),
-                    verdict("reviewer/2", "present"),
+                    present("reviewer/2", &fact_of(1)),
                 ],
             ),
         ],
@@ -1409,12 +1412,12 @@ fn defect_no_repair_fixes() -> Vec<String> {
         retitle("Corrected example"),
         judged(
             Some("Section 1 still prints the result as the string \"4\" instead of the number."),
-            &[verdict("reviewer/1", "present")],
+            &[present("reviewer/1", NUMBER_FOUR)],
         ),
         retitle_again("Corrected twice"),
         judged(
             Some("Section 1 still prints the result as the string \"4\" after two repairs."),
-            &[verdict("reviewer/1", "present")],
+            &[present("reviewer/1", NUMBER_FOUR)],
         ),
     ]
 }
@@ -1680,6 +1683,13 @@ fn repair_requests(model: &ScriptedModel) -> Vec<Value> {
 
 const PART_NAMES: [&str; 4] = ["Part A", "Part B", "Part C", "Part D"];
 
+fn fact_of(index: usize) -> String {
+    format!(
+        "{} states one plain fact about the tool.",
+        PART_NAMES[index]
+    )
+}
+
 fn part_body(index: usize) -> String {
     let name = PART_NAMES[index];
     format!("{name} states one plain fact about the tool. {name} then gives a first idea.")
@@ -1850,7 +1860,7 @@ async fn an_edit_outside_its_finding_s_part_leaves_the_other_findings_edits_appl
             &[],
             &[
                 verdict("reviewer/1", "resolved"),
-                verdict("reviewer/2", "present"),
+                present("reviewer/2", &fact_of(1)),
             ],
         ),
         edits_answer(vec![better_idea(1, "reviewer/2")]),
@@ -1883,7 +1893,7 @@ async fn a_finding_no_edit_named_is_told_so_on_its_second_attempt() -> Result<()
             &[],
             &[
                 verdict("reviewer/1", "resolved"),
-                verdict("reviewer/2", "present"),
+                present("reviewer/2", &fact_of(1)),
             ],
         ),
         edits_answer(vec![better_idea(1, "reviewer/2")]),
@@ -1949,7 +1959,7 @@ async fn a_reverted_edit_gets_a_second_attempt() -> Result<()> {
             &[1],
             &[],
             &[
-                verdict("reviewer/1", "present"),
+                present("reviewer/1", KEPT),
                 verdict("reviewer/2", "resolved"),
             ],
         ),
@@ -2797,19 +2807,24 @@ impl ByRequest {
                         .as_str()
                         .and_then(|part| part.strip_prefix("Section "))
                         .and_then(|number| number.parse::<usize>().ok());
-                    let present = match section {
-                        Some(number) => {
-                            let passages = passages_of(number.saturating_sub(1));
-                            passages.iter().any(|(passage, text)| {
+                    let quote = match section {
+                        Some(number) => passages_of(number.saturating_sub(1))
+                            .into_iter()
+                            .find(|(passage, text)| {
                                 entry["passageId"].as_str().is_none_or(|own| own == passage)
                                     && (self.defective)(text)
                             })
-                        }
+                            .map(|(_, text)| text),
                         None => wanted
                             .iter()
-                            .any(|note| entry["note"].as_str() == Some(*note)),
+                            .any(|note| entry["note"].as_str() == Some(*note))
+                            .then(|| passages_of(0).into_iter().next().map(|(_, text)| text))
+                            .flatten(),
                     };
-                    json!({"id": id, "verdict": if present { "present" } else { "resolved" }, "note": ""})
+                    match quote {
+                        Some(quote) => json!({"id": id, "quote": quote, "verdict": "present"}),
+                        None => json!({"id": id, "quote": "", "verdict": "resolved"}),
+                    }
                 })
                 .collect();
             answer["openFindings"] = json!(verdicts);
@@ -3304,7 +3319,7 @@ async fn a_contradiction_between_two_parts_is_kept_with_both_and_repaired() -> R
     let none_wrong = |index: usize| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"Nothing is wrong here.","hasDefect":false});
     let recheck = |id: &str, issues: Vec<&str>, section: usize| {
         json!({
-            "openFindings": [{"id": id, "verdict": "resolved", "note": ""}],
+            "openFindings": [{"id": id, "quote": "", "verdict": "resolved"}],
             "issues": issues,
             "blockChecks": crate::teaching_review::fixture_checks(vec![none_wrong(section)]),
         })

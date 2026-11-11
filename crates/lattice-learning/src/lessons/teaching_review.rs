@@ -1,7 +1,7 @@
 //! Bind review findings to app-owned passages, not model-transcribed quotations.
 use crate::lessons::structured_call::{CallKind, ReasonFirst};
 use crate::lessons::writer_excerpts::{self, WriterExcerpts};
-use crate::review_findings::{FindingId, FindingSite, ReviewFinding};
+use crate::review_findings::{part_holds, FindingId, FindingSite, ReviewFinding};
 use crate::{generation, outline_progress::OutlineProgress};
 use lattice_core::{
     application::ports::LLMPort,
@@ -9,7 +9,7 @@ use lattice_core::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 pub(super) const POLICY: &str = "section-review-v6";
 
@@ -32,7 +32,7 @@ pub enum LengthRule {
 const REVIEW_DRAFT_BRIEF: &str = "Go through the candidate part by part: for a lesson, every section listed in sectionIndicesToReview and every question; for an outline, every module. Solve each exercise and question yourself and check each worked example against its stated premises and result. For each part say what you checked, what you found and whether it has a material defect.";
 
 /// The sentence the prose step is given when open findings are asked about.
-const OPEN_FINDINGS_BRIEF: &str = " For each entry of openFindings, say whether the defect it describes is still in the candidate.";
+const OPEN_FINDINGS_BRIEF: &str = " For each entry of openFindings, read the part it names as the candidate now has it, whether or not sectionIndicesToReview lists that part. Quote the exact words of that part that still show the defect, or, for something left out, the words it should follow. When no words of the part show it any more, leave the quote empty and answer resolved. An open finding's id is never used for a different defect: report that as a new issue.";
 
 #[cfg(test)]
 pub(super) fn fixture_checks(checks: Vec<Value>) -> Value {
@@ -93,8 +93,8 @@ enum Judgement {
 #[serde(deny_unknown_fields)]
 struct VerdictEntry {
     id: String,
+    quote: String,
     verdict: Judgement,
-    note: String,
 }
 
 /// One open finding shown to the reviewer.
@@ -121,7 +121,8 @@ pub struct Scope<'a> {
 pub struct Verdict {
     pub id: FindingId,
     pub present: bool,
-    pub note: String,
+    /// The words of its part that show the defect now; blank when resolved.
+    pub quote: String,
 }
 
 /// A defect the reviewer reported, before it has a number.
@@ -240,7 +241,7 @@ fn schema(indices: &[usize], passages: &[Vec<String>], verdict_ids: &[&str]) -> 
     if !verdict_ids.is_empty() {
         let count = verdict_ids.len();
         required.push("openFindings");
-        properties.insert("openFindings".into(), json!({"type":"array","minItems":count,"maxItems":count,"items":{"type":"object","additionalProperties":false,"required":["id","verdict","note"],"properties":{"id":{"type":"string","enum":verdict_ids},"verdict":{"type":"string","enum":["present","resolved"]},"note":{"type":"string"}}}}));
+        properties.insert("openFindings".into(), json!({"type":"array","minItems":count,"maxItems":count,"items":{"type":"object","additionalProperties":false,"required":["id","quote","verdict"],"properties":{"id":{"type":"string","enum":verdict_ids},"quote":{"type":"string"},"verdict":{"type":"string","enum":["present","resolved"]}}}}));
     }
     required.push("issues");
     let continues = (!verdict_ids.is_empty()).then(|| {
@@ -382,7 +383,7 @@ pub async fn review(
         inputs.insert(name.into(), value);
     }
     let key = format!(
-        "teaching-review-findings-v5:{}",
+        "teaching-review-findings-v6:{}",
         crate::content_verification::digest(&Value::Object(inputs).to_string())
     );
     if let Some(saved) = crate::lesson_drafts::checkpoint(&key)
@@ -431,6 +432,7 @@ async fn review_sections(
     };
     let mut accepted = BTreeMap::<usize, BlockCheck>::new();
     let mut verdicts = BTreeMap::<FindingId, Verdict>::new();
+    let mut ungrounded = BTreeSet::<FindingId>::new();
     let mut reported: Vec<Reported> = Vec::new();
     let mut problems = Vec::new();
     let continuing = |id: &str| {
@@ -566,10 +568,20 @@ async fn review_sections(
                     let mut own = entries.iter().filter(|entry| entry.id == finding.id.as_str());
                     match (own.next(), own.next()) {
                         (Some(entry), None) => {
+                            let quote = entry.quote.trim();
+                            let mut present = matches!(entry.verdict, Judgement::Present);
+                            if present && !part_holds(candidate, finding.site, quote) {
+                                if ungrounded.insert(finding.id.clone()) {
+                                    problems.push(format!("{}: the quote is not in {} as it now stands; quote the words there that still show the defect, or answer resolved.", finding.id.as_str(), label(finding.site)));
+                                    continue;
+                                }
+                                tracing::info!(finding = %finding.id.as_str(), "A present verdict stayed without words of its part and counts as resolved");
+                                present = false;
+                            }
                             verdicts.insert(finding.id.clone(), Verdict {
                                 id: finding.id.clone(),
-                                present: matches!(entry.verdict, Judgement::Present),
-                                note: entry.note.trim().to_owned(),
+                                present,
+                                quote: quote.to_owned(),
                             });
                         }
                         _ => problems.push(format!("{} needs one verdict.", finding.id.as_str())),
