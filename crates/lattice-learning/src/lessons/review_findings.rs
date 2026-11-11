@@ -617,6 +617,19 @@ pub(crate) fn sentences_of(candidate: &Value, finding: &ReviewFinding) -> Vec<St
     found
 }
 
+/// Whether `quote` stands in the text of the part `site` names, the whole
+/// candidate for the lesson.
+pub(crate) fn part_holds(candidate: &Value, site: FindingSite, quote: &str) -> bool {
+    let Some(part) = part_at(candidate, site) else {
+        return false;
+    };
+    let mut leaves = Vec::new();
+    string_leaves(part, &mut leaves);
+    leaves
+        .into_iter()
+        .any(|leaf| same_text::find(leaf, quote).is_some())
+}
+
 /// The sentences of every string of `value` that are not blank once folded.
 pub(crate) fn sentences_in(value: &Value) -> Vec<String> {
     let mut leaves = Vec::new();

@@ -27,7 +27,6 @@ fn verdict(finding: &ReviewFinding, present: bool, quote: &str) -> Verdict {
     Verdict {
         id: finding.id(),
         present,
-        note: String::new(),
         quote: quote.to_owned(),
     }
 }

@@ -468,8 +468,8 @@ fn asked(number: u32, index: usize) -> Asked {
     }
 }
 
-fn verdict_entry(number: u32, verdict: &str, note: &str) -> Value {
-    json!({"id":format!("reviewer/{number}"),"verdict":verdict,"note":note})
+fn verdict_entry(number: u32, verdict: &str, quote: &str) -> Value {
+    json!({"id":format!("reviewer/{number}"),"quote":quote,"verdict":verdict})
 }
 
 fn sent(model: &ScriptedModel, call: usize) -> Value {
@@ -508,7 +508,7 @@ async fn an_answer_that_leaves_an_id_out_is_corrected_and_the_verdict_given_befo
     let asked = [asked(1, 0), asked(2, 0)];
     let model = model(vec![
         json!({"openFindings":[verdict_entry(1, "resolved", "")],"issues":[],"blockChecks":fixture_checks(vec![check(0)])}),
-        json!({"openFindings":[verdict_entry(2, "present", " Still wrong. ")],"issues":[],"blockChecks":[]}),
+        json!({"openFindings":[verdict_entry(2, "present", " compiler is rustc. ")],"issues":[],"blockChecks":[]}),
     ]);
     let judged = super::review(
         &model,
@@ -527,7 +527,7 @@ async fn an_answer_that_leaves_an_id_out_is_corrected_and_the_verdict_given_befo
     assert_eq!(judged.verdicts[0].id, asked[0].id);
     assert!(!judged.verdicts[0].present);
     assert!(judged.verdicts[1].present);
-    assert_eq!(judged.verdicts[1].note, "Still wrong.");
+    assert_eq!(judged.verdicts[1].quote, "compiler is rustc.");
     let retry = sent(&model, 1);
     assert_eq!(
         retry["reviewResponseProblems"],
@@ -541,7 +541,7 @@ async fn an_answer_that_leaves_an_id_out_is_corrected_and_the_verdict_given_befo
 #[tokio::test]
 async fn a_second_verdict_for_one_id_is_refused() {
     let asked = [asked(1, 0)];
-    let twice = |checks| json!({"openFindings":[verdict_entry(1, "resolved", ""), verdict_entry(1, "present", "")],"issues":[],"blockChecks":fixture_checks(checks)});
+    let twice = |checks| json!({"openFindings":[verdict_entry(1, "resolved", ""), verdict_entry(1, "present", "compiler is rustc.")],"issues":[],"blockChecks":fixture_checks(checks)});
     let model = model(vec![twice(vec![check(0)]), twice(vec![])]);
     let error = super::review(
         &model,
@@ -801,7 +801,7 @@ async fn a_report_carries_the_open_finding_it_continues_and_none_for_an_id_nobod
     flagged["hasDefect"] = json!(true);
     flagged["continues"] = json!("reviewer/1");
     let model = model(vec![json!({
-        "openFindings":[verdict_entry(1, "present", "")],
+        "openFindings":[verdict_entry(1, "present", "compiler is rustc.")],
         "issues":[
             {"note":"The same defect in new words.","continues":"reviewer/1"},
             {"note":"A different defect.","continues":"none"},

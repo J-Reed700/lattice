@@ -615,7 +615,7 @@ impl Model {
             if let Some(open) = data["openFindings"].as_array() {
                 answer["openFindings"] = open
                     .iter()
-                    .map(|finding| json!({"id":finding["id"],"verdict":"resolved","note":""}))
+                    .map(|finding| json!({"id":finding["id"],"quote":"","verdict":"resolved"}))
                     .collect();
             }
             return Ok(answer.to_string());
