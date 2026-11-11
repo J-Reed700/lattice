@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
 use crate::review_findings::ReviewFinding;
 use lattice_core::shared::persistence::driver::DriverPool;

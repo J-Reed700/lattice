@@ -535,6 +535,7 @@ pub async fn continue_in_new_conversation_impl(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
     use super::*;
 

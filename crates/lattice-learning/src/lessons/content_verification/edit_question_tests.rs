@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 //! The user rewrites a question of a published lesson: its prompt, choices,
 //! right answer and explanation are written, the statements that stood on
 //! what changed end, the rest keep their state, and the review's record

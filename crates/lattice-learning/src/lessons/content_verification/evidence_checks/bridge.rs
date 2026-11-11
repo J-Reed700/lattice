@@ -185,6 +185,7 @@ pub(super) fn saved_parts(receipt: &Value) -> Vec<CheckedPart> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
     use super::*;
     use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     use serde_json::json;

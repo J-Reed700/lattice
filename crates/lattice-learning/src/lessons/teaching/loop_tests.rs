@@ -1,5 +1,6 @@
 //! A lesson's teaching review publishes with what the repairs could not
 //! settle waiting for the user.
+#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
 use crate::lesson_drafts;
 use crate::lessons::course_generation_tests::{ScriptedModel, Windowed};

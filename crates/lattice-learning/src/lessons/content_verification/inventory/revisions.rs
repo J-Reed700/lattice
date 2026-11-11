@@ -261,6 +261,7 @@ pub async fn live_revision_fixture(
 
 #[cfg(test)]
 mod capacity_tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
 
     #[test]

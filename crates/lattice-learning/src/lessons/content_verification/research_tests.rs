@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 use super::*;
 use crate::content_verification::tests::{fixture_completion, fixture_prompts};
 use crate::lessons::course_generation_tests::ScriptedModel;

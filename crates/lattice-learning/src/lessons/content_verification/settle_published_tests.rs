@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 //! A published lesson's not-verified statements are the user's to settle
 //! (settle-published design): the learner view follows each claim's current
 //! state, and the user confirms, edits or sources a statement in place.

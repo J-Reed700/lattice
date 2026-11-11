@@ -404,6 +404,7 @@ mod passage_list_tests;
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
     use crate::content_verification::tests::{fixture_completion, fixture_prompts};
     use crate::lessons::course_generation_tests::ScriptedModel;

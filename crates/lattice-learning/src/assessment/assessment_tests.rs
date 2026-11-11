@@ -1,5 +1,6 @@
 //! Quizzes and tests: normalisation, numeric tolerance, partial credit,
 //! option order, rationale checks, and one quiz through the repository.
+#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use crate::{
     assessment_engine::{
         self as engine, KeyedOutcome, LearningAssessmentCandidate, LearningAssessmentKey,

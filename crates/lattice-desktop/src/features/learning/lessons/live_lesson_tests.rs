@@ -1,6 +1,12 @@
 //! Opt-in full production-worker exercise against an explicitly chosen library.
 //! This retries and publishes the chosen job through repositories, so callers
 //! must deliberately select the database. No model responses are mocked.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 use super::*;
 use crate::features::learning::review_findings::{FindingKind, ReviewFinding};
 use crate::features::llm::llama_cpp::LlamaCppLlm;

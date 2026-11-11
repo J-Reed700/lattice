@@ -1,5 +1,6 @@
 //! A lesson's quiz questions are written by a job of their own, queued with
 //! the lesson's publication, so the course's next lesson never waits for them.
+#![allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 use super::*;
 use crate::{
     curriculum::LearningGenerationJobStatus as Status,

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::panic)]
 use super::*;
 use crate::lessons::call_plan::PlannedAt;
 use lattice_core::domain::learning::acceptance::StandardPolicy;
