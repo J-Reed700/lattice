@@ -15,9 +15,10 @@
 //! exists (a destination file usually does not yet), then requires the result
 //! to sit under the canonicalized root.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use crate::shared::error::AppError;
+use crate::shared::path_safety::reject_parent_components;
 
 /// Resolve `candidate` and require the result to live under `root`.
 ///
@@ -30,22 +31,11 @@ use crate::shared::error::AppError;
 /// # Errors
 ///
 /// - `AppError::Security` if the resolved path escapes `root`
-/// - `AppError::Security` if `candidate` contains a `..` component
+/// - `AppError::Security` if `candidate` has a parent component or a NUL byte
 /// - `AppError::FileSystem` if `root` cannot be canonicalized
 pub fn confine_to_root(root: &Path, candidate: &Path) -> Result<PathBuf, AppError> {
-    // Reject `..` outright rather than trying to resolve it. A parent
-    // reference that stays inside the root is legitimate but pointless here,
-    // and allowing it means reasoning about symlink-vs-lexical resolution
-    // order for no benefit.
-    if candidate
-        .components()
-        .any(|c| matches!(c, Component::ParentDir))
-    {
-        return Err(AppError::Security(format!(
-            "Path may not contain '..' components: {}",
-            candidate.display()
-        )));
-    }
+    reject_parent_components(candidate)
+        .map_err(|reason| AppError::Security(format!("Path {reason}: {}", candidate.display())))?;
 
     let canonical_root = root.canonicalize().map_err(|e| {
         AppError::FileSystem(format!(
