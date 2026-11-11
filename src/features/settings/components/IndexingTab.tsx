@@ -21,6 +21,7 @@ import { X } from 'lucide-react';
 import { PageHeader, SettingsRow, SettingsSection, settingsFieldClass, Switch } from '@/components/ui';
 import { IndexingActivitySection } from '@/features/files/components/IndexingStatus/IndexingActivitySection';
 import { useIndexedFoldersActions } from '@/features/files/hooks/useIndexedFoldersQuery';
+import { getErrorMessage } from '@/lib/errorUtils';
 import { cn } from '@/lib/utils';
 import { toast } from '@/stores/toastStore';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
@@ -29,8 +30,6 @@ import { NUMBER_FIELD_CLASS, ROW_ACTION_CLASS, SECONDARY_BUTTON_CLASS, SWITCH_CL
 import { useSettingsQuery, useUpdateSettingsMutation } from '../hooks/useSettingsQuery';
 
 const DEFAULT_BATCH_SIZE = 32;
-
-const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 export function IndexingTab() {
   const { data: settings, isLoading } = useSettingsQuery();
@@ -81,7 +80,7 @@ export function IndexingTab() {
         try {
           await addFolder(selected);
         } catch (error) {
-          toast.error("Couldn't add watch folder", { message: errorMessage(error) });
+          toast.error("Couldn't add watch folder", { message: getErrorMessage(error) });
         }
       }
     } catch (error) {
@@ -95,7 +94,7 @@ export function IndexingTab() {
     try {
       await removeFolder(folder);
     } catch (error) {
-      toast.error("Couldn't remove watch folder", { message: errorMessage(error) });
+      toast.error("Couldn't remove watch folder", { message: getErrorMessage(error) });
     }
   };
 
