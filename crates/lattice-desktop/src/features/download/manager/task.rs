@@ -395,7 +395,6 @@ impl DownloadManagerService {
         active.insert(
             session_id.clone(),
             ActiveDownload {
-                session,
                 task_handle,
                 cancel_tx: Some(cancel_tx),
             },

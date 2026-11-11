@@ -8,7 +8,6 @@ use crate::features::download::download_repository::DownloadRepository;
 use crate::features::download::engine::DownloadEngine;
 use crate::infrastructure::services::file_cleanup::FileCleanupService;
 use lattice_core::application::ports::download_manager::DownloadEvent;
-use lattice_core::domain::download::DownloadSession;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -29,7 +28,6 @@ pub(super) enum StopReason {
 }
 
 pub(super) struct ActiveDownload {
-    pub(super) session: DownloadSession,
     pub(super) task_handle: Option<JoinHandle<()>>,
     pub(super) cancel_tx: Option<mpsc::Sender<StopReason>>,
 }
