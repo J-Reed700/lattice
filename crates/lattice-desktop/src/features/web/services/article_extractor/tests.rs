@@ -273,9 +273,7 @@ fn metadata_entities_are_decoded_once_and_numeric_references_are_read() {
         .unwrap();
 
     assert!(
-        result
-            .text_content
-            .contains("AT&T &lt;b&gt; \u{2014} end"),
+        result.text_content.contains("AT&T &lt;b&gt; \u{2014} end"),
         "{}",
         result.text_content
     );
