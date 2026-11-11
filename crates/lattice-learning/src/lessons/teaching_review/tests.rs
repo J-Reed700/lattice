@@ -838,3 +838,167 @@ async fn a_report_carries_the_open_finding_it_continues_and_none_for_an_id_nobod
     );
     Ok(())
 }
+
+fn two_parts() -> Value {
+    json!({"blocks":[{"body":"Alpha holds the line."},{"body":"Beta follows alpha."}],"questions":[]})
+}
+
+fn quoted(number: u32, verdict: &str, quote: &str) -> Value {
+    json!({"id":format!("reviewer/{number}"),"quote":quote,"verdict":verdict})
+}
+
+fn asked_at(number: u32, site: FindingSite) -> Asked {
+    Asked {
+        id: ReviewFinding::reviewer(number, Some(site), "x").id(),
+        site,
+        passage_id: None,
+        note: "A defect.".to_owned(),
+    }
+}
+
+/// The verdicts of a review of section 0 that was asked about `asked`, given
+/// `replies` in turn.
+async fn judge(asked: &[Asked], replies: Vec<Value>) -> (Vec<Verdict>, ScriptedModel) {
+    let model = model(replies);
+    let judged = super::review(
+        &model,
+        "Review instructional quality.",
+        json!({}),
+        &two_parts(),
+        Scope {
+            sections: Some(&[0]),
+            asked: Some(asked),
+        },
+        None,
+        LengthRule::Fail,
+    )
+    .await
+    .unwrap();
+    (judged.verdicts, model)
+}
+
+fn answer_of(verdicts: Vec<Value>, checks: Vec<Value>) -> Value {
+    json!({"openFindings":verdicts,"issues":[],"blockChecks":fixture_checks(checks)})
+}
+
+#[tokio::test]
+async fn a_present_verdict_whose_quote_is_not_in_its_part_is_asked_for_again_once_then_counts_as_resolved(
+) {
+    let asked = [asked_at(1, FindingSite::Section(0))];
+    let bad = quoted(1, "present", "Gamma is absent here.");
+    let (verdicts, model) = judge(
+        &asked,
+        vec![
+            answer_of(vec![bad.clone()], vec![check(0)]),
+            answer_of(vec![bad], vec![]),
+        ],
+    )
+    .await;
+    assert_eq!(verdicts.len(), 1);
+    assert!(!verdicts[0].present);
+    let prompts = model.prompts.lock().unwrap().len();
+    assert_eq!(prompts, 2);
+    let retry = sent(&model, 1);
+    assert!(retry["reviewResponseProblems"][0]
+        .as_str()
+        .unwrap()
+        .contains("reviewer/1"));
+}
+
+#[tokio::test]
+async fn a_present_verdict_whose_quote_stands_in_its_part_is_kept_with_the_quote() {
+    let asked = [asked_at(1, FindingSite::Section(0))];
+    let (verdicts, model) = judge(
+        &asked,
+        vec![answer_of(
+            vec![quoted(1, "present", "Alpha holds the line.")],
+            vec![check(0)],
+        )],
+    )
+    .await;
+    assert!(verdicts[0].present);
+    assert_eq!(verdicts[0].quote, "Alpha holds the line.");
+    assert_eq!(model.prompts.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_finding_on_a_part_the_review_was_not_sent_to_is_judged_on_that_parts_text() {
+    let asked = [asked_at(1, FindingSite::Section(1))];
+    let (verdicts, model) = judge(
+        &asked,
+        vec![
+            answer_of(
+                vec![quoted(1, "present", "Alpha holds the line.")],
+                vec![check(0)],
+            ),
+            answer_of(vec![quoted(1, "present", "Beta follows alpha.")], vec![]),
+        ],
+    )
+    .await;
+    assert!(verdicts[0].present);
+    assert_eq!(verdicts[0].quote, "Beta follows alpha.");
+    assert_eq!(model.prompts.lock().unwrap().len(), 2);
+    let (kept, model) = judge(
+        &asked,
+        vec![answer_of(
+            vec![quoted(1, "present", "Beta follows alpha.")],
+            vec![check(0)],
+        )],
+    )
+    .await;
+    assert!(kept[0].present);
+    assert_eq!(model.prompts.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_finding_about_the_whole_lesson_is_grounded_by_words_in_any_part() {
+    let asked = [asked_at(1, FindingSite::Lesson)];
+    let (verdicts, model) = judge(
+        &asked,
+        vec![answer_of(
+            vec![quoted(1, "present", "Beta follows alpha.")],
+            vec![check(0)],
+        )],
+    )
+    .await;
+    assert!(verdicts[0].present);
+    assert_eq!(model.prompts.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_resolved_verdict_with_a_quote_is_just_resolved() {
+    let asked = [asked_at(1, FindingSite::Section(0))];
+    let (verdicts, model) = judge(
+        &asked,
+        vec![answer_of(
+            vec![quoted(1, "resolved", "Gamma is absent here.")],
+            vec![check(0)],
+        )],
+    )
+    .await;
+    assert!(!verdicts[0].present);
+    assert_eq!(model.prompts.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn a_verdict_is_an_id_a_quote_and_a_judgement_in_that_order_with_no_note() {
+    let (_, passages) = review_candidate(&candidate());
+    let with = schema(&[0], &passages, &["reviewer/1"]);
+    assert_eq!(
+        with.pointer("/properties/openFindings/items/required"),
+        Some(&json!(["id", "quote", "verdict"]))
+    );
+    let fields: Vec<&String> = with
+        .pointer("/properties/openFindings/items/properties")
+        .and_then(Value::as_object)
+        .unwrap()
+        .keys()
+        .collect();
+    assert_eq!(fields, ["id", "quote", "verdict"]);
+}
+
+#[test]
+fn the_open_findings_sentence_sends_the_reviewer_to_the_part_as_it_now_stands_listed_or_not() {
+    assert!(OPEN_FINDINGS_BRIEF.contains("whether or not sectionIndicesToReview lists that part"));
+    assert!(OPEN_FINDINGS_BRIEF.contains("quote"));
+}
