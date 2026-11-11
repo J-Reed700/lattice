@@ -353,6 +353,32 @@ This is a test
 }
 
 #[test]
+fn cue_text_in_vtt_and_srt_is_decoded_once_and_json3_text_is_left_alone() {
+    let vtt = "WEBVTT
+
+00:00:00.000 --> 00:00:01.000
+AT&amp;T &lt;3&nbsp;you
+";
+    assert_eq!(
+        WebIngestionService::parse_vtt_transcript_text(vtt),
+        "AT&T <3 you"
+    );
+    let srt = "1
+00:00:00,000 --> 00:00:01,000
+<i>AT&amp;T &lt;3</i>
+";
+    assert_eq!(
+        WebIngestionService::parse_srt_transcript_text(srt),
+        "AT&T <3"
+    );
+    let json3 = r#"{"events":[{"segs":[{"utf8":"AT&amp;T"}]}]}"#;
+    assert_eq!(
+        WebIngestionService::parse_json3_transcript_text(json3).as_deref(),
+        Some("AT&amp;T")
+    );
+}
+
+#[test]
 fn test_build_video_article_with_transcript() {
     let service = create_test_service();
 
