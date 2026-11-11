@@ -3,7 +3,8 @@
 //! so each item it found untaught and each use it found untaught is put to the
 //! model once more as a single question about that one thing.
 use super::{
-    first_hit, hits, shown_parts, within, Hit, Item, Part, Reading, Use, ANSWER_TOKENS, POLICY,
+    first_hit, follows, hits, shown_parts, within, Hit, Item, Part, Reading, Use, ANSWER_TOKENS,
+    POLICY,
 };
 use crate::lessons::structured_call::{self, CallKind, ReasonFirst};
 use lattice_core::{application::ports::LLMPort, shared::error::Result};
@@ -51,8 +52,25 @@ pub(super) struct Settled<'a> {
     pub(super) taught: Vec<(&'a Item, Hit<'a>)>,
     /// The planned items still untaught, with the part each belongs in.
     pub(super) missing: Vec<(&'a Item, Option<&'a Part>)>,
-    /// The uses nothing has been shown to teach.
-    pub(super) uses: Vec<Use<'a>>,
+    /// The things used before anything is shown to teach them, one each.
+    pub(super) uses: Vec<Unmet<'a>>,
+}
+
+/// A thing used before it is taught: its first use that stands.
+pub(super) struct Unmet<'a> {
+    pub(super) hit: Hit<'a>,
+    pub(super) what: &'a str,
+    /// The other parts that use it after that use, in order.
+    pub(super) elsewhere: Vec<&'a Part>,
+    /// The words that teach it after that use, when the lesson does.
+    pub(super) later: Option<Hit<'a>>,
+}
+
+/// What the confirming read made of one use.
+enum Read {
+    NotAsked,
+    Taught,
+    Stands,
 }
 
 enum Verdict<'a> {
@@ -60,7 +78,7 @@ enum Verdict<'a> {
     Belongs(Option<&'a Part>),
 }
 
-/// Put every negative of `reading` to the model once more, all at once.
+/// Put every negative of `reading` to the model once more, all at once; the uses of one thing go one after the other.
 pub(super) async fn settle<'a>(
     llm: &dyn LLMPort,
     reading: Reading<'a>,
@@ -84,8 +102,8 @@ pub(super) async fn settle<'a>(
                 .map(|item| read_planned(llm, item, parts))
         ),
         futures::future::try_join_all(
-            uses.iter()
-                .map(|used| stands(llm, used, parts, prior, earlier))
+            uses.into_iter()
+                .map(|used| first_unmet(llm, used, parts, prior, earlier))
         ),
     )?;
     let mut missing = Vec::new();
@@ -95,15 +113,10 @@ pub(super) async fn settle<'a>(
             Verdict::Belongs(part) => missing.push((item, part)),
         }
     }
-    let uses = uses
-        .into_iter()
-        .zip(standing)
-        .filter_map(|(used, stands)| stands.then_some(used))
-        .collect();
     Ok(Settled {
         taught,
         missing,
-        uses,
+        uses: standing.into_iter().flatten().collect(),
     })
 }
 
@@ -141,21 +154,61 @@ async fn read_planned<'a>(
     })
 }
 
-/// Whether the use still stands as a finding after the confirming read.
-async fn stands(
+/// Read the uses of one thing in order until one is not left alone: it stands and is the thing's finding, or it is taught and so is every use after it.
+async fn first_unmet<'a>(
     llm: &dyn LLMPort,
-    used: &Use<'_>,
+    used: Use<'a>,
+    parts: &'a [Part],
+    prior: Option<&Value>,
+    earlier: &[Value],
+) -> Result<Option<Unmet<'a>>> {
+    let Use {
+        what,
+        uses,
+        taught_later,
+    } = used;
+    let mut uses = uses.into_iter();
+    while let Some(hit) = uses.next() {
+        match read_use(llm, what, &hit, parts, prior, earlier).await? {
+            Read::NotAsked => {}
+            Read::Taught => return Ok(None),
+            Read::Stands => {
+                let mut elsewhere: Vec<&Part> = Vec::new();
+                for other in uses.map(|other| other.part) {
+                    if other.id != hit.part.id && !elsewhere.iter().any(|seen| seen.id == other.id)
+                    {
+                        elsewhere.push(other);
+                    }
+                }
+                let later = taught_later.filter(|later| follows(later, &hit));
+                return Ok(Some(Unmet {
+                    hit,
+                    what,
+                    elsewhere,
+                    later,
+                }));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// What the confirming read says of one use of `what`.
+async fn read_use(
+    llm: &dyn LLMPort,
+    what: &str,
+    used: &Hit<'_>,
     parts: &[Part],
     prior: Option<&Value>,
     earlier: &[Value],
-) -> Result<bool> {
-    let (sections, questions) = shown_parts(parts.iter().take(used.hit.order + 1));
+) -> Result<Read> {
+    let (sections, questions) = shown_parts(parts.iter().take(used.order + 1));
     let prompt = json!({
         "task":USE_TASK,
-        "question":format!(concat!("Does {part}, in the words '{words}', ask the learner to do or use {what}, need it for its practice deliverable, or treat it as known? If it does, has the lesson at or before those words, or the earlier lessons' actions and terms, or the learner's prior knowledge, taught it: ", each_shown!(), "?"), words = used.hit.found.exact, part = used.hit.part.id, what = used.what),
+        "question":format!(concat!("Does {part}, in the words '{words}', ask the learner to do or use {what}, need it for its practice deliverable, or treat it as known? If it does, has the lesson at or before those words, or the earlier lessons' actions and terms, or the learner's prior knowledge, taught it: ", each_shown!(), "?"), words = used.found.exact, part = used.part.id, what = what),
         "priorKnowledge":prior,
         "earlierLessons":earlier,
-        "use":{"part":used.hit.part.id,"words":used.hit.found.exact,"what":used.what},
+        "use":{"part":used.part.id,"words":used.found.exact,"what":what},
         "sections":sections,
         "questions":questions,
     });
@@ -168,7 +221,13 @@ async fn stands(
         schema,
     )
     .await?;
-    Ok(answer.asked && !(answer.taught && teaches(&answer, used, parts, prior, earlier)))
+    Ok(if !answer.asked {
+        Read::NotAsked
+    } else if answer.taught && teaches(&answer, used, parts, prior, earlier) {
+        Read::Taught
+    } else {
+        Read::Stands
+    })
 }
 
 /// Whether the place `answer` names bears out its words: before the use or
@@ -176,16 +235,15 @@ async fn stands(
 /// learner already knows.
 fn teaches(
     answer: &Standing,
-    used: &Use<'_>,
+    used: &Hit<'_>,
     parts: &[Part],
     prior: Option<&Value>,
     earlier: &[Value],
 ) -> bool {
     match answer.place {
-        Where::ThisLesson => hits(parts, &answer.quote).iter().any(|hit| {
-            (hit.order, hit.found.text, hit.found.start)
-                <= (used.hit.order, used.hit.found.text, used.hit.found.end)
-        }),
+        Where::ThisLesson => hits(parts, &answer.quote)
+            .iter()
+            .any(|hit| !follows(hit, used)),
         Where::EarlierLessons => earlier
             .iter()
             .flat_map(given)
