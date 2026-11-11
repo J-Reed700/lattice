@@ -159,6 +159,7 @@ describe('Flashcards', () => {
     const created = vi.fn();
     show(<NewFlashcardDeck onCreated={created} onCancel={vi.fn()} />);
     const biology = await screen.findByRole('checkbox', { name: 'biology.md' });
+    expect(mocks.documents).toHaveBeenCalledWith();
     expect(screen.getByLabelText(/Learning goal/)).toHaveValue('');
     await user.click(biology);
     await user.click(screen.getByRole('checkbox', { name: 'history.txt' }));
