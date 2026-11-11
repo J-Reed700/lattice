@@ -150,6 +150,11 @@ async fn a_form_read_that_names_the_right_option_is_a_defect_carrying_its_reason
     assert_eq!(llm.requests("form").len(), 1);
     assert_eq!(found[0].defects.len(), 1, "{:?}", found[0]);
     assert!(found[0].defects[0].contains(WHY), "{}", found[0].defects[0]);
+    assert!(
+        found[0].defects[0].contains("and the question where it lends its words to one of them"),
+        "{}",
+        found[0].defects[0]
+    );
     Ok(())
 }
 
