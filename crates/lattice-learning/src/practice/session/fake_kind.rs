@@ -2,18 +2,26 @@
 //!
 //! A case's body is `{"index": i, "expected": "x"}`; it passes when the piece holds that string at that index.
 
+use crate::practice::practical_dto::{LearningSimulationSpeaker, LearningSimulationTurnDto};
 use crate::practice::session::kind::{
-    Checker, Diff, Established, Gaps, Kind, LearnerCases, Order, Parts, ReplyGuard, Showing, Truth,
-    Wording,
+    Checker, Diff, Established, Gaps, Hint, HintAsk, Hinting, Kind, LearnerCases, Order, Parts,
+    ReplyGuard, Showing, Truth, Wording,
 };
+use crate::practice::session::observation::{ClockView, Coverage, Observation};
 use async_trait::async_trait;
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
+use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::practice::work::{
-    Brief, Case, CaseResult, CaseStatus, Change, ChangeKind, CheckReport, Draft, Exercise, Form,
-    KindId, MarkState, PartMark, PartRef, Piece, Spacing, Stage,
+    Brief, Case, CaseResult, CaseStatus, CaseVisibility, Change, ChangeKind, CheckReport,
+    Difficulty, Draft, Exercise, Form, KindId, MarkState, Misreading, PartMark, PartRef, Piece,
+    Rung, Setting, Spacing, Stage,
 };
 use lattice_core::shared::error::{AppError, Result};
-use serde_json::{json, Value};
-use std::sync::Arc;
+use serde_json::{json, Map, Value};
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
 /// The slots of a piece, or None when the piece is not an array of strings.
@@ -41,10 +49,26 @@ fn piece_of(slots: Vec<String>) -> Piece {
     Piece::new(json!(slots))
 }
 
+/// What the fake's reply guard does, as plain configured values.
+#[derive(Default)]
+struct ReplyConfig {
+    /// The reply has a `slot` field: the indexes of the letters it points at.
+    slot: bool,
+    /// A word the reply may not say.
+    refused_word: Option<String>,
+    /// A text that, in a reply, solves the exercise.
+    solved_by: Option<String>,
+}
+
 /// The roles of the fake kind, one struct for all of them.
 pub(crate) struct Letters {
     reference: Vec<String>,
     ambiguous: Option<String>,
+    reply: ReplyConfig,
+    /// The rungs the fake has no hint for.
+    off: Vec<Rung>,
+    /// The `observed` text of every hint asked for.
+    observed: Arc<Mutex<Vec<String>>>,
 }
 
 #[async_trait]
@@ -217,6 +241,7 @@ impl Wording for Letters {
     }
 }
 
+#[async_trait]
 impl ReplyGuard for Letters {
     fn rules(&self, _brief: &Brief) -> String {
         String::new()
@@ -224,6 +249,108 @@ impl ReplyGuard for Letters {
 
     fn format(&self) -> String {
         String::new()
+    }
+
+    fn fields(&self, _brief: &Brief) -> Result<Vec<(String, Value)>> {
+        Ok(if self.reply.slot {
+            vec![(
+                "slot".to_owned(),
+                json!({"type": "array", "items": {"type": "integer"}}),
+            )]
+        } else {
+            Vec::new()
+        })
+    }
+
+    fn parts(
+        &self,
+        _brief: &Brief,
+        piece: &Piece,
+        fields: &Map<String, Value>,
+    ) -> Result<Vec<PartRef>> {
+        let Some(slots) = fields.get("slot").and_then(Value::as_array) else {
+            return Ok(Vec::new());
+        };
+        let held = slots_of(piece)?.len();
+        slots
+            .iter()
+            .map(|slot| {
+                let index = slot
+                    .as_u64()
+                    .and_then(|index| usize::try_from(index).ok())
+                    .ok_or_else(|| AppError::InvalidInput("A slot is a whole number.".into()))?;
+                if index >= held {
+                    return Err(AppError::InvalidInput(format!(
+                        "Slot {index} is not in the piece. Name only a slot the piece has."
+                    )));
+                }
+                Ok(PartRef::new(&index.to_string()))
+            })
+            .collect()
+    }
+
+    fn check_words(
+        &self,
+        _exercise: &Exercise,
+        _fields: &Map<String, Value>,
+        content: &str,
+    ) -> Result<()> {
+        match &self.reply.refused_word {
+            Some(word) if content.contains(word.as_str()) => Err(AppError::InvalidInput(format!(
+                "The reply says \"{word}\". Never say it."
+            ))),
+            _ => Ok(()),
+        }
+    }
+
+    async fn check_unsolved(
+        &self,
+        _exercise: &Exercise,
+        content: &str,
+        _cancel: CancellationToken,
+    ) -> Result<()> {
+        match &self.reply.solved_by {
+            Some(marker) if content.contains(marker.as_str()) => Err(AppError::InvalidInput(
+                "The reply solves the exercise. Describe the step instead.".into(),
+            )),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// The name the fake's hints give a rung.
+pub(crate) fn rung_name(rung: Rung) -> &'static str {
+    match rung {
+        Rung::Nudge => "nudge",
+        Rung::Idea => "idea",
+        Rung::Plan => "plan",
+        Rung::Point => "point",
+    }
+}
+
+#[async_trait]
+impl Hinting for Letters {
+    async fn hint(&self, ask: HintAsk<'_>) -> Result<Option<Hint>> {
+        if let Ok(mut observed) = self.observed.lock() {
+            observed.push(ask.observed.to_owned());
+        }
+        if self.off.contains(&ask.rung) {
+            return Ok(None);
+        }
+        let held = slots_of(&ask.observation.piece)?;
+        let parts = self
+            .reference
+            .iter()
+            .enumerate()
+            .filter(|(index, wanted)| held.get(*index) != Some(*wanted))
+            .map(|(index, _)| PartRef::new(&index.to_string()))
+            .collect();
+        Ok(Some(Hint {
+            rung: ask.rung,
+            text: format!("A {} hint.", rung_name(ask.rung)),
+            reason: "It fits the rung.".to_owned(),
+            parts,
+        }))
     }
 }
 
@@ -319,6 +446,8 @@ pub(crate) struct FakeKindBuilder {
     needed: usize,
     ambiguous: Option<String>,
     spacing: Spacing,
+    reply: ReplyConfig,
+    off: Vec<Rung>,
 }
 
 /// A fake kind whose reference piece is `reference`. It supports Build and Repair only, needs no misreadings and
@@ -332,6 +461,8 @@ pub(crate) fn fake_kind(reference: &[&str]) -> FakeKindBuilder {
         needed: 0,
         ambiguous: None,
         spacing: Spacing::Item,
+        reply: ReplyConfig::default(),
+        off: Vec::new(),
     }
 }
 
@@ -366,17 +497,51 @@ impl FakeKindBuilder {
         self
     }
 
+    /// Replies carry a `slot` field: the indexes of the letters they point at.
+    pub(crate) fn with_reply_slot(mut self) -> Self {
+        self.reply.slot = true;
+        self
+    }
+
+    /// Replies that say `word` are refused.
+    pub(crate) fn refusing_word(mut self, word: &str) -> Self {
+        self.reply.refused_word = Some(word.to_owned());
+        self
+    }
+
+    /// Replies that hold `marker` solve the exercise.
+    pub(crate) fn solving_with(mut self, marker: &str) -> Self {
+        self.reply.solved_by = Some(marker.to_owned());
+        self
+    }
+
+    /// The kind has no hint of `rung`.
+    pub(crate) fn without_rung(mut self, rung: Rung) -> Self {
+        self.off.push(rung);
+        self
+    }
+
     pub(crate) fn build(self) -> Kind {
+        self.build_recording().0
+    }
+
+    /// The kind, and the `observed` text of every hint it is asked for.
+    pub(crate) fn build_recording(self) -> (Kind, Arc<Mutex<Vec<String>>>) {
+        let observed = Arc::new(Mutex::new(Vec::new()));
         let roles = Arc::new(Letters {
             reference: self.reference,
             ambiguous: self.ambiguous,
+            reply: self.reply,
+            off: self.off,
+            observed: observed.clone(),
         });
-        Kind {
+        let kind = Kind {
             id: KindId::new("letters"),
             spacing: self.spacing,
             misreadings_needed: self.needed,
             wording: roles.clone(),
             reply_guard: roles.clone(),
+            hinting: roles.clone(),
             checker: roles.clone(),
             parts: roles.clone(),
             diff: roles.clone(),
@@ -385,6 +550,143 @@ impl FakeKindBuilder {
             gaps: self.gaps.then(|| roles.clone() as Arc<dyn Gaps>),
             order: self.order.then(|| roles.clone() as Arc<dyn Order>),
             learner_cases: self.learner_cases.then_some(roles as Arc<dyn LearnerCases>),
+        };
+        (kind, observed)
+    }
+}
+
+/// An exercise of the fake kind: the reference is a, b, c; the id of its case is `case-1` and of its misreading
+/// `miss-1`.
+pub(crate) fn letters_exercise() -> Exercise {
+    Exercise {
+        kind: KindId::new("letters"),
+        form: Form::Build,
+        brief: Brief {
+            title: "Spell it".to_owned(),
+            difficulty: Difficulty::Easy,
+            spec: Value::Null,
+        },
+        reference: piece_of(vec!["a".into(), "b".into(), "c".into()]),
+        misreadings: vec![Misreading {
+            id: "miss-1".to_owned(),
+            description: "Reads the letters backwards".to_owned(),
+            piece: piece_of(vec!["c".into(), "b".into(), "a".into()]),
+            killed_by: vec!["case-1".to_owned()],
+        }],
+        cases: vec![Case {
+            id: "case-1".to_owned(),
+            title: "First slot".to_owned(),
+            visibility: CaseVisibility::Hidden,
+            body: json!({"index": 0, "expected": "a"}),
+        }],
+        start: piece_of(vec![String::new(), String::new(), String::new()]),
+        planted: None,
+        proof: Value::Null,
+    }
+}
+
+/// What the counterpart sees of a session of the fake kind in `setting`: the session `session-1`, one turn
+/// `turn-7`, and the draft a, x, c.
+pub(crate) fn letters_observation(setting: Setting) -> Observation {
+    Observation {
+        session_id: "session-1".to_owned(),
+        form: Form::Build,
+        setting,
+        stage: Stage::Make,
+        stages_reached: vec![Stage::Understand, Stage::Plan, Stage::Make],
+        brief: letters_exercise().brief,
+        shown: Vec::new(),
+        clock: ClockView {
+            active_ms: 61_000,
+            budget_seconds: None,
+        },
+        piece: piece_of(vec!["a".into(), "x".into(), "c".into()]),
+        has_baseline: false,
+        changes: Vec::new(),
+        last_check: None,
+        learner_cases: Vec::new(),
+        coverage: Coverage {
+            caught: 0,
+            total: 0,
+            uncaught: None,
+        },
+        hints: Vec::new(),
+        turns: vec![LearningSimulationTurnDto {
+            id: "turn-7".to_owned(),
+            ordinal: 0,
+            speaker: LearningSimulationSpeaker::Learner,
+            content: "Where do I start?".to_owned(),
+            citations: Vec::new(),
+            model_name: None,
+            created_at: 0,
+        }],
+    }
+}
+
+/// A model that answers with the next canned text and keeps every request it was sent.
+pub(crate) struct ScriptedModel {
+    answers: Mutex<VecDeque<String>>,
+    requests: Mutex<Vec<CompletionRequest>>,
+}
+
+impl ScriptedModel {
+    pub(crate) fn new<'a>(answers: impl IntoIterator<Item = &'a str>) -> Self {
+        Self {
+            answers: Mutex::new(answers.into_iter().map(str::to_owned).collect()),
+            requests: Mutex::new(Vec::new()),
         }
+    }
+
+    pub(crate) fn requests(&self) -> Vec<CompletionRequest> {
+        self.requests
+            .lock()
+            .map(|sent| sent.clone())
+            .unwrap_or_default()
+    }
+
+    /// The messages of every request, joined, in the order sent.
+    pub(crate) fn texts(&self) -> Vec<String> {
+        self.requests()
+            .iter()
+            .map(|request| {
+                request
+                    .input
+                    .iter()
+                    .filter_map(|input| match input {
+                        CompletionInput::Message { content, .. } => Some(content.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .collect()
+    }
+}
+
+#[async_trait]
+impl LLMPort for ScriptedModel {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        if let Ok(mut sent) = self.requests.lock() {
+            sent.push(request.clone());
+        }
+        let next = self
+            .answers
+            .lock()
+            .ok()
+            .and_then(|mut answers| answers.pop_front());
+        next.map(CompletionResponse::from_text)
+            .ok_or_else(|| AppError::InternalError("Unexpected extra model call".into()))
+    }
+
+    fn model_name(&self) -> &str {
+        "scripted-model"
+    }
+
+    fn max_context_tokens(&self) -> usize {
+        128_000
+    }
+
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
     }
 }

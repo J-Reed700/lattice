@@ -1,11 +1,14 @@
 //! A kind of work, as a record of small roles. The engine calls these and nothing else.
 
+use crate::practice::session::observation::Observation;
 use async_trait::async_trait;
+use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::practice::work::{
     Brief, Case, CaseResult, Change, CheckReport, CheckScope, Draft, Exercise, Form, KindId,
     PartRef, Piece, Rung, Spacing, Stage,
 };
 use lattice_core::shared::error::{AppError, Result};
+use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -128,12 +131,66 @@ pub trait Wording: Send + Sync {
     fn stage_instruction(&self, brief: &Brief, form: Form, stage: Stage) -> String;
 }
 
-/// What a kind adds to a counterpart's reply: the fields that point at the work, and their rules.
+/// What a kind adds to a counterpart's reply: the fields that point at the work, and their rules. A refusal is an
+/// `AppError::InvalidInput` worded for the model; any other error is a fault.
+#[async_trait]
 pub trait ReplyGuard: Send + Sync {
     /// The rules of the kind's reply fields, as sentences of the system prompt. Empty when it has none.
     fn rules(&self, brief: &Brief) -> String;
     /// What each of the kind's reply fields holds, as clauses of the format line. Empty when it has none.
     fn format(&self) -> String;
+    /// The kind's reply fields in order: name and JSON schema. Every one is required. Empty when it has none.
+    fn fields(&self, brief: &Brief) -> Result<Vec<(String, Value)>>;
+    /// The parts of `piece` the reply's fields point at. Refuses a part the piece does not hold.
+    fn parts(
+        &self,
+        brief: &Brief,
+        piece: &Piece,
+        fields: &Map<String, Value>,
+    ) -> Result<Vec<PartRef>>;
+    /// Refuses words that break one of the kind's rules.
+    fn check_words(
+        &self,
+        exercise: &Exercise,
+        fields: &Map<String, Value>,
+        content: &str,
+    ) -> Result<()>;
+    /// Refuses a reply that solves the exercise. May run the kind's checker.
+    async fn check_unsolved(
+        &self,
+        exercise: &Exercise,
+        content: &str,
+        cancel: CancellationToken,
+    ) -> Result<()>;
+}
+
+/// What a hint is asked from.
+pub struct HintAsk<'a> {
+    pub llm: &'a dyn LLMPort,
+    pub exercise: &'a Exercise,
+    pub observation: &'a Observation,
+    /// The observation as the model reads it.
+    pub observed: &'a str,
+    pub rung: Rung,
+    pub in_role: bool,
+    pub cancel: CancellationToken,
+}
+
+/// A hint that passed the kind's checks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hint {
+    /// The rung the hint is, which is not the asked one when the kind could not make that.
+    pub rung: Rung,
+    pub text: String,
+    pub reason: String,
+    pub parts: Vec<PartRef>,
+}
+
+/// Writes the hints of a kind's ladder.
+#[async_trait]
+pub trait Hinting: Send + Sync {
+    /// The hint of `ask.rung`, or None when the kind has none of that rung.
+    async fn hint(&self, ask: HintAsk<'_>) -> Result<Option<Hint>>;
 }
 
 /// A kind whose learner writes cases of their own.
@@ -186,6 +243,7 @@ pub struct Kind {
     pub misreadings_needed: usize,
     pub wording: Arc<dyn Wording>,
     pub reply_guard: Arc<dyn ReplyGuard>,
+    pub hinting: Arc<dyn Hinting>,
     pub checker: Arc<dyn Checker>,
     pub parts: Arc<dyn Parts>,
     pub diff: Arc<dyn Diff>,

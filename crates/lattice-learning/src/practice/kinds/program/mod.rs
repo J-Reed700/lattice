@@ -3,6 +3,7 @@
 use crate::practice::coding::proof::MIN_KILLED_MISREADINGS;
 use crate::practice::kinds::program::checker::ProgramChecker;
 use crate::practice::kinds::program::diff::ProgramDiff;
+use crate::practice::kinds::program::hinting::ProgramHinting;
 use crate::practice::kinds::program::learner_cases::ProgramLearnerCases;
 use crate::practice::kinds::program::parts::ProgramParts;
 use crate::practice::kinds::program::reply::ProgramReply;
@@ -16,6 +17,7 @@ use std::sync::Arc;
 
 pub mod checker;
 pub mod diff;
+pub mod hinting;
 pub mod learner_cases;
 pub mod parts;
 pub mod reply;
@@ -25,6 +27,10 @@ pub mod toolchain;
 pub mod truth;
 pub mod wording;
 
+#[cfg(test)]
+mod counterpart_tests;
+#[cfg(test)]
+mod hinting_tests;
 #[cfg(test)]
 mod observation_tests;
 #[cfg(test)]
@@ -42,7 +48,12 @@ pub fn kind(tools: Arc<dyn Toolchains>) -> Kind {
         spacing: Spacing::Technique,
         misreadings_needed: MIN_KILLED_MISREADINGS,
         wording: Arc::new(ProgramWording),
-        reply_guard: Arc::new(ProgramReply),
+        reply_guard: Arc::new(ProgramReply {
+            tools: tools.clone(),
+        }),
+        hinting: Arc::new(ProgramHinting {
+            tools: tools.clone(),
+        }),
         checker: Arc::new(ProgramChecker {
             tools: tools.clone(),
         }),
