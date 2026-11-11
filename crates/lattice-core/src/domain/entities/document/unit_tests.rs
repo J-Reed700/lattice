@@ -561,12 +561,7 @@ mod reading_text_tests {
             )
             .expect("a document with chunks");
 
-        assert_eq!(
-            document.reading_text(),
-            "first
-
-second"
-        );
+        assert_eq!(document.reading_text(), "first\n\nsecond");
     }
 
     #[test]

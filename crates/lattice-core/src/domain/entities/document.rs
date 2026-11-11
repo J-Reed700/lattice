@@ -294,11 +294,7 @@ impl Document {
             .iter()
             .map(|chunk| chunk.content())
             .collect::<Vec<_>>()
-            .join(
-                "
-
-",
-            )
+            .join("\n\n")
     }
 
     /// Set document content.
