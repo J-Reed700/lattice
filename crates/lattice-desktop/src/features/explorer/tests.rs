@@ -62,6 +62,28 @@ fn a_parent_dir_component_is_refused() {
 }
 
 #[test]
+fn a_nul_byte_in_a_path_is_refused_not_reported_missing() {
+    let (_dir, scope) = fixture();
+    let error = scope.resolve("src/main\0.rs").unwrap_err();
+    assert!(matches!(error, AppError::PermissionDenied(_)), "{error:?}");
+}
+
+#[test]
+fn a_backslash_separated_parent_is_refused_on_every_platform() {
+    let (_dir, scope) = fixture();
+    let error = scope.resolve("src\\..\\..\\etc").unwrap_err();
+    assert!(matches!(error, AppError::PermissionDenied(_)), "{error:?}");
+}
+
+#[cfg(windows)]
+#[test]
+fn a_dots_only_segment_is_refused_not_reported_missing_on_windows() {
+    let (_dir, scope) = fixture();
+    let error = scope.resolve("src/.../x").unwrap_err();
+    assert!(matches!(error, AppError::PermissionDenied(_)), "{error:?}");
+}
+
+#[test]
 fn an_absolute_path_is_refused_even_inside_the_root() {
     let (_dir, scope) = fixture();
     let inside = scope.root().join("src/main.rs");

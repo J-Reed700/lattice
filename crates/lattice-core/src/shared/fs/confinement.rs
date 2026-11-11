@@ -150,6 +150,28 @@ mod tests {
         assert!(confine_to_root(root.path(), &candidate).is_err());
     }
 
+    #[test]
+    fn rejects_a_nul_byte() {
+        let root = tempdir().unwrap();
+        let candidate = root.path().join("a\0b");
+        assert!(confine_to_root(root.path(), &candidate).is_err());
+    }
+
+    #[test]
+    fn rejects_a_backslash_separated_parent_on_every_platform() {
+        let root = tempdir().unwrap();
+        let candidate = root.path().join("a\\..\\..\\b");
+        assert!(confine_to_root(root.path(), &candidate).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_a_dots_only_segment_on_windows() {
+        let root = tempdir().unwrap();
+        let candidate = root.path().join("...").join("x");
+        assert!(confine_to_root(root.path(), &candidate).is_err());
+    }
+
     fn link_cannot_leave_the_root(kind: LinkKind) {
         let root = tempdir().unwrap();
         let outside = tempdir().unwrap();
