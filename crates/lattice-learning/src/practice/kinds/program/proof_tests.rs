@@ -59,9 +59,9 @@ fn two_killed() -> Vec<ProblemMisreading> {
 /// What both proofs found, once they agree.
 #[derive(Debug)]
 enum Agreed {
-    Proven(Exercise),
+    Proven(Box<Exercise>),
     Unproven(String),
-    Failed(String),
+    Failed,
 }
 
 fn draft(form: Form, reference: &str, misreadings: &[ProblemMisreading]) -> Draft {
@@ -115,7 +115,7 @@ async fn both(
             assert_eq!(new.cases, old_cases, "{form:?}");
             assert_eq!(new.misreadings, old_misreadings, "{form:?}");
             assert_eq!(new.proof, proof_of(&old.reference_ms).unwrap(), "{form:?}");
-            Agreed::Proven(*new)
+            Agreed::Proven(new)
         }
         (Ok(TodaysProof::Unproven(old)), Ok(Proof::Unproven(new))) => {
             assert_eq!(new, old, "{form:?}");
@@ -123,7 +123,7 @@ async fn both(
         }
         (Err(old), Err(new)) => {
             assert_eq!(format!("{new:?}"), format!("{old:?}"), "{form:?}");
-            Agreed::Failed(format!("{new:?}"))
+            Agreed::Failed
         }
         (old, new) => panic!("{form:?}: today {old:?}, the engine {new:?}"),
     }
@@ -131,7 +131,7 @@ async fn both(
 
 fn proven(agreed: Agreed) -> Exercise {
     match agreed {
-        Agreed::Proven(exercise) => exercise,
+        Agreed::Proven(exercise) => *exercise,
         other => panic!("expected a proven exercise, got {other:?}"),
     }
 }
