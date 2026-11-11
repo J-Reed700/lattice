@@ -72,7 +72,7 @@ export async function installExplorerFixture(page: Page) {
       return target;
     },
     get_conversation_messages: () => ({ messages: [], total: 0 }),
-    list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
+    list_message_bookmarks: () => ({ bookmarks: [] }),
     explorer_folders_list: () => ({ home: '/fixtures', folders }),
     explorer_folder_set_last_thread: (args) => {
       const folder = folders.find(item => item.root === args.root);

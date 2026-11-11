@@ -17,7 +17,7 @@ vi.mock('@/lib/api', () => {
     getIndexedFolders: async () => ({ ok: true, data: [] }),
     listConversations: async () => ({ ok: true, data: { conversations: [] } }),
     listJournals: async () => ({ ok: true, data: [] }),
-    listMessageBookmarks: async () => ({ ok: true, data: { bookmarks: [], total: 0 } }),
+    listMessageBookmarks: async () => ({ ok: true, data: { bookmarks: [] } }),
   };
   return { VaultAPI: api, default: api };
 });

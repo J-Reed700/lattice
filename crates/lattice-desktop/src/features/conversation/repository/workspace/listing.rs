@@ -76,6 +76,16 @@ pub(super) fn build_fts_query(raw: &str) -> Option<String> {
     }
 }
 
+/// `rank` rather than `bm25()`: an auxiliary function cannot run inside `MIN`.
+fn push_conversation_matches(qb: &mut QueryBuilder<'_, Sqlite>, fts: &str) {
+    qb.push(
+        " FROM conversation_search_fts fts
+        WHERE fts.conversation_id = c.id
+          AND fts.content MATCH ",
+    )
+    .push_bind(fts.to_string());
+}
+
 /// Which conversations to list, shared by the explorer and the journal listing.
 #[derive(Debug, Default)]
 pub(super) struct ConversationListing<'a> {
@@ -182,30 +192,11 @@ impl<'a> ConversationListing<'a> {
         }
 
         if let Some(fts) = &fts_query {
-            qb.push(
-                " AND EXISTS (
-                SELECT 1
-                FROM conversation_search_fts fts
-                WHERE fts.conversation_id = c.id
-                  AND fts.content MATCH ",
-            )
-            .push_bind(fts.clone())
-            .push(")");
-            qb.push(
-                " ORDER BY
-                c.is_pinned DESC,
-                COALESCE((
-                    SELECT MIN(bm25(conversation_search_fts))
-                    FROM conversation_search_fts
-                    WHERE conversation_id = c.id
-                      AND content MATCH ",
-            )
-            .push_bind(fts.clone())
-            .push(
-                "
-                ), 999999.0),
-                c.updated_at DESC",
-            );
+            qb.push(" AND EXISTS (SELECT 1");
+            push_conversation_matches(&mut qb, fts);
+            qb.push(") ORDER BY c.is_pinned DESC, (SELECT MIN(fts.rank)");
+            push_conversation_matches(&mut qb, fts);
+            qb.push("), c.updated_at DESC");
         } else {
             qb.push(" ORDER BY c.is_pinned DESC, c.updated_at DESC");
         }
@@ -225,7 +216,5 @@ pub(super) fn listing_response(
         .into_iter()
         .map(ConversationExplorerRow::into_dto)
         .collect::<Result<Vec<_>, AppError>>()?;
-    Ok(ListConversationsResponseDto {
-        conversations,
-    })
+    Ok(ListConversationsResponseDto { conversations })
 }

@@ -56,7 +56,7 @@ export async function installChatFixture(page: Page) {
     list_conversations: () => ({ conversations: [CONVERSATION] }),
     get_conversation: () => ({ conversation: CONVERSATION }),
     get_conversation_messages: () => ({ messages: state.messages, total: state.messages.length }),
-    list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
+    list_message_bookmarks: () => ({ bookmarks: [] }),
     list_journals: () => [],
     list_conversation_tangents: () => [],
     list_conversation_linked_documents: () => [],

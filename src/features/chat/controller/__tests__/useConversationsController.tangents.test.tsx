@@ -30,7 +30,7 @@ describe('shared conversation lifecycle with tangents', () => {
     api.listConversationsExplorer = vi.fn().mockResolvedValue({ ok: true, data: { conversations: [parent] } });
     api.getConversation = vi.fn().mockResolvedValue({ ok: true, data: { conversation: parent } });
     api.getConversationMessages = vi.fn().mockResolvedValue({ ok: true, data: { messages: [], total: 0 } });
-    api.listMessageBookmarks = vi.fn().mockResolvedValue({ ok: true, data: { bookmarks: [], total: 0 } });
+    api.listMessageBookmarks = vi.fn().mockResolvedValue({ ok: true, data: { bookmarks: [] } });
     api.listConversationLinkedDocuments = vi.fn().mockResolvedValue({ ok: true, data: [] });
     api.listConversationWebSources = vi.fn().mockResolvedValue({ ok: true, data: [] });
   });

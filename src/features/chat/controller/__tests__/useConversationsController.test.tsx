@@ -838,7 +838,7 @@ describe('useConversationsController optimistic cleanup', () => {
       .mockImplementationOnce(() => new Promise(resolve => { rejectOlderRead = resolve; }))
       .mockResolvedValue({ ok: true, data: { messages: [], total: 0 } });
     api.getConversation = vi.fn().mockResolvedValue({ ok: true, data: { conversation } });
-    api.listMessageBookmarks = vi.fn().mockResolvedValue({ ok: true, data: { bookmarks: [], total: 0 } });
+    api.listMessageBookmarks = vi.fn().mockResolvedValue({ ok: true, data: { bookmarks: [] } });
     api.listConversationLinkedDocuments = vi.fn().mockResolvedValue({ ok: true, data: [] });
     api.listConversationWebSources = vi.fn().mockResolvedValue({ ok: true, data: [] });
     const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
@@ -937,7 +937,7 @@ describe('useConversationsController optimistic cleanup', () => {
 
   it('refreshes the sidebar bookmark query when a message is bookmarked', async () => {
     let bookmarks: Array<{ id: string; spaceId: string }> = [];
-    api.listMessageBookmarks = vi.fn().mockImplementation(async () => ({ ok: true, data: { bookmarks, total: bookmarks.length } }));
+    api.listMessageBookmarks = vi.fn().mockImplementation(async () => ({ ok: true, data: { bookmarks } }));
     api.bookmarkConversationMessage = vi.fn().mockImplementation(async () => {
       bookmarks = [{ id: 'bookmark-1', spaceId: 'space_general' }];
       return { ok: true, data: { status: 'success' } };
@@ -952,7 +952,7 @@ describe('useConversationsController optimistic cleanup', () => {
   describe('opening a conversation', () => {
     beforeEach(() => {
       api.getConversation = vi.fn().mockResolvedValue({ ok: true, data: { conversation: { ...conversation, spaceId: 'food-research' } } });
-      api.listMessageBookmarks = vi.fn().mockResolvedValue({ ok: true, data: { bookmarks: [], total: 0 } });
+      api.listMessageBookmarks = vi.fn().mockResolvedValue({ ok: true, data: { bookmarks: [] } });
       api.listConversationLinkedDocuments = vi.fn().mockResolvedValue({ ok: true, data: [] });
       api.listConversationWebSources = vi.fn().mockResolvedValue({ ok: true, data: [] });
     });

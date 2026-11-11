@@ -53,5 +53,4 @@ pub struct ListMessageBookmarksQueryDto {
 #[serde(rename_all = "camelCase")]
 pub struct ListMessageBookmarksResponseDto {
     pub bookmarks: Vec<ConversationMessageBookmarkDto>,
-    pub total: usize,
 }
