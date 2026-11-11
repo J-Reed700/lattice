@@ -29,7 +29,10 @@ pub(crate) async fn held(candidate: &Value) -> Result<Held> {
 
 /// The text hashes of the questions whose findings wait for the user.
 pub(crate) async fn question_texts() -> Result<BTreeSet<String>> {
-    Ok(BTreeSet::new())
+    match repository() {
+        Some((store, lesson_id, _)) => store.waiting_question_texts(&lesson_id).await,
+        None => Ok(BTreeSet::new()),
+    }
 }
 
 /// A completed review's outcome: what it set aside waits for the user, and a
