@@ -7,11 +7,8 @@ const KEEPALIVE: Duration = Duration::from_secs(30);
 /// How long an HTTP/2 PING may go unanswered before the connection is dropped.
 const KEEPALIVE_ANSWER: Duration = Duration::from_secs(20);
 
-/// Build a reqwest client builder with safe defaults for tests.
-///
-/// On macOS, reqwest's system proxy lookup can panic in sandboxed environments.
-/// We disable system proxies when running tests or when the
-/// RECALL_DISABLE_SYSTEM_PROXY env var is set.
+/// The builder for every request to a remote server: rustls, keepalive, and
+/// the system proxy unless disabled (in tests, or by `LATTICE_DISABLE_SYSTEM_PROXY`).
 pub fn reqwest_client_builder() -> ClientBuilder {
     // Chosen explicitly: other crates switch on reqwest's native-tls, and with
     // both compiled in reqwest picks native-tls — Secure Transport on macOS,
@@ -32,12 +29,17 @@ pub fn reqwest_client_builder() -> ClientBuilder {
     builder
 }
 
+/// The builder for a server on this machine, which no proxy ever reaches.
+pub fn loopback_client_builder() -> ClientBuilder {
+    reqwest_client_builder().no_proxy()
+}
+
 pub fn should_disable_system_proxy() -> bool {
     if cfg!(test) {
         return true;
     }
 
-    std::env::var("RECALL_DISABLE_SYSTEM_PROXY")
+    std::env::var("LATTICE_DISABLE_SYSTEM_PROXY")
         .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
         .unwrap_or(false)
 }

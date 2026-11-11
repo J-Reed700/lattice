@@ -486,7 +486,7 @@ async fn probe(settings: &LLMSettingsDto, expected_slots: u64) -> Result<Value> 
         );
     }
     let network = |e: reqwest::Error| AppError::Network(e.to_string());
-    let client = reqwest::Client::builder()
+    let client = lattice_core::shared::http::reqwest_client_builder()
         .default_headers(headers)
         .build()
         .map_err(network)?;
