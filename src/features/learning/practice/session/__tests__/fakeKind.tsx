@@ -86,11 +86,18 @@ export function createFakeKind(ownCommand: () => Promise<Wire.PracticeSessionDto
       stageInstruction: (stage) => `Do the ${stage} stage.`,
       rung: (rung) =>
         ({
-          nudge: { name: 'Nudge', ask: 'Get a nudge' },
-          idea: { name: 'Idea', ask: 'Get the idea' },
-          plan: { name: 'Plan', ask: 'Get a plan' },
-          point: { name: 'Point', ask: 'Point at the part' },
+          nudge: { name: 'Nudge', ask: 'Get a nudge', counted: 'small push' },
+          idea: { name: 'Idea', ask: 'Get the idea', counted: 'notion' },
+          plan: { name: 'Plan', ask: 'Get a plan', counted: 'outline' },
+          point: { name: 'Point', ask: 'Point at the part', counted: 'pointer' },
         })[rung],
+      debrief: {
+        check: 'trial',
+        learnerCase: 'Case',
+        techniques: 'Techniques',
+        caught: 'Caught',
+        missed: 'Missed',
+      },
     },
     prepare: async () => 'prepared',
     useDraft: useFakeDraft,

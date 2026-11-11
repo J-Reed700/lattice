@@ -41,7 +41,7 @@ export function TalkPanel({ session, counterpart, busy, error, asking, onSend, o
         busy={busy}
         error={error}
         placeholder={setting === 'watched' ? 'Think out loud…' : 'Ask, or explain your thinking…'}
-        draftKey={`coding-thread-${session.sessionId}`}
+        draftKey={`practice-thread-${session.sessionId}`}
         suggestion={setting === 'watched' ? 'Talk through your thinking: type or use the mic' : null}
         disabled={session.finished ? { reason: 'This session is finished.' } : null}
       />

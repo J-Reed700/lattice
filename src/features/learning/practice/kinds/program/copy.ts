@@ -15,11 +15,11 @@ const INSTRUCTIONS: Record<Wire.Stage, string> = {
   verify: 'Submit to run every case and confirm nothing else broke.',
 };
 
-const RUNGS: Record<Wire.Rung, { name: string; ask: string }> = {
-  nudge: { name: 'Nudge', ask: 'Get a nudge' },
-  idea: { name: 'Idea', ask: 'Get the idea' },
-  plan: { name: 'Plan', ask: 'Get a plan' },
-  point: { name: 'Point at the line', ask: 'Point at the line' },
+const RUNGS: Record<Wire.Rung, { name: string; ask: string; counted: string }> = {
+  nudge: { name: 'Nudge', ask: 'Get a nudge', counted: 'nudge' },
+  idea: { name: 'Idea', ask: 'Get the idea', counted: 'idea' },
+  plan: { name: 'Plan', ask: 'Get a plan', counted: 'plan' },
+  point: { name: 'Point at the line', ask: 'Point at the line', counted: 'line hint' },
 };
 
 export const programCopy: KindCopy = {
@@ -28,4 +28,11 @@ export const programCopy: KindCopy = {
   readingWork: 'Reading your code…',
   stageInstruction: (stage) => INSTRUCTIONS[stage],
   rung: (rung) => RUNGS[rung],
+  debrief: {
+    check: 'run',
+    learnerCase: 'Example',
+    techniques: 'Problem patterns',
+    caught: 'Your examples caught this',
+    missed: 'Your examples did not catch this',
+  },
 };

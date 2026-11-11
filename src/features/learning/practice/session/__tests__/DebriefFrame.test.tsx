@@ -42,7 +42,8 @@ describe('DebriefFrame', () => {
     expect(within(facts).getByText('Make it')).toBeInTheDocument();
     expect(within(facts).getByText(/1:30/)).toBeInTheDocument();
     expect(within(facts).getByText(/5:00/)).toBeInTheDocument();
-    expect(within(facts).getByText(/4 runs/)).toBeInTheDocument();
+    expect(within(facts).getByText('4 trials')).toBeInTheDocument();
+    expect(within(facts).getByText('1 small push')).toBeInTheDocument();
     expect(within(facts).getByText(/Coached/)).toBeInTheDocument();
     expect(within(facts).getByText(/Mock/)).toBeInTheDocument();
   });
@@ -56,16 +57,45 @@ describe('DebriefFrame', () => {
     renderDebrief();
     expect(screen.getByText('Reverses the words instead of the letters')).toBeInTheDocument();
     const missed = screen.getByText('Drops the last letter').closest('li');
-    expect(missed).toHaveTextContent(/did not catch/i);
+    expect(missed).toHaveTextContent('Missed');
+    expect(screen.getByText('Reverses the words instead of the letters').closest('li')).toHaveTextContent('Caught');
   });
 
   it('names the technique with its rating and when it comes back', () => {
     renderDebrief();
-    const techniques = screen.getByRole('region', { name: 'Problem patterns' });
+    const techniques = screen.getByRole('region', { name: 'Techniques' });
     expect(within(techniques).getByText('Two pointers')).toBeInTheDocument();
     expect(within(techniques).getByText('Good')).toBeInTheDocument();
     expect(within(techniques).getByText(/Comes back/)).toBeInTheDocument();
     expect(within(techniques).getByText(/walk two positions inward/)).toBeInTheDocument();
+  });
+
+  it('labels run and example evidence in the words of the kind', () => {
+    const base = practiceDebrief();
+    render(
+      <DebriefFrame
+        session={practiceSession()}
+        debrief={{
+          ...base,
+          scorecard: {
+            rows: [
+              {
+                ...base.scorecard.rows[0],
+                evidence: [
+                  { kind: 'run', runId: 'run-1' },
+                  { kind: 'example', ordinal: 1 },
+                ],
+              },
+            ],
+          },
+        }}
+        kind={createFakeKind(vi.fn())}
+        onExit={vi.fn()}
+        onTryInterview={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('A trial')).toBeInTheDocument();
+    expect(screen.getByText('Case 2')).toBeInTheDocument();
   });
 
   it('offers to try it under interview conditions', async () => {

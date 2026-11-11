@@ -5,12 +5,12 @@ import type * as Wire from '@/lib/bindings';
 import { clockText, SETTING_NAMES } from './practiceNames';
 import { CriteriaList, type CriterionView, type EvidenceView } from '../shared/CriteriaList';
 
-import type { KindView } from './kind';
+import type { KindCopy, KindView } from './kind';
 
 export interface DebriefFrameProps {
   session: Wire.PracticeSessionDto;
   debrief: Wire.PracticeDebriefDto;
-  kind: Pick<KindView, 'Debrief'>;
+  kind: Pick<KindView, 'Debrief' | 'copy'>;
   onExit: () => void;
   onTryInterview: () => void;
 }
@@ -22,35 +22,28 @@ const RATINGS: Record<Wire.PatternRating, string> = {
   easy: 'Easy',
 };
 
-const RUNG_NAMES: Record<Wire.Rung, string> = {
-  nudge: 'nudge',
-  idea: 'idea',
-  plan: 'plan',
-  point: 'line hint',
-};
-
-function evidenceView(evidence: Wire.ScorecardEvidence): EvidenceView {
+function evidenceView(evidence: Wire.ScorecardEvidence, copy: KindCopy): EvidenceView {
   switch (evidence.kind) {
     case 'quote':
       return { kind: 'quote', text: evidence.text };
     case 'lines':
       return { kind: 'lines', path: evidence.path, start: evidence.start, end: evidence.end };
     case 'run':
-      return { kind: 'run', label: 'A run' };
+      return { kind: 'run', label: `A ${copy.debrief.check}` };
     case 'example':
-      return { kind: 'example', label: `Example ${evidence.ordinal + 1}` };
+      return { kind: 'example', label: `${copy.debrief.learnerCase} ${evidence.ordinal + 1}` };
     case 'hint':
       return { kind: 'hint', label: `Hint ${evidence.ordinal + 1}` };
   }
 }
 
-export function criteriaFrom(scorecard: Wire.Scorecard): CriterionView[] {
+export function criteriaFrom(scorecard: Wire.Scorecard, copy: KindCopy): CriterionView[] {
   return scorecard.rows.map((row) => ({
     id: row.criterionId,
     title: row.title,
     points: row.status === 'observed' ? row.points : null,
     maxPoints: row.maxPoints,
-    evidence: row.evidence.map(evidenceView),
+    evidence: row.evidence.map((evidence) => evidenceView(evidence, copy)),
     feedback: row.feedback,
     nextStep: row.nextStep,
   }));
@@ -69,7 +62,7 @@ const HEADING = 'm-0 mb-3 font-serif text-lg font-semibold text-text-primary';
 
 export function DebriefFrame({ session, debrief, kind, onExit, onTryInterview }: DebriefFrameProps) {
   const { facts } = debrief;
-  const { Debrief: KindDebrief } = kind;
+  const { Debrief: KindDebrief, copy } = kind;
   const totalMs = facts.stageMs.reduce((sum, stage) => sum + stage.activeMs, 0);
 
   return (
@@ -99,7 +92,7 @@ export function DebriefFrame({ session, debrief, kind, onExit, onTryInterview }:
       </header>
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-        <CriteriaList criteria={criteriaFrom(debrief.scorecard)} heading="How it went" />
+        <CriteriaList criteria={criteriaFrom(debrief.scorecard, copy)} heading="How it went" />
 
         <section aria-labelledby="practice-facts-heading" className={CARD}>
           <h2 id="practice-facts-heading" className={HEADING}>
@@ -115,12 +108,12 @@ export function DebriefFrame({ session, debrief, kind, onExit, onTryInterview }:
             ))}
           </ul>
           <ul className="m-0 list-none space-y-1 p-0 text-sm text-text-primary">
-            <li>{plural(facts.checks, 'run')}</li>
+            <li>{plural(facts.checks, copy.debrief.check)}</li>
             <li>{plural(facts.submits, 'submit')}</li>
             <li>
               {facts.hints.length === 0
                 ? 'No hints'
-                : facts.hints.map((hint) => `${hint.count} ${RUNG_NAMES[hint.rung]}`).join(', ')}
+                : facts.hints.map((hint) => `${hint.count} ${copy.rung(hint.rung).counted}`).join(', ')}
             </li>
           </ul>
           <h3 className="m-0 mb-1 mt-3 text-xs font-semibold uppercase tracking-wide text-text-secondary">Settings</h3>
@@ -150,7 +143,7 @@ export function DebriefFrame({ session, debrief, kind, onExit, onTryInterview }:
                 <span>
                   <span className="block">{misreading.description}</span>
                   <span className="block text-text-secondary">
-                    {misreading.caught ? 'Your examples caught this' : 'Your examples did not catch this'}
+                    {misreading.caught ? copy.debrief.caught : copy.debrief.missed}
                   </span>
                 </span>
               </li>
@@ -162,7 +155,7 @@ export function DebriefFrame({ session, debrief, kind, onExit, onTryInterview }:
       {debrief.techniques.length > 0 ? (
         <section aria-labelledby="practice-techniques-heading" className={CARD}>
           <h2 id="practice-techniques-heading" className={HEADING}>
-            Problem patterns
+            {copy.debrief.techniques}
           </h2>
           <ul className="m-0 list-none space-y-3 p-0">
             {debrief.techniques.map((technique) => (

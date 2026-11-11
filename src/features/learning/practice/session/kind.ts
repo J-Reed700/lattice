@@ -45,7 +45,19 @@ export interface KindCopy {
   /** Shown while the counterpart reads the work. */
   readingWork: string;
   stageInstruction(stage: Wire.Stage): string;
-  rung(rung: Wire.Rung): { name: string; ask: string };
+  rung(rung: Wire.Rung): { name: string; ask: string; counted: string };
+  /** The words the debrief uses for the kind's things. */
+  debrief: {
+    /** One check, as it is counted: "3 runs". */
+    check: string;
+    /** A learner's own case, by number: "Example 2". */
+    learnerCase: string;
+    /** The heading over the technique ratings. */
+    techniques: string;
+    /** Under a misreading the learner's own cases caught, and under one they did not. */
+    caught: string;
+    missed: string;
+  };
 }
 
 export interface KindView {
