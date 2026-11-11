@@ -306,8 +306,10 @@ fn legacy_llm_json() -> serde_json::Value {
 
 #[test]
 fn settings_sent_to_the_renderer_carry_no_auth_header_value() {
-    let mut settings = SettingsDto::default();
-    settings.llm = serde_json::from_value(legacy_llm_json()).unwrap();
+    let settings = SettingsDto {
+        llm: serde_json::from_value(legacy_llm_json()).unwrap(),
+        ..Default::default()
+    };
 
     let json = serde_json::to_string(&settings).unwrap();
     assert!(!json.contains("ollama-secret"), "{json}");
