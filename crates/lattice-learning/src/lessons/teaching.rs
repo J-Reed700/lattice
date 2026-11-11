@@ -11,6 +11,7 @@ use lattice_core::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+mod answers;
 pub(crate) mod contract;
 mod passes;
 mod protected;
