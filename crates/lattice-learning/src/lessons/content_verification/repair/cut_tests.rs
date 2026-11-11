@@ -165,3 +165,14 @@ fn a_cut_in_the_middle_of_a_plain_paragraph_is_unchanged() {
         Some("Alpha holds. Gamma holds.\n\nDelta holds.")
     );
 }
+
+#[test]
+fn a_dash_that_opens_a_sentence_inside_a_line_is_not_a_list_marker() {
+    let out = done(sentence(
+        "Alpha holds. - Beta holds. Gamma holds.",
+        "Beta holds.",
+    ))
+    .unwrap();
+    assert!(out.ends_with("Gamma holds."), "{out}");
+    assert!(!out.contains("- Gamma"), "{out}");
+}

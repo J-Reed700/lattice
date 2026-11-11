@@ -47,10 +47,14 @@ fn stronger<'t>(first: &'t str, second: &'t str) -> &'t str {
     }
 }
 
-/// The list marker and the whitespace after it that open the sentence at `span`.
+/// The list marker and the whitespace after it that open the sentence at
+/// `span`, when that sentence opens its line.
 fn marker_of(text: &str, span: (usize, usize)) -> Option<&str> {
+    let lead = text.get(..span.0)?.rsplit('\n').next()?;
     let sentence = text.get(span.0..span.1)?;
-    sentence.get(..item_marker_end(sentence)?)
+    sentence
+        .get(..item_marker_end(sentence)?)
+        .filter(|_| lead.trim().is_empty())
 }
 
 /// `text` without every sentence `quote` touches, wherever it occurs; the
