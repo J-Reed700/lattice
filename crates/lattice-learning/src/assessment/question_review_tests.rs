@@ -5,7 +5,7 @@ use super::question_review::{check, Outcome};
 use crate::review_findings::FindingSite;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Database;
 use serde_json::{json, Value};
 use std::sync::Mutex;
@@ -13,9 +13,8 @@ use std::sync::Mutex;
 type Solves = Box<dyn Fn(usize) -> usize + Send + Sync>;
 type Judges = Box<dyn Fn(&Value) -> (String, Vec<String>) + Send + Sync>;
 
-/// Solves and judges with the closures it is given and keeps every request.
-/// A request of any other kind is answered as the earlier answer-key check
-/// was, with the same picks as the solver.
+/// Solves and judges with the closures it is given and keeps every request;
+/// any other request fails the test.
 struct Script {
     solves: Solves,
     judges: Judges,
@@ -39,9 +38,7 @@ impl LLMPort for Script {
             .lock()
             .unwrap()
             .extend(request.json_schema.clone());
-        let context: Value = serde_json::from_str(user)
-            .or_else(|_| serde_json::from_str(user.rsplit("\n\n").next().unwrap_or("")))
-            .unwrap_or(Value::Null);
+        let context: Value = serde_json::from_str(user).unwrap_or(Value::Null);
         let reply = match kind {
             "solve" => {
                 json!({"answers": context["questions"].as_array().into_iter().flatten().map(|q| json!({
@@ -57,13 +54,7 @@ impl LLMPort for Script {
                 json!({"id": item["id"], "hasDefect": !finding.is_empty(), "finding": finding, "repeats": repeats})
             }).collect::<Vec<_>>()})
             }
-            _ => {
-                json!({"answers": context["requestedIndices"].as_array().into_iter().flatten().map(|i| json!({
-                "index": i,
-                "correctIndices": [(self.solves)(i.as_u64().unwrap_or(0) as usize)],
-                "reason": "The case decides it."
-            })).collect::<Vec<_>>()})
-            }
+            _ => return Err(AppError::InvalidInput("an unscripted request".into())),
         };
         Ok(CompletionResponse::from_text(reply.to_string()))
     }
@@ -173,7 +164,7 @@ async fn a_question_whose_key_stands_apart_is_a_finding_at_that_question() -> Re
     Ok(())
 }
 
-/// Passes before the change as well: the earlier check disputed a key the same way.
+/// A solver that disagrees with the key is a finding at that question.
 #[tokio::test]
 async fn a_disputed_key_is_a_finding_at_its_question() -> Result<()> {
     let llm = Script::new(

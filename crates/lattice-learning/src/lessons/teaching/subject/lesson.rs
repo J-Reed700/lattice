@@ -18,8 +18,8 @@ use crate::lessons::text_edits::{self, Named};
 use crate::outline_progress::OutlineProgress;
 use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::{
-    new_sentences, part_at, plain_part, sentences_of, FindingId, FindingSite, Held, Origin,
-    ReviewFinding, SetAside,
+    new_sentences, part_at, plain_part, sentences_of, FindingId, FindingSite, Held, ReviewFinding,
+    SetAside,
 };
 use crate::teaching_review::LengthRule;
 use lattice_core::{
@@ -196,7 +196,7 @@ impl Subject for LessonSubject<'_> {
         self.held_up = blocking;
         let issues = if !blocking {
             self.step(Step::CheckingKeys);
-            let answer_issues = crate::question_review::check(
+            let question_issues = crate::question_review::check(
                 llm,
                 pass.value,
                 crate::question_review::Outcome::of_lesson(pass.authoring),
@@ -238,7 +238,7 @@ impl Subject for LessonSubject<'_> {
                 // The reviewer has seen exactly this lesson: its findings stand.
                 None => (None, against_plan.await?),
             };
-            let mut raised = answer_issues;
+            let mut raised = Vec::new();
             if let (Some(round), Some(judged)) = (&round, judged) {
                 raised.extend(self.standing.judged(pass.value, round, judged));
             }
@@ -251,12 +251,10 @@ impl Subject for LessonSubject<'_> {
                 None,
             )
             .await?;
-            let (new, mut issues): (Vec<_>, Vec<_>) = established
-                .into_iter()
-                .partition(|finding| matches!(finding.origin, Origin::Reviewer { .. }));
             if round.is_some() {
-                self.standing.admit(pass.value, new);
+                self.standing.admit(pass.value, established);
             }
+            let mut issues = question_issues;
             issues.extend(self.standing.open().iter().cloned());
             issues.extend(plan_findings);
             // Stopped structure stays among the findings, so it is still
