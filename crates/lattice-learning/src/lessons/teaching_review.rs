@@ -6,6 +6,7 @@ use crate::{generation, outline_progress::OutlineProgress};
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
+    shared::hash::sha256_hex,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -314,7 +315,7 @@ pub(crate) fn basis(llm: &dyn LLMPort, system: &str, scope: &str, inputs: &Value
     ] {
         given.insert(name.into(), value);
     }
-    crate::content_verification::digest(&Value::Object(given).to_string())
+    sha256_hex(Value::Object(given).to_string())
 }
 
 /// The entries of `openFindings`: the findings to be judged.
@@ -384,7 +385,7 @@ pub async fn review(
     }
     let key = format!(
         "teaching-review-findings-v6:{}",
-        crate::content_verification::digest(&Value::Object(inputs).to_string())
+        sha256_hex(Value::Object(inputs).to_string())
     );
     if let Some(saved) = crate::lesson_drafts::checkpoint(&key)
         .await?

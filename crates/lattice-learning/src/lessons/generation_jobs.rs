@@ -10,6 +10,7 @@ use crate::{
     service,
 };
 use futures::future::BoxFuture;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
     application::ports::llm_port::PinnedModel,
     shared::{
@@ -54,9 +55,7 @@ struct PreparedCheckpoint {
 }
 
 fn plan_digest(plan: &crate::lessons::course_plan::CoursePlan) -> Result<String> {
-    Ok(crate::content_verification::digest(&serde_json::to_string(
-        plan,
-    )?))
+    Ok(sha256_hex(serde_json::to_string(plan)?))
 }
 
 #[derive(Clone)]

@@ -8,7 +8,7 @@ use crate::{
         LearningCurriculumModule, LearningCurriculumRevision,
     },
     operations::Operation,
-    persistence::{db, decode, encode, hash, hash_text, now},
+    persistence::{db, decode, encode, hash, now},
     plan_dto::*,
 };
 #[cfg(test)]
@@ -17,6 +17,7 @@ use crate::{
     repository::LearningRepository,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::{driver::DriverPool, Transactions};
 #[cfg(test)]
 use lattice_core::shared::runtime::jobs::JobStore;
@@ -211,7 +212,7 @@ impl LearningCurriculumRepository {
         };
         curriculum::validate_curriculum(&revision)?;
         let json = encode(&revision)?;
-        let digest = hash_text(&json);
+        let digest = sha256_hex(&json);
         let required = revision
             .modules
             .iter()
@@ -417,7 +418,7 @@ impl LearningCurriculumRepository {
             },
         )?;
         let json = encode(&result.revision)?;
-        let digest = hash_text(&json);
+        let digest = sha256_hex(&json);
         let existing_draft: Option<String> = sqlx::query_scalar(
             "SELECT id FROM learning_curriculum_revisions WHERE program_id=? AND status='draft'",
         )

@@ -255,6 +255,44 @@ async fn test_extract_youtube_article_from_html_metadata() {
 }
 
 #[test]
+fn metadata_entities_are_decoded_once_and_numeric_references_are_read() {
+    let service = ArticleExtractorService::new().unwrap();
+
+    let html = r#"
+            <html>
+            <head>
+                <meta property="og:title" content="Sample">
+                <meta property="og:description" content="AT&amp;T &amp;lt;b&amp;gt; &#8212; end">
+            </head>
+            <body></body>
+            </html>
+        "#;
+
+    let result = service
+        .extract_youtube_article_from_html(html, "https://www.youtube.com/watch?v=test")
+        .unwrap();
+
+    assert!(
+        result.text_content.contains("AT&T &lt;b&gt; \u{2014} end"),
+        "{}",
+        result.text_content
+    );
+}
+
+#[test]
+fn title_text_is_decoded_once() {
+    let service = ArticleExtractorService::new().unwrap();
+
+    let html = "<html><head><title>AT&amp;T &amp;lt;b&amp;gt; &#8212; end</title></head><body></body></html>";
+
+    let result = service
+        .extract_youtube_article_from_html(html, "https://www.youtube.com/watch?v=test")
+        .unwrap();
+
+    assert_eq!(result.title, "AT&T &lt;b&gt; \u{2014} end");
+}
+
+#[test]
 fn test_is_youtube_url_variants() {
     let service = ArticleExtractorService::new().unwrap();
 

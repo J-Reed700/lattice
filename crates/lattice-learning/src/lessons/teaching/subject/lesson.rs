@@ -17,10 +17,12 @@ use crate::lessons::copied_wording::Wording;
 use crate::lessons::text_edits::{self, Named};
 use crate::outline_progress::OutlineProgress;
 use crate::reference_collection::ReferenceCollection;
+use crate::review_evidence::Checked;
 use crate::review_findings::{
     new_sentences, part_at, plain_part, sentences_of, FindingSite, Held, ReviewFinding, SetAside,
 };
 use crate::teaching_review::LengthRule;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -112,20 +114,17 @@ impl<'a> LessonSubject<'a> {
         self.references
             .sources
             .iter()
-            .map(|source| {
-                (
-                    source.id.clone(),
-                    crate::content_verification::digest(&source.excerpt),
-                )
-            })
+            .map(|source| (source.id.clone(), sha256_hex(&source.excerpt)))
             .collect()
     }
 
     /// Each reference's id and the digest of its excerpt, as the reviewer is shown them.
     fn reference_versions(&self) -> Vec<Value> {
-        self.references.sources.iter().map(|source| {
-            json!({"id":source.id,"contentHash":crate::content_verification::digest(&source.excerpt)})
-        }).collect()
+        self.references
+            .sources
+            .iter()
+            .map(|source| json!({"id":source.id,"contentHash":sha256_hex(&source.excerpt)}))
+            .collect()
     }
 }
 
@@ -255,10 +254,10 @@ impl Subject for LessonSubject<'_> {
                         LengthRule::DropBlank,
                     );
                     let (judged, plan) = futures::try_join!(review, against_plan)?;
-                    (Some(judged), plan)
+                    (Some(judged), plan.findings)
                 }
                 // The reviewer has seen exactly this lesson: its findings stand.
-                None => (None, against_plan.await?),
+                None => (None, against_plan.await?.findings),
             };
             let mut raised = Vec::new();
             if let (Some(round), Some(judged)) = (&round, judged) {
@@ -285,12 +284,20 @@ impl Subject for LessonSubject<'_> {
                 None,
             )
             .await?;
-            let reported: Vec<&ReviewFinding> = checked
-                .left
-                .iter()
-                .filter(|left| left.check == PLAN_CHECK)
-                .map(|left| &left.finding)
-                .collect();
+            let Checked {
+                mut established,
+                left,
+            } = checked;
+            let gate_established = established.len();
+            let (plan_lefts, other_lefts): (Vec<_>, Vec<_>) =
+                left.iter().partition(|left| left.check == PLAN_CHECK);
+            established.extend(
+                other_lefts
+                    .iter()
+                    .filter_map(|left| left.established.clone()),
+            );
+            let reported: Vec<&ReviewFinding> =
+                plan_lefts.iter().map(|left| &left.finding).collect();
             let plan_findings = if reported.is_empty() {
                 plan_findings
             } else {
@@ -304,16 +311,29 @@ impl Subject for LessonSubject<'_> {
                 )
                 .await?;
                 let before = plan_findings.len();
-                let all = plan_findings_of(plan_findings, ruled);
+                let all = plan_findings_of(plan_findings, ruled.findings);
                 tracing::info!(
                     reported = reported.len(),
                     held = all.len().saturating_sub(before),
+                    outside = ruled.outside.len(),
                     "The check against the course plan ruled on what the review reported"
                 );
+                established.extend(ruled.outside.iter().filter_map(|index| {
+                    plan_lefts
+                        .get(*index)
+                        .and_then(|left| left.established.clone())
+                }));
                 all
             };
+            if !left.is_empty() {
+                tracing::info!(
+                    left = left.len(),
+                    returned = established.len().saturating_sub(gate_established),
+                    "Findings left to a check that did not rule on them stand on the gate's verdict"
+                );
+            }
             if round.is_some() {
-                self.standing.admit(pass.value, checked.established);
+                self.standing.admit(pass.value, established);
             }
             let mut issues = question_issues;
             issues.extend(self.standing.open().iter().cloned());

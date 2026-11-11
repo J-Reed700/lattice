@@ -11,6 +11,7 @@ use crate::lessons::claim_reviews::repository::waiting_questions_in;
 use crate::persistence::{db, now};
 use crate::quiz_blueprints;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 use sha2::{Digest, Sha256};
@@ -86,7 +87,7 @@ pub(crate) async fn insert_bank_items_in(
             if entry.origin != "lesson" {
                 continue;
             }
-            hash = format!("{:x}", Sha256::digest(format!("{hash}\0{}", item.id)));
+            hash = sha256_hex(format!("{hash}\0{}", item.id));
             review_status = "dropped";
         }
         sqlx::query("INSERT INTO learning_assessment_candidates(id,program_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,source_version_ids_json,authored_by,author_model,content_sha256,created_at,review_status,origin,lesson_id,source_quote,left_items_json) VALUES(?,?,?,?,?,?,?,NULL,?,?,'model',?,?,?,?,?,?,?,?)")

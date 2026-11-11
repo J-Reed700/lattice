@@ -194,7 +194,7 @@ async fn run(
         id,
         unit,
         runtime: runtime.version().into(),
-        code_sha256: digest(&code),
+        code_sha256: sha256_hex(&code),
         code,
         result,
     })

@@ -889,8 +889,8 @@ mod reading_record_tests;
 #[path = "repair_request_tests.rs"]
 mod repair_request_tests;
 
-#[path = "unwrite_tests.rs"]
-mod unwrite_tests;
+#[path = "born_of_repair_tests.rs"]
+mod born_of_repair_tests;
 
 #[path = "apparatus_tests.rs"]
 mod apparatus_tests;
@@ -2505,7 +2505,7 @@ async fn evidence_view_hides_assessment_claims_and_marks_source_changes() -> Res
     // public projection must omit it even when there are zero teaching blocks.
     let source = &program.sources[0];
     let saved = repo.verification_sources(&program.summary.id).await?;
-    let report = json!({"policy":POLICY,"lesson_id":lesson.id,"content_sha256":"fixture","checked_at":1,"checker_model":"fixture","sources":[{"id":source.id,"sha256":digest(&saved[0].excerpt)}],"findings":[{"unit":0,"quote":"PRIVATE QUOTE","statement":"PRIVATE ANSWER KEY","verdict":"supported","reason":"PRIVATE RATIONALE","evidence":[],"supporting_quote":null}],"coverage":[],"coverage_audit":[],"executions":[],"issues":[],"retrieval_mode":"hybrid","embedding_model":null,"unexecuted_languages":[]});
+    let report = json!({"policy":POLICY,"lesson_id":lesson.id,"content_sha256":"fixture","checked_at":1,"checker_model":"fixture","sources":[{"id":source.id,"sha256":sha256_hex(&saved[0].excerpt)}],"findings":[{"unit":0,"quote":"PRIVATE QUOTE","statement":"PRIVATE ANSWER KEY","verdict":"supported","reason":"PRIVATE RATIONALE","evidence":[],"supporting_quote":null}],"coverage":[],"coverage_audit":[],"executions":[],"issues":[],"retrieval_mode":"hybrid","embedding_model":null,"unexecuted_languages":[]});
     sqlx::query("INSERT INTO learning_lesson_verifications(lesson_id,program_id,policy,content_sha256,report_json,checked_at) VALUES(?,?,?,?,?,?)").bind(&lesson.id).bind(&program.summary.id).bind(POLICY).bind("fixture").bind(report.to_string()).bind(1_i64).execute(&pool).await.map_err(|e|AppError::Database(e.to_string()))?;
     let view = crate::lesson_evidence::get(
         &Database::from(pool.clone()),

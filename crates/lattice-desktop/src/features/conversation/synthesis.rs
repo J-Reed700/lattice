@@ -14,11 +14,11 @@ use super::workspace_dto::*;
 use async_trait::async_trait;
 use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::runtime::jobs::{
     JobContext, JobDto, JobHandler, JobKindConfig, JobOutcome, JobRecord, JobRuntime, JobStatus,
     NewJob, RecoveryPolicy,
 };
-use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::warn;
@@ -626,7 +626,7 @@ pub async fn synthesize_journal_entries_impl(
             kind: JOURNAL_SYNTHESIS.into(),
             subject_id: Some(subject),
             operation_id: uuid::Uuid::new_v4().to_string(),
-            payload_hash: format!("{:x}", Sha256::digest(requested.to_string().as_bytes())),
+            payload_hash: sha256_hex(requested.to_string()),
             requested,
             progress_total: PROGRESS_TOTAL,
             message: "Waiting to synthesize".into(),

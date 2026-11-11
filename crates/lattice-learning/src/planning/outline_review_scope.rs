@@ -1,5 +1,6 @@
 //! Reuse completed semantic checks only while their inputs still match.
 use crate::outline_draft::OutlineDraft;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -20,7 +21,7 @@ pub struct ReviewReceipt {
 }
 
 fn hash(value: &Value) -> String {
-    crate::persistence::hash_text(&value.to_string())
+    sha256_hex(value.to_string())
 }
 
 impl ReviewReceipt {
