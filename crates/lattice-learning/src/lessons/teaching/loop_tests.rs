@@ -3135,7 +3135,7 @@ async fn a_new_whole_lesson_issue_continues_the_count_of_the_one_before() -> Res
         waiting.iter().all(|(_, repairs)| *repairs == 2),
         "{waiting:?}"
     );
-    assert_eq!(model.repairs().len(), 2);
+    assert_eq!(model.repairs().len(), 3);
     Ok(())
 }
 

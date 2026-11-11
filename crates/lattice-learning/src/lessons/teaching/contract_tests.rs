@@ -210,6 +210,25 @@ fn retitle_again_at(section: usize) -> String {
     }]))
 }
 
+/// A third retitle of `section`, after `retitle_again_at`'s.
+fn retitle_third_at(section: usize) -> String {
+    let before = ["Opening", "Listing", "Reading"][section];
+    edits(json!([{
+        "path": format!("/blocks/{section}/title"),
+        "before": format!("{before}, revised again"),
+        "after": format!("{before}, revised a third time"),
+    }]))
+}
+
+/// A retitle of sections 1 and 2 together, `before` and `after` being what
+/// follows the section names in their titles.
+fn retitle_both(before: &str, after: &str) -> String {
+    edits(json!([
+        {"path":"/blocks/1/title","before":format!("Listing{before}"),"after":format!("Listing{after}")},
+        {"path":"/blocks/2/title","before":format!("Reading{before}"),"after":format!("Reading{after}")},
+    ]))
+}
+
 fn answer(planned: Value, used: Value, contradictions: Value, unseen: Value) -> String {
     json!({"planned":planned,"usedBeforeTaught":used,"contradictions":contradictions,"unseen":unseen})
         .to_string()
@@ -762,6 +781,8 @@ async fn one_fixed_defect_does_not_charge_the_other_in_its_section() -> Result<(
         reviewed_of(&[1], &[]),
         retitle_at(1),
         reviewed_of(&[1], &[]),
+        retitle_again_at(1),
+        reviewed_of(&[1], &[]),
     ]);
     let model = Routed::new(
         &scripted,
@@ -770,6 +791,7 @@ async fn one_fixed_defect_does_not_charge_the_other_in_its_section() -> Result<(
                 (FIRST_USE, "the first tool"),
                 (SECOND_USE, "the second tool"),
             ]),
+            uses_of(&[(SECOND_USE, "the second tool")]),
             uses_of(&[(SECOND_USE, "the second tool")]),
             uses_of(&[(SECOND_USE, "the second tool")]),
         ],
@@ -781,7 +803,7 @@ async fn one_fixed_defect_does_not_charge_the_other_in_its_section() -> Result<(
         "Read the names.",
     ]);
     let result = run(&model, &candidate, &context(&[], &[]), &[]).await?;
-    assert_eq!(repairs_asked(&scripted), 2);
+    assert_eq!(repairs_asked(&scripted), 3);
     assert_eq!(result.set_aside.len(), 1, "{:?}", waiting(&result));
     let left = &result.set_aside[0];
     assert_eq!(left.repairs, 2);
@@ -1115,9 +1137,14 @@ async fn finding_note_in(
         reviewed_of(&[1], &[]),
         retitle_again_at(1),
         reviewed_of(&[1], &[]),
+        retitle_third_at(1),
+        reviewed_of(&[1], &[]),
     ]);
     let found = answer(planned, used, json!([]), json!([]));
-    let model = Routed::new(&scripted, vec![found.clone(), found.clone(), found]);
+    let model = Routed::new(
+        &scripted,
+        vec![found.clone(), found.clone(), found.clone(), found],
+    );
     let candidate = lesson([
         "The first step is shown.",
         "Apply the second method\nto the first item.",
@@ -1645,6 +1672,8 @@ async fn every_negative_is_read_again_once_and_a_use_is_shown_only_the_parts_up_
         reviewed_of(&[1], &[]),
         retitle_again_at(1),
         reviewed_of(&[1], &[]),
+        retitle_third_at(1),
+        reviewed_of(&[1], &[]),
     ]);
     let found = answer(
         json!([not_taught("idea-0"), not_taught("idea-1")]),
@@ -1652,7 +1681,10 @@ async fn every_negative_is_read_again_once_and_a_use_is_shown_only_the_parts_up_
         json!([]),
         json!([]),
     );
-    let model = Routed::new(&scripted, vec![found.clone(), found.clone(), found]);
+    let model = Routed::new(
+        &scripted,
+        vec![found.clone(), found.clone(), found.clone(), found],
+    );
     let candidate = lesson([TYPED, "Type ls -l to see sizes.", "Read the names."]);
     let ctx = context(&["A first idea", "A second idea"], &[]);
     run(&model, &candidate, &ctx, &[]).await?;
@@ -1681,10 +1713,10 @@ async fn words_pointing_at_what_is_never_seen_are_a_finding_in_every_part_that_h
 ) -> Result<()> {
     let scripted = scripted(vec![
         reviewed(3),
-        retitle_at(1),
-        reviewed_of(&[1], &[]),
-        retitle_again_at(1),
-        reviewed_of(&[1], &[]),
+        retitle_both("", ", revised"),
+        reviewed_of(&[1, 2], &[]),
+        retitle_both(", revised", ", revised again"),
+        reviewed_of(&[1, 2], &[]),
     ]);
     let pointing = answer(
         json!([]),
