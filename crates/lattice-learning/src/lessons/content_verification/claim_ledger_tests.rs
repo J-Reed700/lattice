@@ -132,9 +132,9 @@ impl Figures {
                             .iter()
                             .find(|p| p["field"] == "/body" || p["field"] == "/explanation")
                             .unwrap();
-                        let statement = statement_in(passage["text"].as_str().unwrap());
+                        let statement = statement_in(&passage_text(passage));
                         match statement {
-                            Some(statement) => json!({"index":unit["index"],"claims":[{"passageId":passage["id"],"statement":statement}],"nonFactualReason":""}),
+                            Some(statement) => json!({"index":unit["index"],"claims":[{"sentenceId":sentence_id(passage, &statement),"statement":statement}],"nonFactualReason":""}),
                             None => json!({"index":unit["index"],"claims":[],"nonFactualReason":NOTHING_TO_CHECK}),
                         }
                     })

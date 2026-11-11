@@ -5,6 +5,7 @@ use super::*;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
+use lattice_core::application::services::grounded_generation;
 use lattice_core::shared::persistence::Database;
 use std::sync::Mutex;
 
@@ -757,4 +758,136 @@ async fn a_two_step_call_asks_again_for_its_answer_step_only() -> Result<()> {
     assert_eq!(messages(&sent[1]), messages(&sent[2])[..4].to_vec());
     assert_eq!(task_messages(&sent[2]), (SYSTEM, PROMPT));
     Ok(())
+}
+
+/// Refuses anything but [`ANSWER`], giving `reason`.
+fn refusing_with(reason: String) -> impl Fn(&str) -> Result<String> {
+    move |raw| {
+        if raw == ANSWER {
+            return Ok(raw.to_owned());
+        }
+        Err(AppError::InvalidInput(reason.clone()))
+    }
+}
+
+/// The request [`complete_checked`] builds for the fixtures.
+fn first_request() -> GroundedRequest {
+    model_call::structured(SYSTEM, PROMPT.into(), schema(), 1000, "low")
+}
+
+/// What the planner says the task sent again with `reason` measures.
+async fn restated_size(llm: &Recorder, reason: &str) -> (usize, bool) {
+    let restated = restate(first_request(), reason);
+    match grounded_generation::measure(llm, &restated).await {
+        Ok(measured) => (measured.prompt_tokens, measured.exact),
+        Err(error) => (error.overflow().unwrap().required, false),
+    }
+}
+
+/// The refusal of a call that a packer sent, as `send_fitted` sets its scope.
+async fn refused_beyond_the_window(llm: &Recorder, reason: &str) -> AppError {
+    let call = complete_checked_request(
+        llm,
+        first_request(),
+        None,
+        None,
+        refusing_with(reason.into()),
+    );
+    model_call::PACKED.scope((), call).await.unwrap_err()
+}
+
+#[tokio::test]
+async fn a_correction_that_overflows_the_window_is_refused_for_its_size() {
+    let llm = Recorder::answering_first(4_000, &["first"]);
+    let reason = "Too vague. ".repeat(1_100);
+    let error = refused_beyond_the_window(&llm, &reason).await;
+    let AppError::PromptExceedsWindow {
+        prompt_tokens,
+        window,
+        counted_exactly,
+        message,
+    } = error
+    else {
+        panic!("expected a size refusal, got {error:?}");
+    };
+    let (expected, exact) = restated_size(&llm, &reason).await;
+    assert_eq!((prompt_tokens, counted_exactly), (expected, exact));
+    assert_eq!(window, 4_000);
+    assert!(prompt_tokens > 2_000, "{prompt_tokens}");
+    assert!(message.contains(&reason), "{message}");
+    assert!(message.contains(&prompt_tokens.to_string()), "{message}");
+    assert!(message.contains("4000"), "{message}");
+    assert_eq!(llm.sent().len(), 1, "no correction was sent");
+}
+
+#[tokio::test]
+async fn a_correction_only_the_exact_count_overflows_is_refused_with_that_count() {
+    let mut llm = Recorder::answering_first(4_000, &["first"]);
+    llm.exact = true;
+    let reason = "Too vague. ".repeat(550);
+    let error = refused_beyond_the_window(&llm, &reason).await;
+    let AppError::PromptExceedsWindow {
+        prompt_tokens,
+        counted_exactly,
+        ..
+    } = error
+    else {
+        panic!("expected a size refusal, got {error:?}");
+    };
+    assert_eq!(restated_size(&llm, &reason).await, (prompt_tokens, true));
+    assert!(counted_exactly);
+    assert_eq!(llm.sent().len(), 1, "no correction was sent");
+}
+
+#[tokio::test]
+async fn a_packed_request_whose_correction_does_not_fit_is_sent_again_with_less_material(
+) -> Result<()> {
+    let llm = Recorder::answering_first(8_000, &["first"]);
+    let build = |room: usize| {
+        model_call::structured(
+            SYSTEM,
+            format!("{{\"material\":\"{}\"}}", "x".repeat(room * 4)),
+            schema(),
+            1000,
+            "low",
+        )
+    };
+    let room = model_call::source_room(&llm, &build(0), usize::MAX);
+    let reason = "Too vague. ".repeat(40);
+    let answer = model_call::send_fitted(&llm, room, build, |request| {
+        complete_checked_request(&llm, request, None, None, refusing_with(reason.clone()))
+    })
+    .await?;
+    assert_eq!(answer.as_deref(), Some(ANSWER));
+
+    let carried: Vec<usize> = llm
+        .sent()
+        .iter()
+        .map(|request| request.user_text().matches('x').count())
+        .collect();
+    assert_eq!(carried.len(), 2, "the refused request and the smaller one");
+    assert!(carried.iter().all(|material| *material > 0), "{carried:?}");
+    assert!(carried[1] < carried[0], "{carried:?}");
+    Ok(())
+}
+
+/// Passes on the code from before the scope too: only a packer is refused for size.
+#[tokio::test]
+async fn a_correction_that_overflows_the_window_of_an_unpacked_call_is_an_unusable_answer() {
+    let llm = Recorder::answering_first(4_000, &["first"]);
+    let reason = "Too vague. ".repeat(1_100);
+    let error = complete_checked_request(
+        &llm,
+        first_request(),
+        None,
+        None,
+        refusing_with(reason.clone()),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(&error, AppError::ModelAnswerUnusable(given) if *given == reason),
+        "{error:?}"
+    );
+    assert_eq!(llm.sent().len(), 1, "no correction was sent");
 }

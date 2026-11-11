@@ -76,6 +76,11 @@ pub(crate) fn active() -> bool {
     CURRENT.try_with(|_| ()).is_ok()
 }
 
+/// The lesson a running preparation is writing, for logs.
+pub(crate) fn lesson_id() -> Option<String> {
+    CURRENT.try_with(|context| context.lesson_id.clone()).ok()
+}
+
 /// The job and lesson a running preparation writes its drafts for, and the
 /// database it writes them to: where the lesson's claim ledger is kept.
 pub(crate) struct DraftScope {

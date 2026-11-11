@@ -139,14 +139,12 @@ impl Script {
     fn claims_of(&self, unit: &Value) -> Value {
         let mut claims = Vec::new();
         for passage in unit["passages"].as_array().into_iter().flatten() {
-            let text = passage["text"].as_str().unwrap_or_default();
+            let text = passage_text(passage);
             for (sentence, statements) in &self.sentences {
                 if text.contains(*sentence) {
-                    claims.extend(
-                        statements.iter().map(
-                            |statement| json!({"passageId":passage["id"],"statement":statement}),
-                        ),
-                    );
+                    claims.extend(statements.iter().map(|statement| {
+                        json!({"sentenceId":sentence_id(passage, sentence),"statement":statement})
+                    }));
                 }
             }
         }

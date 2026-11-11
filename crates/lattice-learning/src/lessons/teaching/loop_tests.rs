@@ -1998,6 +1998,22 @@ fn shaped_answers(candidate: &Value) -> String {
     json!({"answers":(0..count).map(|index| json!({"index":index,"correctIndices":[0],"reason":"The fixture's key."})).collect::<Vec<_>>()}).to_string()
 }
 
+/// The blind solver's answers for the lesson's questions: each picks the first option.
+fn shaped_solutions(candidate: &Value) -> String {
+    let count = candidate["questions"].as_array().unwrap().len();
+    json!({"answers":(0..count).map(|index| json!({"index":index,"reason":"The fixture's key.","correctIndices":[0],"answer":"","blankAnswers":[],"matches":[],"orderedValues":[]})).collect::<Vec<_>>()}).to_string()
+}
+
+/// The item judge's checks for the lesson's questions: sound, except `fault`'s question.
+fn shaped_judgement(candidate: &Value, fault: Option<(usize, &str)>) -> String {
+    let count = candidate["questions"].as_array().unwrap().len();
+    let checks = (0..count).map(|index| {
+        let finding = fault.filter(|(at, _)| *at == index).map_or("", |(_, text)| text);
+        json!({"id":format!("new-{index}"),"finding":finding,"hasDefect":!finding.is_empty(),"repeats":[]})
+    });
+    json!({"checks":checks.collect::<Vec<_>>()}).to_string()
+}
+
 fn shaped_review(candidate: &Value) -> String {
     let count = candidate["blocks"].as_array().unwrap().len();
     let checks = (0..count)
@@ -3417,6 +3433,26 @@ fn repair_prompts(model: &ScriptedModel) -> Vec<String> {
         .filter(|prompt| prompt.contains("issuesToFix"))
         .cloned()
         .collect()
+}
+
+#[tokio::test]
+async fn a_lesson_question_the_judge_faults_reaches_the_repair_as_a_finding_at_that_question() {
+    const FAULT: &str = "One option stands apart from the others in length.";
+    let candidate = shaped_lesson();
+    let model = model(vec![
+        shaped_solutions(&candidate),
+        shaped_judgement(&candidate, Some((2, FAULT))),
+        shaped_review(&candidate),
+    ]);
+
+    let _ = review_shaped(&model, &candidate, &[]).await;
+
+    let prompts = model.prompts.lock().unwrap().clone();
+    assert!(
+        prompts.iter().any(|prompt| prompt.contains("issuesToFix")
+            && prompt.contains(&format!("Question 3: {FAULT}"))),
+        "{prompts:?}"
+    );
 }
 
 #[tokio::test]
