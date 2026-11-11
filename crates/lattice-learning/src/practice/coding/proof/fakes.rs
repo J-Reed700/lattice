@@ -21,8 +21,12 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-/// The file the fake harness lists its cases in, one `id|scale|digest` line each.
+/// The file the fake harness lists its cases in, one `id|scale|digest` line each; the digest is empty without one.
 const LISTING: &str = "cases.txt";
+
+/// What the fake reports as the digest of a passing solution's result on every scale case.
+pub(crate) const SCALE_DIGEST: &str =
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 /// A model that answers with the next canned text and keeps every request it was sent.
 pub(crate) struct ScriptedModel {
@@ -89,12 +93,12 @@ impl LLMPort for ScriptedModel {
 pub(crate) struct CaseRun {
     pub id: String,
     pub scale: bool,
-    pub digest: bool,
+    pub digest: String,
 }
 
 /// What a fake solution does on a case.
 pub(crate) enum Behaviour {
-    /// Passes, taking `ms`; a scale case without a digest only runs.
+    /// Passes, taking `ms`; a scale case reports `SCALE_DIGEST`, and only runs without a digest or fails against another.
     Passes {
         ms: u64,
     },
@@ -185,11 +189,19 @@ impl CodeRunner for FakeRunner {
             let run = CaseRun {
                 id: parts.next().unwrap_or_default().to_owned(),
                 scale: parts.next() == Some("1"),
-                digest: parts.next() == Some("1"),
+                digest: parts.next().unwrap_or_default().to_owned(),
             };
             let (status, actual, ms, error) = match (self.judge)(&code, &run) {
-                Behaviour::Passes { ms } if run.scale && !run.digest => {
-                    ("ran", "'big'".to_owned(), ms, String::new())
+                Behaviour::Passes { ms } if run.scale => {
+                    let status = if run.digest.is_empty() {
+                        "ran"
+                    } else if run.digest == SCALE_DIGEST {
+                        "passed"
+                    } else {
+                        all_passed = false;
+                        "failed"
+                    };
+                    (status, SCALE_DIGEST.to_owned(), ms, String::new())
                 }
                 Behaviour::Passes { ms } => ("passed", "'ok'".to_owned(), ms, String::new()),
                 Behaviour::Fails => {
@@ -231,7 +243,7 @@ impl CaseHarness for FakeHarness {
                     "{}|{}|{}",
                     case.id,
                     u8::from(case.scale),
-                    u8::from(case.digest.is_some())
+                    case.digest.as_deref().unwrap_or_default()
                 )
             })
             .collect::<Vec<_>>()
@@ -385,7 +397,7 @@ pub(crate) fn cases() -> Vec<ProblemCase> {
 pub(crate) fn proven_cases() -> Vec<ProblemCase> {
     let mut cases = cases();
     for case in cases.iter_mut().filter(|case| case.scale) {
-        case.digest = Some("a".repeat(64));
+        case.digest = Some(SCALE_DIGEST.to_owned());
     }
     cases
 }
