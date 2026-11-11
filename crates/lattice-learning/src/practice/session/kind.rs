@@ -214,6 +214,8 @@ pub trait LearnerCases: Send + Sync {
     fn account(&self, brief: &Brief, case: &SessionLearnerCase) -> Result<Value>;
     /// How the debrief's model cites one of them.
     fn cited(&self) -> Citation;
+    /// One case the learner wrote, as a case a check runs.
+    fn case(&self, exercise: &Exercise, case: &SessionLearnerCase) -> Result<Case>;
 }
 
 /// How the debrief's model cites one kind of evidence the kind names: the tag of its items and the sentence of the
@@ -289,6 +291,12 @@ pub trait Account: Send + Sync {
     ) -> Result<Vec<PartRef>>;
 }
 
+/// The time a timed session gets.
+pub trait Budget: Send + Sync {
+    /// The seconds a session gets when the learner chose none. None leaves it untimed unless the learner sets a time.
+    fn seconds(&self, brief: &Brief) -> Option<u32>;
+}
+
 /// Enables Complete: a piece with parts emptied, and with one part put back.
 pub trait Gaps: Send + Sync {
     fn emptied(&self, brief: &Brief, piece: &Piece, parts: &[PartRef]) -> Result<Piece>;
@@ -336,6 +344,7 @@ pub struct Kind {
     pub hinting: Arc<dyn Hinting>,
     pub rubric: Arc<dyn Rubric>,
     pub account: Arc<dyn Account>,
+    pub budget: Arc<dyn Budget>,
     pub checker: Arc<dyn Checker>,
     pub parts: Arc<dyn Parts>,
     pub diff: Arc<dyn Diff>,

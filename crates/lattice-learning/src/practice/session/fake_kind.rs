@@ -4,8 +4,8 @@
 
 use crate::practice::practical_dto::{LearningSimulationSpeaker, LearningSimulationTurnDto};
 use crate::practice::session::kind::{
-    Account, Checker, Citation, Criterion, Diff, Established, Gaps, Hint, HintAsk, Hinting, Kind,
-    LearnerCases, Order, Parts, ReplyGuard, Rubric, Showing, Statement, Truth, Wording,
+    Account, Budget, Checker, Citation, Criterion, Diff, Established, Gaps, Hint, HintAsk, Hinting,
+    Kind, LearnerCases, Order, Parts, ReplyGuard, Rubric, Showing, Statement, Truth, Wording,
 };
 use crate::practice::session::observation::{ClockView, Coverage, Observation};
 use crate::practice::session::record::{SessionCheck, SessionLearnerCase};
@@ -404,6 +404,27 @@ impl LearnerCases for Letters {
             sentence: "A case: ref is the case's ordinal.".to_owned(),
         }
     }
+
+    fn case(&self, _exercise: &Exercise, case: &SessionLearnerCase) -> Result<Case> {
+        let letter = case
+            .body
+            .get("letter")
+            .and_then(Value::as_str)
+            .unwrap_or("?");
+        Ok(Case {
+            id: format!("mine-{}", case.ordinal),
+            title: format!("Your case {}", case.ordinal),
+            visibility: CaseVisibility::Shown,
+            body: json!({"index": case.ordinal, "expected": letter}),
+        })
+    }
+}
+
+/// An easy exercise gets ten minutes; any other is untimed.
+impl Budget for Letters {
+    fn seconds(&self, brief: &Brief) -> Option<u32> {
+        (brief.difficulty == Difficulty::Easy).then_some(600)
+    }
 }
 
 impl Rubric for Letters {
@@ -699,6 +720,7 @@ impl FakeKindBuilder {
             hinting: roles.clone(),
             rubric: roles.clone(),
             account: roles.clone(),
+            budget: roles.clone(),
             checker: roles.clone(),
             parts: roles.clone(),
             diff: roles.clone(),

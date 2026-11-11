@@ -2,13 +2,16 @@
 
 use crate::practice::session::kind::{Citation, LearnerCases};
 use crate::practice::session::record::SessionLearnerCase;
-use lattice_core::domain::learning::practice::work::Brief;
+use lattice_core::domain::learning::practice::work::{Brief, Case, Exercise};
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use serde_json::json;
 
 #[cfg(test)]
 mod tests;
+
+/// What the id of a case the learner wrote starts with; the ordinal follows.
+pub const MINE_CASE_PREFIX: &str = "mine-";
 
 pub struct ProgramLearnerCases;
 
@@ -55,5 +58,9 @@ impl LearnerCases for ProgramLearnerCases {
             tag: "example".to_owned(),
             sentence: "An example: ref is the example's ordinal.".to_owned(),
         }
+    }
+
+    fn case(&self, _exercise: &Exercise, _case: &SessionLearnerCase) -> Result<Case> {
+        Err(AppError::InvalidState("Not built yet.".into()))
     }
 }

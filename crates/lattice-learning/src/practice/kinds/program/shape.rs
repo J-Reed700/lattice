@@ -2,13 +2,16 @@
 
 use crate::lab_runtime::LearningLabFile;
 use crate::practice::coding::dto::{CodeHintRung, CodingRunScope, CodingStage, ExampleVerdict};
+use crate::practice::coding::policy::CodingCue;
 use crate::practice::coding::problem::{
     self as coding, CodingSetting, CodingTask, Problem, ProblemCase, ProblemSpec,
 };
 use crate::practice::kinds::program::KIND;
+use crate::practice::practical_dto::LearningPracticalRunStatus;
+use crate::practice::session::policy::Cue;
 use lattice_core::domain::learning::practice::work::{
-    self, Brief, Case, CheckScope, Exercise, Form, KindId, LearnerCaseVerdict, Misreading, Piece,
-    Rung, Setting, Stage,
+    self, Brief, Case, CheckScope, CheckStatus, Exercise, Form, KindId, LearnerCaseVerdict,
+    Misreading, Piece, Rung, Setting, Stage,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
@@ -96,7 +99,7 @@ fn difficulty_of(difficulty: coding::ProblemDifficulty) -> work::Difficulty {
     }
 }
 
-fn spec_difficulty_of(difficulty: work::Difficulty) -> coding::ProblemDifficulty {
+pub fn spec_difficulty_of(difficulty: work::Difficulty) -> coding::ProblemDifficulty {
     match difficulty {
         work::Difficulty::Easy => coding::ProblemDifficulty::Easy,
         work::Difficulty::Medium => coding::ProblemDifficulty::Medium,
@@ -447,5 +450,29 @@ pub fn verdict_of(verdict: ExampleVerdict) -> LearnerCaseVerdict {
         ExampleVerdict::Right => LearnerCaseVerdict::Right,
         ExampleVerdict::Wrong => LearnerCaseVerdict::Wrong,
         ExampleVerdict::Invalid => LearnerCaseVerdict::Invalid,
+    }
+}
+
+/// The engine's cue as the coding code stores it.
+pub fn coding_cue_of(_cue: &Cue) -> CodingCue {
+    CodingCue::Idle
+}
+
+/// The cue the coding code stored, in the engine's words.
+pub fn cue_of(_cue: &CodingCue) -> Cue {
+    Cue::Idle
+}
+
+/// How a run stands, as a check stands.
+pub fn check_status_of(status: LearningPracticalRunStatus) -> CheckStatus {
+    match status {
+        LearningPracticalRunStatus::Pending => CheckStatus::Pending,
+        LearningPracticalRunStatus::Running => CheckStatus::Running,
+        LearningPracticalRunStatus::Passed => CheckStatus::Passed,
+        LearningPracticalRunStatus::Failed => CheckStatus::Failed,
+        LearningPracticalRunStatus::TimedOut => CheckStatus::TimedOut,
+        LearningPracticalRunStatus::Cancelled => CheckStatus::Cancelled,
+        LearningPracticalRunStatus::Interrupted => CheckStatus::Interrupted,
+        LearningPracticalRunStatus::RuntimeUnavailable => CheckStatus::Unavailable,
     }
 }

@@ -2,6 +2,7 @@
 
 use crate::practice::coding::proof::MIN_KILLED_MISREADINGS;
 use crate::practice::kinds::program::account::ProgramAccount;
+use crate::practice::kinds::program::budget::ProgramBudget;
 use crate::practice::kinds::program::checker::ProgramChecker;
 use crate::practice::kinds::program::diff::ProgramDiff;
 use crate::practice::kinds::program::hinting::ProgramHinting;
@@ -18,6 +19,7 @@ use lattice_core::domain::learning::practice::work::{KindId, Spacing};
 use std::sync::Arc;
 
 pub mod account;
+pub mod budget;
 pub mod checker;
 pub mod diff;
 pub mod hinting;
@@ -62,6 +64,7 @@ pub fn kind(tools: Arc<dyn Toolchains>) -> Kind {
         }),
         rubric: Arc::new(ProgramRubric),
         account: Arc::new(ProgramAccount),
+        budget: Arc::new(ProgramBudget),
         checker: Arc::new(ProgramChecker {
             tools: tools.clone(),
         }),

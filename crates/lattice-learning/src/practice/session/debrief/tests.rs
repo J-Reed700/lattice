@@ -8,8 +8,8 @@ use crate::practice::session::record::{
     DebriefSession, EventKind, SessionCheck, SessionEvent, SessionHint, SessionLearnerCase,
 };
 use lattice_core::domain::learning::practice::work::{
-    CaseResult, CaseStatus, CheckReport, CheckScope, Form, LearnerCaseVerdict, PartRef, Piece,
-    Rung, Setting, Stage,
+    CaseResult, CaseStatus, CheckReport, CheckScope, CheckStatus, Form, LearnerCaseVerdict,
+    PartRef, Piece, Rung, Setting, Stage,
 };
 use serde_json::{json, Value};
 
@@ -51,6 +51,8 @@ fn check(id: &str, scope: CheckScope, slots: &[&str], status: CaseStatus) -> Ses
             detail: Value::Null,
         },
         at: 0,
+        status: CheckStatus::Passed,
+        cases: Vec::new(),
     }
 }
 
@@ -60,6 +62,7 @@ fn hint(ordinal: u32, rung: Rung) -> SessionHint {
         rung,
         text: "Look at the second slot.".to_owned(),
         stage: Stage::Make,
+        check_id: None,
     }
 }
 
@@ -91,6 +94,7 @@ fn session() -> DebriefSession {
             ordinal: 0,
             body: json!({"letter": "a"}),
             verdict: LearnerCaseVerdict::Right,
+            catches: Vec::new(),
         }],
         hints: vec![hint(0, Rung::Nudge)],
         events: Vec::new(),

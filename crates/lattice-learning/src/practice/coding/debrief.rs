@@ -24,7 +24,7 @@ use crate::practice::session::record::{
 };
 use async_trait::async_trait;
 use lattice_core::application::ports::LLMPort;
-use lattice_core::domain::learning::practice::work::CheckReport;
+use lattice_core::domain::learning::practice::work::{CheckReport, CheckStatus};
 use lattice_core::domain::learning::practice::{Scorecard, ScorecardEvidence, ScorecardRow};
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
@@ -128,24 +128,32 @@ fn hint_of(hint: &CodeHintDto) -> SessionHint {
         rung: rung_of(hint.rung),
         text: hint.text.clone(),
         stage: stage_of(hint.stage),
+        check_id: None,
     }
 }
 
 fn check_of(run: &EvidenceRun) -> Result<SessionCheck> {
+    let report = CheckReport {
+        results: run
+            .results
+            .iter()
+            .map(result_of)
+            .collect::<Result<Vec<_>>>()?,
+        marks: Vec::new(),
+        detail: Value::Null,
+    };
     Ok(SessionCheck {
         id: run.run_id.clone(),
         scope: scope_of(run.scope),
         piece: piece_of(&run.files)?,
-        report: CheckReport {
-            results: run
-                .results
-                .iter()
-                .map(result_of)
-                .collect::<Result<Vec<_>>>()?,
-            marks: Vec::new(),
-            detail: Value::Null,
+        status: if report.all_passed() {
+            CheckStatus::Passed
+        } else {
+            CheckStatus::Failed
         },
+        report,
         at: run.created_at,
+        cases: Vec::new(),
     })
 }
 
@@ -167,6 +175,7 @@ fn engine_session(evidence: &SessionEvidence) -> Result<DebriefSession> {
                 ordinal: example.ordinal,
                 body: json!({"args": example.args, "expected": example.expected}),
                 verdict: verdict_of(example.verdict),
+                catches: Vec::new(),
             })
             .collect(),
         hints: evidence.hints.iter().map(hint_of).collect(),
