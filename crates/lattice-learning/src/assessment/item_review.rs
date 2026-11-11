@@ -33,6 +33,25 @@ pub(crate) struct Context<'a> {
     pub learner_has: &'a [String],
 }
 
+/// What review found on one item. A repeat is kept apart from a defect: it
+/// says the bank already holds the decision, not that the item is badly made.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct Findings {
+    pub defects: Vec<String>,
+    pub repeats: Vec<String>,
+}
+
+impl Findings {
+    pub fn is_sound(&self) -> bool {
+        self.defects.is_empty() && self.repeats.is_empty()
+    }
+
+    /// Every finding, defects first, as the repair request and the drop reason carry them.
+    pub fn texts(&self) -> Vec<String> {
+        self.defects.iter().chain(&self.repeats).cloned().collect()
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Check {
@@ -272,27 +291,27 @@ fn complete(checks: &[Check], wanted: &[String]) -> bool {
             .all(|c| !c.has_defect || !c.finding.trim().is_empty())
 }
 
-/// What is wrong with each entry, in entry order; an empty list is a sound
+/// What is wrong with each entry, in entry order; no findings is a sound
 /// item. A disagreeing blind solution, a defect the judge names and a repeat
 /// of a question the learner has or of an earlier new item are all findings.
 pub(crate) async fn review(
     llm: &dyn LLMPort,
     entries: &[Entry<'_>],
     context: &Context<'_>,
-) -> Result<Vec<Vec<String>>> {
+) -> Result<Vec<Findings>> {
     if entries.is_empty() {
         return Ok(vec![]);
     }
     let pairs: Vec<(&Item, &str)> = entries.iter().map(|e| (e.item, e.quote)).collect();
     let solutions = key_review::solve_items(llm, &pairs).await?;
-    let mut findings: Vec<Vec<String>> = vec![vec![]; entries.len()];
+    let mut findings: Vec<Findings> = vec![Findings::default(); entries.len()];
     let mut items = Vec::new();
     for (position, (entry, solution)) in entries.iter().zip(&solutions).enumerate() {
         if let (KeyVerdict::Disputed(reason), Some(slot)) = (
             key_review::compare(entry.item, solution),
             findings.get_mut(position),
         ) {
-            slot.push(reason);
+            slot.defects.push(reason);
         }
         items.push(item_json(position, entry, solution));
     }
@@ -334,7 +353,7 @@ pub(crate) async fn review(
                 continue;
             };
             if let (true, Some(slot)) = (check.has_defect, findings.get_mut(position)) {
-                slot.push(check.finding.trim().to_owned());
+                slot.defects.push(check.finding.trim().to_owned());
             }
             repeats.entry(position).or_default().extend(check.repeats);
         }
@@ -350,7 +369,7 @@ fn add_repeats(
     entries: &[Entry<'_>],
     context: &Context<'_>,
     repeats: &BTreeMap<usize, BTreeSet<String>>,
-    findings: &mut [Vec<String>],
+    findings: &mut [Findings],
 ) {
     let mut later: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
     for (position, ids) in repeats {
@@ -362,7 +381,7 @@ fn add_repeats(
                 if let (Some(prompt), Some(slot)) =
                     (context.learner_has.get(n), findings.get_mut(*position))
                 {
-                    slot.push(format!(
+                    slot.repeats.push(format!(
                         "It asks for the same decision as a question the learner already has: “{prompt}”."
                     ));
                 }
@@ -381,7 +400,7 @@ fn add_repeats(
     for (position, earlier) in later {
         for other in earlier {
             if let (Some(entry), Some(slot)) = (entries.get(other), findings.get_mut(position)) {
-                slot.push(format!(
+                slot.repeats.push(format!(
                     "It asks for the same decision as another new question: “{}”.",
                     entry.item.prompt
                 ));
