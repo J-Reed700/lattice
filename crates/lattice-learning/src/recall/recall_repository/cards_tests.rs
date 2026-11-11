@@ -281,10 +281,10 @@ async fn edits_are_revision_guarded_versioned_and_mirrored_into_the_deck() -> Re
         change_reason: "Turn into a quiz".into(),
         ..first.clone()
     };
-    assert_invalid(recall.save_card(&edit(None)).await);
-    assert_invalid(recall.save_card(&edit(Some(0))).await);
+    tests::assert_conflict(recall.save_card(&edit(None)).await);
+    tests::assert_conflict(recall.save_card(&edit(Some(0))).await);
     recall.save_card(&edit(Some(1))).await?;
-    assert_invalid(recall.save_card(&edit(Some(1))).await);
+    tests::assert_conflict(recall.save_card(&edit(Some(1))).await);
 
     let edited = recall.workspace(&pid).await?;
     let card = &edited.cards[0];
@@ -383,6 +383,7 @@ async fn reviews_must_fit_the_card_format_and_the_program() -> Result<()> {
     recall
         .review_card(&review(&pid, &free.card_id, None))
         .await?;
+    tests::assert_conflict(recall.review_card(&review(&pid, &free.card_id, None)).await);
     let reviewed = recall
         .review_card(&review(&pid, &quiz.card_id, Some(2)))
         .await?;

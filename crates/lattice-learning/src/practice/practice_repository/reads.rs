@@ -1,5 +1,6 @@
 //! Reading the practice workspace and sessions back into DTOs, and replay checks.
 use super::*;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::SqliteConnection;
 
@@ -98,7 +99,7 @@ impl LearningPracticeRepository {
                 .unwrap_or_default(),
             sha256: row
                 .get::<Option<String>, _>("artifact_sha")
-                .unwrap_or_else(|| hash_text("")),
+                .unwrap_or_else(|| sha256_hex("")),
             updated_at: row
                 .get::<Option<i64>, _>("artifact_updated")
                 .unwrap_or(summary.created_at),
@@ -287,7 +288,7 @@ impl LearningPracticeRepository {
             return Err(invalid("Submitted practice attempts are immutable."));
         }
         if session.summary.revision != expected_revision {
-            return Err(invalid("Practice session changed; reload and retry."));
+            return Err(conflict("Practice session changed; reload and retry."));
         }
         if !allow_demonstrate && session.summary.mode == LearningPracticeMode::Demonstrate {
             return Err(invalid("This aid is unavailable in Demonstrate mode."));

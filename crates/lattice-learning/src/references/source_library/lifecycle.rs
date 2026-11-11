@@ -2,6 +2,7 @@
 use super::repository::{self, lifecycle as stored, SourceVersionInsert};
 use super::*;
 use crate::references::trust;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Transactions;
 
 impl LearningSourceLibraryRepository {
@@ -38,7 +39,7 @@ impl LearningSourceLibraryRepository {
             .ok_or_else(|| AppError::NotFound("Learning source not found".into()))?;
         let revision = row.revision;
         if revision != req.expected_revision {
-            return Err(invalid("Source changed; reload and retry."));
+            return Err(conflict("Source changed; reload and retry."));
         }
         if row.pending_version_id.as_deref() != Some(&req.version_id) {
             return Err(invalid("Only the pending source version can be adopted."));
@@ -59,7 +60,7 @@ impl LearningSourceLibraryRepository {
             )
             .await?
         {
-            return Err(invalid("Source changed; reload and retry."));
+            return Err(conflict("Source changed; reload and retry."));
         }
         source_operation(
             &req.operation_id,
@@ -111,7 +112,7 @@ impl LearningSourceLibraryRepository {
             .ok_or_else(|| AppError::NotFound("Learning source not found".into()))?;
         let revision = row.revision;
         if revision != req.expected_revision {
-            return Err(invalid("Source changed; reload and retry."));
+            return Err(conflict("Source changed; reload and retry."));
         }
         if row.kind != "web" && req.freshness_policy != LearningSourcePolicy::Fixed {
             return Err(invalid("Document and pasted sources use the fixed policy"));
@@ -132,7 +133,7 @@ impl LearningSourceLibraryRepository {
             )
             .await?
         {
-            return Err(invalid("Source changed; reload and retry."));
+            return Err(conflict("Source changed; reload and retry."));
         }
         source_operation(
             &req.operation_id,
@@ -182,7 +183,7 @@ impl LearningSourceLibraryRepository {
             .await?
             .ok_or_else(|| AppError::NotFound("Learning source not found".into()))?;
         if row.revision != req.expected_revision {
-            return Err(invalid("Source changed; reload and retry."));
+            return Err(conflict("Source changed; reload and retry."));
         }
         if row.deleted_at.is_some() {
             return Err(invalid("This source is already removed."));
@@ -197,7 +198,7 @@ impl LearningSourceLibraryRepository {
         )
         .await?
         {
-            return Err(invalid("Source changed; reload and retry."));
+            return Err(conflict("Source changed; reload and retry."));
         }
         crate::lessons::claim_reviews::source_deleted::reopen_for_deleted_source(
             &mut tx,
@@ -264,7 +265,7 @@ impl LearningSourceLibraryRepository {
             .ok_or_else(|| AppError::NotFound("Learning source not found".into()))?;
         let revision = source.revision;
         if revision != req.expected_revision {
-            return Err(invalid("Source changed; reload and retry."));
+            return Err(conflict("Source changed; reload and retry."));
         }
         if source.deleted_at.is_none() {
             return Err(invalid("Only a removed source can be re-imported."));
@@ -283,7 +284,7 @@ impl LearningSourceLibraryRepository {
         if text.trim().is_empty() {
             return Err(invalid("Re-imported source text must not be empty."));
         }
-        let digest_value = hash_text(&text);
+        let digest_value = sha256_hex(&text);
         let existing = repository::version_with_digest(
             &mut tx,
             &req.program_id,
@@ -365,7 +366,7 @@ impl LearningSourceLibraryRepository {
         )
         .await?
         {
-            return Err(invalid("Source changed; reload and retry."));
+            return Err(conflict("Source changed; reload and retry."));
         }
         portability_operation(&req.operation_id, &req.program_id, "reimport_source", &hash)
             .record(&mut tx, &Some(&active_version))

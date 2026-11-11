@@ -8,6 +8,7 @@ use super::repository::{
 };
 use super::*;
 use crate::references::trust;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::http::url_identity::identity;
 use lattice_core::shared::persistence::{Transactions, WriteTx};
 
@@ -153,7 +154,7 @@ impl LearningSourceLibraryRepository {
         {
             return Ok(SelectedSaved::Added);
         }
-        let text_digest = hash_text(&full_text);
+        let text_digest = sha256_hex(&full_text);
         if selection.as_ref().is_some_and(|selection| selection.once) {
             if let Some(version_id) = held_page(
                 &mut tx,
@@ -343,7 +344,7 @@ impl LearningSourceLibraryRepository {
             .ok_or_else(|| AppError::NotFound("Learning source not found".into()))?;
         let revision = src.revision;
         if revision != req.expected_revision {
-            return Err(invalid("Source changed; reload and retry."));
+            return Err(conflict("Source changed; reload and retry."));
         }
         if src.kind != "web" {
             return Err(invalid("Only web sources can be refreshed"));
@@ -385,7 +386,7 @@ impl LearningSourceLibraryRepository {
             } else {
                 let title = captured.title.trim();
                 let publisher = captured.publisher.as_deref();
-                let new_digest = hash_text(&text);
+                let new_digest = sha256_hex(&text);
                 if active_digest.as_deref() == Some(new_digest.as_str()) {
                     (LearningSourceCheckStatus::Unchanged, None, None)
                 } else {
@@ -480,7 +481,7 @@ impl LearningSourceLibraryRepository {
             )
             .await?
         {
-            return Err(invalid("Source changed; reload and retry."));
+            return Err(conflict("Source changed; reload and retry."));
         }
         let result_version = pending_id.as_deref();
         source_operation(

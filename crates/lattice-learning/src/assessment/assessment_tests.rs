@@ -699,6 +699,75 @@ pub(crate) async fn take_quiz(
 }
 
 #[tokio::test]
+async fn a_quiz_that_changed_since_it_was_loaded_is_reported_as_a_conflict() -> Result<()> {
+    let pool = migrated().await?;
+    let program = crate::tests::fixture();
+    let programs = LearningRepository::new(pool.clone());
+    programs.create(&program).await?;
+    programs
+        .accept(&AcceptLearningProgramRequestDto {
+            program_id: program.summary.id.clone(),
+            expected_revision: 0,
+            title: program.summary.title.clone(),
+        })
+        .await?;
+    let program_id = program.summary.id.clone();
+    let lesson_id = program.modules[0].lessons[0].id.clone();
+    programs
+        .prepare(
+            &program_id,
+            &lesson_id,
+            1,
+            &crate::tests::prepared(&lesson_id),
+        )
+        .await?;
+    let scope = LearningQuizScopeDto {
+        kind: LearningQuizScopeKind::Lesson,
+        id: Some(lesson_id),
+    };
+    fill_bank(&pool, &program_id, &scope).await?;
+    let repo = LearningAssessmentRepository::new(pool.clone());
+    let form_id = id();
+    let form = repo
+        .start_quiz(
+            &StartLearningQuizRequestDto {
+                operation_id: id(),
+                form_id: form_id.clone(),
+                program_id: program_id.clone(),
+                scope,
+                mode: LearningQuizMode::Graded,
+                retake_of_form_id: None,
+            },
+            "start",
+        )
+        .await?;
+    let stale = form.revision + 1;
+    let mutate = || MutateLearningAssessmentFormRequestDto {
+        operation_id: id(),
+        program_id: program_id.clone(),
+        form_id: form_id.clone(),
+        expected_revision: stale,
+    };
+    crate::tests::assert_conflict(
+        repo.save_response(
+            &SaveLearningAssessmentResponseRequestDto {
+                operation_id: id(),
+                program_id: program_id.clone(),
+                form_id: form_id.clone(),
+                expected_revision: stale,
+                response: engine::LearningAssessmentResponse::empty(form.items[0].id.clone()),
+                assistance: vec![],
+            },
+            "stale-answer",
+        )
+        .await,
+    );
+    crate::tests::assert_conflict(repo.interrupt(&mutate(), "stale-interrupt").await);
+    crate::tests::assert_conflict(repo.submit(&mutate(), "stale-submit").await);
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_lesson_quiz_grades_keyed_answers_at_once_and_waits_for_written_ones() -> Result<()> {
     let pool = migrated().await?;
     let program = crate::tests::fixture();

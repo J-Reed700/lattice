@@ -64,6 +64,15 @@ pub trait CodeRunner: Send + Sync {
         test: &str,
         cancel: CancellationToken,
     ) -> Result<RunOutcome>;
+
+    /// Runs `files` as they are, `read_only_paths` unwritable to the run, and returns how it ended with what it
+    /// wrote to standard output.
+    async fn run_capturing(
+        &self,
+        files: &[LearningLabFile],
+        read_only_paths: &[String],
+        cancel: CancellationToken,
+    ) -> Result<(RunOutcome, String)>;
 }
 
 const PYTHON_CONTRACT: &str = "Programs run on CPython 3.14 in a sandbox: the standard library only, no packages, no network, no threads or subprocesses, and no writing to the file system. Files import each other from the project root: src/limiter.py is imported as `from src.limiter import RateLimiter`, and no __init__.py is needed. A test fails by raising an exception, as `assert` does.";
@@ -146,6 +155,23 @@ impl CodeRunner for BuiltinRunner {
         };
         let result = self.runtimes.execute(spec, cancel).await?;
         Ok(outcome_of(&result))
+    }
+
+    async fn run_capturing(
+        &self,
+        files: &[LearningLabFile],
+        read_only_paths: &[String],
+        cancel: CancellationToken,
+    ) -> Result<(RunOutcome, String)> {
+        let spec = BuiltinLabExecutionSpec {
+            run_id: uuid::Uuid::new_v4().to_string(),
+            runtime: self.runtime,
+            files: files.to_vec(),
+            read_only_paths: read_only_paths.to_vec(),
+            limits: LearningLabLimits::default(),
+        };
+        let result = self.runtimes.execute(spec, cancel).await?;
+        Ok((outcome_of(&result), result.stdout))
     }
 }
 

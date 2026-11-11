@@ -26,17 +26,13 @@ import type {
   SearchLearningSourcesSemanticallyRequestDto,
 } from '@/lib/bindings';
 import { flushPendingSaves } from '@/lib/pendingSaves';
+import { unwrapApiResult as unwrap } from '@/types/api/result';
 
 export const LEARNING_PORTABILITY_PREFIX = ['learning-portability'] as const;
 export const learningPortabilityKey = (programId: string) => [...LEARNING_PORTABILITY_PREFIX, programId] as const;
 export { learningRecallKey } from '@/features/learning/api/learningQueryKeys';
 export const semanticSourcesKey = (request: SearchLearningSourcesSemanticallyRequestDto | null) =>
   ['learning-semantic-sources', request?.programId, request?.query, request?.limit] as const;
-
-function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string }): T {
-  if (!result.ok) throw new Error(result.error);
-  return result.data;
-}
 
 export function useLearningPortability(programId: string) {
   const api = useApi();

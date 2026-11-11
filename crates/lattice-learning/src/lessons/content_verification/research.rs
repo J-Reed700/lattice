@@ -588,8 +588,8 @@ async fn research<'a>(
     );
     let search_key = format!(
         "research-v1:{}",
-        digest(
-            &json!({"topic":context.topic,
+        sha256_hex(
+            json!({"topic":context.topic,
         "model":llm.model_name(),"policy":POLICY})
             .to_string()
         )

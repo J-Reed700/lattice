@@ -73,6 +73,23 @@ async fn review_in(
     write_in(connection, table, key, &after).await
 }
 
+/// Moves the schedule of `pattern` under `material` on by one review rated `rating` at `now`, landing before `target`
+/// while it is ahead, and returns the schedule it now has.
+pub(crate) async fn review_pattern_in(
+    connection: &mut SqliteConnection,
+    material: &str,
+    pattern: &str,
+    rating: PatternRating,
+    now: i64,
+    target: Option<i64>,
+) -> Result<CardSchedule> {
+    let key = (material, pattern);
+    let before = read_in(connection, &PATTERNS, key, now).await?;
+    let after = before.review(study_rating(rating), now, target)?;
+    write_in(connection, &PATTERNS, key, &after).await?;
+    Ok(after)
+}
+
 /// Moves the schedule of each pattern `ratings` rate by one review, and the lesson's when `lesson` is rated and the
 /// drill was built from one. Call inside the transaction that records the grade.
 pub(crate) async fn record_in(

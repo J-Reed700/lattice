@@ -4,15 +4,7 @@ use chrono::{DateTime, Utc};
 use url::Url;
 
 use super::envelope;
-
-fn escape_html(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
-}
+use crate::infrastructure::extraction::markup::escape_html;
 
 /// Builds a clean, self-contained archival HTML document from extracted text.
 /// `None` when there is no text to keep or `url` does not parse.

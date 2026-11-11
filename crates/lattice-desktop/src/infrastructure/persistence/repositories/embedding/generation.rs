@@ -1,12 +1,8 @@
 //! Resumable preparation of a new vector space. Existing vectors remain untouched.
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::embedding_encoding;
-use sha2::{Digest, Sha256};
-
-pub fn content_hash(text: &str) -> String {
-    format!("{:x}", Sha256::digest(text.as_bytes()))
-}
 
 pub async fn chunk_page_after(
     pool: &impl DriverPool,
@@ -108,7 +104,7 @@ pub async fn restore_page(
     for (id, bytes, doc_id, hash, source) in rows {
         if hash
             .as_ref()
-            .is_some_and(|expected| *expected != content_hash(&source))
+            .is_some_and(|expected| *expected != sha256_hex(&source))
         {
             continue;
         }
@@ -167,7 +163,7 @@ mod tests {
                 .unwrap();
             sqlx::query("INSERT INTO embedding_generation_vectors (model_identity, chunk_id, content_hash, embedding, dimension) VALUES ('new', ?, ?, ?, 2)")
                 .bind(&id)
-                .bind(content_hash(&text))
+                .bind(sha256_hex(&text))
                 .bind(embedding_encoding::encode_embedding(&[1.0, 0.0]))
                 .execute(&pool)
                 .await

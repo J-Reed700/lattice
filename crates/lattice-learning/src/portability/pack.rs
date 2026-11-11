@@ -6,6 +6,7 @@
 //! treated as hostile input on every platform.
 
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::hash::sha256_hex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
@@ -118,10 +119,6 @@ pub struct DecodedLearningPack {
 
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
-}
-
-fn sha256(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
 }
 
 /// Validate against both Unix and Windows path syntax even when decoding on a
@@ -422,7 +419,7 @@ pub fn encode_learning_pack(mut input: LearningPackInput) -> Result<Vec<u8>> {
         manifest_entries.push(LearningPackManifestEntry {
             path: entry.path.clone(),
             kind: entry.kind.clone(),
-            sha256: sha256(&entry.bytes),
+            sha256: sha256_hex(&entry.bytes),
             bytes: entry.bytes.len() as u64,
         });
     }
@@ -597,7 +594,7 @@ pub fn decode_learning_pack(compressed: &[u8]) -> Result<DecodedLearningPack> {
         let bytes = content
             .get(&expected.path)
             .ok_or_else(|| invalid("A learning-pack entry is missing."))?;
-        if bytes.len() as u64 != expected.bytes || sha256(bytes) != expected.sha256 {
+        if bytes.len() as u64 != expected.bytes || sha256_hex(bytes) != expected.sha256 {
             return Err(invalid(format!(
                 "Learning-pack entry '{}' failed checksum validation.",
                 expected.path

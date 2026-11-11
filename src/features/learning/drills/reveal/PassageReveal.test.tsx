@@ -58,6 +58,7 @@ function passage(patch: Partial<CodeReviewResultDto> = {}): CodeReviewResultDto 
       material: { kind: 'passage', sourceTitle: 'Spacing and memory' },
       files: [{ path: 'explanation.md', text: REVIEWED }],
       lesson: null,
+      issues: 3,
     },
     findings: [{ span: { path: 'explanation.md', start: 2, end: 2 }, text: 'It is 14%.', severity: null }],
     reveal: revealOf({
