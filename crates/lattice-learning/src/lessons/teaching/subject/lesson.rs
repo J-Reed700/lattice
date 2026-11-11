@@ -18,7 +18,8 @@ use crate::lessons::text_edits::{self, Named};
 use crate::outline_progress::OutlineProgress;
 use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::{
-    new_sentences, part_at, plain_part, sentences_of, FindingSite, Held, ReviewFinding, SetAside,
+    new_sentences, part_at, plain_part, sentences_of, FindingId, FindingSite, Held, ReviewFinding,
+    SetAside,
 };
 use crate::teaching_review::LengthRule;
 use lattice_core::{
@@ -443,7 +444,7 @@ impl LessonSubject<'_> {
                     })
                     .map(|(_, _, sentence)| sentence.clone());
                 let words: Vec<String> = written.chain(sentences_of(previous, finding)).collect();
-                self.worked_on(finding, words);
+                self.worked_on(&id, words);
             }
         }
         Ok(if value == *previous {
@@ -496,10 +497,9 @@ impl LessonSubject<'_> {
 
     /// Tells the budgets and the reviewer's findings what an applied repair
     /// worked on for `id`.
-    fn worked_on(&mut self, finding: &ReviewFinding, sentences: Vec<String>) {
-        self.standing
-            .worked_on(&finding.id(), sentences.iter().cloned());
-        self.passes.worked_on(finding, sentences);
+    fn worked_on(&mut self, id: &FindingId, sentences: Vec<String>) {
+        self.standing.worked_on(id, sentences.iter().cloned());
+        self.passes.worked_on(id, sentences);
     }
 
     /// What a rewrite puts its findings' words through: the sentences it wrote
@@ -520,13 +520,13 @@ impl LessonSubject<'_> {
                 owners
             };
             for owner in owners {
-                self.worked_on(owner, sentences.clone());
+                self.worked_on(&owner.id(), sentences.clone());
             }
         }
         for finding in send {
             let site = finding.site.unwrap_or(FindingSite::Lesson);
             if part_at(previous, site) != part_at(repaired, site) {
-                self.worked_on(finding, sentences_of(previous, finding));
+                self.worked_on(&finding.id(), sentences_of(previous, finding));
             }
         }
     }

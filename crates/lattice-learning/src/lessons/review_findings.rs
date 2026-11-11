@@ -462,17 +462,6 @@ impl ReviewFinding {
             )
     }
 
-    /// Whether the lesson lacks teaching, which its correction adds without changing any existing sentence.
-    pub fn adds(&self) -> bool {
-        matches!(
-            self.origin,
-            Origin::Plan {
-                check: PlanCheck::Used | PlanCheck::Planned,
-                ..
-            }
-        )
-    }
-
     /// This finding's identity: the same across passes while the same defect
     /// is raised, whatever its note says.
     pub fn id(&self) -> FindingId {

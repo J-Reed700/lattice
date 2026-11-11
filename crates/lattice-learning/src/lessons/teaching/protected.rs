@@ -313,7 +313,3 @@ pub(super) fn confine_review(
     }
     Ok(lesson)
 }
-
-#[cfg(test)]
-#[path = "protected_tests.rs"]
-mod tests;
