@@ -114,7 +114,7 @@ pub(crate) const CONTRACT_NOTHING: &str =
 pub(crate) const CONFIRM_PLANNED_NOTHING: &str =
     "{\"taught\":false,\"quote\":\"\",\"belongs\":\"\"}";
 pub(crate) const CONFIRM_USE_NOTHING: &str =
-    "{\"taught\":false,\"where\":\"thisLesson\",\"quote\":\"\"}";
+    "{\"asked\":true,\"taught\":false,\"where\":\"thisLesson\",\"quote\":\"\"}";
 
 /// The fixture's replies to [`fixture_prompts`], answered in the typed
 /// protocol: one batched reply, a check's verdict as its last line, or the
