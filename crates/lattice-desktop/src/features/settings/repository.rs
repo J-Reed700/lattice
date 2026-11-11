@@ -535,10 +535,6 @@ impl SettingsRepositoryPort for SettingsRepository {
     }
 
     async fn export(&self, path: &str) -> Result<()> {
-        // The remote servers' auth header values are bearer tokens in the
-        // keyring and are never serialized, so an export carries the header
-        // names only; an import keeps this machine's values (see
-        // `drop_unbacked_header_names`).
         let settings = self.get_all().await?;
 
         let json = serde_json::to_string_pretty(&settings)
