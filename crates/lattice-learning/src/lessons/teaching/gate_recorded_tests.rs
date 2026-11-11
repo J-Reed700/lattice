@@ -132,6 +132,21 @@ fn gate_answer(left_to: &str) -> String {
     json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"leftTo":left_to,"reason":"The explanation contradicts the sum it states."}]}).to_string()
 }
 
+fn gate_not_established(left_to: &str) -> String {
+    json!({"decisions":[{"issueId":"issue-0","verdict":"not_established","basis":"internal_conflict","evidenceIds":[],"partId":"lesson","requirementId":null,"leftTo":left_to,"reason":"Nothing in the explanation shows it."}]}).to_string()
+}
+
+/// `reply` with the plan check's ruling on each report: whether each is about a kind it decides.
+fn about(reply: &str, about: &[bool]) -> String {
+    let mut reply: Value = serde_json::from_str(reply).unwrap();
+    reply["reports"] = about
+        .iter()
+        .enumerate()
+        .map(|(index, about)| json!({"report":format!("report-{index}"),"about":about}))
+        .collect();
+    reply.to_string()
+}
+
 async fn run(model: &dyn LLMPort, candidate: &Value) -> Result<Reviewed> {
     let sources = vec![crate::dto::LearningSourceDto {
         id: "saved-reference".into(),
@@ -228,7 +243,10 @@ async fn a_reviewer_finding_about_what_the_plan_check_decides_is_left_to_it_when
             gate_answer("check-1"),
             clean(1),
         ],
-        Vec::new(),
+        vec![
+            CONTRACT_NOTHING.to_owned(),
+            about(CONTRACT_NOTHING, &[true]),
+        ],
     );
     let candidate = json!({"blocks":[block("Example", FIRST, EXCERPT)],"questions":[]});
     let reviewed = run(&model, &candidate).await?;
@@ -264,7 +282,10 @@ const TWICE: &str = "The beads are counted twice on one day.";
 
 /// The plan check lists a contradiction between two sentences of the beads lesson.
 fn contradiction() -> String {
-    json!({"planned":[],"usedBeforeTaught":[],"contradictions":[{"quote":ONCE,"otherQuote":TWICE}],"unseen":[]}).to_string()
+    about(
+        &json!({"planned":[],"usedBeforeTaught":[],"contradictions":[{"quote":ONCE,"otherQuote":TWICE}],"unseen":[]}).to_string(),
+        &[true],
+    )
 }
 
 fn beads() -> Value {
@@ -332,7 +353,7 @@ async fn a_finding_left_to_the_question_review_is_not_given_to_the_plan_check() 
     let model = routed(
         vec![
             reporting(REVIEWER_ONLY, 2),
-            gate_answer("check-0"),
+            gate_not_established("check-0"),
             clean(2),
         ],
         vec![CONTRACT_NOTHING.to_owned(), contradiction()],
@@ -391,10 +412,136 @@ async fn a_report_the_plan_check_does_not_hold_up_repairs_nothing() -> Result<()
             gate_answer("check-1"),
             clean(2),
         ],
-        Vec::new(),
+        vec![
+            CONTRACT_NOTHING.to_owned(),
+            about(CONTRACT_NOTHING, &[true]),
+        ],
     );
     let reviewed = run(&model, &beads()).await?;
     assert!(reviewed.set_aside.is_empty());
     assert!(repair_requests(&model).is_empty());
+    Ok(())
+}
+
+fn single() -> Value {
+    json!({"blocks":[block("Example", FIRST, EXCERPT)],"questions":[]})
+}
+
+/// The one repair the gate's finding reached, when it did.
+fn reached_repair(model: &Routed) -> bool {
+    let asked = repair_requests(model);
+    assert!(asked.len() <= 1, "{asked:?}");
+    asked
+        .first()
+        .is_some_and(|request| request["issuesToFix"].to_string().contains(REVIEWER_ONLY))
+}
+
+#[tokio::test]
+async fn a_report_the_plan_check_says_is_of_another_kind_stands_on_the_gates_verdict() -> Result<()>
+{
+    let model = routed(
+        vec![
+            reporting(REVIEWER_ONLY, 1),
+            gate_answer("check-1"),
+            repair_edit(),
+            clean(1),
+        ],
+        vec![
+            CONTRACT_NOTHING.to_owned(),
+            about(CONTRACT_NOTHING, &[false]),
+        ],
+    );
+    run(&model, &single()).await?;
+    assert!(reached_repair(&model));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_report_the_plan_check_says_is_of_its_kind_and_leaves_out_is_not_repaired() -> Result<()>
+{
+    let model = routed(
+        vec![
+            reporting(REVIEWER_ONLY, 1),
+            gate_answer("check-1"),
+            clean(1),
+        ],
+        vec![
+            CONTRACT_NOTHING.to_owned(),
+            about(CONTRACT_NOTHING, &[true]),
+        ],
+    );
+    let reviewed = run(&model, &single()).await?;
+    assert!(reviewed.set_aside.is_empty());
+    assert!(!reached_repair(&model));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_report_the_gate_did_not_establish_is_not_repaired_even_when_it_is_of_another_kind(
+) -> Result<()> {
+    let model = routed(
+        vec![
+            reporting(REVIEWER_ONLY, 1),
+            gate_not_established("check-1"),
+            clean(1),
+        ],
+        vec![
+            CONTRACT_NOTHING.to_owned(),
+            about(CONTRACT_NOTHING, &[false]),
+        ],
+    );
+    let reviewed = run(&model, &single()).await?;
+    assert!(reviewed.set_aside.is_empty());
+    assert!(!reached_repair(&model));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_finding_left_to_the_question_review_is_repaired_when_the_gate_established_it(
+) -> Result<()> {
+    let model = routed(
+        vec![
+            reporting(REVIEWER_ONLY, 1),
+            gate_answer("check-0"),
+            repair_edit(),
+            clean(1),
+        ],
+        Vec::new(),
+    );
+    run(&model, &single()).await?;
+    assert!(reached_repair(&model));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_finding_left_to_the_question_review_is_not_repaired_when_the_gate_did_not_establish_it(
+) -> Result<()> {
+    let model = routed(
+        vec![
+            reporting(REVIEWER_ONLY, 1),
+            gate_not_established("check-0"),
+            clean(1),
+        ],
+        Vec::new(),
+    );
+    let reviewed = run(&model, &single()).await?;
+    assert!(reviewed.set_aside.is_empty());
+    assert!(!reached_repair(&model));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_finding_left_to_the_rules_is_repaired_when_the_gate_established_it() -> Result<()> {
+    let model = routed(
+        vec![
+            reporting(REVIEWER_ONLY, 1),
+            gate_answer("check-2"),
+            repair_edit(),
+            clean(1),
+        ],
+        Vec::new(),
+    );
+    run(&model, &single()).await?;
+    assert!(reached_repair(&model));
     Ok(())
 }
