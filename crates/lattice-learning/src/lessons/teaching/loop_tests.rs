@@ -3942,10 +3942,7 @@ fn a_finding_whose_edit_overlapped_another_findings_is_not_charged_and_is_told_t
         &previous,
         &[first.clone(), second.clone()],
         true,
-        Ok(Repaired::Patch {
-            patch,
-            plans: std::collections::BTreeMap::new(),
-        }),
+        Ok(Repaired::Patch(patch)),
     )?;
 
     assert!(matches!(settled, Settled::Changed(_)));

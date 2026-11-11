@@ -457,8 +457,6 @@ pub async fn review_and_repair_with_progress(
 }
 
 #[cfg(test)]
-mod answers_tests;
-#[cfg(test)]
 mod citation_tests;
 #[cfg(test)]
 mod contract_tests;

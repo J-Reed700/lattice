@@ -41,64 +41,6 @@ fn a_finding_no_edit_named_is_not_charged_and_is_told() {
     );
 }
 
-fn declined() -> Outcome {
-    Outcome::Declined("Beads are already right as written.".to_owned())
-}
-
-#[test]
-fn a_finding_the_repair_gave_no_change_for_is_charged_like_an_unnamed_one() {
-    let mut passes = Passes::default();
-    let finding = finding();
-    passes.charge(&finding, declined());
-    assert_eq!(spent(&passes, &finding), 0);
-    assert!(offered(&mut passes, &finding));
-    passes.charge(&finding, declined());
-    assert_eq!(spent(&passes, &finding), 1);
-    assert!(offered(&mut passes, &finding));
-    passes.charge(&finding, declined());
-    assert_eq!(spent(&passes, &finding), 2);
-    assert!(!offered(&mut passes, &finding));
-}
-
-#[test]
-fn a_declined_attempt_and_an_unnamed_one_in_a_row_cost_one_repair() {
-    let mut passes = Passes::default();
-    let finding = finding();
-    passes.charge(&finding, Outcome::Unnamed);
-    passes.charge(&finding, declined());
-    assert_eq!(spent(&passes, &finding), 1);
-    let mut passes = Passes::default();
-    passes.charge(&finding, declined());
-    passes.charge(&finding, Outcome::Unnamed);
-    assert_eq!(spent(&passes, &finding), 1);
-}
-
-#[test]
-fn a_declined_attempt_is_told_and_logged_with_the_plan_the_repair_gave() {
-    let mut passes = Passes::default();
-    let finding = finding();
-    passes.charge(&finding, declined());
-    assert_eq!(
-        passes.last_attempt(&finding.id()).as_deref(),
-        Some("The last repair gave no change for this finding; its plan was: \"Beads are already right as written.\"")
-    );
-    assert_eq!(
-        passes.account(&finding).attempts,
-        "the repair gave no change for it; its plan was: \"Beads are already right as written.\""
-    );
-}
-
-#[test]
-fn a_declined_attempt_survives_a_saved_review() {
-    let mut passes = Passes::default();
-    let finding = finding();
-    passes.charge(&finding, declined());
-    let saved = passes.saved().unwrap().to_string();
-    let mut resumed = Passes::default();
-    resumed.resume(&saved);
-    assert_eq!(resumed.last.get(&finding.id()), Some(&declined()));
-}
-
 #[test]
 fn a_missed_attempt_before_two_applied_ones_does_not_cost_one() {
     let mut passes = Passes::default();
