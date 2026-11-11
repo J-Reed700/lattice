@@ -116,10 +116,10 @@ impl ModelPaths {
             ));
         }
 
-        if single_file_name(model_id).is_err() {
-            return Err(AppError::InvalidInput(
-                "Invalid model ID: contains path separators or traversal".to_string(),
-            ));
+        if let Err(reason) = single_file_name(model_id) {
+            return Err(AppError::InvalidInput(format!(
+                "Invalid model ID: not a single plain file name ({reason})"
+            )));
         }
 
         Ok(())

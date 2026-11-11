@@ -92,10 +92,9 @@ impl ModelMetadata {
                 AppError::InvalidInput(format!("Invalid model_id format: {}", model_id))
             })?;
 
-            if single_file_name(filename).is_err() {
+            if let Err(reason) = single_file_name(filename) {
                 return Err(AppError::InvalidInput(format!(
-                    "Invalid filename contains path separators: {}",
-                    filename
+                    "Invalid filename: not a single plain file name ({reason}): {filename}"
                 )));
             }
 

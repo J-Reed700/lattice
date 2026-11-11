@@ -7,7 +7,7 @@ use tracing::{error, info, warn};
 
 #[derive(Debug, Error)]
 pub enum FileCleanupError {
-    #[error("Path traversal attempt detected: path {0}")]
+    #[error("Unsafe path: {0}")]
     UnsafePath(#[from] PathUnsafe),
 
     #[error("Symlink attack detected: {0} is a symbolic link")]

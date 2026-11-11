@@ -112,9 +112,9 @@ impl DeleteModelUseCase {
 
                 // Validate all filenames first (security check - prevents CWE-22 path traversal)
                 for file in &model_meta.files {
-                    if single_file_name(&file.filename).is_err() {
+                    if let Err(reason) = single_file_name(&file.filename) {
                         return Err(AppError::InvalidInput(format!(
-                            "Invalid filename contains path separators: {}",
+                            "Invalid filename: not a single plain file name ({reason}): {}",
                             file.filename
                         )));
                     }

@@ -95,7 +95,7 @@ fn test_build_download_url_prevents_path_traversal_in_filename() {
     assert!(result
         .unwrap_err()
         .to_string()
-        .contains("Invalid filename contains path separators"));
+        .contains("Invalid filename: not a single plain file name"));
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn test_build_download_url_prevents_directory_separators_in_filename() {
     assert!(result
         .unwrap_err()
         .to_string()
-        .contains("Invalid filename contains path separators"));
+        .contains("Invalid filename: not a single plain file name"));
 }
 
 #[test]

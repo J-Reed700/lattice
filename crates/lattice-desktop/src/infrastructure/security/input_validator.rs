@@ -351,7 +351,7 @@ impl InputValidator {
     /// SECURITY FIX (CWE-22): Validate model file path
     ///
     /// Comprehensive path validation to prevent:
-    /// - Path traversal attacks (../)
+    /// - Path traversal attacks (a `..` component)
     /// - Null byte injection
     /// - Invalid file extensions
     /// - Non-existent files
@@ -359,11 +359,12 @@ impl InputValidator {
     ///
     /// # Security Checks
     ///
-    /// 1. Path must exist as a regular file
-    /// 2. Must have .onnx extension (embedding models)
-    /// 3. Must not contain null bytes
-    /// 4. Must not contain .. (path traversal)
-    /// 5. The canonical path is returned
+    /// 1. Must be valid UTF-8, hold no null byte and no `..` component (`..`
+    ///    inside a name such as `v1..v2` is allowed)
+    /// 2. Must exist and not be a symlink
+    /// 3. Must be a `.gguf` or `.safetensors` file, or a directory holding
+    ///    `config.json`
+    /// 4. The canonical path is returned
     pub fn validate_model_artifact(&self, path: &std::path::Path) -> Result<std::path::PathBuf> {
         // Checks 1 and 2: valid UTF-8, no null bytes (CWE-158), no parent component (CWE-22)
         if path.to_str().is_none() {
