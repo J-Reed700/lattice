@@ -4,7 +4,7 @@
 //!
 //! Every call goes through `model_call`: sized to the model's window (a batch
 //! halves until it fits), never timed. Answer keys stay internal.
-use super::item_review::{self, Context, Entry};
+use super::item_review::{self, Context, Entry, Findings};
 use crate::assessment_engine::{
     self as engine, LearningAssessmentCandidate, LearningAssessmentKey,
     LearningBlueprintRequirement, LearningItemFormat, LearningNumericKey, LearningRubricCriterion,
@@ -412,7 +412,7 @@ async fn review_items(
     need: &AuthoringNeed,
     items: &[AuthoredItem],
     learner_has: &[String],
-) -> Result<std::result::Result<Vec<Vec<String>>, String>> {
+) -> Result<std::result::Result<Vec<Findings>, String>> {
     let candidates: Vec<LearningAssessmentCandidate> =
         items.iter().map(|i| i.candidate.clone().into()).collect();
     let entries: Vec<Entry<'_>> = candidates
@@ -459,7 +459,7 @@ async fn reviewed_round(
     let mut kept = Vec::new();
     let mut flawed = Vec::new();
     for (item, findings) in fresh.into_iter().zip(findings) {
-        if findings.is_empty() {
+        if findings.is_sound() {
             kept.push(item);
         } else {
             flawed.push((item, findings));
@@ -481,7 +481,7 @@ async fn reviewed_round(
                 "instruction": "Write a question in this one's place that has none of these defects.",
                 "question": item.candidate.prompt,
                 "options": item.candidate.options,
-                "findings": findings,
+                "findings": findings.texts(),
             })),
         };
         async move {
@@ -500,7 +500,7 @@ async fn reviewed_round(
     for ((_, findings), repair) in flawed.into_iter().zip(repaired) {
         match repair {
             Some(repair) => again.push(repair),
-            None => dropped.push(findings.join(" ")),
+            None => dropped.push(findings.texts().join(" ")),
         }
     }
     if again.is_empty() {
@@ -509,10 +509,10 @@ async fn reviewed_round(
     match review_items(llm, need, &again, &known).await? {
         Ok(second) => {
             for (item, findings) in again.into_iter().zip(second) {
-                if findings.is_empty() {
+                if findings.is_sound() {
                     kept.push(item);
                 } else {
-                    dropped.push(findings.join(" "));
+                    dropped.push(findings.texts().join(" "));
                 }
             }
         }
