@@ -119,8 +119,12 @@ fn a_change_that_rewrites_a_protected_sentence_is_put_back() {
     assert_eq!(kept, previous);
 }
 
+const SHELF: &str = "The kettle sits on the top shelf by the window.";
+const HOOK: &str = "A long rope hangs on the hook beside the kettle.";
+const JAR: &str = "Glass beads fill the jar on the lowest shelf.";
+
 fn cited_lesson(first: &str, second: &str) -> Value {
-    let mut cited = lesson(&format!("{OPEN} {PROTECTED} {ADDED}"));
+    let mut cited = lesson(&format!("{SHELF} {HOOK} {JAR}"));
     cited["blocks"][0]["citations"] = json!([
         {"sentence": first, "sourceIndex": 0, "quote": "An excerpt."},
         {"sentence": second, "sourceIndex": 0, "quote": "Another excerpt."},
@@ -130,11 +134,11 @@ fn cited_lesson(first: &str, second: &str) -> Value {
 
 #[test]
 fn citations_naming_other_sentences_of_the_body_survive_a_repair_of_the_whole_section() {
-    let previous = cited_lesson(OPEN, PROTECTED);
-    let repaired = cited_lesson(PROTECTED, ADDED);
+    let previous = cited_lesson(SHELF, HOOK);
+    let repaired = cited_lesson(HOOK, JAR);
     let finding = reviewer(FindingSite::Section(0));
     let touched = BTreeMap::from([("/blocks/0".to_owned(), vec![&finding])]);
-    let out = confine_review(&previous, &repaired, &touched, &[protect()]).unwrap();
+    let out = confine_review(&previous, &repaired, &touched, &[]).unwrap();
     assert_eq!(
         out["blocks"][0]["citations"],
         repaired["blocks"][0]["citations"]

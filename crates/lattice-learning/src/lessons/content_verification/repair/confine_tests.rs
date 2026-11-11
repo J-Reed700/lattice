@@ -289,9 +289,9 @@ fn a_new_sentence_equal_to_one_the_section_already_has_is_not_kept() {
     assert_eq!(confined["body"], format!("{VERIFIED} {FAILED}"));
 }
 
-const KETTLE: &str = "The kettle sits on the shelf.";
-const ROPE: &str = "A rope hangs beside it.";
-const BEADS: &str = "Beads fill the jar.";
+const KETTLE: &str = "The kettle sits on the top shelf by the window.";
+const ROPE: &str = "A long rope hangs on the hook beside the kettle.";
+const BEADS: &str = "Glass beads fill the jar on the lowest shelf.";
 
 fn cited(first: &str, second: &str) -> Value {
     json!({
