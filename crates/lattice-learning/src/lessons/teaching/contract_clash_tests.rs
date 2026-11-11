@@ -117,7 +117,7 @@ fn clashes(found: &[ReviewFinding]) -> Vec<&ReviewFinding> {
 }
 
 fn told(case: &str) -> String {
-    format!("The lesson contradicts itself: Section 1 says \"{EMPTY_WORDS}\" and Section 2 says \"{FULL_WORDS}\". Correct the one that is wrong so the lesson says one thing.{case}")
+    format!("The lesson contradicts itself: Section 1 says \"{EMPTY}\" and Section 2 says \"{FULL}\". Correct the one that is wrong so the lesson says one thing.{case}")
 }
 
 #[tokio::test]
@@ -239,7 +239,7 @@ async fn a_contradiction_with_both_sides_guarded_is_held_at_the_first() -> Resul
     assert_eq!(clash.len(), 1, "{result:?}");
     assert_eq!(clash[0].site, Some(FindingSite::Section(0)));
     assert_eq!(clash[0].also, None);
-    assert_eq!(clash[0].passage.as_deref(), Some(EMPTY_WORDS));
+    assert_eq!(clash[0].passage.as_deref(), Some(EMPTY));
     Ok(())
 }
 
@@ -251,7 +251,7 @@ async fn a_contradiction_with_one_side_guarded_is_placed_on_the_other() -> Resul
     assert_eq!(clash.len(), 1, "{result:?}");
     assert_eq!(clash[0].site, Some(FindingSite::Section(1)));
     assert_eq!(clash[0].also, None);
-    assert_eq!(clash[0].passage.as_deref(), Some(FULL_WORDS));
+    assert_eq!(clash[0].passage.as_deref(), Some(FULL));
     let result = found(&model, &[guard(1, FULL)], &[]).await?;
     let clash = clashes(&result);
     assert_eq!(clash[0].site, Some(FindingSite::Section(0)));
