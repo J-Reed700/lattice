@@ -32,6 +32,7 @@ async fn found(
         candidate,
         protected,
         &mut contract::Receipts::default(),
+        &[],
     )
     .await
     .unwrap()

@@ -39,6 +39,7 @@ fn first(raw: &str, count: usize) -> Result<Vec<ReviewFinding>> {
         false,
         &mut HashMap::new(),
     )
+    .map(|checked| checked.established)
 }
 
 fn last(raw: &str, count: usize) -> Result<Vec<ReviewFinding>> {
@@ -50,6 +51,7 @@ fn last(raw: &str, count: usize) -> Result<Vec<ReviewFinding>> {
         true,
         &mut HashMap::new(),
     )
+    .map(|checked| checked.established)
 }
 
 #[test]

@@ -179,7 +179,8 @@ async fn live_review_schema_preserves_grounding() -> Result<()> {
             &references,
             Some(&progress),
         )
-        .await?;
+        .await?
+        .established;
         std::fs::write(
             directory.join(format!("case-{index}.json")),
             serde_json::to_vec_pretty(&accepted)?,
