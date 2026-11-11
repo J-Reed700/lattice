@@ -90,12 +90,22 @@ impl HttpPageCapture {
                 Err(_) => Err(CaptureError::Timeout),
             };
 
-        let should_try_browser = match &doc_result {
-            Ok(doc) => needs_browser_escalation(doc),
-            Err(
-                CaptureError::Blocked { .. } | CaptureError::Timeout | CaptureError::Network(_),
-            ) => true,
-            Err(_) => false,
+        let (doc_result, should_try_browser) = match doc_result {
+            Ok(doc) => {
+                let (doc, escalate) = blocking(move || {
+                    let escalate = needs_browser_escalation(&doc);
+                    (doc, escalate)
+                })
+                .await?;
+                (Ok(doc), escalate)
+            }
+            Err(err) => {
+                let escalate = matches!(
+                    &err,
+                    CaptureError::Blocked { .. } | CaptureError::Timeout | CaptureError::Network(_)
+                );
+                (Err(err), escalate)
+            }
         };
 
         let (html, final_url, method, dom_title) = if should_try_browser {
@@ -145,7 +155,7 @@ impl HttpPageCapture {
             } else {
                 match doc_result {
                     Ok(doc) => {
-                        if doc.status == 202 && needs_browser_escalation(&doc) {
+                        if doc.status == 202 {
                             return Err(CaptureError::Blocked { status: 202 });
                         }
                         if doc.html.trim().is_empty() {

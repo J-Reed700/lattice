@@ -42,9 +42,7 @@ impl<'a> MarkupCursor<'a> {
     /// so they must be skipped whole rather than tokenised.
     pub(crate) fn skip_raw_text(&mut self, name: &str) -> &'a str {
         let rest = &self.src[self.pos..];
-        let needle = format!("</{}", name.to_ascii_lowercase());
-        let lower = rest.to_ascii_lowercase();
-        match lower.find(&needle) {
+        match find_close_tag(rest, name) {
             Some(at) => {
                 let body = &rest[..at];
                 let after = &rest[at..];
@@ -58,6 +56,32 @@ impl<'a> MarkupCursor<'a> {
             }
         }
     }
+}
+
+/// Offset of the first `</name` in `text` (ASCII case-insensitive) that ends
+/// the name there, so `</scripts` does not close `<script>`.
+fn find_close_tag(text: &str, name: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let name = name.as_bytes();
+    let mut from = 0;
+    while let Some(offset) = text[from..].find("</") {
+        let at = from + offset;
+        let name_end = at + 2 + name.len();
+        let named = bytes
+            .get(at + 2..name_end)
+            .is_some_and(|candidate| candidate.eq_ignore_ascii_case(name));
+        if named {
+            let ends = match bytes.get(name_end) {
+                None => true,
+                Some(next) => next.is_ascii_whitespace() || matches!(next, b'/' | b'>'),
+            };
+            if ends {
+                return Some(at);
+            }
+        }
+        from = at + 2;
+    }
+    None
 }
 
 impl<'a> Iterator for MarkupCursor<'a> {

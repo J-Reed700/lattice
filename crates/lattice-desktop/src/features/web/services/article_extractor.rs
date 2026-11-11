@@ -7,7 +7,7 @@ use crate::features::web::services::identity;
 use crate::features::web::services::status_error::status_error;
 use crate::features::web::services::web::{build_public_client, validate_url_resolved};
 use crate::features::web::traits::ArticleExtractorServiceTrait;
-use crate::infrastructure::extraction::markup::{decode_entities, escape_html};
+use crate::infrastructure::extraction::markup::escape_html;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use lattice_core::application::contracts::web::CleanArticle;
@@ -90,9 +90,9 @@ impl ArticleExtractorService {
                 .select(&selector)
                 .find_map(|element| element.value().attr(attribute))
             {
-                let decoded = decode_entities(value.trim());
-                if !decoded.is_empty() {
-                    return Some(normalize_whitespace(&decoded));
+                let normalized = normalize_whitespace(value.trim());
+                if !normalized.is_empty() {
+                    return Some(normalized);
                 }
             }
         }
@@ -109,7 +109,7 @@ impl ArticleExtractorService {
             .next()
             .map(|element| element.text().collect::<Vec<_>>().join(" "))?;
 
-        let normalized = normalize_whitespace(&decode_entities(&text));
+        let normalized = normalize_whitespace(&text);
         if normalized.is_empty() {
             None
         } else {
