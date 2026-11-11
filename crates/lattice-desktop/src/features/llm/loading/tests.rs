@@ -1,5 +1,6 @@
 use super::*;
 use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
+use lattice_core::application::services::credentials::memory::InMemoryCredentials;
 
 #[test]
 fn generation_settings_are_preserved() {
@@ -61,10 +62,7 @@ async fn loader_with(rows: &[lattice_core::domain::DownloadedModel]) -> ModelLoa
         models,
         None,
         LlmRuntime::default(),
-        Arc::new(
-            lattice_core::application::services::credentials::memory::InMemoryCredentials::default(
-            ),
-        ),
+        Arc::new(InMemoryCredentials::default()),
     )
 }
 
@@ -79,10 +77,7 @@ fn loader_without_database() -> ModelLoader {
         models,
         None,
         LlmRuntime::default(),
-        Arc::new(
-            lattice_core::application::services::credentials::memory::InMemoryCredentials::default(
-            ),
-        ),
+        Arc::new(InMemoryCredentials::default()),
     )
 }
 
