@@ -1,20 +1,28 @@
-//! Stored practice-fit verdicts: one per course, on the outline basis it was decided on.
+//! Stored practice-fit verdicts: one per course and kind of work, on the basis they were decided on.
 use super::*;
 use crate::practice::practice_fit::{CourseOutline, OutlineLesson, OutlineModule};
 use lattice_core::shared::persistence::Transactions;
 
 /// A verdict as stored.
 pub(crate) struct StoredFit {
+    pub kind: String,
     pub basis: String,
-    pub teaches_code: bool,
+    pub fits: bool,
+    pub reason: String,
+}
+
+/// A verdict on one kind to store.
+pub(crate) struct KindVerdict {
+    pub kind: String,
+    pub fits: bool,
     pub reason: String,
 }
 
 /// What a fit answer rests on, read in one transaction.
 pub(crate) struct FitState {
-    pub language: Option<String>,
+    pub profile: LearningPracticeProfileDto,
     pub outline: CourseOutline,
-    pub stored: Option<StoredFit>,
+    pub stored: Vec<StoredFit>,
 }
 
 impl LearningPracticeRepository {
@@ -41,16 +49,25 @@ impl LearningPracticeRepository {
         .fetch_all(&mut *tx)
         .await
         .map_err(db)?;
-        let stored: Option<(String, i64, String)> = sqlx::query_as(
-            "SELECT basis,teaches_code,reason FROM learning_practice_fits WHERE program_id=?",
+        let stored: Vec<(String, String, i64, String)> = sqlx::query_as(
+            "SELECT kind,basis,fits,reason FROM learning_practice_fits WHERE program_id=? ORDER BY kind",
         )
         .bind(program_id)
-        .fetch_optional(&mut *tx)
+        .fetch_all(&mut *tx)
         .await
         .map_err(db)?;
-        let language = profile_in(&mut tx, program_id)
-            .await?
-            .and_then(|profile| profile.language);
+        let profile =
+            profile_in(&mut tx, program_id)
+                .await?
+                .unwrap_or_else(|| LearningPracticeProfileDto {
+                    program_id: program_id.to_owned(),
+                    details: String::new(),
+                    language: None,
+                    interview_at: None,
+                    company: None,
+                    role: None,
+                    revision: 0,
+                });
         tx.commit().await.map_err(db)?;
         let modules = modules
             .into_iter()
@@ -67,41 +84,52 @@ impl LearningPracticeRepository {
             })
             .collect();
         Ok(FitState {
-            language,
+            profile,
             outline: CourseOutline { title, modules },
-            stored: stored.map(|(basis, teaches_code, reason)| StoredFit {
-                basis,
-                teaches_code: teaches_code != 0,
-                reason,
-            }),
+            stored: stored
+                .into_iter()
+                .map(|(kind, basis, fits, reason)| StoredFit {
+                    kind,
+                    basis,
+                    fits: fits != 0,
+                    reason,
+                })
+                .collect(),
         })
     }
 
-    /// Stores the verdict on `basis`, replacing the course's earlier one.
-    pub(crate) async fn record_fit(
+    /// Stores the verdicts on `basis`, replacing the course's earlier ones. A course that is gone gets none.
+    pub(crate) async fn record_fits(
         &self,
         program_id: &str,
         basis: &str,
-        teaches_code: bool,
-        reason: &str,
+        verdicts: &[KindVerdict],
         model: &str,
         now: i64,
     ) -> Result<()> {
         uuid(program_id, "program")?;
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, program_id).await?;
-        sqlx::query(
-            "INSERT INTO learning_practice_fits(program_id,basis,teaches_code,reason,model,decided_at) SELECT ?1,?2,?3,?4,?5,?6 WHERE EXISTS(SELECT 1 FROM learning_programs WHERE id=?1) ON CONFLICT(program_id) DO UPDATE SET basis=excluded.basis,teaches_code=excluded.teaches_code,reason=excluded.reason,model=excluded.model,decided_at=excluded.decided_at",
-        )
-        .bind(program_id)
-        .bind(basis)
-        .bind(i64::from(teaches_code))
-        .bind(reason)
-        .bind(model)
-        .bind(now)
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
+        sqlx::query("DELETE FROM learning_practice_fits WHERE program_id=?")
+            .bind(program_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        for verdict in verdicts {
+            sqlx::query(
+                "INSERT INTO learning_practice_fits(program_id,kind,basis,fits,reason,model,decided_at) SELECT ?1,?2,?3,?4,?5,?6,?7 WHERE EXISTS(SELECT 1 FROM learning_programs WHERE id=?1)",
+            )
+            .bind(program_id)
+            .bind(&verdict.kind)
+            .bind(basis)
+            .bind(i64::from(verdict.fits))
+            .bind(&verdict.reason)
+            .bind(model)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        }
         tx.commit().await.map_err(db)
     }
 }

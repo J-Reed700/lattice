@@ -5587,10 +5587,6 @@ memberDocumentIds: string[] }
  */
 export type ClusterRunDto = { runId: string; ranAt: string; docCount: number; clusterCount: number; noiseCount: number; durationMs: number; llmCalls: number }
 /**
- * Whether the course teaches writing, reading or debugging program code.
- */
-export type CodeFit = "fits" | "does_not_fit" | "checking"
-/**
  * The drill as the learner may see it.
  */
 export type CodeReviewDrillDto = { title: string; material: CodeReviewMaterialDto; files: CodeReviewFileDto[];
@@ -7509,6 +7505,10 @@ export type KeyStatusDto = { service: KeyServiceDto; name: string;
  * The provider's own page for getting a key.
  */
 keyPageUrl: string; stored: boolean }
+/**
+ * Whether a course has a kind of work.
+ */
+export type KindFit = "fits" | "does_not_fit" | "checking"
 export type KnowledgeItemDto = { id: string; conversationId: string; conversationTitle: string; label: string; kind: string; state: string; scope: string; learnedAt: string; validFrom: string | null; validUntil: string | null; verifiedAt: string | null; forgotten: boolean; supersededBy: string | null;
 /**
  * Exact original passages, resolved on every read.
@@ -9762,7 +9762,7 @@ work: JsonValue }
  */
 export type PracticeDueDto = { items: DueItemDto[] }
 export type PracticeDueRequestDto = { programId: string }
-export type PracticeFitDto = { code: CodeFit; reason: string | null }
+export type PracticeFitDto = { kinds: PracticeKindFitDto[] }
 export type PracticeFitRequestDto = { programId: string }
 export type PracticeHintDto = { ordinal: number; rung: Rung; text: string; reason: string; stage: Stage;
 /**
@@ -9773,6 +9773,7 @@ checkId: string | null;
  * Watched: given by the interviewer, in the thread.
  */
 inRole: boolean; at: number }
+export type PracticeKindFitDto = { kind: string; fit: KindFit; reason: string | null }
 export type PracticeSessionDto = { sessionId: string; programId: string; activityId: string; lessonId: string | null; kind: string; title: string; difficulty: Difficulty; form: Form; setting: Setting; settingsUsed: Setting[]; stage: Stage;
 /**
  * The stages of the form, in order.

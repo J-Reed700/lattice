@@ -6,6 +6,7 @@ use crate::practice::kinds::program::account::ProgramAccount;
 use crate::practice::kinds::program::budget::ProgramBudget;
 use crate::practice::kinds::program::checker::ProgramChecker;
 use crate::practice::kinds::program::diff::ProgramDiff;
+use crate::practice::kinds::program::fit::ProgramFit;
 use crate::practice::kinds::program::hinting::ProgramHinting;
 use crate::practice::kinds::program::learner_cases::ProgramLearnerCases;
 use crate::practice::kinds::program::parts::ProgramParts;
@@ -25,6 +26,7 @@ pub mod budget;
 pub mod checker;
 pub mod diff;
 pub mod dto;
+pub mod fit;
 pub mod hinting;
 pub mod learner_cases;
 pub mod parts;
@@ -89,6 +91,7 @@ pub fn kind(tools: Arc<dyn Toolchains>) -> Kind {
         showing: Arc::new(ProgramShowing),
         screen: Arc::new(ProgramScreen),
         truth: Arc::new(ProgramTruth { tools }),
+        fit: Arc::new(ProgramFit),
         gaps: None,
         order: None,
         learner_cases: Some(Arc::new(ProgramLearnerCases)),

@@ -1,5 +1,6 @@
 //! A kind of work, as a record of small roles. The engine calls these and nothing else.
 
+use crate::dto::LearningPracticeProfileDto;
 use crate::practice::session::author::Author;
 use crate::practice::session::observation::Observation;
 use crate::practice::session::record::{Session, SessionCheck, SessionDebrief, SessionLearnerCase};
@@ -359,6 +360,17 @@ impl MisreadingNeed {
     };
 }
 
+/// When a course has this kind of work.
+pub trait Fit: Send + Sync {
+    /// The kind as the fit check is told it: what the work is and when a course asks for it.
+    fn asked_when(&self) -> String;
+
+    /// Whether the course's practice profile asks for this kind outright.
+    fn wanted_by(&self, _profile: &LearningPracticeProfileDto) -> bool {
+        false
+    }
+}
+
 /// One kind of work.
 #[derive(Clone)]
 pub struct Kind {
@@ -378,6 +390,7 @@ pub struct Kind {
     pub showing: Arc<dyn Showing>,
     pub screen: Arc<dyn Screen>,
     pub truth: Arc<dyn Truth>,
+    pub fit: Arc<dyn Fit>,
     pub gaps: Option<Arc<dyn Gaps>>,
     pub order: Option<Arc<dyn Order>>,
     pub learner_cases: Option<Arc<dyn LearnerCases>>,

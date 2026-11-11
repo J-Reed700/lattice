@@ -28,13 +28,13 @@ export function usePracticeProfile(programId: string) {
   };
 }
 
-/** Whether the course teaches program code. A verdict still being decided is asked for, once, here. */
+/** Which kinds of work the course has. A verdict still being decided is asked for, once, here. */
 export function usePracticeFit(programId: string) {
   const query = useQuery({
     queryKey: fitKey(programId),
     queryFn: async () => {
       const fit = await practiceHomeApi.getFit(programId);
-      return fit.code === 'checking' ? practiceHomeApi.checkFit(programId) : fit;
+      return fit.kinds.some((entry) => entry.fit === 'checking') ? practiceHomeApi.checkFit(programId) : fit;
     },
     retry: false,
   });

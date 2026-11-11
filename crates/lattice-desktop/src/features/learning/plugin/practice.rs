@@ -3,6 +3,7 @@ use lattice_core::shared::error::AppError;
 use lattice_learning::practice::assistance_policy::{
     written_help, written_level, AssistancePolicy, Help, HelpLevel, WrittenAssistance,
 };
+use lattice_learning::practice::session::kind::Kinds;
 
 pub(super) fn practice_repo(
     container: &Container,
@@ -449,9 +450,11 @@ pub async fn save_learning_practice_profile(
 pub async fn get_practice_fit(
     request: PracticeFitRequestDto,
     container: State<'_, Container>,
+    kinds: State<'_, Kinds>,
 ) -> Result<PracticeFitDto, ApiError> {
     crate::features::learning::practice_fit::practice_fit(
         &practice_repo(&container),
+        &kinds,
         &request.program_id,
     )
     .await
@@ -463,22 +466,29 @@ pub async fn get_practice_fit(
 pub async fn check_practice_fit(
     request: PracticeFitRequestDto,
     container: State<'_, Container>,
+    kinds: State<'_, Kinds>,
 ) -> Result<PracticeFitDto, ApiError> {
     let repo = practice_repo(&container);
-    let known = crate::features::learning::practice_fit::practice_fit(&repo, &request.program_id)
-        .await
-        .map_err(ApiError::from)?;
-    if known.code != CodeFit::Checking {
+    let known =
+        crate::features::learning::practice_fit::practice_fit(&repo, &kinds, &request.program_id)
+            .await
+            .map_err(ApiError::from)?;
+    if known
+        .kinds
+        .iter()
+        .all(|entry| entry.fit != KindFit::Checking)
+    {
         return Ok(known);
     }
     let pin = learning_model(
         &container,
         model_requirements::practice(),
-        "Checking whether the course teaches code",
+        "Checking which kinds of practice the course has",
     )
     .await?;
     crate::features::learning::practice_fit::check_practice_fit(
         &repo,
+        &kinds,
         pin.llm.as_ref(),
         &request.program_id,
     )

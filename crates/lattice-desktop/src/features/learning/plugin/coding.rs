@@ -8,7 +8,7 @@ use tauri::State;
 use crate::features::learning::practical_repository::LearningPracticalRepository;
 use crate::features::learning::practical_runs::start_coding_run;
 use crate::interfaces::di::Container;
-use lattice_core::domain::learning::practice::work::{Exercise, Rung};
+use lattice_core::domain::learning::practice::work::{Exercise, KindId, Rung};
 use lattice_core::shared::error::{AppError, Result as CoreResult};
 use lattice_core::shared::ipc::ApiError;
 use lattice_learning::drills::runner::{runner_for, CodeRunner};
@@ -489,12 +489,16 @@ pub async fn practice_due(
     runtimes: State<'_, BuiltinRuntimes>,
     kinds: State<'_, Kinds>,
 ) -> Result<PracticeDueDto, ApiError> {
-    let code_fits = crate::features::learning::practice_fit::code_fits(
+    let code_fits = crate::features::learning::practice_fit::fits(
         &super::practice::practice_repo(&container),
+        &kinds,
         &request.program_id,
     )
     .await
-    .map_err(ApiError::from)?;
+    .map_err(ApiError::from)?
+    .contains(&KindId::new(
+        lattice_learning::practice::kinds::program::KIND,
+    ));
     let repo = repo_of(&container);
     plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions

@@ -457,7 +457,7 @@ impl CodingSessions<'_> {
         self.view(&request.program_id, &request.session_id).await
     }
 
-    /// `code_fits` is the course's fit, from `practice_fit::code_fits`.
+    /// `code_fits` is the course's fit, from `practice_fit::fits`: whether Program is among them.
     pub async fn due(
         &self,
         request: &PracticeDueRequestDto,

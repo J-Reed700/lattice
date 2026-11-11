@@ -2,6 +2,7 @@ import { useCallback, useId, useMemo, useState } from 'react';
 
 import { ArrowRight, Bot, Code2, FileSearch, MessageSquare, Sparkles, Users, type LucideIcon } from 'lucide-react';
 
+import { PROGRAM_KIND_ID } from '@/features/learning/practice/kinds';
 import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
 import type * as Wire from '@/lib/bindings';
 
@@ -167,7 +168,7 @@ export function PracticeHome({ programId, goal, lessonId, onStart, onOpenTarget,
   const due = usePracticeDue(programId);
   const history = usePracticeHistory(programId);
 
-  const fit = fitState(fitStatus.fit);
+  const fit = fitState(fitStatus.fit, PROGRAM_KIND_ID);
   const profile = profileState.profile ?? null;
   const promiseOf = useMemo(() => promises(fit), [fit]);
   const defs = useMemo(() => definitions(fit), [fit]);

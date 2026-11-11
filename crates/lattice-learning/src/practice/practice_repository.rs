@@ -12,7 +12,7 @@ use sqlx::{Row, SqliteConnection, SqlitePool};
 
 mod assistance;
 mod fits;
-pub(crate) use fits::FitState;
+pub(crate) use fits::{FitState, KindVerdict, StoredFit};
 mod profiles;
 pub(crate) use profiles::profile_in;
 mod reads;

@@ -19,9 +19,11 @@ export const CARD_ORDER: CardId[] = ['explain', 'spot', 'code', 'mock', 'role'];
 
 export const CODING_ROUNDS = ['live_coding', 'debugging'] as const;
 
-export function fitState(fit: Wire.PracticeFitDto | undefined | null): FitState {
-  if (fit?.code === 'fits') return 'fits';
-  if (fit?.code === 'does_not_fit') return 'does_not_fit';
+/** The course's fit for one kind of work; a kind with no entry is still being checked. */
+export function fitState(fit: Wire.PracticeFitDto | undefined | null, kind: string): FitState {
+  const state = fit?.kinds.find((entry) => entry.kind === kind)?.fit;
+  if (state === 'fits') return 'fits';
+  if (state === 'does_not_fit') return 'does_not_fit';
   return 'unknown';
 }
 

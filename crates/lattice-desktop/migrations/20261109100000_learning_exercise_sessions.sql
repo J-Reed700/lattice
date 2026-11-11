@@ -128,10 +128,12 @@ CREATE TABLE learning_practice_profiles (
 );
 
 CREATE TABLE learning_practice_fits (
-    program_id TEXT PRIMARY KEY REFERENCES learning_programs(id) ON DELETE CASCADE,
+    program_id TEXT NOT NULL REFERENCES learning_programs(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
     basis TEXT NOT NULL,
-    teaches_code INTEGER NOT NULL CHECK(teaches_code IN (0,1)),
+    fits INTEGER NOT NULL CHECK(fits IN (0,1)),
     reason TEXT NOT NULL,
     model TEXT NOT NULL,
-    decided_at INTEGER NOT NULL
+    decided_at INTEGER NOT NULL,
+    PRIMARY KEY (program_id, kind)
 );

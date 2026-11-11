@@ -2369,8 +2369,8 @@ export async function installLearningStudioBackend(page: Page) {
         profileState = { programId: request.programId, details: request.details, language: request.language, interviewAt: request.interviewAt, company: request.company, role: request.role, revision: profileState.revision + 1 };
         return structuredClone(profileState);
       },
-      get_practice_fit: () => ({ code: "fits", reason: "The lessons teach program code." }),
-      check_practice_fit: () => ({ code: "fits", reason: "The lessons teach program code." }),
+      get_practice_fit: () => ({ kinds: [{ kind: "program", fit: "fits", reason: "The lessons teach program code." }] }),
+      check_practice_fit: () => ({ kinds: [{ kind: "program", fit: "fits", reason: "The lessons teach program code." }] }),
       practice_due: () => ({ items: [] }),
       list_practice_sessions: () => [],
       course_drills: () => ({ language: "python", nextCode: null, nextPassage: null, hasSources: false, modules: [], recent: [] }),
