@@ -2,6 +2,7 @@
 use super::tests::{loose, model, shaped_lesson, sources};
 use super::*;
 use crate::lessons::claim_reviews::teaching_findings::TeachingFindingsRepository;
+use crate::lessons::shape;
 use crate::review_findings::{site_sha256, FindingSite, ReviewFinding, SetAside};
 use lattice_core::shared::persistence::Database;
 

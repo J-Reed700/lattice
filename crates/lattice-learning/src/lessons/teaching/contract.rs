@@ -355,14 +355,14 @@ fn findings(
     let mut found = Vec::new();
     for (item, belongs) in &settled.missing {
         let site = belongs.map_or(FindingSite::Lesson, |part| part.site);
+        let fits = belongs.map_or_else(String::new, |part| {
+            format!(" It fits best in {}.", label(part.site).to_lowercase())
+        });
         let label = if item.kind == "term" {
             ""
         } else {
             "The quoted name is a short label for it, not wording for the lesson: teach what it names in the lesson's own sentences, worked into what the part already says, without copying the label. "
         };
-        let fits = belongs.map_or_else(String::new, |part| {
-            format!(" It fits best in {}.", label(part.site).to_lowercase())
-        });
         found.push(
             ReviewFinding::plan(
                 PlanCheck::Planned,
