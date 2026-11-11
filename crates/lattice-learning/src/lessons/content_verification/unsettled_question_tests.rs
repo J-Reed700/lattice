@@ -30,16 +30,6 @@ fn a_question_whose_finding_waits_is_chosen_when_the_lesson_can_spare_it() {
 }
 
 #[test]
-fn of_two_waiting_questions_of_one_kind_only_the_first_is_chosen() {
-    let lesson = shaped_lesson();
-    let waiting = waiting_on(&lesson, &[0, 1]);
-    assert_eq!(
-        chosen(&lesson, &waiting, &Cuts::default()),
-        [(11, "P1?".to_owned())]
-    );
-}
-
-#[test]
 fn a_hash_that_matches_no_question_chooses_nothing() {
     let lesson = shaped_lesson();
     let waiting = BTreeSet::from(["not a question's hash".to_owned()]);

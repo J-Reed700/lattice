@@ -8,7 +8,7 @@
 //! margin: the writer is asked for more than a lesson needs (a mix of
 //! sections, two questions of each kind) so that verification has something to
 //! spend. A lesson verification has begun to cut is held to the floor: a first
-//! explanation, a question of every kind, a third of the drafted sections at
+//! explanation, at least one question, a third of the drafted sections at
 //! most gone, and the order rules (each check after a worked example shown
 //! since the previous check). The phase is the caller's to name; nothing infers
 //! it from the lesson.
@@ -146,8 +146,8 @@ const SECTION_MIX: [(&str, usize, bool); 8] = [
     ("recap", 1, true),
 ];
 
-/// Questions the writer is asked for of each kind, so that a cut can spend
-/// one; a lesson is saved with one of each (`LessonQuestionKind::ALL`).
+/// Questions the writer is asked for of each kind (`LessonQuestionKind::ALL`),
+/// so that a cut can spend one; a kept lesson needs one question of any kind.
 const QUESTIONS_PER_KIND: usize = 2;
 
 /// The fewest sections the writer is asked for: the mix at its least.
@@ -190,7 +190,7 @@ impl StandardShape {
         found.extend(order_findings(blocks));
         found.extend(match phase {
             Phase::Draft => question_count_finding(questions),
-            Phase::Kept => question_kinds_finding(questions),
+            Phase::Kept => question_finding(questions),
         });
         found
     }
@@ -202,7 +202,7 @@ impl ShapePolicy for StandardShape {
         let asked = QUESTIONS_PER_KIND * kinds;
         let (sections, questions) = match phase {
             Phase::Draft => (SECTIONS, (asked, asked)),
-            Phase::Kept => ((1, SECTIONS.1), (kinds, asked)),
+            Phase::Kept => ((1, SECTIONS.1), (1, asked)),
         };
         LessonSchema {
             phase,
@@ -223,7 +223,7 @@ impl ShapePolicy for StandardShape {
             // What `shape_findings` holds a `Phase::Kept` lesson to: change the two together.
             Phase::Kept => vec![
                 "Verification takes out of a lesson what no source confirms, so this lesson is no longer held to the number of sections and questions it was drafted with.".to_owned(),
-                format!("It is held to this instead: at least one explanation; each check after a worked example shown since the previous check; the recap after the reflection when it has both; and at least one question of each kind: {kinds}."),
+                "It is held to this instead: at least one explanation; each check after a worked example shown since the previous check; the recap after the reflection when it has both; and at least one question.".to_owned(),
             ],
         }
     }
@@ -270,15 +270,6 @@ impl ShapePolicy for StandardShape {
         let questions_lost = (sections..sections + questions.len())
             .filter(|unit| going.contains(unit))
             .count();
-        let kind_lost = LessonQuestionKind::ALL.into_iter().find(|kind| {
-            let asked: Vec<usize> = questions
-                .iter()
-                .enumerate()
-                .filter(|(_, question)| text(question, "kind") == kind.as_str())
-                .map(|(at, _)| sections + at)
-                .collect();
-            !asked.is_empty() && asked.iter().all(|unit| going.contains(unit))
-        });
         if first.is_some_and(|unit| going.contains(&unit)) {
             Some("its first explanation would have to be taken out".to_owned())
         } else if 3 * lost > sections {
@@ -288,7 +279,7 @@ impl ShapePolicy for StandardShape {
         } else if !questions.is_empty() && questions_lost == questions.len() {
             Some("all of its questions would have to be taken out".to_owned())
         } else {
-            kind_lost.map(|kind| format!("it would be left without a {} question", kind.as_str()))
+            None
         }
     }
 }
@@ -549,26 +540,15 @@ fn explanation_finding(blocks: &[Value]) -> Option<ReviewFinding> {
     ))
 }
 
-fn question_kinds_finding(questions: &[Value]) -> Option<ReviewFinding> {
-    let missing: Vec<String> = LessonQuestionKind::ALL
-        .iter()
-        .filter(|kind| kind_count(questions, kind.as_str()) == 0)
-        .map(|kind| kind.as_str().to_owned())
-        .collect();
-    if missing.is_empty() {
+fn question_finding(questions: &[Value]) -> Option<ReviewFinding> {
+    if !questions.is_empty() {
         return None;
     }
     Some(structure(
-        Rule::QuestionKinds,
+        Rule::NoQuestion,
         FindingSite::Lesson,
-        format!(
-            "The lesson has no {} question, and it needs one of each kind.",
-            join_plain(&missing)
-        ),
-        format!(
-            "The lesson has no {} question; it needs at least one question of each kind.",
-            join_plain(&missing)
-        ),
+        "The lesson has no question.".to_owned(),
+        "The lesson has no question; it needs at least one.".to_owned(),
     ))
 }
 

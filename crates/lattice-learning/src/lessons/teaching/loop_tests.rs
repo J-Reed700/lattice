@@ -2615,9 +2615,7 @@ async fn a_review_after_a_cut_and_its_repair_are_told_the_shape_the_lesson_is_ke
     assert!(!lines.is_empty(), "the repair was not told the shape");
     let words: Vec<&str> = lines.iter().filter_map(Value::as_str).collect();
     assert!(
-        words
-            .join("\n")
-            .contains("at least one question of each kind"),
+        words.join("\n").contains("at least one question."),
         "{words:?}"
     );
     Ok(())

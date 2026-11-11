@@ -400,13 +400,24 @@ pub(super) fn unsettled_questions(
     chosen
 }
 
-#[cfg(test)]
+/// Sends out the questions whose findings wait for the user and that the
+/// lesson's shape can spare; whether any went.
 pub(super) async fn send_out_unsettled(
-    _lesson: &Value,
-    _cuts: &mut Cuts,
-    _shape: &dyn ShapePolicy,
+    lesson: &Value,
+    cuts: &mut Cuts,
+    shape: &dyn ShapePolicy,
 ) -> Result<bool> {
-    Ok(false)
+    let waiting = crate::teaching::question_texts().await?;
+    let chosen = unsettled_questions(lesson, &waiting, cuts, shape);
+    let sent = !chosen.is_empty();
+    for (unit, label) in chosen {
+        tracing::info!(
+            unit,
+            "A question whose finding the review could not settle goes"
+        );
+        cuts.go_unsettled(unit, label);
+    }
+    Ok(sent)
 }
 
 /// Whether a cut took the answer of a check: the first teaching sentence under
@@ -607,15 +618,7 @@ pub(super) async fn settle(
     let lesson: Value = parse_json(raw)?;
     ledger.cuts.keep_current(&lesson);
     let mut sent = send_out(&lesson, &mut ledger.cuts, shape.policy);
-    let waiting = crate::teaching::question_texts().await?;
-    for (unit, label) in unsettled_questions(&lesson, &waiting, &ledger.cuts, shape.policy) {
-        tracing::info!(
-            unit,
-            "A question whose finding the review could not settle goes"
-        );
-        ledger.cuts.go_unsettled(unit, label);
-        sent = true;
-    }
+    sent |= send_out_unsettled(&lesson, &mut ledger.cuts, shape.policy).await?;
     if sent {
         ledger.save_cuts().await?;
         return Ok(Settled::Again(raw.to_owned()));
@@ -741,6 +744,10 @@ pub(super) async fn settle(
     }
     if edited != lesson {
         return Ok(Settled::Again(edited.to_string()));
+    }
+    if send_out_unsettled(&lesson, &mut ledger.cuts, shape.policy).await? {
+        ledger.save_cuts().await?;
+        return Ok(Settled::Again(raw.to_owned()));
     }
     Ok(Settled::Done)
 }

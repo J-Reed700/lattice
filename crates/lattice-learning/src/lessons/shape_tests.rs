@@ -63,7 +63,7 @@ fn the_draft_schema_asks_for_the_margin_and_the_kept_schema_for_the_floor() {
     assert_eq!(bound(&draft, "questions", "maxItems"), Some(6));
     assert_eq!(bound(&kept, "blocks", "minItems"), Some(1));
     assert_eq!(bound(&kept, "blocks", "maxItems"), Some(16));
-    assert_eq!(bound(&kept, "questions", "minItems"), Some(3));
+    assert_eq!(bound(&kept, "questions", "minItems"), Some(1));
     assert_eq!(bound(&kept, "questions", "maxItems"), Some(6));
 }
 
@@ -121,26 +121,6 @@ fn a_kept_lesson_is_held_to_the_floor_not_the_margin() {
     cut["questions"].as_array_mut().unwrap().pop();
     cut["blocks"].as_array_mut().unwrap().remove(2);
     assert!(found(&cut, Phase::Kept).is_empty());
-}
-
-#[test]
-fn a_kept_lesson_needs_a_question_of_every_kind_whether_or_not_a_cut_happened() {
-    let mut none_written = lesson();
-    none_written["questions"]
-        .as_array_mut()
-        .unwrap()
-        .retain(|question| question["kind"] != "test");
-    let findings = found(&none_written, Phase::Kept);
-    assert_eq!(ids(&findings), ["structure:lesson"]);
-    assert!(findings[0].note.contains("no test question"));
-    assert!(!findings[0].note.contains("quiz"));
-
-    none_written["questions"]
-        .as_array_mut()
-        .unwrap()
-        .retain(|question| question["kind"] == "practice");
-    let findings = found(&none_written, Phase::Kept);
-    assert!(findings[0].note.contains("no quiz and test question"));
 }
 
 #[test]
@@ -226,9 +206,6 @@ fn what_the_floor_keeps_is_the_first_explanation_a_third_of_the_sections_and_the
         .floor(&lesson, &units([11, 12, 13, 14, 15, 16]))
         .unwrap();
     assert!(all.contains("all of its questions"), "{all}");
-
-    let kind = policy().floor(&lesson, &units([15, 16])).unwrap();
-    assert!(kind.contains("test question"), "{kind}");
     assert!(policy().floor(&lesson, &units([15])).is_none());
 }
 
@@ -370,17 +347,11 @@ fn the_draft_s_words_carry_the_counts_the_draft_is_held_to() {
 }
 
 #[test]
-fn the_kept_words_ask_for_one_question_of_each_kind_and_no_count_of_the_draft_s() {
+fn the_kept_words_ask_for_one_question_and_no_count_of_the_draft_s() {
     let kept = policy().asked(Phase::Kept);
     let draft = policy().asked(Phase::Draft);
     let words = kept.join("\n");
-    for kind in LessonQuestionKind::ALL {
-        assert!(words.contains(kind.as_str()), "{words}");
-    }
-    assert!(
-        words.contains("at least one question of each kind"),
-        "{words}"
-    );
+    assert!(words.contains("at least one question."), "{words}");
     assert!(kept.iter().all(|line| !draft.contains(line)));
 
     let floor = json!({
