@@ -304,6 +304,17 @@ async fn a_sentence_id_the_request_did_not_show_is_refused_by_name() {
     );
 }
 
+#[test]
+fn a_named_sentence_that_stands_twice_in_its_field_has_the_place_it_first_stands() {
+    let body = format!("{FIRST} {SECOND} {FIRST}");
+    let lesson = json!({"blocks":[{"kind":"explanation","title":"Sample","body":body,"rubric":[]}],"questions":[]});
+
+    let location = claim_ledger::locate(&lesson, 0, FIRST, Some(ABOUT_FIRST));
+
+    assert_eq!(location.quote, FIRST);
+    assert_eq!(location.span, Some((0, FIRST.len())));
+}
+
 /// The text of a passage as a model is shown it: its sentences, in order,
 /// joined by a space.
 pub(super) fn passage_text(passage: &Value) -> String {

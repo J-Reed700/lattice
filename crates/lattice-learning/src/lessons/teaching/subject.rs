@@ -111,7 +111,7 @@ const OPEN_VERDICTS: &str = concat!(
     " openFindings are defects an earlier review recorded: report a defect in issues or in a section's check only when it is not one of them. A section whose only defects are in openFindings gets hasDefect false."
 );
 /// What a report is told to say about the open findings it may continue.
-const CONTINUES: &str = "When a defect you report is one that an entry of openFindings already describes, in the same or other words, give that entry's id in continues; give none only for a defect no entry describes.";
+const CONTINUES: &str = "When a defect you report is one that an entry of openFindings or knownFindings already describes, in the same or other words, give that entry's id in continues; give none only for a defect no entry describes.";
 const KNOWN_FINDINGS: &str = "knownFindings are defects already recorded in parts that have not changed since they were reviewed: do not report them again, in issues or in a section's check.";
 const SHARED_CHECKS: &str = concat!(
     "For lessons, inspect EVERY teaching block, including unchanged text in a repaired draft. ",
@@ -303,7 +303,7 @@ fn review_instructions(
     if round.first && !round.asked.is_empty() {
         parts.push(OPEN_VERDICTS);
     }
-    if !round.asked.is_empty() {
+    if !round.asked.is_empty() || !round.known.is_empty() {
         parts.push(CONTINUES);
     }
     if !round.known.is_empty() {

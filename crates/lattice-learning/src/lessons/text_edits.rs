@@ -580,6 +580,53 @@ fn grouped(edits: Vec<Edit>) -> Vec<Group> {
     groups
 }
 
+/// The path with every all-digit segment ignored.
+fn shape_of(path: &str) -> Vec<&str> {
+    path.split('/')
+        .map(|segment| {
+            if !segment.is_empty() && segment.bytes().all(|byte| byte.is_ascii_digit()) {
+                ""
+            } else {
+                segment
+            }
+        })
+        .collect()
+}
+
+/// Gives each text edit whose text stands in no field of its path, but once in
+/// exactly one field of the same shape, the path of that field.
+fn placed(candidate: &Value, mut edits: Vec<Edit>) -> Vec<Edit> {
+    let mut fields = Vec::new();
+    paths(candidate, "", &mut fields);
+    for edit in &mut edits {
+        let Some(before) = edit.before.as_str().filter(|text| !text.is_empty()) else {
+            continue;
+        };
+        let holding = |path: &str| {
+            candidate
+                .pointer(path)
+                .and_then(Value::as_str)
+                .filter(|text| text.contains(before))
+        };
+        if edit.before == edit.after || holding(&edit.path).is_some() {
+            continue;
+        }
+        let shape = shape_of(&edit.path);
+        let mut found = fields
+            .iter()
+            .filter(|field| shape_of(field) == shape)
+            .filter_map(|field| holding(field).map(|text| (field, text)));
+        let only = match (found.next(), found.next()) {
+            (Some((field, text)), None) if text.matches(before).count() == 1 => Some(field.clone()),
+            _ => None,
+        };
+        if let Some(field) = only {
+            edit.path = field;
+        }
+    }
+    edits
+}
+
 /// What accepting and refusing the groups of a patch came to.
 struct Accepted {
     named: BTreeMap<String, Named>,
@@ -828,7 +875,7 @@ pub(super) fn apply_for(
         return Err(fail("it gave no edits.".into()));
     }
     let mut accepted = accept(
-        grouped(patch.edits),
+        grouped(placed(candidate, patch.edits)),
         candidate,
         (lesson, wording),
         &patch.citations,

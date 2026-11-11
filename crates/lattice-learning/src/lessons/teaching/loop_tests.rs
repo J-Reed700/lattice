@@ -3506,17 +3506,7 @@ async fn the_reference_check_is_asked_only_about_the_reviewers_findings() {
         .filter(|prompt| prompt.starts_with(REFERENCE_CHECK))
         .collect();
     assert_eq!(asked.len(), 1, "{prompts:?}");
-    let sent: Value = serde_json::from_str(
-        asked[0]
-            .rsplit(
-                "
-
-",
-            )
-            .next()
-            .unwrap(),
-    )
-    .unwrap();
+    let sent: Value = serde_json::from_str(asked[0].rsplit("\n\n").next().unwrap()).unwrap();
     let proposals = sent["proposals"].as_array().unwrap();
     assert_eq!(proposals.len(), 1, "{proposals:?}");
     assert!(proposals[0]["proposal"].as_str().unwrap().contains(NOTE));
