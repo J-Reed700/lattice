@@ -107,6 +107,10 @@ impl EmbeddingPort for DynamicEmbedding {
             .window_parts(text)
     }
 
+    fn load_failure(&self) -> Option<lattice_core::shared::error::AppError> {
+        self.provider.current_model()?.load_failure()
+    }
+
     async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
         match self.provider.current_model() {
             Some(inner) => inner.is_ready().await,
