@@ -88,6 +88,21 @@ pub(in crate::lessons::claim_reviews) async fn held_rows(
     Ok(rows.iter().map(held_row).collect())
 }
 
+/// The text hashes of the lesson's question findings that wait for the user.
+pub(in crate::lessons::claim_reviews) async fn waiting_question_hashes(
+    pool: &impl DriverPool,
+    lesson_id: &str,
+) -> Result<Vec<String>> {
+    let pool = pool.sqlx_pool();
+    sqlx::query_scalar(
+        "SELECT unit_sha256 FROM learning_lesson_teaching_findings WHERE lesson_id=? AND site='question' AND state='waiting'",
+    )
+    .bind(lesson_id)
+    .fetch_all(pool)
+    .await
+    .map_err(db)
+}
+
 /// The lesson's rows recorded before finding ids, read on `connection`.
 pub(in crate::lessons::claim_reviews) async fn place_rows(
     connection: &mut SqliteConnection,

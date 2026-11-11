@@ -6,7 +6,7 @@
 //! repairs cannot settle waits for the user. It never stops the lesson from
 //! publishing.
 use super::validate_text;
-use crate::assessment_engine::{key_fault, longest_allowed_key, repeated_option, KeyFault};
+use crate::assessment_engine::repeated_option;
 use crate::content_verification::{fences, names_a_source, quoted_wording, CITED_KINDS};
 use crate::lessons::repeats;
 use crate::lessons::same_text::{fold, overlap};
@@ -449,38 +449,6 @@ pub(crate) fn lesson_rules(
         };
         if let Some(note) = choices_fault {
             findings.push(structure(Rule::Choices, site, note.clone(), note));
-        } else if let Some(fault) = right.and_then(|right| key_fault(prompt, &choice_texts, right))
-        {
-            findings.push(match fault {
-                KeyFault::LengthBiased => {
-                    let length = |at: usize| {
-                        choice_texts
-                            .get(at)
-                            .map_or(0, |choice| choice.trim().chars().count())
-                    };
-                    let key = right.map_or(0, length);
-                    let allowed = right
-                        .and_then(|right| longest_allowed_key(&choice_texts, right))
-                        .unwrap_or(0);
-                    let other = (0..choice_texts.len())
-                        .filter(|at| Some(*at) != right)
-                        .map(length)
-                        .max()
-                        .unwrap_or(0);
-                    structure(
-                        Rule::KeyLongest,
-                        site,
-                        format!("{label}'s right choice stands out as the longest."),
-                        format!("{label}'s right choice is {key} characters and the longest wrong choice {other}; so that a learner cannot pick the right choice for its length, it may be at most {allowed} characters. Shorten the right choice to {allowed} characters or fewer, or make the wrong choices as specific."),
-                    )
-                }
-                KeyFault::GivesAway => structure(
-                    Rule::KeyGivenAway,
-                    site,
-                    format!("{label}'s prompt gives away its answer."),
-                    format!("{label}'s right choice repeats the prompt's words, so the prompt gives the answer away; reword the prompt or the right choice."),
-                ),
-            });
         }
         let reasons = reasons(question);
         if reasons.len() != options.len() {

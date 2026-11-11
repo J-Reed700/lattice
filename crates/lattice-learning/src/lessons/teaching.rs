@@ -23,6 +23,7 @@ mod waiting;
 use passes::Passes;
 use review_loop::{review_material, Reviewed};
 use subject::{LessonSubject, MaterialSubject, OutlineSubject};
+pub(crate) use waiting::question_texts;
 pub(crate) use waiting::record as record_waiting;
 
 pub fn project_schema() -> Value {
@@ -460,6 +461,8 @@ mod contract_tests;
 mod loop_tests;
 #[cfg(test)]
 mod memory_tests;
+#[cfg(test)]
+mod open_findings_tests;
 #[cfg(test)]
 mod question_tests;
 #[cfg(test)]

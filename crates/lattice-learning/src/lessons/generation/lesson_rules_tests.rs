@@ -881,67 +881,33 @@ fn first_question_notes(candidate: &Value) -> Vec<String> {
 }
 
 #[test]
-fn a_right_choice_much_longer_than_the_others_is_a_finding_at_its_question() {
+fn a_right_choice_much_longer_than_the_others_is_no_finding() {
     let candidate = question_case(
-        "Which command shows hidden files?",
+        "Which one is named first?",
         [
-            "ls",
-            "ls -a, which lists every entry in the directory, including the ones whose names begin with a dot",
-            "pwd",
-            "cd",
+            "Bravo",
+            "Alpha, which keeps every entry in place, including the ones that sit beyond the marked edge",
+            "Charlie",
+            "Delta",
         ],
         1,
     );
-    let notes = first_question_notes(&candidate);
-    assert_eq!(notes.len(), 1, "{notes:?}");
-    assert!(notes[0].contains("Shorten the right choice"), "{notes:?}");
+    assert!(first_question_notes(&candidate).is_empty());
 }
 
-fn lengths_case(key_length: usize) -> Vec<String> {
-    let options = [
-        "a".repeat(45),
-        "b".repeat(28),
-        "c".repeat(key_length),
-        "d".repeat(45),
-    ];
+#[test]
+fn a_right_choice_repeating_a_value_its_prompt_states_is_no_finding() {
     let candidate = question_case(
-        "Which one is right?",
-        options.each_ref().map(String::as_str),
-        2,
-    );
-    first_question_notes(&candidate)
-}
-
-#[test]
-fn a_long_right_choice_is_told_the_measured_lengths_and_its_limit() {
-    let notes = lengths_case(73);
-    assert_eq!(notes.len(), 1, "{notes:?}");
-    for expected in ["73", "45", "72 characters or fewer"] {
-        assert!(notes[0].contains(expected), "{expected}: {notes:?}");
-    }
-}
-
-#[test]
-fn a_right_choice_exactly_at_its_limit_is_no_finding() {
-    let notes = lengths_case(72);
-    assert!(notes.is_empty(), "{notes:?}");
-}
-
-#[test]
-fn a_right_choice_repeating_the_prompts_words_is_a_finding_at_its_question() {
-    let candidate = question_case(
-        "Which command opens the notes folder inside the learner home?",
+        "Which rule says the Alpha limit stays inside the marked line?",
         [
-            "opens the notes folder",
-            "Lists the files there",
-            "Deletes it for good",
-            "Prints the current location",
+            "the Alpha limit stays inside the marked line",
+            "Bravo moves past it",
+            "Charlie ignores it",
+            "Delta stops at once",
         ],
         0,
     );
-    let notes = first_question_notes(&candidate);
-    assert_eq!(notes.len(), 1, "{notes:?}");
-    assert!(notes[0].contains("gives the answer away"), "{notes:?}");
+    assert!(first_question_notes(&candidate).is_empty());
 }
 
 #[test]

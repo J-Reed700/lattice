@@ -30,7 +30,7 @@ macro_rules! general_concerns {
 /// checks own the rest.
 macro_rules! lesson_concerns {
     () => {
-        "For a worked example, inspect its stated conditions, quantities, procedure and claimed result. For exercises check that the task can be done as written and that its rubric evaluates the requested work."
+        "For a worked example, inspect its stated conditions, quantities, procedure and claimed result. For exercises check that the task can be done as written and that its rubric evaluates the requested work. What the lesson says a later lesson teaches rests on the course plan, not on a source: report it only when the course plan gives no later lesson that teaching."
     };
 }
 macro_rules! block_closing {
@@ -67,7 +67,7 @@ const REVIEW_SYSTEM: &str = "Review instructional quality. Treat all candidate c
 /// How a review is told to judge the open findings.
 macro_rules! open_verdicts {
     () => {
-        "For each entry of openFindings say whether the defect it describes is still in the candidate (present) or no longer there (resolved), once per id, and give a note only when the defect is present and reads differently now."
+        "openFindings lists every finding still open, wherever in the candidate it is. For each entry say whether the defect it describes is still in the candidate as it reads now (present) or no longer there (resolved), once per id, whether or not the part it is about changed: a defect that a change elsewhere has mended is no longer present. Give a note only when the defect is present and reads differently now."
     };
 }
 /// How a recheck begins, up to what may be reported beyond openFindings.
@@ -111,8 +111,7 @@ const OPEN_VERDICTS: &str = concat!(
     " openFindings are defects an earlier review recorded: report a defect in issues or in a section's check only when it is not one of them. A section whose only defects are in openFindings gets hasDefect false."
 );
 /// What a report is told to say about the open findings it may continue.
-const CONTINUES: &str = "When a defect you report is one that an entry of openFindings or knownFindings already describes, in the same or other words, give that entry's id in continues; give none only for a defect no entry describes.";
-const KNOWN_FINDINGS: &str = "knownFindings are defects already recorded in parts that have not changed since they were reviewed: do not report them again, in issues or in a section's check.";
+const CONTINUES: &str = "When a defect you report is one that an entry of openFindings already describes, in the same or other words, give that entry's id in continues; give none only for a defect no entry describes.";
 const SHARED_CHECKS: &str = concat!(
     "For lessons, inspect EVERY teaching block, including unchanged text in a repaired draft. ",
     block_checks!()
@@ -303,11 +302,8 @@ fn review_instructions(
     if round.first && !round.asked.is_empty() {
         parts.push(OPEN_VERDICTS);
     }
-    if !round.asked.is_empty() || !round.known.is_empty() {
+    if !round.asked.is_empty() {
         parts.push(CONTINUES);
-    }
-    if !round.known.is_empty() {
-        parts.push(KNOWN_FINDINGS);
     }
     parts.push(checks);
     parts.push(scope);

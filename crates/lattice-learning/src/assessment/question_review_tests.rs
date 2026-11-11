@@ -28,6 +28,8 @@ impl LLMPort for Script {
         let (system, user) = crate::lessons::structured_call::task_messages(request);
         let kind = if system.starts_with("Solve quiz questions") {
             "solve"
+        } else if system.starts_with("You are shown multiple-choice questions") {
+            "form"
         } else if system.starts_with("Review quiz questions") {
             "judge"
         } else {
@@ -46,6 +48,11 @@ impl LLMPort for Script {
                 "reason": "The case decides it.",
                 "correctIndices": [(self.solves)(q["index"].as_u64().unwrap_or(0) as usize)],
                 "answer": "", "blankAnswers": [], "matches": [], "orderedValues": []
+            })).collect::<Vec<_>>()})
+            }
+            "form" => {
+                json!({"answers": context["questions"].as_array().into_iter().flatten().map(|q| json!({
+                "index": q["index"], "standsApart": null, "why": ""
             })).collect::<Vec<_>>()})
             }
             "judge" => {
@@ -90,8 +97,15 @@ impl Script {
         Box::new(|_| (String::new(), vec![]))
     }
 
+    /// The kinds of request in order, the form read left out: it runs beside the solver.
     fn kinds(&self) -> Vec<&'static str> {
-        self.seen.lock().unwrap().iter().map(|(k, _)| *k).collect()
+        self.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(k, _)| *k)
+            .filter(|k| *k != "form")
+            .collect()
     }
 
     fn requests(&self, kind: &str) -> Vec<Value> {
@@ -132,7 +146,7 @@ fn lesson() -> Value {
 fn outcome() -> Outcome<'static> {
     Outcome {
         title: "Sorting cases",
-        description: "Say which one takes a case.",
+        description: "Say which one takes a case.".into(),
     }
 }
 
