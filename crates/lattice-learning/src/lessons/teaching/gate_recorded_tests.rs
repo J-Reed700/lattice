@@ -108,8 +108,8 @@ fn clean(sections: usize) -> String {
     review_reply(&[], checks, &[])
 }
 
-fn gate_answer(recorded_as: &str) -> String {
-    json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"recordedAs":recorded_as,"reason":"The explanation contradicts the sum it states."}]}).to_string()
+fn gate_answer(left_to: &str) -> String {
+    json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"leftTo":left_to,"reason":"The explanation contradicts the sum it states."}]}).to_string()
 }
 
 async fn run(model: &dyn LLMPort, candidate: &Value) -> Result<Reviewed> {
@@ -196,5 +196,45 @@ async fn the_gate_is_handed_the_other_checks_findings_and_not_the_reviewers() ->
         .to_string()
         .contains(REVIEWER_ONLY));
     assert!(gate[0]["proposals"].to_string().contains(REVIEWER_ONLY));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_reviewer_finding_about_what_the_plan_check_decides_is_left_to_it_when_it_found_nothing(
+) -> Result<()> {
+    let model = routed(
+        vec![
+            reporting(REVIEWER_ONLY, 1),
+            gate_answer("check-1"),
+            clean(1),
+        ],
+        Vec::new(),
+    );
+    let candidate = json!({"blocks":[block("Example", FIRST, EXCERPT)],"questions":[]});
+    let reviewed = run(&model, &candidate).await?;
+    assert!(reviewed.set_aside.is_empty());
+    assert!(repair_requests(&model).is_empty());
+    assert_eq!(model.gate.lock().unwrap().len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_gate_is_told_what_each_of_the_three_checks_decides_in_order() -> Result<()> {
+    let model = routed(
+        vec![reporting(REVIEWER_ONLY, 1), gate_answer("none")],
+        Vec::new(),
+    );
+    let candidate = json!({"blocks":[block("Example", FIRST, EXCERPT)],"questions":[]});
+    // The repairs that follow have no scripted answer; the gate's request is what is read.
+    let _ = run(&model, &candidate).await;
+    let gate = model.gate.lock().unwrap();
+    assert_eq!(
+        gate[0]["otherChecks"],
+        json!([
+            {"id":"check-0","decides":crate::question_review::DECIDES},
+            {"id":"check-1","decides":contract::DECIDES},
+            {"id":"check-2","decides":RULES_DECIDE}
+        ])
+    );
     Ok(())
 }
