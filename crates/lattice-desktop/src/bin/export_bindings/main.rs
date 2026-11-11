@@ -16,6 +16,7 @@
 //!
 //! `--check` compares both against the committed files and writes neither.
 
+mod contracts;
 mod routes;
 mod settings;
 
