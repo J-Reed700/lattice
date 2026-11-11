@@ -241,9 +241,18 @@ impl Subject for LessonSubject<'_> {
             if let (Some(round), Some(judged)) = (&round, judged) {
                 raised.extend(self.standing.judged(pass.value, round, judged));
             }
+            let quotations = quotation_findings(pass.quote_checks);
+            let recorded: Vec<ReviewFinding> = quotations
+                .iter()
+                .chain(&question_issues)
+                .chain(&plan_findings)
+                .chain(&structure)
+                .cloned()
+                .collect();
             let established = crate::review_evidence::check(
                 llm,
                 &raised,
+                &recorded,
                 pass.authoring,
                 pass.value,
                 self.references,
@@ -260,7 +269,7 @@ impl Subject for LessonSubject<'_> {
             // set aside when the review ends.
             issues.extend(structure);
             // Every non-blocking pass rechecks quotations, placed at the part that cites them.
-            let mut findings = quotation_findings(pass.quote_checks);
+            let mut findings = quotations;
             findings.extend(issues);
             findings
         } else {
