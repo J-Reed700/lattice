@@ -91,8 +91,6 @@ pub use corpus_listeners::{DocumentIndexObserver, SearchResultCachePort};
 pub use credentials_port::CredentialsPort;
 pub use database_stats_port::DatabaseStatsPort;
 pub use document_repository_port::DocumentRepositoryPort;
-#[cfg(any(test, feature = "test-support"))]
-pub use mock_web_service::MockWebService;
 pub use embedding_index_binding::EmbeddingIndexBinding;
 pub use embedding_port::EmbeddingPort;
 pub use embedding_repository_port::EmbeddingRepositoryPort;
@@ -109,6 +107,8 @@ pub use loaded_embedding_model::LoadedEmbeddingModelPort;
 pub use mention_repository_port::{MentionData, MentionRepositoryPort, MentionWithContextData};
 pub use metrics_port::{MetricsPort, MetricsSnapshotData};
 pub use mock_embedding_port::MockEmbeddingPort;
+#[cfg(any(test, feature = "test-support"))]
+pub use mock_web_service::MockWebService;
 pub use model_catalog::{ExternalModelMetadata, MockModelCatalogPort, ModelCatalogPort};
 pub use model_file_inspector::ModelFileInspector;
 pub use model_storage::{DownloadedModel, ModelStoragePort};
