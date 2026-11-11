@@ -468,9 +468,9 @@ impl Ctx {
         }
     }
 
-    async fn start(&self, setting: Setting) -> CodingSessionDto {
+    async fn start(&self, setting: Setting) -> PracticeSessionDto {
         self.sessions()
-            .start(&StartCodingSessionRequestDto {
+            .start(&StartPracticeSessionRequestDto {
                 operation_id: id(),
                 program_id: self.program_id.clone(),
                 activity_id: self.activity_id.clone(),
@@ -481,9 +481,9 @@ impl Ctx {
             .unwrap()
     }
 
-    async fn get(&self, session: &CodingSessionDto) -> CodingSessionDto {
+    async fn get(&self, session: &PracticeSessionDto) -> PracticeSessionDto {
         self.sessions()
-            .get(&CodingSessionRequestDto {
+            .get(&PracticeSessionRequestDto {
                 program_id: self.program_id.clone(),
                 session_id: session.session_id.clone(),
             })
@@ -492,7 +492,7 @@ impl Ctx {
     }
 
     /// Drops the cue a new session holds, so a test starts from none.
-    async fn clear_cue(&self, session: &CodingSessionDto) {
+    async fn clear_cue(&self, session: &PracticeSessionDto) {
         self.repo
             .take_coding_cue(&self.program_id, &session.session_id)
             .await
@@ -500,7 +500,7 @@ impl Ctx {
     }
 
     /// Inserts a bare run at the fixed clock, so its id is the only thing that differs.
-    async fn insert_run(&self, session: &CodingSessionDto, run_id: &str) {
+    async fn insert_run(&self, session: &PracticeSessionDto, run_id: &str) {
         let revision: i64 = sqlx::query_scalar(
             "SELECT revision FROM learning_practical_activities WHERE program_id=? AND id=?",
         )
@@ -517,12 +517,12 @@ impl Ctx {
 
     async fn run(
         &self,
-        session: &CodingSessionDto,
+        session: &PracticeSessionDto,
         scope: CodingRunScope,
         input: Option<Vec<String>>,
-    ) -> Result<CodingSessionDto> {
+    ) -> Result<PracticeSessionDto> {
         self.sessions()
-            .run(&RunCodingSessionRequestDto {
+            .run(&CheckPracticePieceRequestDto {
                 operation_id: id(),
                 run_id: id(),
                 program_id: self.program_id.clone(),
@@ -536,12 +536,12 @@ impl Ctx {
 
     async fn move_to(
         &self,
-        session: &CodingSessionDto,
+        session: &PracticeSessionDto,
         stage: Stage,
         expected_revision: i64,
-    ) -> Result<CodingSessionDto> {
+    ) -> Result<PracticeSessionDto> {
         self.sessions()
-            .move_stage(&MoveCodingStageRequestDto {
+            .move_stage(&MovePracticeStageRequestDto {
                 operation_id: id(),
                 program_id: self.program_id.clone(),
                 session_id: session.session_id.clone(),
@@ -553,10 +553,10 @@ impl Ctx {
 
     async fn example(
         &self,
-        session: &CodingSessionDto,
+        session: &PracticeSessionDto,
         ordinal: Option<u32>,
         expected: &str,
-    ) -> Result<CodingSessionDto> {
+    ) -> Result<PracticeSessionDto> {
         self.sessions()
             .check_example(&CheckCodingExampleRequestDto {
                 operation_id: id(),
@@ -571,11 +571,11 @@ impl Ctx {
 
     async fn finish(
         &self,
-        session: &CodingSessionDto,
+        session: &PracticeSessionDto,
         operation_id: &str,
-    ) -> Result<CodingSessionDto> {
+    ) -> Result<PracticeSessionDto> {
         self.sessions()
-            .finish(&FinishCodingSessionRequestDto {
+            .finish(&FinishPracticeSessionRequestDto {
                 operation_id: operation_id.into(),
                 program_id: self.program_id.clone(),
                 session_id: session.session_id.clone(),
@@ -620,7 +620,7 @@ async fn a_session_starts_at_the_first_stage_with_a_budget_only_outside_coached(
 #[tokio::test]
 async fn starting_with_the_same_operation_id_answers_with_the_session_it_made() {
     let ctx = Ctx::new().await;
-    let request = StartCodingSessionRequestDto {
+    let request = StartPracticeSessionRequestDto {
         operation_id: id(),
         program_id: ctx.program_id.clone(),
         activity_id: ctx.activity_id.clone(),
@@ -633,7 +633,7 @@ async fn starting_with_the_same_operation_id_answers_with_the_session_it_made() 
     assert_eq!(first.clock.budget_seconds, Some(600));
     let listed = ctx
         .sessions()
-        .list(&ListCodingSessionsRequestDto {
+        .list(&ListPracticeSessionsRequestDto {
             program_id: ctx.program_id.clone(),
         })
         .await
@@ -650,7 +650,7 @@ async fn the_list_is_newest_first_and_reports_the_last_submit() {
     ctx.run(&older, CodingRunScope::All, None).await.unwrap();
     let listed = ctx
         .sessions()
-        .list(&ListCodingSessionsRequestDto {
+        .list(&ListPracticeSessionsRequestDto {
             program_id: ctx.program_id.clone(),
         })
         .await
@@ -866,7 +866,7 @@ async fn a_hint_points_at_the_last_run_made_even_when_two_share_a_millisecond() 
     let session = ctx.get(&session).await;
     let after = ctx
         .sessions()
-        .ask_hint(&AskCodingHintRequestDto {
+        .ask_hint(&AskPracticeHintRequestDto {
             operation_id: id(),
             program_id: ctx.program_id.clone(),
             session_id: session.session_id.clone(),
@@ -928,8 +928,8 @@ async fn an_input_run_shows_what_the_reference_returns_only_in_coached() {
 async fn the_worked_solution_is_never_available_in_mock_and_only_after_a_submit_in_coached() {
     let ctx = Ctx::new().await;
     let ctx = &ctx;
-    let reveal = |session: &CodingSessionDto| {
-        let request = RevealCodingSolutionRequestDto {
+    let reveal = |session: &PracticeSessionDto| {
+        let request = RevealPracticeSolutionRequestDto {
             operation_id: id(),
             program_id: ctx.program_id.clone(),
             session_id: session.session_id.clone(),
@@ -964,7 +964,7 @@ async fn the_clock_counts_open_time_only_and_a_stale_span_ends_at_the_last_event
     let session = ctx.start(Setting::Mock).await;
     let ctx = &ctx;
     let clock = |open: bool| {
-        let request = SetCodingClockRequestDto {
+        let request = SetPracticeClockRequestDto {
             program_id: ctx.program_id.clone(),
             session_id: session.session_id.clone(),
             open,
@@ -1047,7 +1047,7 @@ async fn respond_with_no_pending_cue_makes_no_model_call() {
     ctx.clear_cue(&session).await;
     let after = ctx
         .sessions()
-        .respond(&CodingSessionRequestDto {
+        .respond(&PracticeSessionRequestDto {
             program_id: ctx.program_id.clone(),
             session_id: session.session_id.clone(),
         })
@@ -1073,7 +1073,7 @@ async fn a_reply_becomes_the_counterparts_turn_and_the_cue_is_spent() {
         })));
         let after = ctx
             .sessions()
-            .respond(&CodingSessionRequestDto {
+            .respond(&PracticeSessionRequestDto {
                 program_id: ctx.program_id.clone(),
                 session_id: session.session_id.clone(),
             })
@@ -1100,7 +1100,7 @@ async fn silence_stores_no_turn_but_spends_the_cue() {
     ctx.aids.queue(Ok(None));
     let after = ctx
         .sessions()
-        .respond(&CodingSessionRequestDto {
+        .respond(&PracticeSessionRequestDto {
             program_id: ctx.program_id.clone(),
             session_id: session.session_id.clone(),
         })
@@ -1117,7 +1117,7 @@ async fn a_failed_respond_puts_the_cue_back_and_returns_the_error() {
     ctx.aids.queue(Err(AppError::ServiceNotAvailable(
         "the model is busy".into(),
     )));
-    let request = CodingSessionRequestDto {
+    let request = PracticeSessionRequestDto {
         program_id: ctx.program_id.clone(),
         session_id: session.session_id.clone(),
     };
@@ -1170,7 +1170,7 @@ async fn a_hint_is_stored_by_rung_and_a_stale_revision_conflicts() {
     let session = ctx.start(Setting::Coached).await;
     let ctx = &ctx;
     let ask = |revision: i64| {
-        let request = AskCodingHintRequestDto {
+        let request = AskPracticeHintRequestDto {
             operation_id: id(),
             program_id: ctx.program_id.clone(),
             session_id: session.session_id.clone(),
@@ -1201,7 +1201,7 @@ async fn in_watched_a_hint_is_also_the_interviewers_turn() {
     let session = ctx.start(Setting::Watched).await;
     let after = ctx
         .sessions()
-        .ask_hint(&AskCodingHintRequestDto {
+        .ask_hint(&AskPracticeHintRequestDto {
             operation_id: id(),
             program_id: ctx.program_id.clone(),
             session_id: session.session_id.clone(),
@@ -1225,7 +1225,7 @@ async fn a_learner_turn_is_stored_with_the_draft_and_cues_the_counterpart() {
     ctx.clear_cue(&session).await;
     let ctx = &ctx;
     let send = |revision: i64| {
-        let request = SendCodingTurnRequestDto {
+        let request = SendPracticeTurnRequestDto {
             operation_id: id(),
             program_id: ctx.program_id.clone(),
             session_id: session.session_id.clone(),
@@ -1246,7 +1246,7 @@ async fn a_learner_turn_is_stored_with_the_draft_and_cues_the_counterpart() {
 
     let blank = ctx
         .sessions()
-        .send_turn(&SendCodingTurnRequestDto {
+        .send_turn(&SendPracticeTurnRequestDto {
             operation_id: id(),
             program_id: ctx.program_id.clone(),
             session_id: session.session_id.clone(),
@@ -1322,7 +1322,7 @@ async fn changing_the_setting_logs_it_and_gives_the_budget_a_session_lacked() {
     let session = ctx.start(Setting::Coached).await;
     let ctx = &ctx;
     let change = |setting: Setting, revision: i64| {
-        let request = SetCodingSettingRequestDto {
+        let request = SetPracticeSettingRequestDto {
             operation_id: id(),
             program_id: ctx.program_id.clone(),
             session_id: session.session_id.clone(),
@@ -1503,7 +1503,7 @@ async fn the_ledger_refuses_an_operation_id_reused_for_another_request() {
     let operation = id();
     let ctx = &ctx;
     let move_with = |stage: Stage| {
-        let request = MoveCodingStageRequestDto {
+        let request = MovePracticeStageRequestDto {
             operation_id: operation.clone(),
             program_id: ctx.program_id.clone(),
             session_id: session.session_id.clone(),

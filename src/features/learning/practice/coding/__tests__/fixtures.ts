@@ -20,7 +20,7 @@ export function caseView(overrides: Partial<Wire.CaseViewDto> = {}): Wire.CaseVi
   };
 }
 
-export function codingRun(cases: Wire.CaseViewDto[], overrides: Partial<Wire.CodingRunDto> = {}): Wire.CodingRunDto {
+export function codingRun(cases: Wire.CaseViewDto[], overrides: Partial<Wire.PracticeCheckDto> = {}): Wire.PracticeCheckDto {
   return {
     runId: 'run-1',
     scope: 'all',
@@ -35,7 +35,7 @@ export function codingRun(cases: Wire.CaseViewDto[], overrides: Partial<Wire.Cod
   };
 }
 
-export function codingSession(overrides: Partial<Wire.CodingSessionDto> = {}): Wire.CodingSessionDto {
+export function codingSession(overrides: Partial<Wire.PracticeSessionDto> = {}): Wire.PracticeSessionDto {
   return {
     sessionId: 'session-1',
     programId: 'program-1',
@@ -82,7 +82,7 @@ export function codingSession(overrides: Partial<Wire.CodingSessionDto> = {}): W
   };
 }
 
-export function codingDebrief(overrides: Partial<Wire.CodingDebriefDto> = {}): Wire.CodingDebriefDto {
+export function codingDebrief(overrides: Partial<Wire.PracticeDebriefDto> = {}): Wire.PracticeDebriefDto {
   return {
     scorecard: {
       rows: [

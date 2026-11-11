@@ -128,7 +128,7 @@ const failingHidden = caseView({
 const passing = caseView({ caseId: 'c1', category: 'a pair at the ends' });
 const passingToo = caseView({ caseId: 'c2', category: 'an empty list', status: 'passed' });
 
-function renderSession(session: Wire.CodingSessionDto) {
+function renderSession(session: Wire.PracticeSessionDto) {
   api.getSession.mockResolvedValue(session);
   const onTryInterview = vi.fn();
   const view = render(
@@ -244,7 +244,7 @@ describe('CodingSession', () => {
   });
 
   it('shows one hint rung at a time, the next only after the current is read', async () => {
-    const nudge: Wire.CodeHintDto = {
+    const nudge: Wire.PracticeHintDto = {
       ordinal: 0,
       rung: 'nudge',
       text: 'What do you need to remember about earlier numbers?',

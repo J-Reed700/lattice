@@ -2,7 +2,7 @@ import { ArrowRight, Check } from 'lucide-react';
 
 import type * as Wire from '@/lib/bindings';
 
-export const STAGE_NAMES: Record<Wire.CodingStage, string> = {
+export const STAGE_NAMES: Record<Wire.Stage, string> = {
   understand: 'Understand',
   examples: 'Examples',
   plan: 'Plan',
@@ -15,7 +15,7 @@ export const STAGE_NAMES: Record<Wire.CodingStage, string> = {
   verify: 'Verify',
 };
 
-const INSTRUCTIONS: Record<Wire.CodingStage, string> = {
+const INSTRUCTIONS: Record<Wire.Stage, string> = {
   understand: 'Read the statement and ask about anything it leaves open.',
   examples: 'Write examples with the answers you expect, before any code.',
   plan: 'Say how you will solve it and what that costs.',
@@ -29,10 +29,10 @@ const INSTRUCTIONS: Record<Wire.CodingStage, string> = {
 };
 
 export interface StageRailProps {
-  stages: Wire.CodingStage[];
-  current: Wire.CodingStage;
+  stages: Wire.Stage[];
+  current: Wire.Stage;
   busy?: boolean;
-  onSelect: (stage: Wire.CodingStage) => void;
+  onSelect: (stage: Wire.Stage) => void;
 }
 
 export function StageRail({ stages, current, busy = false, onSelect }: StageRailProps) {

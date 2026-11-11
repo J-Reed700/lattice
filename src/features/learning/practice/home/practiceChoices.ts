@@ -116,7 +116,7 @@ const SCENARIO_KINDS: Record<string, Wire.LearningPracticalActivityKind> = {
 };
 
 /** What the Code card's task slot offers: the project opens a code lab, the rest are coding builds. */
-export type CodeCardTask = Wire.CodingTask | 'project';
+export type CodeCardTask = Wire.Form | 'project';
 
 function asTask(value: string | undefined): CodeCardTask {
   return value === 'repair' || value === 'project' ? value : 'build';

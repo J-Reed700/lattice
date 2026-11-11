@@ -13,7 +13,7 @@ import { practiceHomeApi } from './practiceHomeApi';
 export const practiceProfileKey = (programId: string) => ['learning-practice-profile', programId] as const;
 const fitKey = (programId: string) => ['learning-practice-fit', programId] as const;
 const dueKey = (programId: string) => ['learning-practice-due', programId] as const;
-const codingKey = (programId: string) => ['learning-coding-sessions', programId] as const;
+const codingKey = (programId: string) => ['learning-exercise-sessions', programId] as const;
 
 export function usePracticeProfile(programId: string) {
   const client = useQueryClient();

@@ -23,7 +23,7 @@ use serde_json::Value;
 
 use crate::lab_runtime::LearningLabFile;
 use crate::practice::coding::dto::{
-    CodeHintDto, CodingExampleDto, CodingSessionDto, ExampleCoverageDto, ExampleVerdict,
+    CodingExampleDto, ExampleCoverageDto, ExampleVerdict, PracticeHintDto, PracticeSessionDto,
 };
 use crate::practice::coding::observation::test_support::{failing_run, problem, session};
 use crate::practice::coding::problem::Problem;
@@ -175,7 +175,7 @@ fn turn(
 pub(crate) fn rich_session(
     task: Form,
     setting: Setting,
-) -> (Problem, CodingSessionDto, Vec<LearningLabFile>) {
+) -> (Problem, PracticeSessionDto, Vec<LearningLabFile>) {
     let problem = problem();
     let stages = task.stages(true);
     let stage: Stage = stages.get(2).copied().unwrap_or(Stage::Make);
@@ -206,7 +206,7 @@ pub(crate) fn rich_session(
         total: 2,
         uncaught: Some("Ignores negative values".to_owned()),
     };
-    session.hints = vec![CodeHintDto {
+    session.hints = vec![PracticeHintDto {
         ordinal: 0,
         rung: Rung::Nudge,
         text: "What should the loop do with each value?".to_owned(),

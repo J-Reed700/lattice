@@ -44,7 +44,7 @@ vi.mock('@/features/learning/practice/home/practiceHomeApi', () => ({
     checkFit: async () => ({ code: 'fits', reason: null }),
     due: async () => ({ items: [] }),
     codingSessions: async () => [],
-    startCodingSession: vi.fn(),
+    startPracticeSession: vi.fn(),
   },
 }));
 // The journey's own markup is tested with it; here it only hands the workspace a module or a lesson to open.

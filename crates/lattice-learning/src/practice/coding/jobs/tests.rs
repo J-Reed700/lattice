@@ -8,8 +8,8 @@ use crate::practice::test_support::fixture;
 use lattice_core::domain::learning::practice::work::Form;
 use serde_json::json;
 
-fn build_request(operation_id: &str, program_id: &str) -> StartCodingBuildRequestDto {
-    StartCodingBuildRequestDto {
+fn build_request(operation_id: &str, program_id: &str) -> StartPracticeBuildRequestDto {
+    StartPracticeBuildRequestDto {
         operation_id: operation_id.to_owned(),
         program_id: program_id.to_owned(),
         lesson_id: None,

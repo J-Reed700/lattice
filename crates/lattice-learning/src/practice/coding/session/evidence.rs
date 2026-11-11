@@ -3,13 +3,13 @@ use super::view::{example_views, settings_used};
 use crate::lab_runtime::LearningLabFile;
 use crate::practical_dto::CaseCheckDetailDto;
 use crate::practice::coding::debrief::{CodingEventRow, EvidenceRun, SessionEvidence};
-use crate::practice::coding::dto::{CodeHintDto, CodingRunScope};
+use crate::practice::coding::dto::{CodingRunScope, PracticeHintDto};
 use crate::practice::coding::problem::CaseResult;
 use crate::practice::coding::records::{SessionBundle, StoredRun};
 use lattice_core::shared::error::{AppError, Result};
 
 /// The hints the session gave, in order.
-pub fn hints_of(bundle: &SessionBundle) -> Result<Vec<CodeHintDto>> {
+pub fn hints_of(bundle: &SessionBundle) -> Result<Vec<PracticeHintDto>> {
     bundle
         .events
         .iter()

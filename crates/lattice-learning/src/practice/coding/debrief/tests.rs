@@ -156,8 +156,8 @@ fn example(ordinal: u32) -> CodingExampleDto {
     }
 }
 
-fn hint(ordinal: u32, rung: Rung) -> CodeHintDto {
-    CodeHintDto {
+fn hint(ordinal: u32, rung: Rung) -> PracticeHintDto {
+    PracticeHintDto {
         ordinal,
         rung,
         text: "Think about what you have already seen.".into(),

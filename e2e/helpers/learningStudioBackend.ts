@@ -2372,7 +2372,7 @@ export async function installLearningStudioBackend(page: Page) {
       get_practice_fit: () => ({ code: "fits", reason: "The lessons teach program code." }),
       check_practice_fit: () => ({ code: "fits", reason: "The lessons teach program code." }),
       practice_due: () => ({ items: [] }),
-      list_coding_sessions: () => [],
+      list_practice_sessions: () => [],
       course_drills: () => ({ language: "python", nextCode: null, nextPassage: null, hasSources: false, modules: [], recent: [] }),
       get_learning_runtime_catalog: () => {
         return ([

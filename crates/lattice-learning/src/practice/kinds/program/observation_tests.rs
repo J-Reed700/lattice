@@ -3,7 +3,9 @@
 #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 
 use crate::lab_runtime::LearningLabFile;
-use crate::practice::coding::dto::{CaseViewDto, CodingRunDto, CodingRunScope, CodingSessionDto};
+use crate::practice::coding::dto::{
+    CaseViewDto, CodingRunScope, PracticeCheckDto, PracticeSessionDto,
+};
 use crate::practice::coding::golden_support::{assert_golden, rich_session, Golden};
 use crate::practice::coding::observation::test_support::{problem, session};
 use crate::practice::coding::problem::{
@@ -83,7 +85,7 @@ fn case_view_of(view: &CaseViewDto, disclose: bool) -> CaseView {
 /// with.
 pub(super) fn engine_observation(
     problem: &Problem,
-    session: &CodingSessionDto,
+    session: &PracticeSessionDto,
     seen: Option<&[LearningLabFile]>,
     disclose: bool,
 ) -> Observation {
@@ -164,7 +166,7 @@ pub(super) fn engine_observation(
 
 fn rendered(
     problem: &Problem,
-    session: &CodingSessionDto,
+    session: &PracticeSessionDto,
     seen: Option<&[LearningLabFile]>,
     disclose: bool,
 ) -> String {
@@ -194,8 +196,8 @@ fn run_of(
     scope: CodingRunScope,
     status: LearningPracticalRunStatus,
     cases: Vec<CaseViewDto>,
-) -> CodingRunDto {
-    CodingRunDto {
+) -> PracticeCheckDto {
+    PracticeCheckDto {
         run_id: "run-3333-cccc".to_owned(),
         scope,
         status,

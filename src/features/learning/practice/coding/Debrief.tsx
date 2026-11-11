@@ -9,7 +9,7 @@ import { CriteriaList, type CriterionView, type EvidenceView } from '../shared/C
 
 export interface DebriefProps {
   title: string;
-  debrief: Wire.CodingDebriefDto;
+  debrief: Wire.PracticeDebriefDto;
   onExit: () => void;
   onTryInterview: () => void;
 }
@@ -21,7 +21,7 @@ const RATINGS: Record<Wire.PatternRating, string> = {
   easy: 'Easy',
 };
 
-const RUNG_NAMES: Record<Wire.CodeHintRung, string> = {
+const RUNG_NAMES: Record<Wire.Rung, string> = {
   nudge: 'nudge',
   idea: 'idea',
   plan: 'plan',

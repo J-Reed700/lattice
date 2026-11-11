@@ -103,7 +103,7 @@ pub struct CaseViewDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct CodingRunDto {
+pub struct PracticeCheckDto {
     pub run_id: String,
     pub scope: CodingRunScope,
     pub status: LearningPracticalRunStatus,
@@ -143,7 +143,7 @@ pub struct ExampleCoverageDto {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct CodeHintDto {
+pub struct PracticeHintDto {
     pub ordinal: u32,
     pub rung: Rung,
     pub text: String,
@@ -174,7 +174,7 @@ pub struct PublicProblemDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct CodingSessionDto {
+pub struct PracticeSessionDto {
     pub session_id: String,
     pub program_id: String,
     pub activity_id: String,
@@ -189,8 +189,8 @@ pub struct CodingSessionDto {
     pub examples: Vec<CodingExampleDto>,
     pub coverage: ExampleCoverageDto,
     /// Oldest first.
-    pub runs: Vec<CodingRunDto>,
-    pub hints: Vec<CodeHintDto>,
+    pub runs: Vec<PracticeCheckDto>,
+    pub hints: Vec<PracticeHintDto>,
     pub next_rung: Rung,
     pub turns: Vec<LearningSimulationTurnDto>,
     pub cue_pending: bool,
@@ -199,14 +199,14 @@ pub struct CodingSessionDto {
     pub solution_available: bool,
     /// Some once revealed, or in the debrief.
     pub worked_solution: Option<String>,
-    pub debrief: Option<CodingDebriefDto>,
+    pub debrief: Option<PracticeDebriefDto>,
     pub finished: bool,
     pub revision: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct CodingSessionSummaryDto {
+pub struct PracticeSessionSummaryDto {
     pub session_id: String,
     pub activity_id: String,
     pub title: String,
@@ -223,7 +223,7 @@ pub struct CodingSessionSummaryDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct CodingDebriefDto {
+pub struct PracticeDebriefDto {
     pub scorecard: Scorecard,
     pub facts: DebriefFactsDto,
     pub strong_answer: StrongAnswerDto,
@@ -313,7 +313,7 @@ pub struct PracticeDueDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct StartCodingBuildRequestDto {
+pub struct StartPracticeBuildRequestDto {
     pub operation_id: String,
     pub program_id: String,
     pub lesson_id: Option<String>,
@@ -325,13 +325,13 @@ pub struct StartCodingBuildRequestDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct StartCodingBuildResultDto {
+pub struct StartPracticeBuildResultDto {
     pub job_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct StartCodingSessionRequestDto {
+pub struct StartPracticeSessionRequestDto {
     pub operation_id: String,
     pub program_id: String,
     pub activity_id: String,
@@ -342,20 +342,20 @@ pub struct StartCodingSessionRequestDto {
 /// Names a session: get and respond.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct CodingSessionRequestDto {
+pub struct PracticeSessionRequestDto {
     pub program_id: String,
     pub session_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct ListCodingSessionsRequestDto {
+pub struct ListPracticeSessionsRequestDto {
     pub program_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct MoveCodingStageRequestDto {
+pub struct MovePracticeStageRequestDto {
     pub operation_id: String,
     pub program_id: String,
     pub session_id: String,
@@ -386,7 +386,7 @@ pub struct RemoveCodingExampleRequestDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct RunCodingSessionRequestDto {
+pub struct CheckPracticePieceRequestDto {
     pub operation_id: String,
     pub run_id: String,
     pub program_id: String,
@@ -399,7 +399,7 @@ pub struct RunCodingSessionRequestDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct AskCodingHintRequestDto {
+pub struct AskPracticeHintRequestDto {
     pub operation_id: String,
     pub program_id: String,
     pub session_id: String,
@@ -409,7 +409,7 @@ pub struct AskCodingHintRequestDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct SendCodingTurnRequestDto {
+pub struct SendPracticeTurnRequestDto {
     pub operation_id: String,
     pub program_id: String,
     pub session_id: String,
@@ -430,7 +430,7 @@ pub struct ObserveCodingDraftRequestDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct SetCodingClockRequestDto {
+pub struct SetPracticeClockRequestDto {
     pub program_id: String,
     pub session_id: String,
     pub open: bool,
@@ -438,7 +438,7 @@ pub struct SetCodingClockRequestDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct SetCodingSettingRequestDto {
+pub struct SetPracticeSettingRequestDto {
     pub operation_id: String,
     pub program_id: String,
     pub session_id: String,
@@ -448,7 +448,7 @@ pub struct SetCodingSettingRequestDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct RevealCodingSolutionRequestDto {
+pub struct RevealPracticeSolutionRequestDto {
     pub operation_id: String,
     pub program_id: String,
     pub session_id: String,
@@ -456,7 +456,7 @@ pub struct RevealCodingSolutionRequestDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct FinishCodingSessionRequestDto {
+pub struct FinishPracticeSessionRequestDto {
     pub operation_id: String,
     pub program_id: String,
     pub session_id: String,

@@ -1523,47 +1523,47 @@ async courseDrills(programId: string, language: string | null) : Promise<Result<
 /**
  * Queues a coding problem build job that generates and proves a problem before saving it.
  */
-async startCodingBuild(request: StartCodingBuildRequestDto) : Promise<Result<StartCodingBuildResultDto, ApiError>> {
+async startPracticeBuild(request: StartPracticeBuildRequestDto) : Promise<Result<StartPracticeBuildResultDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_coding_build", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_practice_build", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async startCodingSession(request: StartCodingSessionRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+async startPracticeSession(request: StartPracticeSessionRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_coding_session", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_practice_session", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async getCodingSession(request: CodingSessionRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+async getPracticeSession(request: PracticeSessionRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_coding_session", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_practice_session", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async listCodingSessions(request: ListCodingSessionsRequestDto) : Promise<Result<CodingSessionSummaryDto[], ApiError>> {
+async listPracticeSessions(request: ListPracticeSessionsRequestDto) : Promise<Result<PracticeSessionSummaryDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|list_coding_sessions", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|list_practice_sessions", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async moveCodingStage(request: MoveCodingStageRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+async movePracticeStage(request: MovePracticeStageRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|move_coding_stage", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|move_practice_stage", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async checkCodingExample(request: CheckCodingExampleRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+async checkCodingExample(request: CheckCodingExampleRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|check_coding_example", { request }) };
 } catch (e) {
@@ -1571,7 +1571,7 @@ async checkCodingExample(request: CheckCodingExampleRequestDto) : Promise<Result
     else return { status: "error", error: e  as any };
 }
 },
-async removeCodingExample(request: RemoveCodingExampleRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+async removeCodingExample(request: RemoveCodingExampleRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|remove_coding_example", { request }) };
 } catch (e) {
@@ -1579,39 +1579,39 @@ async removeCodingExample(request: RemoveCodingExampleRequestDto) : Promise<Resu
     else return { status: "error", error: e  as any };
 }
 },
-async runCodingSession(request: RunCodingSessionRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+async checkPracticePiece(request: CheckPracticePieceRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|run_coding_session", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|check_practice_piece", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async askCodingHint(request: AskCodingHintRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+async askPracticeHint(request: AskPracticeHintRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|ask_coding_hint", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|ask_practice_hint", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async sendCodingTurn(request: SendCodingTurnRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+async sendPracticeTurn(request: SendPracticeTurnRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|send_coding_turn", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|send_practice_turn", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async respondCodingSession(request: CodingSessionRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+async respondPracticeSession(request: PracticeSessionRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|respond_coding_session", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|respond_practice_session", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async observeCodingDraft(request: ObserveCodingDraftRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+async observeCodingDraft(request: ObserveCodingDraftRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|observe_coding_draft", { request }) };
 } catch (e) {
@@ -1619,33 +1619,33 @@ async observeCodingDraft(request: ObserveCodingDraftRequestDto) : Promise<Result
     else return { status: "error", error: e  as any };
 }
 },
-async setCodingClock(request: SetCodingClockRequestDto) : Promise<Result<ClockDto, ApiError>> {
+async setPracticeClock(request: SetPracticeClockRequestDto) : Promise<Result<ClockDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|set_coding_clock", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|set_practice_clock", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async setCodingSetting(request: SetCodingSettingRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+async setPracticeSetting(request: SetPracticeSettingRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|set_coding_setting", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|set_practice_setting", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async revealCodingSolution(request: RevealCodingSolutionRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+async revealPracticeSolution(request: RevealPracticeSolutionRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|reveal_coding_solution", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|reveal_practice_solution", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async finishCodingSession(request: FinishCodingSessionRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+async finishPracticeSession(request: FinishPracticeSessionRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|finish_coding_session", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|finish_practice_session", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4768,7 +4768,7 @@ dataDirCloudProvider: string | null;
  * Newest first.
  */
 archives: ArchiveFileDto[] }
-export type AskCodingHintRequestDto = { operationId: string; programId: string; sessionId: string; files: LearningLabFile[]; expectedRevision: number }
+export type AskPracticeHintRequestDto = { operationId: string; programId: string; sessionId: string; files: LearningLabFile[]; expectedRevision: number }
 export type AttachEvidenceDto = { kind: "attach_saved_source"; sourceVersionId: string; startByte: number; endByte: number } | { kind: "attach_link"; url: string } | { kind: "attach_document"; documentId: string } | { kind: "attach_text"; title: string; text: string }
 export type AttachFailureDto = { kind: AttachFailureKindDto; message: string; nextSteps: AttachNextStepDto[] }
 export type AttachFailureKindDto =
@@ -5203,6 +5203,11 @@ export type CheckCodingExampleRequestDto = { operationId: string; programId: str
  */
 ordinal: number | null; args: string[]; expected: string }
 export type CheckDto = { checker: CheckerDto; result: CheckResultDto; reason: string; fingerprint: string; evidence: EvidenceSeenDto[]; windowTokens: number }
+export type CheckPracticePieceRequestDto = { operationId: string; runId: string; programId: string; sessionId: string; scope: CodingRunScope; files: LearningLabFile[];
+/**
+ * Scope Input: one literal per parameter.
+ */
+input: string[] | null }
 export type CheckResultDto = { verdict: "supported"; sourceVersionId: string; supportingQuote: string } |
 /**
  * Supported by a passage of another course source than the ones its
@@ -5563,19 +5568,6 @@ export type ClusterRunDto = { runId: string; ranAt: string; docCount: number; cl
  * Whether the course teaches writing, reading or debugging program code.
  */
 export type CodeFit = "fits" | "does_not_fit" | "checking"
-export type CodeHintDto = { ordinal: number; rung: CodeHintRung; text: string; reason: string;
-/**
- * Rung Line: 1-based lines of `path` in the draft the hint was written for.
- */
-lines: number[]; path: string | null; stage: CodingStage; runId: string | null;
-/**
- * Watched: given by the interviewer, in the thread.
- */
-inRole: boolean; at: number }
-/**
- * How much a hint gives away; each rung gives more than the one before.
- */
-export type CodeHintRung = "nudge" | "idea" | "plan" | "point"
 /**
  * The drill as the learner may see it.
  */
@@ -5682,29 +5674,11 @@ export type CodeReviewSeverity = "critical" | "major" | "minor" | "nit"
  * Whole lines of one file: 1-based, both ends included.
  */
 export type CodeReviewSpanDto = { path: string; start: number; end: number }
-export type CodingDebriefDto = { scorecard: Scorecard; facts: DebriefFactsDto; strongAnswer: StrongAnswerDto; patterns: PatternRatingDto[];
-/**
- * The last submit, nothing kept back.
- */
-cases: CaseViewDto[]; misreadings: MisreadingViewDto[]; model: string }
 export type CodingExampleDto = { ordinal: number; args: string[]; expected: string; verdict: ExampleVerdict;
 /**
  * Coached, verdict Wrong: what the problem expects.
  */
 expects: string | null; whyInvalid: string | null }
-export type CodingRunDto = { runId: string; scope: CodingRunScope; status: LearningPracticalRunStatus;
-/**
- * In case order; the screen lists failures first.
- */
-cases: CaseViewDto[];
-/**
- * What the program printed outside any case.
- */
-stdout: string; stderr: string; durationMs: number | null;
-/**
- * An input run in Coached: what the reference returns.
- */
-referenceActual: string | null; createdAt: number }
 /**
  * Which cases a run covers.
  */
@@ -5721,36 +5695,6 @@ export type CodingRunScope =
  * One input of the learner's choosing.
  */
 "input"
-export type CodingSessionDto = { sessionId: string; programId: string; activityId: string; lessonId: string | null; task: CodingTask; setting: CodingSetting; settingsUsed: CodingSetting[]; stage: CodingStage; stages: CodingStage[]; problem: PublicProblemDto; clock: ClockDto; examples: CodingExampleDto[]; coverage: ExampleCoverageDto;
-/**
- * Oldest first.
- */
-runs: CodingRunDto[]; hints: CodeHintDto[]; nextRung: CodeHintRung; turns: LearningSimulationTurnDto[]; cuePending: boolean; draft: LearningLabFile[]; submitted: boolean; solutionAvailable: boolean;
-/**
- * Some once revealed, or in the debrief.
- */
-workedSolution: string | null; debrief: CodingDebriefDto | null; finished: boolean; revision: number }
-/**
- * Names a session: get and respond.
- */
-export type CodingSessionRequestDto = { programId: string; sessionId: string }
-export type CodingSessionSummaryDto = { sessionId: string; activityId: string; title: string; task: CodingTask; setting: CodingSetting; stage: CodingStage; finished: boolean;
-/**
- * Cases passed on the last submit.
- */
-passed: number | null; total: number | null; createdAt: number; finishedAt: number | null }
-/**
- * Who the counterpart is, and what the learner may see.
- */
-export type CodingSetting = "coached" | "mock" | "watched"
-/**
- * Where in the task the learner is.
- */
-export type CodingStage = "understand" | "examples" | "plan" | "make" | "check" | "review" | "reproduce" | "locate" | "fix" | "verify"
-/**
- * What the learner is asked to do.
- */
-export type CodingTask = "build" | "repair" | "complete" | "arrange"
 /**
  * Request to compact a conversation's oldest messages into an LLM summary.
  *
@@ -6244,7 +6188,7 @@ defaultMaxResults: number }
 export type DailyNoteCompatDto = { id: string; date: string; content: string; createdAt: string; updatedAt: string }
 export type DailyNoteCursorRequestDto = { currentDate: string }
 export type DailyNotesRangeRequestDto = { startDate: string; endDate: string }
-export type DebriefFactsDto = { stageMs: StageTimeDto[]; runs: number; submits: number; hints: RungCountDto[]; settings: CodingSetting[] }
+export type DebriefFactsDto = { stageMs: StageTimeDto[]; runs: number; submits: number; hints: RungCountDto[]; settings: Setting[] }
 export type DecideLearningFollowUpRequestDto = { operationId: string; programId: string; followUpId: string }
 export type DecideLearningPracticeProposalRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; proposalId: string }
 export type DecideLearningRecallDuplicateRequestDto = { operationId: string; programId: string; suggestionId: string; accept: boolean }
@@ -7108,8 +7052,8 @@ export type FindingResultKind =
  * A real problem the key does not hold.
  */
 "valid_extra" | "false_positive"
-export type FinishCodingSessionRequestDto = { operationId: string; programId: string; sessionId: string; files: LearningLabFile[] }
 export type FinishLearningSimulationRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
+export type FinishPracticeSessionRequestDto = { operationId: string; programId: string; sessionId: string; files: LearningLabFile[] }
 /**
  * The device a verdict was judged against.
  */
@@ -7226,6 +7170,10 @@ export type ForkConversationRequestDto = { conversationId: string;
  */
 upToMessageId?: string | null }
 export type ForkConversationResponseDto = { conversation: ConversationDto; copiedMessageCount: number }
+/**
+ * How the starting state is derived from proven material.
+ */
+export type Form = "build" | "repair" | "complete" | "arrange"
 /**
  * A function call request from the LLM
  *
@@ -9250,7 +9198,6 @@ export type ListBatchJobsResponseDto = {
  * List of batch job summaries (newest first)
  */
 jobs: BatchJobSummaryDto[] }
-export type ListCodingSessionsRequestDto = { programId: string }
 export type ListConversationsExplorerQueryDto = { spaceId: string | null;
 /**
  * Only the tutor chats of this course.
@@ -9280,6 +9227,7 @@ export type ListJournalConversationsQueryDto = { journalSpaceId: string; query: 
 export type ListLearningTangentsRequestDto = { programId?: string | null }
 export type ListMessageBookmarksQueryDto = { conversationId: string | null; query: string | null; limit: number | null; offset: number | null }
 export type ListMessageBookmarksResponseDto = { bookmarks: ConversationMessageBookmarkDto[] }
+export type ListPracticeSessionsRequestDto = { programId: string }
 export type ListWorkspaceNotesRequestDto = {
 /**
  * List only the pages this journal owns. Omitted lists every page, which
@@ -9657,8 +9605,8 @@ export type ModelWaitDto = { retryInSeconds: number; errorCode: ErrorCode }
  * does not state.
  */
 export type ModelWindowDto = { contextWindow: number | null; maxOutputTokens: number | null }
-export type MoveCodingStageRequestDto = { operationId: string; programId: string; sessionId: string; stage: CodingStage; expectedRevision: number }
 export type MoveConversationToSpaceRequestDto = { conversationId: string; spaceId: string }
+export type MovePracticeStageRequestDto = { operationId: string; programId: string; sessionId: string; stage: Stage; expectedRevision: number }
 export type MutateLearningAssessmentFormRequestDto = { operationId: string; programId: string; formId: string; expectedRevision: number }
 /**
  * The lesson a start with no lesson asked for draws on, and what it comes to.
@@ -9775,6 +9723,24 @@ export type PerformanceTierDto =
  * Accurate models (> 5s/response)
  */
 "Accurate"
+export type PracticeCheckDto = { runId: string; scope: CodingRunScope; status: LearningPracticalRunStatus;
+/**
+ * In case order; the screen lists failures first.
+ */
+cases: CaseViewDto[];
+/**
+ * What the program printed outside any case.
+ */
+stdout: string; stderr: string; durationMs: number | null;
+/**
+ * An input run in Coached: what the reference returns.
+ */
+referenceActual: string | null; createdAt: number }
+export type PracticeDebriefDto = { scorecard: Scorecard; facts: DebriefFactsDto; strongAnswer: StrongAnswerDto; patterns: PatternRatingDto[];
+/**
+ * The last submit, nothing kept back.
+ */
+cases: CaseViewDto[]; misreadings: MisreadingViewDto[]; model: string }
 /**
  * Most overdue first.
  */
@@ -9782,6 +9748,33 @@ export type PracticeDueDto = { items: DueItemDto[] }
 export type PracticeDueRequestDto = { programId: string }
 export type PracticeFitDto = { code: CodeFit; reason: string | null }
 export type PracticeFitRequestDto = { programId: string }
+export type PracticeHintDto = { ordinal: number; rung: Rung; text: string; reason: string;
+/**
+ * Rung Point: 1-based lines of `path` in the draft the hint was written for.
+ */
+lines: number[]; path: string | null; stage: Stage; runId: string | null;
+/**
+ * Watched: given by the interviewer, in the thread.
+ */
+inRole: boolean; at: number }
+export type PracticeSessionDto = { sessionId: string; programId: string; activityId: string; lessonId: string | null; task: Form; setting: Setting; settingsUsed: Setting[]; stage: Stage; stages: Stage[]; problem: PublicProblemDto; clock: ClockDto; examples: CodingExampleDto[]; coverage: ExampleCoverageDto;
+/**
+ * Oldest first.
+ */
+runs: PracticeCheckDto[]; hints: PracticeHintDto[]; nextRung: Rung; turns: LearningSimulationTurnDto[]; cuePending: boolean; draft: LearningLabFile[]; submitted: boolean; solutionAvailable: boolean;
+/**
+ * Some once revealed, or in the debrief.
+ */
+workedSolution: string | null; debrief: PracticeDebriefDto | null; finished: boolean; revision: number }
+/**
+ * Names a session: get and respond.
+ */
+export type PracticeSessionRequestDto = { programId: string; sessionId: string }
+export type PracticeSessionSummaryDto = { sessionId: string; activityId: string; title: string; task: Form; setting: Setting; stage: Stage; finished: boolean;
+/**
+ * Cases passed on the last submit.
+ */
+passed: number | null; total: number | null; createdAt: number; finishedAt: number | null }
 export type PrepareLearningLessonRequestDto = { programId: string; lessonId: string; expectedRevision: number }
 export type PrepareLearningModuleRequestDto = { programId: string; moduleId: string; expectedRevision: number }
 export type PrepareLearningQuizBankRequestDto = { operationId: string; programId: string; scope: LearningQuizScopeDto;
@@ -10236,8 +10229,8 @@ newJobId: string;
  * Number of failed items being retried
  */
 retriedCount: number }
-export type RevealCodingSolutionRequestDto = { operationId: string; programId: string; sessionId: string }
 export type RevealLearningPracticeSolutionRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
+export type RevealPracticeSolutionRequestDto = { operationId: string; programId: string; sessionId: string }
 /**
  * One finding of the learner's, with what came of it.
  */
@@ -10368,12 +10361,11 @@ promptTemplate: string;
  * Clarification prompt template shown to users.
  */
 clarifyPromptTemplate: string }
-export type RunCodingSessionRequestDto = { operationId: string; runId: string; programId: string; sessionId: string; scope: CodingRunScope; files: LearningLabFile[];
 /**
- * Scope Input: one literal per parameter.
+ * How much of the answer a hint gives, in the order they are offered.
  */
-input: string[] | null }
-export type RungCountDto = { rung: CodeHintRung; count: number }
+export type Rung = "nudge" | "idea" | "plan" | "point"
+export type RungCountDto = { rung: Rung; count: number }
 /**
  * The sampling a model runs with in one mode.
  */
@@ -10613,16 +10605,14 @@ vectorIndexCompression: VectorIndexCompressionSettingsDto;
  * by the utility model, so this is off until a utility model is set up.
  */
 summaryIndexEnabled: boolean }
-export type SendCodingTurnRequestDto = { operationId: string; programId: string; sessionId: string; content: string; spoken: boolean; files: LearningLabFile[]; expectedRevision: number }
 export type SendLearningSimulationTurnRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; content: string }
+export type SendPracticeTurnRequestDto = { operationId: string; programId: string; sessionId: string; content: string; spoken: boolean; files: LearningLabFile[]; expectedRevision: number }
 export type SetArchiveKeepCountRequestDto = { keepCount: number }
 export type SetArchivePassphraseRequestDto = {
 /**
  * `None` removes the passphrase slot; the recovery code always remains.
  */
 passphrase?: string | null }
-export type SetCodingClockRequestDto = { programId: string; sessionId: string; open: boolean }
-export type SetCodingSettingRequestDto = { operationId: string; programId: string; sessionId: string; setting: CodingSetting; expectedRevision: number }
 export type SetConversationCourseRequestDto = { conversationId: string; programId: string;
 /**
  * The lesson the chat was opened from, when it was.
@@ -10634,10 +10624,16 @@ export type SetConversationStateRequestDto = { conversationId: string; value: bo
  * Chat sidebar is separate.
  */
 export type SetJournalEntryPinnedRequestDto = { journalSpaceId: string; conversationId: string; pinned: boolean }
+export type SetPracticeClockRequestDto = { programId: string; sessionId: string; open: boolean }
+export type SetPracticeSettingRequestDto = { operationId: string; programId: string; sessionId: string; setting: Setting; expectedRevision: number }
 /**
  * Set or clear the moment a deck must be remembered by.
  */
 export type SetStudyDeckTargetRequestDto = { deckId: string; targetAt: number | null }
+/**
+ * Who the counterpart is, and what the learner may see.
+ */
+export type Setting = "coached" | "mock" | "watched"
 /**
  * Complete application settings structure.
  */
@@ -10980,7 +10976,11 @@ downloadBytes: number }
  * How quickly a model answers, from its active parameters.
  */
 export type SpeedClassDto = "fast" | "balanced" | "thorough"
-export type StageTimeDto = { stage: CodingStage; activeMs: number }
+/**
+ * Where a session is in its form.
+ */
+export type Stage = "understand" | "examples" | "plan" | "make" | "check" | "review" | "reproduce" | "locate" | "fix" | "verify"
+export type StageTimeDto = { stage: Stage; activeMs: number }
 /**
  * A `StandingAssessed` event's payload: the claim's kind, whether its
  * support met the bar (and which bar it failed), each support's level for
@@ -11043,9 +11043,6 @@ export type StartBatchUrlImportResponseDto = {
  * Unique batch job ID for tracking
  */
 jobId: string }
-export type StartCodingBuildRequestDto = { operationId: string; programId: string; lessonId: string | null; task: CodingTask; language: string; difficulty: ProblemDifficulty; focus: string | null }
-export type StartCodingBuildResultDto = { jobId: string }
-export type StartCodingSessionRequestDto = { operationId: string; programId: string; activityId: string; setting: CodingSetting; budgetSeconds: number | null }
 export type StartDownloadRequest = { url: string; destination: string; checksum: ChecksumRequest | null; auth_token: string | null; model_name: string | null; model_id: string | null }
 export type StartJournalSynthesisRequestDto = { request: SynthesizeJournalEntriesRequestDto; destination: SynthesisDestinationDto;
 /**
@@ -11062,6 +11059,9 @@ export type StartLearningPracticalRunRequestDto = { operationId: string; runId: 
 export type StartLearningPracticeSessionRequestDto = { operationId: string; sessionId: string; programId: string; lessonId: string; expectedProgramRevision: number; mode: LearningPracticeMode; taskKind?: LearningPracticeTaskKind; revisesSessionId?: string | null }
 export type StartLearningQuizRequestDto = { operationId: string; formId: string; programId: string; scope: LearningQuizScopeDto; mode: LearningQuizMode; retakeOfFormId: string | null }
 export type StartLearningSimulationRequestDto = { operationId: string; sessionId: string; programId: string; activityId: string; expectedActivityRevision: number; practiceSessionId: string | null; learnerRole: string; counterpartRole: string }
+export type StartPracticeBuildRequestDto = { operationId: string; programId: string; lessonId: string | null; task: Form; language: string; difficulty: ProblemDifficulty; focus: string | null }
+export type StartPracticeBuildResultDto = { jobId: string }
+export type StartPracticeSessionRequestDto = { operationId: string; programId: string; activityId: string; setting: Setting; budgetSeconds: number | null }
 /**
  * What starting a drill came to.
  */

@@ -4,8 +4,8 @@ use crate::lab_runtime::LearningLabFile;
 use crate::practical_dto::CaseCheckDetailDto;
 use crate::practice::coding::debrief::facts;
 use crate::practice::coding::dto::{
-    CaseViewDto, ClockDto, CodingDebriefDto, CodingExampleDto, CodingRunDto, CodingSessionDto,
-    ExampleCoverageDto, ExampleVerdict, PublicProblemDto, StrongAnswerDto,
+    CaseViewDto, ClockDto, CodingExampleDto, ExampleCoverageDto, ExampleVerdict, PracticeCheckDto,
+    PracticeDebriefDto, PracticeSessionDto, PublicProblemDto, StrongAnswerDto,
 };
 use crate::practice::coding::problem::{CaseStatus, CaseVisibility, Problem, ProblemCase};
 use crate::practice::coding::records::{SessionBundle, StoredExample, StoredRun};
@@ -69,8 +69,8 @@ pub(crate) fn cut_case(detail: &CaseCheckDetailDto, shown: bool) -> CaseViewDto 
     }
 }
 
-fn run_view(run: &StoredRun, disclose: bool, reference_actual: Option<String>) -> CodingRunDto {
-    CodingRunDto {
+fn run_view(run: &StoredRun, disclose: bool, reference_actual: Option<String>) -> PracticeCheckDto {
+    PracticeCheckDto {
         run_id: run.run_id.clone(),
         scope: run.scope,
         status: run.status,
@@ -179,7 +179,7 @@ fn reference_actual_of(bundle: &SessionBundle, run_id: &str) -> Option<String> {
 fn debrief_view(
     bundle: &SessionBundle,
     draft: &[LearningLabFile],
-) -> Result<Option<CodingDebriefDto>> {
+) -> Result<Option<PracticeDebriefDto>> {
     let (Some(stored), Some(scorecard), true) = (
         &bundle.debrief,
         &bundle.scorecard,
@@ -188,7 +188,7 @@ fn debrief_view(
         return Ok(None);
     };
     let caught = caught_ids(&bundle.examples);
-    Ok(Some(CodingDebriefDto {
+    Ok(Some(PracticeDebriefDto {
         scorecard: scorecard.clone(),
         facts: facts(&evidence_of(bundle, draft)?),
         strong_answer: StrongAnswerDto {
@@ -221,14 +221,14 @@ fn debrief_view(
 }
 
 /// Everything the screen shows of a session. A finished session shows all of it: the debrief keeps nothing back.
-pub fn session_view(bundle: &SessionBundle) -> Result<CodingSessionDto> {
+pub fn session_view(bundle: &SessionBundle) -> Result<PracticeSessionDto> {
     let row = &bundle.row;
     let finished = row.finished_at.is_some();
     let submitted = row.submitted_at.is_some();
     let discloses = |hidden: Hidden| finished || row.setting.discloses(hidden, submitted);
     let hints = hints_of(bundle)?;
     let solution_available = row.setting.discloses(Hidden::WorkedSolution, submitted);
-    Ok(CodingSessionDto {
+    Ok(PracticeSessionDto {
         session_id: row.id.clone(),
         program_id: row.program_id.clone(),
         activity_id: row.activity_id.clone(),

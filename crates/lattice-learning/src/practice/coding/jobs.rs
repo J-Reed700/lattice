@@ -6,7 +6,7 @@ use crate::persistence::hash;
 use crate::practical_generation::{
     GeneratedPracticalActivity, GeneratedPracticalFile, PracticalFileRole,
 };
-use crate::practice::coding::dto::StartCodingBuildRequestDto;
+use crate::practice::coding::dto::StartPracticeBuildRequestDto;
 use crate::practice::coding::harness::{new_nonce, CaseHarness};
 use crate::practice::coding::problem::{Problem, PROBLEM_FILE_PATH, SOLUTION_PATH};
 use crate::practice::coding::source::ProgramOptions;
@@ -70,7 +70,7 @@ pub struct PracticeBuildRequest {
 
 /// The job payload of a program's build request.
 pub fn practice_build_request(
-    request: &StartCodingBuildRequestDto,
+    request: &StartPracticeBuildRequestDto,
 ) -> Result<PracticeBuildRequest> {
     let options = serde_json::to_value(ProgramOptions {
         language: request.language.clone(),
@@ -91,7 +91,7 @@ pub fn practice_build_request(
 /// Queues a build of a problem for a program and returns its job id. The same operation id is the same job.
 pub async fn queue_coding_build(
     database: &Database,
-    request: &StartCodingBuildRequestDto,
+    request: &StartPracticeBuildRequestDto,
 ) -> Result<String> {
     let requested = serde_json::to_value(practice_build_request(request)?)
         .map_err(|error| AppError::Serialization(error.to_string()))?;

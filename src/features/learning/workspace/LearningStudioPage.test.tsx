@@ -33,7 +33,7 @@ vi.mock('@/features/learning/practice/home/practiceHomeApi', () => ({
     checkFit: async () => ({ code: 'fits', reason: null }),
     due: async () => ({ items: [] }),
     codingSessions: async () => [],
-    startCodingSession: vi.fn(),
+    startPracticeSession: vi.fn(),
   },
 }));
 

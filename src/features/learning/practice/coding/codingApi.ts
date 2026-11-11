@@ -8,38 +8,38 @@ async function call<T>(command: CommandName, args: { request: unknown }): Promis
 
 /** One wrapper per coding command; each throws the backend's message when it fails. */
 export const codingApi = {
-  startBuild: (request: Wire.StartCodingBuildRequestDto) =>
-    call<Wire.StartCodingBuildResultDto>('start_coding_build', { request }),
-  startSession: (request: Wire.StartCodingSessionRequestDto) =>
-    call<Wire.CodingSessionDto>('start_coding_session', { request }),
-  getSession: (request: Wire.CodingSessionRequestDto) =>
-    call<Wire.CodingSessionDto>('get_coding_session', { request }),
-  listSessions: (request: Wire.ListCodingSessionsRequestDto) =>
-    call<Wire.CodingSessionSummaryDto[]>('list_coding_sessions', { request }),
-  moveStage: (request: Wire.MoveCodingStageRequestDto) =>
-    call<Wire.CodingSessionDto>('move_coding_stage', { request }),
+  startBuild: (request: Wire.StartPracticeBuildRequestDto) =>
+    call<Wire.StartPracticeBuildResultDto>('start_practice_build', { request }),
+  startSession: (request: Wire.StartPracticeSessionRequestDto) =>
+    call<Wire.PracticeSessionDto>('start_practice_session', { request }),
+  getSession: (request: Wire.PracticeSessionRequestDto) =>
+    call<Wire.PracticeSessionDto>('get_practice_session', { request }),
+  listSessions: (request: Wire.ListPracticeSessionsRequestDto) =>
+    call<Wire.PracticeSessionSummaryDto[]>('list_practice_sessions', { request }),
+  moveStage: (request: Wire.MovePracticeStageRequestDto) =>
+    call<Wire.PracticeSessionDto>('move_practice_stage', { request }),
   checkExample: (request: Wire.CheckCodingExampleRequestDto) =>
-    call<Wire.CodingSessionDto>('check_coding_example', { request }),
+    call<Wire.PracticeSessionDto>('check_coding_example', { request }),
   removeExample: (request: Wire.RemoveCodingExampleRequestDto) =>
-    call<Wire.CodingSessionDto>('remove_coding_example', { request }),
-  run: (request: Wire.RunCodingSessionRequestDto) =>
-    call<Wire.CodingSessionDto>('run_coding_session', { request }),
-  askHint: (request: Wire.AskCodingHintRequestDto) =>
-    call<Wire.CodingSessionDto>('ask_coding_hint', { request }),
-  sendTurn: (request: Wire.SendCodingTurnRequestDto) =>
-    call<Wire.CodingSessionDto>('send_coding_turn', { request }),
-  respond: (request: Wire.CodingSessionRequestDto) =>
-    call<Wire.CodingSessionDto>('respond_coding_session', { request }),
+    call<Wire.PracticeSessionDto>('remove_coding_example', { request }),
+  run: (request: Wire.CheckPracticePieceRequestDto) =>
+    call<Wire.PracticeSessionDto>('check_practice_piece', { request }),
+  askHint: (request: Wire.AskPracticeHintRequestDto) =>
+    call<Wire.PracticeSessionDto>('ask_practice_hint', { request }),
+  sendTurn: (request: Wire.SendPracticeTurnRequestDto) =>
+    call<Wire.PracticeSessionDto>('send_practice_turn', { request }),
+  respond: (request: Wire.PracticeSessionRequestDto) =>
+    call<Wire.PracticeSessionDto>('respond_practice_session', { request }),
   observeDraft: (request: Wire.ObserveCodingDraftRequestDto) =>
-    call<Wire.CodingSessionDto>('observe_coding_draft', { request }),
-  setClock: (request: Wire.SetCodingClockRequestDto) =>
-    call<Wire.ClockDto>('set_coding_clock', { request }),
-  setSetting: (request: Wire.SetCodingSettingRequestDto) =>
-    call<Wire.CodingSessionDto>('set_coding_setting', { request }),
-  revealSolution: (request: Wire.RevealCodingSolutionRequestDto) =>
-    call<Wire.CodingSessionDto>('reveal_coding_solution', { request }),
-  finish: (request: Wire.FinishCodingSessionRequestDto) =>
-    call<Wire.CodingSessionDto>('finish_coding_session', { request }),
+    call<Wire.PracticeSessionDto>('observe_coding_draft', { request }),
+  setClock: (request: Wire.SetPracticeClockRequestDto) =>
+    call<Wire.ClockDto>('set_practice_clock', { request }),
+  setSetting: (request: Wire.SetPracticeSettingRequestDto) =>
+    call<Wire.PracticeSessionDto>('set_practice_setting', { request }),
+  revealSolution: (request: Wire.RevealPracticeSolutionRequestDto) =>
+    call<Wire.PracticeSessionDto>('reveal_practice_solution', { request }),
+  finish: (request: Wire.FinishPracticeSessionRequestDto) =>
+    call<Wire.PracticeSessionDto>('finish_practice_session', { request }),
 
   /** The revision of the activity whose draft the learner's code is saved under. */
   async activityRevision(programId: string, activityId: string): Promise<number> {

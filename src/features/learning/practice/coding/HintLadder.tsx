@@ -5,27 +5,27 @@ import { Check, Lightbulb } from 'lucide-react';
 import type * as Wire from '@/lib/bindings';
 
 export interface HintLadderProps {
-  hints: Wire.CodeHintDto[];
-  nextRung: Wire.CodeHintRung;
+  hints: Wire.PracticeHintDto[];
+  nextRung: Wire.Rung;
   asking?: boolean;
   onAsk: () => void;
 }
 
-const RUNGS: Record<Wire.CodeHintRung, { name: string; ask: string }> = {
+const RUNGS: Record<Wire.Rung, { name: string; ask: string }> = {
   nudge: { name: 'Nudge', ask: 'Get a nudge' },
   idea: { name: 'Idea', ask: 'Get the idea' },
   plan: { name: 'Plan', ask: 'Get a plan' },
   point: { name: 'Point at the line', ask: 'Point at the line' },
 };
 
-function lineList(hint: Wire.CodeHintDto): string {
+function lineList(hint: Wire.PracticeHintDto): string {
   const where = hint.path ? ` of ${hint.path}` : '';
   return `Look at line${hint.lines.length === 1 ? '' : 's'} ${hint.lines.join(', ')}${where}`;
 }
 
 export function HintLadder({ hints, nextRung, asking = false, onAsk }: HintLadderProps) {
   const [read, setRead] = useState<ReadonlySet<number>>(new Set());
-  const latest = hints[hints.length - 1] as Wire.CodeHintDto | undefined;
+  const latest = hints[hints.length - 1] as Wire.PracticeHintDto | undefined;
   const latestRead = latest === undefined || read.has(latest.ordinal);
 
   return (

@@ -1,5 +1,5 @@
 //! Coding sessions as the Code card calls them (docs/design/2026-11-08-coding-sessions-and-one-practice-area.md):
-//! request DTOs in, the engine's session service in the middle, `CodingSessionDto` out. `get`, `list`, `due` and
+//! request DTOs in, the engine's session service in the middle, `PracticeSessionDto` out. `get`, `list`, `due` and
 //! `set_clock` stay here: each is one read or write that answers with a screen DTO.
 
 mod aids;
@@ -110,11 +110,14 @@ impl CodingSessions<'_> {
         }
     }
 
-    async fn view(&self, program_id: &str, session_id: &str) -> Result<CodingSessionDto> {
+    async fn view(&self, program_id: &str, session_id: &str) -> Result<PracticeSessionDto> {
         session_view(&self.repo.coding_session(program_id, session_id).await?)
     }
 
-    pub async fn start(&self, request: &StartCodingSessionRequestDto) -> Result<CodingSessionDto> {
+    pub async fn start(
+        &self,
+        request: &StartPracticeSessionRequestDto,
+    ) -> Result<PracticeSessionDto> {
         let payload_hash = hash(request)?;
         let engine = self.engine();
         let session_id = self
@@ -132,21 +135,21 @@ impl CodingSessions<'_> {
         self.view(&request.program_id, &session_id).await
     }
 
-    pub async fn get(&self, request: &CodingSessionRequestDto) -> Result<CodingSessionDto> {
+    pub async fn get(&self, request: &PracticeSessionRequestDto) -> Result<PracticeSessionDto> {
         self.view(&request.program_id, &request.session_id).await
     }
 
     pub async fn list(
         &self,
-        request: &ListCodingSessionsRequestDto,
-    ) -> Result<Vec<CodingSessionSummaryDto>> {
+        request: &ListPracticeSessionsRequestDto,
+    ) -> Result<Vec<PracticeSessionSummaryDto>> {
         self.repo.list_coding_sessions(&request.program_id).await
     }
 
     pub async fn move_stage(
         &self,
-        request: &MoveCodingStageRequestDto,
-    ) -> Result<CodingSessionDto> {
+        request: &MovePracticeStageRequestDto,
+    ) -> Result<PracticeSessionDto> {
         let payload_hash = hash(request)?;
         let engine = self.engine();
         self.service(&engine)
@@ -163,7 +166,7 @@ impl CodingSessions<'_> {
     pub async fn check_example(
         &self,
         request: &CheckCodingExampleRequestDto,
-    ) -> Result<CodingSessionDto> {
+    ) -> Result<PracticeSessionDto> {
         let payload_hash = hash(request)?;
         let operation = coding_op(&request.operation_id, "example", &payload_hash);
         let seen = self
@@ -203,7 +206,7 @@ impl CodingSessions<'_> {
     pub async fn remove_example(
         &self,
         request: &RemoveCodingExampleRequestDto,
-    ) -> Result<CodingSessionDto> {
+    ) -> Result<PracticeSessionDto> {
         let payload_hash = hash(request)?;
         self.repo
             .remove_coding_example(
@@ -217,7 +220,7 @@ impl CodingSessions<'_> {
         self.view(&request.program_id, &request.session_id).await
     }
 
-    pub async fn run(&self, request: &RunCodingSessionRequestDto) -> Result<CodingSessionDto> {
+    pub async fn run(&self, request: &CheckPracticePieceRequestDto) -> Result<PracticeSessionDto> {
         if request.scope == CodingRunScope::Input {
             self.run_input(request).await?;
         } else {
@@ -241,7 +244,7 @@ impl CodingSessions<'_> {
 
     /// Program's own check: the learner's code on one input, with no verdict. In Coached it also records what the
     /// reference returns for that input.
-    async fn run_input(&self, request: &RunCodingSessionRequestDto) -> Result<()> {
+    async fn run_input(&self, request: &CheckPracticePieceRequestDto) -> Result<()> {
         let bundle = self
             .repo
             .coding_session(&request.program_id, &request.session_id)
@@ -317,7 +320,10 @@ impl CodingSessions<'_> {
         Ok(())
     }
 
-    pub async fn ask_hint(&self, request: &AskCodingHintRequestDto) -> Result<CodingSessionDto> {
+    pub async fn ask_hint(
+        &self,
+        request: &AskPracticeHintRequestDto,
+    ) -> Result<PracticeSessionDto> {
         let payload_hash = hash(request)?;
         let piece = piece_of(&request.files)?;
         let engine = self.engine();
@@ -332,7 +338,10 @@ impl CodingSessions<'_> {
         self.view(&request.program_id, &request.session_id).await
     }
 
-    pub async fn send_turn(&self, request: &SendCodingTurnRequestDto) -> Result<CodingSessionDto> {
+    pub async fn send_turn(
+        &self,
+        request: &SendPracticeTurnRequestDto,
+    ) -> Result<PracticeSessionDto> {
         let payload_hash = hash(request)?;
         let piece = piece_of(&request.files)?;
         let engine = self.engine();
@@ -350,7 +359,7 @@ impl CodingSessions<'_> {
     }
 
     /// Answers the pending cue, if there is one. On failure the cue goes back unless a newer one arrived.
-    pub async fn respond(&self, request: &CodingSessionRequestDto) -> Result<CodingSessionDto> {
+    pub async fn respond(&self, request: &PracticeSessionRequestDto) -> Result<PracticeSessionDto> {
         let engine = self.engine();
         self.service(&engine)
             .respond(&at(&request.program_id, &request.session_id))
@@ -361,7 +370,7 @@ impl CodingSessions<'_> {
     pub async fn observe_draft(
         &self,
         request: &ObserveCodingDraftRequestDto,
-    ) -> Result<CodingSessionDto> {
+    ) -> Result<PracticeSessionDto> {
         let piece = piece_of(&request.files)?;
         let reason = match request.reason {
             DraftObservation::Pause => DraftReason::Pause,
@@ -378,7 +387,7 @@ impl CodingSessions<'_> {
         self.view(&request.program_id, &request.session_id).await
     }
 
-    pub async fn set_clock(&self, request: &SetCodingClockRequestDto) -> Result<ClockDto> {
+    pub async fn set_clock(&self, request: &SetPracticeClockRequestDto) -> Result<ClockDto> {
         self.repo
             .set_coding_clock(
                 &request.program_id,
@@ -391,8 +400,8 @@ impl CodingSessions<'_> {
 
     pub async fn set_setting(
         &self,
-        request: &SetCodingSettingRequestDto,
-    ) -> Result<CodingSessionDto> {
+        request: &SetPracticeSettingRequestDto,
+    ) -> Result<PracticeSessionDto> {
         let payload_hash = hash(request)?;
         let engine = self.engine();
         self.service(&engine)
@@ -408,8 +417,8 @@ impl CodingSessions<'_> {
 
     pub async fn reveal_solution(
         &self,
-        request: &RevealCodingSolutionRequestDto,
-    ) -> Result<CodingSessionDto> {
+        request: &RevealPracticeSolutionRequestDto,
+    ) -> Result<PracticeSessionDto> {
         let payload_hash = hash(request)?;
         let engine = self.engine();
         self.service(&engine)
@@ -425,8 +434,8 @@ impl CodingSessions<'_> {
     /// returned as it is stored.
     pub async fn finish(
         &self,
-        request: &FinishCodingSessionRequestDto,
-    ) -> Result<CodingSessionDto> {
+        request: &FinishPracticeSessionRequestDto,
+    ) -> Result<PracticeSessionDto> {
         let payload_hash = hash(request)?;
         let piece = piece_of(&request.files)?;
         let engine = self.engine();

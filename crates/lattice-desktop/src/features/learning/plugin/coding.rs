@@ -203,10 +203,10 @@ macro_rules! live_sessions {
 /// Queues a coding problem build job that generates and proves a problem before saving it.
 #[tauri::command]
 #[specta::specta]
-pub async fn start_coding_build(
-    request: StartCodingBuildRequestDto,
+pub async fn start_practice_build(
+    request: StartPracticeBuildRequestDto,
     container: State<'_, Container>,
-) -> Result<StartCodingBuildResultDto, ApiError> {
+) -> Result<StartPracticeBuildResultDto, ApiError> {
     let requested = serde_json::to_value(practice_build_request(&request).map_err(ApiError::from)?)
         .map_err(|e| ApiError::internal(format!("Failed to serialize build request: {e}")))?;
     let payload_hash = format!(
@@ -228,17 +228,17 @@ pub async fn start_coding_build(
         .await
         .map_err(ApiError::from)?;
     container.jobs().submitted(&job.id).await;
-    Ok(StartCodingBuildResultDto { job_id: job.id })
+    Ok(StartPracticeBuildResultDto { job_id: job.id })
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn start_coding_session(
-    request: StartCodingSessionRequestDto,
+pub async fn start_practice_session(
+    request: StartPracticeSessionRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
     kinds: State<'_, Kinds>,
-) -> Result<CodingSessionDto, ApiError> {
+) -> Result<PracticeSessionDto, ApiError> {
     let repo = repo_of(&container);
     plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions.start(&request).await.map_err(ApiError::from)
@@ -246,12 +246,12 @@ pub async fn start_coding_session(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn get_coding_session(
-    request: CodingSessionRequestDto,
+pub async fn get_practice_session(
+    request: PracticeSessionRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
     kinds: State<'_, Kinds>,
-) -> Result<CodingSessionDto, ApiError> {
+) -> Result<PracticeSessionDto, ApiError> {
     let repo = repo_of(&container);
     plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions.get(&request).await.map_err(ApiError::from)
@@ -259,12 +259,12 @@ pub async fn get_coding_session(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn list_coding_sessions(
-    request: ListCodingSessionsRequestDto,
+pub async fn list_practice_sessions(
+    request: ListPracticeSessionsRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
     kinds: State<'_, Kinds>,
-) -> Result<Vec<CodingSessionSummaryDto>, ApiError> {
+) -> Result<Vec<PracticeSessionSummaryDto>, ApiError> {
     let repo = repo_of(&container);
     plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions.list(&request).await.map_err(ApiError::from)
@@ -272,12 +272,12 @@ pub async fn list_coding_sessions(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn move_coding_stage(
-    request: MoveCodingStageRequestDto,
+pub async fn move_practice_stage(
+    request: MovePracticeStageRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
     kinds: State<'_, Kinds>,
-) -> Result<CodingSessionDto, ApiError> {
+) -> Result<PracticeSessionDto, ApiError> {
     let repo = repo_of(&container);
     plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions.move_stage(&request).await.map_err(ApiError::from)
@@ -290,7 +290,7 @@ pub async fn check_coding_example(
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
     kinds: State<'_, Kinds>,
-) -> Result<CodingSessionDto, ApiError> {
+) -> Result<PracticeSessionDto, ApiError> {
     let repo = repo_of(&container);
     live_sessions!(sessions, request, container, runtimes, kinds, repo, &NoDebrief);
     sessions
@@ -306,7 +306,7 @@ pub async fn remove_coding_example(
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
     kinds: State<'_, Kinds>,
-) -> Result<CodingSessionDto, ApiError> {
+) -> Result<PracticeSessionDto, ApiError> {
     let repo = repo_of(&container);
     plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions
@@ -317,12 +317,12 @@ pub async fn remove_coding_example(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn run_coding_session(
-    request: RunCodingSessionRequestDto,
+pub async fn check_practice_piece(
+    request: CheckPracticePieceRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
     kinds: State<'_, Kinds>,
-) -> Result<CodingSessionDto, ApiError> {
+) -> Result<PracticeSessionDto, ApiError> {
     let repo = repo_of(&container);
     live_sessions!(sessions, request, container, runtimes, kinds, repo, &NoDebrief);
     sessions.run(&request).await.map_err(ApiError::from)
@@ -330,12 +330,12 @@ pub async fn run_coding_session(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn ask_coding_hint(
-    request: AskCodingHintRequestDto,
+pub async fn ask_practice_hint(
+    request: AskPracticeHintRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
     kinds: State<'_, Kinds>,
-) -> Result<CodingSessionDto, ApiError> {
+) -> Result<PracticeSessionDto, ApiError> {
     let repo = repo_of(&container);
     live_sessions!(sessions, request, container, runtimes, kinds, repo, &NoDebrief);
     sessions.ask_hint(&request).await.map_err(ApiError::from)
@@ -343,12 +343,12 @@ pub async fn ask_coding_hint(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn send_coding_turn(
-    request: SendCodingTurnRequestDto,
+pub async fn send_practice_turn(
+    request: SendPracticeTurnRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
     kinds: State<'_, Kinds>,
-) -> Result<CodingSessionDto, ApiError> {
+) -> Result<PracticeSessionDto, ApiError> {
     let repo = repo_of(&container);
     plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions.send_turn(&request).await.map_err(ApiError::from)
@@ -356,12 +356,12 @@ pub async fn send_coding_turn(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn respond_coding_session(
-    request: CodingSessionRequestDto,
+pub async fn respond_practice_session(
+    request: PracticeSessionRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
     kinds: State<'_, Kinds>,
-) -> Result<CodingSessionDto, ApiError> {
+) -> Result<PracticeSessionDto, ApiError> {
     let repo = repo_of(&container);
     live_sessions!(sessions, request, container, runtimes, kinds, repo, &NoDebrief);
     sessions.respond(&request).await.map_err(ApiError::from)
@@ -374,7 +374,7 @@ pub async fn observe_coding_draft(
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
     kinds: State<'_, Kinds>,
-) -> Result<CodingSessionDto, ApiError> {
+) -> Result<PracticeSessionDto, ApiError> {
     let repo = repo_of(&container);
     plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions
@@ -385,8 +385,8 @@ pub async fn observe_coding_draft(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn set_coding_clock(
-    request: SetCodingClockRequestDto,
+pub async fn set_practice_clock(
+    request: SetPracticeClockRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
     kinds: State<'_, Kinds>,
@@ -398,12 +398,12 @@ pub async fn set_coding_clock(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn set_coding_setting(
-    request: SetCodingSettingRequestDto,
+pub async fn set_practice_setting(
+    request: SetPracticeSettingRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
     kinds: State<'_, Kinds>,
-) -> Result<CodingSessionDto, ApiError> {
+) -> Result<PracticeSessionDto, ApiError> {
     let repo = repo_of(&container);
     plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions.set_setting(&request).await.map_err(ApiError::from)
@@ -411,12 +411,12 @@ pub async fn set_coding_setting(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn reveal_coding_solution(
-    request: RevealCodingSolutionRequestDto,
+pub async fn reveal_practice_solution(
+    request: RevealPracticeSolutionRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
     kinds: State<'_, Kinds>,
-) -> Result<CodingSessionDto, ApiError> {
+) -> Result<PracticeSessionDto, ApiError> {
     let repo = repo_of(&container);
     plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions
@@ -427,12 +427,12 @@ pub async fn reveal_coding_solution(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn finish_coding_session(
-    request: FinishCodingSessionRequestDto,
+pub async fn finish_practice_session(
+    request: FinishPracticeSessionRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
     kinds: State<'_, Kinds>,
-) -> Result<CodingSessionDto, ApiError> {
+) -> Result<PracticeSessionDto, ApiError> {
     let repo = repo_of(&container);
     let runner = runner_of(&repo, &request.program_id, &request.session_id, &runtimes).await?;
     let pin = container

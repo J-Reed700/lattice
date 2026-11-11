@@ -36,7 +36,7 @@ vi.mock('@/features/learning/practice/coding/CodingSession', () => ({
     <button type="button" onClick={() => onTryInterview('mock')}>try interview</button>
   ),
 }));
-vi.mock('./practiceHomeApi', () => ({ practiceHomeApi: { startCodingSession: vi.fn() } }));
+vi.mock('./practiceHomeApi', () => ({ practiceHomeApi: { startPracticeSession: vi.fn() } }));
 
 const lesson = (id: string) => ({ id, title: id }) as Wire.LearningLessonDto;
 const program = {

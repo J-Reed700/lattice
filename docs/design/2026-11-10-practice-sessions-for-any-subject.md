@@ -474,7 +474,18 @@ Tests come first in every step. Nothing is built locally; each step is pushed to
      Program's run scope has `Input`, `check_status_of` because the run status is the workbench's, and
      `program_form` replaces `task_of` as the one place that refuses Complete and Arrange. The fits table and
      `run_coding_input` are not part of this step.
-5b follows with commands, DTOs, bindings and the screen's API names.
+   - 5b Commands, DTOs, bindings and the screen's API. The commands are `start_practice_session`,
+     `get_practice_session`, `list_practice_sessions`, `finish_practice_session`, `respond_practice_session`,
+     `move_practice_stage`, `ask_practice_hint`, `send_practice_turn`, `set_practice_clock`,
+     `set_practice_setting`, `reveal_practice_solution`, `start_practice_build` and `check_practice_piece` (was
+     `run_coding_session`); `check_coding_example`, `remove_coding_example` and `observe_coding_draft` keep their
+     names. The request and result DTOs follow their commands; the session, summary, debrief, check and hint views
+     are `PracticeSessionDto`, `PracticeSessionSummaryDto`, `PracticeDebriefDto`, `PracticeCheckDto` and
+     `PracticeHintDto`. The wire types `CodingStage`, `CodingSetting`, `CodingTask` and `CodeHintRung` are the
+     engine's `Stage`, `Setting`, `Form` and `Rung`. The wire field `task` keeps its name and now holds a `Form`.
+     `CodingSessions` stays: `PracticeSessions` is the engine's service and the Program type is its adapter.
+     `run_coding_input`, the new command for Program's run on the learner's own input, is not part of this step.
+     The screen's API follows (calls, types, one query key); the components are step 6.
 6. The screen: `session/` and the kind registry, with Program's editor and results views under `kinds/program/`;
    the dependency rule in the architecture check; the fake-kind tests.
 7. Fit per kind.

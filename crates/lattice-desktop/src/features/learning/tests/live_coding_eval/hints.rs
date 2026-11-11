@@ -14,9 +14,9 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::Result;
 use lattice_learning::lab_runtime::LearningLabFile;
 use lattice_learning::practice::coding::dto::{
-    AskCodingHintRequestDto, CaseViewDto, CodeHintDto, CodingRunScope, CodingSessionDto,
-    DraftObservation, MoveCodingStageRequestDto, ObserveCodingDraftRequestDto,
-    RunCodingSessionRequestDto, StartCodingSessionRequestDto,
+    AskPracticeHintRequestDto, CaseViewDto, CheckPracticePieceRequestDto, CodingRunScope,
+    DraftObservation, MovePracticeStageRequestDto, ObserveCodingDraftRequestDto, PracticeHintDto,
+    PracticeSessionDto, StartPracticeSessionRequestDto,
 };
 use lattice_learning::practice::coding::observation::{diff_lines, LineChange, LineChangeKind};
 use lattice_learning::practice::coding::problem::{CaseStatus, Problem, SOLUTION_PATH};
@@ -47,7 +47,7 @@ struct BlockCheck {
 struct HintRecord {
     rung: Rung,
     ms: u64,
-    hint: Option<CodeHintDto>,
+    hint: Option<PracticeHintDto>,
     error: Option<String>,
     blocks: Vec<BlockCheck>,
 }
@@ -130,7 +130,7 @@ fn id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-fn failing_of(session: &CodingSessionDto) -> Vec<FailingCase> {
+fn failing_of(session: &PracticeSessionDto) -> Vec<FailingCase> {
     let Some(run) = session.runs.last() else {
         return Vec::new();
     };
@@ -149,7 +149,7 @@ fn failing_of(session: &CodingSessionDto) -> Vec<FailingCase> {
 }
 
 /// Runs every code block of `hint` as `solution.py` against all the problem's cases.
-async fn check_blocks(lab: &EvalLab, problem: &Problem, hint: &CodeHintDto) -> Vec<BlockCheck> {
+async fn check_blocks(lab: &EvalLab, problem: &Problem, hint: &PracticeHintDto) -> Vec<BlockCheck> {
     let mut checks = Vec::new();
     for (part, markdown) in [("text", &hint.text), ("reason", &hint.reason)] {
         for code in code_blocks(markdown) {
@@ -391,7 +391,7 @@ async fn hint_ladder(
 ) -> Result<(Vec<FailingCase>, Vec<HintRecord>)> {
     lab_sessions!(sessions, lab);
     let started = sessions
-        .start(&StartCodingSessionRequestDto {
+        .start(&StartPracticeSessionRequestDto {
             operation_id: id(),
             program_id: lab.program_id.clone(),
             activity_id: activity_id.to_owned(),
@@ -401,7 +401,7 @@ async fn hint_ladder(
         .await?;
     let session_id = started.session_id;
     sessions
-        .move_stage(&MoveCodingStageRequestDto {
+        .move_stage(&MovePracticeStageRequestDto {
             operation_id: id(),
             program_id: lab.program_id.clone(),
             session_id: session_id.clone(),
@@ -418,7 +418,7 @@ async fn hint_ladder(
         })
         .await?;
     let mut view = sessions
-        .run(&RunCodingSessionRequestDto {
+        .run(&CheckPracticePieceRequestDto {
             operation_id: id(),
             run_id: id(),
             program_id: lab.program_id.clone(),
@@ -435,7 +435,7 @@ async fn hint_ladder(
         let before = view.hints.len();
         let at = Instant::now();
         let asked = sessions
-            .ask_hint(&AskCodingHintRequestDto {
+            .ask_hint(&AskPracticeHintRequestDto {
                 operation_id: id(),
                 program_id: lab.program_id.clone(),
                 session_id: session_id.clone(),

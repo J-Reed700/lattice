@@ -27,7 +27,7 @@ export interface CodingSessionProps {
   programId: string;
   sessionId: string;
   onExit: () => void;
-  onTryInterview: (setting: Wire.CodingSetting) => void;
+  onTryInterview: (setting: Wire.Setting) => void;
 }
 
 /** How long typing must stop before a Watched interviewer looks at the changes. */
@@ -35,7 +35,7 @@ export const TYPING_PAUSE_MS = 4_000;
 /** How long a Coached learner may do nothing before the coach checks in. */
 export const IDLE_AFTER_MS = 180_000;
 const BUSY_LABEL = 'Reading your code…';
-const SETTINGS: Wire.CodingSetting[] = ['coached', 'mock', 'watched'];
+const SETTINGS: Wire.Setting[] = ['coached', 'mock', 'watched'];
 const RUN_TITLES: Record<Wire.CodingRunScope, string> = {
   shown: 'Examples',
   all: 'Every case',
@@ -46,12 +46,12 @@ type Panel = 'problem' | 'code' | 'talk';
 type Failure = { message: string; retry?: () => void };
 
 /** The interview setting the course last used on the Practice page; Mock the first time. */
-function lastInterviewSetting(programId: string): Wire.CodingSetting {
+function lastInterviewSetting(programId: string): Wire.Setting {
   return lastChosen(programId, 'mock', 'setting') === 'watched' ? 'watched' : 'mock';
 }
 
 export function CodingSession({ programId, sessionId, onExit, onTryInterview }: CodingSessionProps) {
-  const [loaded, setLoaded] = useState<{ session: Wire.CodingSessionDto; activityRevision: number } | null>(null);
+  const [loaded, setLoaded] = useState<{ session: Wire.PracticeSessionDto; activityRevision: number } | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
 
@@ -105,10 +105,10 @@ export function CodingSession({ programId, sessionId, onExit, onTryInterview }: 
 
 interface WorkspaceProps {
   programId: string;
-  initial: Wire.CodingSessionDto;
+  initial: Wire.PracticeSessionDto;
   activityRevision: number;
   onExit: () => void;
-  onTryInterview: (setting: Wire.CodingSetting) => void;
+  onTryInterview: (setting: Wire.Setting) => void;
 }
 
 function Workspace({ programId, initial, activityRevision, onExit, onTryInterview }: WorkspaceProps) {
@@ -134,7 +134,7 @@ function Workspace({ programId, initial, activityRevision, onExit, onTryIntervie
   const responding = useRef(false);
   const drainRef = useRef<() => Promise<void>>(async () => undefined);
 
-  const apply = useCallback((next: Wire.CodingSessionDto) => {
+  const apply = useCallback((next: Wire.PracticeSessionDto) => {
     sessionRef.current = next;
     setSession(next);
     if (next.cuePending) void drainRef.current();
@@ -235,7 +235,7 @@ function Workspace({ programId, initial, activityRevision, onExit, onTryIntervie
   }, [activityAt, session.setting, session.finished, observe]);
 
   const guarded = useCallback(
-    async (work: () => Promise<Wire.CodingSessionDto>, retry?: () => void) => {
+    async (work: () => Promise<Wire.PracticeSessionDto>, retry?: () => void) => {
       setActionError(null);
       try {
         apply(await work());
@@ -299,7 +299,7 @@ function Workspace({ programId, initial, activityRevision, onExit, onTryIntervie
     setAsking(false);
   };
 
-  const move = async (stage: Wire.CodingStage) => {
+  const move = async (stage: Wire.Stage) => {
     if (movingRef.current) return;
     movingRef.current = true;
     setMoving(true);
@@ -331,7 +331,7 @@ function Workspace({ programId, initial, activityRevision, onExit, onTryIntervie
     await guarded(() => codingApi.removeExample({ operationId: newId(), programId, sessionId, ordinal }));
   };
 
-  const changeSetting = (setting: Wire.CodingSetting) =>
+  const changeSetting = (setting: Wire.Setting) =>
     guarded(() =>
       codingApi.setSetting({
         operationId: newId(),
@@ -392,7 +392,7 @@ function Workspace({ programId, initial, activityRevision, onExit, onTryIntervie
   }
 
   const { problem, setting } = session;
-  const lastRun = session.runs[session.runs.length - 1] as Wire.CodingRunDto | undefined;
+  const lastRun = session.runs[session.runs.length - 1] as Wire.PracticeCheckDto | undefined;
   const counterpart = setting === 'coached' ? 'Coach' : 'Interviewer';
   const messages: ThreadMessage[] = session.turns.map((turn) => ({
     id: turn.id,
@@ -439,7 +439,7 @@ function Workspace({ programId, initial, activityRevision, onExit, onTryIntervie
             <select
               id="coding-setting"
               value={setting}
-              onChange={(event) => void changeSetting(event.target.value as Wire.CodingSetting)}
+              onChange={(event) => void changeSetting(event.target.value as Wire.Setting)}
               className="min-h-[44px] rounded-lg border border-border-default bg-surface px-2 text-sm text-text-primary"
             >
               {SETTINGS.map((option) => (

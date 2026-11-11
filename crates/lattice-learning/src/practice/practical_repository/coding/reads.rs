@@ -6,7 +6,7 @@ use super::super::{
 use super::{from_name, parse_row, problem_of, row_on, scope_of, to_u32, verdict_of};
 use crate::persistence::db;
 use crate::practical_dto::{CaseCheckDetailDto, LearningSimulationTurnDto};
-use crate::practice::coding::dto::{CodingSessionSummaryDto, PatternRatingDto, PracticeDueDto};
+use crate::practice::coding::dto::{PatternRatingDto, PracticeDueDto, PracticeSessionSummaryDto};
 use crate::practice::coding::patterns;
 use crate::practice::coding::records::{
     SessionBundle, StoredDebrief, StoredEvent, StoredExample, StoredRun,
@@ -246,7 +246,7 @@ impl LearningPracticalRepository {
     pub async fn list_coding_sessions(
         &self,
         program_id: &str,
-    ) -> Result<Vec<crate::practice::coding::dto::CodingSessionSummaryDto>> {
+    ) -> Result<Vec<crate::practice::coding::dto::PracticeSessionSummaryDto>> {
         uuid(program_id, "program")?;
         let mut tx = self.pool.begin_read().await.map_err(db)?;
         let rows = sqlx::query("SELECT s.*,a.title AS title FROM learning_exercise_sessions s JOIN learning_practical_activities a ON a.id=s.activity_id WHERE s.program_id=? ORDER BY s.created_at DESC,s.id DESC")
@@ -275,7 +275,7 @@ impl LearningPracticalRepository {
                     .and_then(serde_json::Value::as_u64)
                     .and_then(|number| u32::try_from(number).ok())
             };
-            summaries.push(CodingSessionSummaryDto {
+            summaries.push(PracticeSessionSummaryDto {
                 passed: count("passed"),
                 total: count("total"),
                 title: row.get("title"),

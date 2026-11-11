@@ -11,7 +11,7 @@ const empty: HistorySources = { coding: [], activities: [], simulations: [], att
 const activity = (patch: Partial<Wire.LearningPracticalActivityDto>): Wire.LearningPracticalActivityDto =>
   ({ id: 'act', title: 'An activity', kind: 'code_lab', practiceMode: 'practice', updatedAt: 100, ...patch }) as Wire.LearningPracticalActivityDto;
 
-const session = (patch: Partial<Wire.CodingSessionSummaryDto>): Wire.CodingSessionSummaryDto => ({
+const session = (patch: Partial<Wire.PracticeSessionSummaryDto>): Wire.PracticeSessionSummaryDto => ({
   sessionId: 's1',
   activityId: 'coding-act',
   title: 'Two sum',

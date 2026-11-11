@@ -134,7 +134,8 @@ pub(crate) mod test_support {
 
     use crate::lab_runtime::LearningLabFile;
     use crate::practice::coding::dto::{
-        CaseViewDto, ClockDto, CodingRunDto, CodingSessionDto, ExampleCoverageDto, PublicProblemDto,
+        CaseViewDto, ClockDto, ExampleCoverageDto, PracticeCheckDto, PracticeSessionDto,
+        PublicProblemDto,
     };
     use crate::practice::coding::problem::{
         CaseCompare, CaseStatus, CaseVisibility, Misreading, Problem, ProblemCase,
@@ -212,9 +213,9 @@ pub(crate) mod test_support {
         }
     }
 
-    pub fn session(problem: &Problem, setting: Setting, stage: Stage) -> CodingSessionDto {
+    pub fn session(problem: &Problem, setting: Setting, stage: Stage) -> PracticeSessionDto {
         let task = Form::Build;
-        CodingSessionDto {
+        PracticeSessionDto {
             session_id: SESSION_ID.to_owned(),
             program_id: "program-1".to_owned(),
             activity_id: "activity-1".to_owned(),
@@ -276,10 +277,10 @@ pub(crate) mod test_support {
         }
     }
 
-    pub fn failing_run() -> CodingRunDto {
+    pub fn failing_run() -> PracticeCheckDto {
         use crate::practice::coding::dto::CodingRunScope;
         use crate::practice::practical_dto::LearningPracticalRunStatus;
-        CodingRunDto {
+        PracticeCheckDto {
             run_id: "run-77777777-aaaa".to_owned(),
             scope: CodingRunScope::All,
             status: LearningPracticalRunStatus::Failed,

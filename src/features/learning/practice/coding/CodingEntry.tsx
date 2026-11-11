@@ -12,8 +12,8 @@ import { codingApi } from './codingApi';
 
 export interface CodingBuildChoice {
   lessonId?: string | null;
-  task: Wire.CodingTask;
-  setting: Wire.CodingSetting;
+  task: Wire.Form;
+  setting: Wire.Setting;
   language: string;
   difficulty: Wire.ProblemDifficulty;
   focus?: string | null;

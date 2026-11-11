@@ -2,7 +2,7 @@
 //! coding code speaks (docs/design/2026-11-08-coding-sessions-and-one-practice-area.md 4.8).
 
 use super::dto::{
-    CodeHintDto, CodingExampleDto, CodingRunScope, DebriefFactsDto, RungCountDto, StageTimeDto,
+    CodingExampleDto, CodingRunScope, DebriefFactsDto, PracticeHintDto, RungCountDto, StageTimeDto,
 };
 use super::harness::CaseHarness;
 use super::problem::{CaseResult, Problem};
@@ -38,7 +38,7 @@ pub struct SessionEvidence {
     pub turns: Vec<LearningSimulationTurnDto>,
     pub runs: Vec<EvidenceRun>,
     pub examples: Vec<CodingExampleDto>,
-    pub hints: Vec<CodeHintDto>,
+    pub hints: Vec<PracticeHintDto>,
     pub events: Vec<CodingEventRow>,
     pub draft: Vec<LearningLabFile>,
 }
@@ -121,7 +121,7 @@ pub(super) fn event_of(row: &CodingEventRow) -> SessionEvent {
     }
 }
 
-pub(super) fn hint_of(hint: &CodeHintDto) -> SessionHint {
+pub(super) fn hint_of(hint: &PracticeHintDto) -> SessionHint {
     SessionHint {
         ordinal: hint.ordinal,
         rung: hint.rung,

@@ -25,10 +25,11 @@ use lattice_core::domain::learning::practice::{
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_learning::coding::dto::{
-    AskCodingHintRequestDto, CheckCodingExampleRequestDto, CodeHintDto, CodingRunDto,
-    CodingRunScope, CodingSessionDto, CodingSessionRequestDto, DebriefFactsDto, DraftObservation,
-    FinishCodingSessionRequestDto, MoveCodingStageRequestDto, ObserveCodingDraftRequestDto,
-    RunCodingSessionRequestDto, SendCodingTurnRequestDto, StartCodingSessionRequestDto,
+    AskPracticeHintRequestDto, CheckCodingExampleRequestDto, CheckPracticePieceRequestDto,
+    CodingRunScope, DebriefFactsDto, DraftObservation, FinishPracticeSessionRequestDto,
+    MovePracticeStageRequestDto, ObserveCodingDraftRequestDto, PracticeCheckDto, PracticeHintDto,
+    PracticeSessionDto, PracticeSessionRequestDto, SendPracticeTurnRequestDto,
+    StartPracticeSessionRequestDto,
 };
 use lattice_learning::coding::problem::{CaseStatus, Problem, SOLUTION_PATH};
 use lattice_learning::coding::records::StoredRun;
@@ -121,7 +122,7 @@ struct RunResult {
     stderr: String,
 }
 
-fn run_result(problem: &Problem, run: &CodingRunDto) -> RunResult {
+fn run_result(problem: &Problem, run: &PracticeCheckDto) -> RunResult {
     let failing = run
         .cases
         .iter()
@@ -190,7 +191,7 @@ struct Player<'a> {
     sessions: &'a CodingSessions<'a>,
     problem: &'a Problem,
     setting: Setting,
-    session: CodingSessionDto,
+    session: PracticeSessionDto,
     draft: Vec<LearningLabFile>,
     steps: Vec<Step>,
 }
@@ -203,7 +204,7 @@ impl<'a> Player<'a> {
         activity_id: &str,
         setting: Setting,
     ) -> Result<Self> {
-        let request = StartCodingSessionRequestDto {
+        let request = StartPracticeSessionRequestDto {
             operation_id: id(),
             program_id: lab.program_id.clone(),
             activity_id: activity_id.to_owned(),
@@ -239,7 +240,7 @@ impl<'a> Player<'a> {
         kind: &'static str,
         detail: Option<String>,
         started: Instant,
-        result: Result<CodingSessionDto>,
+        result: Result<PracticeSessionDto>,
     ) -> Result<()> {
         let ms = elapsed_ms(started);
         let calls = self.lab.llm.take();
@@ -312,7 +313,7 @@ impl<'a> Player<'a> {
         if !self.session.cue_pending {
             return Ok(None);
         }
-        let request = CodingSessionRequestDto {
+        let request = PracticeSessionRequestDto {
             program_id: self.lab.program_id.clone(),
             session_id: self.session.session_id.clone(),
         };
@@ -365,7 +366,7 @@ impl<'a> Player<'a> {
     }
 
     async fn move_to(&mut self, stage: Stage) -> Result<()> {
-        let request = MoveCodingStageRequestDto {
+        let request = MovePracticeStageRequestDto {
             operation_id: id(),
             program_id: self.lab.program_id.clone(),
             session_id: self.session.session_id.clone(),
@@ -379,7 +380,7 @@ impl<'a> Player<'a> {
     }
 
     async fn say(&mut self, content: &str) -> Result<()> {
-        let request = SendCodingTurnRequestDto {
+        let request = SendPracticeTurnRequestDto {
             operation_id: id(),
             program_id: self.lab.program_id.clone(),
             session_id: self.session.session_id.clone(),
@@ -446,7 +447,7 @@ impl<'a> Player<'a> {
 
     async fn run(&mut self, scope: CodingRunScope, code: &str, label: &str) -> Result<()> {
         self.draft = files(code);
-        let request = RunCodingSessionRequestDto {
+        let request = CheckPracticePieceRequestDto {
             operation_id: id(),
             run_id: id(),
             program_id: self.lab.program_id.clone(),
@@ -469,7 +470,7 @@ impl<'a> Player<'a> {
 
     async fn hint(&mut self) -> Result<()> {
         let rung = self.session.next_rung;
-        let request = AskCodingHintRequestDto {
+        let request = AskPracticeHintRequestDto {
             operation_id: id(),
             program_id: self.lab.program_id.clone(),
             session_id: self.session.session_id.clone(),
@@ -489,7 +490,7 @@ impl<'a> Player<'a> {
     }
 
     async fn finish(&mut self) -> Result<()> {
-        let request = FinishCodingSessionRequestDto {
+        let request = FinishPracticeSessionRequestDto {
             operation_id: id(),
             program_id: self.lab.program_id.clone(),
             session_id: self.session.session_id.clone(),
@@ -699,13 +700,13 @@ struct SessionItem {
     finished: bool,
     final_draft: String,
     steps: Vec<Step>,
-    hints: Vec<CodeHintDto>,
+    hints: Vec<PracticeHintDto>,
     question_rule_failures: usize,
     debrief: Option<DebriefItem>,
 }
 
 fn debrief_item(
-    session: &CodingSessionDto,
+    session: &PracticeSessionDto,
     turns: &[LearningSimulationTurnDto],
     runs: &[StoredRun],
     examples: &[u32],

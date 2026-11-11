@@ -63,7 +63,7 @@ export function PracticeArea({ program, currentLesson, currentModule, view }: Pr
           break;
         case 'coding-activity':
           practiceHomeApi
-            .startCodingSession(programId, target.activityId)
+            .startPracticeSession(programId, target.activityId)
             .then(view.openCoding)
             .catch((error: unknown) => setStartError(getErrorMessage(error)));
           break;
@@ -99,7 +99,7 @@ export function PracticeArea({ program, currentLesson, currentModule, view }: Pr
   );
 
   const tryInterview = useCallback(
-    (setting: Wire.CodingSetting) => {
+    (setting: Wire.Setting) => {
       view.openCodingBuild({
         lessonId: currentLesson?.id ?? null,
         task: 'build',
