@@ -372,8 +372,12 @@ impl Passes {
     /// An applied repair put these sentences through the repairs `id` had
     /// been charged: what it wrote, or the words it was applied for. A new
     /// finding about them starts at that count.
-    pub fn worked_on(&mut self, id: &FindingId, sentences: impl IntoIterator<Item = String>) {
-        let count = self.spent.get(id).copied().unwrap_or_default();
+    pub fn worked_on(
+        &mut self,
+        finding: &ReviewFinding,
+        sentences: impl IntoIterator<Item = String>,
+    ) {
+        let count = self.spent.get(&finding.id()).copied().unwrap_or_default();
         for sentence in sentences {
             let held = self.worked.entry(subject_of(&sentence)).or_default();
             *held = (*held).max(count);
@@ -619,7 +623,7 @@ mod tests {
         let mut passes = Passes::default();
         let first = own(0, "A first sentence.");
         sent(&mut passes, &candidate, vec![first.clone()]);
-        passes.worked_on(&first.id(), ["A second sentence.".to_owned()]);
+        passes.worked_on(&first, ["A second sentence.".to_owned()]);
         let second = own(0, "A second sentence.");
         assert_eq!(
             sent(&mut passes, &candidate, vec![second.clone()]),
@@ -698,7 +702,7 @@ mod tests {
             vec![first.clone(), own(1, "A filler.")],
         );
         sent(&mut passes, &candidate, vec![first.clone()]);
-        passes.worked_on(&first.id(), ["A second sentence.".to_owned()]);
+        passes.worked_on(&first, ["A second sentence.".to_owned()]);
         let second = own(2, "A second sentence.");
         assert_eq!(
             done(passes.next(&candidate, vec![second.clone()])),
@@ -928,7 +932,7 @@ mod tests {
         let mut passes = Passes::default();
         let first = own(0, "A first sentence.");
         sent(&mut passes, &candidate, vec![first.clone()]);
-        passes.worked_on(&first.id(), ["A second sentence.".to_owned()]);
+        passes.worked_on(&first, ["A second sentence.".to_owned()]);
         let second = own(0, "A second sentence.");
         sent(&mut passes, &candidate, vec![second.clone()]);
         assert_eq!(passes.account(&second).inherited, 1);
@@ -942,3 +946,7 @@ mod refusal_tests;
 #[cfg(test)]
 #[path = "passes_misses_tests.rs"]
 mod misses_tests;
+
+#[cfg(test)]
+#[path = "passes_kinds_tests.rs"]
+mod kinds_tests;
