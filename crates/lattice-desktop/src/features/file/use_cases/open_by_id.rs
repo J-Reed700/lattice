@@ -6,7 +6,6 @@ use crate::features::file::dto::{OpenFileByIdRequestDto, OpenFileResponseDto};
 use crate::infrastructure::adapters::fs::web_article::WebArticleDetector;
 use crate::infrastructure::security::FileAccessConfig;
 use lattice_core::application::ports::{DocumentRepositoryPort, FileStoragePort, FileSystemPort};
-use lattice_core::application::services::FileType;
 use lattice_core::shared::error::{AppError, Result};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -96,11 +95,8 @@ impl OpenFileByIdUseCase {
 
         self.file_system.open_file(&validated_path).await?;
 
-        let file_type = FileType::from_path(&validated_path);
-
         Ok(OpenFileResponseDto::opened_external(
             full_path.display().to_string(),
-            file_type,
         ))
     }
 }
@@ -141,13 +137,6 @@ mod tests {
     #[async_trait]
     impl RepositoryPort<Document> for MockDocumentRepository {
         async fn find_by_id(&self, _id: &str) -> Result<Option<Document>> {
-            unimplemented!()
-        }
-
-        async fn find_by_filter(
-            &self,
-            _filter: &dyn lattice_core::application::ports::repository_port::Filter,
-        ) -> Result<Vec<Document>> {
             unimplemented!()
         }
 

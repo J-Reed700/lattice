@@ -74,7 +74,7 @@ export async function installJournalsFixture(page: Page) {
       state.pages[index] = saved;
       return saved;
     },
-    list_journal_conversations: () => ({ conversations: [], total: 0 }),
+    list_journal_conversations: () => ({ conversations: [] }),
     list_journal_entry_pins: () => [],
     list_passage_references: () => [],
   }));

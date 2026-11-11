@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 
 import { AlertCircle, ArrowDownRight, BookOpen, Check, ChevronRight, CircleHelp, Lightbulb, MessageCircle, Send, ShieldCheck, Sparkles, Unlock, X } from 'lucide-react';
 
@@ -154,7 +154,8 @@ export function PracticeWorkbenchPanel({ program, lesson, taskKind = 'independen
     if (sessionId && sessionQuery.data?.summary.lessonId === lessonId && (sessionQuery.data?.summary.taskKind ?? 'independent') === taskKind) return;
     if (latest?.id !== sessionId) setSessionId(latest?.id ?? null);
   }, [lessonId, sessionId, sessionQuery.data?.summary.lessonId, sessionQuery.data?.summary.taskKind, workspace.data, taskKind]);
-  useEffect(() => {
+  // Reset only when switching session. Query refreshes must not overwrite edits.
+  const hydrateSession = useEffectEvent(() => {
     if (!session) return;
     if (session.summary.id !== sessionId) return;
     revisionRef.current = session.summary.revision;
@@ -177,8 +178,9 @@ export function PracticeWorkbenchPanel({ program, lesson, taskKind = 'independen
       const val = (event.details as Record<string, unknown> | null)?.hintLevel;
       return typeof val === 'string' ? val as LearningPracticeHintLevel : undefined;
     }).filter((value): value is LearningPracticeHintLevel => Boolean(value)));
-  // Reset only when switching session. Query refreshes must not overwrite edits.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  });
+  useEffect(() => {
+    hydrateSession();
   }, [session?.summary.id, session?.summary.revision, session?.artifact.revision, sessionId]);
 
   const perform = async (label: string, run: () => Promise<unknown>) => {

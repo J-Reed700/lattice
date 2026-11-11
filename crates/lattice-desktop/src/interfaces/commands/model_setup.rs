@@ -168,12 +168,44 @@ pub async fn download_model_impl(
     Ok(response)
 }
 
+/// A llama.cpp connection to try. The header value may be left blank to try
+/// the one already stored for the saved server URL.
+#[derive(serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TestLlamaCppConnectionRequest {
+    pub url: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub auth_header_name: String,
+    #[serde(default)]
+    pub auth_header_value: String,
+}
+
+/// Try a llama.cpp connection. A blank header value tries the one already
+/// stored for the saved server URL.
 #[tauri::command]
 #[specta::specta]
 pub async fn test_llama_cpp_connection(
-    request: lattice_core::application::contracts::settings::LlamaCppSettingsDto,
+    container: tauri::State<'_, Container>,
+    request: TestLlamaCppConnectionRequest,
 ) -> Result<TestOllamaConnectionResponse, ApiError> {
-    let models = LlamaCppLlm::test_connection(&request)
+    let saved = container.get_settings_use_case().execute().await?;
+    let header = lattice_core::application::services::credentials::remote_auth::header_for_test(
+        container.credentials().as_ref(),
+        lattice_core::application::ports::llm_port::RemoteServer::LlamaCpp,
+        &request.url,
+        &request.auth_header_name,
+        &request.auth_header_value,
+        &saved.llm.llama_cpp.url,
+    )
+    .await?;
+    let connection = lattice_core::application::contracts::settings::LlamaCppSettingsDto {
+        url: request.url,
+        model: request.model,
+        auth_header_name: request.auth_header_name,
+    };
+    let models = LlamaCppLlm::test_connection(&connection, header)
         .await
         .map_err(ApiError::from)?;
     Ok(TestOllamaConnectionResponse {
@@ -223,11 +255,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Requires writable filesystem, run manually with --ignored"]
     async fn test_check_first_run_status_command() {
         let (container, _temp_dir) = create_test_container().await;
 
-        // Resolve the repository from the container (proper DI) and run the use case.
         let repository = container.downloaded_models();
         let use_case =
             CheckFirstRunStatusUseCase::new(repository, container.machine_profile_probe());
@@ -237,15 +267,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Requires writable filesystem, run manually with --ignored"]
     async fn test_models_path_from_container() {
-        let (container, _temp_dir) = create_test_container().await;
+        let (container, temp_dir) = create_test_container().await;
 
-        let models_path = container.models_path();
-
-        assert!(models_path.to_string_lossy().contains("models"));
-
-        // Verify fallback works (should use home dir)
-        assert!(models_path.exists() || models_path.to_string_lossy().contains(".lattice"));
+        assert_eq!(container.models_path(), temp_dir.path().join("models"));
     }
 }

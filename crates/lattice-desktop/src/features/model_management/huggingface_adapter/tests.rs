@@ -51,6 +51,7 @@ fn catalog_variants_keep_exact_precision_size_and_identity() {
 #[ignore = "Requires internet; reads public metadata, never downloads weights"]
 async fn test_model_variants_integration() {
     let variants = HuggingFaceAdapter::new()
+        .unwrap()
         .get_model_variants("unsloth/Qwen3.5-9B-GGUF")
         .await
         .unwrap();
@@ -149,7 +150,7 @@ fn embedding_gguf_of_an_architecture_the_engine_lacks_is_incompatible() {
 
 #[test]
 fn test_huggingface_adapter_creation() {
-    let _adapter = HuggingFaceAdapter::new();
+    let _adapter = HuggingFaceAdapter::new().unwrap();
 }
 
 #[test]
@@ -337,7 +338,7 @@ fn filters_out_auxiliary_draft_and_fork_only_gguf_files() {
 #[tokio::test]
 #[ignore = "Requires network access"]
 async fn test_search_models_integration() {
-    let adapter = HuggingFaceAdapter::new();
+    let adapter = HuggingFaceAdapter::new().unwrap();
     let results = adapter.search_models("phi-3", 5).await.unwrap();
 
     assert!(!results.is_empty());
@@ -350,7 +351,7 @@ async fn test_search_models_integration() {
 #[tokio::test]
 #[ignore = "Requires network access"]
 async fn test_get_model_by_id_integration() {
-    let adapter = HuggingFaceAdapter::new();
+    let adapter = HuggingFaceAdapter::new().unwrap();
     let model = adapter
         .get_model_by_id("microsoft/phi-3-mini-4k-instruct")
         .await
@@ -364,11 +365,18 @@ async fn test_get_model_by_id_integration() {
 #[tokio::test]
 #[ignore = "Requires network access"]
 async fn test_get_model_by_id_not_found() {
-    let adapter = HuggingFaceAdapter::new();
+    let adapter = HuggingFaceAdapter::new().unwrap();
     let model = adapter
         .get_model_by_id("nonexistent/model-that-does-not-exist-12345")
         .await
         .unwrap();
 
     assert!(model.is_none());
+}
+
+#[test]
+fn a_standalone_gguf_may_have_two_dots_inside_its_name() {
+    assert!(HuggingFaceModel::is_standalone_gguf("model..Q4_K_M.gguf"));
+    assert!(!HuggingFaceModel::is_standalone_gguf("../model.gguf"));
+    assert!(!HuggingFaceModel::is_standalone_gguf("a/model.gguf"));
 }

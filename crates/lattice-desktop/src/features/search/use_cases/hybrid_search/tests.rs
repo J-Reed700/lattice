@@ -227,10 +227,7 @@ impl TextSearchPort for SlowTextSearch {
 #[tokio::test]
 async fn query_time_covers_the_search_itself() {
     let use_case = HybridSearchUseCase::new(
-        Arc::new(
-            lattice_core::application::ports::mock_embedding_port::MockEmbeddingPort::new_degraded(
-            ),
-        ),
+        Arc::new(lattice_core::application::ports::UnavailableEmbedding::not_installed()),
         Arc::new(ScriptedVectorSearch { hits: Vec::new() }),
         Arc::new(SlowTextSearch),
     );
@@ -435,10 +432,7 @@ async fn a_hybrid_search_asks_each_branch_for_three_candidates_per_result() {
 #[tokio::test]
 async fn a_hybrid_search_keeps_the_branch_that_answered() {
     let search = HybridSearchUseCase::new(
-        Arc::new(
-            lattice_core::application::ports::mock_embedding_port::MockEmbeddingPort::new_degraded(
-            ),
-        ),
+        Arc::new(lattice_core::application::ports::UnavailableEmbedding::not_installed()),
         Arc::new(ScriptedVectorSearch {
             hits: vec![port_hit("v", "a", 0.9)],
         }),
@@ -453,10 +447,7 @@ async fn a_hybrid_search_keeps_the_branch_that_answered() {
 #[tokio::test]
 async fn a_hybrid_search_with_every_branch_down_is_an_error() {
     let search = HybridSearchUseCase::new(
-        Arc::new(
-            lattice_core::application::ports::mock_embedding_port::MockEmbeddingPort::new_degraded(
-            ),
-        ),
+        Arc::new(lattice_core::application::ports::UnavailableEmbedding::not_installed()),
         Arc::new(ScriptedVectorSearch { hits: Vec::new() }),
         Arc::new(ScriptedTextSearch::down()),
     );
@@ -500,11 +491,7 @@ async fn attachment_fixture() -> Arc<dyn lattice_core::application::ports::Chunk
     .execute(&pool)
     .await
     .unwrap();
-    Arc::new(
-        crate::infrastructure::persistence::repositories::chunk_repository::ChunkRepository::new(
-            pool,
-        ),
-    )
+    Arc::new(crate::infrastructure::persistence::repositories::ChunkRepository::new(pool))
 }
 
 fn attachment_search(

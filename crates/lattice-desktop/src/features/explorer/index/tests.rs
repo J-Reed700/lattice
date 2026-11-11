@@ -655,10 +655,12 @@ mod progress {
             .iter()
             .filter(|event| event.state == FolderIndexState::Indexing)
             .collect();
-        let embedded: Vec<u32> = indexing
+        let mut embedded: Vec<u32> = indexing
             .iter()
             .map(|event| event.passages_embedded)
             .collect();
+        // A save slower than the throttle reports files moving at the same count.
+        embedded.dedup();
         // Batches of four, a save every eight; the ignore file is a passage.
         assert_eq!(embedded, vec![0, 4, 8, 12, 13], "{embedded:?}");
         assert!(indexing.iter().all(|event| event.passages_total == 13));

@@ -181,7 +181,7 @@ mod tests {
     use crate::features::indexing::commands::require_embedding_ready;
     use crate::features::indexing::engine::progress::IndexStatus;
     use lattice_core::application::ports::{
-        DocumentRepositoryPort, MockEmbeddingPort, RepositoryPort,
+        DocumentRepositoryPort, RepositoryPort, UnavailableEmbedding,
     };
     use lattice_core::domain::entities::Document;
     use lattice_core::shared::error::{AppError, Result as AppResult};
@@ -208,7 +208,7 @@ mod tests {
     #[async_trait]
     impl EmbeddingReadiness for NoActiveModel {
         async fn ensure_ready(&self) -> Result<()> {
-            require_embedding_ready(Ok(Arc::new(MockEmbeddingPort::new_degraded()))).await
+            require_embedding_ready(Ok(Arc::new(UnavailableEmbedding::not_installed()))).await
         }
     }
 
@@ -315,13 +315,6 @@ mod tests {
     impl RepositoryPort<Document> for PathLookupRepo {
         async fn find_by_id(&self, _id: &str) -> AppResult<Option<Document>> {
             Ok(None)
-        }
-
-        async fn find_by_filter(
-            &self,
-            _filter: &dyn lattice_core::application::ports::Filter,
-        ) -> AppResult<Vec<Document>> {
-            Ok(vec![])
         }
 
         async fn find_all(&self) -> AppResult<Vec<Document>> {
@@ -478,6 +471,18 @@ mod tests {
             error,
             "Service not available: Could not load the active embedding model: weights are corrupt"
         );
+    }
+
+    #[tokio::test]
+    async fn the_readiness_gate_gives_the_error_of_a_port_that_failed_to_load() {
+        let failure = AppError::ModelLoadFailed("weights are corrupt".to_string());
+        let port = Arc::new(UnavailableEmbedding::failed_to_load(failure.clone()));
+
+        let error = require_embedding_ready(Ok(port))
+            .await
+            .expect_err("a model that failed to load is not ready");
+
+        assert_eq!(error.to_string(), failure.to_string());
     }
 
     #[tokio::test]

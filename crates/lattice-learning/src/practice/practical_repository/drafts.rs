@@ -7,6 +7,7 @@ use crate::lab_runtime::LearningLabFile;
 use crate::persistence::{db, now};
 use crate::practical_dto::*;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::path_safety::single_file_name;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::Row;
 use std::collections::HashSet;
@@ -90,13 +91,10 @@ impl LearningPracticalRepository {
         let mut seen = HashSet::new();
         let mut total_bytes = 0usize;
         for file in &request.files {
-            if file.path.is_empty()
-                || file.path.starts_with('/')
-                || file.path.contains('\\')
-                || file
-                    .path
-                    .split('/')
-                    .any(|part| part.is_empty() || part == "." || part == "..")
+            if file
+                .path
+                .split('/')
+                .any(|part| single_file_name(part).is_err())
             {
                 return Err(invalid("Practical draft contains an invalid file path."));
             }

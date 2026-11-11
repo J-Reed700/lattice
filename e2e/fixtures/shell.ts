@@ -29,6 +29,7 @@ export async function installShell(page: Page): Promise<ShellBackend> {
   const settings = makeAppSettings();
   const served = await serveCommands(page, () => ({
     get_settings: () => settings,
+    get_remote_auth_header_status: () => ({ ollama: false, llamaCpp: false }),
     initialize_database: () => 'ready',
     list_downloads: () => [],
     // Iris, in the rail, lists what is running and counts the flashcards due.
@@ -48,8 +49,8 @@ export async function installShell(page: Page): Promise<ShellBackend> {
     list_journal_syntheses: () => [],
     list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
     // The sidebar's recent conversations; chat fixtures replace these.
-    list_conversations_explorer: () => ({ conversations: [], total: 0 }),
-    list_conversations: () => ({ conversations: [], total: 0 }),
+    list_conversations_explorer: () => ({ conversations: [] }),
+    list_conversations: () => ({ conversations: [] }),
   }));
   return { calls: served.calls, unsupported: mock.unsupported, pageErrors };
 }

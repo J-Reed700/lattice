@@ -192,9 +192,7 @@ async fn wait_ready(
     endpoint: &str,
     api_key: &str,
 ) -> Result<(), String> {
-    // Loopback never goes through a proxy.
-    let http = reqwest::Client::builder()
-        .no_proxy()
+    let http = lattice_core::shared::http::loopback_client_builder()
         .timeout(HEALTH_PROBE_TIMEOUT)
         .build()
         .map_err(|error| format!("no HTTP client: {error}"))?;
@@ -269,7 +267,6 @@ impl ServerProcess for ChildProcess {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 

@@ -1,9 +1,12 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { act, cleanup, fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
+import { LEARNING_CLAIM_REVIEW_ROOT } from '@/features/learning/api/learningQueryKeys';
 import { StudyActivityPanel } from '@/features/learning/workspace/StudyActivityPanel';
 import { queryClient } from '@/lib/queryClient';
 import { beginStudyActivity, shortCourseTitle, STUDY_ACTIVITY_KEY, type StudyActivity } from '@/lib/studyActivity';
+import { render } from '@/tests/renderWithQueryClient';
 
 const api = vi.hoisted(() => ({ review: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: { getLearningLessonClaimReview: api.review } }));
@@ -74,6 +77,25 @@ it('a finished preparation that holds claims links to the review', async () => {
   fireEvent.click(within(card).getByRole('button', { name: 'Review' }));
   expect(open).toHaveBeenCalledWith(expect.objectContaining({ programId: 'course', lessonId: 'lesson-1', tab: 'lessons', review: 'claims' }));
   expect(within(card).queryByRole('button', { name: 'View result' })).not.toBeInTheDocument();
+});
+
+it('a claim-review invalidation through the provider refreshes the count of statements waiting', async () => {
+  const waiting = { state: { state: 'queued' } };
+  api.review
+    .mockResolvedValueOnce({ ok: true, data: { state: 'needs_review', claims: [waiting, waiting, waiting] } as never })
+    .mockResolvedValue({ ok: true, data: { state: 'needs_review', claims: [waiting] } as never });
+  let provided: QueryClient | undefined;
+  function Probe() { provided = useQueryClient(); return null; }
+  render(<><Probe /><StudyActivityPanel onOpen={vi.fn()} /></>);
+  const task = beginStudyActivity('learning', 'attach_learning_claim_evidence', { request: { programId: 'course', lessonId: 'lesson-1' } })!;
+  await advance(1000);
+  act(() => task.finish());
+  await advance(10);
+  const card = screen.getByRole('article', { name: 'Checking statements against your source' });
+  expect(within(card).getByRole('status')).toHaveTextContent('3 statements need you');
+  await act(async () => { await provided?.invalidateQueries({ queryKey: LEARNING_CLAIM_REVIEW_ROOT }); });
+  await advance(10);
+  expect(within(card).getByRole('status')).toHaveTextContent('1 statement needs you');
 });
 
 it('names a course by its short title, never its whole goal', () => {

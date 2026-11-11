@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 //! The models' activity: one line per backend, in words.
 
 use super::{loading_item, queue_words, request_items};

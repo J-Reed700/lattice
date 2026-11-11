@@ -141,7 +141,11 @@ fn a_remote_server_and_its_key_come_from_the_named_variables_and_stay_out_of_rec
     };
     let (url, auth) = recipe.connection(&env).unwrap();
     assert_eq!(url, "https://models.example");
-    assert_eq!(auth, Some(("X-Key".to_owned(), "secret-value".to_owned())));
+    assert_eq!(
+        auth.as_ref()
+            .map(|header| (header.name.as_str(), header.value.as_str())),
+        Some(("X-Key", "secret-value"))
+    );
     let settings = recipe.llm_settings(&url, auth.as_ref()).unwrap();
     assert_eq!(settings.llama_cpp.auth_header_name, "X-Key");
     let recorded = recorded_settings(&settings).unwrap().to_string();
@@ -406,6 +410,17 @@ fn a_lesson_resumes_from_its_job() {
     for status in [Status::Failed, Status::Completed, Status::Cancelled] {
         assert_eq!(lesson_step(false, Some((status, None))), LessonStep::Record);
     }
+}
+
+#[test]
+fn a_quiz_job_is_run_recovered_retried_or_recorded_by_its_status() {
+    use QuizJobStep as Step;
+    assert_eq!(quiz_job_step(JobStatus::Pending), Step::Run);
+    assert_eq!(quiz_job_step(JobStatus::Running), Step::Recover);
+    assert_eq!(quiz_job_step(JobStatus::Failed), Step::Retry);
+    assert_eq!(quiz_job_step(JobStatus::Cancelled), Step::Retry);
+    assert_eq!(quiz_job_step(JobStatus::Interrupted), Step::Retry);
+    assert_eq!(quiz_job_step(JobStatus::Completed), Step::Record);
 }
 
 // --- the quiz hooks ----------------------------------------------------------

@@ -116,27 +116,8 @@ pub async fn ingest_web_url(
 
     // Ensure embedding model is available before starting ingestion.
     // This pre-loads the active embedding model into cache if configured.
-    match container.get_or_load_embedding().await {
-        Ok(embedding) => match embedding.is_ready().await {
-            Ok(true) => {
-                tracing::info!("Embedding model ready for web ingestion");
-            }
-            Ok(false) => {
-                return Err(AppError::AiModelsNotInstalled(
-                        "AI models are not installed. This feature requires embedding models. \
-                         Please download models from Settings → Models to enable this functionality."
-                            .to_string(),
-                    ));
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to verify embedding readiness before web ingest: {}",
-                    e
-                );
-            }
-        },
-        Err(e) => return Err(e),
-    }
+    lattice_core::application::ports::require_loaded_ready(container.get_or_load_embedding().await)
+        .await?;
 
     // 1. Get use case
     let ingest_use_case = container.ingest_web_url_use_case();

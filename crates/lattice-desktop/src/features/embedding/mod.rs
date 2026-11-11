@@ -17,7 +17,7 @@
 //! - `crate::features::embedding::commands` — Tauri command handlers
 //! - `crate::features::embedding::plugin::init()` — Tauri plugin
 //!
-//! Ports (EmbeddingPort, EmbeddingRepositoryPort, MockEmbeddingPort)
+//! Ports (EmbeddingPort, EmbeddingRepositoryPort, UnavailableEmbedding)
 //! stay in `application/ports/`.
 
 pub(crate) mod activity;

@@ -62,7 +62,6 @@ export function FileBrowser() {
   const clearSelection = useFileBrowserStore(state => state.clearSelection);
   const scope = useFileBrowserStore(state => state.scope);
   const setScope = useFileBrowserStore(state => state.setScope);
-  const sourceConnections = useFileBrowserStore(state => state.sourceConnections);
   const searchQuery = useFileBrowserStore(state => state.searchQuery);
   const setSearchQuery = useFileBrowserStore(state => state.setSearchQuery);
   const filterByType = useFileBrowserStore(state => state.filterByType);
@@ -359,7 +358,6 @@ export function FileBrowser() {
                 openSavedSearchNameDialog('rename', name, searchId)
               }
               onCreateSavedSearch={handleCreateSavedSearch}
-              sources={sourceConnections}
               themes={themes}
               themesEnabled={themesEnabled}
               hasRunThemes={hasRunThemes}

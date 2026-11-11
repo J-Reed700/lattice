@@ -47,8 +47,8 @@ pub(super) struct LexicalClaim {
     pub(super) citation_ids: Vec<u32>,
     /// Zero-based source indices those citation numbers resolve to.
     pub(super) cited_source_indices: Vec<usize>,
-    /// Kept for tests and debugging; no decision reads it.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Read by tests only; no decision reads it.
+    #[cfg(test)]
     pub(super) overlap_ratio: f32,
     pub(super) matching_tokens: usize,
     /// The lexical verdict: enough overlap to call this grounded.
@@ -134,6 +134,7 @@ pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<Lexical
             claim_text: claim_for_note(&claim_text),
             citation_ids,
             cited_source_indices,
+            #[cfg(test)]
             overlap_ratio,
             matching_tokens,
             supported,

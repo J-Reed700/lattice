@@ -136,10 +136,6 @@ pub struct LLMSettingsDto {
     #[serde(default)]
     pub ollama_auth_header_name: String,
 
-    /// Optional Ollama auth header value (e.g., "Bearer ...")
-    #[serde(default)]
-    pub ollama_auth_header_value: String,
-
     /// Independent remote llama.cpp connection; switching providers retains both.
     #[serde(default)]
     pub llama_cpp: LlamaCppSettingsDto,
@@ -259,7 +255,6 @@ pub struct LlamaCppSettingsDto {
     pub url: String,
     pub model: String,
     pub auth_header_name: String,
-    pub auth_header_value: String,
 }
 
 impl Default for LlamaCppSettingsDto {
@@ -268,7 +263,6 @@ impl Default for LlamaCppSettingsDto {
             url: "http://localhost:8080".into(),
             model: String::new(),
             auth_header_name: String::new(),
-            auth_header_value: String::new(),
         }
     }
 }
@@ -276,8 +270,9 @@ impl Default for LlamaCppSettingsDto {
 impl LlamaCppSettingsDto {
     /// The OpenAI-compatible base URL, ending in `/v1`, these settings point
     /// at, or why they can't be used to reach a server: the URL must be plain
-    /// HTTP(S) without credentials, query or fragment, and the authentication
-    /// header fields must be set together or not at all.
+    /// HTTP(S) without credentials, query or fragment. The authentication
+    /// header's value is a credential kept in the keyring, so its pairing with
+    /// the name is checked where the value is read.
     pub fn validated_base_url(&self) -> Result<String> {
         let raw = self.url.trim().trim_end_matches('/');
         let parsed = url::Url::parse(raw)
@@ -290,11 +285,6 @@ impl LlamaCppSettingsDto {
             || parsed.fragment().is_some()
         {
             return Err(AppError::InvalidConfig("Use an HTTP(S) server URL without credentials, query, or fragment; configure authentication in the header fields".into()));
-        }
-        if self.auth_header_name.trim().is_empty() ^ self.auth_header_value.trim().is_empty() {
-            return Err(AppError::InvalidConfig(
-                "Set both authentication header fields, or clear both".into(),
-            ));
         }
         Ok(if raw.ends_with("/v1") {
             raw.to_owned()
@@ -569,7 +559,6 @@ impl Default for LLMSettingsDto {
             ollama_configured: false,
             ollama_utility_model: String::new(),
             ollama_auth_header_name: String::new(),
-            ollama_auth_header_value: String::new(),
             llama_cpp: LlamaCppSettingsDto::default(),
             timeout_seconds: DEFAULT_LLM_STALL_TIMEOUT_SECONDS,
             stream_responses: true,

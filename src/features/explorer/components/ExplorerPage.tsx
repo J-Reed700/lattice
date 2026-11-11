@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -100,10 +100,13 @@ export function ExplorerPage() {
   const threads = useExplorerThread(root?.root ?? null, root?.name ?? '');
 
   // The chat column needs what Chat loads on mount: spaces and models.
-  useEffect(() => {
+  const loadChatColumnData = useEffectEvent(() => {
     void loadSpaces();
     void fetchDownloadedModels();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  });
+
+  useEffect(() => {
+    loadChatColumnData();
   }, []);
 
   // Whenever a folder is open (the persisted one on launch included), its

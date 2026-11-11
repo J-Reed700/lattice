@@ -1,5 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
 use super::*;
 use crate::features::llm::engine::system::backend_devices::parse_list_devices;
 use lattice_core::domain::models::fit::{Accelerator, AcceleratorKind, Backend};

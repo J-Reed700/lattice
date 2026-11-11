@@ -8,22 +8,6 @@ use lattice_core::shared::error::AppError;
 
 #[async_trait]
 pub trait ModelManagerTrait: Send + Sync {
-    /// Ensure embedding model is available (download if needed)
-    ///
-    /// # Errors
-    /// - `AppError::Network` if download fails
-    /// - `AppError::Other` if disk operations fail
-    async fn ensure_model_available(&self) -> Result<std::path::PathBuf, AppError>;
-
-    /// Check if embedding model is ready to use
-    async fn is_model_ready(&self) -> bool;
-
-    /// Get path to embedding model file
-    fn get_model_path(&self) -> std::path::PathBuf;
-
-    /// Get path to embedding model tokenizer file
-    fn get_tokenizer_path(&self) -> std::path::PathBuf;
-
     /// Ensure the reranker GGUF is downloaded and verified (download if needed)
     ///
     /// # Errors
@@ -44,16 +28,4 @@ pub trait ModelManagerTrait: Send + Sync {
 
     /// Get download progress (0.0 to 1.0)
     fn get_download_progress(&self) -> Option<f32>;
-
-    /// Get model info
-    fn get_model_info(&self) -> ModelInfo;
-}
-
-/// Model information
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ModelInfo {
-    pub name: String,
-    pub version: String,
-    pub size_bytes: Option<i64>,
-    pub is_downloaded: bool,
 }

@@ -93,7 +93,7 @@ it('groups repeated chunks by document, uses the strongest hit and opens the dur
     hit('Lower-ranked title', { id: 'chunk-1', documentId: 'document-1', score: 0.2 }),
     hit('Best title', { id: 'chunk-2', documentId: 'document-1', score: 0.9, content: 'Better passage' }),
   ] });
-  vi.mocked(VaultAPI.openFileById).mockResolvedValue({ ok: true, data: { action: 'render_internal', contentPath: '/saved/doc.md', fileType: 'text' } });
+  vi.mocked(VaultAPI.openFileById).mockResolvedValue({ ok: true, data: { action: 'render_internal', contentPath: '/saved/doc.md' } });
   show();
   await search('document');
   expect(screen.getByText('1 result')).toBeInTheDocument();

@@ -120,12 +120,6 @@ impl RepositoryPort<Document> for SingleDocumentRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<Document>> {
         Ok((self.document.id().as_str() == id).then(|| self.document.clone()))
     }
-    async fn find_by_filter(
-        &self,
-        _f: &dyn lattice_core::application::ports::repository_port::Filter,
-    ) -> Result<Vec<Document>> {
-        Ok(vec![self.document.clone()])
-    }
     async fn find_all(&self) -> Result<Vec<Document>> {
         Ok(vec![self.document.clone()])
     }
@@ -527,7 +521,7 @@ async fn hybrid_semantic_search_runs_the_library_orchestrator_and_names_hits_by_
     // No embedding model: the keyword branch answers alone, as it would in chat.
     let search = Arc::new(
         HybridSearchUseCase::new(
-            Arc::new(lattice_core::application::ports::MockEmbeddingPort::new_degraded()),
+            Arc::new(lattice_core::application::ports::UnavailableEmbedding::not_installed()),
             Arc::new(USearchVectorIndex::new(4, None).unwrap()),
             Arc::new(SqliteTextSearch::new(Database::from(pool.clone()))),
         )

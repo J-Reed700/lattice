@@ -5,6 +5,7 @@ use super::huggingface_adapter::{HuggingFaceAdapter, HUB_USER_AGENT};
 use super::recommend::{GgufFacts, GgufHeaderSource};
 use crate::features::llm::engine::gguf_metadata::read_model_info_from;
 use async_trait::async_trait;
+use lattice_core::shared::error::AppError;
 use reqwest::Client;
 use std::collections::BTreeMap;
 use std::io::{Read, Seek, SeekFrom};
@@ -30,18 +31,22 @@ pub struct HuggingFaceHeaderSource {
 }
 
 impl HuggingFaceHeaderSource {
-    pub fn new(cache_dir: PathBuf) -> Self {
+    pub fn new(cache_dir: PathBuf) -> Result<Self, AppError> {
         Self::with_limit(cache_dir, "https://huggingface.co", MAX_HEADER_BYTES)
     }
 
     /// A source that reads from `base_url` and asks for no more than `limit_bytes` of a file.
-    pub fn with_limit(cache_dir: PathBuf, base_url: impl Into<String>, limit_bytes: u64) -> Self {
-        Self {
-            client: HuggingFaceAdapter::new().client().clone(),
+    pub fn with_limit(
+        cache_dir: PathBuf,
+        base_url: impl Into<String>,
+        limit_bytes: u64,
+    ) -> Result<Self, AppError> {
+        Ok(Self {
+            client: HuggingFaceAdapter::new()?.client().clone(),
             cache_dir,
             base_url: base_url.into(),
             limit_bytes,
-        }
+        })
     }
 
     fn cache_path(&self, repo: &str, file: &str, revision: Option<&str>) -> PathBuf {
@@ -259,7 +264,6 @@ impl GgufHeaderSource for CachedHeadersOnly {
 }
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
     use lattice_core::domain::models::fit::ModelShape;
@@ -277,7 +281,7 @@ mod tests {
     #[tokio::test]
     async fn a_header_that_was_read_is_kept_by_repository_file_and_revision() {
         let dir = tempfile::tempdir().unwrap();
-        let source = Arc::new(HuggingFaceHeaderSource::new(dir.path().to_path_buf()));
+        let source = Arc::new(HuggingFaceHeaderSource::new(dir.path().to_path_buf()).unwrap());
         assert_eq!(source.cached("a/b", "m.gguf", None), None);
 
         source.store("a/b", "m.gguf", None, &facts());
@@ -295,7 +299,7 @@ mod tests {
 
     #[test]
     fn the_url_names_the_revision_and_encodes_each_part() {
-        let source = HuggingFaceHeaderSource::new(PathBuf::new());
+        let source = HuggingFaceHeaderSource::new(PathBuf::new()).unwrap();
         assert_eq!(
             source.url("pub/model", "dir/m 1.gguf", Some("abc")),
             "https://huggingface.co/pub/model/resolve/abc/dir/m%201.gguf"
@@ -412,7 +416,8 @@ mod tests {
     ) -> (HuggingFaceHeaderSource, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let source =
-            HuggingFaceHeaderSource::with_limit(dir.path().to_path_buf(), server.uri(), limit);
+            HuggingFaceHeaderSource::with_limit(dir.path().to_path_buf(), server.uri(), limit)
+                .unwrap();
         (source, dir)
     }
 

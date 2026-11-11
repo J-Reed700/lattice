@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 //! The course index against the shared fake embedding model: a build, a
 //! build cut short and resumed, a new model, a deleted course, a replaced
 //! version, and a course searched without any model.

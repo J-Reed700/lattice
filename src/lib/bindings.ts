@@ -2821,14 +2821,6 @@ async getHuggingfaceTokenStatus() : Promise<Result<HfTokenStatus, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
-async getHuggingfaceToken() : Promise<Result<string | null, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:huggingface|get_huggingface_token") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async deleteHuggingfaceToken() : Promise<Result<null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:huggingface|delete_huggingface_token") };
@@ -3766,6 +3758,10 @@ async getModelLimits(model: ModelRef) : Promise<Result<ModelWindowDto, ApiError>
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Try an Ollama connection. A blank header value tries the one already
+ * stored for the saved server URL.
+ */
 async testOllamaConnection(request: TestOllamaConnectionRequest) : Promise<Result<TestOllamaConnectionResponse, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:settings|test_ollama_connection", { request }) };
@@ -3774,7 +3770,32 @@ async testOllamaConnection(request: TestOllamaConnectionRequest) : Promise<Resul
     else return { status: "error", error: e  as any };
 }
 },
-async testLlamaCppConnection(request: LlamaCppSettingsDto) : Promise<Result<TestOllamaConnectionResponse, ApiError>> {
+/**
+ * Save (`Some`) or clear (`None`, or blank) the authentication header value
+ * of a remote model server. The value goes to the keyring and is never
+ * returned.
+ */
+async saveRemoteAuthHeaderValue(server: RemoteServer, value: string | null) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|save_remote_auth_header_value", { server, value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getRemoteAuthHeaderStatus() : Promise<Result<RemoteAuthStatusDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|get_remote_auth_header_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Try a llama.cpp connection. A blank header value tries the one already
+ * stored for the saved server URL.
+ */
+async testLlamaCppConnection(request: TestLlamaCppConnectionRequest) : Promise<Result<TestOllamaConnectionResponse, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:settings|test_llama_cpp_connection", { request }) };
 } catch (e) {
@@ -4163,7 +4184,7 @@ async synthesizeSpeech(text: string, voice: string, speed: number) : Promise<Res
 
 /** user-defined constants **/
 
-
+export const FILE_TYPES = [{"extension":"txt","mimeType":"text/plain","category":"document","route":"plain_text"},{"extension":"md","mimeType":"text/markdown","category":"document","route":"plain_text"},{"extension":"markdown","mimeType":"text/markdown","category":"document","route":"plain_text"},{"extension":"pdf","mimeType":"application/pdf","category":"document","route":"pdf"},{"extension":"docx","mimeType":"application/vnd.openxmlformats-officedocument.wordprocessingml.document","category":"document","route":"docx"},{"extension":"doc","mimeType":"application/msword","category":"document","route":null},{"extension":"rtf","mimeType":"application/rtf","category":"document","route":"rtf"},{"extension":"odt","mimeType":"application/vnd.oasis.opendocument.text","category":"document","route":"odt"},{"extension":"xlsx","mimeType":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","category":"document","route":"xlsx"},{"extension":"xls","mimeType":"application/vnd.ms-excel","category":"document","route":null},{"extension":"pptx","mimeType":"application/vnd.openxmlformats-officedocument.presentationml.presentation","category":"document","route":"pptx"},{"extension":"ppt","mimeType":"application/vnd.ms-powerpoint","category":"document","route":null},{"extension":"rs","mimeType":"text/x-rust","category":"code","route":"code"},{"extension":"toml","mimeType":"text/x-toml","category":"code","route":"code"},{"extension":"js","mimeType":"text/javascript","category":"code","route":"code"},{"extension":"mjs","mimeType":"text/javascript","category":"code","route":"code"},{"extension":"cjs","mimeType":"text/javascript","category":"code","route":"code"},{"extension":"ts","mimeType":"text/typescript","category":"code","route":"code"},{"extension":"tsx","mimeType":"text/typescript-jsx","category":"code","route":"code"},{"extension":"jsx","mimeType":"text/javascript-jsx","category":"code","route":"code"},{"extension":"html","mimeType":"text/html","category":"document","route":"html"},{"extension":"htm","mimeType":"text/html","category":"document","route":"html"},{"extension":"css","mimeType":"text/css","category":"code","route":"code"},{"extension":"scss","mimeType":"text/x-scss","category":"code","route":"code"},{"extension":"sass","mimeType":"text/x-scss","category":"code","route":"code"},{"extension":"less","mimeType":"text/x-less","category":"code","route":"code"},{"extension":"py","mimeType":"text/x-python","category":"code","route":"code"},{"extension":"pyw","mimeType":"text/x-python","category":"code","route":"code"},{"extension":"pyi","mimeType":"text/x-python","category":"code","route":"code"},{"extension":"c","mimeType":"text/x-c","category":"code","route":"code"},{"extension":"h","mimeType":"text/x-c-header","category":"code","route":"code"},{"extension":"cpp","mimeType":"text/x-c++","category":"code","route":"code"},{"extension":"cxx","mimeType":"text/x-c++","category":"code","route":"code"},{"extension":"cc","mimeType":"text/x-c++","category":"code","route":"code"},{"extension":"hpp","mimeType":"text/x-c++-header","category":"code","route":"code"},{"extension":"hxx","mimeType":"text/x-c++-header","category":"code","route":"code"},{"extension":"hh","mimeType":"text/x-c++-header","category":"code","route":"code"},{"extension":"go","mimeType":"text/x-go","category":"code","route":"code"},{"extension":"java","mimeType":"text/x-java","category":"code","route":"code"},{"extension":"kt","mimeType":"text/x-kotlin","category":"code","route":"code"},{"extension":"kts","mimeType":"text/x-kotlin","category":"code","route":"code"},{"extension":"scala","mimeType":"text/x-scala","category":"code","route":"code"},{"extension":"clj","mimeType":"text/x-clojure","category":"code","route":"code"},{"extension":"cljs","mimeType":"text/x-clojure","category":"code","route":"code"},{"extension":"cljc","mimeType":"text/x-clojure","category":"code","route":"code"},{"extension":"rb","mimeType":"text/x-ruby","category":"code","route":"code"},{"extension":"rake","mimeType":"text/x-ruby","category":"code","route":"code"},{"extension":"php","mimeType":"text/x-php","category":"code","route":"code"},{"extension":"swift","mimeType":"text/x-swift","category":"code","route":"code"},{"extension":"r","mimeType":"text/x-r","category":"code","route":"code"},{"extension":"m","mimeType":"text/x-matlab","category":"code","route":"code"},{"extension":"mm","mimeType":"text/x-objective-c","category":"code","route":null},{"extension":"pl","mimeType":"text/x-perl","category":"code","route":null},{"extension":"pm","mimeType":"text/x-perl","category":"code","route":null},{"extension":"lua","mimeType":"text/x-lua","category":"code","route":null},{"extension":"hs","mimeType":"text/x-haskell","category":"code","route":null},{"extension":"lhs","mimeType":"text/x-haskell","category":"code","route":null},{"extension":"cs","mimeType":"text/x-csharp","category":"code","route":null},{"extension":"vb","mimeType":"text/x-vb","category":"code","route":null},{"extension":"fs","mimeType":"text/x-fsharp","category":"code","route":null},{"extension":"ex","mimeType":"text/x-elixir","category":"code","route":"code"},{"extension":"exs","mimeType":"text/x-elixir","category":"code","route":"code"},{"extension":"erl","mimeType":"text/x-erlang","category":"code","route":"code"},{"extension":"hrl","mimeType":"text/x-erlang","category":"code","route":"code"},{"extension":"sh","mimeType":"text/x-shellscript","category":"code","route":"code"},{"extension":"bash","mimeType":"text/x-bash","category":"code","route":"code"},{"extension":"zsh","mimeType":"text/x-zsh","category":"code","route":"code"},{"extension":"fish","mimeType":"text/x-fish","category":"code","route":"code"},{"extension":"ps1","mimeType":"text/x-powershell","category":"code","route":"code"},{"extension":"psm1","mimeType":"text/x-powershell","category":"code","route":"code"},{"extension":"bat","mimeType":"text/x-batch","category":"code","route":"code"},{"extension":"cmd","mimeType":"text/x-batch","category":"code","route":"code"},{"extension":"json","mimeType":"application/json","category":"code","route":"code"},{"extension":"xml","mimeType":"application/xml","category":"code","route":"code"},{"extension":"yaml","mimeType":"text/x-yaml","category":"code","route":"code"},{"extension":"yml","mimeType":"text/x-yaml","category":"code","route":"code"},{"extension":"ini","mimeType":"text/x-ini","category":"code","route":"code"},{"extension":"conf","mimeType":"text/plain","category":"code","route":"plain_text"},{"extension":"config","mimeType":"text/plain","category":"code","route":"plain_text"},{"extension":"sql","mimeType":"text/x-sql","category":"code","route":"code"},{"extension":"graphql","mimeType":"application/graphql","category":"code","route":"code"},{"extension":"gql","mimeType":"application/graphql","category":"code","route":"code"},{"extension":"csv","mimeType":"text/csv","category":"data","route":"csv"},{"extension":"tsv","mimeType":"text/tab-separated-values","category":"data","route":"csv"},{"extension":"parquet","mimeType":"application/octet-stream","category":"data","route":null},{"extension":"arrow","mimeType":"application/octet-stream","category":"data","route":null},{"extension":"jpg","mimeType":"image/jpeg","category":"image","route":null},{"extension":"jpeg","mimeType":"image/jpeg","category":"image","route":null},{"extension":"png","mimeType":"image/png","category":"image","route":null},{"extension":"gif","mimeType":"image/gif","category":"image","route":null},{"extension":"bmp","mimeType":"image/bmp","category":"image","route":null},{"extension":"svg","mimeType":"image/svg+xml","category":"image","route":null},{"extension":"webp","mimeType":"image/webp","category":"image","route":null},{"extension":"ico","mimeType":"image/x-icon","category":"image","route":null},{"extension":"tiff","mimeType":"image/tiff","category":"image","route":null},{"extension":"tif","mimeType":"image/tiff","category":"image","route":null},{"extension":"heic","mimeType":"image/heic","category":"image","route":null},{"extension":"heif","mimeType":"image/heif","category":"image","route":null},{"extension":"mp4","mimeType":"video/mp4","category":"video","route":null},{"extension":"mov","mimeType":"video/quicktime","category":"video","route":null},{"extension":"avi","mimeType":"video/x-msvideo","category":"video","route":null},{"extension":"mkv","mimeType":"video/x-matroska","category":"video","route":null},{"extension":"webm","mimeType":"video/webm","category":"video","route":null},{"extension":"flv","mimeType":"video/x-flv","category":"video","route":null},{"extension":"wmv","mimeType":"video/x-ms-wmv","category":"video","route":null},{"extension":"m4v","mimeType":"video/x-m4v","category":"video","route":null},{"extension":"mp3","mimeType":"audio/mpeg","category":"audio","route":"audio"},{"extension":"wav","mimeType":"audio/wav","category":"audio","route":"audio"},{"extension":"ogg","mimeType":"audio/ogg","category":"audio","route":"audio"},{"extension":"flac","mimeType":"audio/flac","category":"audio","route":"audio"},{"extension":"aac","mimeType":"audio/aac","category":"audio","route":"audio"},{"extension":"m4a","mimeType":"audio/mp4","category":"audio","route":"audio"},{"extension":"wma","mimeType":"audio/x-ms-wma","category":"audio","route":"audio"},{"extension":"zip","mimeType":"application/zip","category":"archive","route":null},{"extension":"tar","mimeType":"application/x-tar","category":"archive","route":null},{"extension":"gz","mimeType":"application/gzip","category":"archive","route":null},{"extension":"tgz","mimeType":"application/gzip","category":"archive","route":null},{"extension":"bz2","mimeType":"application/x-bzip2","category":"archive","route":null},{"extension":"7z","mimeType":"application/x-7z-compressed","category":"archive","route":null},{"extension":"rar","mimeType":"application/vnd.rar","category":"archive","route":null},{"extension":"xz","mimeType":"application/x-xz","category":"archive","route":null},{"extension":"exe","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"dll","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"dylib","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"so","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"bin","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"msi","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"app","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"apk","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"deb","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"rpm","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"pkg","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"dmg","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"iso","mimeType":"application/octet-stream","category":"binary","route":null}] as const;
 
 /** user-defined types **/
 
@@ -6651,10 +6672,6 @@ isWritable: boolean;
  */
 path: string }
 /**
- * Supported file types for internal viewing
- */
-export type FileType = "web_article_html" | "pdf" | "image" | "text" | "unknown"
-/**
  * Why a finder cannot run under the user's settings and keys.
  */
 export type FinderGateDto =
@@ -7366,10 +7383,6 @@ ollamaUtilityModel: string;
  * Optional Ollama auth header name (e.g., "Authorization")
  */
 ollamaAuthHeaderName: string;
-/**
- * Optional Ollama auth header value (e.g., "Bearer ...")
- */
-ollamaAuthHeaderValue: string;
 /**
  * Independent remote llama.cpp connection; switching providers retains both.
  */
@@ -8909,15 +8922,11 @@ export type ListConversationsResponseDto = {
 /**
  * List of conversations
  */
-conversations: ConversationDto[];
-/**
- * Total count
- */
-total: number }
+conversations: ConversationDto[] }
 export type ListJournalConversationsQueryDto = { journalSpaceId: string; query: string | null; includeArchived: boolean | null; limit: number | null; offset: number | null }
 export type ListLearningTangentsRequestDto = { programId?: string | null }
 export type ListMessageBookmarksQueryDto = { conversationId: string | null; query: string | null; limit: number | null; offset: number | null }
-export type ListMessageBookmarksResponseDto = { bookmarks: ConversationMessageBookmarkDto[]; total: number }
+export type ListMessageBookmarksResponseDto = { bookmarks: ConversationMessageBookmarkDto[] }
 export type ListWorkspaceNotesRequestDto = {
 /**
  * List only the pages this journal owns. Omitted lists every page, which
@@ -8926,7 +8935,7 @@ export type ListWorkspaceNotesRequestDto = {
  */
 journalId: string | null }
 export type ListWorkspaceNotesResponseDto = { notes: WorkspaceNoteDto[] }
-export type LlamaCppSettingsDto = { url: string; model: string; authHeaderName: string; authHeaderValue: string }
+export type LlamaCppSettingsDto = { url: string; model: string; authHeaderName: string }
 /**
  * A model loaded right now, for diagnostics.
  */
@@ -9342,10 +9351,6 @@ export type OpenFileResponseDto = {
  */
 action: string;
 /**
- * File type detected (enum: WebArticleHtml, Pdf, Image, Text, Unknown)
- */
-fileType: FileType;
-/**
  * Path to content (HTML file for internal rendering, original file for external)
  */
 contentPath: string;
@@ -9517,6 +9522,15 @@ total_functions: number;
  */
 call_counts: { [key in string]: number } }
 export type ReimportLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; versionId: string; expectedRevision: number; replacementText: string | null }
+/**
+ * Whether each remote server has an authentication header value stored.
+ * The values themselves never leave the keyring.
+ */
+export type RemoteAuthStatusDto = { ollama: boolean; llamaCpp: boolean }
+/**
+ * A model server the user runs and connects to over the network.
+ */
+export type RemoteServer = "ollama" | "llamaCpp"
 export type RemoveConversationFromJournalRequestDto = { journalSpaceId: string; conversationId: string }
 export type RemoveConversationSpaceMemberRequestDto = { spaceId: string; memberId: string }
 /**
@@ -10941,6 +10955,11 @@ export type TeachingSettleDto =
 "source_added"
 export type TestCustomToolRequest = { endpoint: string; queryParam: string; maxResultsParam: string | null; defaultMaxResults: number; query: string; maxResults: number | null }
 export type TestCustomToolResponse = { finalUrl: string; status: number; contentType: string | null; bodyPreview: string }
+/**
+ * A llama.cpp connection to try. The header value may be left blank to try
+ * the one already stored for the saved server URL.
+ */
+export type TestLlamaCppConnectionRequest = { url: string; model?: string; authHeaderName?: string; authHeaderValue?: string }
 export type TestOllamaConnectionRequest = { ollamaUrl: string; authHeaderName?: string; authHeaderValue?: string }
 export type TestOllamaConnectionResponse = { endpoint: string; models: string[] }
 /**

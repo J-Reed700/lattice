@@ -19,7 +19,9 @@ use crate::features::web::services::web::WebService;
 use lattice_core::application::contracts::settings::{
     LLMProvider, LLMSettingsDto, LlamaCppSettingsDto, ThinkingOverrideDto,
 };
+use lattice_core::application::ports::llm_port::RemoteHeader;
 use lattice_core::application::ports::WebServiceTrait;
+use lattice_core::shared::runtime::jobs::JobStatus;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -128,7 +130,7 @@ impl CourseRecipe {
     pub(super) fn connection(
         &self,
         env: &dyn Fn(&str) -> Option<String>,
-    ) -> Result<(String, Option<(String, String)>)> {
+    ) -> Result<(String, Option<RemoteHeader>)> {
         let read = |name: &str| {
             env(name)
                 .filter(|value| !value.trim().is_empty())
@@ -148,7 +150,10 @@ impl CourseRecipe {
                     .map(|(header, value)| (header.trim(), value.trim()))
                     .filter(|(header, value)| !header.is_empty() && !value.is_empty())
                     .ok_or_else(|| refuse(format!("{name} must read `Header-Name: value`")))?;
-                Some((header.to_owned(), value.to_owned()))
+                Some(RemoteHeader {
+                    name: header.to_owned(),
+                    value: value.to_owned(),
+                })
             }
         };
         Ok((url, auth))
@@ -160,7 +165,7 @@ impl CourseRecipe {
     pub(super) fn llm_settings(
         &self,
         url: &str,
-        auth: Option<&(String, String)>,
+        header: Option<&RemoteHeader>,
     ) -> Result<LLMSettingsDto> {
         let patch = match &self.settings {
             Value::Null => json!({}),
@@ -182,15 +187,13 @@ impl CourseRecipe {
             }
         }
         let defaults = LLMSettingsDto::default();
-        let (header, value) = auth.cloned().unwrap_or_default();
         let wired = LLMSettingsDto {
             provider: LLMProvider::Llamacpp,
             context_window: self.server.expected_ctx,
             llama_cpp: LlamaCppSettingsDto {
                 url: url.to_owned(),
                 model: self.server.model.clone(),
-                auth_header_name: header,
-                auth_header_value: value,
+                auth_header_name: header.map(|header| header.name.clone()).unwrap_or_default(),
             },
             ..defaults
         };
@@ -360,6 +363,28 @@ pub(super) fn lesson_step(
     }
 }
 
+/// What the quiz stage does with a lesson's quiz job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum QuizJobStep {
+    /// Dispatch it.
+    Run,
+    /// A killed run left it running: requeue it, then dispatch.
+    Recover,
+    /// It stopped without finishing: a new attempt that reuses its saved work.
+    Retry,
+    /// It completed; record its numbers.
+    Record,
+}
+
+pub(super) fn quiz_job_step(status: JobStatus) -> QuizJobStep {
+    match status {
+        JobStatus::Pending => QuizJobStep::Run,
+        JobStatus::Running => QuizJobStep::Recover,
+        JobStatus::Failed | JobStatus::Cancelled | JobStatus::Interrupted => QuizJobStep::Retry,
+        JobStatus::Completed => QuizJobStep::Record,
+    }
+}
+
 /// Whether a job's error text is the display of an error the job runtime
 /// treats as transient (`JobFailure::is_transient`).
 pub(super) fn transient_text(error: &str) -> bool {
@@ -473,20 +498,19 @@ fn now_ms() -> i64 {
 
 /// The server's own account of itself. A server that reports its window
 /// or slots must report the recipe's; one that does not is recorded as such.
-async fn probe(settings: &LLMSettingsDto, expected_slots: u64) -> Result<Value> {
+async fn probe(
+    settings: &LLMSettingsDto,
+    header: Option<&RemoteHeader>,
+    expected_slots: u64,
+) -> Result<Value> {
     let connection = &settings.llama_cpp;
     let base = connection.validated_base_url()?;
-    let mut headers = reqwest::header::HeaderMap::new();
-    if !connection.auth_header_name.is_empty() {
-        headers.insert(
-            reqwest::header::HeaderName::from_bytes(connection.auth_header_name.as_bytes())
-                .map_err(|e| refuse(e.to_string()))?,
-            reqwest::header::HeaderValue::from_str(&connection.auth_header_value)
-                .map_err(|e| refuse(e.to_string()))?,
-        );
-    }
+    let headers = match header {
+        Some(header) => lattice_core::shared::http::auth_header_map(&header.name, &header.value)?,
+        None => reqwest::header::HeaderMap::new(),
+    };
     let network = |e: reqwest::Error| AppError::Network(e.to_string());
-    let client = reqwest::Client::builder()
+    let client = lattice_core::shared::http::reqwest_client_builder()
         .default_headers(headers)
         .build()
         .map_err(network)?;
@@ -532,12 +556,9 @@ async fn probe(settings: &LLMSettingsDto, expected_slots: u64) -> Result<Value> 
 fn recorded_settings(settings: &LLMSettingsDto) -> Result<Value> {
     let mut value = serde_json::to_value(settings)?;
     if let Some(connection) = value.get_mut("llamaCpp").and_then(Value::as_object_mut) {
-        for key in ["url", "authHeaderName", "authHeaderValue"] {
+        for key in ["url", "authHeaderName"] {
             connection.remove(key);
         }
-    }
-    if let Some(fields) = value.as_object_mut() {
-        fields.remove("ollamaAuthHeaderValue");
     }
     Ok(value)
 }
@@ -629,8 +650,8 @@ async fn live_course_eval() -> Result<()> {
     std::fs::write(dir.join("request.json"), &request_bytes)?;
     std::fs::write(dir.join("recipe.json"), &recipe_text)?;
 
-    let (url, auth) = recipe.connection(&env)?;
-    let settings = recipe.llm_settings(&url, auth.as_ref())?;
+    let (url, header) = recipe.connection(&env)?;
+    let settings = recipe.llm_settings(&url, header.as_ref())?;
     let weights = match &recipe.server.gguf {
         Some(path) => {
             let actual = file_sha256(&resolve(path))?;
@@ -644,8 +665,10 @@ async fn live_course_eval() -> Result<()> {
         None => json!({ "model_revision": recipe.server.model_revision }),
     };
     let embedder = load_embedder(&recipe).await?;
-    let identity = probe(&settings, recipe.server.expected_slots).await?;
-    let model = Arc::new(ObservedModel::new(&settings, dir.clone(), next_call(&dir)?).await?);
+    let identity = probe(&settings, header.as_ref(), recipe.server.expected_slots).await?;
+    let model = Arc::new(
+        ObservedModel::with_header(&settings, header, dir.clone(), next_call(&dir)?).await?,
+    );
     let web_cache = dir.join("web");
     std::fs::create_dir_all(&web_cache)?;
     let web = Arc::new(TracedWeb::new(

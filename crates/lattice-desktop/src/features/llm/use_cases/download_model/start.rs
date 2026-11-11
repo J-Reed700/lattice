@@ -8,6 +8,7 @@ use crate::features::llm::dto::DownloadModelResponseDto;
 use crate::features::llm::engine::compatibility::check_download;
 use crate::infrastructure::adapters::fs::model_paths::ModelPaths;
 use crate::infrastructure::persistence::repositories::models_table_type::models_table_type;
+use lattice_core::application::services::credentials::CredentialKey;
 use lattice_core::domain::download::{Checksum, ChecksumAlgorithm, DownloadOperationState};
 use lattice_core::domain::entities::model::Model;
 use lattice_core::domain::entities::model_file::ModelFile;
@@ -27,7 +28,7 @@ impl DownloadModelUseCase {
         if !meta.requires_auth {
             return Ok(None);
         }
-        match self.credentials.get_api_key("huggingface_token").await {
+        match self.credentials.get_api_key(CredentialKey::HuggingFaceToken.as_str()).await {
             Ok(Some(token)) => {
                 info!(model_id = %model_id, "Model requires authentication, using HuggingFace token");
                 Ok(Some(token))

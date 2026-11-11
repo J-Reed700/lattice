@@ -1,17 +1,15 @@
 //! Validating a whole settings document into errors and warnings.
-use super::SettingsRepository;
-use crate::features::settings::dto::{
-    LLMProvider, SettingsDto, ValidationResult, VectorIndexCompressionModeDto,
-    MAX_LLM_STALL_TIMEOUT_SECONDS, MAX_VECTOR_COMPRESSION_DIMS, MIN_LLM_STALL_TIMEOUT_SECONDS,
-    MIN_VECTOR_COMPRESSION_DIMS,
+use super::{
+    presence_penalty_problem, LLMProvider, SettingsDto, ValidationResult,
+    VectorIndexCompressionModeDto, MAX_LLM_STALL_TIMEOUT_SECONDS, MAX_VECTOR_COMPRESSION_DIMS,
+    MIN_LLM_STALL_TIMEOUT_SECONDS, MIN_VECTOR_COMPRESSION_DIMS,
 };
 use url::Url;
 
-impl SettingsRepository {
-    /// Validate settings and return validation result.
-    ///
-    /// Uses the same validation logic as the mock implementation.
-    pub(super) fn validate_settings(&self, settings: &SettingsDto) -> ValidationResult {
+impl SettingsDto {
+    /// Validate the settings document into errors and warnings.
+    pub fn validate(&self) -> ValidationResult {
+        let settings = self;
         let mut result = ValidationResult::success();
 
         if settings.indexing.chunk_size == 0 {
@@ -190,11 +188,7 @@ impl SettingsRepository {
         if settings.llm.repeat_penalty <= 0.0 {
             result.add_error("llm", "repeat_penalty must be greater than 0.0".to_string());
         }
-        let generation_problems =
-            lattice_core::application::contracts::settings::presence_penalty_problem(
-                "llm",
-                settings.llm.presence_penalty,
-            )
+        let generation_problems = presence_penalty_problem("llm", settings.llm.presence_penalty)
             .into_iter()
             .chain(settings.llm.thinking_sampling.problems("thinking_sampling"))
             .chain(settings.llm.speculative_decoding.problem())
@@ -219,16 +213,6 @@ impl SettingsRepository {
         }
         if let Err(error) = settings.llm.llama_cpp.validated_base_url() {
             result.add_error("llm", error.to_string());
-        }
-        let auth_name = settings.llm.ollama_auth_header_name.trim();
-        let auth_value = settings.llm.ollama_auth_header_value.trim();
-        if (!auth_name.is_empty() && auth_value.is_empty())
-            || (auth_name.is_empty() && !auth_value.is_empty())
-        {
-            result.add_error(
-                "llm",
-                "ollama_auth_header_name and ollama_auth_header_value must both be set".to_string(),
-            );
         }
         if !(MIN_LLM_STALL_TIMEOUT_SECONDS..=MAX_LLM_STALL_TIMEOUT_SECONDS)
             .contains(&settings.llm.timeout_seconds)

@@ -552,5 +552,4 @@ async fn is_downloaded_in(conn: &mut SqliteConnection, model_id: &str) -> Result
 }
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests;

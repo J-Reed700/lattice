@@ -8,7 +8,6 @@ use crate::features::download::download_repository::DownloadRepository;
 use crate::features::download::engine::DownloadEngine;
 use crate::infrastructure::services::file_cleanup::FileCleanupService;
 use lattice_core::application::ports::download_manager::DownloadEvent;
-use lattice_core::domain::download::DownloadSession;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -29,11 +28,6 @@ pub(super) enum StopReason {
 }
 
 pub(super) struct ActiveDownload {
-    // reason: the registry owns the in-flight session snapshot for the lifetime of the transfer.
-    #[allow(dead_code)]
-    pub(super) session: DownloadSession,
-    // reason: keeps the spawned transfer task's join handle alive while the download is active.
-    #[allow(dead_code)]
     pub(super) task_handle: Option<JoinHandle<()>>,
     pub(super) cancel_tx: Option<mpsc::Sender<StopReason>>,
 }

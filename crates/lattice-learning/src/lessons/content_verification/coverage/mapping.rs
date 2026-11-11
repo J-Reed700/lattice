@@ -160,7 +160,6 @@ pub(super) async fn review(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
     use crate::lessons::course_generation_tests::ScriptedModel;
     use lattice_core::shared::persistence::Database;

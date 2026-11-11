@@ -11,8 +11,7 @@ shared/error/
 ├── mod.rs          # Re-exports the shared contracts and result helpers
 ├── domain.rs       # DomainError and its unit tests
 ├── application.rs  # ApplicationError and its unit tests
-├── types.rs        # AppError, ErrorResponse, ResultExt, and their unit tests
-└── examples.rs     # Examples compiled only for #[cfg(any(test, doc))]
+└── types.rs        # AppError, ErrorResponse, ResultExt, and their unit tests
 ```
 
 ## The types

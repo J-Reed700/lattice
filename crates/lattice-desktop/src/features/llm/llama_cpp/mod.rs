@@ -17,12 +17,15 @@ use lattice_core::application::{
     contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto},
     ports::llm_port::{
         invalid_tool_arguments, CompletionInput, CompletionRequest, CompletionResponse, LLMPort,
-        ThinkingPolicy,
+        RemoteHeader, ThinkingPolicy,
     },
 };
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
+use lattice_core::shared::http::{
+    auth_header_map, loopback_client_builder, reqwest_client_builder,
+};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
@@ -77,8 +80,9 @@ pub struct LlamaCppLlm {
 }
 
 impl LlamaCppLlm {
-    /// A server the user runs, as Chat settings describe it.
-    pub fn new(settings: &LLMSettingsDto) -> Result<Self> {
+    /// A server the user runs, as Chat settings describe it, reached with
+    /// `header` (see `remote_auth::header`).
+    pub fn new(settings: &LLMSettingsDto, header: Option<RemoteHeader>) -> Result<Self> {
         let connection = &settings.llama_cpp;
         let base_url = connection.validated_base_url()?;
         if connection.model.trim().is_empty() {
@@ -87,7 +91,7 @@ impl LlamaCppLlm {
             ));
         }
         Ok(Self {
-            client: http_client(remote_headers(connection)?)?,
+            client: http_client(reqwest_client_builder(), remote_headers(header)?)?,
             base_url,
             config: ServerConfig {
                 model: connection.model.clone(),
@@ -147,16 +151,19 @@ impl LlamaCppLlm {
         bearer.set_sensitive(true);
         headers.insert(AUTHORIZATION, bearer);
         Ok(Self {
-            client: http_client(headers)?,
+            client: http_client(loopback_client_builder(), headers)?,
             base_url: format!("{}/v1", endpoint.trim_end_matches('/')),
             config,
             process: None,
         })
     }
 
-    pub async fn test_connection(connection: &LlamaCppSettingsDto) -> Result<Vec<String>> {
+    pub async fn test_connection(
+        connection: &LlamaCppSettingsDto,
+        header: Option<RemoteHeader>,
+    ) -> Result<Vec<String>> {
         let base_url = connection.validated_base_url()?;
-        let client = http_client(remote_headers(connection)?)?;
+        let client = http_client(reqwest_client_builder(), remote_headers(header)?)?;
         let probe_timeout = Duration::from_secs(30);
         let response = client
             .get(format!("{base_url}/models"))
@@ -462,24 +469,18 @@ impl ModelBackend for LlamaCppLlm {
     }
 }
 
-/// The authentication header Chat settings configure for a remote server.
-fn remote_headers(connection: &LlamaCppSettingsDto) -> Result<HeaderMap> {
-    let mut headers = HeaderMap::new();
-    if !connection.auth_header_name.trim().is_empty() {
-        let name = HeaderName::from_bytes(connection.auth_header_name.trim().as_bytes())
-            .map_err(|_| AppError::InvalidConfig("Invalid authentication header name".into()))?;
-        let mut value = HeaderValue::from_str(connection.auth_header_value.trim())
-            .map_err(|_| AppError::InvalidConfig("Invalid authentication header value".into()))?;
-        value.set_sensitive(true);
-        headers.insert(name, value);
-    }
-    Ok(headers)
+/// The authentication header of a remote server.
+fn remote_headers(header: Option<RemoteHeader>) -> Result<HeaderMap> {
+    header.map_or_else(
+        || Ok(HeaderMap::new()),
+        |header| auth_header_map(&header.name, &header.value),
+    )
 }
 
 /// No client-wide read or total timeout: generations are bounded by their time
 /// budget and stall detection, probes by per-request timeouts.
-fn http_client(headers: HeaderMap) -> Result<reqwest::Client> {
-    lattice_core::shared::http::reqwest_client_builder()
+fn http_client(builder: reqwest::ClientBuilder, headers: HeaderMap) -> Result<reqwest::Client> {
+    builder
         .default_headers(headers)
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))

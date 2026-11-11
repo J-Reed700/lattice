@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 use super::test_support::collection_fixture;
 pub(crate) use super::test_support::FakeLibrary;
 use super::*;

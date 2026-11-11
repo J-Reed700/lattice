@@ -80,7 +80,7 @@ export async function installReferencesFixture(page: Page) {
       if (state.holdBookmarks) await state.holdBookmarks;
       const query = (args.query as ListMessageBookmarksQueryDto).query?.toLowerCase() ?? '';
       const bookmarks = state.bookmarks.filter(item => !query || `${item.conversationTitle} ${item.messagePreview}`.toLowerCase().includes(query));
-      return { bookmarks, total: bookmarks.length };
+      return { bookmarks };
     },
     get_conversation_messages: (args) => {
       if ((args.request as GetConversationMessagesRequestDto).conversationId !== BREAD_BOOKMARK.conversationId) throw new Error('Conversation not found');

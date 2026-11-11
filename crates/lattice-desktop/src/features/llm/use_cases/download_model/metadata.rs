@@ -1,6 +1,7 @@
 //! Resolving what to download: curated or Hugging Face metadata and embedding file lists.
 
 use lattice_core::application::ports::model_catalog::ExternalModelMetadata;
+use lattice_core::application::services::credentials::CredentialKey;
 use lattice_core::domain::models::curated::get_all_curated_models;
 use lattice_core::shared::error::AppError;
 
@@ -45,7 +46,7 @@ impl DownloadModelUseCase {
     /// it to the download list. HF returns 200 on HEAD (after redirects) for
     /// existing files and 404 otherwise.
     async fn remote_file_exists(url: &str, auth_token: Option<&str>) -> bool {
-        let client = match reqwest::Client::builder()
+        let client = match lattice_core::shared::http::reqwest_client_builder()
             .timeout(std::time::Duration::from_secs(10))
             .redirect(reqwest::redirect::Policy::limited(5))
             .build()
@@ -143,7 +144,7 @@ impl DownloadModelUseCase {
                 // user's token.
                 let auth_token: Option<String> = if resolved.requires_auth {
                     self.credentials
-                        .get_api_key("huggingface_token")
+                        .get_api_key(CredentialKey::HuggingFaceToken.as_str())
                         .await
                         .ok()
                         .flatten()
