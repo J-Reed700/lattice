@@ -1,13 +1,26 @@
 //! The debrief of a session, for every kind of work: facts counted from what happened, and a scorecard the model
 //! writes and the app checks against the session's own data.
 
+use crate::lessons::structured_call::reask;
+use crate::model_call;
 use crate::practice::session::kind::Kind;
-use crate::practice::session::record::{Counted, DebriefSession};
+use crate::practice::session::record::DebriefSession;
+use answer::{ask, examine, settle};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::practice::work::{Form, PartRef, Rung, Setting, Stage};
 use lattice_core::domain::learning::practice::ScoreStatus;
 use lattice_core::shared::error::Result;
 use serde_json::Value;
+
+mod answer;
+mod plan;
+mod tally;
+mod telling;
+
+pub use tally::facts;
+
+use plan::Plan;
+use telling::told;
 
 #[cfg(test)]
 mod tests;
@@ -69,35 +82,39 @@ pub struct Facts {
     pub settings: Vec<Setting>,
 }
 
-pub fn facts(_kind: &Kind, _counted: &Counted<'_>) -> Facts {
-    Facts {
-        stage_ms: Vec::new(),
-        checks: 0,
-        submits: 0,
-        hints: Vec::new(),
-        settings: Vec::new(),
+pub fn system(kind: &Kind, form: Form) -> String {
+    Plan::new(kind, form).system()
+}
+
+pub fn schema(kind: &Kind, form: Form) -> Value {
+    Plan::new(kind, form).schema()
+}
+
+pub fn prompt(kind: &Kind, session: &DebriefSession) -> Result<String> {
+    told(&Plan::new(kind, session.form), session)
+}
+
+/// Asks for the debrief, checks every item of evidence, and asks once more with every fault; evidence that is still
+/// wrong after that is dropped, and a row left without any becomes insufficient evidence.
+pub async fn debrief(llm: &dyn LLMPort, kind: &Kind, session: &DebriefSession) -> Result<Debrief> {
+    let plan = Plan::new(kind, session.form);
+    let request = model_call::structured(
+        &plan.system(),
+        told(&plan, session)?,
+        plan.schema(),
+        0,
+        "low",
+    );
+    let (raw, answer) = ask(llm, &plan, request.clone()).await?;
+    let examined = examine(&plan, session, &answer)?;
+    if examined.faults.is_empty() {
+        return settle(&plan, answer, examined);
     }
-}
-
-pub fn system(_kind: &Kind, _form: Form) -> String {
-    String::new()
-}
-
-pub fn schema(_kind: &Kind, _form: Form) -> Value {
-    Value::Null
-}
-
-pub fn prompt(_kind: &Kind, _session: &DebriefSession) -> Result<String> {
-    Ok(String::new())
-}
-
-pub async fn debrief(
-    _llm: &dyn LLMPort,
-    _kind: &Kind,
-    _session: &DebriefSession,
-) -> Result<Debrief> {
-    Ok(Debrief {
-        rows: Vec::new(),
-        stated: Vec::new(),
-    })
+    let reason = format!(
+        "The app checked the evidence against the session and found these faults:\n{}",
+        examined.faults.join("\n")
+    );
+    let (_, answer) = ask(llm, &plan, reask(request, &raw, &reason)).await?;
+    let examined = examine(&plan, session, &answer)?;
+    settle(&plan, answer, examined)
 }

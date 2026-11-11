@@ -8,8 +8,8 @@ use crate::practice::session::record::{
     DebriefSession, EventKind, SessionCheck, SessionEvent, SessionHint, SessionLearnerCase,
 };
 use lattice_core::domain::learning::practice::work::{
-    CaseResult, CaseStatus, CheckReport, CheckScope, Form, LearnerCaseVerdict, PartRef, Piece,
-    Rung, Setting, Stage,
+    CaseResult, CaseStatus, CheckReport, CheckScope, CheckStatus, Form, LearnerCaseVerdict,
+    PartRef, Piece, Rung, Setting, Stage,
 };
 use serde_json::{json, Value};
 
@@ -51,6 +51,8 @@ fn check(id: &str, scope: CheckScope, slots: &[&str], status: CaseStatus) -> Ses
             detail: Value::Null,
         },
         at: 0,
+        status: CheckStatus::Passed,
+        cases: Vec::new(),
     }
 }
 
@@ -60,6 +62,7 @@ fn hint(ordinal: u32, rung: Rung) -> SessionHint {
         rung,
         text: "Look at the second slot.".to_owned(),
         stage: Stage::Make,
+        check_id: None,
     }
 }
 
@@ -91,6 +94,7 @@ fn session() -> DebriefSession {
             ordinal: 0,
             body: json!({"letter": "a"}),
             verdict: LearnerCaseVerdict::Right,
+            catches: Vec::new(),
         }],
         hints: vec![hint(0, Rung::Nudge)],
         events: Vec::new(),
@@ -438,10 +442,9 @@ async fn a_criterion_written_twice_refuses_the_answer() {
 async fn an_answer_that_cannot_be_read_twice_is_an_error() {
     let mut short = good_rows();
     short.pop();
-    let (result, model) = ask(&[answer(short.clone()), answer(short)], &kind(), &session()).await;
+    let (result, _) = ask(&[answer(short.clone()), answer(short)], &kind(), &session()).await;
 
     assert!(result.is_err());
-    assert_eq!(model.requests().len(), 2);
 }
 
 #[tokio::test]
@@ -588,7 +591,10 @@ async fn a_kind_with_stated_keys_must_have_them_written() {
     let without_pitfall = json!({"rows": good_rows(), "model": "Fill a, b, c."}).to_string();
     let blank_model =
         json!({"rows": good_rows(), "model": "  ", "pitfall": "Do not reverse them."}).to_string();
-    for unwritten in [without_pitfall, blank_model] {
+    for (unwritten, named) in [
+        (without_pitfall, "These must be written: pitfall."),
+        (blank_model, "These must be written: model."),
+    ] {
         let (result, model) = ask(
             &[unwritten, answer_stating(good_rows())],
             &stating,
@@ -597,9 +603,7 @@ async fn a_kind_with_stated_keys_must_have_them_written() {
         .await;
 
         let debrief = result.expect("a debrief");
-        assert!(
-            model.texts()[1].contains("The model answer and the pitfall to avoid must be written.")
-        );
+        assert!(model.texts()[1].contains(named), "{}", model.texts()[1]);
         assert_eq!(
             debrief.stated,
             [

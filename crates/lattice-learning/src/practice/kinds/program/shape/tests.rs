@@ -4,6 +4,7 @@ use super::*;
 use crate::practice::coding::problem::{CaseResult as RunResult, CaseStatus as RunStatus};
 use crate::practice::coding::proof::fakes::{sample_problem, spec};
 use lattice_core::domain::learning::practice::work::{CaseStatus, CaseVisibility};
+use serde_json::json;
 
 fn files() -> Vec<LearningLabFile> {
     vec![
@@ -271,4 +272,80 @@ fn an_exercise_of_another_kind_is_invalid() {
         problem_of(&exercise),
         Err(AppError::InvalidState(_))
     ));
+}
+
+#[test]
+fn every_cue_survives_the_coding_cue_and_back() {
+    let cues = [
+        Cue::Opening,
+        Cue::Reply,
+        Cue::StageOpened(Stage::Plan),
+        Cue::StageOpened(Stage::Make),
+        Cue::AskForSkipped(vec![Stage::Examples, Stage::Plan]),
+        Cue::AskForSkipped(Vec::new()),
+        Cue::CheckReview(CheckScope::Shown),
+        Cue::CheckReview(CheckScope::All),
+        Cue::CheckReview(CheckScope::Own),
+        Cue::Submitted,
+        Cue::Checkpoint,
+        Cue::Idle,
+    ];
+    for cue in cues {
+        assert_eq!(cue_of(&coding_cue_of(&cue)), cue, "{cue:?}");
+    }
+}
+
+#[test]
+fn a_cue_is_stored_under_the_name_the_coding_tables_know() {
+    let stored = |cue: Cue| serde_json::to_value(coding_cue_of(&cue)).unwrap();
+    assert_eq!(
+        stored(Cue::CheckReview(CheckScope::All)),
+        json!({"run_review": "all"})
+    );
+    assert_eq!(
+        stored(Cue::StageOpened(Stage::Make)),
+        json!({"stage_opened": "code"})
+    );
+    assert_eq!(stored(Cue::Submitted), json!("submitted"));
+}
+
+#[test]
+fn a_cue_ranks_as_the_coding_cue_it_is_stored_as() {
+    let cues = [
+        Cue::Opening,
+        Cue::Reply,
+        Cue::Submitted,
+        Cue::AskForSkipped(Vec::new()),
+        Cue::StageOpened(Stage::Plan),
+        Cue::CheckReview(CheckScope::All),
+        Cue::Checkpoint,
+        Cue::Idle,
+    ];
+    for first in &cues {
+        for second in &cues {
+            assert_eq!(
+                first.outranks(second),
+                coding_cue_of(first).outranks(&coding_cue_of(second)),
+                "{first:?} over {second:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_run_stands_as_the_check_it_is() {
+    use crate::practice::practical_dto::LearningPracticalRunStatus as Run;
+    let pairs = [
+        (Run::Pending, CheckStatus::Pending),
+        (Run::Running, CheckStatus::Running),
+        (Run::Passed, CheckStatus::Passed),
+        (Run::Failed, CheckStatus::Failed),
+        (Run::TimedOut, CheckStatus::TimedOut),
+        (Run::Cancelled, CheckStatus::Cancelled),
+        (Run::Interrupted, CheckStatus::Interrupted),
+        (Run::RuntimeUnavailable, CheckStatus::Unavailable),
+    ];
+    for (run, check) in pairs {
+        assert_eq!(check_status_of(run), check);
+    }
 }

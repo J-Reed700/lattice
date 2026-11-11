@@ -4,8 +4,7 @@
 
 use crate::lab_runtime::LearningLabFile;
 use crate::practice::coding::dto::{
-    CaseViewDto, CodeHintRung, CodingRunDto, CodingRunScope, CodingSessionDto, CodingStage,
-    ExampleVerdict,
+    CaseViewDto, CodingRunDto, CodingRunScope, CodingSessionDto, CodingStage,
 };
 use crate::practice::coding::golden_support::{rich_observation, rich_session};
 use crate::practice::coding::observation::test_support::{problem, session};
@@ -27,54 +26,18 @@ use crate::practice::session::kind::{Diff, Kind};
 use crate::practice::session::observation::{
     CaseView, CheckView, ClockView, Coverage, HintView, LearnerCaseView, Observation,
 };
-use lattice_core::domain::learning::practice::work::{
-    CheckScope, CheckStatus, Form, LearnerCaseVerdict, Rung, Setting, Stage,
-};
+use lattice_core::domain::learning::practice::work::CheckStatus;
 use serde_json::json;
 use std::sync::Arc;
+
+pub(super) use crate::practice::kinds::program::shape::{
+    form_of, rung_of, scope_of, setting_of, stage_of, verdict_of,
+};
 
 pub(super) fn program_kind() -> Kind {
     kind(Arc::new(FakeToolchains::new(FakeRunner::new(|_, _| {
         Behaviour::Fails
     }))))
-}
-
-pub(super) fn form_of(task: CodingTask) -> Form {
-    match task {
-        CodingTask::Problem => Form::Build,
-        CodingTask::BugFix => Form::Repair,
-    }
-}
-
-pub(super) fn setting_of(setting: CodingSetting) -> Setting {
-    match setting {
-        CodingSetting::Coached => Setting::Coached,
-        CodingSetting::Mock => Setting::Mock,
-        CodingSetting::Watched => Setting::Watched,
-    }
-}
-
-pub(super) fn stage_of(stage: CodingStage) -> Stage {
-    match stage {
-        CodingStage::Understand => Stage::Understand,
-        CodingStage::Examples => Stage::Examples,
-        CodingStage::Plan => Stage::Plan,
-        CodingStage::Code => Stage::Make,
-        CodingStage::Test => Stage::Check,
-        CodingStage::Review => Stage::Review,
-        CodingStage::Reproduce => Stage::Reproduce,
-        CodingStage::Locate => Stage::Locate,
-        CodingStage::Fix => Stage::Fix,
-        CodingStage::Verify => Stage::Verify,
-    }
-}
-
-pub(super) fn scope_of(scope: CodingRunScope) -> CheckScope {
-    match scope {
-        CodingRunScope::Examples => CheckScope::Shown,
-        CodingRunScope::All => CheckScope::All,
-        CodingRunScope::Input => CheckScope::Own,
-    }
 }
 
 fn check_status_of(status: LearningPracticalRunStatus) -> CheckStatus {
@@ -87,23 +50,6 @@ fn check_status_of(status: LearningPracticalRunStatus) -> CheckStatus {
         LearningPracticalRunStatus::Cancelled => CheckStatus::Cancelled,
         LearningPracticalRunStatus::Interrupted => CheckStatus::Interrupted,
         LearningPracticalRunStatus::RuntimeUnavailable => CheckStatus::Unavailable,
-    }
-}
-
-fn verdict_of(verdict: ExampleVerdict) -> LearnerCaseVerdict {
-    match verdict {
-        ExampleVerdict::Right => LearnerCaseVerdict::Right,
-        ExampleVerdict::Wrong => LearnerCaseVerdict::Wrong,
-        ExampleVerdict::Invalid => LearnerCaseVerdict::Invalid,
-    }
-}
-
-fn rung_of(rung: CodeHintRung) -> Rung {
-    match rung {
-        CodeHintRung::Nudge => Rung::Nudge,
-        CodeHintRung::Idea => Rung::Idea,
-        CodeHintRung::Plan => Rung::Plan,
-        CodeHintRung::Line => Rung::Point,
     }
 }
 

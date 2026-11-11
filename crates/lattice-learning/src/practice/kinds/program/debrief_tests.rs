@@ -13,7 +13,7 @@ use crate::practice::kinds::program::wording::ProgramWording;
 use crate::practice::session::kind::{Account, LearnerCases, Rubric, Wording};
 use crate::practice::session::record::{SessionCheck, SessionLearnerCase};
 use lattice_core::domain::learning::practice::work::{
-    CheckReport, CheckScope, Exercise, Form, LearnerCaseVerdict, PartRef,
+    CheckReport, CheckScope, CheckStatus, Exercise, Form, LearnerCaseVerdict, PartRef,
 };
 use lattice_core::shared::error::AppError;
 use serde_json::{json, Map, Value};
@@ -47,6 +47,8 @@ fn check(id: &str, scope: CheckScope, code: &str, status: RunStatus) -> SessionC
             detail: Value::Null,
         },
         at: 0,
+        status: CheckStatus::Passed,
+        cases: Vec::new(),
     }
 }
 
@@ -302,6 +304,7 @@ fn the_cases_a_learner_wrote_are_told_with_their_verdict() {
         ordinal: 2,
         body: json!({"args": ["[1]", "2"], "expected": "3"}),
         verdict: LearnerCaseVerdict::Right,
+        catches: Vec::new(),
     };
 
     let told = ProgramLearnerCases
