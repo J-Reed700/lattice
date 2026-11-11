@@ -493,7 +493,25 @@ Tests come first in every step. Nothing is built locally; each step is pushed to
      `run_coding_input`, the new command for Program's run on the learner's own input, is not part of this step.
      The screen's API follows (calls, types, one query key); the components are step 6.
 6. The screen: `session/` and the kind registry, with Program's editor and results views under `kinds/program/`;
-   the dependency rule in the architecture check; the fake-kind tests.
+   the dependency rule in the architecture check; the fake-kind tests. In two parts, because a screen that names
+   no kind needs a wire that names none:
+   - 6a The wire. Today the session view is Program's (`problem`, `examples`, `runs`, `draft` as files), it carries
+     no kind, and the requests that carry the learner's work (`check_practice_piece`, `ask_practice_hint`,
+     `send_practice_turn`, `observe_practice_draft`, `finish_practice_session`) take `files`. The view becomes the
+     engine's: the session's own fields, its `kind`, the kind's words for the labels the screen draws (`Wording`),
+     and `work`, the kind's public view as one JSON value (`Showing`, §3.2), with the debrief split the same way
+     (scorecard and counts from the engine, the rest in `work`). The requests carry `piece` as a JSON value, which
+     the engine already stores and hands on without looking inside (§3.2). Program's view and debrief types stay
+     typed in the bindings; Program's screen code reads `work` as them at its own boundary, as the kind does on the
+     server.
+   - 6b The screen. `session/` owns every call and everything a session is whatever the work: loading, the clock,
+     the counterpart's turns and cues, stage moves, hints, the checks' status, finishing, the debrief frame. It
+     takes a kind's view from a registry (`kinds/index.ts`, the one place that names every kind): the brief, the
+     editor that yields the piece, the check controls, the results, the learner's own cases where the kind has
+     them, and the kind's part of the debrief. `session/` imports nothing under `kinds/`, and no kind imports
+     another; the architecture check holds both. The screen's tests run on a fake kind whose piece is a string.
+   Rejected: a kind's view making its own calls with its own request types. It keeps the wire Program's and
+   moves the same change to the second kind.
 7. Fit per kind.
 
 **After #422, one small PR each:**
