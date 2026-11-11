@@ -5,6 +5,7 @@ use crate::infrastructure::persistence::mappers::DocumentModel;
 use crate::infrastructure::storage::file_intents::{record_releases_sql, run_id, FileStore};
 use lattice_core::domain::entities::Document as DocumentEntity;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::bind_limit::rows_per_statement;
 use sqlx::SqliteConnection;
 use std::time::Instant;
 use tracing::{info, instrument};
@@ -174,7 +175,7 @@ pub async fn delete_batch_optimized(conn: &mut SqliteConnection, ids: &[&str]) -
     }
 
     let start = Instant::now();
-    const DELETE_BATCH_SIZE: usize = 500; // SQLite can handle larger batches for DELETE
+    const DELETE_BATCH_SIZE: usize = rows_per_statement(1, 0);
 
     for batch in ids.chunks(DELETE_BATCH_SIZE) {
         let placeholders = batch.iter().map(|_| "?").collect::<Vec<_>>().join(",");

@@ -1,5 +1,6 @@
 //! The pool-backed chunk repository and the chunk operations inside a unit of
 //! work, over the real migrated schema.
+use super::ops::CHUNK_ROWS_PER_INSERT;
 use super::{ops, ChunkRepository};
 use lattice_core::application::ports::{ChunkRepositoryPort, RepositoryPort};
 use lattice_core::domain::entities::chunk::Chunk;
@@ -201,15 +202,25 @@ async fn chunk_batch_writes_are_bounded_and_late_batch_failure_rolls_back() {
     let pool = pool().await;
     let repo = ChunkRepository::new(pool.clone());
     let owner = document(&pool, "indexed").await;
-    let chunks: Vec<_> = (0..121).map(|index| chunk(&owner, index)).collect();
+    let chunks: Vec<_> = (0..2 * CHUNK_ROWS_PER_INSERT + 1)
+        .map(|index| chunk(&owner, index))
+        .collect();
     let (saved, writes) = count_writes(repo.save_batch(&chunks)).await;
     saved.unwrap();
-    assert_eq!(writes, 3, "121 chunks should use three <=900-bind INSERTs");
-    assert_eq!(repo.count_by_document(owner.as_str()).await.unwrap(), 121);
+    assert_eq!(
+        writes, 3,
+        "two full INSERTs and one more chunk should use three INSERTs"
+    );
+    assert_eq!(
+        repo.count_by_document(owner.as_str()).await.unwrap(),
+        2 * CHUNK_ROWS_PER_INSERT as i64 + 1
+    );
 
     let other = document(&pool, "indexed").await;
-    let mut failing: Vec<_> = (0..60).map(|index| chunk(&other, index)).collect();
-    failing.push(chunk(&DocumentId::new(), 60));
+    let mut failing: Vec<_> = (0..CHUNK_ROWS_PER_INSERT)
+        .map(|index| chunk(&other, index))
+        .collect();
+    failing.push(chunk(&DocumentId::new(), CHUNK_ROWS_PER_INSERT));
     assert!(repo.save_batch(&failing).await.is_err());
     assert_eq!(
         repo.count_by_document(other.as_str()).await.unwrap(),

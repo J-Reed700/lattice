@@ -3,6 +3,7 @@
 
 mod driver_error;
 
+pub mod bind_limit;
 pub mod database;
 pub mod driver;
 pub mod embedding_encoding;
