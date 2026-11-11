@@ -2,6 +2,7 @@
 //! building articles from video metadata.
 
 use super::WebIngestionService;
+use crate::infrastructure::extraction::markup::decode_entities;
 use chrono::{DateTime, NaiveDate, Utc};
 use lattice_core::application::contracts::web::CleanArticle;
 use lattice_core::shared::error::{AppError, Result};
@@ -144,9 +145,8 @@ impl WebIngestionService {
                 continue;
             }
 
-            let cleaned = Self::normalize_whitespace(
-                &Self::strip_html_like_tags(trimmed).replace("&nbsp;", " "),
-            );
+            let cleaned =
+                Self::normalize_whitespace(&decode_entities(&Self::strip_html_like_tags(trimmed)));
             if !cleaned.is_empty() {
                 lines.push(cleaned);
             }
@@ -164,7 +164,8 @@ impl WebIngestionService {
                 continue;
             }
 
-            let cleaned = Self::normalize_whitespace(&Self::strip_html_like_tags(trimmed));
+            let cleaned =
+                Self::normalize_whitespace(&decode_entities(&Self::strip_html_like_tags(trimmed)));
             if !cleaned.is_empty() {
                 lines.push(cleaned);
             }
