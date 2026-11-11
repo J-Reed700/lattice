@@ -1,7 +1,7 @@
 import { invoke, type InvokeArgs } from '@tauri-apps/api/core';
 
-import { parseApiError } from '@/lib/errorHandling';
 import type { CommandArgs, CommandResults } from '@/lib/bindings';
+import { parseApiError } from '@/lib/errorHandling';
 import type { ApiResult } from '@/types';
 import { diagnostics } from '@/utils/diagnostics';
 
