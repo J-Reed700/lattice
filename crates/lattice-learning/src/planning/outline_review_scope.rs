@@ -21,7 +21,7 @@ pub struct ReviewReceipt {
 }
 
 fn hash(value: &Value) -> String {
-    sha256_hex(&value.to_string())
+    sha256_hex(value.to_string())
 }
 
 impl ReviewReceipt {

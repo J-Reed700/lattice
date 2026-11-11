@@ -156,7 +156,7 @@ pub(crate) fn receipt_key(
     quote: &str,
 ) -> String {
     sha256_hex(
-        &json!({"policy":POLICY,"model":model,"kind":kind.name(),"text":text.trim(),"source":source_hash,"quote":quote.trim()})
+        json!({"policy":POLICY,"model":model,"kind":kind.name(),"text":text.trim(),"source":source_hash,"quote":quote.trim()})
             .to_string(),
     )
 }
@@ -165,7 +165,7 @@ pub(crate) fn receipt_key(
 /// offered exactly these passages, is not asked about again.
 fn declined_key(model: &str, kind: ItemKind, text: &str, candidates: &[Candidate]) -> String {
     sha256_hex(
-        &json!({"policy":POLICY,"model":model,"kind":kind.name(),"text":text.trim(),"declined":candidates.iter().map(|c| json!({"source":c.hash,"quote":c.quote})).collect::<Vec<_>>()})
+        json!({"policy":POLICY,"model":model,"kind":kind.name(),"text":text.trim(),"declined":candidates.iter().map(|c| json!({"source":c.hash,"quote":c.quote})).collect::<Vec<_>>()})
             .to_string(),
     )
 }

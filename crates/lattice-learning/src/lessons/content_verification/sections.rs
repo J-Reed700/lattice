@@ -601,7 +601,7 @@ pub(super) async fn settle(
         ledger.save_cuts().await?;
     }
     let without_going = going.out_of(&edited);
-    let without_going_digest = sha256_hex(&without_going.to_string());
+    let without_going_digest = sha256_hex(without_going.to_string());
     let needs_going_review = !going.is_empty()
         && ledger.cuts.reviewed_without_going.as_deref() != Some(without_going_digest.as_str());
     if edited != lesson || needs_going_review {

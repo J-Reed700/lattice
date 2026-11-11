@@ -291,9 +291,7 @@ impl ClaimChecks {
         // Each decision is restricted to this claim and its assigned evidence,
         // including when requests share a bank of passages. Other targets are
         // never evidence. Fresh coverage and final content binding still run.
-        sha256_hex(
-            &json!({"unit":unit,"statement":claim.statement,"passages":passages}).to_string(),
-        )
+        sha256_hex(json!({"unit":unit,"statement":claim.statement,"passages":passages}).to_string())
     }
 }
 
@@ -319,7 +317,7 @@ fn claim_receipt_key(llm: &dyn LLMPort, comparison: &str) -> String {
     format!(
         "claim-v1:{}",
         sha256_hex(
-            &json!({
+            json!({
                 "policy": POLICY, "model": llm.model_name(),
                 "context": llm.max_context_tokens(), "comparison": comparison,
                 "trust": lattice_core::domain::provenance::TRUST_POLICY_VERSION,

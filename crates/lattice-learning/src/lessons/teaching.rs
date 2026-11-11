@@ -252,7 +252,7 @@ pub async fn review_and_repair(
     output_tokens: usize,
 ) -> Result<String> {
     let context = json!({"policy":"lesson-teaching","model":llm.model_name(),"system":system,"prompt":prompt,"schema":schema});
-    let receipt = sha256_hex(&context.to_string());
+    let receipt = sha256_hex(context.to_string());
     if crate::lesson_drafts::teaching_completed(&candidate, &receipt).await? {
         crate::lesson_progress::phase(
             crate::lesson_progress::Phase::Review,
@@ -320,7 +320,7 @@ pub(crate) async fn review_lesson(
     let source_key = |candidate: &str| {
         format!(
             "teaching-sources:{}",
-            sha256_hex(&json!({"input":review_input,"candidate":candidate}).to_string())
+            sha256_hex(json!({"input":review_input,"candidate":candidate}).to_string())
         )
     };
     let unchanged_review = crate::lesson_drafts::checkpoint(&source_key(&candidate))
@@ -333,7 +333,7 @@ pub(crate) async fn review_lesson(
                     .any(|(current_id, current_hash)| *current_id == id && current_hash == hash)
             })
         });
-    let receipt = sha256_hex(&json!({"policy":"lesson-teaching-review","findingPolicy":crate::review_evidence::POLICY,"sectionReviewPolicy":crate::teaching_review::POLICY,"model":llm.model_name(),"system":system,"prompt":prompt,"schema":schema,"reviewReferenceHashes":sources}).to_string());
+    let receipt = sha256_hex(json!({"policy":"lesson-teaching-review","findingPolicy":crate::review_evidence::POLICY,"sectionReviewPolicy":crate::teaching_review::POLICY,"model":llm.model_name(),"system":system,"prompt":prompt,"schema":schema,"reviewReferenceHashes":sources}).to_string());
     if unchanged_review || crate::lesson_drafts::teaching_completed(&candidate, &receipt).await? {
         if !unchanged_review {
             crate::lesson_drafts::record_checkpoint(&source_key(&candidate), json!(sources))

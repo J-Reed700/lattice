@@ -1029,7 +1029,7 @@ async fn the_report_takes_the_questions_new_title_and_text_and_one_confirmed_fin
     let text = format!("{}\n\n{NEW_EXPLANATION}", choices.join("\n\n"));
     assert_eq!(
         now.0,
-        sha256_hex(&json!([before.0, SECTIONS, NEW_PROMPT, text]).to_string())
+        sha256_hex(json!([before.0, SECTIONS, NEW_PROMPT, text]).to_string())
     );
     let findings = serde_json::from_str::<Value>(&now.1)?["findings"]
         .as_array()

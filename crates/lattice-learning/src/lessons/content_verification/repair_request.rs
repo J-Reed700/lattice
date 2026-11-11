@@ -39,7 +39,7 @@ pub(super) fn repair_fingerprint(
         .map(|source| (&source.id, sha256_hex(&source.excerpt)))
         .collect();
     sources.sort();
-    sha256_hex(&json!({"policy":POLICY,"repairPolicy":"pending-repair-v3","model":llm.model_name(),"prompt":prompt,"schema":schema,"candidate":candidate,"sources":sources}).to_string())
+    sha256_hex(json!({"policy":POLICY,"repairPolicy":"pending-repair-v3","model":llm.model_name(),"prompt":prompt,"schema":schema,"candidate":candidate,"sources":sources}).to_string())
 }
 
 impl PendingRepair {

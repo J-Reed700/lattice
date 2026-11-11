@@ -54,7 +54,7 @@ const META_PROGRAM: &str = "program";
 /// revision is one job however often it is asked for.
 pub(super) fn revision(versions: &[ActiveVersion]) -> String {
     let ids: Vec<&str> = versions.iter().map(|version| version.id.as_str()).collect();
-    sha256_hex(&ids.join("\n"))
+    sha256_hex(ids.join("\n"))
 }
 
 /// What an index holds when it is current: the course's `revision`,
@@ -62,7 +62,7 @@ pub(super) fn revision(versions: &[ActiveVersion]) -> String {
 /// made by the old one is not current, and a build for the new one is a new
 /// build.
 pub(super) fn stamp(revision: &str, identity: &str) -> String {
-    sha256_hex(&format!("{revision}\n{identity}"))
+    sha256_hex(format!("{revision}\n{identity}"))
 }
 
 /// Chunks a version's text into the store under its id. Shared with the

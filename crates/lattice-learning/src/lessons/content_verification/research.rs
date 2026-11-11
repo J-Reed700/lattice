@@ -589,7 +589,7 @@ async fn research<'a>(
     let search_key = format!(
         "research-v1:{}",
         sha256_hex(
-            &json!({"topic":context.topic,
+            json!({"topic":context.topic,
         "model":llm.model_name(),"policy":POLICY})
             .to_string()
         )

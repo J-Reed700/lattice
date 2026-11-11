@@ -82,7 +82,7 @@ fn short(text: &str) -> String {
 
 fn claim_key(model: &str, claim: &str, passages: &[ReferencePassage]) -> String {
     sha256_hex(
-        &json!({"policy":CLAIM_POLICY,"model":model,"claim":claim.trim(),
+        json!({"policy":CLAIM_POLICY,"model":model,"claim":claim.trim(),
             "passages":passages.iter().map(|p| json!({"source":p.source_id,"sha256":sha256_hex(&p.text)})).collect::<Vec<_>>()})
         .to_string(),
     )

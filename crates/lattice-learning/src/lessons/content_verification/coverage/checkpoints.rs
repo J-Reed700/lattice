@@ -9,7 +9,7 @@ fn key(llm: &dyn LLMPort, input: &Value) -> String {
     format!(
         "coverage-unit-v2:{}",
         sha256_hex(
-            &json!({
+            json!({
                 "inventoryPolicy": INVENTORY_POLICY,
                 "coveragePolicy": POLICY,
                 "model": llm.model_name(), "context": llm.max_context_tokens(),

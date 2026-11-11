@@ -86,7 +86,7 @@ pub(super) async fn plan(
     let key = format!(
         "{POLICY}:plan:{}",
         sha256_hex(
-            &json!({"model":llm.model_name(),"system":PLAN_SYSTEM,"request":request}).to_string()
+            json!({"model":llm.model_name(),"system":PLAN_SYSTEM,"request":request}).to_string()
         )
     );
     if let Some(topics) = checkpoint(&key)
@@ -584,7 +584,7 @@ async fn judge(
         let key = format!(
             "{POLICY}:coverage:{}",
             sha256_hex(
-                &json!({"model":llm.model_name(),"system":COVERAGE_SYSTEM,"prompt":call.prompt})
+                json!({"model":llm.model_name(),"system":COVERAGE_SYSTEM,"prompt":call.prompt})
                     .to_string()
             )
         );

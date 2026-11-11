@@ -29,7 +29,7 @@ struct Basis {
 }
 
 fn key(llm: &dyn LLMPort, index: usize) -> String {
-    format!("inventory-basis-v1:{}", sha256_hex(&json!({"policy":INVENTORY_POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"index":index}).to_string()))
+    format!("inventory-basis-v1:{}", sha256_hex(json!({"policy":INVENTORY_POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"index":index}).to_string()))
 }
 
 /// Whether `now` is the section `before` was: of its kind and role, under its
@@ -179,7 +179,7 @@ pub(in crate::lessons::content_verification) async fn update(
     // A later repair may revisit the same text with a different saved basis.
     let delta_key = format!(
         "inventory-delta-v1:{}",
-        sha256_hex(&json!({"model":key(llm,index),"basis":before,"content":section}).to_string())
+        sha256_hex(json!({"model":key(llm,index),"basis":before,"content":section}).to_string())
     );
     if let Some(saved) = crate::lesson_drafts::checkpoint(&delta_key)
         .await?
@@ -751,7 +751,7 @@ mod revision_tests {
             let old_key = format!(
                 "inventory-revision-v2:{}",
                 sha256_hex(
-                    &json!({"model":key(&model,0),"basis":basis,"content":after[0]}).to_string()
+                    json!({"model":key(&model,0),"basis":basis,"content":after[0]}).to_string()
                 )
             );
             crate::lesson_drafts::record_checkpoint(&old_key, serde_json::to_value(&kept)?).await?;

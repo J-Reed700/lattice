@@ -34,7 +34,7 @@ pub struct SavedSource {
 impl LearningSourceLibraryRepository {
     /// The digest a captured text is stored under (`content_sha256`).
     pub fn text_digest(text: &str) -> String {
-        sha256_hex(&normalized(text))
+        sha256_hex(normalized(text))
     }
 
     async fn live_sources(&self, program_id: &str) -> Result<Vec<stored::LiveSource>> {

@@ -406,7 +406,7 @@ async fn the_rewritten_report_drops_findings_with_no_claim_whose_text_is_gone() 
     assert_eq!(
         report.content_sha256,
         sha256_hex(
-            &json!([before, 0, "A title", "A sentence that stays. Mine is new."]).to_string()
+            json!([before, 0, "A title", "A sentence that stays. Mine is new."]).to_string()
         )
     );
     Ok(())

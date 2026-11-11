@@ -130,7 +130,7 @@ impl LessonVerificationReport {
             });
         }
         self.content_sha256 =
-            sha256_hex(&json!([self.content_sha256, removal.unit, removal.new_body]).to_string());
+            sha256_hex(json!([self.content_sha256, removal.unit, removal.new_body]).to_string());
     }
 
     /// The report after the user rewrote a section: the findings on the
@@ -180,7 +180,7 @@ impl LessonVerificationReport {
             self.findings.insert(at + offset, finding);
         }
         self.content_sha256 = sha256_hex(
-            &json!([
+            json!([
                 self.content_sha256,
                 rewrite.unit,
                 rewrite.new_title,
@@ -231,7 +231,7 @@ impl LessonVerificationReport {
         let at = first.unwrap_or(self.findings.len());
         self.findings.insert(at, finding);
         self.content_sha256 =
-            sha256_hex(&json!([self.content_sha256, edit.unit, edit.new_body]).to_string());
+            sha256_hex(json!([self.content_sha256, edit.unit, edit.new_body]).to_string());
     }
 }
 
@@ -290,7 +290,7 @@ impl LessonVerificationReport {
         });
         self.findings.insert(at, finding);
         self.content_sha256 =
-            sha256_hex(&json!([self.content_sha256, back.unit, back.new_body]).to_string());
+            sha256_hex(json!([self.content_sha256, back.unit, back.new_body]).to_string());
     }
 
     /// The report after the sentence the claims in `claims` stood for was
@@ -306,14 +306,14 @@ impl LessonVerificationReport {
         let at = self.findings.iter().position(own);
         self.findings.retain(|finding| !own(finding));
         self.restore_replaced(claims, at);
-        self.content_sha256 = sha256_hex(&json!([self.content_sha256, unit, new_body]).to_string());
+        self.content_sha256 = sha256_hex(json!([self.content_sha256, unit, new_body]).to_string());
     }
 
     /// The report after the user's removal was undone: the findings it
     /// dropped are back where they stood.
     pub(crate) fn taken_back(&mut self, unit: usize, new_body: &str, claims: &HashSet<String>) {
         self.restore_replaced(claims, None);
-        self.content_sha256 = sha256_hex(&json!([self.content_sha256, unit, new_body]).to_string());
+        self.content_sha256 = sha256_hex(json!([self.content_sha256, unit, new_body]).to_string());
     }
 
     /// Puts back the findings kept for the claims in `claims`, at `at` or
