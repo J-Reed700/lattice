@@ -19,7 +19,7 @@
  * Accessibility: Focus trap, ARIA dialog, keyboard navigation
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { handleAsyncEvent, voidAsync } from '@/utils/promiseHandlers';
@@ -92,33 +92,6 @@ export function ConfirmDialog({
     }
   }, [isOpen]);
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const canConfirm =
-      !confirmDisabled &&
-      !isLoading &&
-      (!requireConfirmation || confirmText === requireConfirmation);
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        if (!pendingRef.current || allowCancelWhileLoading) onCancel();
-      } else if (e.key === 'Enter' && e.metaKey) {
-        // Cmd/Ctrl+Enter to confirm
-        e.preventDefault();
-        if (canConfirm) {
-          voidAsync(() => handleConfirm())();
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, onCancel, confirmText, requireConfirmation, confirmDisabled, isLoading, allowCancelWhileLoading]);
-
   const handleConfirm = async () => {
     if (pendingRef.current || confirmDisabled || (requireConfirmation && confirmText !== requireConfirmation)) return;
     pendingRef.current = true;
@@ -140,6 +113,27 @@ export function ConfirmDialog({
     !confirmDisabled &&
     !isLoading &&
     (!requireConfirmation || confirmText === requireConfirmation);
+
+  // Keyboard shortcuts
+  const handleKeyDown = useEffectEvent((e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      if (!pendingRef.current || allowCancelWhileLoading) onCancel();
+    } else if (e.key === 'Enter' && e.metaKey) {
+      // Cmd/Ctrl+Enter to confirm
+      e.preventDefault();
+      if (canConfirm) {
+        voidAsync(() => handleConfirm())();
+      }
+    }
+  });
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const listener = (e: KeyboardEvent) => handleKeyDown(e);
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
+  }, [isOpen]);
 
   const confirmButtonClass =
     variant === 'danger'

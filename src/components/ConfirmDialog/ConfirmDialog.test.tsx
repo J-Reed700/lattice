@@ -43,3 +43,14 @@ it('shows an action failure and permits retry', async () => {
   expect(onConfirm).toHaveBeenCalledTimes(2);
   expect(onCancel).toHaveBeenCalledOnce();
 });
+
+it('confirms with the latest onConfirm after a re-render while open', async () => {
+  const first = vi.fn();
+  const second = vi.fn();
+  const onCancel = vi.fn();
+  const { rerender } = render(<ConfirmDialog isOpen title="Save?" message="Saving" onConfirm={first} onCancel={onCancel} />);
+  rerender(<ConfirmDialog isOpen title="Save?" message="Saving" onConfirm={second} onCancel={onCancel} />);
+  await act(async () => { fireEvent.keyDown(window, { key: 'Enter', metaKey: true }); });
+  expect(second).toHaveBeenCalledOnce();
+  expect(first).not.toHaveBeenCalled();
+});

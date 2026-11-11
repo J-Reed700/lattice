@@ -63,11 +63,11 @@ export async function installHomeFixture(page: Page) {
     list_all_documents: () => state.documents,
     get_system_stats: () => ({ total_documents: state.documents.length, total_chunks: state.documents.length * 40, total_tags: 0, storage_size_bytes: state.documents.length * 1_048_576 }),
     get_indexed_folders: () => state.folders,
-    list_conversations: () => ({ conversations: state.conversations, total: state.conversations.length }),
+    list_conversations: () => ({ conversations: state.conversations }),
     list_journals: () => state.journals,
     list_journal_conversations: () => {
       const entries = state.conversations.filter(item => item.spaceId === FIELD_JOURNAL.id);
-      return { conversations: entries, total: entries.length };
+      return { conversations: entries };
     },
     get_corpus_shape: () => ({ total: state.documents.length, byType: [{ type: 'md', count: 2 }, { type: 'pdf', count: 1 }], grownLast7Days: state.documents.length }),
   }));

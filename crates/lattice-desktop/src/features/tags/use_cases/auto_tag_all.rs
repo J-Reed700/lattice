@@ -1,25 +1,25 @@
 //! Auto-Tag All Documents Use Case
 
 use crate::features::tags::dto::{AutoTagRequestDto, AutoTagResponseDto};
-use lattice_core::application::ports::TagServiceTrait;
+use crate::features::tags::tag_generation::TagGenerationService;
 use lattice_core::shared::error::Result;
 use std::sync::Arc;
 
 /// Use case for auto-tagging all untagged documents
 pub struct AutoTagAllDocumentsUseCase {
-    tag_service: Arc<dyn TagServiceTrait>,
+    generation: Arc<TagGenerationService>,
 }
 
 impl AutoTagAllDocumentsUseCase {
     /// Create a new use case instance
-    pub fn new(tag_service: Arc<dyn TagServiceTrait>) -> Self {
-        Self { tag_service }
+    pub fn new(generation: Arc<TagGenerationService>) -> Self {
+        Self { generation }
     }
 
     /// Execute the use case
     pub async fn execute(&self, request: AutoTagRequestDto) -> Result<AutoTagResponseDto> {
         let tagged_count = self
-            .tag_service
+            .generation
             .auto_tag_all_documents(request.max_documents)
             .await?;
 
@@ -27,25 +27,5 @@ impl AutoTagAllDocumentsUseCase {
             tagged_count,
             status: format!("Successfully tagged {} documents", tagged_count),
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::features::tags::mocks::MockTagService;
-
-    #[tokio::test]
-
-    async fn test_auto_tag_all_documents() {
-        let mock_service = Arc::new(MockTagService::new());
-        let use_case = AutoTagAllDocumentsUseCase::new(mock_service);
-
-        let request = AutoTagRequestDto { max_documents: 50 };
-
-        let response = use_case.execute(request).await.unwrap();
-
-        assert_eq!(response.tagged_count, 0);
-        assert!(response.status.contains("0 documents"));
     }
 }

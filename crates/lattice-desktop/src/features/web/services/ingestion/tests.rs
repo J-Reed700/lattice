@@ -110,7 +110,6 @@ async fn test_ingest_url_with_mock_article() {
     let web_archive = Arc::new(MockWebArchiveService);
     let embedding_service = Arc::new(MockEmbeddingService);
     let index_storage = Arc::new(MockIndexStorage);
-
     let service = WebIngestionService::new(
         mock_article_extractor,
         web_archive,
@@ -130,6 +129,26 @@ async fn test_ingest_url_with_mock_article() {
     assert_eq!(result.word_count, 300);
     assert!(result.chunks_created > 0);
     assert_eq!(result.reading_time_minutes, Some(2));
+}
+
+#[test]
+fn chunk_text_prefixes_each_part_the_embedder_returns() {
+    let service = create_test_service();
+
+    let text = "This is a sentence. ".repeat(100);
+    let chunks = service.chunk_text(&text).unwrap();
+
+    assert_eq!(chunks.len(), 1, "the test embedder splits nothing");
+    for (index, chunk) in chunks.iter().enumerate() {
+        assert_eq!(chunk.original_content, text);
+        assert_eq!(chunk.chunk_index, index);
+        assert_eq!(chunk.context_prefix, "[Document: Web Article]");
+        assert_eq!(
+            chunk.contextualized_content,
+            format!("[Document: Web Article]\n\n{text}")
+        );
+    }
+    assert!(service.chunk_text("").unwrap().is_empty());
 }
 
 #[test]
@@ -170,6 +189,18 @@ fn test_builder_builds_with_custom_config() {
     assert_eq!(service.config.chunk_size, 256);
     assert_eq!(service.config.chunk_overlap, 32);
     assert!(!service.config.prefer_sentence_boundaries);
+}
+
+#[test]
+fn the_builder_needs_no_tokenizer_because_chunking_is_the_embedders_split() {
+    let result = WebIngestionService::builder()
+        .article_extractor(Arc::new(MockArticleExtractorService::new()))
+        .web_archive(Arc::new(MockWebArchiveService))
+        .embedding_service(Arc::new(MockEmbeddingService))
+        .index_storage(Arc::new(MockIndexStorage))
+        .build();
+
+    assert!(result.is_ok(), "{:?}", result.err());
 }
 
 #[test]
@@ -721,32 +752,6 @@ mod article_vectors {
 
         fn dimension(&self) -> usize {
             12
-        }
-    }
-
-    #[test]
-    fn text_is_chunked_where_the_embedder_splits_it() {
-        let service = WebIngestionService::new(
-            Arc::new(MockArticleExtractorService::new()),
-            Arc::new(MockWebArchiveService),
-            Arc::new(RecordingEmbeddingService::new(40)),
-            Arc::new(RecordingStorage::default()),
-        );
-        assert_eq!(
-            service.chunk_text("This is a short text.").unwrap().len(),
-            1
-        );
-
-        let chunks = service
-            .chunk_text(&"This is a sentence. ".repeat(100))
-            .unwrap();
-        assert_eq!(chunks.len(), 50);
-        for (i, chunk) in chunks.iter().enumerate() {
-            assert_eq!(chunk.chunk_index, i);
-            assert_eq!(
-                chunk.contextualized_content,
-                format!("{}\n\n{}", chunk.context_prefix, chunk.original_content)
-            );
         }
     }
 

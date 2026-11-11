@@ -75,14 +75,7 @@ impl FunctionExecutor {
                 );
 
                 if !chunks.is_empty() {
-                    // Reassemble document text from indexed chunks (sorted by position)
-                    let mut sorted_chunks: Vec<_> = chunks.iter().collect();
-                    sorted_chunks.sort_by_key(|c| c.index());
-                    sorted_chunks
-                        .iter()
-                        .map(|c| c.content())
-                        .collect::<Vec<_>>()
-                        .join("\n\n")
+                    doc.reading_text()
                 } else {
                     // Fallback: try repository (legacy) then raw file
                     let repo_chunks = self
