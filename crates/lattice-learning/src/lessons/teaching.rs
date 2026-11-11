@@ -461,6 +461,8 @@ mod loop_tests;
 #[cfg(test)]
 mod memory_tests;
 #[cfg(test)]
+mod open_findings_tests;
+#[cfg(test)]
 mod question_tests;
 #[cfg(test)]
 mod standing_tests;
