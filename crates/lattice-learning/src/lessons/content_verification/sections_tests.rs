@@ -26,14 +26,14 @@ fn lesson() -> Value {
     ],"questions":[question("Which?"), question("And?")]})
 }
 
-pub(super) fn model(replies: &[Value]) -> ScriptedModel {
+fn model(replies: &[Value]) -> ScriptedModel {
     ScriptedModel {
         outputs: Mutex::new(replies.iter().map(Value::to_string).collect()),
         prompts: Mutex::new(Vec::new()),
     }
 }
 
-pub(super) fn sources() -> Vec<LearningSourceDto> {
+fn sources() -> Vec<LearningSourceDto> {
     vec![LearningSourceDto {
         id: "source".into(),
         title: "Source".into(),
@@ -144,7 +144,7 @@ fn report(units: usize) -> LessonVerificationReport {
 
 /// A schema of the test's own under the kept promise, for tests of what the
 /// schema is not about.
-pub(super) fn loose() -> LessonShape<'static> {
+fn loose() -> LessonShape<'static> {
     static POLICY: std::sync::LazyLock<shape::FixedSchema> =
         std::sync::LazyLock::new(|| shape::FixedSchema(json!({"type":"object"})));
     static SCHEMA: std::sync::LazyLock<shape::LessonSchema> =
@@ -1040,7 +1040,7 @@ async fn settle_does_not_rerun_teaching_review_on_cut_lesson_when_surviving_sect
     Ok(())
 }
 
-pub(super) fn shaped_block(kind: &str, title: &str) -> Value {
+fn shaped_block(kind: &str, title: &str) -> Value {
     let body = if kind == "check" {
         format!(
             "Case for {title}: what happens to the lid?\n\n{}\n\nAnswer for {title}: it bulges.",
@@ -1060,7 +1060,7 @@ pub(super) fn shaped_block(kind: &str, title: &str) -> Value {
     json!({"kind":kind,"title":title,"body":body,"rubric":rubric,"sourceIndex":null,"quote":"","citations":[]})
 }
 
-pub(super) fn shaped_question(kind: &str, prompt: &str) -> Value {
+fn shaped_question(kind: &str, prompt: &str) -> Value {
     json!({"kind":kind,"prompt":prompt,"options":["One","Two","Three","Four"],"correctIndex":0,
         "rationales":["","Two reverses the order.","Three mistakes the cause for the effect.","Four states it backwards."],
         "explanation":"Because.","sourceIndex":null,"quote":"","citations":[]})
@@ -1068,7 +1068,7 @@ pub(super) fn shaped_question(kind: &str, prompt: &str) -> Value {
 
 /// A lesson in the writer's full shape: eleven sections, the checks at units 3
 /// and 6, the worked examples at units 1 and 5; six questions.
-pub(super) fn shaped_lesson() -> Value {
+fn shaped_lesson() -> Value {
     json!({"blocks":[
         shaped_block("explanation","First idea"), shaped_block("worked_example","First example"),
         shaped_block("contrast","Not to be confused with"), shaped_block("check","Your turn"),
