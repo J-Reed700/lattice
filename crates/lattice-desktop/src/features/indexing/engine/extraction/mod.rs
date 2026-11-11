@@ -152,6 +152,9 @@ impl ContentExtractor {
             Some(ExtractionRoute::Csv) => {
                 csv::extract_csv_file(path, mime_type, self.max_file_size).await
             }
+            Some(ExtractionRoute::Html) => {
+                html::extract_html_file(path, mime_type, self.max_file_size).await
+            }
             Some(ExtractionRoute::Code) => {
                 html::extract_code_file(path, mime_type, self.max_file_size).await
             }

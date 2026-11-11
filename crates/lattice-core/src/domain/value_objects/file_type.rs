@@ -36,6 +36,7 @@ pub enum ExtractionRoute {
     Xlsx,
     Pptx,
     Csv,
+    Html,
     Code,
     /// Transcribed on-device rather than parsed.
     Audio,
@@ -123,8 +124,8 @@ static CATALOGUE: &[FileFormat] = &[
     FileFormat::new("ts", "text/typescript", FileCategory::Code, Some(ExtractionRoute::Code)),
     FileFormat::new("tsx", "text/typescript-jsx", FileCategory::Code, Some(ExtractionRoute::Code)),
     FileFormat::new("jsx", "text/javascript-jsx", FileCategory::Code, Some(ExtractionRoute::Code)),
-    FileFormat::new("html", "text/html", FileCategory::Code, Some(ExtractionRoute::Code)),
-    FileFormat::new("htm", "text/html", FileCategory::Code, Some(ExtractionRoute::Code)),
+    FileFormat::new("html", "text/html", FileCategory::Document, Some(ExtractionRoute::Html)),
+    FileFormat::new("htm", "text/html", FileCategory::Document, Some(ExtractionRoute::Html)),
     FileFormat::new("css", "text/css", FileCategory::Code, Some(ExtractionRoute::Code)),
     FileFormat::new("scss", "text/x-scss", FileCategory::Code, Some(ExtractionRoute::Code)),
     FileFormat::new("sass", "text/x-scss", FileCategory::Code, Some(ExtractionRoute::Code)),
