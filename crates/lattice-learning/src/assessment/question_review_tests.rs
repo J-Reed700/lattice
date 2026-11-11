@@ -150,6 +150,19 @@ fn outcome() -> Outcome<'static> {
     }
 }
 
+#[tokio::test]
+async fn the_question_review_asks_the_solver_and_the_judge_and_nothing_else() -> Result<()> {
+    let llm = Script::new(Script::agreeing(), Script::sound());
+
+    check(&llm, &lesson(), outcome()).await?;
+
+    let mut kinds: Vec<&str> = llm.seen.lock().unwrap().iter().map(|(k, _)| *k).collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    assert_eq!(kinds, ["judge", "solve"]);
+    Ok(())
+}
+
 const STANDS_APART: &str = "One option stands apart from the others in length.";
 
 #[tokio::test]
