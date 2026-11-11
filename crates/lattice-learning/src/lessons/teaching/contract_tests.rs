@@ -7,7 +7,7 @@ use crate::content_verification::tests::{fixture_completion, CONTRACT_NOTHING};
 use crate::lessons::content_verification::Protected;
 use crate::lessons::course_generation_tests::{clean_review, verdict, ScriptedModel};
 use crate::reference_collection::ReferenceCollection;
-use crate::review_findings::Held;
+use crate::review_findings::{subject_of, Held, PlanCheck};
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
@@ -793,51 +793,84 @@ async fn one_fixed_defect_does_not_charge_the_other_in_its_section() -> Result<(
     Ok(())
 }
 
+/// A repair of the second section's body for `finding`.
+fn replace_for(finding: &ReviewFinding, before: &str, after: &str) -> String {
+    edits(json!([{
+        "finding": finding.id().as_str(),
+        "path": "/blocks/1/body",
+        "before": before,
+        "after": after
+    }]))
+}
+
 #[tokio::test]
-async fn a_defect_in_words_a_repair_wrote_continues_that_repair_s_count() -> Result<()> {
-    let written = "Sorting the list with the second tool leaves names unchanged.";
-    let theirs = "Rename a file with the third tool.";
+async fn a_defect_in_words_a_repair_wrote_continues_the_count_of_its_own_kind_of_defect(
+) -> Result<()> {
+    let (one, other) = (
+        "Names never change when listed.",
+        "Listing may change names.",
+    );
+    let first = "Sorting the list with the second tool leaves names unchanged.";
+    let second = "Sorting the list with the third tool leaves names unchanged.";
+    let third = "Sorting the list with the third tool always leaves names unchanged.";
+    let mut digests = [subject_of(one), subject_of(other)];
+    digests.sort();
+    let clash = ReviewFinding::plan(
+        PlanCheck::Contradiction,
+        digests.join("-"),
+        FindingSite::Section(0),
+        "",
+    );
+    let use_of = |tool: &str| {
+        ReviewFinding::plan(
+            PlanCheck::Used,
+            subject_of(tool),
+            FindingSite::Section(1),
+            "",
+        )
+    };
     let scripted = scripted(vec![
         reviewed(3),
-        replace_in_listing("Listing may change names.", written),
+        replace_for(&clash, other, first),
         reviewed_of(&[1], &[]),
-        edits(json!([{"path":"/blocks/2/body","before":theirs,"after":"Read the names again."}])),
-        reviewed_of(&[2], &[]),
-        retitle(),
-        reviewed(3),
+        replace_for(&use_of("the second tool"), first, second),
+        reviewed_of(&[1], &[]),
+        replace_for(&use_of("the third tool"), second, third),
+        reviewed_of(&[1], &[]),
     ]);
-    let clash = answer(
+    let contradiction = answer(
         json!([]),
         json!([]),
-        json!([{
-            "quote":"Names never change when listed.",
-            "otherQuote":"Listing may change names."
-        }]),
+        json!([{"quote": one, "otherQuote": other}]),
         json!([]),
     );
-    let in_written = ("the second tool", "the second tool");
     let model = Routed::new(
         &scripted,
         vec![
-            clash,
-            uses_of(&[in_written, (theirs, "the third tool")]),
-            uses_of(&[in_written]),
-            uses_of(&[in_written]),
+            contradiction,
+            uses_of(&[("the second tool", "the second tool")]),
+            uses_of(&[("the third tool", "the third tool")]),
+            uses_of(&[("the third tool", "the third tool")]),
         ],
     );
-    let third = format!("Read the names. {theirs}");
     let candidate = lesson([
         "A terminal takes typed commands. Names never change when listed.",
         "Listing may change names. The list shows names in order.",
-        third.as_str(),
+        "Read the names.",
     ]);
     let result = run(&model, &candidate, &context(&[], &[]), &[]).await?;
-    assert_eq!(repairs_asked(&scripted), 2);
+    // The use in the words the contradiction's repair wrote has its own
+    // repairs; the use in the words that use's repair wrote continues its count.
+    assert_eq!(repairs_asked(&scripted), 3);
     assert_eq!(result.set_aside.len(), 1, "{:?}", waiting(&result));
     assert_eq!(result.set_aside[0].repairs, 2);
     assert_eq!(
         result.set_aside[0].finding.passage.as_deref(),
-        Some("the second tool")
+        Some("the third tool")
+    );
+    assert_eq!(
+        body(&result, 1),
+        format!("{third} The list shows names in order.")
     );
     Ok(())
 }
