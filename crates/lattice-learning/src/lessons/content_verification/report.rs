@@ -5,7 +5,7 @@ use super::*;
 mod repository;
 
 pub(super) fn content_hash(lesson: &PreparedLearningLesson) -> Result<String> {
-    Ok(digest(&serde_json::to_string(&(
+    Ok(sha256_hex(&serde_json::to_string(&(
         &lesson.blocks,
         &lesson.questions,
         &lesson.keys,
@@ -130,7 +130,7 @@ impl LessonVerificationReport {
             });
         }
         self.content_sha256 =
-            digest(&json!([self.content_sha256, removal.unit, removal.new_body]).to_string());
+            sha256_hex(json!([self.content_sha256, removal.unit, removal.new_body]).to_string());
     }
 
     /// The report after the user rewrote a section: the findings on the
@@ -179,8 +179,8 @@ impl LessonVerificationReport {
             };
             self.findings.insert(at + offset, finding);
         }
-        self.content_sha256 = digest(
-            &json!([
+        self.content_sha256 = sha256_hex(
+            json!([
                 self.content_sha256,
                 rewrite.unit,
                 rewrite.new_title,
@@ -231,7 +231,7 @@ impl LessonVerificationReport {
         let at = first.unwrap_or(self.findings.len());
         self.findings.insert(at, finding);
         self.content_sha256 =
-            digest(&json!([self.content_sha256, edit.unit, edit.new_body]).to_string());
+            sha256_hex(json!([self.content_sha256, edit.unit, edit.new_body]).to_string());
     }
 }
 
@@ -290,7 +290,7 @@ impl LessonVerificationReport {
         });
         self.findings.insert(at, finding);
         self.content_sha256 =
-            digest(&json!([self.content_sha256, back.unit, back.new_body]).to_string());
+            sha256_hex(json!([self.content_sha256, back.unit, back.new_body]).to_string());
     }
 
     /// The report after the sentence the claims in `claims` stood for was
@@ -306,14 +306,14 @@ impl LessonVerificationReport {
         let at = self.findings.iter().position(own);
         self.findings.retain(|finding| !own(finding));
         self.restore_replaced(claims, at);
-        self.content_sha256 = digest(&json!([self.content_sha256, unit, new_body]).to_string());
+        self.content_sha256 = sha256_hex(json!([self.content_sha256, unit, new_body]).to_string());
     }
 
     /// The report after the user's removal was undone: the findings it
     /// dropped are back where they stood.
     pub(crate) fn taken_back(&mut self, unit: usize, new_body: &str, claims: &HashSet<String>) {
         self.restore_replaced(claims, None);
-        self.content_sha256 = digest(&json!([self.content_sha256, unit, new_body]).to_string());
+        self.content_sha256 = sha256_hex(json!([self.content_sha256, unit, new_body]).to_string());
     }
 
     /// Puts back the findings kept for the claims in `claims`, at `at` or
@@ -389,9 +389,9 @@ impl LessonVerificationReport {
             Err(error) => return Some(error.to_string()),
         }
         let changed = !self.sources.iter().all(|binding| {
-            sources
-                .iter()
-                .any(|source| source.id == binding.id && digest(&source.excerpt) == binding.sha256)
+            sources.iter().any(|source| {
+                source.id == binding.id && sha256_hex(&source.excerpt) == binding.sha256
+            })
         });
         changed.then(|| {
             "a source it was checked against changed while it was being prepared; prepare it again once the sources stop changing".to_owned()
@@ -532,7 +532,7 @@ pub(crate) async fn persist_report(
         let text = repository::active_version_text(tx, program_id, &source.id)
             .await?
             .ok_or_else(|| invalid(SOURCE_INACTIVE))?;
-        if digest(&text) != source.sha256 {
+        if sha256_hex(&text) != source.sha256 {
             return Err(invalid(SOURCE_CONTENT_CHANGED));
         }
     }

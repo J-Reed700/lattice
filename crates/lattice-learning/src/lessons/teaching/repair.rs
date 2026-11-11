@@ -5,6 +5,7 @@ use crate::lessons::text_edits;
 use crate::lessons::writer_excerpts::{self, WriterExcerpts};
 use crate::outline_progress::OutlineProgress;
 use crate::review_findings::{FindingSite, ReviewFinding};
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -264,8 +265,8 @@ pub(super) async fn ask(
     let schema = form.schema(request);
     let key = format!(
         "teaching-repair-answer:{}",
-        crate::content_verification::digest(
-            &json!({"policy":REPAIR_POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"system":system,"prompt":form.prompt(request, request.authoring.clone()),"schema":schema}).to_string()
+        sha256_hex(
+            json!({"policy":REPAIR_POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"system":system,"prompt":form.prompt(request, request.authoring.clone()),"schema":schema}).to_string()
         )
     );
     if let Some(saved) = crate::lesson_drafts::checkpoint(&key).await? {

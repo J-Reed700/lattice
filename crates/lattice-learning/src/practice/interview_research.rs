@@ -1,7 +1,6 @@
 //! Bounded company research whose captured evidence remains in the source library.
 use crate::{
     dto::{LearningSourceKind, LearningSourcePolicy},
-    persistence::hash_text,
     practical_dto::{LearningInterviewPlanDto, LearningInterviewTargetDto},
     references::{
         source_library::{
@@ -14,6 +13,7 @@ use crate::{
     },
 };
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
     application::ports::{LLMPort, WebServiceTrait},
     domain::learning::claim_review::SourceAddedBy,
@@ -181,7 +181,7 @@ async fn save_capture(
     let op_id = deterministic_id(operation_id, &format!("{tag}-op"));
     let source_id = deterministic_id(operation_id, &format!("{tag}-source"));
     let version_id = deterministic_id(operation_id, &format!("{tag}-version"));
-    let payload_hash = hash_text(&format!("{request_hash}:{tag}"));
+    let payload_hash = sha256_hex(format!("{request_hash}:{tag}"));
     if library
         .preflight_replay(
             &op_id,
@@ -256,8 +256,8 @@ pub async fn research_interview_target(
     target: &LearningInterviewTargetDto,
 ) -> Result<Vec<String>> {
     let target = validate_target(target)?;
-    let request_hash = hash_text(
-        &serde_json::json!({"target": target, "brief": learner_brief, "lesson": lesson_title})
+    let request_hash = sha256_hex(
+        serde_json::json!({"target": target, "brief": learner_brief, "lesson": lesson_title})
             .to_string(),
     );
     let workspace = library.workspace(program_id).await?;
@@ -273,7 +273,7 @@ pub async fn research_interview_target(
         let tag = format!("research:{}", identity(url));
         if version.id == deterministic_id(operation_id, &format!("{tag}-version")) {
             let op_id = deterministic_id(operation_id, &format!("{tag}-op"));
-            let payload_hash = hash_text(&format!("{request_hash}:{tag}"));
+            let payload_hash = sha256_hex(format!("{request_hash}:{tag}"));
             library
                 .preflight_replay(
                     &op_id,
@@ -326,7 +326,7 @@ pub async fn research_interview_target(
                 program_id,
                 &deterministic_id(operation_id, "seed-url-source"),
                 "interview_research",
-                &hash_text(&format!("{request_hash}:seed-url")),
+                &sha256_hex(format!("{request_hash}:seed-url")),
             )
             .await?;
         if let Some(saved) = library.saved_web_source(program_id, url).await? {
@@ -470,8 +470,8 @@ pub async fn research_interview_answers(
     };
     // Keep a distinct replay namespace from company research. Question IDs are
     // random on a generation retry, so the request identity uses question text.
-    let request_hash = hash_text(
-        &serde_json::json!({
+    let request_hash = sha256_hex(
+        serde_json::json!({
             "company":plan.company_name,"role":plan.target_role,
             "questions":plan.questions.iter().map(|question| &question.question).collect::<Vec<_>>()
         })

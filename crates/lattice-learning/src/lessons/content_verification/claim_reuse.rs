@@ -27,6 +27,6 @@ pub(super) fn legacy_key(
         .collect();
     claim_receipt_key(
         llm,
-        &digest(&json!({"unit":unit,"claim":claim,"passages":passages}).to_string()),
+        &sha256_hex(json!({"unit":unit,"claim":claim,"passages":passages}).to_string()),
     )
 }

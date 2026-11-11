@@ -3,6 +3,7 @@ use chrono::Utc;
 use lattice_core::domain::entities::model_file::ModelFile;
 use lattice_core::domain::models::downloaded::ModelLocation;
 use lattice_core::domain::value_objects::model_status::FileStatus;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Database;
 use std::path::PathBuf;
 
@@ -171,11 +172,6 @@ async fn complete_gguf_embedding_download(
         .await
         .expect("read active embedding model");
     (active, dir.join("model-f16.gguf"))
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    hex::encode(Sha256::digest(bytes))
 }
 
 #[tokio::test]

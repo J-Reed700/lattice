@@ -1,5 +1,6 @@
 //! The source library's statements, their bindings and their row mapping.
 use super::*;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection};
@@ -64,7 +65,7 @@ pub(super) async fn backfill_legacy(pool: &impl DriverPool, program_id: &str) ->
         let id: String = row.get("id");
         let text: String = row.get("full_text");
         sqlx::query("UPDATE learning_source_versions SET content_sha256=?,word_count=? WHERE program_id=? AND id=? AND extraction_version=? AND content_sha256='' ")
-            .bind(hash_text(&text)).bind(words(&text) as i64).bind(program_id).bind(id).bind(LEGACY_EXTRACTION).execute(&mut *tx).await.map_err(db)?;
+            .bind(sha256_hex(&text)).bind(words(&text) as i64).bind(program_id).bind(id).bind(LEGACY_EXTRACTION).execute(&mut *tx).await.map_err(db)?;
     }
     tx.commit().await.map_err(db)
 }

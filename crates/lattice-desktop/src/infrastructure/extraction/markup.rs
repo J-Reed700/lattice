@@ -10,7 +10,7 @@ use tracing::warn;
 
 /// One step through a markup document.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Markup<'a> {
+pub(crate) enum Markup<'a> {
     /// An opening tag. `attrs` is the raw text after the name; `empty` is set
     /// for a self-closing `<name/>`.
     Open {
@@ -27,24 +27,22 @@ pub(super) enum Markup<'a> {
 
 /// Walks tags and text in order. Declarations, processing instructions and
 /// comments are skipped; CDATA content is returned as text.
-pub(super) struct MarkupCursor<'a> {
+pub(crate) struct MarkupCursor<'a> {
     src: &'a str,
     pos: usize,
 }
 
 impl<'a> MarkupCursor<'a> {
-    pub(super) fn new(src: &'a str) -> Self {
+    pub(crate) fn new(src: &'a str) -> Self {
         Self { src, pos: 0 }
     }
 
     /// Raw text up to the closing `</name>` (ASCII case-insensitive), with the
     /// cursor moved past it. HTML `<script>`/`<style>` bodies are not markup,
     /// so they must be skipped whole rather than tokenised.
-    pub(super) fn skip_raw_text(&mut self, name: &str) -> &'a str {
+    pub(crate) fn skip_raw_text(&mut self, name: &str) -> &'a str {
         let rest = &self.src[self.pos..];
-        let needle = format!("</{}", name.to_ascii_lowercase());
-        let lower = rest.to_ascii_lowercase();
-        match lower.find(&needle) {
+        match find_close_tag(rest, name) {
             Some(at) => {
                 let body = &rest[..at];
                 let after = &rest[at..];
@@ -58,6 +56,32 @@ impl<'a> MarkupCursor<'a> {
             }
         }
     }
+}
+
+/// Offset of the first `</name` in `text` (ASCII case-insensitive) that ends
+/// the name there, so `</scripts` does not close `<script>`.
+fn find_close_tag(text: &str, name: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let name = name.as_bytes();
+    let mut from = 0;
+    while let Some(offset) = text[from..].find("</") {
+        let at = from + offset;
+        let name_end = at + 2 + name.len();
+        let named = bytes
+            .get(at + 2..name_end)
+            .is_some_and(|candidate| candidate.eq_ignore_ascii_case(name));
+        if named {
+            let ends = match bytes.get(name_end) {
+                None => true,
+                Some(next) => next.is_ascii_whitespace() || matches!(next, b'/' | b'>'),
+            };
+            if ends {
+                return Some(at);
+            }
+        }
+        from = at + 2;
+    }
+    None
 }
 
 impl<'a> Iterator for MarkupCursor<'a> {
@@ -134,7 +158,7 @@ impl<'a> Iterator for MarkupCursor<'a> {
 }
 
 /// The value of `key="…"` in a tag's raw attribute text, entity-decoded.
-pub(super) fn attr(attrs: &str, key: &str) -> Option<String> {
+pub(crate) fn attr(attrs: &str, key: &str) -> Option<String> {
     let mut rest = attrs;
     while let Some(at) = rest.find(key) {
         let before_ok = rest[..at]
@@ -160,7 +184,7 @@ pub(super) fn attr(attrs: &str, key: &str) -> Option<String> {
 
 /// Decode named and numeric character references in one pass, so `&amp;lt;`
 /// stays `&lt;` instead of being decoded twice.
-pub(super) fn decode_entities(s: &str) -> String {
+pub(crate) fn decode_entities(s: &str) -> String {
     if !s.contains('&') {
         return s.to_owned();
     }
@@ -234,12 +258,21 @@ fn decode_entity(entity: &str) -> Option<char> {
     })
 }
 
+/// Escape `&`, `<`, `>` and both quote characters for HTML text and attributes.
+pub(crate) fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
 /// Decode a text file's bytes. A BOM decides UTF-8 or UTF-16; otherwise UTF-8
 /// is tried and anything that is not UTF-8 is read as Windows-1252, the
 /// encoding nearly every legacy non-UTF-8 text file on disk uses. Rejecting
 /// the whole file over one accented byte loses far more than a mis-mapped
 /// character would.
-pub(super) fn decode_text_bytes(bytes: Vec<u8>, path: &std::path::Path) -> String {
+pub(crate) fn decode_text_bytes(bytes: Vec<u8>, path: &std::path::Path) -> String {
     if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
         return String::from_utf8_lossy(rest).into_owned();
     }
@@ -288,7 +321,7 @@ fn windows_1252(b: u8) -> char {
 
 /// Collapse three or more consecutive newlines to two and trim the ends, so
 /// empty paragraphs used as spacing do not become runs of blank lines.
-pub(super) fn tidy_lines(text: &str) -> String {
+pub(crate) fn tidy_lines(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut newlines = 0;
     for line in text.split('\n') {
@@ -346,6 +379,37 @@ mod tests {
             decode_entities("it&#8217;s &#x2019; &amp;lt; &bogus; &"),
             "it\u{2019}s \u{2019} &lt; &bogus; &"
         );
+    }
+
+    #[test]
+    fn a_raw_text_body_is_not_closed_by_a_longer_tag_name() {
+        let mut cursor = MarkupCursor::new("a</scripts>b</script>tail");
+        assert_eq!(cursor.skip_raw_text("script"), "a</scripts>b");
+        assert_eq!(cursor.next(), Some(Markup::Text("tail")));
+    }
+
+    #[test]
+    fn a_raw_text_close_tag_matches_any_case_and_trailing_space() {
+        let mut cursor = MarkupCursor::new("x < y</ScRiPt >tail");
+        assert_eq!(cursor.skip_raw_text("script"), "x < y");
+        assert_eq!(cursor.next(), Some(Markup::Text("tail")));
+    }
+
+    #[test]
+    fn a_raw_text_body_without_a_close_tag_runs_to_the_end() {
+        let mut cursor = MarkupCursor::new("body </b> only");
+        assert_eq!(cursor.skip_raw_text("style"), "body </b> only");
+        assert_eq!(cursor.next(), None);
+    }
+
+    #[test]
+    fn multi_byte_text_before_a_raw_text_close_tag_is_kept() {
+        let mut cursor = MarkupCursor::new("caf\u{e9} \u{2014} \u{1F600}</SCRIPT>tail");
+        assert_eq!(
+            cursor.skip_raw_text("script"),
+            "caf\u{e9} \u{2014} \u{1F600}"
+        );
+        assert_eq!(cursor.next(), Some(Markup::Text("tail")));
     }
 
     #[test]

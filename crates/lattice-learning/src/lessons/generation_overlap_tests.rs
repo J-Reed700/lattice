@@ -9,6 +9,7 @@ use crate::{
 };
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::runtime::jobs::{JobRuntime, JobStatus, JobStore};
@@ -163,7 +164,7 @@ pub(crate) async fn save_verified(
             &lesson.id,
             "prepared-v2",
             serde_json::json!({
-                "plan": crate::content_verification::digest(&serde_json::to_string(&plan)?),
+                "plan": sha256_hex(serde_json::to_string(&plan)?),
                 "lesson": prepared,
             }),
         )

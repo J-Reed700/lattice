@@ -6,7 +6,7 @@ use super::{
 };
 use crate::embedded_runtime::{BuiltinLabExecutionSpec, LearningBuiltinRuntime};
 use crate::lab_runtime::{self, LearningLabExecutionSpec, LearningLabFile, LearningLabLimits};
-use crate::persistence::{db, hash_text, now};
+use crate::persistence::{db, now};
 use crate::practical_dto::*;
 use crate::practical_generation::{
     GeneratedPracticalActivity, PracticalFileRole, INTERVIEW_PLAN_FILE_PATH,
@@ -14,6 +14,7 @@ use crate::practical_generation::{
 use crate::practice::coding::problem::{Problem, PROBLEM_FILE_PATH};
 use crate::practice::interview_answers::{InterviewAnswerGuides, INTERVIEW_ANSWERS_FILE_PATH};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashSet;
@@ -345,7 +346,7 @@ impl LearningPracticalRepository {
             };
             sqlx::query("INSERT INTO learning_practical_files(activity_id,ordinal,path,role,content,content_sha256,editable) VALUES(?,?,?,?,?,?,?)")
                 .bind(&request.activity_id).bind(ordinal as i64).bind(&file.path).bind(role)
-                .bind(&file.content).bind(hash_text(&file.content))
+                .bind(&file.content).bind(sha256_hex(&file.content))
                 .bind(file.editable as i64).execute(&mut *tx).await.map_err(db)?;
         }
         operation.record(&mut tx, &0_i64).await?;

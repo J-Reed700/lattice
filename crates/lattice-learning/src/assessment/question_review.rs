@@ -6,6 +6,7 @@ use crate::assessment_engine::LearningAssessmentCandidate;
 use crate::dto::{LessonAnswerKey, LessonQuestion, LessonQuestionKind};
 use crate::lessons::teaching::contract;
 use crate::review_findings::ReviewFinding;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{application::ports::LLMPort, shared::error::Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -132,8 +133,8 @@ pub(crate) async fn check(
         .map(|(_, question)| {
             format!(
                 "question-review-v5:{}",
-                crate::content_verification::digest(
-                    &json!({
+                sha256_hex(
+                    json!({
                         "model": llm.model_name(),
                         "context": llm.max_context_tokens(),
                         "outcome": {"title": outcome.title, "description": outcome.description},
@@ -152,7 +153,7 @@ pub(crate) async fn check(
                 .filter(|(n, _)| *n != at)
                 .map(|(_, (_, question))| question.prompt.as_str())
                 .collect();
-            crate::content_verification::digest(&json!(prompts).to_string())
+            sha256_hex(json!(prompts).to_string())
         })
         .collect();
     let mut verdicts: Vec<Option<Verdict>> = Vec::with_capacity(drafted.len());

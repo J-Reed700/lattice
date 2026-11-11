@@ -589,12 +589,7 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
                 reference_hashes: program
                     .sources
                     .iter()
-                    .map(|source| {
-                        (
-                            source.id.clone(),
-                            crate::content_verification::digest(&source.excerpt),
-                        )
-                    })
+                    .map(|source| (source.id.clone(), sha256_hex(&source.excerpt)))
                     .collect(),
             });
             assert!(crate::lesson_drafts::resume("matching-inputs".into())

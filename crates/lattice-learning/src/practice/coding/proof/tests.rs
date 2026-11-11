@@ -2,7 +2,7 @@
 
 use super::fakes::{cases, spec, Behaviour, FakeHarness, FakeRunner};
 use super::*;
-use crate::persistence::hash_text;
+use lattice_core::shared::hash::sha256_hex;
 
 /// A runner whose code fails the cases listed against the text it contains and passes the rest; code containing
 /// BROKEN raises on every case.
@@ -99,7 +99,7 @@ async fn scale_cases_take_their_digest_and_time_from_the_reference_run() {
     let runner = runner(killers(), 7);
     let proven = proven(prove_with(&runner, "REF", &two_killed()).await);
     let scale = proven.cases.iter().find(|case| case.scale).unwrap();
-    assert_eq!(scale.digest, Some(hash_text("'big'")));
+    assert_eq!(scale.digest, Some(sha256_hex("'big'")));
     assert_eq!(scale.expected, None);
     assert_eq!(proven.reference_ms.get("scale-1"), Some(&7));
     assert!(proven

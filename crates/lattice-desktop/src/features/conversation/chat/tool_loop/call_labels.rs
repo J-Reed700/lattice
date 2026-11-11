@@ -4,6 +4,7 @@
 use crate::features::conversation::chat::fetch_memory::{self, Recall};
 use crate::features::conversation::chat::turn_record::TurnStepKind;
 use lattice_core::application::ports::ToolDefinition;
+use lattice_core::shared::http::host_of;
 use std::collections::HashSet;
 
 pub(super) fn canonical_tool_name(tool_name: &str) -> &str {
@@ -142,17 +143,11 @@ pub(super) fn recalled_page_notice(url: &str, recall: &Recall) -> String {
 /// and a blocked site are visible.
 pub(super) fn tool_activity_label(tool: &str, arguments: &serde_json::Value) -> String {
     match tool {
-        "fetch_url_content" => match fetch_memory::fetch_target(arguments)
-            .and_then(|url| url::Url::parse(url).ok())
-            .and_then(|url| url.host_str().map(|host| host.to_string()))
-        {
+        "fetch_url_content" => match fetch_memory::fetch_target(arguments).and_then(host_of) {
             Some(host) => format!("Reading {host}"),
             None => "Reading a web page".to_string(),
         },
-        "follow_links" => match fetch_memory::fetch_target(arguments)
-            .and_then(|url| url::Url::parse(url).ok())
-            .and_then(|url| url.host_str().map(|host| host.to_string()))
-        {
+        "follow_links" => match fetch_memory::fetch_target(arguments).and_then(host_of) {
             Some(host) => format!("Following links on {host}"),
             None => "Following links on a page".to_string(),
         },

@@ -1,7 +1,6 @@
 #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 
 use super::*;
-use crate::persistence::hash_text;
 use crate::practice::coding::proof::fakes::{Behaviour, FakeRunner, ScriptedModel};
 use crate::practice::kinds::program::shape::solution_piece;
 use crate::practice::kinds::program::toolchain::FakeToolchains;
@@ -9,6 +8,7 @@ use crate::practice::kinds::program::{kind, KIND};
 use crate::practice::session::author::Failed;
 use crate::practice::session::builder::{BuildSteps, MAX_PROOF_REASKS, STEP_PROVING, STEP_WRITING};
 use lattice_core::domain::learning::practice::work::{Draft as ExerciseDraft, Form};
+use lattice_core::shared::hash::sha256_hex;
 use std::sync::Mutex;
 
 struct RecordingSteps {
@@ -311,7 +311,7 @@ async fn cases_are_examples_then_hidden_then_scale_with_the_scale_digest_and_tim
     let scale = problem.cases.last().unwrap();
     assert!(scale.scale);
     assert_eq!(scale.expected, None);
-    assert_eq!(scale.digest, Some(hash_text("'big'")));
+    assert_eq!(scale.digest, Some(sha256_hex("'big'")));
     assert_eq!(problem.reference_ms.get("scale-1"), Some(&5));
     assert!(problem
         .cases

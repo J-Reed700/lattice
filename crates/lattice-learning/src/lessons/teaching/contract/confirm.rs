@@ -8,6 +8,7 @@ use super::{
     ANSWER_TOKENS, POLICY,
 };
 use crate::lessons::structured_call::{self, CallKind, ReasonFirst};
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{application::ports::LLMPort, shared::error::Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -341,8 +342,8 @@ async fn ask<T: DeserializeOwned + Serialize>(
     let prompt = prompt.to_string();
     let key = format!(
         "lesson-contract-confirm:{}",
-        crate::content_verification::digest(
-            &json!({"policy":POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"system":SYSTEM,"prompt":prompt,"schema":schema}).to_string()
+        sha256_hex(
+            json!({"policy":POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"system":SYSTEM,"prompt":prompt,"schema":schema}).to_string()
         )
     );
     if let Some(saved) = crate::lesson_drafts::checkpoint(&key)

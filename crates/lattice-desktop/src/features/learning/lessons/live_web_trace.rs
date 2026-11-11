@@ -7,10 +7,10 @@ use lattice_core::application::contracts::web::{
 };
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::runtime::jobs::JobFailure;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -300,10 +300,6 @@ fn canonical(value: &Value) -> Value {
         Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
         other => other.clone(),
     }
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    hex::encode(Sha256::digest(bytes))
 }
 
 #[async_trait::async_trait]
