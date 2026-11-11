@@ -8,6 +8,7 @@ use crate::practice::session::policy::{policy_for, Cue, Event};
 use crate::practice::session::ports::{
     Aids, At, CheckFinished, CheckStart, Checks, Clock, Debriefer, SessionStore,
 };
+use crate::practice::session::rating::rating;
 use crate::practice::session::record::{Applied, Finish, Help, NewHint, NewSession, Op, Session};
 use crate::practice::session::turn::validate_learner_turn;
 use lattice_core::domain::learning::practice::work::{
@@ -388,6 +389,7 @@ impl PracticeSessions<'_> {
                     debrief: &debrief,
                     model: self.aids.model_name(),
                     outcome: outcome(&session),
+                    rating: rating(&outcome(&session)),
                     draft: piece,
                     passed,
                     total,

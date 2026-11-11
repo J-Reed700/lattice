@@ -13,6 +13,7 @@ pub mod observe;
 pub mod policy;
 pub mod ports;
 pub mod proof;
+pub mod rating;
 pub mod record;
 pub mod service;
 pub mod turn;

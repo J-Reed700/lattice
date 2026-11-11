@@ -3,6 +3,7 @@
 use crate::practice::practical_dto::LearningSimulationTurnDto;
 use crate::practice::session::debrief::Debrief;
 use crate::practice::session::policy::Cue;
+use lattice_core::domain::learning::drills::PatternRating;
 use lattice_core::domain::learning::practice::work::{
     Case, CheckReport, CheckScope, CheckStatus, Exercise, Form, LearnerCaseVerdict, PartRef, Piece,
     Rung, Setting, Stage,
@@ -163,6 +164,7 @@ pub struct Finish<'a> {
     pub debrief: &'a Debrief,
     pub model: &'a str,
     pub outcome: Outcome,
+    pub rating: PatternRating,
     /// The learner's work as it stood at the end.
     pub draft: &'a Piece,
     /// Cases passed and run on the last submit.
