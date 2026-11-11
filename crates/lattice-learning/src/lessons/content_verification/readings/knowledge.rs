@@ -1,6 +1,6 @@
 //! `Knowledge` and `Veto`: the knowledge judge's closed-book samples, read by
 //! one of two rules. Knowledge passes a statement on unanimity; the veto fails
-//! it only on a majority that calls it false. Every receipt of a batch is
+//! it only when every sample calls it false. Every receipt of a batch is
 //! restored before its first call.
 use super::super::class_checks::{
     finding_of, knowledge_key, knowledge_of, saved_knowledge, standard, unjudged_finding, vetoed,

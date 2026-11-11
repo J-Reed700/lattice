@@ -685,6 +685,62 @@ mod real_python {
         Ok(())
     }
 
+    fn scale_case(source: &str) -> ProblemCase {
+        ProblemCase {
+            scale: true,
+            ..case("scale", [source, "0"], None, true)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_scale_input_may_be_a_comprehension_a_conditional_or_a_slice() -> Result<()> {
+        let code = "def add(xs, _unused):\n    return sum(xs)\n";
+        for source in [
+            "[i % 7 for i in range(1000) if i != 3]",
+            "[0 if i % 2 else i for i in range(100)][::-1]",
+        ] {
+            let (_, results) = run(code, &[scale_case(source)]).await?;
+            assert_eq!(
+                results[0].status,
+                CaseStatus::Ran,
+                "{source}: {:?}",
+                results[0].error
+            );
+            assert_eq!(
+                results[0].actual.as_ref().map(String::len),
+                Some(64),
+                "{source}"
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_scale_input_with_an_attribute_a_lambda_or_a_called_loop_variable_is_refused(
+    ) -> Result<()> {
+        let code = "def add(xs, _unused):\n    return 0\n";
+        for source in [
+            "[i for i in range(3)].__class__",
+            "(lambda: 1)()",
+            "[f(1) for f in [len]]",
+        ] {
+            let (_, results) = run(code, &[scale_case(source)]).await?;
+            assert_eq!(results[0].status, CaseStatus::Error, "{source}");
+            let error = results[0].error.clone().unwrap_or_default();
+            assert!(
+                error.contains("not allowed in a scale input"),
+                "{source}: {error}"
+            );
+        }
+        let (_, results) = run(code, &[scale_case("[i for i in range(3)].__class__")]).await?;
+        assert!(results[0]
+            .error
+            .clone()
+            .unwrap_or_default()
+            .contains("Attribute"));
+        Ok(())
+    }
+
     #[tokio::test]
     async fn unordered_and_float_cases_compare_by_their_rule() -> Result<()> {
         let code = "def add(a, b):\n    return a\n";

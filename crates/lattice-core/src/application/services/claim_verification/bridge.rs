@@ -134,11 +134,14 @@ impl BridgeOutcome {
     }
 
     /// Whether the passages ground a statement a closed-book reading called
-    /// false: every part stated, common or the lesson's own and one stated,
-    /// else the veto stands. Apply [`Self::guarded`] first.
+    /// false: some part stated, none missing, contradicted or common, else the
+    /// veto stands. Apply [`Self::guarded`] first.
     pub fn ground_outcome(&self) -> Outcome {
         let any = |kind: PartKind| self.parts.iter().any(|part| part.kind == kind);
-        if any(PartKind::Stated) && !any(PartKind::SpecificMissing) && !any(PartKind::Contradicted)
+        if any(PartKind::Stated)
+            && !any(PartKind::SpecificMissing)
+            && !any(PartKind::Contradicted)
+            && !any(PartKind::Common)
         {
             Outcome::Stands
         } else {

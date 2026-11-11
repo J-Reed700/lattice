@@ -78,7 +78,7 @@ pub(super) async fn run(model: &dyn LLMPort, candidate: Value) -> Result<Reviewe
         ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
-        &mut LessonSubject::new(&references, &[], Held::default()),
+        &mut LessonSubject::new(&references, &sources, &[], Held::default()),
     )
     .await
 }
@@ -99,7 +99,7 @@ async fn review_protecting(
         ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
-        &mut LessonSubject::new(&references, protected, Held::default()),
+        &mut LessonSubject::new(&references, &sources, protected, Held::default()),
     )
     .await
 }
@@ -363,7 +363,7 @@ async fn a_repair_too_long_for_the_window_leaves_the_lesson_waiting() -> Result<
         ReviewSchema::Other(&json!({"type":"object"})),
         original.to_string(),
         4000,
-        &mut LessonSubject::new(&references, &[], Held::default()),
+        &mut LessonSubject::new(&references, &sources, &[], Held::default()),
     )
     .await?;
     assert_eq!(
@@ -397,7 +397,15 @@ async fn a_repair_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_f
         judged(None, &[verdict("reviewer/1", "resolved")]),
     ]);
     let window = Windowed(&scripted, 13_000);
-    let sources = references();
+    let sources: Vec<_> = (0..6)
+        .map(|index| crate::dto::LearningSourceDto {
+            id: format!("source-{index}"),
+            title: format!("Source {index}"),
+            url: None,
+            acquired_at: 0,
+            excerpt: "x ".repeat(4000),
+        })
+        .collect();
     let references = ReferenceCollection::lexical(&sources)?;
     let reviewed = review_material(
         &window,
@@ -406,7 +414,7 @@ async fn a_repair_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_f
         ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
-        &mut LessonSubject::new(&references, &[], Held::default()),
+        &mut LessonSubject::new(&references, &sources, &[], Held::default()),
     )
     .await?;
     assert!(reviewed.set_aside.is_empty());
@@ -450,6 +458,7 @@ async fn a_finding_the_user_already_holds_is_not_repaired_again() -> Result<()> 
         4000,
         &mut LessonSubject::new(
             &references,
+            &sources,
             &[],
             Held {
                 places: BTreeSet::from([FindingKey {
@@ -555,7 +564,7 @@ async fn a_teaching_finding_on_a_protected_sentence_waits_for_the_user_and_the_r
         ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
-        &mut LessonSubject::new(&references, &protected, Held::default()),
+        &mut LessonSubject::new(&references, &sources, &protected, Held::default()),
     )
     .await?;
     assert_eq!(reviewed.set_aside.len(), 1);
@@ -1140,7 +1149,7 @@ async fn run_with_schema(
         ReviewSchema::Other(schema),
         candidate.to_string(),
         4000,
-        &mut LessonSubject::new(&references, &[], Held::default()),
+        &mut LessonSubject::new(&references, &sources, &[], Held::default()),
     )
     .await
 }
@@ -2256,6 +2265,7 @@ async fn waiting_after_review(candidate: &Value, protected: bool) -> Result<Vec<
         4000,
         &mut LessonSubject::new(
             &references,
+            &sources,
             if protected { &sentences } else { &[] },
             Held::default(),
         ),
@@ -2798,7 +2808,7 @@ async fn a_review_after_a_cut_and_its_repair_are_told_the_shape_the_lesson_is_ke
         ReviewSchema::Lesson(LessonShape::new(&schema, &policy)),
         lesson(EXCERPT).to_string(),
         4000,
-        &mut LessonSubject::new(&references, &[], Held::default()),
+        &mut LessonSubject::new(&references, &sources, &[], Held::default()),
     )
     .await?;
     assert!(reviewed.set_aside.is_empty());
@@ -2857,7 +2867,7 @@ async fn a_draft_review_is_told_what_the_writer_was() -> Result<()> {
         ReviewSchema::Lesson(LessonShape::new(&schema, &policy)),
         lesson(EXCERPT).to_string(),
         4000,
-        &mut LessonSubject::new(&references, &[], Held::default()),
+        &mut LessonSubject::new(&references, &sources, &[], Held::default()),
     )
     .await?;
     {
@@ -3414,7 +3424,7 @@ async fn a_stored_reviewer_finding_is_judged_again_by_the_first_review_and_is_no
         ReviewSchema::Other(&json!({"type":"object"})),
         after.to_string(),
         4000,
-        &mut LessonSubject::new(&collection, &[], held),
+        &mut LessonSubject::new(&collection, &sources, &[], held),
     )
     .await?;
     let first = &model.reviews()[0];
@@ -3469,7 +3479,7 @@ async fn review_in_the_job(
         ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
-        &mut LessonSubject::new(&collection, &[], Held::default()),
+        &mut LessonSubject::new(&collection, &sources, &[], Held::default()),
     )
     .await
 }
@@ -3675,7 +3685,7 @@ async fn review_shaped(
         ReviewSchema::Lesson(LessonShape::new(&schema, policy)),
         candidate.to_string(),
         4000,
-        &mut LessonSubject::new(&references, protected, Held::default()),
+        &mut LessonSubject::new(&references, &sources, protected, Held::default()),
     )
     .await
 }
@@ -3933,7 +3943,7 @@ fn an_answer_of_plans_and_no_change_declines_each_finding_and_changes_nothing() 
     ]);
     let sources = references();
     let references = ReferenceCollection::lexical(&sources)?;
-    let mut subject = LessonSubject::new(&references, &[], Held::default());
+    let mut subject = LessonSubject::new(&references, &sources, &[], Held::default());
 
     let settled = subject.settle_repair(
         &previous,
@@ -3979,7 +3989,7 @@ fn a_finding_whose_edit_overlapped_another_findings_is_not_charged_and_is_told_t
     .to_string();
     let sources = references();
     let references = ReferenceCollection::lexical(&sources)?;
-    let mut subject = LessonSubject::new(&references, &[], Held::default());
+    let mut subject = LessonSubject::new(&references, &sources, &[], Held::default());
 
     let settled = subject.settle_repair(
         &previous,

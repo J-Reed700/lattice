@@ -553,7 +553,7 @@ pub async fn prepare_lesson_with_references<'a>(
             LessonShape::new(&draft_schema, policy),
             raw,
             output_tokens,
-            references,
+            (references, &sources),
             &[],
         )
         .await?

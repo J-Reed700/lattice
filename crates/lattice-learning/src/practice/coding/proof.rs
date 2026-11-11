@@ -8,7 +8,6 @@ use crate::practice::coding::problem::{
     CaseResult, CaseStatus, Misreading, ProblemCase, ProblemSpec, SOLUTION_PATH,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::hash::sha256_hex;
 use std::collections::BTreeMap;
 use tokio_util::sync::CancellationToken;
 
@@ -168,7 +167,7 @@ pub(crate) async fn establish_reference(
                 case.id
             )));
         };
-        case.digest = Some(sha256_hex(actual));
+        case.digest = Some(actual.to_owned());
     }
 
     let second = proving.run(reference, &cases).await?;

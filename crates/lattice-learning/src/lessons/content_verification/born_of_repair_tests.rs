@@ -60,6 +60,8 @@ struct Script {
     repairs: Vec<Vec<(&'static str, String)>>,
     /// Sentences its extraction finds only once a repair was requested.
     late: Vec<&'static str>,
+    /// Reports another model identity once a repair was requested.
+    renamed_after_repair: bool,
     requests: Mutex<Vec<Value>>,
     sorted: Mutex<Vec<String>>,
 }
@@ -75,6 +77,7 @@ impl Script {
             failing: Vec::new(),
             repairs: Vec::new(),
             late: Vec::new(),
+            renamed_after_repair: false,
             requests: Mutex::new(Vec::new()),
             sorted: Mutex::new(Vec::new()),
         }
@@ -94,6 +97,11 @@ impl Script {
 
     fn late(mut self, sentences: &[&'static str]) -> Self {
         self.late = sentences.to_vec();
+        self
+    }
+
+    fn renamed_after_repair(mut self) -> Self {
+        self.renamed_after_repair = true;
         self
     }
 
@@ -203,6 +211,9 @@ impl LLMPort for Script {
         Ok(fixture_completion(request, replies))
     }
     fn model_name(&self) -> &str {
+        if self.renamed_after_repair && !self.requests.lock().unwrap().is_empty() {
+            return "script-fixture-after-repair";
+        }
         "script-fixture"
     }
     fn count_tokens(&self, text: &str) -> usize {
@@ -752,13 +763,15 @@ async fn a_born_statement_whose_reading_does_not_stand_goes_to_its_cut_with_no_r
 async fn a_statement_new_to_the_ledger_outside_any_repaired_region_begins_at_its_class_entry_born_of_nothing(
 ) -> Result<()> {
     // The model finds the second sentence's statement only on the pass after
-    // the correction: it is new, but the correction did not write it.
+    // the correction, which reports another identity, has no basis, and
+    // extracts the section whole: it is new, but the correction did not write it.
     let model = Script::new(&[
         (SENTENCE, &[BUFFERS, MISSING]),
         (READS, &[READS_ONE, MISSING]),
         (GOOD, &[GOOD]),
     ])
     .late(&[GOOD])
+    .renamed_after_repair()
     .failing(&[BUFFERS])
     .repairs(vec![vec![(SENTENCE, READS.to_owned())]]);
 

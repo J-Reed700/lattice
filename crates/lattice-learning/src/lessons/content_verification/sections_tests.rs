@@ -476,7 +476,7 @@ async fn a_lesson_that_loses_its_first_explanation_stops_with_the_reason_that_na
     let settled = settle(
         &llm,
         ("{}", loose(), 4_000),
-        &references,
+        (&references, &[]),
         &lesson().to_string(),
         &mut ledger,
     )
@@ -532,7 +532,7 @@ async fn a_lesson_every_statement_of_which_ended_removed_stops_with_the_reason_t
     let settled = settle(
         &llm,
         ("{}", loose(), 4_000),
-        &references,
+        (&references, &[]),
         &lesson().to_string(),
         &mut ledger,
     )
@@ -561,7 +561,7 @@ async fn a_lesson_with_a_statement_left_is_settled_as_before_whatever_was_remove
     let settled = settle(
         &llm,
         ("{}", loose(), 4_000),
-        &references,
+        (&references, &[]),
         &lesson().to_string(),
         &mut ledger,
     )
@@ -589,7 +589,7 @@ async fn a_section_left_with_too_little_goes_and_the_checks_let_go_of_its_statem
     let settled = settle(
         &llm,
         ("{}", loose(), 4_000),
-        &references,
+        (&references, &[]),
         &lesson.to_string(),
         &mut ledger,
     )
@@ -617,7 +617,7 @@ async fn a_lesson_with_nothing_cut_is_settled_without_a_call() -> Result<()> {
     let settled = settle(
         &llm,
         ("{}", loose(), 4_000),
-        &references,
+        (&references, &[]),
         &lesson().to_string(),
         &mut ledger,
     )
@@ -816,7 +816,7 @@ async fn each_section_that_took_a_cut_gets_one_flow_repair_and_never_a_second() 
         let settled = settle(
             &llm,
             ("{}", loose(), 4_000),
-            &references,
+            (&references, &[]),
             &lesson.to_string(),
             &mut ledger,
         )
@@ -856,7 +856,7 @@ async fn a_flow_repair_that_cannot_stand_leaves_the_section_as_cut() -> Result<(
     let settled = settle(
         &llm,
         ("{}", loose(), 4_000),
-        &references,
+        (&references, &[]),
         &lesson.to_string(),
         &mut ledger,
     )
@@ -1013,7 +1013,7 @@ async fn settle_does_not_rerun_teaching_review_on_cut_lesson_when_surviving_sect
     let settled = settle(
         &llm,
         ("{}", loose(), 4_000),
-        &references,
+        (&references, &[]),
         &lesson.to_string(),
         &mut ledger,
     )
@@ -1026,7 +1026,7 @@ async fn settle_does_not_rerun_teaching_review_on_cut_lesson_when_surviving_sect
     let settled_again = settle(
         &llm,
         ("{}", loose(), 4_000),
-        &references,
+        (&references, &[]),
         &edited_str,
         &mut ledger,
     )
@@ -1096,7 +1096,7 @@ async fn a_check_whose_only_worked_example_goes_goes_with_it() -> Result<()> {
     let settled = settle(
         &llm,
         ("{}", loose(), 4_000),
-        &references,
+        (&references, &[]),
         &lesson.to_string(),
         &mut ledger,
     )

@@ -1,7 +1,15 @@
-use super::quotes::{lesson_quote_checks, reanchor_lesson_quotes, restore_lesson_quotes};
+use super::quotes::{authored, lesson_quote_checks, reanchor_quotes_in, restore_quotes_in};
 use super::*;
 use crate::lessons::course_generation_tests::{clean_review, verdict, ScriptedModel};
 use std::sync::Mutex;
+
+fn restore_lesson_quotes(candidate: &mut Value, authoring: &Value) -> usize {
+    restore_quotes_in(candidate, &authored(authoring).unwrap())
+}
+
+fn reanchor_lesson_quotes(candidate: &mut Value, authoring: &Value) -> usize {
+    reanchor_quotes_in(candidate, &authored(authoring).unwrap())
+}
 
 const EXCERPT: &str = "This saved reference describes the exact behavior of the example tool.";
 
@@ -54,7 +62,7 @@ async fn lesson_review_only_rewrites_established_findings() -> Result<()> {
             ReviewSchema::Other(&json!({"type":"object"})),
             original.to_string(),
             4000,
-            &references,
+            (&references, &references.sources),
             &[],
         )
         .await?;

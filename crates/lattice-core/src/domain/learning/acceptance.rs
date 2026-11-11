@@ -62,7 +62,7 @@ pub enum Reading {
     Consistency,
     /// The knowledge judge's closed-book samples, passing on unanimity.
     Knowledge,
-    /// The same samples, failing only on a majority `false`.
+    /// The same samples, failing only when every sample says `false`.
     Veto,
 }
 
@@ -140,9 +140,9 @@ pub enum Outcome {
     AllCommon,
     /// It asserts a specific nothing states.
     Unproven,
-    /// A passage, or most samples, say otherwise.
+    /// A passage, or every sample, says otherwise.
     Refuted,
-    /// It needs a source: a `needs_source`, a lone `false`, or an unfounded
+    /// It needs a source: a `needs_source`, a split with a `false`, or an unfounded
     /// specific.
     NeedsSource,
     /// The answer could not be read, after the judge's own second asking.

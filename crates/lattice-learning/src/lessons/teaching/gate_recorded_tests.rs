@@ -178,7 +178,7 @@ async fn run(model: &dyn LLMPort, candidate: &Value) -> Result<Reviewed> {
         ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
-        &mut LessonSubject::new(&references, &[], Held::default()),
+        &mut LessonSubject::new(&references, &sources, &[], Held::default()),
     )
     .await
 }

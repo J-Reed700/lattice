@@ -1,7 +1,7 @@
 //! The lesson as a subject of the review.
 use super::super::contract;
 use super::super::passes::{Next, Outcome, Passes};
-use super::super::quotes::lesson_quote_checks;
+use super::super::quotes::{numbered, quote_checks_in};
 use super::super::repair::{self, Repaired};
 use super::super::standing::Standing;
 use super::super::{
@@ -9,9 +9,10 @@ use super::super::{
     LESSON_REVIEW_EVIDENCE_SCOPE, RULES_DECIDE,
 };
 use super::{
-    review_instructions, review_prompt, settle_lesson_quotes, Decision, Found, Pass, ReviewTexts,
+    review_instructions, review_prompt, settle_quotes_in, Decision, Found, Pass, ReviewTexts,
     Settled, Step, Subject, LESSON_PRIORITY,
 };
+use crate::dto::LearningSourceDto;
 use crate::lessons::content_verification::Protected;
 use crate::lessons::copied_wording::Wording;
 use crate::lessons::text_edits::{self, Named};
@@ -62,6 +63,8 @@ pub(in crate::lessons::teaching) struct LessonSubject<'a> {
     receipts: contract::Receipts,
     protected: &'a [Protected],
     references: &'a ReferenceCollection<'a>,
+    /// The lesson's numbered sources: what its `sourceIndex`es name.
+    numbered: &'a [LearningSourceDto],
     wording: Wording,
     standing: Standing,
     /// Whether structure held up the latest pass's content review.
@@ -74,6 +77,7 @@ impl<'a> LessonSubject<'a> {
     /// user already has, never repaired again.
     pub(in crate::lessons::teaching) fn new(
         references: &'a ReferenceCollection<'a>,
+        numbered: &'a [LearningSourceDto],
         protected: &'a [Protected],
         held: Held,
     ) -> Self {
@@ -83,6 +87,7 @@ impl<'a> LessonSubject<'a> {
             receipts: contract::Receipts::default(),
             protected,
             references,
+            numbered,
             wording: Wording::of(references),
             standing,
             held_up: false,
@@ -187,17 +192,17 @@ impl Subject for LessonSubject<'_> {
         crate::lesson_drafts::save_with_passes(candidate, saved.to_string()).await
     }
 
-    fn settle_quotes(&self, candidate: &mut Value, authoring: &Value, attempt: usize) -> bool {
-        settle_lesson_quotes(candidate, authoring, attempt)
+    fn settle_quotes(&self, candidate: &mut Value, _authoring: &Value, attempt: usize) -> bool {
+        settle_quotes_in(candidate, &numbered(self.numbered), attempt)
     }
 
     fn quote_checks(
         &self,
         candidate: &Value,
-        authoring: &Value,
+        _authoring: &Value,
         _attempt: usize,
     ) -> Result<Vec<Value>> {
-        Ok(lesson_quote_checks(candidate, authoring))
+        Ok(quote_checks_in(candidate, &numbered(self.numbered)))
     }
 
     async fn find(&mut self, llm: &dyn LLMPort, pass: &Pass<'_>) -> Result<Found> {

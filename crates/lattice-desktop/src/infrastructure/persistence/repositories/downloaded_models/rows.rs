@@ -65,21 +65,6 @@ SELECT
 FROM models m
 "#;
 
-/// Map domain model type strings to the models-table CHECK constraint values.
-///
-/// The domain uses modern values (`language_model`, `text_embeddings`), while the
-/// legacy `models` table constraint still expects (`chat`, `embedding`, ...).
-pub(super) fn normalize_model_type_for_models_table(model_type: ModelType) -> &'static str {
-    match model_type {
-        ModelType::LanguageModel => "chat",
-        ModelType::TextEmbeddings => "embedding",
-        ModelType::Vision => "multi_modal",
-        ModelType::Reranker => "qa",
-        ModelType::Transcription => "custom",
-        ModelType::Speech => "unknown",
-    }
-}
-
 /// Weights a checkpoint directory's model (the reranker's) loads from: any
 /// safetensors shard.
 pub(super) fn directory_has_loadable_weights(path: &Path) -> bool {

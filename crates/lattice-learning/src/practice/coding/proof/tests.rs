@@ -1,8 +1,7 @@
 #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 
-use super::fakes::{cases, spec, Behaviour, FakeHarness, FakeRunner};
+use super::fakes::{cases, spec, Behaviour, FakeHarness, FakeRunner, SCALE_DIGEST};
 use super::*;
-use lattice_core::shared::hash::sha256_hex;
 
 /// A runner whose code fails the cases listed against the text it contains and passes the rest; code containing
 /// BROKEN raises on every case.
@@ -99,7 +98,7 @@ async fn scale_cases_take_their_digest_and_time_from_the_reference_run() {
     let runner = runner(killers(), 7);
     let proven = proven(prove_with(&runner, "REF", &two_killed()).await);
     let scale = proven.cases.iter().find(|case| case.scale).unwrap();
-    assert_eq!(scale.digest, Some(sha256_hex("'big'")));
+    assert_eq!(scale.digest.as_deref(), Some(SCALE_DIGEST));
     assert_eq!(scale.expected, None);
     assert_eq!(proven.reference_ms.get("scale-1"), Some(&7));
     assert!(proven
@@ -196,4 +195,59 @@ async fn a_cancelled_build_stops_before_running_anything() {
         "{result:?}"
     );
     assert!(runner.codes().is_empty());
+}
+
+#[cfg(feature = "learning-labs")]
+mod real_python {
+    use super::*;
+    use crate::drills::runner::runner_for;
+    use crate::embedded_runtime::BuiltinRuntimes;
+    use crate::practice::coding::harness::{run_cases, PythonHarness};
+    use crate::practice::coding::problem::CaseVisibility;
+    use crate::practice::coding::proof::fakes::{case, sample_problem};
+
+    #[tokio::test]
+    async fn the_digest_a_scale_case_stores_is_the_one_the_harness_reports() -> Result<()> {
+        let runner = runner_for("python", &BuiltinRuntimes::for_tests())
+            .ok_or_else(|| AppError::InternalError("Python has no runner here".into()))?;
+        let reference = sample_problem().reference;
+        let cases = vec![
+            case(
+                "example-1",
+                "a pair at the start",
+                CaseVisibility::Example,
+                false,
+            ),
+            ProblemCase {
+                args: vec!["list(range(1000))".into(), "1997".into()],
+                ..case("scale-1", "a long list", CaseVisibility::Hidden, true)
+            },
+        ];
+        let referenced = establish_reference(
+            runner.as_ref(),
+            &PythonHarness::new(),
+            &spec(),
+            &reference,
+            &cases,
+            CancellationToken::new(),
+        )
+        .await?;
+        let Referenced::Right { cases: proven, .. } = referenced else {
+            panic!("expected a right reference");
+        };
+        let (_, reported) = run_cases(
+            runner.as_ref(),
+            &PythonHarness::new(),
+            &spec(),
+            &reference,
+            &cases,
+            CancellationToken::new(),
+        )
+        .await?;
+        let actual = reported[1].actual.clone().unwrap();
+        assert_eq!(actual.len(), 64);
+        assert_eq!(proven[1].digest, Some(actual));
+        assert_eq!(proven[0].digest, None);
+        Ok(())
+    }
 }
