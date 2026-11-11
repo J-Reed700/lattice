@@ -15,6 +15,7 @@ use crate::generation::{parse_json, split_check, teaching_sentences};
 use crate::lessons::copied_wording::Wording;
 use crate::lessons::shape::{LessonShape, ShapePolicy};
 use crate::lessons::text_edits;
+use crate::review_findings::{site_sha256, FindingSite};
 use lattice_core::domain::learning::claim_review::ClaimId;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -64,6 +65,9 @@ pub(super) struct Cuts {
     /// The sections that go, with the title or prompt of each.
     pub(super) going: BTreeMap<usize, String>,
     pub(super) mended: BTreeMap<usize, Mended>,
+    /// The units that go only because a finding on them could not be settled.
+    #[serde(default)]
+    pub(super) unsettled: BTreeSet<usize>,
     #[serde(default)]
     pub(crate) reviewed_without_going: Option<String>,
 }
@@ -79,6 +83,7 @@ impl Cuts {
         let same = |unit: &usize, label: &str| unit_label(lesson, *unit).as_deref() == Some(label);
         self.taken.retain(|unit, taken| same(unit, &taken.label));
         self.going.retain(|unit, label| same(unit, label));
+        self.unsettled.retain(|unit| self.going.contains_key(unit));
         self.mended.retain(|unit, mended| same(unit, &mended.label));
     }
 
@@ -102,6 +107,22 @@ impl Cuts {
 
     pub(super) fn go(&mut self, unit: usize, label: String) {
         self.going.insert(unit, label);
+    }
+
+    /// Sends a unit out because a finding on it could not be settled.
+    pub(super) fn go_unsettled(&mut self, unit: usize, label: String) {
+        self.going.insert(unit, label);
+        self.unsettled.insert(unit);
+    }
+
+    /// Puts back the units that went because a finding could not be settled;
+    /// whether it put back any.
+    pub(super) fn readmit(&mut self) -> bool {
+        let back = std::mem::take(&mut self.unsettled);
+        for unit in &back {
+            self.going.remove(unit);
+        }
+        !back.is_empty()
     }
 }
 
@@ -341,6 +362,44 @@ pub(super) fn unpublishable(
     shape.floor(lesson, cuts.units().units())
 }
 
+/// The questions of `lesson` that go because a finding on them waits for the
+/// user and the lesson's shape can spare them, each with its unit and label.
+pub(super) fn unsettled_questions(
+    lesson: &Value,
+    waiting: &BTreeSet<String>,
+    cuts: &Cuts,
+    shape: &dyn ShapePolicy,
+) -> Vec<(usize, String)> {
+    let count = |list: &str| {
+        lesson
+            .get(list)
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len)
+    };
+    let blocks = count("blocks");
+    let mut going = cuts.units().units().clone();
+    let mut chosen = Vec::new();
+    for index in 0..count("questions") {
+        let unit = blocks + index;
+        if going.contains(&unit)
+            || !waiting.contains(&site_sha256(lesson, FindingSite::Question(index)))
+        {
+            continue;
+        }
+        let mut with = going.clone();
+        with.insert(unit);
+        if shape.floor(lesson, &with).is_some() {
+            continue;
+        }
+        let Some(label) = unit_label(lesson, unit) else {
+            continue;
+        };
+        going = with;
+        chosen.push((unit, label));
+    }
+    chosen
+}
+
 /// Whether a cut took the answer of a check: the first teaching sentence under
 /// its reveal line.
 pub(super) fn answer_lost(before: &str, after: &str) -> bool {
@@ -538,12 +597,26 @@ pub(super) async fn settle(
 ) -> Result<Settled> {
     let lesson: Value = parse_json(raw)?;
     ledger.cuts.keep_current(&lesson);
-    if send_out(&lesson, &mut ledger.cuts, shape.policy) {
+    let mut sent = send_out(&lesson, &mut ledger.cuts, shape.policy);
+    let waiting = crate::teaching::question_texts().await?;
+    for (unit, label) in unsettled_questions(&lesson, &waiting, &ledger.cuts, shape.policy) {
+        tracing::info!(
+            unit,
+            "A question whose finding the review could not settle goes"
+        );
+        ledger.cuts.go_unsettled(unit, label);
+        sent = true;
+    }
+    if sent {
         ledger.save_cuts().await?;
         return Ok(Settled::Again(raw.to_owned()));
     }
     let going = ledger.cuts.units();
     if let Some(what) = shape.policy.floor(&lesson, going.units()) {
+        if ledger.cuts.readmit() {
+            ledger.save_cuts().await?;
+            return Ok(Settled::Again(raw.to_owned()));
+        }
         return Ok(Settled::Stopped(ledger.stop_unsupported(raw, &what).await?));
     }
     if ledger.nothing_left(&[]) {
@@ -731,3 +804,6 @@ pub(super) async fn excise(
 #[cfg(test)]
 #[path = "sections_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "unsettled_question_tests.rs"]
+mod unsettled_question_tests;
