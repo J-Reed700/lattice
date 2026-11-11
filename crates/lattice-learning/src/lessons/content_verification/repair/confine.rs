@@ -161,16 +161,17 @@ fn confine_at(
                 set.iter().map(|item| item.quote.clone()).collect()
             };
             let (mine, passed) = (in_field(targets), in_field(protected));
-            let elsewhere: HashSet<&str> = held
-                .iter()
-                .filter(|(field, _)| field != path)
-                .flat_map(|(_, keys)| keys.iter().map(String::as_str))
-                .collect();
+            let elsewhere: Option<HashSet<&str>> = repeats::teaches_path(path).then(|| {
+                held.iter()
+                    .filter(|(field, _)| field != path)
+                    .flat_map(|(_, keys)| keys.iter().map(String::as_str))
+                    .collect()
+            });
             let (text, reverted) = confine_text(
                 before,
                 after,
                 (&quotes(&mine), &quotes(&passed)),
-                &elsewhere,
+                elsewhere.as_ref(),
             )?;
             for back in reverted {
                 let mut said: Vec<&str> = Vec::new();
@@ -307,12 +308,13 @@ fn touching(quotes: &[String], touched: impl Fn(&String) -> bool) -> Vec<usize> 
 /// `after` confined to the sentences of `targets` (see [`confine`]), and the
 /// changes it put back because they also rewrote a sentence of `protected`.
 /// A new sentence that `before` or the text `elsewhere` already has is not
-/// kept.
+/// kept; with no `elsewhere`, the repeat rule does not read this text and
+/// none is dropped.
 fn confine_text(
     before: &str,
     after: &str,
     (targets, protected): (&[String], &[String]),
-    elsewhere: &HashSet<&str>,
+    elsewhere: Option<&HashSet<&str>>,
 ) -> Result<(String, Vec<Reverted>)> {
     if before == after {
         return Ok((after.to_owned(), Vec::new()));
@@ -395,10 +397,12 @@ fn confine_text(
                     .flat_map(|sentence| repeats::keys(sentence))
                     .collect();
                 for k in written {
-                    let repeat = new_sentences.get(k).is_some_and(|sentence| {
-                        repeats::keys(sentence).iter().any(|key| {
-                            elsewhere.contains(key.as_str())
-                                || (own.contains(key) && !replaced_keys.contains(key))
+                    let repeat = elsewhere.is_some_and(|elsewhere| {
+                        new_sentences.get(k).is_some_and(|sentence| {
+                            repeats::keys(sentence).iter().any(|key| {
+                                elsewhere.contains(key.as_str())
+                                    || (own.contains(key) && !replaced_keys.contains(key))
+                            })
                         })
                     });
                     if repeat {
