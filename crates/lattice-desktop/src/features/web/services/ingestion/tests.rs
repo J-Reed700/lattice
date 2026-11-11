@@ -92,7 +92,6 @@ impl IngestedDocumentStorePort for MockIndexStorage {
 }
 
 #[tokio::test]
-#[ignore = "requires tokenizer vocabulary file"]
 async fn test_ingest_url_with_mock_article() {
     let mock_article_extractor = Arc::new(MockArticleExtractorService::new());
     let custom_article = CleanArticle {
@@ -132,26 +131,24 @@ async fn test_ingest_url_with_mock_article() {
     assert_eq!(result.reading_time_minutes, Some(2));
 }
 
-#[tokio::test]
-#[ignore = "requires tokenizer vocabulary file"]
-async fn test_chunk_text() {
+#[test]
+fn chunk_text_prefixes_each_part_the_embedder_returns() {
     let service = create_test_service();
 
-    let short_text = "This is a short text.";
-    let chunks = service.chunk_text(short_text).unwrap();
-    assert_eq!(chunks.len(), 1);
+    let text = "This is a sentence. ".repeat(100);
+    let chunks = service.chunk_text(&text).unwrap();
 
-    let long_text = "This is a sentence. ".repeat(100);
-    let chunks = service.chunk_text(&long_text).unwrap();
-    assert!(chunks.len() > 1);
-
-    for chunk in chunks {
-        assert!(!chunk.original_content.is_empty());
-        assert!(!chunk.contextualized_content.is_empty());
-        assert!(chunk
-            .contextualized_content
-            .contains(&chunk.original_content));
+    assert_eq!(chunks.len(), 1, "the test embedder splits nothing");
+    for (index, chunk) in chunks.iter().enumerate() {
+        assert_eq!(chunk.original_content, text);
+        assert_eq!(chunk.chunk_index, index);
+        assert_eq!(chunk.context_prefix, "[Document: Web Article]");
+        assert_eq!(
+            chunk.contextualized_content,
+            format!("[Document: Web Article]\n\n{text}")
+        );
     }
+    assert!(service.chunk_text("").unwrap().is_empty());
 }
 
 #[test]
