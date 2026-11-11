@@ -6,6 +6,7 @@ use crate::{generation, outline_progress::OutlineProgress};
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
+    shared::hash::sha256_hex,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -383,7 +384,6 @@ mod tests {
     use super::test_support::candidate;
     use super::*;
     use crate::lessons::course_generation_tests::{ScriptedModel, Windowed};
-    use lattice_core::shared::hash::sha256_hex;
 
     fn check(index: usize) -> Value {
         json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The explanation correctly distinguishes the stated inputs and resulting behavior.","hasDefect":false})
