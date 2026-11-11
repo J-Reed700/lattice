@@ -5,7 +5,6 @@ import type {
   JournalSynthesisDto,
   StartJournalSynthesisRequestDto,
   SynthesisActivityDto,
-  SynthesizeJournalEntriesResponseDto,
 } from '@/lib/bindings';
 import { apiCall } from '@/shared/ipc/transport';
 import { unwrapApiResult } from '@/types/api/result';

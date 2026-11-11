@@ -1,12 +1,12 @@
 import type * as Wire from '@/lib/bindings';
 import { studyActivityCall } from '@/lib/studyActivity';
-import type { CommandName } from '@/shared/ipc/transport';
+import type { CommandArgList, CommandName } from '@/shared/ipc/transport';
 
 async function invokeCommand<C extends CommandName>(
   command: C,
-  args: Wire.CommandArgs[C],
+  ...args: CommandArgList<C>
 ): Promise<Wire.CommandResults[C]> {
-  const result = await studyActivityCall('learning', command, args);
+  const result = await studyActivityCall('learning', command, ...args);
   if (!result.ok) {
     throw new Error(result.error);
   }

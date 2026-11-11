@@ -1,7 +1,7 @@
 import { Channel } from '@tauri-apps/api/core';
 
 import type * as Wire from '@/lib/bindings';
-import type { CommandName } from '@/shared/ipc/transport';
+import type { CommandArgList, CommandName } from '@/shared/ipc/transport';
 import type { ApiResult } from '@/types';
 
 import { learningCall } from './learningCall';
@@ -9,9 +9,9 @@ import { lessonReviewApi } from './lessonReview';
 
 async function invokeCommand<C extends CommandName>(
   command: C,
-  args: Wire.CommandArgs[C],
+  ...args: CommandArgList<C>
 ): Promise<Wire.CommandResults[C]> {
-  const result = await learningCall(command, args);
+  const result = await learningCall(command, ...args);
   if (!result.ok) {
     throw new Error(result.error);
   }

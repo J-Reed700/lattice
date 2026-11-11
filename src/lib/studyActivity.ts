@@ -1,5 +1,5 @@
-import type { CommandArgs, CommandResults } from '@/lib/bindings';
-import { apiCall, type CommandName } from '@/shared/ipc/transport';
+import type { CommandResults } from '@/lib/bindings';
+import { apiCall, type CommandArgList, type CommandName } from '@/shared/ipc/transport';
 import type { ApiResult } from '@/types';
 
 import { queryClient } from './queryClient';
@@ -171,10 +171,10 @@ export function beginStudyActivity(domain: string, command: string, rawArgs?: un
 export async function studyActivityCall<C extends CommandName>(
   domain: 'learning' | 'study',
   command: C,
-  args: CommandArgs[C],
+  ...args: CommandArgList<C>
 ): Promise<ApiResult<CommandResults[C]>> {
-  const activity = beginStudyActivity(domain, command, args);
-  const result = await apiCall(command, args);
+  const activity = beginStudyActivity(domain, command, args[0]);
+  const result = await apiCall(command, ...args);
   if (result.ok) activity?.finish(undefined, result.data);
   else activity?.finish(result.error);
   return result;

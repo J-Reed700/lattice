@@ -9,13 +9,18 @@ import { COMMAND_PLUGINS, type CommandName } from './routes.generated';
 
 export type { CommandName } from './routes.generated';
 
+/** A command's argument list: optional when every argument may be left out. */
+export type CommandArgList<C extends CommandName> = undefined extends CommandArgs[C]
+  ? [args?: CommandArgs[C]]
+  : [args: CommandArgs[C]];
+
 /**
  * Invoke a command through the plugin that registers it and wrap the outcome
  * in an ApiResult. Failures are recorded in diagnostics, never thrown.
  */
 export async function apiCall<C extends CommandName>(
   command: C,
-  args: CommandArgs[C],
+  ...[args]: CommandArgList<C>
 ): Promise<ApiResult<CommandResults[C]>> {
   try {
     const data = await invoke<CommandResults[C]>(
