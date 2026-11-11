@@ -1,72 +1,12 @@
 use super::*;
 use crate::practice::coding::dto::{DueKind, PracticeDueDto};
 use crate::repository::LearningRepository;
+use lattice_core::domain::learning::drills::PatternRating;
 use lattice_core::domain::learning::practice::{problem_pattern, PROBLEM_PATTERNS};
 use sqlx::SqlitePool;
 
 const DAY_MS: i64 = 86_400_000;
 const NOW: i64 = 1_800_000_000_000;
-
-fn outcome(
-    all_passed: bool,
-    highest_rung: Option<CodeHintRung>,
-    solution_seen_before_passing: bool,
-) -> ProblemOutcome {
-    ProblemOutcome {
-        all_passed,
-        highest_rung,
-        solution_seen_before_passing,
-    }
-}
-
-#[test]
-fn every_case_passed_without_help_is_easy() {
-    assert_eq!(rating(&outcome(true, None, false)), PatternRating::Easy);
-}
-
-#[test]
-fn every_case_passed_after_a_nudge_is_good() {
-    let outcome = outcome(true, Some(CodeHintRung::Nudge), false);
-    assert_eq!(rating(&outcome), PatternRating::Good);
-}
-
-#[test]
-fn every_case_passed_after_an_idea_is_hard() {
-    let outcome = outcome(true, Some(CodeHintRung::Idea), false);
-    assert_eq!(rating(&outcome), PatternRating::Hard);
-}
-
-#[test]
-fn every_case_passed_after_a_plan_is_hard() {
-    let outcome = outcome(true, Some(CodeHintRung::Plan), false);
-    assert_eq!(rating(&outcome), PatternRating::Hard);
-}
-
-#[test]
-fn a_failing_case_is_again_whatever_the_help() {
-    for rung in [
-        None,
-        Some(CodeHintRung::Nudge),
-        Some(CodeHintRung::Idea),
-        Some(CodeHintRung::Plan),
-        Some(CodeHintRung::Line),
-    ] {
-        assert_eq!(rating(&outcome(false, rung, false)), PatternRating::Again);
-    }
-}
-
-#[test]
-fn a_line_hint_is_again_even_when_every_case_passed() {
-    let outcome = outcome(true, Some(CodeHintRung::Line), false);
-    assert_eq!(rating(&outcome), PatternRating::Again);
-}
-
-#[test]
-fn the_solution_seen_before_passing_is_again() {
-    assert_eq!(rating(&outcome(true, None, true)), PatternRating::Again);
-    let nudged = outcome(true, Some(CodeHintRung::Nudge), true);
-    assert_eq!(rating(&nudged), PatternRating::Again);
-}
 
 async fn course() -> (SqlitePool, crate::dto::LearningProgramDto) {
     let pool = crate::test_support::pool().await.expect("test pool");

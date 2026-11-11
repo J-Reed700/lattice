@@ -163,7 +163,6 @@ pub struct Outcome {
 pub struct Finish<'a> {
     pub debrief: &'a Debrief,
     pub model: &'a str,
-    pub outcome: Outcome,
     pub rating: PatternRating,
     /// The learner's work as it stood at the end.
     pub draft: &'a Piece,

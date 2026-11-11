@@ -1,7 +1,6 @@
 //! The session store over the coding tables: the engine's records in, and the coding rows they are kept as.
 
 use super::debrief::{debrief_of, event_of, hint_of, CodingEventRow};
-use super::patterns::{rating, ProblemOutcome};
 use super::problem::{CaseCompare, Problem, ProblemCase};
 use super::records::{
     self as stored, CodingOp, FinishWrite, NewCodingSession, RunFinished, SessionBundle, StoredRun,
@@ -396,11 +395,7 @@ impl SessionStore for CodingStore<'_> {
                     model: finish.model,
                     language: &bundle.problem.spec.language,
                     pattern_ids: &bundle.problem.spec.patterns,
-                    rating: rating(&ProblemOutcome {
-                        all_passed: finish.outcome.all_passed,
-                        highest_rung: finish.outcome.highest_rung.map(coding_rung_of),
-                        solution_seen_before_passing: finish.outcome.solution_seen_before_passing,
-                    }),
+                    rating: finish.rating,
                     files: &files,
                     passed: finish.passed,
                     total: finish.total,

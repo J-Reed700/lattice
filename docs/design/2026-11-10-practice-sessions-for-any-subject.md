@@ -455,7 +455,11 @@ Tests come first in every step. Nothing is built locally; each step is pushed to
      practice build job over Program's author and store, and the removal of the coding problem source and its
      assembly. The stored job kind stays `learning.coding_build` until step 5. The `sound` step has no rule
      before step 8 and `Sourced` truth, with the storage of "nothing to make", waits for step 9.
-   Still to move: ratings.
+   - 4.7 Ratings into the engine: one rule over the engine's `Outcome` and `Rung` in `session/rating.rs`, computed
+     by the session service when it finishes a session and handed to the store in `Finish`, which no longer
+     carries the outcome. Program's store records it; its technique spacing stays in `coding/patterns.rs`.
+     Nothing branches on `Kind.spacing` until item spacing in step 9.
+   Nothing is left to move in step 4.
 5. The renames of §7: migration, DTOs, commands, bindings.
 6. The screen: `session/` and the kind registry, with Program's editor and results views under `kinds/program/`;
    the dependency rule in the architecture check; the fake-kind tests.

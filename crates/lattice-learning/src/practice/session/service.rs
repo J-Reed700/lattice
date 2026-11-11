@@ -388,7 +388,6 @@ impl PracticeSessions<'_> {
                 &Finish {
                     debrief: &debrief,
                     model: self.aids.model_name(),
-                    outcome: outcome(&session),
                     rating: rating(&outcome(&session)),
                     draft: piece,
                     passed,
