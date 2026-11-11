@@ -6,7 +6,6 @@
 //! existing call site's behaviour unchanged.
 
 use crate::features::indexing::engine::extraction::ContentExtractor;
-use crate::infrastructure::services::file_type_detector::{FileCategory, FileTypeDetector};
 use async_trait::async_trait;
 use lattice_core::application::ports::content_extraction_port::{
     ContentExtractionPort, ExtractedContentData,
@@ -15,6 +14,7 @@ use lattice_core::application::ports::{OcrPort, TranscriptionPort};
 use lattice_core::application::services::transcript::{
     group_segments_into_windows, render_transcript, TRANSCRIPT_WINDOW_SECS,
 };
+use lattice_core::domain::value_objects::FileFormat;
 use lattice_core::shared::error::{AppError, Result};
 use std::path::Path;
 use std::sync::Arc;
@@ -113,7 +113,7 @@ impl ContentExtractionAdapter {
             });
         }
 
-        let mime_type = FileTypeDetector::detect(path)?.mime_type;
+        let mime_type = FileFormat::mime_type_of(path).to_string();
 
         info!(
             duration_ms = start.elapsed().as_millis(),
@@ -137,10 +137,7 @@ impl ContentExtractionAdapter {
 
 /// Whether this path is an audio file the transcription path should handle.
 fn is_audio(path: &Path) -> bool {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| FileTypeDetector::get_category(&ext.to_ascii_lowercase()) == FileCategory::Audio)
-        .unwrap_or(false)
+    FileFormat::is_audio_path(path)
 }
 
 impl Default for ContentExtractionAdapter {
@@ -222,7 +219,7 @@ mod tests {
             other => panic!("expected ContentExtraction, got {other:?}"),
         }
 
-        // `is_supported` stays true: `mime::supported_extensions()` lists the
+        // `is_supported` stays true: the file-type catalogue lists the
         // audio extensions so `BatchFileImportService` (which calls
         // `ContentExtractor::is_supported` directly) does not fail the whole
         // batch fast. The honest "no model" answer is given at extraction time,

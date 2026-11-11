@@ -248,18 +248,45 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_metadata_panel_and_the_detector_name_the_same_type() {
-        use crate::infrastructure::services::file_type_detector::FileTypeDetector;
+    #[tokio::test]
+    async fn the_metadata_panel_names_the_type_the_indexer_stores() {
+        use crate::features::indexing::engine::extraction::ContentExtractor;
+        use lattice_core::domain::value_objects::{ExtractionRoute, FileFormat};
 
-        for name in [
-            "a.lua", "a.pl", "a.hs", "a.heic", "a.cs", "a.7z", "a.gz", "a.rs", "a.mp3", "a.conf",
-        ] {
-            let path = Path::new(name);
+        let dir = tempfile::tempdir().unwrap();
+        for format in FileFormat::all() {
+            let path = dir.path().join(format!("sample.{}", format.extension));
             assert_eq!(
-                GetFileMetadataUseCase::detect_mime_type(path),
-                FileTypeDetector::detect(path).unwrap().mime_type,
-                "{name}"
+                GetFileMetadataUseCase::detect_mime_type(&path),
+                format.mime_type,
+                "{}",
+                format.extension
+            );
+        }
+        for extension in ["lua", "pl", "hs", "heic", "cs", "7z", "gz"] {
+            assert_ne!(
+                GetFileMetadataUseCase::detect_mime_type(Path::new(&format!("a.{extension}"))),
+                "application/octet-stream",
+                "{extension}"
+            );
+        }
+        for format in FileFormat::all().iter().filter(|format| {
+            matches!(
+                format.route,
+                Some(ExtractionRoute::PlainText | ExtractionRoute::Code | ExtractionRoute::Csv)
+            )
+        }) {
+            let path = dir.path().join(format!("sample.{}", format.extension));
+            std::fs::write(&path, "a,b\n1,2\n").unwrap();
+            let content = ContentExtractor::new()
+                .extract_from_file(&path)
+                .await
+                .unwrap();
+            assert_eq!(
+                content.mime_type,
+                GetFileMetadataUseCase::detect_mime_type(&path),
+                "{}",
+                format.extension
             );
         }
     }
