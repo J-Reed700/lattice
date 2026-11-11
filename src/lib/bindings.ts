@@ -8931,6 +8931,9 @@ export type ListWorkspaceNotesRequestDto = {
 journalId: string | null }
 export type ListWorkspaceNotesResponseDto = { notes: WorkspaceNoteDto[] }
 export type LlamaCppSettingsDto = { url: string; model: string; authHeaderName: string }
+/**
+ * A model loaded right now, for diagnostics.
+ */
 export type LoadedModelDto = { model: ModelRef; provider: string; context_tokens: number;
 /**
  * Turns and jobs holding it now.
