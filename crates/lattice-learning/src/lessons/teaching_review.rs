@@ -240,7 +240,7 @@ fn schema(
     indices: &[usize],
     passages: &[Vec<String>],
     verdict_ids: &[&str],
-    _known_ids: &[&str],
+    known_ids: &[&str],
 ) -> Value {
     let mut required = Vec::new();
     let mut properties = serde_json::Map::new();
@@ -250,9 +250,10 @@ fn schema(
         properties.insert("openFindings".into(), json!({"type":"array","minItems":count,"maxItems":count,"items":{"type":"object","additionalProperties":false,"required":["id","verdict","note"],"properties":{"id":{"type":"string","enum":verdict_ids},"verdict":{"type":"string","enum":["present","resolved"]},"note":{"type":"string"}}}}));
     }
     required.push("issues");
-    let continues = (!verdict_ids.is_empty()).then(|| {
+    let continues = (!verdict_ids.is_empty() || !known_ids.is_empty()).then(|| {
         let choices: Vec<&str> = verdict_ids
             .iter()
+            .chain(known_ids)
             .copied()
             .chain(std::iter::once("none"))
             .collect();
@@ -325,13 +326,23 @@ pub(crate) fn basis(llm: &dyn LLMPort, system: &str, scope: &str, inputs: &Value
 
 /// The entries of `openFindings`: the findings to be judged.
 fn open_entries<'a>(asked: impl IntoIterator<Item = &'a Asked>) -> Value {
-    let entries: Vec<Value> = asked
+    finding_entries(asked, true)
+}
+
+/// The entries of `knownFindings`: shown with their ids so a report can
+/// continue one, and not judged.
+fn known_entries<'a>(known: impl IntoIterator<Item = &'a Asked>) -> Value {
+    finding_entries(known, false)
+}
+
+fn finding_entries<'a>(findings: impl IntoIterator<Item = &'a Asked>, passages: bool) -> Value {
+    let entries: Vec<Value> = findings
         .into_iter()
         .map(|finding| {
             let mut entry = serde_json::Map::new();
             entry.insert("id".into(), json!(finding.id.as_str()));
             entry.insert("part".into(), json!(label(finding.site)));
-            if let Some(passage_id) = &finding.passage_id {
+            if let Some(passage_id) = finding.passage_id.as_ref().filter(|_| passages) {
                 entry.insert("passageId".into(), json!(passage_id));
             }
             entry.insert("note".into(), json!(finding.note));
@@ -378,12 +389,7 @@ pub async fn review(
         prompt.insert("openFindings".into(), open_entries(asked));
     }
     if !scope.known.is_empty() {
-        let entries: Vec<Value> = scope
-            .known
-            .iter()
-            .map(|finding| part_note(Some(finding.site), &finding.note))
-            .collect();
-        prompt.insert("knownFindings".into(), json!(entries));
+        prompt.insert("knownFindings".into(), known_entries(scope.known));
     }
     // Save findings, including defects, before the later grounding/repair step.
     // Reusing a completed review never approves the lesson or skips grounding.
@@ -453,6 +459,7 @@ async fn review_sections(
             .asked
             .into_iter()
             .flatten()
+            .chain(scope.known)
             .find(|asked| asked.id.as_str() == id)
             .map(|asked| asked.id.clone())
     };
@@ -519,7 +526,11 @@ async fn review_sections(
                     .iter()
                     .map(|finding| finding.id.as_str())
                     .collect::<Vec<_>>(),
-                &[],
+                &scope
+                    .known
+                    .iter()
+                    .map(|finding| finding.id.as_str())
+                    .collect::<Vec<_>>(),
             ),
             output_tokens: REVIEW_ANSWER_TOKENS,
         };

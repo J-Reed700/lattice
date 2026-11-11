@@ -651,7 +651,7 @@ async fn a_first_review_sends_no_finding_keys_and_known_findings_are_sent_only_w
     let prompt = sent(&second, 0);
     assert_eq!(
         prompt["knownFindings"],
-        json!([{"part":"Section 3","note":"A defect."}])
+        json!([{"id":"reviewer/1","part":"Section 3","note":"A defect."}])
     );
     assert!(prompt.get("openFindings").is_none());
     Ok(())
