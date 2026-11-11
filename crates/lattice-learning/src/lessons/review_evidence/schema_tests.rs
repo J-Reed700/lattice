@@ -31,11 +31,25 @@ fn answer(decisions: Vec<Value>) -> String {
 }
 
 fn first(raw: &str, count: usize) -> Result<Vec<ReviewFinding>> {
-    accepted(raw, &issues(count), &evidence(), false, &mut HashMap::new())
+    accepted(
+        raw,
+        &issues(count),
+        &[],
+        &evidence(),
+        false,
+        &mut HashMap::new(),
+    )
 }
 
 fn last(raw: &str, count: usize) -> Result<Vec<ReviewFinding>> {
-    accepted(raw, &issues(count), &evidence(), true, &mut HashMap::new())
+    accepted(
+        raw,
+        &issues(count),
+        &[],
+        &evidence(),
+        true,
+        &mut HashMap::new(),
+    )
 }
 
 #[test]

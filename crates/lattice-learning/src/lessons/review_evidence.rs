@@ -93,6 +93,11 @@ fn invalid_finding(index: usize, detail: &str) -> AppError {
     ))
 }
 
+/// The id a recorded finding has in the request.
+fn recorded_id(index: usize) -> String {
+    format!("recorded-{index}")
+}
+
 /// A decision that kept the protocol: its verdict and the finding it
 /// establishes, if any.
 type Kept = (Verdict, Option<ReviewFinding>);
@@ -105,6 +110,7 @@ type Kept = (Verdict, Option<ReviewFinding>);
 fn accepted(
     raw: &str,
     issues: &[ReviewFinding],
+    recorded: &[ReviewFinding],
     evidence: &HashMap<String, EvidenceKind>,
     last: bool,
     kept: &mut HashMap<usize, Kept>,
@@ -146,7 +152,7 @@ fn accepted(
             _ => None,
         };
         let decided = finding.ok_or_else(invalid).and_then(|finding| {
-            decided(index, issue, finding, evidence)
+            decided(index, issue, finding, recorded, evidence)
                 .map(|established| (finding.verdict, established))
         });
         match decided {
@@ -182,10 +188,21 @@ fn decided(
     index: usize,
     issue: &ReviewFinding,
     finding: &Finding,
+    recorded: &[ReviewFinding],
     evidence: &HashMap<String, EvidenceKind>,
 ) -> Result<Option<ReviewFinding>> {
-    if let Some(recorded) = finding.recorded_as.as_deref().filter(|id| *id != "none") {
-        tracing::info!(finding = %issue.id().as_str(), recorded, "A reviewer finding that another check already recorded is not repaired twice");
+    if let Some(named) = finding.recorded_as.as_deref().filter(|id| *id != "none") {
+        let Some(known) = recorded
+            .iter()
+            .enumerate()
+            .find_map(|(at, known)| (recorded_id(at) == named).then_some(known))
+        else {
+            return Err(invalid_finding(
+                index,
+                "recordedAs must be none or the id of one of recordedFindings.",
+            ));
+        };
+        tracing::info!(finding = %issue.id().as_str(), recorded = %known.id().as_str(), "A reviewer finding that another check already recorded is not repaired twice");
         return Ok(None);
     }
     let ids: HashSet<_> = finding.evidence_ids.iter().collect();
@@ -308,9 +325,7 @@ pub async fn check(
     // leaves for reference passages; a correction carries the rejected
     // answer as well.
     let notes: Vec<&str> = issues.iter().map(|issue| issue.note.as_str()).collect();
-    let recorded_ids: Vec<String> = (0..recorded.len())
-        .map(|i| format!("recorded-{i}"))
-        .collect();
+    let recorded_ids: Vec<String> = (0..recorded.len()).map(recorded_id).collect();
     let recorded_list: Vec<Value> = recorded
         .iter()
         .zip(&recorded_ids)
@@ -450,7 +465,7 @@ pub async fn check(
                     |raw| {
                         let last = answers.fetch_add(1, Ordering::Relaxed) > 0;
                         let mut kept = kept.lock().unwrap_or_else(PoisonError::into_inner);
-                        accepted(raw, issues, &evidence, last, &mut kept)
+                        accepted(raw, issues, recorded, &evidence, last, &mut kept)
                     },
                 )
                 .await

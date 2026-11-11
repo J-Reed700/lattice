@@ -25,7 +25,7 @@ fn first(
     issues: &[ReviewFinding],
     evidence: &HashMap<String, EvidenceKind>,
 ) -> Result<Vec<ReviewFinding>> {
-    accepted(raw, issues, evidence, false, &mut HashMap::new())
+    accepted(raw, issues, &[], evidence, false, &mut HashMap::new())
 }
 
 fn placed(findings: Vec<ReviewFinding>) -> Vec<(String, Option<FindingSite>)> {
