@@ -1,1 +1,219 @@
-PENDING
+=== plain, Mock, Code, nothing run, no baseline ===
+Problem: Total of values
+Return the sum of the values.
+Signature: def total(values: list[int]) -> int
+Constraint: At most 1000 values
+Example in the statement: an ordinary list; input ([1, 2]); expected 3
+Clarification 0: asked "Can the list be empty?", answered "Yes, and its total is 0."
+Clarification 1: asked "Can values be negative?", answered "Yes, any integer."
+Target complexity: O(n) time, O(1) space
+Techniques the problem is built around: Hash map lookup
+Task: Problem. Setting: Mock. Stage: Code. Stages reached: Understand, Examples, Plan, Code.
+Clock: 61 s active, no budget.
+Draft:
+=== solution.py ===
+1 | def total(values):
+2 |     result = 0
+3 |     return result
+Changes since you last looked: you have not looked at the draft before.
+Last run: none yet.
+Examples catch 0 of 1 common mistakes.
+Transcript:
+
+=== Problem Coached ===
+Problem: Total of values
+Return the sum of the values.
+Signature: def total(values: list[int]) -> int
+Constraint: At most 1000 values
+Example in the statement: an ordinary list; input ([1, 2]); expected 3
+Clarification 0: asked "Can the list be empty?", answered "Yes, and its total is 0."
+Clarification 1: asked "Can values be negative?", answered "Yes, any integer."
+Target complexity: O(n) time, O(1) space
+Techniques the problem is built around: Hash map lookup
+Task: Problem. Setting: Coached. Stage: Plan. Stages reached: Understand, Examples, Plan.
+Clock: 61 s active, no budget.
+Draft:
+=== solution.py ===
+1 | def total(values):
+2 |     result = 0
+3 |     return result
+Changes since you last looked:
+removed solution.py line 2:     pass
+added solution.py line 2:     result = 0
+added solution.py line 3:     return result
+Last run: All, Failed.
+- Failed: an empty list
+Learner's example 0: ([]) expects 0 - Right
+Learner's example 1: ([1, -1]) expects 2 - Wrong
+Examples catch 1 of 2 common mistakes.
+One mistake they do not catch yet: Ignores negative values
+Hint given (Nudge): What should the loop do with each value?
+Transcript:
+You: Welcome. Read the problem first.
+Learner: Can the list be empty?
+You: Yes, and its total is 0.
+
+=== Problem Mock ===
+Problem: Total of values
+Return the sum of the values.
+Signature: def total(values: list[int]) -> int
+Constraint: At most 1000 values
+Example in the statement: an ordinary list; input ([1, 2]); expected 3
+Clarification 0: asked "Can the list be empty?", answered "Yes, and its total is 0."
+Clarification 1: asked "Can values be negative?", answered "Yes, any integer."
+Target complexity: O(n) time, O(1) space
+Techniques the problem is built around: Hash map lookup
+Task: Problem. Setting: Mock. Stage: Plan. Stages reached: Understand, Examples, Plan.
+Clock: 61 s active, no budget.
+Draft:
+=== solution.py ===
+1 | def total(values):
+2 |     result = 0
+3 |     return result
+Changes since you last looked:
+removed solution.py line 2:     pass
+added solution.py line 2:     result = 0
+added solution.py line 3:     return result
+Last run: All, Failed.
+- Failed: an empty list
+Learner's example 0: ([]) expects 0 - Right
+Learner's example 1: ([1, -1]) expects 2 - Wrong
+Examples catch 1 of 2 common mistakes.
+One mistake they do not catch yet: Ignores negative values
+Hint given (Nudge): What should the loop do with each value?
+Transcript:
+You: Welcome. Read the problem first.
+Learner: Can the list be empty?
+You: Yes, and its total is 0.
+
+=== Problem Watched ===
+Problem: Total of values
+Return the sum of the values.
+Signature: def total(values: list[int]) -> int
+Constraint: At most 1000 values
+Example in the statement: an ordinary list; input ([1, 2]); expected 3
+Clarification 0: asked "Can the list be empty?", answered "Yes, and its total is 0."
+Clarification 1: asked "Can values be negative?", answered "Yes, any integer."
+Target complexity: O(n) time, O(1) space
+Techniques the problem is built around: Hash map lookup
+Task: Problem. Setting: Watched. Stage: Plan. Stages reached: Understand, Examples, Plan.
+Clock: 61 s active, no budget.
+Draft:
+=== solution.py ===
+1 | def total(values):
+2 |     result = 0
+3 |     return result
+Changes since you last looked:
+removed solution.py line 2:     pass
+added solution.py line 2:     result = 0
+added solution.py line 3:     return result
+Last run: All, Failed.
+- Failed: an empty list
+Learner's example 0: ([]) expects 0 - Right
+Learner's example 1: ([1, -1]) expects 2 - Wrong
+Examples catch 1 of 2 common mistakes.
+One mistake they do not catch yet: Ignores negative values
+Hint given (Nudge): What should the loop do with each value?
+Transcript:
+You: Welcome. Read the problem first.
+Learner: Can the list be empty?
+You: Yes, and its total is 0.
+
+=== BugFix Coached ===
+Problem: Total of values
+Return the sum of the values.
+Signature: def total(values: list[int]) -> int
+Constraint: At most 1000 values
+Example in the statement: an ordinary list; input ([1, 2]); expected 3
+Clarification 0: asked "Can the list be empty?", answered "Yes, and its total is 0."
+Clarification 1: asked "Can values be negative?", answered "Yes, any integer."
+Target complexity: O(n) time, O(1) space
+Techniques the problem is built around: Hash map lookup
+Task: BugFix. Setting: Coached. Stage: Fix. Stages reached: Reproduce, Locate, Fix.
+Clock: 61 s active, no budget.
+Draft:
+=== solution.py ===
+1 | def total(values):
+2 |     result = 0
+3 |     return result
+Changes since you last looked:
+removed solution.py line 2:     pass
+added solution.py line 2:     result = 0
+added solution.py line 3:     return result
+Last run: All, Failed.
+- Failed: an empty list
+Learner's example 0: ([]) expects 0 - Right
+Learner's example 1: ([1, -1]) expects 2 - Wrong
+Examples catch 1 of 2 common mistakes.
+One mistake they do not catch yet: Ignores negative values
+Hint given (Nudge): What should the loop do with each value?
+Transcript:
+You: Welcome. Read the problem first.
+Learner: Can the list be empty?
+You: Yes, and its total is 0.
+
+=== BugFix Mock ===
+Problem: Total of values
+Return the sum of the values.
+Signature: def total(values: list[int]) -> int
+Constraint: At most 1000 values
+Example in the statement: an ordinary list; input ([1, 2]); expected 3
+Clarification 0: asked "Can the list be empty?", answered "Yes, and its total is 0."
+Clarification 1: asked "Can values be negative?", answered "Yes, any integer."
+Target complexity: O(n) time, O(1) space
+Techniques the problem is built around: Hash map lookup
+Task: BugFix. Setting: Mock. Stage: Fix. Stages reached: Reproduce, Locate, Fix.
+Clock: 61 s active, no budget.
+Draft:
+=== solution.py ===
+1 | def total(values):
+2 |     result = 0
+3 |     return result
+Changes since you last looked:
+removed solution.py line 2:     pass
+added solution.py line 2:     result = 0
+added solution.py line 3:     return result
+Last run: All, Failed.
+- Failed: an empty list
+Learner's example 0: ([]) expects 0 - Right
+Learner's example 1: ([1, -1]) expects 2 - Wrong
+Examples catch 1 of 2 common mistakes.
+One mistake they do not catch yet: Ignores negative values
+Hint given (Nudge): What should the loop do with each value?
+Transcript:
+You: Welcome. Read the problem first.
+Learner: Can the list be empty?
+You: Yes, and its total is 0.
+
+=== BugFix Watched ===
+Problem: Total of values
+Return the sum of the values.
+Signature: def total(values: list[int]) -> int
+Constraint: At most 1000 values
+Example in the statement: an ordinary list; input ([1, 2]); expected 3
+Clarification 0: asked "Can the list be empty?", answered "Yes, and its total is 0."
+Clarification 1: asked "Can values be negative?", answered "Yes, any integer."
+Target complexity: O(n) time, O(1) space
+Techniques the problem is built around: Hash map lookup
+Task: BugFix. Setting: Watched. Stage: Fix. Stages reached: Reproduce, Locate, Fix.
+Clock: 61 s active, no budget.
+Draft:
+=== solution.py ===
+1 | def total(values):
+2 |     result = 0
+3 |     return result
+Changes since you last looked:
+removed solution.py line 2:     pass
+added solution.py line 2:     result = 0
+added solution.py line 3:     return result
+Last run: All, Failed.
+- Failed: an empty list
+Learner's example 0: ([]) expects 0 - Right
+Learner's example 1: ([1, -1]) expects 2 - Wrong
+Examples catch 1 of 2 common mistakes.
+One mistake they do not catch yet: Ignores negative values
+Hint given (Nudge): What should the loop do with each value?
+Transcript:
+You: Welcome. Read the problem first.
+Learner: Can the list be empty?
+You: Yes, and its total is 0.
