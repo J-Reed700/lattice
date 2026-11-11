@@ -894,7 +894,7 @@ async fn a_sourced_statement_the_passages_do_not_state_but_every_sample_confirms
 }
 
 #[tokio::test]
-async fn a_common_statement_most_samples_call_false_stays_and_passes_when_its_sections_passages_state_it(
+async fn a_common_statement_every_sample_calls_false_stays_and_passes_when_its_sections_passages_state_it(
 ) -> Result<()> {
     // §1 #5 of the acceptance policy design
     let pool = crate::tests::pool().await?;
@@ -902,7 +902,7 @@ async fn a_common_statement_most_samples_call_false_stays_and_passes_when_its_se
     let model = Reads::new(
         Classes::new(&[SKIPPED, GOOD])
             .classed(&[(SKIPPED, "common")])
-            .knows(&[(SKIPPED, ["false", "false", "true_common"])]),
+            .knows(&[(SKIPPED, ["false"; 3])]),
         &["stated"],
     );
 
@@ -944,7 +944,7 @@ async fn a_common_statement_most_samples_call_false_stays_and_passes_when_its_se
 }
 
 #[tokio::test]
-async fn a_consistent_statement_most_samples_call_false_stays_and_passes_when_its_sections_passages_ground_it_part_by_part(
+async fn a_consistent_statement_every_sample_calls_false_stays_and_passes_when_its_sections_passages_state_it(
 ) -> Result<()> {
     // §1 #4 of the acceptance policy design
     let pool = crate::tests::pool().await?;
@@ -952,9 +952,9 @@ async fn a_consistent_statement_most_samples_call_false_stays_and_passes_when_it
     let model = Reads::new(
         Classes::new(&[REASONED, REWRITTEN, GOOD])
             .classed(&[(REASONED, "reasoning")])
-            .knows(&[(REASONED, ["false", "false", "true_common"])])
+            .knows(&[(REASONED, ["false"; 3])])
             .rewrites(REASONED, REWRITTEN),
-        &["stated", "common"],
+        &["stated"],
     )
     .finds_unstated(&[REASONED]);
 
@@ -1126,7 +1126,7 @@ async fn a_common_statement_ends_as_general_knowledge_only_when_every_sample_agr
             (WANTS, "common"),
         ])
         .knows(&[
-            (FALSE, ["false", "false", "true_common"]),
+            (FALSE, ["false"; 3]),
             (LONE, ["true_common", "true_common", "false"]),
             (WANTS, ["needs_source", "true_common", "true_common"]),
         ]);
@@ -1134,7 +1134,7 @@ async fn a_common_statement_ends_as_general_knowledge_only_when_every_sample_agr
 
     let (ledger, pass) = one_pass(&model, &lesson(&body), &[source()]).await?;
 
-    let [unanimous, majority, lone, wants] =
+    let [unanimous, refuted, lone, wants] =
         [0, 1, 2, 3].map(|index| statement(&ledger, &pass, index));
     // Unanimity ends as general knowledge.
     assert!(matches!(
@@ -1145,13 +1145,13 @@ async fn a_common_statement_ends_as_general_knowledge_only_when_every_sample_agr
         unanimous.classified(),
         Some((Class::Common, ClassifiedBy::Model))
     );
-    // A majority false is refuted, and its knowledge reading's check says so.
+    // A statement every sample calls false is refuted, and its knowledge reading's check says so.
     assert_eq!(
-        steps_of(majority),
+        steps_of(refuted),
         [(KNOWLEDGE, Outcome::Refuted), (GROUND, Outcome::Refuted)]
     );
-    assert_eq!(node_of(&ledger, majority.claim_id()), Some("c.rewrite"));
-    let reasons: Vec<&str> = majority
+    assert_eq!(node_of(&ledger, refuted.claim_id()), Some("c.rewrite"));
+    let reasons: Vec<&str> = refuted
         .events()
         .iter()
         .filter_map(|record| match &record.event {
@@ -1159,9 +1159,9 @@ async fn a_common_statement_ends_as_general_knowledge_only_when_every_sample_agr
             _ => None,
         })
         .collect();
-    assert!(reasons[0].contains("(2 of 3)"), "{reasons:?}");
+    assert!(reasons[0].contains("(3 of 3)"), "{reasons:?}");
     assert_eq!(
-        majority.classified(),
+        refuted.classified(),
         Some((Class::Common, ClassifiedBy::Model))
     );
     // A lone dissent forfeits the pass without failing the statement, as a
@@ -1196,7 +1196,7 @@ async fn the_calls_ceiling_only_comes_down_while_the_loop_checks_a_mix_of_classe
             (REASONED, "reasoning"),
         ])
         .knows(&[
-            (FALSE, ["false", "false", "true_common"]),
+            (FALSE, ["false"; 3]),
             (LONE, ["true_common", "true_common", "false"]),
             (WANTS, ["needs_source", "true_common", "true_common"]),
         ])
@@ -1450,7 +1450,7 @@ async fn a_statement_the_model_calls_internal_is_put_to_the_veto_and_then_to_its
     // §1 #15 of the acceptance policy design
     let model = Classes::new(&[MISSTATED])
         .classed(&[(MISSTATED, "internal")])
-        .knows(&[(MISSTATED, ["false", "false", "true_common"])]);
+        .knows(&[(MISSTATED, ["false"; 3])]);
 
     let (ledger, pass) = one_pass(&model, &lesson(MISSTATED), &[source()]).await?;
 
@@ -1462,7 +1462,7 @@ async fn a_statement_the_model_calls_internal_is_put_to_the_veto_and_then_to_its
         entry.classified(),
         Some((Class::Internal, ClassifiedBy::Model))
     );
-    // A majority false is refuted, and its section cites no passage that could
+    // A statement every sample calls false is refuted, and its section cites no passage that could
     // ground it.
     assert_eq!(
         steps_of(entry),

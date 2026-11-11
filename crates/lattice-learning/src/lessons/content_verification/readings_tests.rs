@@ -740,13 +740,30 @@ async fn the_sections_passages_ground_a_statement_that_a_passage_states() -> Res
     let sources = sources();
     let references = ReferenceCollection::lexical(&sources)?;
     let world = world_of(&references, citing(&references)?);
-    let model = ScriptedBridge::new(vec![half_stated()]);
+    let stated = parts_reply(
+        json!([{"part": "Quillet is a lexer", "kind": "stated", "passage": "passage-0"}]),
+        "supported",
+    );
+    let model = ScriptedBridge::new(vec![stated]);
 
     let read = read_one(Reading::Ground, &model, &world, STATEMENT).await?;
 
     assert_eq!(read.outcome, Outcome::Stands);
     assert_eq!(read.finding.verdict, ClaimVerdict::Supported);
     assert_eq!(read.finding.class, Some(classed()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_common_part_beside_a_stated_one_does_not_ground_a_statement() -> Result<()> {
+    let sources = sources();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let world = world_of(&references, citing(&references)?);
+    let model = ScriptedBridge::new(vec![half_stated()]);
+
+    let read = read_one(Reading::Ground, &model, &world, STATEMENT).await?;
+
+    assert_eq!(read.outcome, Outcome::Refuted);
     Ok(())
 }
 
@@ -1213,7 +1230,7 @@ fn closed_book() -> Classes {
             WANTS_A_SOURCE,
             ["true_common", "true_common", "needs_source"],
         ),
-        (FALSE, ["false", "false", "true_common"]),
+        (FALSE, ["false"; 3]),
         (UNSURE, ["maybe", "maybe", "maybe"]),
     ])
 }
@@ -1226,7 +1243,8 @@ fn samples() -> Vec<(usize, Claim)> {
 }
 
 #[tokio::test]
-async fn the_knowledge_reading_passes_on_unanimity_and_refutes_on_a_majority() -> Result<()> {
+async fn the_knowledge_reading_passes_on_unanimity_and_refutes_only_when_every_sample_calls_it_false(
+) -> Result<()> {
     let references = ReferenceCollection::lexical(&sources())?;
     let world = world_of(&references, Citations::default());
     let model = closed_book();
@@ -1247,7 +1265,7 @@ async fn the_knowledge_reading_passes_on_unanimity_and_refutes_on_a_majority() -
         ]
     );
     assert!(reads[0].finding.reason.starts_with("Standard knowledge"));
-    assert!(reads[2].finding.reason.contains("(2 of 3)"));
+    assert!(reads[2].finding.reason.contains("(3 of 3)"));
     assert!(reads
         .iter()
         .all(|read| read.finding.evidence.is_empty() && read.finding.class == Some(classed())));
@@ -1258,7 +1276,7 @@ async fn the_knowledge_reading_passes_on_unanimity_and_refutes_on_a_majority() -
 }
 
 #[tokio::test]
-async fn the_veto_reading_fails_only_on_a_majority_that_calls_it_false() -> Result<()> {
+async fn the_veto_reading_fails_only_when_every_sample_calls_it_false() -> Result<()> {
     let references = ReferenceCollection::lexical(&sources())?;
     let world = world_of(&references, Citations::default());
     let model = closed_book();
@@ -1283,7 +1301,7 @@ async fn the_veto_reading_fails_only_on_a_majority_that_calls_it_false() -> Resu
         "a request for a source is no falsity: {}",
         reads[1].finding.reason
     );
-    assert!(reads[2].finding.reason.contains("(2 of 3)"));
+    assert!(reads[2].finding.reason.contains("(3 of 3)"));
     Ok(())
 }
 

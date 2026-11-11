@@ -192,7 +192,7 @@ async fn a_statement_the_teaching_review_writes_after_the_sort_is_held_by_the_pl
     // The first section's statement is contradicted and rewritten; the
     // teaching review after that repair writes a statement into the second
     // section, in a sentence no claim stood on. It is new to the ledger, sorted
-    // after the plan was made, refuted by most samples and rewritten itself.
+    // after the plan was made, refuted by every sample and rewritten itself.
     let model = Rounds::new(
         Classes::new(&[ROWS, MAPPED, DELIMITER, HEADER_LAST, HEADER_FIRST])
             .classed(&[
@@ -201,7 +201,7 @@ async fn a_statement_the_teaching_review_writes_after_the_sort_is_held_by_the_pl
                 (HEADER_LAST, "common"),
             ])
             .consistent(&[(ROWS, "contradicted")])
-            .knows(&[(HEADER_LAST, ["false", "false", "true_common"])]),
+            .knows(&[(HEADER_LAST, ["false"; 3])]),
     )
     .rewriting(&[(ROWS, MAPPED), (HEADER_LAST, HEADER_FIRST)])
     .teaching(1, ALOUD, HEADER_LAST);
@@ -278,7 +278,7 @@ async fn the_statements_beside_a_rewritten_one_are_read_again_and_its_narrowing_
     // Three Reasoning statements stand on one sentence. The first is
     // contradicted and rewritten, which gives the other two successors read
     // from the post-rewrite node in the same pass; its rewrite is refuted by
-    // most samples and grounded by no passage, so its cut narrows the sentence,
+    // every sample and grounded by no passage, so its cut narrows the sentence,
     // and the other two are read again after that.
     let model = Rounds::new(
         Classes::new(&[ALPHA, BETA, GAMMA, ALPHA_AGAIN, BETA_AGAIN, GAMMA_AGAIN])
@@ -288,7 +288,7 @@ async fn the_statements_beside_a_rewritten_one_are_read_again_and_its_narrowing_
                 (GAMMA, "reasoning"),
             ])
             .consistent(&[(ALPHA, "contradicted")])
-            .knows(&[(ALPHA_AGAIN, ["false", "false", "true_common"])]),
+            .knows(&[(ALPHA_AGAIN, ["false"; 3])]),
     )
     .rewriting(&[(SENTENCE, REWRITTEN), (REWRITTEN, NARROWED)]);
     let lesson =
