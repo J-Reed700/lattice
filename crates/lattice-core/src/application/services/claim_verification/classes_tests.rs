@@ -276,12 +276,15 @@ fn the_samples_decide_a_pass_a_falsity_veto_and_a_need_for_a_source() {
     let unanimous = outcome([TrueCommon; 3]);
     assert!(unanimous.is_common() && !unanimous.is_false() && !unanimous.needs_source());
 
-    // A lone dissent forfeits the pass but is no majority, so it never vetoes.
+    // A dissent forfeits the pass, and only every sample calling it false vetoes.
     let lone = outcome([TrueCommon, False, TrueCommon]);
     assert!(!lone.is_common() && !lone.is_false());
 
-    let majority = outcome([False, TrueCommon, False]);
-    assert!(majority.is_false() && !majority.is_common());
+    let split = outcome([False, TrueCommon, False]);
+    assert!(!split.is_false() && !split.is_common());
+
+    let every = outcome([False; 3]);
+    assert!(every.is_false() && !every.is_common());
 
     let doubtful = outcome([TrueCommon, NeedsSource, TrueCommon]);
     assert!(doubtful.needs_source() && !doubtful.is_common() && !doubtful.is_false());
@@ -311,10 +314,10 @@ fn every_mix_of_three_samples_has_the_outcome_a_common_statement_and_a_veto_give
         ([Common, Common, False], Source, Stands),
         ([Common, Needs, Needs], Source, Stands),
         ([Common, Needs, False], Source, Stands),
-        ([Common, False, False], Refuted, Refuted),
+        ([Common, False, False], Source, Stands),
         ([Needs, Needs, Needs], Source, Stands),
         ([Needs, Needs, False], Source, Stands),
-        ([Needs, False, False], Refuted, Refuted),
+        ([Needs, False, False], Source, Stands),
         ([False, False, False], Refuted, Refuted),
     ];
     for (verdicts, knowledge, veto) in rows {

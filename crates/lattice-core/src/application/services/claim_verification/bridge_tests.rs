@@ -398,11 +398,12 @@ fn a_common_part_that_names_a_specific_is_unproven_once_guarded() {
 }
 
 #[test]
-fn the_passages_ground_a_statement_when_one_part_is_stated_and_none_fails() {
-    use PartKind::{Common, Contradicted, SpecificMissing, Stated};
+fn only_what_the_passages_state_grounds_a_vetoed_statement() {
+    use PartKind::{Common, Contradicted, Own, SpecificMissing, Stated};
     let rows: &[(&[PartKind], Outcome)] = &[
-        (&[Stated, Common], Outcome::Stands),
         (&[Stated], Outcome::Stands),
+        (&[Stated, Own], Outcome::Stands),
+        (&[Stated, Common], Outcome::Refuted),
         (&[Common], Outcome::Refuted),
         (&[Stated, SpecificMissing], Outcome::Refuted),
         (&[Stated, Contradicted], Outcome::Refuted),
@@ -412,17 +413,6 @@ fn the_passages_ground_a_statement_when_one_part_is_stated_and_none_fails() {
         let parts: Vec<BridgePart> = kinds.iter().map(|kind| part("A part.", *kind)).collect();
         assert_eq!(outcome(parts).ground_outcome(), *expected, "{kinds:?}");
     }
-}
-
-#[test]
-fn a_common_part_that_names_a_specific_does_not_ground_a_statement_once_guarded() {
-    let parts = vec![
-        part("Quillet is a lexer.", PartKind::Stated),
-        part("It shipped in 1999.", PartKind::Common),
-    ];
-    assert_eq!(outcome(parts.clone()).ground_outcome(), Outcome::Stands);
-    let (guarded, _) = outcome(parts).guarded(names_a_figure);
-    assert_eq!(guarded.ground_outcome(), Outcome::Refuted);
 }
 
 const OWN_FIGURES: &str = "The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them.";
