@@ -125,7 +125,15 @@ async fn a_floor_failure_with_an_unsettled_question_going_puts_it_back() -> Resu
     let llm = model(&[]);
     let mut ledger = ClaimLedger::open(&llm, "{}").await?;
     ledger.cuts.go_unsettled(11, "P1?".into());
-    ledger.cuts.go(12, "P2?".into());
+    for (unit, label) in [
+        (12, "P2?"),
+        (13, "Q1?"),
+        (14, "Q2?"),
+        (15, "T1?"),
+        (16, "T2?"),
+    ] {
+        ledger.cuts.go(unit, label.into());
+    }
     let sources = sources();
     let references = ReferenceCollection::lexical(&sources)?;
 
@@ -139,7 +147,10 @@ async fn a_floor_failure_with_an_unsettled_question_going_puts_it_back() -> Resu
     .await?;
 
     assert!(matches!(settled, Settled::Again(_)));
-    assert_eq!(ledger.cuts.going.keys().copied().collect::<Vec<_>>(), [12]);
+    assert_eq!(
+        ledger.cuts.going.keys().copied().collect::<Vec<_>>(),
+        [12, 13, 14, 15, 16]
+    );
     assert!(ledger.cuts.unsettled.is_empty());
     Ok(())
 }

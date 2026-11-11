@@ -394,13 +394,18 @@ fn findings(
     }
     for used in &settled.uses {
         let (part, passage) = (used.hit.part, &used.hit.found.exact);
+        let teach = if protected::guards(candidate, part.site, passage, protected) {
+            concat!("Teach it in this step, where it is first used (", each_shown!(), "), in sentences added before or after the quoted words; the quoted words stay exactly as they are.")
+        } else {
+            concat!("Teach it in this step, where it is first used (", each_shown!(), "), or change the step to use only what the lesson has taught (a record asked for in the learner's own notes needs nothing taught).")
+        };
         found.push(
             ReviewFinding::plan(
                 PlanCheck::Used,
                 subject_of(passage),
                 part.site,
                 format!(
-                    concat!("{} asks the learner to use {} (\"{passage}\"), and nothing before this point in the lesson, the earlier lessons or the learner's prior knowledge has taught it. Teach it in this step, where it is first used (", each_shown!(), "), or change the step to use only what the lesson has taught (a record asked for in the learner's own notes needs nothing taught)."),
+                    "{} asks the learner to use {} (\"{passage}\"), and nothing before this point in the lesson, the earlier lessons or the learner's prior knowledge has taught it. {teach}",
                     label(part.site),
                     used.what,
                     passage = passage
