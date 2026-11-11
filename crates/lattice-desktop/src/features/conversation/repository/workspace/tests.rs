@@ -264,3 +264,168 @@ async fn deleting_another_conversations_message_is_rejected_without_changing_tot
     assert_eq!(stored.message_count, 0);
     assert_eq!(stored.total_tokens, 0);
 }
+
+async fn seed_listing(repo: &ConversationRepository) -> Vec<String> {
+    let mut ids = Vec::new();
+    for (index, title) in ["Alpha one", "Alpha two", "Alpha six", "Beta note"]
+        .into_iter()
+        .enumerate()
+    {
+        let conversation = repo.create(title, None).await.unwrap();
+        let id = conversation.id.to_string();
+        sqlx::query("UPDATE conversations SET updated_at = ? WHERE id = ?")
+            .bind(format!("2026-01-0{}T00:00:00Z", index + 1))
+            .bind(&id)
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+        ids.push(id);
+    }
+    sqlx::query("UPDATE conversations SET is_archived = 1 WHERE id = ?")
+        .bind(&ids[2])
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+    ids
+}
+
+fn titles(response: &ListConversationsResponseDto) -> Vec<&str> {
+    response
+        .conversations
+        .iter()
+        .map(|c| c.title.as_str())
+        .collect()
+}
+
+fn explorer_query(
+    query: Option<&str>,
+    include_archived: bool,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> ListConversationsExplorerQueryDto {
+    ListConversationsExplorerQueryDto {
+        space_id: None,
+        program_id: None,
+        query: query.map(str::to_string),
+        saved_only: None,
+        bookmarked_only: None,
+        pinned_only: None,
+        has_message_bookmarks: None,
+        include_archived: Some(include_archived),
+        limit,
+        offset,
+    }
+}
+
+#[tokio::test]
+async fn the_explorer_listing_searches_hides_archived_and_pages() {
+    let (_directory, repo) = repository().await;
+    seed_listing(&repo).await;
+
+    let found = repo
+        .list_conversations_explorer(explorer_query(Some("alpha"), false, None, None))
+        .await
+        .unwrap();
+    assert_eq!(titles(&found), ["Alpha two", "Alpha one"]);
+
+    let with_archived = repo
+        .list_conversations_explorer(explorer_query(Some("alpha"), true, None, None))
+        .await
+        .unwrap();
+    assert_eq!(
+        titles(&with_archived),
+        ["Alpha six", "Alpha two", "Alpha one"]
+    );
+
+    let all = repo
+        .list_conversations_explorer(explorer_query(None, false, None, None))
+        .await
+        .unwrap();
+    assert_eq!(titles(&all), ["Beta note", "Alpha two", "Alpha one"]);
+
+    let second = repo
+        .list_conversations_explorer(explorer_query(Some("alpha"), false, Some(1), Some(1)))
+        .await
+        .unwrap();
+    assert_eq!(titles(&second), ["Alpha one"]);
+    let past_end = repo
+        .list_conversations_explorer(explorer_query(Some("alpha"), false, Some(1), Some(2)))
+        .await
+        .unwrap();
+    assert!(past_end.conversations.is_empty());
+}
+
+fn journal_query(
+    journal_space_id: &str,
+    query: Option<&str>,
+    include_archived: bool,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> ListJournalConversationsQueryDto {
+    ListJournalConversationsQueryDto {
+        journal_space_id: journal_space_id.to_string(),
+        query: query.map(str::to_string),
+        include_archived: Some(include_archived),
+        limit,
+        offset,
+    }
+}
+
+#[tokio::test]
+async fn the_journal_listing_searches_hides_archived_pages_and_stays_in_its_journal() {
+    let (_directory, repo) = repository().await;
+    let ids = seed_listing(&repo).await;
+    let reading = repo.create_journal(journal("Reading")).await.unwrap();
+    for id in &ids[..3] {
+        repo.add_conversation_to_journal(AddConversationToJournalRequestDto {
+            journal_space_id: reading.id.clone(),
+            conversation_id: id.clone(),
+        })
+        .await
+        .unwrap();
+    }
+
+    let found = repo
+        .list_journal_conversations(journal_query(&reading.id, Some("alpha"), false, None, None))
+        .await
+        .unwrap();
+    assert_eq!(titles(&found), ["Alpha two", "Alpha one"]);
+
+    let with_archived = repo
+        .list_journal_conversations(journal_query(&reading.id, Some("alpha"), true, None, None))
+        .await
+        .unwrap();
+    assert_eq!(
+        titles(&with_archived),
+        ["Alpha six", "Alpha two", "Alpha one"]
+    );
+
+    let beta = repo
+        .list_journal_conversations(journal_query(&reading.id, Some("beta"), true, None, None))
+        .await
+        .unwrap();
+    assert!(beta.conversations.is_empty());
+
+    let second = repo
+        .list_journal_conversations(journal_query(
+            &reading.id,
+            Some("alpha"),
+            false,
+            Some(1),
+            Some(1),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(titles(&second), ["Alpha one"]);
+
+    assert!(matches!(
+        repo.list_journal_conversations(journal_query("journal_missing", None, false, None, None))
+            .await,
+        Err(AppError::NotFound(_))
+    ));
+    assert!(matches!(
+        repo.list_journal_conversations(journal_query(" ", None, false, None, None))
+            .await,
+        Err(AppError::InvalidInput(_))
+    ));
+}
