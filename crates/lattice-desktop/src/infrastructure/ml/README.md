@@ -6,8 +6,8 @@ Shared model infrastructure lives here:
 |------|------------|-------------|
 | `instance_pool.rs` | Loaded LLM instances keyed by what they are, any number at once: one load per key at a time, leases for work that pins an instance, invalidation that leaves holders their instance, and least-recently-used eviction of idle ones. | `features/llm/instances.rs` |
 | `model_cache.rs` | Single-flight loading and invalidation-safe publication; a dead value is a miss. | the embedding runtime (`features/embedding/runtime.rs`) |
-| `tokenizer.rs` | Loads a Hugging Face `tokenizer.json`. | the embedding splitter (`features/embedding/llama_cpp/`) and the Qwen3 reranker |
-| `compute_device.rs` | Picks the Candle device: Metal first, then CPU. | the cross-encoder reranker and Whisper |
+| `tokenizer.rs` | Loads a Hugging Face `tokenizer.json`. | the embedding splitter (`features/embedding/llama_cpp/`) and the retrieval eval |
+| `compute_device.rs` | Picks the Candle device: Metal first, then CPU. | Whisper (`features/transcription/engine/whisper/load.rs`) |
 | `embedding_generation.rs` | Resumable preparation of a new embedding model's vector space: embeds the library's chunks into `embedding_generation_vectors` before the model is activated. | activation (`features/model_management`) and the search runtime (`features/search`) |
 | `artifact_identity.rs` | The SHA-256 of an embedding GGUF, which names its vector space. | activation, download, and the standalone embedding server |
 

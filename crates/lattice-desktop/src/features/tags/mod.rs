@@ -15,8 +15,10 @@
 //!   auto-generate use cases
 //! - `crate::features::tags::generator::TagGenerator` — LLM prompt helpers
 //! - `crate::features::tags::repository::TagRepository`
-//! - `crate::features::tags::service::TagService` — DocumentLockGuard helper
-//! - `crate::features::tags::service_impl::TagServiceImpl`
+//! - `crate::features::tags::service::TagService` — the one tag service and its
+//!   per-document lock table
+//! - `crate::features::tags::tag_generation::TagGenerationService` — LLM tag
+//!   suggestions and auto-tagging
 //! - `crate::features::tags::TagRepositoryTrait` — repository trait
 //!   (`TagServiceTrait` and `DocumentLockGuard` live in `lattice_core::application::ports`)
 //! - `crate::features::tags::{MockTagService, MockTagRepository}` — test mocks
@@ -32,7 +34,7 @@ pub mod persistence_mapper;
 pub mod plugin;
 pub mod repository;
 pub mod service;
-pub mod service_impl;
+pub mod tag_generation;
 pub mod trait_def;
 pub mod use_cases;
 

@@ -1,46 +1,24 @@
-//! Chunk Repository Implementation
-//!
-//! SQLite pool-based implementation of ChunkRepository that delegates to ops.rs.
+//! Pool-based chunk repository: each method acquires a connection or begins a
+//! unit of work and calls the SQL in `ops`.
 
 use async_trait::async_trait;
-use lattice_core::application::ports::{ChunkRepositoryPort, Filter, RepositoryPort};
+use lattice_core::application::ports::{ChunkRepositoryPort, RepositoryPort};
 use lattice_core::domain::entities::chunk::Chunk as ChunkEntity;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::SqlitePool;
+use std::collections::HashMap;
 
 use super::ops;
 
+/// SQLite chunk persistence behind `RepositoryPort<ChunkEntity>` and `ChunkRepositoryPort`.
 #[derive(Debug, Clone)]
-pub struct ChunkFilter {
-    pub document_id: Option<String>,
-    pub limit: Option<usize>,
-}
-
-impl Filter for ChunkFilter {
-    fn validate(&self) -> Result<()> {
-        if let Some(limit) = self.limit {
-            if limit == 0 || limit > 10000 {
-                return Err(AppError::InvalidInput(
-                    "Limit must be between 1 and 10000".to_string(),
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SqliteChunkRepository {
+pub struct ChunkRepository {
     pool: SqlitePool,
 }
 
-impl SqliteChunkRepository {
+impl ChunkRepository {
     pub fn new(pool: impl DriverPool) -> Self {
         let pool = pool.sqlx_pool().clone();
         Self { pool }
@@ -63,25 +41,10 @@ impl SqliteChunkRepository {
 }
 
 #[async_trait]
-impl RepositoryPort<ChunkEntity> for SqliteChunkRepository {
+impl RepositoryPort<ChunkEntity> for ChunkRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<ChunkEntity>> {
         let mut conn = self.pool.acquire().await?;
         ops::find_by_id(&mut conn, id).await
-    }
-
-    async fn find_by_filter(&self, filter: &dyn Filter) -> Result<Vec<ChunkEntity>> {
-        filter.validate()?;
-
-        let filter_any = filter.as_any();
-        if let Some(chunk_filter) = filter_any.downcast_ref::<ChunkFilter>() {
-            if let Some(document_id) = &chunk_filter.document_id {
-                let mut conn = self.pool.acquire().await?;
-                return ops::find_by_document_limit(&mut conn, document_id, chunk_filter.limit)
-                    .await;
-            }
-        }
-
-        Ok(vec![])
     }
 
     async fn find_all(&self) -> Result<Vec<ChunkEntity>> {
@@ -153,7 +116,7 @@ impl RepositoryPort<ChunkEntity> for SqliteChunkRepository {
 }
 
 #[async_trait]
-impl ChunkRepositoryPort for SqliteChunkRepository {
+impl ChunkRepositoryPort for ChunkRepository {
     async fn create(
         &self,
         document_id: &str,
@@ -172,8 +135,16 @@ impl ChunkRepositoryPort for SqliteChunkRepository {
     }
 
     async fn find_by_document(&self, document_id: &str) -> Result<Vec<ChunkEntity>> {
+        ChunkRepository::find_by_document(self, document_id).await
+    }
+
+    async fn find_first_by_document(
+        &self,
+        document_id: &str,
+        limit: usize,
+    ) -> Result<Vec<ChunkEntity>> {
         let mut conn = self.pool.acquire().await?;
-        ops::find_by_document(&mut conn, document_id).await
+        ops::find_by_document_limit(&mut conn, document_id, Some(limit)).await
     }
 
     async fn find_by_ids(&self, chunk_ids: &[String]) -> Result<Vec<ChunkEntity>> {
@@ -181,19 +152,23 @@ impl ChunkRepositoryPort for SqliteChunkRepository {
         ops::find_by_ids(&mut conn, chunk_ids).await
     }
 
-    async fn delete_by_document(&self, document_id: &str) -> Result<()> {
+    async fn find_content_by_ids(&self, chunk_ids: &[String]) -> Result<HashMap<String, String>> {
         let mut conn = self.pool.acquire().await?;
-        ops::delete_by_document(&mut conn, document_id).await
+        ops::find_content_by_ids(&mut conn, chunk_ids).await
+    }
+
+    async fn find_conversation_attached_chunk_ids(&self) -> Result<Vec<String>> {
+        let mut conn = self.pool.acquire().await?;
+        ops::find_conversation_attached_chunk_ids(&mut conn).await
+    }
+
+    async fn delete_by_document(&self, document_id: &str) -> Result<()> {
+        ChunkRepository::delete_by_document(self, document_id).await
     }
 
     async fn count_all(&self) -> Result<i64> {
         let mut conn = self.pool.acquire().await?;
         ops::count_all(&mut conn).await
-    }
-
-    async fn count_indexed_documents(&self) -> Result<i64> {
-        let mut conn = self.pool.acquire().await?;
-        ops::count_indexed_documents(&mut conn).await
     }
 
     async fn count_by_document(&self, document_id: &str) -> Result<i64> {

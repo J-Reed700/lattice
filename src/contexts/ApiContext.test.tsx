@@ -82,7 +82,7 @@ describe('ApiProvider', () => {
   });
 
   it('passes a supplied client through non-React query helpers', async () => {
-    const listConversationsExplorer = vi.fn().mockResolvedValue({ ok: true, data: { conversations: [], total: 0 } });
+    const listConversationsExplorer = vi.fn().mockResolvedValue({ ok: true, data: { conversations: [] } });
     const api = createTestApi({ listConversationsExplorer });
     await expect(fetchConversationList({ spaceId: null, filterMode: 'all', searchQuery: '' }, api)).resolves.toEqual([]);
     expect(listConversationsExplorer).toHaveBeenCalledTimes(1);

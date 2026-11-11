@@ -7,6 +7,7 @@ use super::mapper::{EmbeddingDTO, EmbeddingMapper};
 use chrono::{DateTime, Utc};
 use lattice_core::domain::entities::Embedding as DomainEmbedding;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::bind_limit::rows_per_statement;
 use sqlx::SqliteConnection;
 
 #[cfg(test)]
@@ -89,9 +90,7 @@ pub async fn save_batch(
 
     let start = Instant::now();
 
-    // Batch size: 6 columns per embedding, 999 param limit
-    // 999 / 6 = 166, use 150 for safety
-    const EMBEDDING_BATCH_SIZE: usize = 150;
+    const EMBEDDING_BATCH_SIZE: usize = rows_per_statement(6, 0);
 
     // Validate the whole input before writing any rows, then encode only one
     // SQL batch at a time to avoid holding a second copy of every vector.

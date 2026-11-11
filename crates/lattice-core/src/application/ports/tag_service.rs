@@ -1,10 +1,7 @@
 //! Tag management as the tools and file metadata use it, and the per-document
 //! lock that serialises tag writes.
 
-use std::sync::Arc;
-
 use async_trait::async_trait;
-use tokio::sync::Mutex;
 
 use crate::application::contracts::tags::TagWithCountDto;
 use crate::domain::entities::Tag;
@@ -24,19 +21,11 @@ impl DocumentLockGuard {
         Self { _guard: guard }
     }
 
-    /// Create mock lock guard for testing and mocks
-    ///
-    /// ⚠️ **TEST INFRASTRUCTURE ONLY**
-    ///
-    /// This mock is exposed outside `#[cfg(test)]` to enable cross-module testing.
-    /// **Do not use in production code.** Use `DocumentLockGuard::new()` instead.
-    ///
-    /// # Panics
-    ///
-    /// Panics if lock acquisition fails (test infrastructure issue, not production code).
-    #[allow(clippy::expect_used)] // Test infrastructure - panics are acceptable
+    /// An uncontended guard for mocks.
+    #[cfg(any(test, feature = "test-support"))]
+    #[allow(clippy::expect_used)]
     pub fn mock() -> Self {
-        let lock = Arc::new(Mutex::new(()));
+        let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
         // IMMACULATE INVARIANT: Test lock should always be available (no contention in tests)
         let guard = lock.clone().try_lock_owned().expect(
             "IMMACULATE INVARIANT: Mock lock guard should always acquire successfully in tests",
@@ -118,53 +107,9 @@ pub trait TagServiceTrait: Send + Sync {
     /// - `AppError::Database` if database query fails
     async fn search_documents_by_tag(&self, tag_name: &str) -> Result<Vec<String>>;
 
-    /// Generate tags for a document using LLM
-    ///
-    /// **NOTE**: Currently disabled pending local LLM port
-    ///
-    /// # Errors
-    /// - `AppError::Other` - Feature disabled
-    async fn generate_tags(&self, document_id: &str, max_tags: usize) -> Result<Vec<String>>;
-
-    /// Auto-tag all documents
-    ///
-    /// **NOTE**: Currently disabled pending local LLM port
-    ///
-    /// # Errors
-    /// - `AppError::Other` - Feature disabled
-    async fn auto_tag_all_documents(&self, max_documents: usize) -> Result<usize>;
-
-    /// Acquire exclusive lock for document tag operations with timeout
-    ///
-    /// Ensures only one tag operation can occur per document at a time,
-    /// preventing race conditions during tag generation and merging.
+    /// Acquire the exclusive per-document lock for tag and file-metadata writes.
     ///
     /// # Errors
     /// - `AppError::Other` if lock acquisition times out (30 seconds)
     async fn acquire_lock_with_timeout(&self, document_id: &str) -> Result<DocumentLockGuard>;
-
-    /// Acquire exclusive lock for document tag operations (simpler version)
-    ///
-    /// Mock-friendly version without timeout parameter.
-    ///
-    /// # Errors
-    /// - `AppError::Other` if lock acquisition fails
-    async fn acquire_lock(&self, document_id: &str) -> Result<DocumentLockGuard>;
-
-    /// Get or create a tag by name
-    ///
-    /// If tag with name exists, returns it. Otherwise creates new tag.
-    ///
-    /// # Errors
-    /// - `AppError::Database` if database operation fails
-    async fn get_or_create(&self, name: &str, color: &str) -> Result<Tag>;
-
-    /// Get all tags with document counts (alternative to get_all_tags_with_counts)
-    ///
-    /// # Errors
-    /// - `AppError::Database` if database query fails
-    async fn get_all_with_counts(&self) -> Result<Vec<TagWithCountDto>>;
-
-    /// Merge existing and generated tags, removing duplicates (case-insensitive)
-    fn merge_tags(&self, existing: Vec<String>, generated: Vec<String>) -> Vec<String>;
 }

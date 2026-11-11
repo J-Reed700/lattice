@@ -32,7 +32,6 @@ module calls them:
 infrastructure/setup/
 ├── directories.rs               # setup_app_directories, setup_model_directory
 ├── database.rs                  # setup_database: open lattice.db + run migrations
-├── embedding.rs                 # setup_tokenizer (optional legacy tokenizer.json)
 ├── observability.rs             # setup_tracing (see infrastructure/observability)
 ├── indexing_config.rs           # indexing config file shape
 ├── renderer_shutdown.rs         # Lets the renderer finish writes before quit

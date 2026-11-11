@@ -48,8 +48,8 @@ export async function installShell(page: Page): Promise<ShellBackend> {
     list_journal_syntheses: () => [],
     list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
     // The sidebar's recent conversations; chat fixtures replace these.
-    list_conversations_explorer: () => ({ conversations: [], total: 0 }),
-    list_conversations: () => ({ conversations: [], total: 0 }),
+    list_conversations_explorer: () => ({ conversations: [] }),
+    list_conversations: () => ({ conversations: [] }),
   }));
   return { calls: served.calls, unsupported: mock.unsupported, pageErrors };
 }

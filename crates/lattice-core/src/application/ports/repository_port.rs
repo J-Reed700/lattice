@@ -34,21 +34,9 @@ where
     /// - `AppError::InvalidInput` if ID format is invalid
     async fn find_by_id(&self, id: &str) -> Result<Option<T>>;
 
-    /// Find all entities matching a filter.
-    ///
-    /// The filter type is implementation-specific and allows for
-    /// flexible querying without exposing database details.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::Database` if query fails
-    /// - `AppError::InvalidInput` if filter is malformed
-    async fn find_by_filter(&self, filter: &dyn Filter) -> Result<Vec<T>>;
-
     /// Retrieve all entities.
     ///
-    /// **Warning**: This can be expensive for large datasets. Consider
-    /// using pagination or `find_by_filter` with limits.
+    /// **Warning**: This can be expensive for large datasets.
     ///
     /// # Errors
     ///
@@ -110,36 +98,4 @@ where
     ///
     /// - `AppError::Database` if existence check fails
     async fn exists(&self, id: &str) -> Result<bool>;
-}
-
-/// Trait for repository filters.
-///
-/// Implementations define specific filter criteria for entity queries.
-/// This allows type-safe filtering without exposing database details.
-pub trait Filter: Send + Sync + 'static {
-    /// Validate the filter criteria.
-    ///
-    /// # Errors
-    ///
-    /// Returns `AppError::InvalidInput` if filter is invalid.
-    fn validate(&self) -> Result<()>;
-
-    /// Cast to `Any` for downcasting to concrete filter types.
-    fn as_any(&self) -> &dyn std::any::Any;
-}
-
-/// Empty filter that matches all entities.
-///
-/// Useful as a default or for "get all" queries.
-#[derive(Debug, Clone)]
-pub struct NoFilter;
-
-impl Filter for NoFilter {
-    fn validate(&self) -> Result<()> {
-        Ok(())
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
 }

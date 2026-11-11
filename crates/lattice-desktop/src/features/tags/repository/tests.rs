@@ -1,4 +1,4 @@
-//! Tests for tag CRUD, batches and filters against an in-memory SQLite.
+//! Tests for tag CRUD and batches against an in-memory SQLite.
 
 use super::*;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -220,38 +220,4 @@ async fn test_exists() {
     repo.save(&entity).await.unwrap();
 
     assert!(repo.exists(entity.id().as_str()).await.unwrap());
-}
-
-#[tokio::test]
-async fn test_find_by_filter() {
-    let pool = create_test_pool().await;
-    setup_schema(&pool).await;
-    let repo = TagRepository::new(pool);
-
-    let entities = vec![
-        TagEntity::new(
-            TagName::new("rust".to_string()).unwrap(),
-            "#ff0000".to_string(),
-        ),
-        TagEntity::new(
-            TagName::new("python".to_string()).unwrap(),
-            "#00ff00".to_string(),
-        ),
-        TagEntity::new(
-            TagName::new("ruby".to_string()).unwrap(),
-            "#0000ff".to_string(),
-        ),
-    ];
-
-    repo.save_batch(&entities).await.unwrap();
-
-    let filter = TagFilter {
-        name_pattern: Some("ru".to_string()),
-        limit: None,
-    };
-
-    let results = repo.find_by_filter(&filter).await.unwrap();
-    assert_eq!(results.len(), 2); // rust and ruby
-    assert!(results.iter().any(|t| t.name().as_str() == "rust"));
-    assert!(results.iter().any(|t| t.name().as_str() == "ruby"));
 }

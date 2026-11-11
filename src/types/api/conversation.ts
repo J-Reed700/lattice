@@ -30,9 +30,6 @@ export type RenameConversationResponse = import('../../lib/bindings').RenameConv
 
 export type DeleteConversationResponse = import('../../lib/bindings').DeleteConversationResponseDto;
 
-/**
- * Response from listing conversations.
- */
 export type ListConversationsResponse = import('../../lib/bindings').ListConversationsResponseDto;
 
 /**

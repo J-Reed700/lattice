@@ -21,6 +21,11 @@ impl UpdateFileMetadataUseCase {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn tag_service(&self) -> &Arc<dyn TagServiceTrait> {
+        &self.tag_service
+    }
+
     pub async fn execute(&self, request: UpdateFileMetadataRequestDto) -> Result<()> {
         let exists = self
             .document_repository
