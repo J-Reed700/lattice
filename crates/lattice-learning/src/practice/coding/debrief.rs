@@ -204,17 +204,14 @@ pub fn facts(evidence: &SessionEvidence) -> DebriefFactsDto {
         stage_ms: counts
             .stage_ms
             .into_iter()
-            .map(|(stage, active_ms)| StageTimeDto {
-                stage: stage,
-                active_ms,
-            })
+            .map(|(stage, active_ms)| StageTimeDto { stage, active_ms })
             .collect(),
         runs: counts.checks,
         submits: counts.submits,
         hints: counts
             .hints
             .into_iter()
-            .map(|(rung, count)| RungCountDto { rung: rung, count })
+            .map(|(rung, count)| RungCountDto { rung, count })
             .collect(),
         settings: counts.settings,
     }

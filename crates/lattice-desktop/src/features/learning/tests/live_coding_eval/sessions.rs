@@ -13,8 +13,8 @@
 //! Reads `LATTICE_CODING_EVAL_PROBLEMS` (the `builds` folder of a run of eval 1), `LATTICE_CODING_EVAL_OUT`, and
 //! `LATTICE_CODING_EVAL_SESSION_PROBLEMS` (the number of problems, 4 without it: 20 sessions per setting).
 
-use crate::practice::session::policy::Cue;
 use lattice_core::domain::learning::practice::work::{Rung, Setting, Stage};
+use lattice_learning::practice::session::policy::Cue;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::time::Instant;
