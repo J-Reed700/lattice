@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { learningPlanKey } from '@/features/learning/api/learningQueryKeys';
 import { ProgramWorkspace } from '@/features/learning/curriculum/ProgramWorkspace';
 import { review, unsupportedItem } from '@/features/learning/lessons/review/claimReviewTestData';
+import { PROGRAM_KIND_ID } from '@/features/learning/practice/kinds';
 import { quizOverview } from '@/features/learning/quizzes/quizTestData';
 import type { LearningGenerationJob, LearningLessonDto, LearningModuleDto, LearningProgramDto } from '@/lib/bindings';
 import type { StudyDestination } from '@/lib/studyActivity';
@@ -40,8 +41,8 @@ vi.mock('@/features/learning/practice/home/practiceHomeApi', () => ({
   practiceHomeApi: {
     getProfile: async () => ({ programId: 'program-1', details: '', language: null, interviewAt: null, company: null, role: null, revision: 0 }),
     saveProfile: vi.fn(),
-    getFit: async () => ({ code: 'fits', reason: null }),
-    checkFit: async () => ({ code: 'fits', reason: null }),
+    getFit: async () => ({ kinds: [{ kind: PROGRAM_KIND_ID, fit: 'fits', reason: null }] }),
+    checkFit: async () => ({ kinds: [{ kind: PROGRAM_KIND_ID, fit: 'fits', reason: null }] }),
     due: async () => ({ items: [] }),
     codingSessions: async () => [],
     startPracticeSession: vi.fn(),
