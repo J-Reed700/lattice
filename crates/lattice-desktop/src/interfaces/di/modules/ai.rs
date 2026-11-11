@@ -80,7 +80,7 @@ impl AIModule {
         // Model catalog (HuggingFace + SQLite cache)
         let downloaded_models = Arc::new(DownloadedModelRepository::new(database.clone()));
 
-        let huggingface = Arc::new(HuggingFaceAdapter::new()) as Arc<dyn ModelCatalogPort>;
+        let huggingface = Arc::new(HuggingFaceAdapter::new()?) as Arc<dyn ModelCatalogPort>;
         let model_catalog_cache =
             Arc::new(ModelCacheAdapter::new(database.clone(), huggingface).await?);
         let model_catalog = model_catalog_cache.clone() as Arc<dyn ModelCatalogPort>;
