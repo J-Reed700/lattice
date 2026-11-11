@@ -237,7 +237,6 @@ fn snapshot_text(content: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod capture_tests;
 
 #[cfg(test)]

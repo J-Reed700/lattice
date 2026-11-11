@@ -343,26 +343,6 @@ impl GroundingVerifier {
         }
     }
 
-    /// Opts out of the judge explicitly, logging it, since a lexical-only verdict
-    /// looks like a judged one in the metadata. Tests use it to pin lexical-only
-    /// behaviour.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn with_judge_enabled(self, enabled: bool) -> Self {
-        if enabled {
-            return self;
-        }
-        if self.judge.is_some() {
-            info!(
-                "Grounding claim judge skipped: disabled by configuration — claim verdicts are \
-                 lexical overlap only"
-            );
-        }
-        Self {
-            judge: None,
-            ..self
-        }
-    }
-
     /// An Explorer answer may explain the folder from general knowledge
     /// without a citation, as its template allows, so only cited sentences
     /// (by their own marker or their paragraph's) are claims about the
@@ -515,10 +495,8 @@ impl GroundingVerifier {
     }
 }
 
-/// Lexical-only grounding summary.
-///
-/// The synchronous path, kept for callers that have no LLM handle to offer.
-#[cfg_attr(not(test), allow(dead_code))]
+/// Lexical-only grounding summary, the synchronous path for tests.
+#[cfg(test)]
 pub(super) fn verify_response_grounding_summary(
     response: &str,
     sources: &[SourceDto],
@@ -530,6 +508,28 @@ pub(super) fn verify_response_grounding_summary(
             .collect(),
         false,
     )
+}
+
+#[cfg(test)]
+impl GroundingVerifier {
+    /// Opts out of the judge explicitly, logging it, since a lexical-only verdict
+    /// looks like a judged one in the metadata. Tests use it to pin lexical-only
+    /// behaviour.
+    pub(super) fn with_judge_enabled(self, enabled: bool) -> Self {
+        if enabled {
+            return self;
+        }
+        if self.judge.is_some() {
+            info!(
+                "Grounding claim judge skipped: disabled by configuration — claim verdicts are \
+                 lexical overlap only"
+            );
+        }
+        Self {
+            judge: None,
+            ..self
+        }
+    }
 }
 
 #[cfg(test)]

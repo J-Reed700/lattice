@@ -1,9 +1,10 @@
 import { createRef } from 'react';
 
-import { render, screen } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ChatModelButton, type ChatModelButtonProps } from '@/features/chat/components/composer/ChatModelButton';
+import { render } from '@/tests/renderWithQueryClient';
 import type { ChatModelOption } from '@/utils/chatModelSelection';
 
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ downloadedModels: [] }) }));

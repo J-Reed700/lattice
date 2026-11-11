@@ -5,8 +5,11 @@
 use async_trait::async_trait;
 use lattice_core::application::contracts::web::CleanArticle;
 use lattice_core::shared::error::Result;
+#[cfg(test)]
 use parking_lot::Mutex;
+#[cfg(test)]
 use std::collections::HashMap;
+#[cfg(test)]
 use std::sync::Arc;
 
 /// Extracts clean, readable article content from HTML, like Firefox Reader
@@ -32,6 +35,7 @@ pub trait ArticleExtractorServiceTrait: Send + Sync {
     async fn extract_article_from_url(&self, url: &str) -> Result<CleanArticle>;
 }
 
+#[cfg(test)]
 /// Mock article extractor for tests, answering with responses configured by
 /// `set_response`.
 pub struct MockArticleExtractorService {
@@ -39,6 +43,7 @@ pub struct MockArticleExtractorService {
     responses: Arc<Mutex<HashMap<String, CleanArticle>>>,
 }
 
+#[cfg(test)]
 impl MockArticleExtractorService {
     /// Create a new mock service
     pub fn new() -> Self {
@@ -86,12 +91,14 @@ impl MockArticleExtractorService {
     }
 }
 
+#[cfg(test)]
 impl Default for MockArticleExtractorService {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(test)]
 #[async_trait]
 impl ArticleExtractorServiceTrait for MockArticleExtractorService {
     async fn extract_article_from_url(&self, url: &str) -> Result<CleanArticle> {

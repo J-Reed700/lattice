@@ -1,5 +1,4 @@
 //! Course edits invalidate pending teaching; ordinary learner progress does not.
-#![allow(clippy::unwrap_used)]
 use super::*;
 use crate::{
     curriculum::LearningCurriculumOperation,

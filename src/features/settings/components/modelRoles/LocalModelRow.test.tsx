@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -6,6 +6,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { useModelWarmupStore } from '@/features/model/stores/modelWarmupStore';
 import type { LearningWindowShortfallDto, LoadedModelDto } from '@/lib/bindings';
 import { makeAppSettings } from '@/tests/fixtures/appSettings';
+import { render } from '@/tests/renderWithQueryClient';
 import type { LLMSettings } from '@/types/api/settings';
 import type { DownloadedModel } from '@/types/downloadedModels';
 

@@ -1,19 +1,9 @@
-import { useContext } from 'react';
-
-import { QueryClient, QueryClientContext, useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
 import type { KeyServiceDto, SourcesStatusDto } from '@/lib/bindings';
 
 export const SOURCES_STATUS_QUERY_KEY = ['sources-status'] as const;
-
-const fallbackQueryClient = new QueryClient({
-  defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-});
-
-function useClient() {
-  return useContext(QueryClientContext) ?? fallbackQueryClient;
-}
 
 /**
  * Settings → Sources: every source finder with its need, privacy line,
@@ -22,24 +12,20 @@ function useClient() {
  */
 export function useSourcesStatus() {
   const api = useApi();
-  const queryClient = useClient();
-  return useQuery<SourcesStatusDto>(
-    {
-      queryKey: SOURCES_STATUS_QUERY_KEY,
-      queryFn: async () => {
-        const result = await api.getSourcesStatus();
-        if (!result.ok) throw new Error(result.error);
-        return result.data;
-      },
-      staleTime: 0,
+  return useQuery<SourcesStatusDto>({
+    queryKey: SOURCES_STATUS_QUERY_KEY,
+    queryFn: async () => {
+      const result = await api.getSourcesStatus();
+      if (!result.ok) throw new Error(result.error);
+      return result.data;
     },
-    queryClient,
-  );
+    staleTime: 0,
+  });
 }
 
 /** Re-reads the status after a settings write re-registered the finders. */
 export function useRefreshSourcesStatus() {
-  const queryClient = useClient();
+  const queryClient = useQueryClient();
   return () => queryClient.invalidateQueries({ queryKey: SOURCES_STATUS_QUERY_KEY });
 }
 
@@ -49,30 +35,24 @@ export function useRefreshSourcesStatus() {
  */
 export function useSourceKeyMutations() {
   const api = useApi();
-  const queryClient = useClient();
+  const queryClient = useQueryClient();
   const settle = (status: SourcesStatusDto) =>
     queryClient.setQueryData(SOURCES_STATUS_QUERY_KEY, status);
-  const save = useMutation<SourcesStatusDto, Error, { service: KeyServiceDto; key: string }>(
-    {
-      mutationFn: async ({ service, key }) => {
-        const result = await api.saveSourceKey(service, key);
-        if (!result.ok) throw new Error(result.error);
-        return result.data;
-      },
-      onSuccess: settle,
+  const save = useMutation<SourcesStatusDto, Error, { service: KeyServiceDto; key: string }>({
+    mutationFn: async ({ service, key }) => {
+      const result = await api.saveSourceKey(service, key);
+      if (!result.ok) throw new Error(result.error);
+      return result.data;
     },
-    queryClient,
-  );
-  const remove = useMutation<SourcesStatusDto, Error, KeyServiceDto>(
-    {
-      mutationFn: async (service) => {
-        const result = await api.removeSourceKey(service);
-        if (!result.ok) throw new Error(result.error);
-        return result.data;
-      },
-      onSuccess: settle,
+    onSuccess: settle,
+  });
+  const remove = useMutation<SourcesStatusDto, Error, KeyServiceDto>({
+    mutationFn: async (service) => {
+      const result = await api.removeSourceKey(service);
+      if (!result.ok) throw new Error(result.error);
+      return result.data;
     },
-    queryClient,
-  );
+    onSuccess: settle,
+  });
   return { saveKey: save, removeKey: remove };
 }

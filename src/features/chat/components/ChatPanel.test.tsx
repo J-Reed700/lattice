@@ -1,11 +1,12 @@
 import type { ReactNode } from 'react';
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import { ConversationSnapshotProvider } from '@/shared/conversations/conversationsStore';
 import { deferred } from '@/tests/deferred';
+import { render } from '@/tests/renderWithQueryClient';
 
 import { ChatPanel } from './ChatPanel';
 

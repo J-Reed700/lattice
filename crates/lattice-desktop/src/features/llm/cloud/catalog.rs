@@ -3,7 +3,10 @@
 use std::{collections::HashSet, time::Duration};
 
 use lattice_core::{
-    application::services::chat_model_resolution::cloud_provider_id,
+    application::{
+        ports::credentials_port::CredentialsPort,
+        services::chat_model_resolution::cloud_provider_id,
+    },
     domain::models::model_ref::CloudProvider,
     shared::{
         error::{AppError, Result},
@@ -29,17 +32,22 @@ pub struct CloudModelCatalogDto {
 }
 
 /// The key saved for `provider`, if one is.
-pub(crate) async fn saved_key(provider: CloudProvider) -> Result<Option<String>> {
-    tokio::task::spawn_blocking(move || {
-        crate::infrastructure::security::keyring_storage::SecureStorage::new()
-            .cloud_api_key(cloud_provider_id(provider))
-    })
+pub(crate) async fn saved_key(
+    credentials: &dyn CredentialsPort,
+    provider: CloudProvider,
+) -> Result<Option<String>> {
+    lattice_core::application::services::credentials::cloud_api_key(
+        credentials,
+        cloud_provider_id(provider),
+    )
     .await
-    .map_err(|_| AppError::Security("Could not read the cloud API key".into()))?
 }
 
-pub async fn list_models(provider: CloudProvider) -> Result<CloudModelCatalogDto> {
-    let key = saved_key(provider).await?;
+pub async fn list_models(
+    credentials: &dyn CredentialsPort,
+    provider: CloudProvider,
+) -> Result<CloudModelCatalogDto> {
+    let key = saved_key(credentials, provider).await?;
     catalog(
         provider,
         key.as_deref(),

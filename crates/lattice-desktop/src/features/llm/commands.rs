@@ -35,6 +35,3 @@ pub async fn get_available_models(
     let result = use_case.execute().await?;
     Ok(result.models)
 }
-
-#[cfg(test)]
-mod tests;

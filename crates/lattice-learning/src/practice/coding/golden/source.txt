@@ -15,7 +15,7 @@ Rules:
 - The reference is a complete, correct solution.py that meets the target complexity.
 - A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
 - Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
-- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals, arithmetic, comparisons, conditional expressions, indexing and comprehensions, such as list(range(50000)), [3] * 100000 or [i * 7919 % 100003 for i in range(100000)]. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
 - "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
 --- schema ---
 {
@@ -24,7 +24,7 @@ Rules:
   "required": [
     "title",
     "statement",
-    "function",
+    "functionName",
     "params",
     "returns",
     "constraints",
@@ -48,7 +48,7 @@ Rules:
       "type": "string",
       "minLength": 1
     },
-    "function": {
+    "functionName": {
       "type": "string",
       "minLength": 1
     },
@@ -292,7 +292,7 @@ Rules:
 - The reference is a complete, correct solution.py that meets the target complexity.
 - A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
 - Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
-- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals, arithmetic, comparisons, conditional expressions, indexing and comprehensions, such as list(range(50000)), [3] * 100000 or [i * 7919 % 100003 for i in range(100000)]. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
 - "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
 --- schema ---
 {
@@ -301,7 +301,7 @@ Rules:
   "required": [
     "title",
     "statement",
-    "function",
+    "functionName",
     "params",
     "returns",
     "constraints",
@@ -325,7 +325,7 @@ Rules:
       "type": "string",
       "minLength": 1
     },
-    "function": {
+    "functionName": {
       "type": "string",
       "minLength": 1
     },
@@ -569,7 +569,7 @@ Rules:
 - The reference is a complete, correct solution.py that meets the target complexity.
 - A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
 - Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
-- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals, arithmetic, comparisons, conditional expressions, indexing and comprehensions, such as list(range(50000)), [3] * 100000 or [i * 7919 % 100003 for i in range(100000)]. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
 - "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
 --- schema ---
 {
@@ -578,7 +578,7 @@ Rules:
   "required": [
     "title",
     "statement",
-    "function",
+    "functionName",
     "params",
     "returns",
     "constraints",
@@ -602,7 +602,7 @@ Rules:
       "type": "string",
       "minLength": 1
     },
-    "function": {
+    "functionName": {
       "type": "string",
       "minLength": 1
     },
@@ -846,7 +846,7 @@ Rules:
 - The reference is a complete, correct solution.py that meets the target complexity.
 - A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
 - Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
-- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals, arithmetic, comparisons, conditional expressions, indexing and comprehensions, such as list(range(50000)), [3] * 100000 or [i * 7919 % 100003 for i in range(100000)]. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
 - "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
 
 The learner will be handed one misreading as buggy code to repair, so write each misreading as a small, realistic change to the reference (an off-by-one, a wrong comparison, a missed case) that keeps the function's shape.
@@ -857,7 +857,7 @@ The learner will be handed one misreading as buggy code to repair, so write each
   "required": [
     "title",
     "statement",
-    "function",
+    "functionName",
     "params",
     "returns",
     "constraints",
@@ -881,7 +881,7 @@ The learner will be handed one misreading as buggy code to repair, so write each
       "type": "string",
       "minLength": 1
     },
-    "function": {
+    "functionName": {
       "type": "string",
       "minLength": 1
     },
@@ -1125,7 +1125,7 @@ Rules:
 - The reference is a complete, correct solution.py that meets the target complexity.
 - A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
 - Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
-- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals, arithmetic, comparisons, conditional expressions, indexing and comprehensions, such as list(range(50000)), [3] * 100000 or [i * 7919 % 100003 for i in range(100000)]. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
 - "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
 
 The learner will be handed one misreading as buggy code to repair, so write each misreading as a small, realistic change to the reference (an off-by-one, a wrong comparison, a missed case) that keeps the function's shape.
@@ -1136,7 +1136,7 @@ The learner will be handed one misreading as buggy code to repair, so write each
   "required": [
     "title",
     "statement",
-    "function",
+    "functionName",
     "params",
     "returns",
     "constraints",
@@ -1160,7 +1160,7 @@ The learner will be handed one misreading as buggy code to repair, so write each
       "type": "string",
       "minLength": 1
     },
-    "function": {
+    "functionName": {
       "type": "string",
       "minLength": 1
     },
@@ -1404,7 +1404,7 @@ Rules:
 - The reference is a complete, correct solution.py that meets the target complexity.
 - A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
 - Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
-- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals, arithmetic, comparisons, conditional expressions, indexing and comprehensions, such as list(range(50000)), [3] * 100000 or [i * 7919 % 100003 for i in range(100000)]. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
 - "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
 
 The learner will be handed one misreading as buggy code to repair, so write each misreading as a small, realistic change to the reference (an off-by-one, a wrong comparison, a missed case) that keeps the function's shape.
@@ -1415,7 +1415,7 @@ The learner will be handed one misreading as buggy code to repair, so write each
   "required": [
     "title",
     "statement",
-    "function",
+    "functionName",
     "params",
     "returns",
     "constraints",
@@ -1439,7 +1439,7 @@ The learner will be handed one misreading as buggy code to repair, so write each
       "type": "string",
       "minLength": 1
     },
-    "function": {
+    "functionName": {
       "type": "string",
       "minLength": 1
     },
@@ -1682,7 +1682,7 @@ Rules:
 - The reference is a complete, correct solution.py that meets the target complexity.
 - A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
 - Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
-- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals, arithmetic, comparisons, conditional expressions, indexing and comprehensions, such as list(range(50000)), [3] * 100000 or [i * 7919 % 100003 for i in range(100000)]. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
 - "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
 --- schema ---
 {
@@ -1691,7 +1691,7 @@ Rules:
   "required": [
     "title",
     "statement",
-    "function",
+    "functionName",
     "params",
     "returns",
     "constraints",
@@ -1715,7 +1715,7 @@ Rules:
       "type": "string",
       "minLength": 1
     },
-    "function": {
+    "functionName": {
       "type": "string",
       "minLength": 1
     },
@@ -1959,7 +1959,7 @@ Rules:
 - The reference is a complete, correct solution.py that meets the target complexity.
 - A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
 - Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
-- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals, arithmetic, comparisons, conditional expressions, indexing and comprehensions, such as list(range(50000)), [3] * 100000 or [i * 7919 % 100003 for i in range(100000)]. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
 - "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
 --- schema ---
 {
@@ -1968,7 +1968,7 @@ Rules:
   "required": [
     "title",
     "statement",
-    "function",
+    "functionName",
     "params",
     "returns",
     "constraints",
@@ -1992,7 +1992,7 @@ Rules:
       "type": "string",
       "minLength": 1
     },
-    "function": {
+    "functionName": {
       "type": "string",
       "minLength": 1
     },
@@ -2236,10 +2236,10 @@ Rules:
 - The reference is a complete, correct solution.py that meets the target complexity.
 - A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
 - Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
-- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals, arithmetic, comparisons, conditional expressions, indexing and comprehensions, such as list(range(50000)), [3] * 100000 or [i * 7919 % 100003 for i in range(100000)]. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
 - "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
 --- assistant ---
-{"title":"Pair with a given sum","statement":"Return the positions of the two numbers that add up to the target.","function":"pair_positions","params":[{"name":"numbers","annotation":"list[int]"},{"name":"target","annotation":"int"}],"returns":"list[int]","constraints":["There is exactly one pair."],"clarifications":[],"targetComplexity":"O(n) time, O(n) space","patterns":["hash_map_lookup"],"compare":"exact","tolerance":0,"reference":"REF BAD","misreadings":[{"description":"Uses a number twice.","code":"LATE"},{"description":"Stops at the first sum.","code":"EARLY"},{"description":"Same as the reference.","code":"SAME"}],"examples":[{"category":"a pair at the start","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"a pair in the middle","args":["[1, 2, 3]","5"],"expected":"[1, 2]"}],"hidden":[{"category":"duplicate numbers","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"negative numbers","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"the pair at the end","args":["[1, 2, 3]","5"],"expected":"[1, 2]"}],"scale":[{"category":"a long list","args":["list(range(50000))","99997"]}]}
+{"title":"Pair with a given sum","statement":"Return the positions of the two numbers that add up to the target.","functionName":"pair_positions","params":[{"name":"numbers","annotation":"list[int]"},{"name":"target","annotation":"int"}],"returns":"list[int]","constraints":["There is exactly one pair."],"clarifications":[],"targetComplexity":"O(n) time, O(n) space","patterns":["hash_map_lookup"],"compare":"exact","tolerance":0,"reference":"REF BAD","misreadings":[{"description":"Uses a number twice.","code":"LATE"},{"description":"Stops at the first sum.","code":"EARLY"},{"description":"Same as the reference.","code":"SAME"}],"examples":[{"category":"a pair at the start","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"a pair in the middle","args":["[1, 2, 3]","5"],"expected":"[1, 2]"}],"hidden":[{"category":"duplicate numbers","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"negative numbers","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"the pair at the end","args":["[1, 2, 3]","5"],"expected":"[1, 2]"}],"scale":[{"category":"a long list","args":["list(range(50000))","99997"]}]}
 --- user ---
 That answer could not be used: The reference solution did not pass every case:
 - hidden-1 (duplicate numbers): the reference returned 'wrong' where [1, 2] was expected
@@ -2251,7 +2251,7 @@ Fix the reference, or the cases that disagree with the statement. Answer the sam
   "required": [
     "title",
     "statement",
-    "function",
+    "functionName",
     "params",
     "returns",
     "constraints",
@@ -2275,7 +2275,7 @@ Fix the reference, or the cases that disagree with the statement. Answer the sam
       "type": "string",
       "minLength": 1
     },
-    "function": {
+    "functionName": {
       "type": "string",
       "minLength": 1
     },
@@ -2519,7 +2519,7 @@ Rules:
 - The reference is a complete, correct solution.py that meets the target complexity.
 - A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
 - Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
-- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals, arithmetic, comparisons, conditional expressions, indexing and comprehensions, such as list(range(50000)), [3] * 100000 or [i * 7919 % 100003 for i in range(100000)]. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
 - "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
 
 The learner will be handed one misreading as buggy code to repair, so write each misreading as a small, realistic change to the reference (an off-by-one, a wrong comparison, a missed case) that keeps the function's shape.
@@ -2530,7 +2530,7 @@ The learner will be handed one misreading as buggy code to repair, so write each
   "required": [
     "title",
     "statement",
-    "function",
+    "functionName",
     "params",
     "returns",
     "constraints",
@@ -2554,7 +2554,7 @@ The learner will be handed one misreading as buggy code to repair, so write each
       "type": "string",
       "minLength": 1
     },
-    "function": {
+    "functionName": {
       "type": "string",
       "minLength": 1
     },
@@ -2798,12 +2798,12 @@ Rules:
 - The reference is a complete, correct solution.py that meets the target complexity.
 - A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
 - Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
-- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals, arithmetic, comparisons, conditional expressions, indexing and comprehensions, such as list(range(50000)), [3] * 100000 or [i * 7919 % 100003 for i in range(100000)]. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
 - "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
 
 The learner will be handed one misreading as buggy code to repair, so write each misreading as a small, realistic change to the reference (an off-by-one, a wrong comparison, a missed case) that keeps the function's shape.
 --- assistant ---
-{"title":"Pair with a given sum","statement":"Return the positions of the two numbers that add up to the target.","function":"pair_positions","params":[{"name":"numbers","annotation":"list[int]"},{"name":"target","annotation":"int"}],"returns":"list[int]","constraints":["There is exactly one pair."],"clarifications":[],"targetComplexity":"O(n) time, O(n) space","patterns":["hash_map_lookup"],"compare":"exact","tolerance":0,"reference":"REF BAD","misreadings":[{"description":"Uses a number twice.","code":"LATE"},{"description":"Stops at the first sum.","code":"EARLY"},{"description":"Same as the reference.","code":"SAME"}],"examples":[{"category":"a pair at the start","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"a pair in the middle","args":["[1, 2, 3]","5"],"expected":"[1, 2]"}],"hidden":[{"category":"duplicate numbers","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"negative numbers","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"the pair at the end","args":["[1, 2, 3]","5"],"expected":"[1, 2]"}],"scale":[{"category":"a long list","args":["list(range(50000))","99997"]}]}
+{"title":"Pair with a given sum","statement":"Return the positions of the two numbers that add up to the target.","functionName":"pair_positions","params":[{"name":"numbers","annotation":"list[int]"},{"name":"target","annotation":"int"}],"returns":"list[int]","constraints":["There is exactly one pair."],"clarifications":[],"targetComplexity":"O(n) time, O(n) space","patterns":["hash_map_lookup"],"compare":"exact","tolerance":0,"reference":"REF BAD","misreadings":[{"description":"Uses a number twice.","code":"LATE"},{"description":"Stops at the first sum.","code":"EARLY"},{"description":"Same as the reference.","code":"SAME"}],"examples":[{"category":"a pair at the start","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"a pair in the middle","args":["[1, 2, 3]","5"],"expected":"[1, 2]"}],"hidden":[{"category":"duplicate numbers","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"negative numbers","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"the pair at the end","args":["[1, 2, 3]","5"],"expected":"[1, 2]"}],"scale":[{"category":"a long list","args":["list(range(50000))","99997"]}]}
 --- user ---
 That answer could not be used: The reference solution did not pass every case:
 - hidden-1 (duplicate numbers): the reference returned 'wrong' where [1, 2] was expected
@@ -2815,7 +2815,7 @@ Fix the reference, or the cases that disagree with the statement. Answer the sam
   "required": [
     "title",
     "statement",
-    "function",
+    "functionName",
     "params",
     "returns",
     "constraints",
@@ -2839,7 +2839,7 @@ Fix the reference, or the cases that disagree with the statement. Answer the sam
       "type": "string",
       "minLength": 1
     },
-    "function": {
+    "functionName": {
       "type": "string",
       "minLength": 1
     },

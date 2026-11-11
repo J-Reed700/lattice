@@ -1,5 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
-
 use std::path::PathBuf;
 
 use candle_core::{Device, Module, Tensor, D};

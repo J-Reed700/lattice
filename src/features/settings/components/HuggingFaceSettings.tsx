@@ -9,8 +9,8 @@
  *    typing, and is cleared on success.
  *  - It never reaches the React Query cache, a toast, a log, or an error
  *    message. `mutation.reset()` after a save drops the mutation variables too.
- *  - `get_huggingface_token` (which returns the plaintext) is never called.
- *    The status query carries `{ isSet }` and nothing else.
+ *  - No command returns the plaintext. The status query carries `{ isSet }` and
+ *    nothing else.
  */
 
 import { useEffect, useState } from 'react';

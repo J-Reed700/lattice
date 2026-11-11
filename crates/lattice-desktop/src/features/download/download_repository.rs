@@ -22,9 +22,6 @@ struct DownloadSessionRow {
     checksum_value: Option<String>,
     error_message: Option<String>,
     retry_count: i32,
-    // reason: sqlx::FromRow column mapped from `SELECT *`; kept to mirror the table schema.
-    #[allow(dead_code)]
-    max_retries: i32,
     created_at: String,
     updated_at: String,
     started_at: Option<String>,

@@ -4,7 +4,6 @@
 //!
 //! These DTOs represent file metadata and content across application boundaries.
 
-use lattice_core::application::services::FileType;
 use serde::{Deserialize, Serialize};
 
 /// File metadata representation.
@@ -146,9 +145,6 @@ pub struct OpenFileResponseDto {
     /// Action taken: "render_internal" or "opened_external"
     pub action: String,
 
-    /// File type detected (enum: WebArticleHtml, Pdf, Image, Text, Unknown)
-    pub file_type: FileType,
-
     /// Path to content (HTML file for internal rendering, original file for external)
     pub content_path: String,
 
@@ -164,35 +160,17 @@ impl OpenFileResponseDto {
     pub fn render_internal(html_path: String, title: String) -> Self {
         Self {
             action: "render_internal".to_string(),
-            file_type: FileType::WebArticleHtml,
             content_path: html_path,
             title: Some(title),
-        }
-    }
-
-    /// Create response for internal rendering with specific file type.
-    ///
-    /// Used when opening files that can be rendered internally (PDF, images, text, etc).
-    pub fn render_internal_with_type(
-        content_path: String,
-        file_type: FileType,
-        title: Option<String>,
-    ) -> Self {
-        Self {
-            action: "render_internal".to_string(),
-            file_type,
-            content_path,
-            title,
         }
     }
 
     /// Create response for external opening.
     ///
     /// Used when opening files in the default system application.
-    pub fn opened_external(path: String, file_type: FileType) -> Self {
+    pub fn opened_external(path: String) -> Self {
         Self {
             action: "opened_external".to_string(),
-            file_type,
             content_path: path,
             title: None,
         }
@@ -272,7 +250,6 @@ mod tests {
         );
 
         assert_eq!(response.action, "render_internal");
-        assert_eq!(response.file_type, FileType::WebArticleHtml);
         assert_eq!(response.content_path, "/path/to/article.html");
         assert_eq!(response.title, Some("My Article Title".to_string()));
 
@@ -280,33 +257,14 @@ mod tests {
         let deserialized: OpenFileResponseDto = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized.action, "render_internal");
-        assert_eq!(deserialized.file_type, FileType::WebArticleHtml);
         assert_eq!(deserialized.title, Some("My Article Title".to_string()));
     }
 
     #[test]
-    fn test_open_file_response_dto_render_internal_with_type() {
-        let response = OpenFileResponseDto::render_internal_with_type(
-            "/path/to/document.pdf".to_string(),
-            FileType::Pdf,
-            Some("My PDF".to_string()),
-        );
-
-        assert_eq!(response.action, "render_internal");
-        assert_eq!(response.file_type, FileType::Pdf);
-        assert_eq!(response.content_path, "/path/to/document.pdf");
-        assert_eq!(response.title, Some("My PDF".to_string()));
-    }
-
-    #[test]
     fn test_open_file_response_dto_opened_external() {
-        let response = OpenFileResponseDto::opened_external(
-            "/path/to/document.pdf".to_string(),
-            FileType::Pdf,
-        );
+        let response = OpenFileResponseDto::opened_external("/path/to/document.pdf".to_string());
 
         assert_eq!(response.action, "opened_external");
-        assert_eq!(response.file_type, FileType::Pdf);
         assert_eq!(response.content_path, "/path/to/document.pdf");
         assert_eq!(response.title, None);
 
@@ -314,20 +272,15 @@ mod tests {
         let deserialized: OpenFileResponseDto = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized.action, "opened_external");
-        assert_eq!(deserialized.file_type, FileType::Pdf);
         assert_eq!(deserialized.title, None);
     }
 
     #[test]
     fn test_open_file_response_dto_serialization_format() {
-        let response = OpenFileResponseDto::render_internal_with_type(
-            "/test.pdf".to_string(),
-            FileType::Pdf,
-            None,
-        );
+        let response = OpenFileResponseDto::opened_external("/test.pdf".to_string());
 
         let json = serde_json::to_string(&response).unwrap();
-        assert!(json.contains("\"fileType\":\"pdf\""));
-        assert!(json.contains("\"action\":\"render_internal\""));
+        assert!(!json.contains("fileType"));
+        assert!(json.contains("\"action\":\"opened_external\""));
     }
 }

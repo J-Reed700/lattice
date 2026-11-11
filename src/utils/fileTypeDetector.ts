@@ -1,3 +1,5 @@
+import { formatOfExtension, isIndexableFormat } from './fileTypeCatalogue';
+
 export type FileType = 'markdown' | 'code' | 'text' | 'html' | 'docx' | 'pdf' | 'image' | 'audio' | 'unsupported';
 
 export interface FileTypeInfo {
@@ -48,17 +50,10 @@ const TEXT_EXTENSIONS = [
   '.gitignore', '.dockerignore', '.editorconfig',
 ];
 
-// These formats are previewed through extracted plain text from the backend.
-const EXTRACTED_TEXT_DOCUMENT_EXTENSIONS = ['.rtf', '.odt', '.xlsx', '.pptx'];
-
 const PDF_EXTENSIONS = ['.pdf'];
 
 const IMAGE_EXTENSIONS = [
   '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg', '.webp', '.ico',
-];
-
-const AUDIO_EXTENSIONS = [
-  '.mp3', '.m4a', '.wav', '.flac', '.ogg', '.aac', '.wma',
 ];
 
 export function detectFileType(filePath: string): FileTypeInfo {
@@ -81,10 +76,6 @@ export function detectFileType(filePath: string): FileTypeInfo {
     return { type: 'text', canPreview: true };
   }
 
-  if (EXTRACTED_TEXT_DOCUMENT_EXTENSIONS.includes(extension)) {
-    return { type: 'text', canPreview: true };
-  }
-
   if (extension === '.html' || extension === '.htm') {
     return { type: 'html', canPreview: true };
   }
@@ -101,8 +92,15 @@ export function detectFileType(filePath: string): FileTypeInfo {
     return { type: 'image', canPreview: true };
   }
 
-  if (AUDIO_EXTENSIONS.includes(extension)) {
+  const format = formatOfExtension(extension.slice(1));
+
+  if (format?.category === 'audio') {
     return { type: 'audio', canPreview: true };
+  }
+
+  // Everything the indexer reads, the backend can also hand back as text.
+  if (isIndexableFormat(format)) {
+    return { type: 'text', canPreview: true };
   }
 
   return { type: 'unsupported', canPreview: false };

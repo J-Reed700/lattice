@@ -104,7 +104,6 @@ impl Finding {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
 
     /// The user's resolution is what lets an unsupported claim publish.

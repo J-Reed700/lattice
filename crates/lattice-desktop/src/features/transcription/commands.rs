@@ -17,8 +17,8 @@ use crate::features::transcription::dto::{
 use crate::features::transcription::use_cases::{
     GetTranscriptionStatusUseCase, TranscribeFileUseCase, TranscribeSpeechUseCase,
 };
-use crate::infrastructure::services::file_type_detector::{FileCategory, FileTypeDetector};
 use crate::interfaces::di::Container;
+use lattice_core::domain::value_objects::FileFormat;
 use lattice_core::shared::error::{AppError, Result};
 
 /// Transcribes an audio file on-device and returns timestamped segments.
@@ -33,13 +33,7 @@ pub async fn transcribe_file_impl(container: &Container, path: &str) -> Result<T
         .validate_path(path)
         .map_err(|e| AppError::InvalidInput(format!("Invalid path: {}", e)))?;
 
-    let is_audio = validated_path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| FileTypeDetector::get_category(&ext.to_ascii_lowercase()) == FileCategory::Audio)
-        .unwrap_or(false);
-
-    if !is_audio {
+    if !FileFormat::is_audio_path(&validated_path) {
         return Err(AppError::InvalidInput(
             "Only audio files can be transcribed.".to_string(),
         ));

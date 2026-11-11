@@ -14,8 +14,8 @@ use lattice_core::domain::models::fit::Footprint;
 /// survived a crash. The mutex is `parking_lot`, not tokio's, because the
 /// shutdown consumer is a synchronous callback where `block_on` can deadlock.
 ///
-/// TODO: on Linux, `prctl(PR_SET_PDEATHSIG)` would need a pre-exec hook,
-/// which `tauri-plugin-shell` does not expose.
+/// On Linux there is no parent-death signal, because `prctl(PR_SET_PDEATHSIG)`
+/// needs a pre-exec hook that `tauri-plugin-shell` does not expose.
 pub struct SidecarRegistry {
     pub(super) entries: SyncMutex<RegistryState>,
 

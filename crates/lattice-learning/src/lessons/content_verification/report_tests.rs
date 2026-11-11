@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 //! What the stored report keeps of the findings a published edit, put back
 //! or removal replaced, and gives back when it is undone.
 use super::claim_ledger_tests::pass_report;
