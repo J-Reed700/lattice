@@ -169,7 +169,7 @@ pub async fn download_model_impl(
 }
 
 /// A llama.cpp connection to try. The header value may be left blank to try
-/// the one already stored under the same header name.
+/// the one already stored for the saved server URL.
 #[derive(serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TestLlamaCppConnectionRequest {
@@ -182,6 +182,8 @@ pub struct TestLlamaCppConnectionRequest {
     pub auth_header_value: String,
 }
 
+/// Try a llama.cpp connection. A blank header value tries the one already
+/// stored for the saved server URL.
 #[tauri::command]
 #[specta::specta]
 pub async fn test_llama_cpp_connection(

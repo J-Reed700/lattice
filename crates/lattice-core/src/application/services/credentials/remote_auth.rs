@@ -73,8 +73,17 @@ pub async fn header_for_test(
     if name.is_empty() {
         return Ok(None);
     }
-    let _ = (tested_url, saved_url);
+    if !same_server_url(tested_url, saved_url) {
+        return Err(AppError::InvalidConfig(
+            "Type the header value to test a server other than the saved one".into(),
+        ));
+    }
     header(credentials, server, name).await
+}
+
+fn same_server_url(left: &str, right: &str) -> bool {
+    let normalize = |url: &str| url.trim().trim_end_matches('/').to_owned();
+    normalize(left) == normalize(right)
 }
 
 #[cfg(test)]

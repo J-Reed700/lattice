@@ -21,7 +21,8 @@ async fn live_claim_pairs_eval() -> Result<()> {
         std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
     )?)?;
     let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
-    let model = LlamaCppLlm::new(&config, None)?
+    let header = live_eval_header(&config.llama_cpp.auth_header_name)?;
+    let model = LlamaCppLlm::new(&config, header)?
         .schedule(&crate::features::llm::scheduler::SchedulerRegistry::default())
         .await;
     let checker_name =

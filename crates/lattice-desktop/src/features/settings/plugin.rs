@@ -10,7 +10,6 @@ use crate::features::settings::text_files::{self, FileFilterDto, NativeDialogs};
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::llm_port::{InvalidationCause, RemoteHeader, RemoteServer};
 use lattice_core::application::services::credentials::remote_auth;
-use lattice_core::application::services::credentials::CredentialKey;
 use lattice_core::domain::models::model_ref::CloudProvider;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::http::{auth_header_map, reqwest_client_builder};
@@ -174,7 +173,7 @@ async fn fetch_models_from_tags(client: &Client, base_url: &str) -> Result<Vec<S
 }
 
 /// Try an Ollama connection. A blank header value tries the one already
-/// stored under the same header name.
+/// stored for the saved server URL.
 #[tauri::command]
 #[specta::specta]
 pub async fn test_ollama_connection(
@@ -357,16 +356,10 @@ pub async fn save_remote_auth_header_value(
     server: RemoteServer,
     value: Option<String>,
 ) -> Result<(), ApiError> {
-    let key = CredentialKey::for_server(server);
-    let credentials = container.credentials();
-    match value
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        Some(value) => credentials.set_api_key(key.as_str(), value).await?,
-        None => credentials.delete_api_key(key.as_str()).await?,
-    }
+    container
+        .settings_repository()
+        .store_header_value(server, value.as_deref())
+        .await?;
     container.invalidate_llm_instances(InvalidationCause::RemoteAuthChanged { server });
     Ok(())
 }

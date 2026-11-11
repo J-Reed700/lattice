@@ -209,10 +209,15 @@ impl SettingsRepository {
     /// settings types no longer have a field for them. Only after the keyring
     /// holds every one is the file rewritten without them.
     async fn migrate_legacy_secrets(&self) -> Result<()> {
+        let _guard = self.write_lock.lock().await;
+        self.migrate_legacy_secrets_locked().await
+    }
+
+    /// As [`Self::migrate_legacy_secrets`]; the caller holds `write_lock`.
+    async fn migrate_legacy_secrets_locked(&self) -> Result<()> {
         let Some(credentials) = &self.credentials else {
             return Ok(());
         };
-        let _guard = self.write_lock.lock().await;
         let Some(raw) = self.read_raw_settings().await else {
             return Ok(());
         };
@@ -287,13 +292,14 @@ impl SettingsRepository {
     }
 
     /// Whether the keyring holds a value for `server`.
-    async fn header_value_stored(&self, server: RemoteServer) -> bool {
+    async fn header_value_stored(&self, server: RemoteServer) -> Result<bool> {
         match &self.credentials {
-            Some(credentials) => credentials
-                .has_api_key(CredentialKey::for_server(server).as_str())
-                .await
-                .unwrap_or(false),
-            None => false,
+            Some(credentials) => {
+                credentials
+                    .has_api_key(CredentialKey::for_server(server).as_str())
+                    .await
+            }
+            None => Ok(false),
         }
     }
 
@@ -309,8 +315,8 @@ impl SettingsRepository {
         let _guard = self.write_lock.lock().await;
         let existing = self.get_all().await?;
         let previous_vault_enabled = existing.vault.enabled;
-        let ollama_held = self.header_value_stored(RemoteServer::Ollama).await;
-        let llama_held = self.header_value_stored(RemoteServer::LlamaCpp).await;
+        let ollama_held = self.header_value_stored(RemoteServer::Ollama).await?;
+        let llama_held = self.header_value_stored(RemoteServer::LlamaCpp).await?;
         drop_unbacked_header_names(&mut imported_settings, &existing, ollama_held, llama_held);
 
         let validation = self.validate_settings(&imported_settings);
@@ -567,6 +573,8 @@ impl SettingsRepositoryPort for SettingsRepository {
         let Some(credentials) = &self.credentials else {
             return Ok(());
         };
+        let _guard = self.write_lock.lock().await;
+        self.migrate_legacy_secrets_locked().await?;
         let key = CredentialKey::for_server(server);
         match value.map(str::trim).filter(|value| !value.is_empty()) {
             Some(value) => credentials.set_api_key(key.as_str(), value).await,

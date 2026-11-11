@@ -3760,7 +3760,7 @@ async getModelLimits(model: ModelRef) : Promise<Result<ModelWindowDto, ApiError>
 },
 /**
  * Try an Ollama connection. A blank header value tries the one already
- * stored under the same header name.
+ * stored for the saved server URL.
  */
 async testOllamaConnection(request: TestOllamaConnectionRequest) : Promise<Result<TestOllamaConnectionResponse, ApiError>> {
     try {
@@ -3791,6 +3791,10 @@ async getRemoteAuthHeaderStatus() : Promise<Result<RemoteAuthStatusDto, ApiError
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Try a llama.cpp connection. A blank header value tries the one already
+ * stored for the saved server URL.
+ */
 async testLlamaCppConnection(request: TestLlamaCppConnectionRequest) : Promise<Result<TestOllamaConnectionResponse, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:settings|test_llama_cpp_connection", { request }) };
@@ -10965,7 +10969,7 @@ export type TestCustomToolRequest = { endpoint: string; queryParam: string; maxR
 export type TestCustomToolResponse = { finalUrl: string; status: number; contentType: string | null; bodyPreview: string }
 /**
  * A llama.cpp connection to try. The header value may be left blank to try
- * the one already stored under the same header name.
+ * the one already stored for the saved server URL.
  */
 export type TestLlamaCppConnectionRequest = { url: string; model?: string; authHeaderName?: string; authHeaderValue?: string }
 export type TestOllamaConnectionRequest = { ollamaUrl: string; authHeaderName?: string; authHeaderValue?: string }

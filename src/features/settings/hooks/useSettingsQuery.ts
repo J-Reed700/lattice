@@ -12,6 +12,7 @@ import { useApi } from '@/contexts/ApiContext';
 import { useFileBrowserStore } from '@/features/files/stores/fileBrowserStore';
 import { LEARNING_CLAIM_REVIEW_ROOT } from '@/features/learning/api/learningQueryKeys';
 import { CLOUD_MODELS_QUERY_KEY } from '@/features/model/hooks/useCloudModels';
+import { REMOTE_AUTH_STATUS_QUERY_KEY } from '@/features/settings/hooks/useRemoteAuthStatus';
 import VaultAPI, { type ApiClient } from '@/lib/api';
 import type { UpdateSettingsRequest } from '@/lib/bindings';
 import {
@@ -91,6 +92,7 @@ export function useSettingsTransfer() {
     if (result.ok) {
       void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: LEARNING_CLAIM_REVIEW_ROOT });
+      void queryClient.invalidateQueries({ queryKey: REMOTE_AUTH_STATUS_QUERY_KEY });
     }
   };
   const reset = useMutation({ mutationFn: () => api.resetSettings(), onSuccess: refreshOnSuccess }, queryClient);

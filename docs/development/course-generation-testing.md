@@ -77,7 +77,7 @@ All live tests are `#[ignore]` lib tests in `crates/lattice-desktop/src/features
 ### What a live run touches
 
 - **Database:** a new SQLite file in the run's artifact directory, created with `create_new` and migrated from `migrations/`. The test refuses to run if the file exists. It never opens the user's library.
-- **Model:** the llama.cpp server configured in the settings file named by `LATTICE_LLAMACPP_SETTINGS` (its `settings.llm` block). On Josh's machine this is his real remote Qwen3.8-27B llama-server with a 131k window. It is single-slot: while a run is going, the app's own chat queues behind it, and a run takes the server for hours.
+- **Model:** the llama.cpp server configured in the settings file named by `LATTICE_LLAMACPP_SETTINGS` (its `settings.llm` block). On Josh's machine this is his real remote Qwen3.8-27B llama-server with a 131k window. If `llamaCpp.authHeaderName` names a header, the value comes from `LATTICE_LLAMACPP_AUTH_HEADER_VALUE`, and a run without it stops. It is single-slot: while a run is going, the app's own chat queues behind it, and a run takes the server for hours.
 - **Web:** real searches (DuckDuckGo) and real page fetches through `WebService`, with its cache in `<run>/web/`.
 - **Disk:** every model call is recorded (`call-N.json`), so a run directory can reach hundreds of files.
 - **Window:** a lesson needs about 20k tokens of window to be written. The 9B at a saved context of 8,704 tokens could not write lessons (2026-10-16), so a settings file or recipe for a lesson run needs a larger window; the scored eval's 9B recipe serves and configures 32,768 (§7).
@@ -264,6 +264,7 @@ Scores the lesson's strict passage judge (`ClaimChecker`, `CheckPolicy::Strict`)
 | Variable | Meaning |
 |---|---|
 | `LATTICE_LLAMACPP_SETTINGS` | Settings whose `settings.llm` names the model to test (Josh's Qwen, or a settings copy pointing at another server such as Laguna) |
+| `LATTICE_LLAMACPP_AUTH_HEADER_VALUE` | The value of the header named by `llamaCpp.authHeaderName` in those settings. Required when the settings name a header; the settings file never holds the value |
 | `LATTICE_CLAIM_PAIRS` | The gold JSONL |
 | `LATTICE_CLAIM_RESULTS` | Output JSONL; appended per batch, so a stopped run resumes |
 | `LATTICE_CLAIM_CHECKER` | Name written into each row (default `lesson-judge`) |

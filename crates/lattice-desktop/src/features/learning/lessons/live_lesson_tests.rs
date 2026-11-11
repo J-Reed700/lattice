@@ -25,6 +25,28 @@ mod small;
 #[path = "live_web_trace.rs"]
 mod web_trace;
 
+/// The header a live run sends to its llama.cpp server. The settings file
+/// holds the header name; the value comes from the environment.
+fn live_eval_header(
+    name: &str,
+) -> Result<Option<lattice_core::application::ports::llm_port::RemoteHeader>> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    match std::env::var("LATTICE_LLAMACPP_AUTH_HEADER_VALUE") {
+        Ok(value) if !value.trim().is_empty() => Ok(Some(
+            lattice_core::application::ports::llm_port::RemoteHeader {
+                name: name.to_owned(),
+                value: value.trim().to_owned(),
+            },
+        )),
+        _ => Err(AppError::InvalidConfig(format!(
+            "The settings file names the header `{name}`; set LATTICE_LLAMACPP_AUTH_HEADER_VALUE to its value"
+        ))),
+    }
+}
+
 /// The embedding model a live run was given, loaded once, or none. The course
 /// indexes of a live run read it through this.
 struct GivenModel(Option<Arc<dyn lattice_core::application::ports::EmbeddingPort>>);
@@ -271,12 +293,7 @@ impl ObservedModel {
         directory: std::path::PathBuf,
         first_call: usize,
     ) -> Result<Self> {
-        let header = (!settings.llama_cpp.auth_header_name.trim().is_empty()).then(|| {
-            lattice_core::application::ports::llm_port::RemoteHeader {
-                name: settings.llama_cpp.auth_header_name.clone(),
-                value: std::env::var("LATTICE_LLAMACPP_AUTH_HEADER_VALUE").unwrap_or_default(),
-            }
-        });
+        let header = live_eval_header(&settings.llama_cpp.auth_header_name)?;
         Self::with_header(settings, header, directory, first_call).await
     }
 
