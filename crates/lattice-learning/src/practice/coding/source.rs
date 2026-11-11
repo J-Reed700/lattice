@@ -1,27 +1,20 @@
-//! Where coding problems come from. `GeneratedProblems` has the model write a problem, proves it by running the
-//! reference and the misreadings, and asks again with what failed.
+//! Where a program's problems come from: the author the Program kind drafts with, and the build the evals run.
 
 use crate::drills::build::ask::{ask_request, refuse};
-use crate::drills::runner::CodeRunner;
 use crate::generation::parse_json;
 use crate::lessons::structured_call::reask;
 use crate::model_call;
-use crate::practice::coding::harness::CaseHarness;
 use crate::practice::coding::problem::{
     CaseCompare, CaseVisibility, CodingTask, Misreading, Problem, ProblemCase,
     ProblemClarification, ProblemDifficulty, ProblemSignature, ProblemSpec, SignatureParam,
 };
-use crate::practice::coding::proof::{prove, Proof};
 use crate::practice::kinds::program::shape::{
     brief_of, built_problem_of, case_of, form_of, misreading_of, solution_piece, task_of,
 };
 use crate::practice::kinds::program::toolchain::Toolchains;
 use crate::practice::kinds::program::KIND;
 use crate::practice::session::author::{Author, Authored, Commission, Lesson};
-use crate::practice::session::builder::{build, Built, Making, NothingStore, Target};
-pub use crate::practice::session::builder::{
-    BuildSteps, MAX_PROOF_REASKS, STEP_PROVING, STEP_SAVING, STEP_WRITING,
-};
+use crate::practice::session::builder::{build, BuildSteps, Built, Making, NothingStore, Target};
 use crate::practice::session::kind::Kind;
 use async_trait::async_trait;
 use lattice_core::application::ports::LLMPort;
@@ -76,79 +69,6 @@ pub struct ProblemRequest {
     pub focus: Option<String>,
     /// What the learner has said about what they prepare for.
     pub details: Option<String>,
-}
-
-/// Where a problem comes from. The model writes one today; a pasted problem is the next source.
-#[async_trait]
-pub trait ProblemSource: Send + Sync {
-    async fn problem(
-        &self,
-        request: &ProblemRequest,
-        steps: &dyn BuildSteps,
-        cancel: CancellationToken,
-    ) -> Result<Problem>;
-}
-
-/// Problems the model writes and the app proves.
-pub struct GeneratedProblems<'a> {
-    pub llm: &'a dyn LLMPort,
-    pub runner: &'a dyn CodeRunner,
-    pub harness: &'a dyn CaseHarness,
-}
-
-#[async_trait]
-impl ProblemSource for GeneratedProblems<'_> {
-    async fn problem(
-        &self,
-        request: &ProblemRequest,
-        steps: &dyn BuildSteps,
-        cancel: CancellationToken,
-    ) -> Result<Problem> {
-        for id in &request.patterns {
-            if problem_pattern(id).is_none() {
-                return Err(AppError::InvalidInput(format!(
-                    "{id} is not one of the problem patterns."
-                )));
-            }
-        }
-        let mut asking = model_call::structured(
-            SYSTEM,
-            prompt(request, self.runner.contract()),
-            schema(),
-            PROBLEM_ANSWER_TOKENS,
-            "low",
-        );
-        let mut reasked = 0;
-        loop {
-            // Progress only moves forward, so a draft asked for again is written during the proving step.
-            report(steps, u32::from(reasked > 0), STEP_WRITING).await?;
-            let asked = ask_request(self.llm, asking.clone(), |raw| read(raw, request)).await?;
-            report(steps, 1, STEP_PROVING).await?;
-            let draft = asked.value;
-            let proof = prove(
-                self.runner,
-                self.harness,
-                &draft.spec,
-                &draft.reference,
-                &draft.misreadings,
-                &draft.cases,
-                cancel.clone(),
-            )
-            .await?;
-            match proof {
-                Proof::Proven(proven) => {
-                    return assemble(request.task, draft.spec, draft.reference, proven)
-                }
-                Proof::Unproven(reason) => {
-                    if reasked >= MAX_PROOF_REASKS {
-                        return Err(AppError::ModelAnswerUnusable(reason));
-                    }
-                    reasked += 1;
-                    asking = reask(asking, &asked.raw, &reason);
-                }
-            }
-        }
-    }
 }
 
 /// What a program's build request carries beyond the lesson and the form.
@@ -322,17 +242,6 @@ pub async fn build_problem(
     match build(kind, &making, llm, &Unremembered, steps, cancel).await? {
         Built::Exercise(exercise) => built_problem_of(&exercise),
         Built::NothingToMake(reason) => Err(AppError::ModelAnswerUnusable(reason)),
-    }
-}
-
-/// Tells the build's steps where it is; a build nobody waits for any more stops.
-async fn report(steps: &dyn BuildSteps, current: u32, message: &str) -> Result<()> {
-    if steps.step(current, message).await? {
-        Ok(())
-    } else {
-        Err(AppError::InvalidState(
-            "The coding build was stopped.".into(),
-        ))
     }
 }
 
@@ -735,36 +644,4 @@ fn starter_of(signature: &ProblemSignature) -> String {
         params.join(", "),
         signature.returns
     )
-}
-
-/// The proven problem. For Fix a bug the starter is the code of the misreading killed by the most cases, the first
-/// of those that tie.
-fn assemble(
-    task: CodingTask,
-    mut spec: ProblemSpec,
-    reference: String,
-    proven: crate::practice::coding::proof::Proven,
-) -> Result<Problem> {
-    let mut bug = None;
-    if task == CodingTask::BugFix {
-        let mut chosen: Option<&Misreading> = None;
-        for misreading in &proven.misreadings {
-            if chosen.is_none_or(|best| misreading.killed_by.len() > best.killed_by.len()) {
-                chosen = Some(misreading);
-            }
-        }
-        let chosen = chosen.ok_or_else(|| {
-            AppError::InvalidState("A proven problem keeps at least two misreadings.".into())
-        })?;
-        spec.starter = chosen.code.clone();
-        bug = Some(chosen.id.clone());
-    }
-    Ok(Problem {
-        spec,
-        reference,
-        misreadings: proven.misreadings,
-        cases: proven.cases,
-        reference_ms: proven.reference_ms,
-        bug,
-    })
 }

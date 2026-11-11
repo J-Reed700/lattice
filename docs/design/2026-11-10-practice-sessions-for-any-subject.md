@@ -450,7 +450,12 @@ Tests come first in every step. Nothing is built locally; each step is pushed to
      `LearnerCases::case`, the pure functions (`observe`, `cases_for`, `outcome`, `submit_counts`), Program's
      store, checks and adapter, and the removal of the coding observation, policies, hint entry point and
      counterpart reply that lost their last caller. The stored cue stays `CodingCue` until step 5.
-   Still to move: the proof template and the build job; ratings.
+   - 4.6 The proof template and the build job behind the kind seam: `build(kind, form, lesson)` and
+     `prove(kind, form, draft)` in the engine, the `Author` role, the kind's declared need for misreadings, the
+     practice build job over Program's author and store, and the removal of the coding problem source and its
+     assembly. The stored job kind stays `learning.coding_build` until step 5. The `sound` step has no rule
+     before step 8 and `Sourced` truth, with the storage of "nothing to make", waits for step 9.
+   Still to move: ratings.
 5. The renames of §7: migration, DTOs, commands, bindings.
 6. The screen: `session/` and the kind registry, with Program's editor and results views under `kinds/program/`;
    the dependency rule in the architecture check; the fake-kind tests.

@@ -7,6 +7,7 @@ use crate::practice::kinds::program::shape::solution_piece;
 use crate::practice::kinds::program::toolchain::FakeToolchains;
 use crate::practice::kinds::program::{kind, KIND};
 use crate::practice::session::author::Failed;
+use crate::practice::session::builder::{BuildSteps, MAX_PROOF_REASKS, STEP_PROVING, STEP_WRITING};
 use lattice_core::domain::learning::practice::work::{Draft as ExerciseDraft, Form};
 use std::sync::Mutex;
 
