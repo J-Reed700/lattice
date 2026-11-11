@@ -101,7 +101,7 @@ impl EmbeddingRuntime {
         let generation = self.cache.generation();
         self.cache.get_or_load_with_policy((), generation, || async {
             if let Some(port) = self.recent_failure(generation) {
-                return Ok((Some(port), false));
+                return Ok::<_, AppError>((Some(port), false));
             }
             let model = load().await?;
             let cacheable = match model.is_ready().await {
