@@ -8,9 +8,10 @@ import type * as Wire from '@/lib/bindings';
 import { getErrorMessage } from '@/lib/errorUtils';
 
 import { programApi } from './programApi';
-import type { KindEntryProps } from '../../session/kind';
 import { SETTING_NAMES } from '../../session/practiceNames';
 import { sessionApi } from '../../session/sessionApi';
+
+import type { KindEntryProps } from '../../session/kind';
 
 const STEPS = ['Writing the problem', 'Proving it', 'Saving'] as const;
 

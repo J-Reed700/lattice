@@ -1,4 +1,5 @@
 import { programKind } from './program';
+
 import type { Kinds, KindView } from '../session/kind';
 
 /** Every kind of practice this app can open, by the id the wire carries. */

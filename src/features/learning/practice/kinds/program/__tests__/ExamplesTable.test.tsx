@@ -7,9 +7,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type * as Wire from '@/lib/bindings';
 
 import { ExamplesTable } from '../ExamplesTable';
-import { codingSession } from './fixtures';
+import { programWorkDto } from './fixtures';
 
-const problem = codingSession().problem;
+const problem = programWorkDto().problem;
 
 function example(overrides: Partial<Wire.CodingExampleDto> = {}): Wire.CodingExampleDto {
   return {
@@ -95,6 +95,12 @@ describe('ExamplesTable', () => {
     renderTable({ coverage: { caught: 2, total: 3, uncaught: 'an input where the same number appears twice' } });
     expect(screen.getByRole('status')).toHaveTextContent('Your examples catch 2 of 3 common mistakes');
     expect(screen.getByText(/an input where the same number appears twice/)).toBeInTheDocument();
+  });
+
+  it('says nothing about coverage when the session holds none', () => {
+    renderTable({ coverage: null });
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.queryByText(/common mistakes/)).not.toBeInTheDocument();
   });
 
   it('removes a row and loads a row for editing under its ordinal', async () => {

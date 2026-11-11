@@ -3,7 +3,6 @@ import type { CodingBuildChoice } from '@/features/learning/practice/session/kin
 import { newId } from '@/lib/api';
 import type * as Wire from '@/lib/bindings';
 
-
 import type { AttemptMode } from './usePracticeView';
 
 export type CardId = 'explain' | 'spot' | 'code' | 'mock' | 'role';

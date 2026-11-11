@@ -2,28 +2,44 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
-import { Debrief } from '../Debrief';
-import { codingDebrief } from './fixtures';
+import { DebriefFrame } from '../DebriefFrame';
+import { createFakeKind } from './fakeKind';
+import { practiceDebrief, practiceSession } from './fixtures';
 
 function renderDebrief() {
   const onTryInterview = vi.fn();
   const onExit = vi.fn();
-  render(<Debrief title="Pair with a sum" debrief={codingDebrief()} onExit={onExit} onTryInterview={onTryInterview} />);
+  render(
+    <DebriefFrame
+      session={practiceSession({ title: 'Pair with a sum' })}
+      debrief={practiceDebrief()}
+      kind={createFakeKind(vi.fn())}
+      onExit={onExit}
+      onTryInterview={onTryInterview}
+    />,
+  );
   return { onTryInterview, onExit };
 }
 
-describe('Debrief', () => {
+describe('DebriefFrame', () => {
+  it('titles the debrief with the session\'s title', () => {
+    renderDebrief();
+    expect(screen.getByRole('heading', { name: 'Debrief: Pair with a sum' })).toBeInTheDocument();
+  });
+
   it('shows the scorecard with its evidence, and not enough evidence as such', () => {
     renderDebrief();
     expect(screen.getByText('Problem solving')).toBeInTheDocument();
-    expect(screen.getByText(/a dict remembers what I have seen/)).toBeInTheDocument();
+    expect(screen.getByText(/a stack remembers what I have seen/)).toBeInTheDocument();
     expect(screen.getByText('Testing')).toBeInTheDocument();
     expect(screen.getByText(/Not enough evidence/)).toBeInTheDocument();
   });
 
-  it('shows the facts beside the scores', () => {
+  it('shows the facts beside the scores, each stage under the label the wire sent', () => {
     renderDebrief();
     const facts = screen.getByRole('region', { name: 'What happened' });
+    expect(within(facts).getByText('Understand')).toBeInTheDocument();
+    expect(within(facts).getByText('Make it')).toBeInTheDocument();
     expect(within(facts).getByText(/1:30/)).toBeInTheDocument();
     expect(within(facts).getByText(/5:00/)).toBeInTheDocument();
     expect(within(facts).getByText(/4 runs/)).toBeInTheDocument();
@@ -31,29 +47,25 @@ describe('Debrief', () => {
     expect(within(facts).getByText(/Mock/)).toBeInTheDocument();
   });
 
-  it('gives the strong answer with the reference folded away', () => {
+  it('gives the kind\'s part of the debrief', () => {
     renderDebrief();
-    expect(screen.getByText(/Remember each value and its position/)).toBeInTheDocument();
-    expect(screen.getByText('O(n) time, O(n) space')).toBeInTheDocument();
-    const reference = screen.getByText(/seen = \{\}/);
-    expect(reference.closest('details')).not.toHaveAttribute('open');
+    expect(screen.getByText('Kind debrief text.')).toBeInTheDocument();
   });
 
-  it('lists the cases and which misreadings the examples caught', () => {
+  it('lists which misreadings the examples caught', () => {
     renderDebrief();
-    expect(screen.getAllByText(/an input with duplicates/).length).toBeGreaterThan(0);
-    expect(screen.getByText('Uses the same element twice')).toBeInTheDocument();
-    const missed = screen.getByText('Returns values instead of positions').closest('li');
+    expect(screen.getByText('Reverses the words instead of the letters')).toBeInTheDocument();
+    const missed = screen.getByText('Drops the last letter').closest('li');
     expect(missed).toHaveTextContent(/did not catch/i);
   });
 
-  it('names the pattern with its rating and when it comes back', () => {
+  it('names the technique with its rating and when it comes back', () => {
     renderDebrief();
-    const patterns = screen.getByRole('region', { name: 'Problem patterns' });
-    expect(within(patterns).getByText('Hash map lookup')).toBeInTheDocument();
-    expect(within(patterns).getByText('Good')).toBeInTheDocument();
-    expect(within(patterns).getByText(/Comes back/)).toBeInTheDocument();
-    expect(within(patterns).getByText(/pairs that sum to a target/)).toBeInTheDocument();
+    const techniques = screen.getByRole('region', { name: 'Problem patterns' });
+    expect(within(techniques).getByText('Two pointers')).toBeInTheDocument();
+    expect(within(techniques).getByText('Good')).toBeInTheDocument();
+    expect(within(techniques).getByText(/Comes back/)).toBeInTheDocument();
+    expect(within(techniques).getByText(/walk two positions inward/)).toBeInTheDocument();
   });
 
   it('offers to try it under interview conditions', async () => {

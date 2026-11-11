@@ -7,8 +7,9 @@ import { RunBar } from './RunBar';
 import { programDraftState } from './useProgramDraft';
 import { programWork } from './work';
 import { LearningCodeEditor } from '../../practical/LearningCodeEditor';
-import type { KindPartProps } from '../../session/kind';
 import { FileTabs } from '../../shared/FileTabs';
+
+import type { KindPartProps } from '../../session/kind';
 
 export function ProgramWork({ programId, session, draft, checking, check, own, touch }: KindPartProps) {
   const { files, setFileContent, currentFiles } = programDraftState(draft);

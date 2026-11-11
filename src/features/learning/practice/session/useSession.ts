@@ -4,10 +4,11 @@ import { newId } from '@/lib/api';
 import type * as Wire from '@/lib/bindings';
 import { getErrorMessage } from '@/lib/errorUtils';
 
-import type { Failure, KindDraft } from './kind';
 import { sessionApi } from './sessionApi';
 import { useObservation } from './useObservation';
 import { useSessionClock } from './useSessionClock';
+
+import type { Failure, KindDraft } from './kind';
 import type { StatusState } from '../shared/StatusLine';
 
 interface UseSessionArgs {

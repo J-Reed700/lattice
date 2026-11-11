@@ -3,10 +3,11 @@ import { useEffect, useState } from 'react';
 import type * as Wire from '@/lib/bindings';
 import { getErrorMessage } from '@/lib/errorUtils';
 
-import type { Kinds, KindView } from './kind';
 import { PracticeWorkspace } from './PracticeWorkspace';
 import { sessionApi } from './sessionApi';
 import { StatusLine, type StatusState } from '../shared/StatusLine';
+
+import type { Kinds, KindView } from './kind';
 
 export interface PracticeSessionProps {
   programId: string;

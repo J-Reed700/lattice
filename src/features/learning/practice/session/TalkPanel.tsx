@@ -2,8 +2,9 @@ import { HelpCircle } from 'lucide-react';
 
 import type * as Wire from '@/lib/bindings';
 
-import type { Failure } from './kind';
 import { PracticeThread, type ThreadMessage } from '../shared/PracticeThread';
+
+import type { Failure } from './kind';
 
 export interface TalkPanelProps {
   session: Wire.PracticeSessionDto;

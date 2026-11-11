@@ -2,9 +2,10 @@ import { ArrowRight, CalendarClock, Check, X } from 'lucide-react';
 
 import type * as Wire from '@/lib/bindings';
 
-import type { KindView } from './kind';
 import { clockText, SETTING_NAMES } from './practiceNames';
 import { CriteriaList, type CriterionView, type EvidenceView } from '../shared/CriteriaList';
+
+import type { KindView } from './kind';
 
 export interface DebriefFrameProps {
   session: Wire.PracticeSessionDto;

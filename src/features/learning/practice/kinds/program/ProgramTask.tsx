@@ -4,6 +4,7 @@ import { ExamplesTable } from './ExamplesTable';
 import { ProblemPane } from './ProblemPane';
 import { programApi } from './programApi';
 import { programWork } from './work';
+
 import type { KindTaskProps } from '../../session/kind';
 
 export function ProgramTask({ programId, session, checking, own, touch, solutionControl }: KindTaskProps) {

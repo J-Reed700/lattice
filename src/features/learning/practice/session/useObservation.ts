@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef } from 'react';
 
 import type * as Wire from '@/lib/bindings';
 
-import type { KindDraft } from './kind';
 import { sessionApi } from './sessionApi';
+
+import type { KindDraft } from './kind';
 
 /** How long typing must stop before a Watched interviewer looks at the changes. */
 export const TYPING_PAUSE_MS = 4_000;

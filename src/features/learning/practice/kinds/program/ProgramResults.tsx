@@ -2,8 +2,9 @@ import type * as Wire from '@/lib/bindings';
 
 import { caseResultViews } from './caseViews';
 import { programWork } from './work';
-import type { KindPartProps } from '../../session/kind';
 import { CaseResults } from '../../shared/CaseResults';
+
+import type { KindPartProps } from '../../session/kind';
 
 const RUN_TITLES: Record<Wire.CodingRunScope, string> = {
   shown: 'Examples',

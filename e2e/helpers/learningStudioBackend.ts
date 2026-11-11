@@ -2373,6 +2373,10 @@ export async function installLearningStudioBackend(page: Page) {
       check_practice_fit: () => ({ code: "fits", reason: "The lessons teach program code." }),
       practice_due: () => ({ items: [] }),
       list_practice_sessions: () => [],
+      run_coding_input: (args) => {
+        const request = getRequest<{ programId: string; sessionId: string }>(args);
+        return { sessionId: request.sessionId, programId: request.programId, kind: "program", finished: false };
+      },
       course_drills: () => ({ language: "python", nextCode: null, nextPassage: null, hasSources: false, modules: [], recent: [] }),
       get_learning_runtime_catalog: () => {
         return ([

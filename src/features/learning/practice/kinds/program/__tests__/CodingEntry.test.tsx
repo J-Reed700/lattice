@@ -4,18 +4,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { JobDto } from '@/lib/bindings';
 
-import { codingApi } from '../codingApi';
-import { CodingEntry, type CodingBuildChoice } from '../CodingEntry';
-import { codingSession } from './fixtures';
+import { CodingEntry } from '../CodingEntry';
+import { programApi } from '../programApi';
+import { programSession } from './fixtures';
+import { sessionApi } from '../../../session/sessionApi';
+
+import type { CodingBuildChoice } from '../../../session/kind';
 
 vi.mock('@/lib/api', () => {
   let count = 0;
   return { newId: () => `id-${++count}`, unwrap: <T,>(value: T) => value, default: {}, VaultAPI: {} };
 });
 
-vi.mock('../codingApi', () => ({
-  codingApi: { startBuild: vi.fn(), startSession: vi.fn() },
-}));
+vi.mock('../programApi', () => ({ programApi: { startBuild: vi.fn() } }));
+vi.mock('../../../session/sessionApi', () => ({ sessionApi: { startSession: vi.fn() } }));
 
 const subscribers = new Set<(job: JobDto) => void>();
 vi.mock('@/features/jobs/api', () => ({
@@ -65,14 +67,14 @@ describe('CodingEntry', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     subscribers.clear();
-    vi.mocked(codingApi.startBuild).mockResolvedValue({ jobId: 'job-1' });
-    vi.mocked(codingApi.startSession).mockResolvedValue(codingSession({ sessionId: 'session-9' }));
+    vi.mocked(programApi.startBuild).mockResolvedValue({ jobId: 'job-1' });
+    vi.mocked(sessionApi.startSession).mockResolvedValue(programSession({ sessionId: 'session-9' }));
   });
 
   it('starts the build with the choice and names the three steps behind a progress bar', async () => {
     render(<CodingEntry programId="program-1" choice={choice} onReady={vi.fn()} onCancel={vi.fn()} />);
     await waitFor(() =>
-      expect(codingApi.startBuild).toHaveBeenCalledWith(
+      expect(programApi.startBuild).toHaveBeenCalledWith(
         expect.objectContaining({ programId: 'program-1', form: 'build', language: 'python', difficulty: 'easy' }),
       ),
     );
@@ -85,11 +87,11 @@ describe('CodingEntry', () => {
   it('starts the session with the built activity and hands over its id', async () => {
     const onReady = vi.fn();
     render(<CodingEntry programId="program-1" choice={choice} onReady={onReady} onCancel={vi.fn()} />);
-    await waitFor(() => expect(codingApi.startBuild).toHaveBeenCalled());
+    await waitFor(() => expect(programApi.startBuild).toHaveBeenCalled());
 
     publish(job({ status: 'completed', progressCurrent: 3, resultRef: 'activity-7' }));
     await waitFor(() => expect(onReady).toHaveBeenCalledWith('session-9'));
-    expect(codingApi.startSession).toHaveBeenCalledWith(
+    expect(sessionApi.startSession).toHaveBeenCalledWith(
       expect.objectContaining({ programId: 'program-1', activityId: 'activity-7', setting: 'mock', budgetSeconds: 1200 }),
     );
   });
@@ -97,12 +99,12 @@ describe('CodingEntry', () => {
   it('shows a failed build with Try again, which builds anew', async () => {
     const user = userEvent.setup();
     render(<CodingEntry programId="program-1" choice={choice} onReady={vi.fn()} onCancel={vi.fn()} />);
-    await waitFor(() => expect(codingApi.startBuild).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(programApi.startBuild).toHaveBeenCalledTimes(1));
 
     publish(job({ status: 'failed', error: 'The reference failed a case.' }));
     expect(await screen.findByText('The reference failed a case.')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Try again' }));
-    await waitFor(() => expect(codingApi.startBuild).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(programApi.startBuild).toHaveBeenCalledTimes(2));
   });
 
   it('cancels', async () => {
@@ -115,21 +117,21 @@ describe('CodingEntry', () => {
 
   it('retries only the session start when it fails after the build completed', async () => {
     const user = userEvent.setup();
-    vi.mocked(codingApi.startSession)
+    vi.mocked(sessionApi.startSession)
       .mockRejectedValueOnce(new Error('The session could not start.'))
-      .mockResolvedValue(codingSession({ sessionId: 'session-9' }));
+      .mockResolvedValue(programSession({ sessionId: 'session-9' }));
     const onReady = vi.fn();
     render(<CodingEntry programId="program-1" choice={choice} onReady={onReady} onCancel={vi.fn()} />);
-    await waitFor(() => expect(codingApi.startBuild).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(programApi.startBuild).toHaveBeenCalledTimes(1));
 
     publish(job({ status: 'completed', progressCurrent: 3, resultRef: 'activity-7' }));
     expect(await screen.findByText('The session could not start.')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Try again' }));
 
     await waitFor(() => expect(onReady).toHaveBeenCalledWith('session-9'));
-    expect(codingApi.startBuild).toHaveBeenCalledTimes(1);
-    expect(codingApi.startSession).toHaveBeenCalledTimes(2);
-    const [first, second] = vi.mocked(codingApi.startSession).mock.calls.map(([request]) => request);
+    expect(programApi.startBuild).toHaveBeenCalledTimes(1);
+    expect(sessionApi.startSession).toHaveBeenCalledTimes(2);
+    const [first, second] = vi.mocked(sessionApi.startSession).mock.calls.map(([request]) => request);
     expect(second.operationId).toBe(first.operationId);
     expect(second.activityId).toBe('activity-7');
   });

@@ -4,6 +4,7 @@ import type * as Wire from '@/lib/bindings';
 
 import { programWork } from './work';
 import { useLearningLabDraft } from '../../practical/useLearningLabDraft';
+
 import type { KindDraft } from '../../session/kind';
 
 /** What Program's components read from its draft. */

@@ -4,7 +4,6 @@ import type * as Wire from '@/lib/bindings';
 
 import { DebriefFrame } from './DebriefFrame';
 import { HintLadder } from './HintLadder';
-import type { KindPartProps, KindView } from './kind';
 import { SessionHeader } from './SessionHeader';
 import { SolutionControl } from './SolutionControl';
 import { StageRail } from './StageRail';
@@ -12,6 +11,8 @@ import { TalkPanel } from './TalkPanel';
 import { useSession } from './useSession';
 import { lastChosen } from '../home/StartSentence';
 import { StatusLine } from '../shared/StatusLine';
+
+import type { KindPartProps, KindView } from './kind';
 
 export interface PracticeWorkspaceProps {
   programId: string;

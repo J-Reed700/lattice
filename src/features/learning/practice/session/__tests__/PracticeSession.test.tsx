@@ -4,22 +4,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as Wire from '@/lib/bindings';
 
-import { codingApi } from '../codingApi';
-import { CodingSession } from '../CodingSession';
-import { caseView, codingRun, codingSession } from './fixtures';
+import { PracticeSession } from '../PracticeSession';
+import { sessionApi } from '../sessionApi';
+import { createFakeKind, flushDraft } from './fakeKind';
+import { practiceCheck, practiceDebrief, practiceHint, practiceSession } from './fixtures';
 
 vi.mock('@/lib/api', () => {
   let count = 0;
   return { newId: () => `id-${++count}`, unwrap: <T,>(value: T) => value, default: {}, VaultAPI: {} };
 });
 
-vi.mock('../codingApi', () => ({
-  codingApi: {
+vi.mock('../sessionApi', () => ({
+  sessionApi: {
     getSession: vi.fn(),
     moveStage: vi.fn(),
-    checkExample: vi.fn(),
-    removeExample: vi.fn(),
-    run: vi.fn(),
+    check: vi.fn(),
     askHint: vi.fn(),
     sendTurn: vi.fn(),
     respond: vi.fn(),
@@ -28,56 +27,8 @@ vi.mock('../codingApi', () => ({
     setSetting: vi.fn(),
     revealSolution: vi.fn(),
     finish: vi.fn(),
-    activityRevision: vi.fn(),
   },
 }));
-
-vi.mock('../../practical/LearningCodeEditor', () => ({
-  LearningCodeEditor: ({
-    value,
-    onChange,
-    readOnly,
-    ariaLabel,
-    onRunShortcut,
-  }: {
-    value: string;
-    onChange: (value: string) => void;
-    readOnly?: boolean;
-    ariaLabel?: string;
-    onRunShortcut?: () => void;
-  }) => (
-    <textarea
-      aria-label={ariaLabel ?? 'Code'}
-      value={value}
-      readOnly={readOnly}
-      onChange={(event) => onChange(event.target.value)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' && event.ctrlKey && !event.shiftKey) onRunShortcut?.();
-      }}
-    />
-  ),
-}));
-
-vi.mock('../../practical/useLearningLabDraft', async () => {
-  const React = await import('react');
-  return {
-    useLearningLabDraft: ({ starterFiles }: { starterFiles: { path: string; content: string }[] }) => {
-      const [files, setFiles] = React.useState(starterFiles);
-      return {
-        files,
-        setFileContent: (path: string, content: string) =>
-          setFiles((current) => current.map((file) => (file.path === path ? { ...file, content } : file))),
-        loadState: 'ready',
-        saveState: 'saved',
-        error: null,
-        flush: async () => true,
-        retryLoad: async () => true,
-        keepLocalEdits: async () => true,
-        useSavedVersion: async () => true,
-      };
-    },
-  };
-});
 
 vi.mock('../../shared/PracticeThread', () => ({
   PracticeThread: ({
@@ -107,46 +58,42 @@ vi.mock('../../shared/PracticeThread', () => ({
         </div>
       ) : null}
       {suggestion ? <p>{suggestion}</p> : null}
-      <button type="button" onClick={() => void onSend('What about an empty list?', false)}>
+      <button type="button" onClick={() => void onSend('What about an empty word?', false)}>
         Send
       </button>
     </div>
   ),
 }));
 
-const api = vi.mocked(codingApi);
+const api = vi.mocked(sessionApi);
+const ownCommand = vi.fn<() => Promise<Wire.PracticeSessionDto>>();
+const kinds = { fake: createFakeKind(() => ownCommand()) };
 
-const failingHidden = caseView({
-  caseId: 'hidden-1',
-  category: 'an input with duplicates',
-  visibility: 'hidden',
-  status: 'failed',
-  args: null,
-  expected: null,
-  actual: null,
-});
-const passing = caseView({ caseId: 'c1', category: 'a pair at the ends' });
-const passingToo = caseView({ caseId: 'c2', category: 'an empty list', status: 'passed' });
-
-function renderSession(session: Wire.PracticeSessionDto) {
+function renderSession(session: Wire.PracticeSessionDto, registry = kinds) {
   api.getSession.mockResolvedValue(session);
   const onTryInterview = vi.fn();
+  const onExit = vi.fn();
   const view = render(
-    <CodingSession programId="program-1" sessionId={session.sessionId} onExit={vi.fn()} onTryInterview={onTryInterview} />,
+    <PracticeSession
+      programId="program-1"
+      sessionId={session.sessionId}
+      kinds={registry}
+      onExit={onExit}
+      onTryInterview={onTryInterview}
+    />,
   );
-  return { ...view, onTryInterview };
+  return { ...view, onTryInterview, onExit };
 }
 
-async function editor() {
-  return screen.findByRole('textbox', { name: /code/i });
+async function workBox() {
+  return screen.findByRole('textbox', { name: 'Work' });
 }
 
-describe('CodingSession', () => {
+describe('PracticeSession', () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    api.activityRevision.mockResolvedValue(2);
     api.setClock.mockResolvedValue({ activeMs: 60_000, openSince: 1_700_000_000_000, budgetSeconds: null });
-    api.respond.mockImplementation(async () => codingSession({ cuePending: false }));
+    api.respond.mockImplementation(async () => practiceSession({ cuePending: false }));
   });
 
   afterEach(() => {
@@ -154,113 +101,129 @@ describe('CodingSession', () => {
     vi.useRealTimers();
   });
 
-  it('keeps the editor, runs and examples usable while a reply is pending', async () => {
-    api.sendTurn.mockResolvedValue(codingSession({ cuePending: true }));
+  it('keeps the work, the checks and the kind\'s own commands usable while a reply is pending', async () => {
+    api.sendTurn.mockResolvedValue(practiceSession({ cuePending: true }));
     api.respond.mockImplementation(() => new Promise(() => undefined));
-    api.run.mockResolvedValue(codingSession({ runs: [codingRun([passing])] }));
+    api.check.mockResolvedValue(practiceSession({ checks: [practiceCheck()] }));
     const user = userEvent.setup();
-    renderSession(codingSession({ stage: 'make' }));
+    renderSession(practiceSession({ stage: 'make' }));
 
     await user.click(await screen.findByRole('button', { name: 'Send' }));
-    expect(await screen.findByText('Reading your code…')).toBeInTheDocument();
+    expect(await screen.findByText('Reading the work…')).toBeInTheDocument();
 
-    const box = await editor();
+    const box = await workBox();
     expect(box).not.toHaveAttribute('readonly');
-    fireEvent.change(box, { target: { value: 'def find_pair(numbers, target):\n    return []\n' } });
-    expect(box).toHaveValue('def find_pair(numbers, target):\n    return []\n');
+    fireEvent.change(box, { target: { value: 'edited' } });
+    expect(box).toHaveValue('edited');
 
-    const runButton = screen.getByRole('button', { name: /Run examples/ });
-    expect(runButton).toBeEnabled();
-    await user.click(runButton);
-    expect(api.run).toHaveBeenCalledWith(expect.objectContaining({ scope: 'shown' }));
-    expect(screen.getByLabelText('numbers')).toBeEnabled();
+    const checkButton = screen.getByRole('button', { name: 'Check shown' });
+    expect(checkButton).toBeEnabled();
+    await user.click(checkButton);
+    expect(api.check).toHaveBeenCalledWith(expect.objectContaining({ scope: 'shown' }));
+    expect(screen.getByRole('button', { name: /own thing/ })).toBeEnabled();
   });
 
-  it('runs the examples on Ctrl+Enter and shows the shortcuts', async () => {
-    api.run.mockResolvedValue(codingSession({ runs: [codingRun([passing])] }));
-    renderSession(codingSession({ stage: 'make' }));
-    const box = await editor();
+  it('sends the work as it stands with every call that carries it', async () => {
+    const user = userEvent.setup();
+    api.check.mockResolvedValue(practiceSession({ stage: 'make' }));
+    api.askHint.mockResolvedValue(practiceSession({ stage: 'make' }));
+    api.sendTurn.mockResolvedValue(practiceSession({ stage: 'make' }));
+    api.finish.mockResolvedValue(practiceSession({ stage: 'make' }));
+    renderSession(practiceSession({ stage: 'make' }));
 
-    expect(screen.getByRole('button', { name: /Run examples/ })).toHaveTextContent('Ctrl+Enter');
-    expect(screen.getByRole('button', { name: /Submit/ })).toHaveTextContent('Ctrl+Shift+Enter');
+    fireEvent.change(await workBox(), { target: { value: 'my work' } });
 
-    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
-    await waitFor(() =>
-      expect(api.run).toHaveBeenCalledWith(
-        expect.objectContaining({
-          programId: 'program-1',
-          sessionId: 'session-1',
-          scope: 'shown',
-          files: [expect.objectContaining({ path: 'solution.py' })],
-        }),
-      ),
-    );
+    await user.click(screen.getByRole('button', { name: 'Check all' }));
+    expect(api.check).toHaveBeenLastCalledWith(expect.objectContaining({ scope: 'all', piece: 'my work' }));
+    await user.click(screen.getByRole('button', { name: /Get a nudge/ }));
+    expect(api.askHint).toHaveBeenLastCalledWith(expect.objectContaining({ piece: 'my work' }));
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(api.sendTurn).toHaveBeenLastCalledWith(expect.objectContaining({ piece: 'my work' }));
+    await user.click(screen.getByRole('button', { name: /^Finish/ }));
+    expect(api.finish).toHaveBeenLastCalledWith(expect.objectContaining({ piece: 'my work' }));
   });
 
-  it('lists failures first and announces the summary', async () => {
-    renderSession(
-      codingSession({
-        stage: 'check',
-        runs: [codingRun([passing, passingToo, failingHidden])],
-      }),
+  it('checks the shown and the whole scope under the session ids', async () => {
+    api.check.mockResolvedValue(practiceSession({ stage: 'make' }));
+    const user = userEvent.setup();
+    renderSession(practiceSession({ stage: 'make' }));
+
+    await user.click(await screen.findByRole('button', { name: 'Check shown' }));
+    await user.click(screen.getByRole('button', { name: 'Check all' }));
+    expect(api.check).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ programId: 'program-1', sessionId: 'session-1', scope: 'shown', piece: 'start' }),
     );
-
-    expect((await screen.findAllByText(/2 of 3 passed\. Failing: an input with duplicates/)).length).toBeGreaterThan(0);
-    const live = screen.getAllByRole('status').find((node) => /2 of 3 passed/.test(node.textContent ?? ''));
-    expect(live).toBeDefined();
-
-    const failingMatches = screen.getAllByText(/an input with duplicates/);
-    const failing = failingMatches[failingMatches.length - 1];
-    const passingMatches = screen.getAllByText(/a pair at the ends/);
-    const firstPassing = passingMatches[passingMatches.length - 1];
-    expect(failing.compareDocumentPosition(firstPassing) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(api.check).toHaveBeenNthCalledWith(2, expect.objectContaining({ scope: 'all' }));
   });
 
-  it('shows a failing hidden case by its category only in Mock, and in full in Coached', async () => {
-    const mock = renderSession(
-      codingSession({
-        setting: 'mock',
-        settingsUsed: ['mock'],
-        stage: 'check',
-        runs: [codingRun([failingHidden])],
-      }),
-    );
-    expect((await screen.findAllByText(/an input with duplicates/)).length).toBeGreaterThan(0);
-    expect(screen.queryByText('[2, 2]')).not.toBeInTheDocument();
-    expect(screen.queryByText('[0, 1]')).not.toBeInTheDocument();
-    mock.unmount();
+  it('draws the stage rail from the labels the wire sent', async () => {
+    renderSession(practiceSession({ stage: 'make' }));
+    const rail = await screen.findByRole('navigation', { name: 'Stages' });
 
-    renderSession(
-      codingSession({
-        stage: 'check',
-        runs: [
-          codingRun([
-            { ...failingHidden, args: ['[2, 2]', '4'], expected: '[0, 1]', actual: '[]' },
-          ]),
-        ],
-      }),
-    );
-    expect((await screen.findAllByText(/\[2, 2\]/)).length).toBeGreaterThan(0);
+    expect(within(rail).getByRole('button', { name: /Make it/ })).toHaveAttribute('aria-current', 'step');
+    for (const label of ['Understand', 'Examples', 'Plan', 'Review']) {
+      expect(within(rail).getByRole('button', { name: new RegExp(label) })).toBeInTheDocument();
+    }
+    expect(within(rail).queryByText('Code')).not.toBeInTheDocument();
+    expect(within(rail).getByRole('button', { name: /Next: Test/ })).toBeInTheDocument();
+    expect(within(rail).getByText('Do the make stage. Any stage can be skipped.')).toBeInTheDocument();
+  });
+
+  it('names the kind\'s panels on the small-screen tabs and the session\'s title in the header', async () => {
+    renderSession(practiceSession());
+    expect(await screen.findByRole('heading', { name: 'Reverse a word' })).toBeInTheDocument();
+    const tabs = screen.getAllByRole('tab').map((tab) => tab.textContent);
+    expect(tabs).toEqual(['Brief', 'Piece', 'Coach']);
+    expect(screen.getByText('Give the word back in reverse.')).toBeInTheDocument();
+  });
+
+  it('shows an error with the way back for a kind the registry lacks', async () => {
+    const user = userEvent.setup();
+    const { onExit } = renderSession(practiceSession({ kind: 'sketch' }));
+
+    expect(
+      await screen.findByText('This kind of practice is not available in this version of the app.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Back to Practice' }));
+    expect(onExit).toHaveBeenCalled();
+  });
+
+  it('puts the failure of a kind\'s own command on screen with its retry, and reads the session again', async () => {
+    ownCommand.mockRejectedValueOnce(new Error('The kind could not do that.'));
+    const user = userEvent.setup();
+    renderSession(practiceSession());
+
+    await user.click(await screen.findByRole('button', { name: /own thing/ }));
+    expect(await screen.findByText('The kind could not do that.')).toBeInTheDocument();
+    await waitFor(() => expect(api.getSession).toHaveBeenCalledTimes(2));
+
+    ownCommand.mockResolvedValueOnce(practiceSession({ revision: 5 }));
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(ownCommand).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText('The kind could not do that.')).not.toBeInTheDocument());
+  });
+
+  it('applies the session a kind\'s own command answers with', async () => {
+    ownCommand.mockResolvedValue(practiceSession({ checks: [practiceCheck({ checkId: 'own-1', scope: 'shown', passed: 2, total: 2 })] }));
+    const user = userEvent.setup();
+    renderSession(practiceSession());
+
+    await user.click(await screen.findByRole('button', { name: /own thing/ }));
+    expect(await screen.findByText('shown 2/2')).toBeInTheDocument();
+  });
+
+  it('lists what the kind\'s results part draws from the session\'s checks', async () => {
+    renderSession(practiceSession({ checks: [practiceCheck()] }));
+    expect(await screen.findByText('all 1/3')).toBeInTheDocument();
   });
 
   it('shows one hint rung at a time, the next only after the current is read', async () => {
-    const nudge: Wire.PracticeHintDto = {
-      ordinal: 0,
-      rung: 'nudge',
-      text: 'What do you need to remember about earlier numbers?',
-      reason: 'It points at what to look at.',
-      lines: [],
-      path: null,
-      stage: 'make',
-      runId: null,
-      inRole: false,
-      at: 1,
-    };
-    api.askHint.mockResolvedValue(
-      codingSession({ hints: [nudge], nextRung: 'idea', stage: 'make' }),
-    );
+    const nudge = practiceHint({ stage: 'make' });
+    api.askHint.mockResolvedValue(practiceSession({ hints: [nudge], nextRung: 'idea', stage: 'make' }));
     const user = userEvent.setup();
-    renderSession(codingSession({ stage: 'make' }));
+    renderSession(practiceSession({ stage: 'make' }));
 
     expect(screen.queryByRole('button', { name: /Get the idea/ })).not.toBeInTheDocument();
     await user.click(await screen.findByRole('button', { name: /Get a nudge/ }));
@@ -276,16 +239,41 @@ describe('CodingSession', () => {
     expect(screen.queryByRole('button', { name: /Get a plan/ })).not.toBeInTheDocument();
   });
 
+  it('draws the kind\'s mark beside each hint it is given', async () => {
+    renderSession(practiceSession({ stage: 'make', hints: [practiceHint({ ordinal: 2, rung: 'point' })], nextRung: 'point' }));
+    expect(await screen.findByText('Points at part 2')).toBeInTheDocument();
+  });
+
+  it('offers the worked solution only when it is available and not yet open, and says why not', async () => {
+    const user = userEvent.setup();
+    api.revealSolution.mockResolvedValue(practiceSession({ solutionAvailable: true, solutionShown: true }));
+    const closed = renderSession(practiceSession());
+    const button = await screen.findByRole('button', { name: 'Show the worked solution' });
+    expect(button).toBeDisabled();
+    expect(screen.getByText('It opens after your first submit.')).toBeInTheDocument();
+    closed.unmount();
+
+    const available = renderSession(practiceSession({ solutionAvailable: true }));
+    await user.click(await screen.findByRole('button', { name: 'Show the worked solution' }));
+    expect(api.revealSolution).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Show the worked solution' })).not.toBeInTheDocument());
+    available.unmount();
+
+    renderSession(practiceSession({ solutionAvailable: true, solutionShown: true }));
+    await workBox();
+    expect(screen.queryByRole('button', { name: 'Show the worked solution' })).not.toBeInTheDocument();
+  });
+
   it('offers I am stuck instead of the ladder in Watched', async () => {
-    renderSession(codingSession({ setting: 'watched', settingsUsed: ['watched'], stage: 'make' }));
+    renderSession(practiceSession({ setting: 'watched', settingsUsed: ['watched'], stage: 'make' }));
     expect(await screen.findByRole('button', { name: /I'm stuck/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Get a nudge/ })).not.toBeInTheDocument();
     expect(screen.getByText(/Talk through your thinking: type or use the mic/)).toBeInTheDocument();
   });
 
   it('opens the clock on mount, closes it when the document hides and on unmount', async () => {
-    const view = renderSession(codingSession());
-    await editor();
+    const view = renderSession(practiceSession());
+    await workBox();
     await waitFor(() =>
       expect(api.setClock).toHaveBeenCalledWith({ programId: 'program-1', sessionId: 'session-1', open: true }),
     );
@@ -314,8 +302,8 @@ describe('CodingSession', () => {
   });
 
   it('calls respond once for a pending cue and not at all without one', async () => {
-    renderSession(codingSession({ cuePending: true }));
-    await editor();
+    renderSession(practiceSession({ cuePending: true }));
+    await workBox();
     await waitFor(() => expect(api.respond).toHaveBeenCalledTimes(1));
     expect(api.respond).toHaveBeenCalledWith({ programId: 'program-1', sessionId: 'session-1' });
     await act(async () => {
@@ -325,8 +313,8 @@ describe('CodingSession', () => {
   });
 
   it('does not call respond when no cue is pending', async () => {
-    renderSession(codingSession());
-    await editor();
+    renderSession(practiceSession());
+    await workBox();
     await act(async () => {
       await Promise.resolve();
     });
@@ -335,28 +323,28 @@ describe('CodingSession', () => {
 
   it('calls respond again only while the result still holds a cue', async () => {
     api.respond
-      .mockResolvedValueOnce(codingSession({ cuePending: true }))
-      .mockResolvedValueOnce(codingSession({ cuePending: false }));
-    renderSession(codingSession({ cuePending: true }));
+      .mockResolvedValueOnce(practiceSession({ cuePending: true }))
+      .mockResolvedValueOnce(practiceSession({ cuePending: false }));
+    renderSession(practiceSession({ cuePending: true }));
     await waitFor(() => expect(api.respond).toHaveBeenCalledTimes(2));
   });
 
   it('offers Try again in the thread when a reply fails, and respond runs again on it', async () => {
     api.respond.mockRejectedValueOnce(new Error('The model did not answer.'));
     const user = userEvent.setup();
-    renderSession(codingSession({ cuePending: true }));
+    renderSession(practiceSession({ cuePending: true }));
 
     expect(await screen.findByText('The model did not answer.')).toBeInTheDocument();
-    expect(await editor()).not.toHaveAttribute('readonly');
-    api.respond.mockResolvedValueOnce(codingSession({ cuePending: false }));
+    expect(await workBox()).not.toHaveAttribute('readonly');
+    api.respond.mockResolvedValueOnce(practiceSession({ cuePending: false }));
     await user.click(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(api.respond).toHaveBeenCalledTimes(2));
   });
 
   it('moves to the next stage with the session revision', async () => {
-    api.moveStage.mockResolvedValue(codingSession({ stage: 'examples', revision: 5 }));
+    api.moveStage.mockResolvedValue(practiceSession({ stage: 'examples', revision: 5 }));
     const user = userEvent.setup();
-    renderSession(codingSession());
+    renderSession(practiceSession());
 
     await user.click(await screen.findByRole('button', { name: /^Next/ }));
     expect(api.moveStage).toHaveBeenCalledWith(
@@ -365,24 +353,22 @@ describe('CodingSession', () => {
   });
 
   it('sends a draft observation after a typing pause in Watched', async () => {
-    api.observeDraft.mockResolvedValue(codingSession({ setting: 'watched' }));
-    renderSession(codingSession({ setting: 'watched', settingsUsed: ['watched'], stage: 'make' }));
-    const box = await editor();
+    api.observeDraft.mockResolvedValue(practiceSession({ setting: 'watched' }));
+    renderSession(practiceSession({ setting: 'watched', settingsUsed: ['watched'], stage: 'make' }));
+    const box = await workBox();
 
     vi.useFakeTimers();
-    fireEvent.change(box, { target: { value: 'def find_pair(numbers, target):\n    return {}\n' } });
+    fireEvent.change(box, { target: { value: 'changed text' } });
     await act(async () => {
       vi.advanceTimersByTime(4_000);
     });
-    expect(api.observeDraft).toHaveBeenCalledWith(
-      expect.objectContaining({ reason: 'pause', files: [expect.objectContaining({ path: 'solution.py' })] }),
-    );
+    expect(api.observeDraft).toHaveBeenCalledWith(expect.objectContaining({ reason: 'pause', piece: 'changed text' }));
   });
 
   it('sends Idle in Coached after three minutes with no activity', async () => {
-    api.observeDraft.mockResolvedValue(codingSession());
-    renderSession(codingSession({ stage: 'make' }));
-    const box = await editor();
+    api.observeDraft.mockResolvedValue(practiceSession());
+    renderSession(practiceSession({ stage: 'make' }));
+    const box = await workBox();
 
     vi.useFakeTimers();
     fireEvent.change(box, { target: { value: 'x = 1\n' } });
@@ -393,57 +379,44 @@ describe('CodingSession', () => {
     await act(async () => {
       vi.advanceTimersByTime(2_000);
     });
-    expect(api.observeDraft).toHaveBeenCalledWith(expect.objectContaining({ reason: 'idle' }));
+    expect(api.observeDraft).toHaveBeenCalledWith(expect.objectContaining({ reason: 'idle', piece: 'x = 1\n' }));
   });
 
-  it('finishes with the code and shows the debrief', async () => {
+  it('saves the draft, then finishes with the work and shows the debrief', async () => {
     const user = userEvent.setup();
-    api.finish.mockResolvedValue(
-      codingSession({
-        finished: true,
-        debrief: {
-          scorecard: { rows: [] },
-          facts: { stageMs: [], runs: 0, submits: 0, hints: [], settings: ['coached'] },
-          strongAnswer: { approach: 'Scan once.', complexity: 'O(n)', reference: 'pass' },
-          patterns: [],
-          cases: [],
-          misreadings: [],
-          model: 'a model',
-        },
-      }),
-    );
-    renderSession(codingSession({ stage: 'review' }));
+    api.finish.mockResolvedValue(practiceSession({ finished: true, debrief: practiceDebrief() }));
+    renderSession(practiceSession({ stage: 'review' }));
 
     await user.click(await screen.findByRole('button', { name: /^Finish/ }));
-    expect(api.finish).toHaveBeenCalledWith(
-      expect.objectContaining({ files: [expect.objectContaining({ path: 'solution.py' })] }),
-    );
+    expect(flushDraft).toHaveBeenCalledTimes(1);
+    expect(api.finish).toHaveBeenCalledWith(expect.objectContaining({ piece: 'start' }));
     expect(await screen.findByRole('heading', { name: /Debrief/ })).toBeInTheDocument();
-    expect(within(document.body).queryByRole('button', { name: /Run examples/ })).not.toBeInTheDocument();
+    expect(screen.getByText('Kind debrief text.')).toBeInTheDocument();
+    expect(within(document.body).queryByRole('button', { name: 'Check shown' })).not.toBeInTheDocument();
   });
 
   describe('retries reuse the ids of the action', () => {
     function ids(mock: { mock: { calls: unknown[][] } }, call: number) {
-      return mock.mock.calls[call][0] as { operationId: string; runId?: string };
+      return mock.mock.calls[call][0] as { operationId: string; checkId?: string };
     }
 
-    it('repeats a failed run under the same operation and run ids', async () => {
-      api.run.mockRejectedValueOnce(new Error('timed out')).mockResolvedValue(codingSession({ stage: 'make' }));
+    it('repeats a failed check under the same operation and check ids', async () => {
+      api.check.mockRejectedValueOnce(new Error('timed out')).mockResolvedValue(practiceSession({ stage: 'make' }));
       const user = userEvent.setup();
-      renderSession(codingSession({ stage: 'make' }));
+      renderSession(practiceSession({ stage: 'make' }));
 
-      await user.click(await screen.findByRole('button', { name: /Run examples/ }));
+      await user.click(await screen.findByRole('button', { name: 'Check shown' }));
       await user.click(await screen.findByRole('button', { name: 'Try again' }));
 
-      await waitFor(() => expect(api.run).toHaveBeenCalledTimes(2));
-      expect(ids(api.run, 1).operationId).toBe(ids(api.run, 0).operationId);
-      expect(ids(api.run, 1).runId).toBe(ids(api.run, 0).runId);
+      await waitFor(() => expect(api.check).toHaveBeenCalledTimes(2));
+      expect(ids(api.check, 1).operationId).toBe(ids(api.check, 0).operationId);
+      expect(ids(api.check, 1).checkId).toBe(ids(api.check, 0).checkId);
     });
 
     it('repeats a failed hint under the same operation id', async () => {
-      api.askHint.mockRejectedValueOnce(new Error('timed out')).mockResolvedValue(codingSession({ stage: 'make' }));
+      api.askHint.mockRejectedValueOnce(new Error('timed out')).mockResolvedValue(practiceSession({ stage: 'make' }));
       const user = userEvent.setup();
-      renderSession(codingSession({ stage: 'make' }));
+      renderSession(practiceSession({ stage: 'make' }));
 
       await user.click(await screen.findByRole('button', { name: /Get a nudge/ }));
       await user.click(await screen.findByRole('button', { name: 'Try again' }));
@@ -453,9 +426,9 @@ describe('CodingSession', () => {
     });
 
     it('repeats a failed message under the same operation id', async () => {
-      api.sendTurn.mockRejectedValueOnce(new Error('timed out')).mockResolvedValue(codingSession());
+      api.sendTurn.mockRejectedValueOnce(new Error('timed out')).mockResolvedValue(practiceSession());
       const user = userEvent.setup();
-      renderSession(codingSession());
+      renderSession(practiceSession());
 
       await user.click(await screen.findByRole('button', { name: 'Send' }));
       await user.click(await screen.findByRole('button', { name: 'Try again' }));
@@ -465,9 +438,9 @@ describe('CodingSession', () => {
     });
 
     it('repeats a failed finish under the same operation id', async () => {
-      api.finish.mockRejectedValueOnce(new Error('timed out')).mockResolvedValue(codingSession());
+      api.finish.mockRejectedValueOnce(new Error('timed out')).mockResolvedValue(practiceSession());
       const user = userEvent.setup();
-      renderSession(codingSession({ stage: 'review' }));
+      renderSession(practiceSession({ stage: 'review' }));
 
       await user.click(await screen.findByRole('button', { name: /^Finish/ }));
       await user.click(await screen.findByRole('button', { name: 'Try again' }));
@@ -477,25 +450,24 @@ describe('CodingSession', () => {
     });
 
     it('gives each fresh click new ids', async () => {
-      api.run.mockResolvedValue(codingSession({ stage: 'make' }));
+      api.check.mockResolvedValue(practiceSession({ stage: 'make' }));
       const user = userEvent.setup();
-      renderSession(codingSession({ stage: 'make' }));
+      renderSession(practiceSession({ stage: 'make' }));
 
-      const button = await screen.findByRole('button', { name: /Run examples/ });
-      await user.click(button);
-      await waitFor(() => expect(api.run).toHaveBeenCalledTimes(1));
-      await user.click(screen.getByRole('button', { name: /Run examples/ }));
-      await waitFor(() => expect(api.run).toHaveBeenCalledTimes(2));
+      await user.click(await screen.findByRole('button', { name: 'Check shown' }));
+      await waitFor(() => expect(api.check).toHaveBeenCalledTimes(1));
+      await user.click(screen.getByRole('button', { name: 'Check shown' }));
+      await waitFor(() => expect(api.check).toHaveBeenCalledTimes(2));
 
-      expect(ids(api.run, 1).operationId).not.toBe(ids(api.run, 0).operationId);
-      expect(ids(api.run, 1).runId).not.toBe(ids(api.run, 0).runId);
+      expect(ids(api.check, 1).operationId).not.toBe(ids(api.check, 0).operationId);
+      expect(ids(api.check, 1).checkId).not.toBe(ids(api.check, 0).checkId);
     });
   });
 
   it('sends one stage move while the first is pending', async () => {
     api.moveStage.mockImplementation(() => new Promise(() => undefined));
     const user = userEvent.setup();
-    renderSession(codingSession());
+    renderSession(practiceSession());
 
     const next = await screen.findByRole('button', { name: /^Next/ });
     await user.click(next);
