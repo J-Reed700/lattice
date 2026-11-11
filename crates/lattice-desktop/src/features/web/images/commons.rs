@@ -1,6 +1,7 @@
 //! Finding candidates (§7.3): Wikimedia Commons' keyless search API, and the
 //! picture a page offers for itself.
 
+use crate::infrastructure::extraction::html_text::html_to_text;
 use lattice_core::application::contracts::images::ImageOrigin;
 use serde_json::Value;
 
@@ -137,10 +138,9 @@ fn metadata(info: &Value, field: &str) -> Option<String> {
     (!plain.is_empty()).then_some(plain)
 }
 
-/// HTML to text: tags dropped, entities decoded, whitespace collapsed.
+/// HTML to a one-line caption: its readable text, whitespace collapsed.
 pub fn strip_html(html: &str) -> String {
-    let fragment = scraper::Html::parse_fragment(html);
-    collapse(&fragment.root_element().text().collect::<String>())
+    collapse(&html_to_text(html))
 }
 
 fn collapse(text: &str) -> String {

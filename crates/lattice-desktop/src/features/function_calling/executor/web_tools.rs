@@ -2,6 +2,7 @@
 //! and `wiki_summary`.
 
 use super::{FunctionExecutor, WIKIPEDIA_USER_AGENT};
+use crate::infrastructure::extraction::html_text::html_to_text;
 use lattice_core::application::contracts::tools::FunctionResult;
 use lattice_core::application::contracts::tools::*;
 use lattice_core::application::contracts::web::WebSearchInput;
@@ -178,22 +179,12 @@ impl FunctionExecutor {
         })
     }
 
-    fn strip_html_tags(input: &str) -> String {
-        let mut out = String::with_capacity(input.len());
-        let mut in_tag = false;
-        for ch in input.chars() {
-            match ch {
-                '<' => in_tag = true,
-                '>' => in_tag = false,
-                _ if !in_tag => out.push(ch),
-                _ => {}
-            }
-        }
-        out.replace("&quot;", "\"")
-            .replace("&amp;", "&")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&#39;", "'")
+    /// A search hit's snippet as one line of plain text.
+    fn wiki_snippet_text(raw: &str) -> String {
+        html_to_text(raw)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     /// Execute wiki_search function.
@@ -263,10 +254,7 @@ impl FunctionExecutor {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .trim();
-                    let snippet = Self::strip_html_tags(snippet_raw)
-                        .split_whitespace()
-                        .collect::<Vec<_>>()
-                        .join(" ");
+                    let snippet = Self::wiki_snippet_text(snippet_raw);
                     let url = format!("https://en.wikipedia.org/wiki/{}", title.replace(' ', "_"));
                     results.push(WikiSearchResult {
                         title,
@@ -382,9 +370,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_search_match_stays_inside_its_sentence() {
+        assert_eq!(
+            FunctionExecutor::wiki_snippet_text(
+                "<span class=\"searchmatch\">Rust</span> is a general-purpose <span class=\"searchmatch\">programming</span> language"
+            ),
+            "Rust is a general-purpose programming language"
+        );
+    }
+
+    #[test]
     fn a_snippet_is_decoded_once() {
         assert_eq!(
-            FunctionExecutor::strip_html_tags("AT&amp;amp;T &amp;lt;b&amp;gt;"),
+            FunctionExecutor::wiki_snippet_text("AT&amp;amp;T &amp;lt;b&amp;gt;"),
             "AT&amp;T &lt;b&gt;"
         );
     }

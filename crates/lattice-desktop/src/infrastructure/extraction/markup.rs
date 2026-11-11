@@ -10,7 +10,7 @@ use tracing::warn;
 
 /// One step through a markup document.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Markup<'a> {
+pub(crate) enum Markup<'a> {
     /// An opening tag. `attrs` is the raw text after the name; `empty` is set
     /// for a self-closing `<name/>`.
     Open {
@@ -27,20 +27,20 @@ pub(super) enum Markup<'a> {
 
 /// Walks tags and text in order. Declarations, processing instructions and
 /// comments are skipped; CDATA content is returned as text.
-pub(super) struct MarkupCursor<'a> {
+pub(crate) struct MarkupCursor<'a> {
     src: &'a str,
     pos: usize,
 }
 
 impl<'a> MarkupCursor<'a> {
-    pub(super) fn new(src: &'a str) -> Self {
+    pub(crate) fn new(src: &'a str) -> Self {
         Self { src, pos: 0 }
     }
 
     /// Raw text up to the closing `</name>` (ASCII case-insensitive), with the
     /// cursor moved past it. HTML `<script>`/`<style>` bodies are not markup,
     /// so they must be skipped whole rather than tokenised.
-    pub(super) fn skip_raw_text(&mut self, name: &str) -> &'a str {
+    pub(crate) fn skip_raw_text(&mut self, name: &str) -> &'a str {
         let rest = &self.src[self.pos..];
         let needle = format!("</{}", name.to_ascii_lowercase());
         let lower = rest.to_ascii_lowercase();
@@ -134,7 +134,7 @@ impl<'a> Iterator for MarkupCursor<'a> {
 }
 
 /// The value of `key="…"` in a tag's raw attribute text, entity-decoded.
-pub(super) fn attr(attrs: &str, key: &str) -> Option<String> {
+pub(crate) fn attr(attrs: &str, key: &str) -> Option<String> {
     let mut rest = attrs;
     while let Some(at) = rest.find(key) {
         let before_ok = rest[..at]
@@ -160,7 +160,7 @@ pub(super) fn attr(attrs: &str, key: &str) -> Option<String> {
 
 /// Decode named and numeric character references in one pass, so `&amp;lt;`
 /// stays `&lt;` instead of being decoded twice.
-pub(super) fn decode_entities(s: &str) -> String {
+pub(crate) fn decode_entities(s: &str) -> String {
     if !s.contains('&') {
         return s.to_owned();
     }
@@ -239,7 +239,7 @@ fn decode_entity(entity: &str) -> Option<char> {
 /// encoding nearly every legacy non-UTF-8 text file on disk uses. Rejecting
 /// the whole file over one accented byte loses far more than a mis-mapped
 /// character would.
-pub(super) fn decode_text_bytes(bytes: Vec<u8>, path: &std::path::Path) -> String {
+pub(crate) fn decode_text_bytes(bytes: Vec<u8>, path: &std::path::Path) -> String {
     if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
         return String::from_utf8_lossy(rest).into_owned();
     }
@@ -288,7 +288,7 @@ fn windows_1252(b: u8) -> char {
 
 /// Collapse three or more consecutive newlines to two and trim the ends, so
 /// empty paragraphs used as spacing do not become runs of blank lines.
-pub(super) fn tidy_lines(text: &str) -> String {
+pub(crate) fn tidy_lines(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut newlines = 0;
     for line in text.split('\n') {
