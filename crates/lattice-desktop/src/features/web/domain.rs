@@ -4,6 +4,7 @@
 
 use chrono::{DateTime, Utc};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::path_safety::single_file_name;
 use lattice_core::shared::types::DocumentId;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -25,20 +26,6 @@ pub fn validate_domain(domain: &str) -> Result<()> {
         return Err(AppError::InvalidInput("Domain cannot be empty".to_string()));
     }
 
-    // Reject path traversal - component-based check is more robust
-    if domain.split('/').any(|part| part == ".." || part == ".") {
-        return Err(AppError::InvalidInput(
-            "Domain cannot contain path traversal sequences (. or ..)".to_string(),
-        ));
-    }
-
-    // Also check for backslash-separated (Windows-style)
-    if domain.split('\\').any(|part| part == ".." || part == ".") {
-        return Err(AppError::InvalidInput(
-            "Domain cannot contain path traversal sequences (. or ..)".to_string(),
-        ));
-    }
-
     // Reject control characters (including null byte)
     if domain.chars().any(|c| c.is_control()) {
         return Err(AppError::InvalidInput(
@@ -54,6 +41,9 @@ pub fn validate_domain(domain: &str) -> Result<()> {
             invalid_char
         )));
     }
+
+    single_file_name(domain)
+        .map_err(|reason| AppError::InvalidInput(format!("Domain {reason}")))?;
 
     // Reject overly long domains (filesystem limits)
     if domain.len() > 255 {

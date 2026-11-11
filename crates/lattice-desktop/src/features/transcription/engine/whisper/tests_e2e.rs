@@ -13,13 +13,6 @@
 //! The engine is constructed directly from the model directory, bypassing
 //! `DownloadedModelRepository`, so no database and no download are involved.
 
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic
-)]
-
 use std::path::PathBuf;
 use std::time::Instant;
 

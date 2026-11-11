@@ -130,6 +130,7 @@ impl Container {
             self.ai.active_models(),
             self.app_handle(),
             self.llm_runtime.clone(),
+            self.credentials(),
         )
     }
 

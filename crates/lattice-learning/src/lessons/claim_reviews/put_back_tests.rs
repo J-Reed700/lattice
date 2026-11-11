@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 //! Where a sentence the machine took out goes back: beside a neighbour the
 //! cut recorded, beside the claims around it, through a claim that survived
 //! the same section, or where the user chooses.

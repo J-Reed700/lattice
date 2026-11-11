@@ -1,6 +1,5 @@
 //! The quiz job a lesson's publication queues: it writes the published
 //! lesson's bank once, from what the lesson's rows hold.
-#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use crate::{
     assessment_engine::{LearningAssessmentKey, LearningItemFormat},
     assessment_generation::{AuthoredItem, StoredItem},

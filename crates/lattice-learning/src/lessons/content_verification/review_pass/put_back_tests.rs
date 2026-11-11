@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 //! The review pass writes the user's put back and restore into the draft.
 
 use super::*;

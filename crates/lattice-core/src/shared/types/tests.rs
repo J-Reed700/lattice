@@ -65,6 +65,27 @@ fn test_validated_file_path_empty_error() {
     assert!(result.is_err());
 }
 
+#[test]
+fn a_file_path_with_a_nul_byte_is_refused() {
+    assert!(ValidatedFilePath::new(PathBuf::from("x\0y")).is_err());
+}
+
+#[test]
+fn a_backslash_separated_parent_component_is_refused_on_every_platform() {
+    assert!(ValidatedFilePath::new(PathBuf::from("a\\..\\b")).is_err());
+}
+
+#[cfg(windows)]
+#[test]
+fn a_dots_and_spaces_segment_is_refused_on_windows() {
+    for path in [r"a\...\b", r"a\.. \b"] {
+        assert!(
+            ValidatedFilePath::new(PathBuf::from(path)).is_err(),
+            "{path}"
+        );
+    }
+}
+
 mod property_tests {
     use super::*;
     use proptest::prelude::*;

@@ -12,7 +12,6 @@
 //! - 5.3.4 — round-trip through SQLite preserves all fields.
 
 #![cfg(test)]
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use std::sync::Arc;
 

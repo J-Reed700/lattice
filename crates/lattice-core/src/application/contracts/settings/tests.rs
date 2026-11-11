@@ -290,3 +290,40 @@ fn the_utility_model_reference_loads_with_or_without_the_field() {
         chosen
     );
 }
+
+fn legacy_llm_json() -> serde_json::Value {
+    let mut llm = serde_json::to_value(LLMSettingsDto::default()).unwrap();
+    llm["ollamaAuthHeaderName"] = "Authorization".into();
+    llm["ollamaAuthHeaderValue"] = "Bearer ollama-secret".into();
+    llm["llamaCpp"] = serde_json::json!({
+        "url": "http://localhost:8080",
+        "model": "",
+        "authHeaderName": "Authorization",
+        "authHeaderValue": "Bearer llama-secret"
+    });
+    llm
+}
+
+#[test]
+fn settings_sent_to_the_renderer_carry_no_auth_header_value() {
+    let settings = SettingsDto {
+        llm: serde_json::from_value(legacy_llm_json()).unwrap(),
+        ..Default::default()
+    };
+
+    let json = serde_json::to_string(&settings).unwrap();
+    assert!(!json.contains("ollama-secret"), "{json}");
+    assert!(!json.contains("llama-secret"), "{json}");
+    assert!(json.contains("Authorization"));
+
+    let debug = format!("{settings:?}");
+    assert!(!debug.contains("ollama-secret"), "{debug}");
+    assert!(!debug.contains("llama-secret"), "{debug}");
+}
+
+#[test]
+fn a_settings_file_written_before_secrets_moved_still_loads() {
+    let llm: LLMSettingsDto = serde_json::from_value(legacy_llm_json()).unwrap();
+    assert_eq!(llm.ollama_auth_header_name, "Authorization");
+    assert_eq!(llm.llama_cpp.auth_header_name, "Authorization");
+}

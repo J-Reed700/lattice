@@ -1,9 +1,10 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 
 import { MessageActions } from '@/features/chat/components/MessageActions';
 import { TangentSelectionContext } from '@/features/chat/components/tangents/TangentSelection';
+import { render } from '@/tests/renderWithQueryClient';
 import type { SourceWithMetadata } from '@/types/conversation';
 
 

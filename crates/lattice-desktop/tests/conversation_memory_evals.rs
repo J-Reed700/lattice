@@ -2093,10 +2093,10 @@ async fn build_port(config: &EvalConfig, model: &str) -> Arc<dyn LLMPort> {
             if config.auth_header_name.is_empty() {
                 None
             } else {
-                Some((
-                    config.auth_header_name.clone(),
-                    config.auth_header_value.clone(),
-                ))
+                Some(lattice_core::application::ports::llm_port::RemoteHeader {
+                    name: config.auth_header_name.clone(),
+                    value: config.auth_header_value.clone(),
+                })
             },
         )
         .expect("Ollama client")
@@ -2110,11 +2110,16 @@ async fn build_port(config: &EvalConfig, model: &str) -> Arc<dyn LLMPort> {
                     url: config.endpoint.clone(),
                     model: model.to_owned(),
                     auth_header_name: config.auth_header_name.clone(),
-                    auth_header_value: config.auth_header_value.clone(),
                 },
                 ..Default::default()
             };
-            LlamaCppLlm::new(&settings)
+            let header = (!config.auth_header_name.is_empty()).then(|| {
+                lattice_core::application::ports::llm_port::RemoteHeader {
+                    name: config.auth_header_name.clone(),
+                    value: config.auth_header_value.clone(),
+                }
+            });
+            LlamaCppLlm::new(&settings, header)
                 .expect("llama.cpp client")
                 .into_port()
                 .await

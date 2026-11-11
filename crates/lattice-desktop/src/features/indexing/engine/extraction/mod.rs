@@ -7,7 +7,6 @@
 //!
 //! The module is split into focused sub-modules:
 //! - `types`: Shared data structures
-//! - `mime`: MIME type detection
 //! - `text`: Plain text and markdown extraction
 //! - `pdf`: PDF document extraction with page tracking
 //! - `docx`: Word document extraction
@@ -19,7 +18,6 @@ mod archive_budget;
 mod csv;
 mod docx;
 mod html;
-mod mime;
 mod odt;
 mod pdf;
 mod pdf_layout;
@@ -30,13 +28,13 @@ mod text;
 mod types;
 mod xlsx;
 
-pub use mime::is_code_mime;
 pub use types::{ContentMetadata, ExtractedContent};
 
 pub use streaming::extract_text_streaming;
 
-use crate::features::indexing::engine::error::Result;
+use crate::features::indexing::engine::error::{IndexingError, Result};
 use lattice_core::application::ports::OcrPort;
+use lattice_core::domain::value_objects::{ExtractionRoute, FileFormat};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::io::AsyncRead;
@@ -118,55 +116,48 @@ impl ContentExtractor {
         self
     }
 
-    /// Extract content from a file, automatically detecting the type.
+    /// Extract content from a file, routed by the file-type catalogue.
     pub async fn extract_from_file(&self, path: &Path) -> Result<ExtractedContent> {
-        let mime_type = mime::detect_mime_type(path)?;
+        let Some(format) = FileFormat::from_path(path) else {
+            let detected_type = match path.extension().and_then(|s| s.to_str()) {
+                Some(extension) => format!("unknown/{extension}"),
+                None => "unknown".to_string(),
+            };
+            return Err(unsupported(path, detected_type));
+        };
+        let mime_type = format.mime_type;
 
-        match mime_type.as_str() {
-            // Text files
-            "text/plain" | "text/markdown" => {
+        match format.route {
+            Some(ExtractionRoute::PlainText) => {
                 text::extract_text_file(path, self.max_file_size).await
             }
-
-            // Documents
-            "application/pdf" => {
+            Some(ExtractionRoute::Pdf) => {
                 pdf::extract_pdf(path, self.max_file_size, self.ocr.as_ref(), &self.workers).await
             }
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => {
+            Some(ExtractionRoute::Docx) => {
                 docx::extract_docx(path, self.max_file_size, &self.workers).await
             }
-            "application/rtf" => rtf::extract_rtf(path, self.max_file_size).await,
-            "application/vnd.oasis.opendocument.text" => {
+            Some(ExtractionRoute::Rtf) => rtf::extract_rtf(path, self.max_file_size).await,
+            Some(ExtractionRoute::Odt) => {
                 odt::extract_odt(path, self.max_file_size, &self.workers).await
             }
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => {
+            Some(ExtractionRoute::Xlsx) => {
                 xlsx::extract_xlsx(path, self.max_file_size, &self.workers).await
             }
-            "application/vnd.openxmlformats-officedocument.presentationml.presentation" => {
+            Some(ExtractionRoute::Pptx) => {
                 pptx::extract_pptx(path, self.max_file_size, &self.workers).await
             }
-
-            // CSV/TSV. Ahead of the `text/` catch-all below, which would
-            // otherwise swallow both of these and index a spreadsheet as code.
-            "text/csv" | "text/tab-separated-values" => {
-                csv::extract_csv_file(path, &mime_type, self.max_file_size).await
+            Some(ExtractionRoute::Csv) => {
+                csv::extract_csv_file(path, mime_type, self.max_file_size).await
             }
-
-            // Code files (treat as text with proper MIME type)
-            mime if mime.starts_with("text/")
-                || mime == "application/json"
-                || mime == "application/xml"
-                || mime == "application/graphql" =>
-            {
-                html::extract_code_file(path, &mime_type, self.max_file_size).await
+            Some(ExtractionRoute::Html) => {
+                html::extract_html_file(path, mime_type, self.max_file_size).await
             }
-
-            _ => Err(
-                crate::features::indexing::engine::error::IndexingError::UnsupportedFileType {
-                    path: path.display().to_string(),
-                    detected_type: mime_type,
-                },
-            ),
+            Some(ExtractionRoute::Code) => {
+                html::extract_code_file(path, mime_type, self.max_file_size).await
+            }
+            // Audio is transcribed by `ContentExtractionAdapter`, not parsed here.
+            Some(ExtractionRoute::Audio) | None => Err(unsupported(path, mime_type.to_string())),
         }
     }
 
@@ -180,15 +171,44 @@ impl ContentExtractor {
         streaming::extract_text_streaming(reader, mime_type).await
     }
 
-    /// Get a list of all supported file extensions.
-    pub fn supported_extensions() -> &'static [&'static str] {
-        mime::supported_extensions()
+    /// Every extension the indexer can read, audio included.
+    pub fn supported_extensions() -> Vec<&'static str> {
+        FileFormat::all()
+            .iter()
+            .filter(|format| format.is_indexable())
+            .map(|format| format.extension)
+            .collect()
     }
 
     /// Check if a file path has a supported extension.
     pub fn is_supported(&self, path: &Path) -> bool {
-        mime::is_supported(path)
+        FileFormat::from_path(path).is_some_and(FileFormat::is_indexable)
     }
+}
+
+fn unsupported(path: &Path, detected_type: String) -> IndexingError {
+    IndexingError::UnsupportedFileType {
+        path: path.display().to_string(),
+        detected_type,
+    }
+}
+
+/// Whether a MIME type is source code, config or a shell script rather than
+/// prose. In these a `# ` line is a comment, never a section heading.
+pub fn is_code_mime(mime_type: &str) -> bool {
+    mime_type.starts_with("text/x-")
+        || mime_type.starts_with("application/x-")
+        || matches!(
+            mime_type,
+            "text/javascript"
+                | "text/javascript-jsx"
+                | "text/typescript"
+                | "text/typescript-jsx"
+                | "text/css"
+                | "application/json"
+                | "application/xml"
+                | "application/graphql"
+        )
 }
 
 impl Default for ContentExtractor {
@@ -242,5 +262,45 @@ mod tests {
                 content.text
             );
         }
+    }
+
+    /// Every extension the catalogue calls indexable must reach an extractor;
+    /// audio is transcribed by the adapter instead.
+    #[tokio::test]
+    async fn every_indexable_extension_in_the_catalogue_is_extracted() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut unsupported = Vec::new();
+        for format in FileFormat::all() {
+            if format.route.is_none() || format.route == Some(ExtractionRoute::Audio) {
+                continue;
+            }
+            let path = dir.path().join(format!("sample.{}", format.extension));
+            std::fs::write(&path, "hello world\n").unwrap();
+            if let Err(IndexingError::UnsupportedFileType { .. }) =
+                ContentExtractor::new().extract_from_file(&path).await
+            {
+                unsupported.push(format.extension);
+            }
+        }
+        assert!(
+            unsupported.is_empty(),
+            "offered but rejected: {unsupported:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_known_type_without_a_route_is_rejected_with_its_mime_type() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("script.lua");
+        std::fs::write(&path, "print('hi')").unwrap();
+        let error = ContentExtractor::new().extract_from_file(&path).await.err();
+        assert!(
+            matches!(
+                &error,
+                Some(IndexingError::UnsupportedFileType { detected_type, .. })
+                    if detected_type == "text/x-lua"
+            ),
+            "{error:?}"
+        );
     }
 }

@@ -319,11 +319,7 @@ pub async fn batch_search(
         _ => LibraryMode::Hybrid,
     };
 
-    container.get_or_load_embedding().await.map_err(|e| {
-        AppError::AiModelsNotInstalled(
-            format!("Failed to load embedding model: {}. Download models from Settings → Models to enable search.", e)
-        )
-    })?;
+    container.get_or_load_embedding().await?;
 
     let search = container.hybrid_search_use_case();
     let enrichment_service = container.search_enrichment_service();

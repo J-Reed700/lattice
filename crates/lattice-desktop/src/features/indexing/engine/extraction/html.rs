@@ -6,12 +6,27 @@ use crate::infrastructure::extraction::html_text::html_to_text;
 use crate::infrastructure::extraction::markup::decode_text_bytes;
 use std::path::Path;
 
-/// Extract content from code files (including HTML).
+/// Extract content from source, config and other text files as written.
 pub async fn extract_code_file(
     path: &Path,
     mime_type: &str,
     max_file_size: u64,
 ) -> Result<ExtractedContent> {
+    let text = read_text(path, max_file_size).await?;
+    Ok(content_of(text, mime_type))
+}
+
+/// Extract the visible text of an HTML file.
+pub async fn extract_html_file(
+    path: &Path,
+    mime_type: &str,
+    max_file_size: u64,
+) -> Result<ExtractedContent> {
+    let text = read_text(path, max_file_size).await?;
+    Ok(content_of(html_to_text(&text), mime_type))
+}
+
+async fn read_text(path: &Path, max_file_size: u64) -> Result<String> {
     let metadata = tokio::fs::metadata(path)
         .await
         .map_err(|e| IndexingError::Io {
@@ -33,29 +48,25 @@ pub async fn extract_code_file(
         message: e.to_string(),
         kind: format!("{:?}", e.kind()),
     })?;
-    let text = decode_text_bytes(bytes, path);
+    Ok(decode_text_bytes(bytes, path))
+}
 
-    let processed_text = if mime_type == "text/html" {
-        html_to_text(&text)
-    } else {
-        text
-    };
-
+fn content_of(text: String, mime_type: &str) -> ExtractedContent {
     let metadata = ContentMetadata {
         page_count: None,
-        word_count: processed_text.split_whitespace().count(),
-        char_count: processed_text.chars().count(),
+        word_count: text.split_whitespace().count(),
+        char_count: text.chars().count(),
         language: None,
     };
 
-    Ok(ExtractedContent {
-        text: processed_text,
+    ExtractedContent {
+        text,
         mime_type: mime_type.to_string(),
         metadata,
         page_ranges: vec![],
         needs_ocr: Vec::new(),
         ocr_pages: Vec::new(),
-    })
+    }
 }
 
 #[cfg(test)]
@@ -97,7 +108,7 @@ mod tests {
         let path = temp_file.path().with_extension("html");
         std::fs::copy(temp_file.path(), &path).unwrap();
 
-        let result = extract_code_file(&path, "text/html", 50 * 1024 * 1024).await;
+        let result = extract_html_file(&path, "text/html", 50 * 1024 * 1024).await;
 
         assert!(result.is_ok());
         let content = result.unwrap();
@@ -116,7 +127,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("page.html");
         std::fs::write(&path, b"<p>caf\xE9</p>").unwrap();
-        let content = extract_code_file(&path, "text/html", 1 << 20)
+        let content = extract_html_file(&path, "text/html", 1 << 20)
             .await
             .unwrap();
         assert_eq!(content.text, "caf\u{e9}");

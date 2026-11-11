@@ -525,5 +525,4 @@ fn truncate_chars(text: &str, limit: usize) -> String {
 }
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests;

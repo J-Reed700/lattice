@@ -17,11 +17,9 @@ async fn live_claim_pairs_eval() -> Result<()> {
     };
     use std::io::Write as _;
 
-    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
-        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
-    )?)?;
-    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
-    let model = LlamaCppLlm::new(&config)?
+    let config = crate::tests::live_llama_cpp::settings()?;
+    let header = crate::tests::live_llama_cpp::header(&config.llama_cpp.auth_header_name)?;
+    let model = LlamaCppLlm::new(&config, header)?
         .schedule(&crate::features::llm::scheduler::SchedulerRegistry::default())
         .await;
     let checker_name =

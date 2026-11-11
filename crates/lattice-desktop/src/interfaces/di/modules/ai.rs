@@ -238,7 +238,6 @@ impl AIModule {
         &self.download_manager
     }
 
-    #[allow(dead_code)]
     pub fn speech(&self) -> &Arc<crate::features::speech::engine::KokoroSpeech> {
         &self.speech
     }
