@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 
 use crate::features::stats::corpus_shape_repository::{
     CorpusShapeRepositoryPort, SqliteCorpusShapeRepository,
@@ -25,14 +25,15 @@ pub struct StatsDi {
 }
 
 /// `tag_repo` is the tags feature's store; stats only counts its rows.
-pub fn build(db_pool: SqlitePool, tag_repo: Arc<dyn RepositoryPort<TagEntity>>) -> StatsDi {
-    let document_repo = Arc::new(DocumentRepositoryImpl::new(db_pool.clone()))
+pub fn build(database: Database, tag_repo: Arc<dyn RepositoryPort<TagEntity>>) -> StatsDi {
+    let document_repo = Arc::new(DocumentRepositoryImpl::new(database.clone()))
         as Arc<dyn RepositoryPort<DocumentEntity>>;
     let chunk_repo =
-        Arc::new(ChunkRepositoryImpl::new(db_pool.clone())) as Arc<dyn RepositoryPort<Chunk>>;
-    let corpus_shape_repo = Arc::new(SqliteCorpusShapeRepository::new(db_pool.clone()))
+        Arc::new(ChunkRepositoryImpl::new(database.clone())) as Arc<dyn RepositoryPort<Chunk>>;
+    let corpus_shape_repo = Arc::new(SqliteCorpusShapeRepository::new(database.clone()))
         as Arc<dyn CorpusShapeRepositoryPort>;
-    let database_stats = Arc::new(DatabaseStatsAdapter::new(db_pool)) as Arc<dyn DatabaseStatsPort>;
+    let database_stats =
+        Arc::new(DatabaseStatsAdapter::new(database)) as Arc<dyn DatabaseStatsPort>;
 
     StatsDi {
         get_system_stats_use_case: Arc::new(GetSystemStatsUseCase::new(

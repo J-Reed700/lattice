@@ -10,6 +10,7 @@ use crate::assessment_generation::{
     StoredItem, WrittenAnswer,
 };
 use crate::assessment_repository::{BankItem, ItemGrade, LearningAssessmentRepository};
+use crate::curriculum_repository::lesson_rank_in;
 use crate::dto::{
     LearningAssessmentGradeStatus, LearningQuizScopeDto, LearningQuizScopeKind, LessonAnswerKey,
     LessonQuestion, LessonQuestionKind,
@@ -21,14 +22,12 @@ use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::PinnedModel;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, Transactions};
 use lattice_core::shared::runtime::jobs::{
-    Backoff, JobContext, JobFailure, JobHandler, JobKindConfig, JobOutcome, JobRecord, JobStore,
-    NewJob, RecoveryPolicy,
+    Backoff, JobContext, JobFailure, JobHandler, JobKindConfig, JobOutcome, JobRecord, JobStatus,
+    JobStore, RecoveryPolicy,
 };
 use serde_json::json;
-use sha2::{Digest, Sha256};
-use sqlx::{SqliteConnection, SqlitePool};
 use std::sync::Arc;
 
 pub const QUIZ_BANK: &str = "learning.quiz_bank";
@@ -45,112 +44,28 @@ pub type ModelLoader = Arc<dyn Fn() -> BoxFuture<'static, Result<PinnedModel>> +
 pub fn quiz_job_config() -> JobKindConfig {
     JobKindConfig::new(RecoveryPolicy::Requeue)
         .exclusive_per_subject()
+        .ranked()
         .backoff(Backoff::default())
-}
-
-fn digest(text: &str) -> String {
-    format!("{:x}", Sha256::digest(text.as_bytes()))
-}
-
-/// A UUID derived from text, so a repeated request finds the same job.
-fn derived_uuid(seed: &str) -> String {
-    let hash = Sha256::digest(seed.as_bytes());
-    let mut bytes = [0u8; 16];
-    for (slot, byte) in bytes.iter_mut().zip(hash.iter()) {
-        *slot = *byte;
-    }
-    uuid::Builder::from_random_bytes(bytes)
-        .into_uuid()
-        .to_string()
-}
-
-async fn queue_in(
-    connection: &mut SqliteConnection,
-    kind: &str,
-    program_id: &str,
-    operation_id: String,
-    requested: serde_json::Value,
-    total: u32,
-    message: &str,
-) -> Result<String> {
-    let admitted = JobStore::submit_in(
-        connection,
-        &NewJob {
-            kind: kind.into(),
-            subject_id: Some(program_id.into()),
-            operation_id,
-            payload_hash: digest(&requested.to_string()),
-            requested,
-            progress_total: total.max(1),
-            message: message.into(),
-        },
-    )
-    .await?;
-    if admitted.created {
-        let revision: i64 = sqlx::query_scalar("SELECT revision FROM learning_programs WHERE id=?")
-            .bind(program_id)
-            .fetch_one(&mut *connection)
-            .await
-            .map_err(db)?;
-        sqlx::query("INSERT INTO learning_jobs(job_id,program_id,base_revision_number,content_revision) VALUES(?,?,?,NULL)")
-            .bind(&admitted.id)
-            .bind(program_id)
-            .bind(revision.max(0))
-            .execute(&mut *connection)
-            .await
-            .map_err(db)?;
-    }
-    Ok(admitted.id)
-}
-
-/// Queue the grading of a submitted quiz's pending items, or (with a
-/// contest) a blind regrade. The caller tells the runtime once it commits.
-pub(crate) async fn queue_grading_in(
-    connection: &mut SqliteConnection,
-    program_id: &str,
-    form_id: &str,
-    contest_id: Option<&str>,
-    seed: &str,
-) -> Result<String> {
-    let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_assessment_item_results WHERE form_id=? AND grade_status='pending'")
-        .bind(form_id)
-        .fetch_one(&mut *connection)
-        .await
-        .map_err(db)?;
-    queue_in(
-        connection,
-        QUIZ_GRADING,
-        program_id,
-        derived_uuid(&format!("{QUIZ_GRADING}:{seed}")),
-        json!({"programId": program_id, "formId": form_id, "contestId": contest_id}),
-        if contest_id.is_some() {
-            1
-        } else {
-            pending.max(1) as u32
-        },
-        if contest_id.is_some() {
-            "Waiting to regrade"
-        } else {
-            "Waiting to grade written answers"
-        },
-    )
-    .await
 }
 
 /// Queue writing a quiz's questions: its missing bank, or with `top_up` one
 /// more form's worth.
 pub async fn queue_bank(
-    pool: &SqlitePool,
+    database: &Database,
     operation_id: &str,
     program_id: &str,
     scope: &LearningQuizScopeDto,
     top_up: bool,
 ) -> Result<String> {
     quiz_blueprints::validate_scope(scope)?;
-    let mut tx = pool.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await.map_err(db)?;
     let needs =
         LearningAssessmentRepository::bank_needs_in(&mut tx, program_id, scope, top_up).await?;
-    let id = queue_in(
+    let rank = match (&scope.kind, &scope.id) {
+        (LearningQuizScopeKind::Lesson, Some(lesson)) => lesson_rank_in(&mut tx, lesson).await?,
+        _ => None,
+    };
+    let id = repository::queue_in(
         &mut tx,
         QUIZ_BANK,
         program_id,
@@ -158,34 +73,11 @@ pub async fn queue_bank(
         json!({"programId": program_id, "scope": scope, "topUp": top_up}),
         needs.len() as u32,
         "Waiting to write quiz questions",
+        rank,
     )
     .await?;
     tx.commit().await.map_err(db)?;
     Ok(id)
-}
-
-/// Queue writing a published lesson's quiz bank, in the transaction that
-/// publishes the lesson. The caller tells the runtime once it commits.
-pub(crate) async fn queue_lesson_bank_in(
-    connection: &mut SqliteConnection,
-    program_id: &str,
-    lesson_id: &str,
-) -> Result<String> {
-    queue_in(
-        connection,
-        QUIZ_BANK,
-        program_id,
-        uuid::Uuid::new_v4().to_string(),
-        json!({
-            "programId": program_id,
-            "scope": {"kind": "lesson", "id": lesson_id},
-            "topUp": false,
-            "lessonStage": true,
-        }),
-        1,
-        "Waiting to write quiz questions",
-    )
-    .await
 }
 
 /// What writing a bank produced.
@@ -201,19 +93,14 @@ pub struct BankReport {
 /// blinded key review), without the job runner. For the course eval's live
 /// hook and other callers that hold a model already.
 pub async fn prepare_bank_now(
-    pool: &SqlitePool,
+    database: &Database,
     llm: &dyn LLMPort,
     program_id: &str,
     scope: &LearningQuizScopeDto,
     top_up: bool,
 ) -> Result<BankReport> {
-    let needs = {
-        let mut tx = pool.begin_write().await.map_err(db)?;
-        let needs =
-            LearningAssessmentRepository::bank_needs_in(&mut tx, program_id, scope, top_up).await?;
-        tx.commit().await.map_err(db)?;
-        needs
-    };
+    let needs =
+        LearningAssessmentRepository::bank_needs(database, program_id, scope, top_up).await?;
     let mut report = BankReport::default();
     for need in &needs {
         let authored = generation::author_items(llm, need).await?;
@@ -229,17 +116,45 @@ pub async fn prepare_bank_now(
                 review_status: "agreed",
             })
             .collect();
-        let mut tx = pool.begin_write().await.map_err(db)?;
-        report.written += crate::assessment_repository::insert_bank_items_in(
-            &mut tx,
+        report.written += LearningAssessmentRepository::insert_bank_items(
+            database,
             program_id,
             &items,
             Some(llm.model_name()),
         )
         .await?;
-        tx.commit().await.map_err(db)?;
     }
     Ok(report)
+}
+
+fn written_message(written: usize, dropped: usize) -> String {
+    if dropped == 0 {
+        format!("{written} questions written.")
+    } else {
+        format!("{written} questions written; {dropped} failed the checks and were left out.")
+    }
+}
+
+/// A completed lesson quiz job's numbers: what it stored, from its result,
+/// and what its checks or the blinded key review left out, from its saved
+/// stage output. `None` until the job has completed.
+pub async fn lesson_stage_report(database: &Database, job_id: &str) -> Result<Option<BankReport>> {
+    let store = JobStore::new(database.clone());
+    let job = store.get(job_id).await?;
+    if job.status != JobStatus::Completed {
+        return Ok(None);
+    }
+    let written = job
+        .result_ref
+        .as_deref()
+        .and_then(|result| result.strip_prefix("quiz_bank:"))
+        .and_then(|count| count.parse().ok())
+        .unwrap_or(0);
+    let dropped = match store.checkpoint(job_id, LESSON_BANK_CHECKPOINT).await? {
+        Some(saved) => serde_json::from_value::<LessonBank>(saved)?.dropped,
+        None => Vec::new(),
+    };
+    Ok(Some(BankReport { written, dropped }))
 }
 
 fn requested_str<'a>(job: &'a JobRecord, field: &str) -> Result<&'a str> {
@@ -252,13 +167,15 @@ fn requested_str<'a>(job: &'a JobRecord, field: &str) -> Result<&'a str> {
 /// Writes a quiz's question bank.
 #[derive(Clone)]
 pub struct QuizBankWorker {
-    pub pool: SqlitePool,
+    pub database: Database,
     pub load_llm: ModelLoader,
 }
 
 #[async_trait::async_trait]
 impl JobHandler for QuizBankWorker {
     async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
+        let _activity =
+            lattice_core::shared::runtime::user_activity::UserActivity::begin("Preparing a quiz");
         let job = context.job();
         let program_id = requested_str(job, "programId")?.to_string();
         let scope: LearningQuizScopeDto =
@@ -269,14 +186,9 @@ impl JobHandler for QuizBankWorker {
             .get("topUp")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
-        let needs = {
-            let mut tx = self.pool.begin_write().await.map_err(db)?;
-            let needs =
-                LearningAssessmentRepository::bank_needs_in(&mut tx, &program_id, &scope, top_up)
-                    .await?;
-            tx.commit().await.map_err(db)?;
-            needs
-        };
+        let needs =
+            LearningAssessmentRepository::bank_needs(&self.database, &program_id, &scope, top_up)
+                .await?;
         let lesson_stage = job
             .requested
             .get("lessonStage")
@@ -326,25 +238,17 @@ impl JobHandler for QuizBankWorker {
                     review_status: "agreed",
                 })
                 .collect();
-            let mut tx = self.pool.begin_write().await.map_err(db)?;
-            written += crate::assessment_repository::insert_bank_items_in(
-                &mut tx,
+            written += LearningAssessmentRepository::insert_bank_items(
+                &self.database,
                 &program_id,
                 &items,
                 Some(llm.model_name()),
             )
             .await?;
-            tx.commit().await.map_err(db)?;
         }
         Ok(JobOutcome::Completed {
             result_ref: format!("quiz_bank:{written}"),
-            message: if dropped == 0 {
-                format!("{written} questions written.")
-            } else {
-                format!(
-                    "{written} questions written; {dropped} failed the checks and were left out."
-                )
-            },
+            message: written_message(written, dropped),
         })
     }
 
@@ -376,27 +280,8 @@ impl QuizBankWorker {
         let bank = match saved {
             Some(bank) => bank,
             None => {
-                let (title, objective, material, seeds) = {
-                    let mut tx = self.pool.begin_read().await.map_err(db)?;
-                    let (title, objective): (String, String) = sqlx::query_as(
-                        "SELECT title,objective FROM learning_lessons WHERE id=? AND program_id=?",
-                    )
-                    .bind(lesson_id)
-                    .bind(program_id)
-                    .fetch_optional(&mut *tx)
-                    .await
-                    .map_err(db)?
-                    .ok_or_else(|| AppError::NotFound("Lesson not found in this course".into()))?;
-                    let material =
-                        LearningAssessmentRepository::lesson_material_in(&mut tx, lesson_id)
-                            .await?;
-                    let seeds = LearningAssessmentRepository::lesson_seeds_in(
-                        &mut tx, program_id, lesson_id,
-                    )
-                    .await?;
-                    tx.commit().await.map_err(db)?;
-                    (title, objective, material, seeds)
-                };
+                let inputs =
+                    repository::lesson_inputs(&self.database, program_id, lesson_id).await?;
                 let Some(pin) = context.until_cancelled((self.load_llm)()).await else {
                     return Ok(JobOutcome::Stopped);
                 };
@@ -404,13 +289,13 @@ impl QuizBankWorker {
                 let Some(bank) = context
                     .until_cancelled(lesson_bank_stage(
                         pin.llm.as_ref(),
-                        &self.pool,
+                        &self.database,
                         program_id,
                         lesson_id,
-                        &title,
-                        &objective,
-                        material,
-                        seeds,
+                        &inputs.title,
+                        &inputs.objective,
+                        inputs.material,
+                        inputs.seeds,
                     ))
                     .await
                 else {
@@ -423,6 +308,7 @@ impl QuizBankWorker {
                 bank
             }
         };
+        let dropped = bank.dropped.len();
         let items: Vec<BankItem> = bank
             .items
             .into_iter()
@@ -438,24 +324,25 @@ impl QuizBankWorker {
                 }
             })
             .collect();
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        let written = crate::assessment_repository::insert_bank_items_in(
-            &mut tx,
+        let written = LearningAssessmentRepository::insert_bank_items(
+            &self.database,
             program_id,
             &items,
             bank.author_model.as_deref(),
         )
         .await?;
-        tx.commit().await.map_err(db)?;
         Ok(JobOutcome::Completed {
             result_ref: format!("quiz_bank:{written}"),
-            message: format!("{written} questions written."),
+            message: written_message(written, dropped),
         })
     }
 }
 
 mod grading;
 mod lesson_stage;
+mod repository;
+
+pub(crate) use repository::{queue_grading_in, queue_lesson_bank_in};
 
 pub use grading::{grade_written_answer, judge_short_answer, QuizGradingWorker};
 pub(crate) use lesson_stage::{lesson_bank_stage, lesson_seed_items, LessonBank};

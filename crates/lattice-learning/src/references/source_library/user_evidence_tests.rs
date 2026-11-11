@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::{repository::LearningRepository, tests};
+use lattice_core::shared::persistence::Database;
 
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -67,7 +68,7 @@ async fn add_web(
 async fn sources_record_who_added_them() {
     let pool = tests::pool().await.unwrap();
     let program_id = program(&pool).await;
-    let repo = LearningSourceLibraryRepository::new(pool.clone());
+    let repo = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let by_user = add_web(
         &repo,
         &program_id,
@@ -103,7 +104,7 @@ async fn sources_record_who_added_them() {
 async fn a_saved_source_is_found_by_address_text_and_version() {
     let pool = tests::pool().await.unwrap();
     let program_id = program(&pool).await;
-    let repo = LearningSourceLibraryRepository::new(pool.clone());
+    let repo = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let text = "Water boils sooner up high.";
     let version = add_web(&repo, &program_id, text, Some(SourceAddedBy::User)).await;
 
@@ -145,7 +146,7 @@ async fn a_saved_source_is_found_by_address_text_and_version() {
 async fn a_frozen_page_is_recorded_on_its_version() {
     let pool = tests::pool().await.unwrap();
     let program_id = program(&pool).await;
-    let repo = LearningSourceLibraryRepository::new(pool.clone());
+    let repo = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let version = add_web(
         &repo,
         &program_id,

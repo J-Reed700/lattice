@@ -39,17 +39,17 @@ async fn a_source_override_covers_that_source_and_nothing_else() -> Result<()> {
         note: None,
         set_at: 1,
     };
-    let change = set(&course.store, &entry).await?;
+    let change = set(&course.database, &entry).await?;
     assert_eq!(change.scope, entry.scope());
     assert_eq!(
         change.versions,
         vec![covered(&course.program_id, &chosen.version_id)]
     );
-    let cleared = clear(&course.store, &entry.scope())
+    let cleared = clear(&course.database, &entry.scope())
         .await?
         .expect("was set");
     assert_eq!(cleared.versions, change.versions);
-    assert_eq!(clear(&course.store, &entry.scope()).await?, None);
+    assert_eq!(clear(&course.database, &entry.scope()).await?, None);
     Ok(())
 }
 
@@ -61,6 +61,7 @@ async fn a_site_override_covers_the_site_in_every_course_with_or_without_a_class
     let other = Course {
         program_id: course_on(&course.pool).await?,
         pool: course.pool.clone(),
+        database: course.database.clone(),
         library: course.library.clone(),
         store: course.store.clone(),
     };
@@ -77,8 +78,8 @@ async fn a_site_override_covers_the_site_in_every_course_with_or_without_a_class
         note: None,
         set_at: 1,
     };
-    assert_eq!(preview(&course.store, &site.scope()).await?, expected);
-    assert_eq!(set(&course.store, &site).await?.versions, expected);
+    assert_eq!(preview(&course.database, &site.scope()).await?, expected);
+    assert_eq!(set(&course.database, &site).await?.versions, expected);
 
     let for_class = TrustOverride::SiteSubject {
         registrable_domain: "example.org".into(),
@@ -87,7 +88,7 @@ async fn a_site_override_covers_the_site_in_every_course_with_or_without_a_class
         note: None,
         set_at: 2,
     };
-    assert_eq!(set(&course.store, &for_class).await?.versions, expected);
+    assert_eq!(set(&course.database, &for_class).await?.versions, expected);
     // Both stand: the class override does not replace the site's standing.
     assert_eq!(course.store.site_overrides().await?.len(), 2);
     Ok(())
@@ -102,10 +103,10 @@ async fn an_override_without_its_source_or_site_is_refused() -> Result<()> {
         note: None,
         set_at: 1,
     };
-    assert!(set(&course.store, &blank).await.is_err());
+    assert!(set(&course.database, &blank).await.is_err());
     let scope = OverrideScope::Site {
         registrable_domain: "never-set.example".into(),
     };
-    assert_eq!(clear(&course.store, &scope).await?, None);
+    assert_eq!(clear(&course.database, &scope).await?, None);
     Ok(())
 }

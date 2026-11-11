@@ -230,7 +230,7 @@ export function ChatTab() {
                 saveLlmUpdates({
                   provider: event.target.value as ApiLLMSettings["provider"],
                   ...(isCloudProvider(event.target.value as ApiLLMSettings['provider'])
-                    ? { model: '', maxTokens: 8192 }
+                    ? { model: '' }
                     : {}),
                 }))
               }

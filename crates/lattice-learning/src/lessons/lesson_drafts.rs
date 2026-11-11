@@ -4,6 +4,7 @@
 use crate::curriculum_repository::LearningCurriculumRepository;
 use crate::dto::LearningSourceDto;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -58,6 +59,7 @@ impl AuthoringContext {
 
 #[derive(Clone)]
 struct Context {
+    database: Database,
     repo: LearningCurriculumRepository,
     job_id: String,
     lesson_id: String,
@@ -74,7 +76,7 @@ pub(crate) fn active() -> bool {
 /// The job and lesson a running preparation writes its drafts for, and the
 /// database it writes them to: where the lesson's claim ledger is kept.
 pub(crate) struct DraftScope {
-    pub pool: sqlx::SqlitePool,
+    pub database: Database,
     pub job_id: String,
     pub lesson_id: String,
 }
@@ -82,7 +84,7 @@ pub(crate) struct DraftScope {
 pub(crate) fn scope() -> Option<DraftScope> {
     CURRENT
         .try_with(|context| DraftScope {
-            pool: context.repo.pool().clone(),
+            database: context.database.clone(),
             job_id: context.job_id.clone(),
             lesson_id: context.lesson_id.clone(),
         })
@@ -122,6 +124,7 @@ pub(crate) async fn record_checkpoint(key: &str, value: serde_json::Value) -> Re
 }
 
 pub(crate) async fn run<T>(
+    database: &Database,
     repo: &LearningCurriculumRepository,
     job_id: &str,
     lesson_id: &str,
@@ -131,6 +134,7 @@ pub(crate) async fn run<T>(
     CURRENT
         .scope(
             Context {
+                database: database.clone(),
                 repo: repo.clone(),
                 job_id: job_id.into(),
                 lesson_id: lesson_id.into(),

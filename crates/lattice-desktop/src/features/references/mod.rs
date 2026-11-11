@@ -11,7 +11,7 @@
 //! - `commands` — pure `*_impl(container, …)` functions
 //! - `plugin::init()` — the `references` Tauri plugin
 //!
-//! The repository is constructed on demand from `container.db_pool()`, matching
+//! The repository is constructed on demand from `container.database()`, matching
 //! `features::daily_notes`. It is the only reader/writer of `passage_references`.
 
 pub mod commands;

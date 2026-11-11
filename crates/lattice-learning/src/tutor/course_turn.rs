@@ -1,9 +1,9 @@
 //! The course a tutor chat is bound to, opened for one turn.
 
-use super::binding::conversation_course;
 use super::cards::DueCard;
 use super::facts::replies_since_check;
 use super::prompt::{self, TurnFacts, TUTOR_POLICY};
+use super::repository::conversation_course;
 use super::tools;
 use crate::dto::{LearningLessonDto, LearningModuleDto, LearningProgramDto};
 use crate::references::course_index::CourseIndexes;
@@ -15,8 +15,8 @@ use lattice_core::application::ports::turn_source::{
 };
 use lattice_core::application::ports::ToolDefinition;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use serde_json::Value;
-use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 use tracing::warn;
@@ -30,7 +30,7 @@ const CARDS_SHOWN: usize = 5;
 pub type NoteWritten = Arc<dyn Fn() + Send + Sync>;
 
 pub struct CourseTurn {
-    pub(super) pool: SqlitePool,
+    pub(super) database: Database,
     pub(super) courses: Option<Arc<CourseIndexes>>,
     pub(super) conversation_id: String,
     pub(super) program_id: String,
@@ -53,12 +53,12 @@ impl CourseTurn {
     /// `None` for a chat bound to no course. One whose binding cannot be read
     /// also gives `None`: the turn then runs as a plain chat rather than failing.
     pub async fn resolve(
-        pool: &SqlitePool,
+        database: &Database,
         courses: Option<Arc<CourseIndexes>>,
         conversation_id: &str,
         note_written: NoteWritten,
     ) -> Option<Self> {
-        let binding = match conversation_course(pool, conversation_id).await {
+        let binding = match conversation_course(database, conversation_id).await {
             Ok(binding) => binding?,
             Err(error) => {
                 warn!(%error, conversation_id, "Could not read the conversation's course");
@@ -66,7 +66,7 @@ impl CourseTurn {
             }
         };
         Some(Self {
-            pool: pool.clone(),
+            database: database.clone(),
             courses,
             conversation_id: conversation_id.to_string(),
             program_id: binding.program_id,
@@ -80,7 +80,7 @@ impl CourseTurn {
     pub(super) async fn program(&self) -> Result<&LearningProgramDto> {
         self.program
             .get_or_try_init(|| async {
-                LearningRepository::new(self.pool.clone())
+                LearningRepository::new(self.database.clone())
                     .get(&self.program_id)
                     .await
             })
@@ -111,7 +111,7 @@ impl CourseTurn {
             .await
             .inspect_err(|error| warn!(%error, "Could not read the course's due cards"))
             .ok();
-        let replies_since_check = replies_since_check(&self.pool, &self.conversation_id)
+        let replies_since_check = replies_since_check(&self.database, &self.conversation_id)
             .await
             .inspect_err(|error| warn!(%error, "Could not read the tutor's last check"))
             .ok();

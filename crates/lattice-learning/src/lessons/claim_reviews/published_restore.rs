@@ -9,15 +9,13 @@ use lattice_core::domain::learning::claim_review::{
     span_of, Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, EventProvenance, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::SqliteConnection;
+use lattice_core::shared::persistence::WriteTx;
 
 use super::actions::{in_section_body, ONLY_SECTION};
-use super::published_edit::{
-    gone, placed, section_body, update_report, write_section_body, CHANGED, UNDO_BLOCKED,
-};
+use super::published_edit::{gone, placed, section_body, update_report, CHANGED, UNDO_BLOCKED};
 use super::published_remove::Removal;
 use super::put_back::siblings;
-use super::repository::{append_in, load_in};
+use super::repository::{append_in, blocks, load_in};
 use crate::content_verification::{insert_sentence, put_at_junction, remove_sentence, WrittenBack};
 
 const AFTER_IT: &str = "This section changed after you removed this sentence, so it can't go back on its own. Edit the section to add it back.";
@@ -29,7 +27,7 @@ const RESTORED_REASON: &str = "You restored the original sentence; it was not ch
 /// `connection`: the text, the claim's event, and the report. The claims it
 /// ended or restored are the ones it returns.
 pub(super) async fn apply_in(
-    connection: &mut SqliteConnection,
+    connection: &mut WriteTx,
     lesson_id: &str,
     claim_id: &ClaimId,
     event: &ClaimEvent,
@@ -132,7 +130,7 @@ pub(super) async fn apply_in(
         };
         append_in(connection, lesson_id, id, user.clone(), superseded).await?;
     }
-    write_section_body(connection, lesson_id, unit, &new_body).await?;
+    blocks::write_section_body(connection, lesson_id, unit, &new_body).await?;
     let mut ids: HashSet<String> = replaced.iter().map(|id| id.0.clone()).collect();
     ids.extend(taken_with);
     update_report(connection, &review.program_id, lesson_id, |report| {
@@ -286,7 +284,7 @@ pub(super) fn undoable_in_published(entry: &ClaimLedgerEntry) -> bool {
 /// `connection`. The claims it took the event back from are the ones it
 /// returns.
 pub(super) async fn undo_in(
-    connection: &mut SqliteConnection,
+    connection: &mut WriteTx,
     lesson_id: &str,
     claim_id: &ClaimId,
     user: &EventProvenance,
@@ -469,7 +467,7 @@ pub(super) async fn undo_in(
                 };
                 append_in(connection, lesson_id, successor, machine, ended).await?;
             }
-            write_section_body(connection, lesson_id, undoing.unit, &undoing.then).await?;
+            blocks::write_section_body(connection, lesson_id, undoing.unit, &undoing.then).await?;
             let mut claims: HashSet<String> =
                 undoing.undone.iter().map(|(id, _)| id.0.clone()).collect();
             claims.extend(undoing.successor.iter().map(|id| id.0.clone()));

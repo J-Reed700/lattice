@@ -92,7 +92,7 @@ async fn interrupted_coverage_reuses_mapping_and_each_completed_passage() -> Res
             })
             .collect(),
     };
-    crate::lesson_drafts::run(&repo, &job, &lesson, async {
+    crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         assert!(coverage::audit(&model, &content, &inventory, None)
             .await
             .is_err());
@@ -102,7 +102,7 @@ async fn interrupted_coverage_reuses_mapping_and_each_completed_passage() -> Res
     })
     .await?;
     // A new task-local context must recover the persisted results, not memory.
-    crate::lesson_drafts::run(&repo, &job, &lesson, async {
+    crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         let audited = coverage::audit(&model, &content, &inventory, None).await?;
         assert!(audited.units.iter().all(|unit| unit.complete));
         assert_eq!(model.mapping_calls.load(Ordering::Relaxed), 1);

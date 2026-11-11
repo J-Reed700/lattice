@@ -1,5 +1,6 @@
 //! Reading the recall workspace: cards, their versions and schedules, and duplicate suggestions.
 use super::*;
+use sqlx::SqliteConnection;
 
 /// The card's FSRS schedule as the recall workspace reports it.
 fn scheduler_dto(row: &sqlx::sqlite::SqliteRow) -> LearningRecallSchedulerStateDto {
@@ -16,20 +17,21 @@ fn scheduler_dto(row: &sqlx::sqlite::SqliteRow) -> LearningRecallSchedulerStateD
 impl LearningRecallRepository {
     pub async fn workspace(&self, program_id: &str) -> Result<LearningRecallWorkspaceDto> {
         validate_uuid(program_id, "program")?;
+        self.bootstrap_deck_cards(program_id).await?;
+        let mut read = self.pool.begin_read().await.map_err(db)?;
         let program_exists: Option<i64> =
             sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
                 .bind(program_id)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut *read)
                 .await
                 .map_err(db)?;
         if program_exists.is_none() {
             return Err(AppError::NotFound("Learning program not found.".into()));
         }
-        self.bootstrap_deck_cards(program_id).await?;
         let deck_id: Option<String> =
             sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
                 .bind(program_id)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut *read)
                 .await
                 .map_err(db)?
                 .flatten();
@@ -45,7 +47,7 @@ impl LearningRecallRepository {
         let rows = sqlx::query("SELECT p.*,c.deck_id,c.due_at,c.interval_days,c.review_count,c.stability,c.difficulty,c.last_reviewed_at FROM learning_recall_card_profiles p JOIN study_cards c ON c.id=p.card_id WHERE p.program_id=? AND c.deck_id=? ORDER BY p.created_at,c.id")
             .bind(program_id)
             .bind(&deck_id)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *read)
             .await
             .map_err(db)?;
         let mut cards = Vec::with_capacity(rows.len());
@@ -53,7 +55,7 @@ impl LearningRecallRepository {
             let card_id: String = row.get("card_id");
             let format = parse_format(row.get("format"))?;
             let content = content_from_row(row, format)?;
-            let versions = self.card_versions(&card_id).await?;
+            let versions = Self::card_versions_on(&mut read, &card_id).await?;
             cards.push(LearningRecallCardDto {
                 id: card_id,
                 format,
@@ -69,7 +71,8 @@ impl LearningRecallRepository {
                 updated_at: row.get("updated_at"),
             });
         }
-        let duplicates = self.duplicate_suggestions(program_id).await?;
+        let duplicates = Self::duplicate_suggestions_on(&mut read, program_id).await?;
+        read.commit().await.map_err(db)?;
         let due_count = cards
             .iter()
             .filter(|card| card.scheduler.due_at <= now())
@@ -83,12 +86,15 @@ impl LearningRecallRepository {
         })
     }
 
-    async fn card_versions(&self, card_id: &str) -> Result<Vec<LearningRecallCardVersionDto>> {
+    async fn card_versions_on(
+        connection: &mut SqliteConnection,
+        card_id: &str,
+    ) -> Result<Vec<LearningRecallCardVersionDto>> {
         let rows = sqlx::query(
             "SELECT * FROM learning_recall_card_versions WHERE card_id=? ORDER BY revision",
         )
         .bind(card_id)
-        .fetch_all(&self.pool)
+        .fetch_all(connection)
         .await
         .map_err(db)?;
         rows.iter()
@@ -115,13 +121,13 @@ impl LearningRecallRepository {
             .collect()
     }
 
-    async fn duplicate_suggestions(
-        &self,
+    async fn duplicate_suggestions_on(
+        connection: &mut SqliteConnection,
         program_id: &str,
     ) -> Result<Vec<LearningRecallDuplicateSuggestionDto>> {
         let rows = sqlx::query("SELECT * FROM learning_recall_duplicate_suggestions WHERE program_id=? ORDER BY created_at,id LIMIT 500")
             .bind(program_id)
-            .fetch_all(&self.pool)
+            .fetch_all(connection)
             .await
             .map_err(db)?;
         rows.iter()

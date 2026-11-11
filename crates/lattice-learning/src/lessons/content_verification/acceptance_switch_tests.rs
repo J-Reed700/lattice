@@ -25,6 +25,7 @@ use lattice_core::domain::learning::claim_review::{
     ClaimLocation, ClaimState, EvidenceFingerprint, EvidenceSeen, LessonReviewState, ReopenCause,
     RepairOutcome, UnitKind, UnverifiedReason, VerdictKind,
 };
+use lattice_core::shared::persistence::Database;
 use std::collections::VecDeque;
 
 const SENTENCE: &str = "The reader hands over one row at a time.";
@@ -640,11 +641,12 @@ async fn research_that_reached_nothing_records_nothing_and_a_round_where_nothing
     // The fixture gives the research planner no answer it can use: the round
     // reaches nothing.
     let error = research::run(
-        pool.clone(),
+        Database::from(pool.clone()),
         program_id,
         "CSV".into(),
         Some(research::tests::web(false)),
         prepare(
+            &Database::from(pool.clone()),
             &repo,
             &job,
             &lesson_id,
@@ -1991,61 +1993,68 @@ async fn a_confirmed_claim_whose_sentence_or_bound_source_changed_is_reopened_be
     let model = Model::new();
     let body = format!("{SENTENCE} {HEADER}");
     let draft = lesson_of(&body).to_string();
-    lesson_drafts::run(&repo, &job, &lesson_id, async {
-        lesson_drafts::resume("switch-fixture".into()).await?;
-        lesson_drafts::save(&draft).await?;
-        let mut ledger = claim_ledger::ClaimLedger::open(&model, &draft).await?;
-        let changes = claim(&mut ledger, "changes", (SENTENCE, SENTENCE), &body, SOURCED).await?;
-        let stays = claim(&mut ledger, "stays", (HEADER, HEADER), &body, SOURCED).await?;
-        for id in [&changes, &stays] {
-            walk(&mut ledger, id, Class::Sourced, &REWRITING).await?;
-        }
-        let store = ClaimReviewRepository::new(pool.clone());
-        let service = ClaimReviewService::new(pool.clone());
-        let mut revision = store.load(&lesson_id).await?.revision.0;
-        for (id, sources) in [(&changes, vec![]), (&stays, vec![BOUND.to_owned()])] {
-            revision = service
-                .resolve(
-                    &lesson_id,
-                    &id.0,
-                    ClaimActionRequestDto::Confirm {
-                        note: Some("Checked by hand.".into()),
-                        source_version_ids: sources,
-                    },
-                    revision,
-                )
-                .await?;
-        }
-        ledger.sync().await?;
-        assert!(matches!(
-            ledger.entry(&stays).unwrap().state(),
-            ClaimState::Confirmed { .. }
-        ));
+    lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &repo,
+        &job,
+        &lesson_id,
+        async {
+            lesson_drafts::resume("switch-fixture".into()).await?;
+            lesson_drafts::save(&draft).await?;
+            let mut ledger = claim_ledger::ClaimLedger::open(&model, &draft).await?;
+            let changes =
+                claim(&mut ledger, "changes", (SENTENCE, SENTENCE), &body, SOURCED).await?;
+            let stays = claim(&mut ledger, "stays", (HEADER, HEADER), &body, SOURCED).await?;
+            for id in [&changes, &stays] {
+                walk(&mut ledger, id, Class::Sourced, &REWRITING).await?;
+            }
+            let store = ClaimReviewRepository::new(pool.clone());
+            let service = ClaimReviewService::new(Database::from(pool.clone()));
+            let mut revision = store.load(&lesson_id).await?.revision.0;
+            for (id, sources) in [(&changes, vec![]), (&stays, vec![BOUND.to_owned()])] {
+                revision = service
+                    .resolve(
+                        &lesson_id,
+                        &id.0,
+                        ClaimActionRequestDto::Confirm {
+                            note: Some("Checked by hand.".into()),
+                            source_version_ids: sources,
+                        },
+                        revision,
+                    )
+                    .await?;
+            }
+            ledger.sync().await?;
+            assert!(matches!(
+                ledger.entry(&stays).unwrap().state(),
+                ClaimState::Confirmed { .. }
+            ));
 
-        // The next pass finds the first sentence changed and the bound source
-        // gone from the course.
-        let rewritten = format!("{REWRITTEN} {HEADER}");
-        identified(
-            &mut ledger,
-            &model,
-            &lesson_of(&rewritten),
-            &[(REWRITTEN, REWRITTEN), (HEADER, HEADER)],
-            &[],
-        )
-        .await?;
+            // The next pass finds the first sentence changed and the bound source
+            // gone from the course.
+            let rewritten = format!("{REWRITTEN} {HEADER}");
+            identified(
+                &mut ledger,
+                &model,
+                &lesson_of(&rewritten),
+                &[(REWRITTEN, REWRITTEN), (HEADER, HEADER)],
+                &[],
+            )
+            .await?;
 
-        let cause = |id: &ClaimId| match ledger.entry(id).map(ClaimLedgerEntry::state) {
-            Some(ClaimState::Reopened { cause, .. }) => Some(cause.clone()),
-            _ => None,
-        };
-        assert_eq!(cause(&changes), Some(ReopenCause::SentenceChanged));
-        assert_eq!(
-            cause(&stays),
-            Some(ReopenCause::SourceDeleted(BOUND.into()))
-        );
-        assert!(ledger.due(&StandardPolicy::new()).is_empty());
-        Ok(())
-    })
+            let cause = |id: &ClaimId| match ledger.entry(id).map(ClaimLedgerEntry::state) {
+                Some(ClaimState::Reopened { cause, .. }) => Some(cause.clone()),
+                _ => None,
+            };
+            assert_eq!(cause(&changes), Some(ReopenCause::SentenceChanged));
+            assert_eq!(
+                cause(&stays),
+                Some(ReopenCause::SourceDeleted(BOUND.into()))
+            );
+            assert!(ledger.due(&StandardPolicy::new()).is_empty());
+            Ok(())
+        },
+    )
     .await
 }
 
@@ -2196,74 +2205,81 @@ async fn a_claim_at_recite_whose_finding_was_lost_is_recited_from_the_finding_re
     let mut lesson = json!({"blocks":[{"kind":"explanation","title":"Rows","body":GOOD,"rubric":[],
         "sourceIndex":0,"quote":"An unrelated quotation."}],"questions":[]});
 
-    lesson_drafts::run(&repo, &job, &lesson_id, async {
-        lesson_drafts::resume("rebuild-fixture".into()).await?;
-        let mut ledger = open().await?;
-        let id = claim(&mut ledger, "recite", (GOOD, GOOD), GOOD, SOURCED).await?;
-        walk(&mut ledger, &id, Class::Sourced, &RECITING).await?;
-        // What an earlier run of the job left: the check that found the support
-        // elsewhere, and the passage the card shows.
-        ledger
-            .append(
-                &id,
-                ClaimEvent::Checked(found_elsewhere(&sources[0], GOOD, at)),
+    lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &repo,
+        &job,
+        &lesson_id,
+        async {
+            lesson_drafts::resume("rebuild-fixture".into()).await?;
+            let mut ledger = open().await?;
+            let id = claim(&mut ledger, "recite", (GOOD, GOOD), GOOD, SOURCED).await?;
+            walk(&mut ledger, &id, Class::Sourced, &RECITING).await?;
+            // What an earlier run of the job left: the check that found the support
+            // elsewhere, and the passage the card shows.
+            ledger
+                .append(
+                    &id,
+                    ClaimEvent::Checked(found_elsewhere(&sources[0], GOOD, at)),
+                )
+                .await?;
+            let shown = EvidencePassage {
+                source_id: sources[0].id.clone(),
+                text: GOOD.into(),
+                start_byte: at,
+                end_byte: at + GOOD.len(),
+                retrieval_kind: "lexical".into(),
+                score: 1.0,
+            };
+            ledger.show_evidence(&id, &[shown]).await?;
+            let pass = identified(
+                &mut ledger,
+                &Model::new(),
+                &lesson,
+                &[(GOOD, GOOD)],
+                &sources,
             )
             .await?;
-        let shown = EvidencePassage {
-            source_id: sources[0].id.clone(),
-            text: GOOD.into(),
-            start_byte: at,
-            end_byte: at + GOOD.len(),
-            retrieval_kind: "lexical".into(),
-            score: 1.0,
-        };
-        ledger.show_evidence(&id, &[shown]).await?;
-        let pass = identified(
-            &mut ledger,
-            &Model::new(),
-            &lesson,
-            &[(GOOD, GOOD)],
-            &sources,
-        )
-        .await?;
 
-        // This job saved no finding for the claim.
-        let findings = passes::latest_findings(&ledger, &mut ClaimChecks::default(), &pass).await?;
+            // This job saved no finding for the claim.
+            let findings =
+                passes::latest_findings(&ledger, &mut ClaimChecks::default(), &pass).await?;
 
-        let [finding] = findings.as_slice() else {
-            panic!("one finding: {findings:?}");
-        };
-        assert_eq!(finding.verdict, ClaimVerdict::Supported);
-        assert_eq!(
-            finding.two_pass.supported_by.as_ref().map(|found| (
-                found.source_id.as_str(),
-                found.start_byte,
-                found.end_byte
-            )),
-            Some((sources[0].id.as_str(), at, at + GOOD.len()))
-        );
-        assert_eq!(
-            finding.class.map(|classed| classed.class),
-            Some(Class::Sourced)
-        );
-        let report = pass_report(findings);
-        let moved = super::super::repair_loop::recite(
-            &mut ledger,
-            &policy,
-            (&mut lesson, &report),
-            (&mut vec![sources[0].clone()], &mut HashSet::new()),
-            &references,
-        )
-        .await?;
-        assert!(moved, "the claim is recited");
-        assert_eq!(node_of(&ledger, &id), Some("s.citeread"));
-        assert_eq!(lesson["blocks"][0]["quote"], "An unrelated quotation.");
-        assert_eq!(
-            lesson["blocks"][0]["citations"],
-            json!([{"sentence":GOOD,"sourceIndex":0,"quote":GOOD}])
-        );
-        Ok(())
-    })
+            let [finding] = findings.as_slice() else {
+                panic!("one finding: {findings:?}");
+            };
+            assert_eq!(finding.verdict, ClaimVerdict::Supported);
+            assert_eq!(
+                finding.two_pass.supported_by.as_ref().map(|found| (
+                    found.source_id.as_str(),
+                    found.start_byte,
+                    found.end_byte
+                )),
+                Some((sources[0].id.as_str(), at, at + GOOD.len()))
+            );
+            assert_eq!(
+                finding.class.map(|classed| classed.class),
+                Some(Class::Sourced)
+            );
+            let report = pass_report(findings);
+            let moved = super::super::repair_loop::recite(
+                &mut ledger,
+                &policy,
+                (&mut lesson, &report),
+                (&mut vec![sources[0].clone()], &mut HashSet::new()),
+                &references,
+            )
+            .await?;
+            assert!(moved, "the claim is recited");
+            assert_eq!(node_of(&ledger, &id), Some("s.citeread"));
+            assert_eq!(lesson["blocks"][0]["quote"], "An unrelated quotation.");
+            assert_eq!(
+                lesson["blocks"][0]["citations"],
+                json!([{"sentence":GOOD,"sourceIndex":0,"quote":GOOD}])
+            );
+            Ok(())
+        },
+    )
     .await
 }
 
@@ -2327,68 +2343,75 @@ async fn a_claim_at_a_rewrite_whose_finding_was_lost_sends_the_repair_its_reason
     let policy = StandardPolicy::new();
     let lesson = lesson_of(SENTENCE);
 
-    lesson_drafts::run(&repo, &job, &lesson_id, async {
-        lesson_drafts::resume("rebuild-fixture".into()).await?;
-        let mut ledger = open().await?;
-        let id = claim(
-            &mut ledger,
-            "rewrite",
-            (SENTENCE, SENTENCE),
-            SENTENCE,
-            SOURCED,
-        )
-        .await?;
-        walk(&mut ledger, &id, Class::Sourced, &REWRITING).await?;
-        let evidence = vec![EvidenceSeen {
-            source_version_id: sources[0].id.clone(),
-            start_byte: 0,
-            end_byte: GOOD.len(),
-            text_sha256: text_sha256(GOOD),
-        }];
-        let failed = CheckResult::Failed {
-            kind: VerdictKind::Unsupported,
-        };
-        ledger
-            .append(
-                &id,
-                ClaimEvent::Checked(local_check(failed, "No passage states it.", evidence)),
+    lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &repo,
+        &job,
+        &lesson_id,
+        async {
+            lesson_drafts::resume("rebuild-fixture".into()).await?;
+            let mut ledger = open().await?;
+            let id = claim(
+                &mut ledger,
+                "rewrite",
+                (SENTENCE, SENTENCE),
+                SENTENCE,
+                SOURCED,
             )
             .await?;
-        ledger
-            .show_evidence(&id, &[passage(&sources[0].id)])
+            walk(&mut ledger, &id, Class::Sourced, &REWRITING).await?;
+            let evidence = vec![EvidenceSeen {
+                source_version_id: sources[0].id.clone(),
+                start_byte: 0,
+                end_byte: GOOD.len(),
+                text_sha256: text_sha256(GOOD),
+            }];
+            let failed = CheckResult::Failed {
+                kind: VerdictKind::Unsupported,
+            };
+            ledger
+                .append(
+                    &id,
+                    ClaimEvent::Checked(local_check(failed, "No passage states it.", evidence)),
+                )
+                .await?;
+            ledger
+                .show_evidence(&id, &[passage(&sources[0].id)])
+                .await?;
+            let pass = identified(
+                &mut ledger,
+                &Model::new(),
+                &lesson,
+                &[(SENTENCE, SENTENCE)],
+                &sources,
+            )
             .await?;
-        let pass = identified(
-            &mut ledger,
-            &Model::new(),
-            &lesson,
-            &[(SENTENCE, SENTENCE)],
-            &sources,
-        )
-        .await?;
 
-        let findings = passes::latest_findings(&ledger, &mut ClaimChecks::default(), &pass).await?;
+            let findings =
+                passes::latest_findings(&ledger, &mut ClaimChecks::default(), &pass).await?;
 
-        let report = pass_report(findings);
-        let context = super::super::repair_request::repair_context(
-            "{}",
-            &lesson,
-            &report,
-            (&ledger, &policy),
-            std::slice::from_ref(&id),
-            &references,
-        )?;
-        let [failed] = context["failedClaims"].as_array().unwrap().as_slice() else {
-            panic!("one failed claim: {context}");
-        };
-        assert_eq!(failed["claimId"], "rewrite");
-        assert_eq!(
-            failed["goal"],
-            repair::goal_words(Goal::WhatThePassageStates)
-        );
-        assert_eq!(failed["reason"], "No passage states it.");
-        assert_eq!(failed["evidence"], json!(["evidence-0"]));
-        assert_eq!(context["evidence"][0]["text"], SENTENCE);
-        Ok(())
-    })
+            let report = pass_report(findings);
+            let context = super::super::repair_request::repair_context(
+                "{}",
+                &lesson,
+                &report,
+                (&ledger, &policy),
+                std::slice::from_ref(&id),
+                &references,
+            )?;
+            let [failed] = context["failedClaims"].as_array().unwrap().as_slice() else {
+                panic!("one failed claim: {context}");
+            };
+            assert_eq!(failed["claimId"], "rewrite");
+            assert_eq!(
+                failed["goal"],
+                repair::goal_words(Goal::WhatThePassageStates)
+            );
+            assert_eq!(failed["reason"], "No passage states it.");
+            assert_eq!(failed["evidence"], json!(["evidence-0"]));
+            assert_eq!(context["evidence"][0]["text"], SENTENCE);
+            Ok(())
+        },
+    )
     .await
 }

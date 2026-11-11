@@ -2083,46 +2083,49 @@ struct Models {
     continuation: Arc<EvalLlm>,
 }
 
-fn build_models(config: &EvalConfig, arm: Arm) -> Models {
-    let build = |model: &str| -> Arc<dyn LLMPort> {
-        match config.provider {
-            EvalProvider::Ollama => Arc::new(
-                OllamaClient::with_model_and_timeouts_and_header(
-                    &config.endpoint,
-                    model,
-                    Duration::from_secs(30),
-                    config.request_timeout,
-                    if config.auth_header_name.is_empty() {
-                        None
-                    } else {
-                        Some((
-                            config.auth_header_name.clone(),
-                            config.auth_header_value.clone(),
-                        ))
-                    },
-                )
-                .expect("Ollama client"),
-            ),
-            EvalProvider::LlamaCpp => {
-                let settings = LLMSettingsDto {
-                    context_window: config.context_tokens as u32,
-                    timeout_seconds: u32::try_from(config.request_timeout.as_secs())
-                        .unwrap_or(u32::MAX),
-                    llama_cpp: LlamaCppSettingsDto {
-                        url: config.endpoint.clone(),
-                        model: model.to_owned(),
-                        auth_header_name: config.auth_header_name.clone(),
-                        auth_header_value: config.auth_header_value.clone(),
-                    },
-                    ..Default::default()
-                };
-                Arc::new(LlamaCppLlm::new(&settings).expect("llama.cpp client"))
-            }
+async fn build_port(config: &EvalConfig, model: &str) -> Arc<dyn LLMPort> {
+    match config.provider {
+        EvalProvider::Ollama => OllamaClient::with_model_and_timeouts_and_header(
+            &config.endpoint,
+            model,
+            Duration::from_secs(30),
+            config.request_timeout,
+            if config.auth_header_name.is_empty() {
+                None
+            } else {
+                Some((
+                    config.auth_header_name.clone(),
+                    config.auth_header_value.clone(),
+                ))
+            },
+        )
+        .expect("Ollama client")
+        .into_port(),
+        EvalProvider::LlamaCpp => {
+            let settings = LLMSettingsDto {
+                context_window: config.context_tokens as u32,
+                timeout_seconds: u32::try_from(config.request_timeout.as_secs())
+                    .unwrap_or(u32::MAX),
+                llama_cpp: LlamaCppSettingsDto {
+                    url: config.endpoint.clone(),
+                    model: model.to_owned(),
+                    auth_header_name: config.auth_header_name.clone(),
+                    auth_header_value: config.auth_header_value.clone(),
+                },
+                ..Default::default()
+            };
+            LlamaCppLlm::new(&settings)
+                .expect("llama.cpp client")
+                .into_port()
+                .await
         }
-    };
-    let utility_inner = build(&config.utility_model);
+    }
+}
+
+async fn build_models(config: &EvalConfig, arm: Arm) -> Models {
+    let utility_inner = build_port(config, &config.utility_model).await;
     let continuation = Arc::new(EvalLlm::new(
-        build(&config.continuation_model),
+        build_port(config, &config.continuation_model).await,
         false,
         Duration::from_secs(4),
         config.provider_attempts,
@@ -2236,7 +2239,7 @@ async fn run_once(
     metrics: &mut Metrics,
 ) {
     let mut harness = Harness::open().await;
-    let models = build_models(config, arm);
+    let models = build_models(config, arm).await;
 
     // A second conversation holding text that looks like the first one's. Any
     // evidence span that lands here is a scoping failure, and without a decoy

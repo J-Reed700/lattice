@@ -13,11 +13,12 @@ use lattice_core::application::contracts::notes::WorkspaceNoteDto;
 use lattice_core::application::contracts::notes::WorkspaceNoteRecord;
 use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::timestamps::now_db_timestamp;
-use sqlx::{Sqlite, SqlitePool, Transaction};
+use lattice_core::shared::persistence::Transactions;
 
 async fn capture_target(
-    tx: &mut Transaction<'_, Sqlite>,
+    tx: &mut sqlx::SqliteConnection,
     title: &str,
     journal_id: Option<&str>,
     preferred: Option<&str>,
@@ -27,7 +28,7 @@ async fn capture_target(
         let row = sqlx::query(&query)
             .bind(id)
             .try_map(note_from_row)
-            .fetch_optional(&mut **tx)
+            .fetch_optional(&mut *tx)
             .await?;
         // A removed explicit destination must not silently send the capture elsewhere.
         return row
@@ -41,7 +42,7 @@ async fn capture_target(
         .bind(title)
         .bind(journal_id)
         .try_map(note_from_row)
-        .fetch_optional(&mut **tx)
+        .fetch_optional(&mut *tx)
         .await?
     {
         return Ok((row_to_dto(row)?, false));
@@ -67,9 +68,10 @@ async fn capture_target(
 }
 
 pub(super) async fn capture_reference(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     request: CaptureReferenceRequestDto,
 ) -> Result<CaptureReferenceResultDto> {
+    let pool = pool.sqlx_pool();
     capture_snippet(&request.message_content)?;
     if request.conversation_id.trim().is_empty()
         || request.message_id.trim().is_empty()
@@ -79,7 +81,7 @@ pub(super) async fn capture_reference(
             "A capture requires a message, conversation, and destination title".into(),
         ));
     }
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let mut tx = pool.begin_write().await?;
     let (mut note, _) = capture_target(
         &mut tx,
         &request.inbox_title,
@@ -106,14 +108,15 @@ pub(super) async fn capture_reference(
 }
 
 pub(super) async fn quick_capture(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     title: &str,
     content: &str,
     sources: Vec<SourceDto>,
     conversation_ids: Vec<String>,
 ) -> Result<QuickCaptureResultDto> {
+    let pool = pool.sqlx_pool();
     let snippet = capture_snippet(content)?;
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let mut tx = pool.begin_write().await?;
     let journal_id: Option<String> = sqlx::query_scalar("SELECT j.id FROM journals j LEFT JOIN daily_notes_workspace n ON n.journal_id = j.id WHERE j.is_archived = 0 GROUP BY j.id ORDER BY MAX(n.updated_at) DESC, j.sort_order, j.created_at, j.id LIMIT 1")
         .fetch_optional(&mut *tx).await?;
     let (mut note, created) = capture_target(&mut tx, title, journal_id.as_deref(), None).await?;

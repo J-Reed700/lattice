@@ -1,4 +1,5 @@
 //! Reading source workspaces, versions, search hits and prepared sources.
+use super::repository::reads as stored;
 use super::*;
 use lattice_core::shared::persistence::Transactions;
 
@@ -48,106 +49,10 @@ impl LearningSourceLibraryRepository {
     ) -> Result<LearningSourceWorkspaceDto> {
         Self::validate_program_id(program_id)?;
         self.backfill_legacy(program_id).await?;
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
-        let workspace = Self::workspace_on(&mut tx, program_id, include_deleted).await?;
+        let mut tx = self.database.begin_read().await.map_err(db)?;
+        let workspace = stored::workspace_in(&mut tx, program_id, include_deleted).await?;
         tx.commit().await.map_err(db)?;
         Ok(workspace)
-    }
-
-    /// Read source metadata and history through an existing database snapshot.
-    pub(crate) async fn workspace_on(
-        connection: &mut sqlx::SqliteConnection,
-        program_id: &str,
-        include_deleted: bool,
-    ) -> Result<LearningSourceWorkspaceDto> {
-        let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
-            .bind(program_id)
-            .fetch_optional(&mut *connection)
-            .await
-            .map_err(db)?;
-        if exists.is_none() {
-            return Err(AppError::NotFound("Learning program not found".into()));
-        }
-        let query = if include_deleted {
-            "SELECT * FROM learning_source_library WHERE program_id=? ORDER BY created_at,id"
-        } else {
-            "SELECT * FROM learning_source_library WHERE program_id=? AND deleted_at IS NULL ORDER BY created_at,id"
-        };
-        let rows = sqlx::query(query)
-            .bind(program_id)
-            .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?;
-        let mut sources = Vec::with_capacity(rows.len());
-        for row in rows {
-            let id: String = row.get("id");
-            let versions = Self::version_summaries(connection, program_id, &id).await?;
-            let active_id: Option<String> = row.try_get("active_version_id").map_err(db)?;
-            let pending_id: Option<String> = row.try_get("pending_version_id").map_err(db)?;
-            let checks = Self::checks(connection, program_id, &id).await?;
-            sources.push(LearningSourceLibraryItemDto {
-                id: id.clone(),
-                kind: parse_kind(row.get("kind"))?,
-                added_by: parse_added_by(row.get("added_by"))?.into(),
-                found_by_search: Some(row.get::<i64, _>("found_by_search") != 0),
-                origin: row.get("origin"),
-                requested_url: row.get("requested_url"),
-                freshness_policy: parse_policy(row.get("freshness_policy"))?,
-                active_version_id: active_id.clone(),
-                pending_version_id: pending_id.clone(),
-                revision: row.get("revision"),
-                deleted_at: row.get("deleted_at"),
-                deletion_reason: row.get("deletion_reason"),
-                active_version: active_id
-                    .as_deref()
-                    .and_then(|vid| versions.iter().find(|v| v.id == vid).cloned()),
-                pending_version: pending_id
-                    .as_deref()
-                    .and_then(|vid| versions.iter().find(|v| v.id == vid).cloned()),
-                versions,
-                latest_check: checks.first().cloned(),
-                checks,
-                created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
-            });
-        }
-        Ok(LearningSourceWorkspaceDto {
-            program_id: program_id.into(),
-            sources,
-            not_sources: Vec::new(),
-            unused_research: Vec::new(),
-            recheck: None,
-        })
-    }
-
-    async fn version_summaries(
-        connection: &mut sqlx::SqliteConnection,
-        program_id: &str,
-        source_id: &str,
-    ) -> Result<Vec<LearningSourceVersionSummaryDto>> {
-        let rows = sqlx::query("SELECT * FROM learning_source_versions WHERE program_id=? AND source_id=? ORDER BY version_number DESC")
-            .bind(program_id).bind(source_id).fetch_all(&mut *connection).await.map_err(db)?;
-        rows.into_iter().map(|r| Ok(summary(&r))).collect()
-    }
-    async fn checks(
-        connection: &mut sqlx::SqliteConnection,
-        program_id: &str,
-        source_id: &str,
-    ) -> Result<Vec<LearningSourceCheckDto>> {
-        let rows = sqlx::query("SELECT * FROM learning_source_refresh_checks WHERE program_id=? AND source_id=? ORDER BY checked_at DESC,rowid DESC LIMIT ?")
-            .bind(program_id).bind(source_id).bind(MAX_CHECKS_IN_WORKSPACE).fetch_all(&mut *connection).await.map_err(db)?;
-        rows.into_iter()
-            .map(|r| {
-                Ok(LearningSourceCheckDto {
-                    operation_id: r.get("operation_id"),
-                    status: parse_check(r.get("status"))?,
-                    checked_at: r.get("checked_at"),
-                    active_digest: r.get("active_digest"),
-                    pending_version_id: r.get("pending_version_id"),
-                    message: r.get("message"),
-                })
-            })
-            .collect()
     }
 
     pub async fn get_version(
@@ -164,72 +69,21 @@ impl LearningSourceLibraryRepository {
             }
         }
         self.backfill_legacy(&req.program_id).await?;
-        let row = sqlx::query(
-            "SELECT * FROM learning_source_versions WHERE program_id=? AND source_id=? AND id=?",
+        let found = stored::stored_version(
+            &self.database,
+            &req.program_id,
+            &req.source_id,
+            &req.version_id,
         )
-        .bind(&req.program_id)
-        .bind(&req.source_id)
-        .bind(&req.version_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db)?
+        .await?
         .ok_or_else(|| AppError::NotFound("Source version not found in this program".into()))?;
-        let usage = self.version_usage(&req.program_id, &req.version_id).await?;
+        let usage = stored::version_usage(&self.database, &req.program_id, &req.version_id).await?;
         Ok(LearningSourceVersionDto {
             source_id: req.source_id.clone(),
-            version: summary(&row),
-            full_text: row.get("full_text"),
+            version: found.summary,
+            full_text: found.full_text,
             usage,
         })
-    }
-
-    pub(super) async fn version_usage(
-        &self,
-        program_id: &str,
-        version_id: &str,
-    ) -> Result<Vec<LearningSourceUsageDto>> {
-        let mut out = Vec::new();
-        let rows=sqlx::query("SELECT l.id lesson_id,l.title lesson_title,b.title ref_title FROM learning_blocks b JOIN learning_lessons l ON l.id=b.lesson_id WHERE l.program_id=? AND EXISTS(SELECT 1 FROM json_each(b.source_ids_json) WHERE value=?) ORDER BY l.ordinal,b.ordinal")
-            .bind(program_id).bind(version_id).fetch_all(&self.pool).await.map_err(db)?;
-        for r in rows {
-            out.push(LearningSourceUsageDto {
-                lesson_id: r.get("lesson_id"),
-                lesson_title: r.get("lesson_title"),
-                reference_kind: "lesson_block".into(),
-                reference_title: r.get("ref_title"),
-            });
-        }
-        let rows=sqlx::query("SELECT l.id lesson_id,l.title lesson_title,c.prompt ref_title FROM learning_assessment_candidates c JOIN learning_lessons l ON l.id=c.lesson_id WHERE c.program_id=? AND c.review_status='agreed' AND EXISTS(SELECT 1 FROM json_each(c.source_version_ids_json) WHERE value=?) ORDER BY l.ordinal,c.rowid")
-            .bind(program_id).bind(version_id).fetch_all(&self.pool).await.map_err(db)?;
-        for r in rows {
-            out.push(LearningSourceUsageDto {
-                lesson_id: r.get("lesson_id"),
-                lesson_title: r.get("lesson_title"),
-                reference_kind: "assessment_question".into(),
-                reference_title: r.get("ref_title"),
-            });
-        }
-        let rows=sqlx::query("SELECT l.id lesson_id,l.title lesson_title,d.question ref_title FROM learning_card_drafts d JOIN learning_lessons l ON l.id=d.lesson_id WHERE d.program_id=? AND d.status='pending' AND EXISTS(SELECT 1 FROM json_each(d.source_ids_json) WHERE value=?) ORDER BY l.ordinal,d.created_at")
-            .bind(program_id).bind(version_id).fetch_all(&self.pool).await.map_err(db)?;
-        for r in rows {
-            out.push(LearningSourceUsageDto {
-                lesson_id: r.get("lesson_id"),
-                lesson_title: r.get("lesson_title"),
-                reference_kind: "recall_draft".into(),
-                reference_title: r.get("ref_title"),
-            });
-        }
-        let rows=sqlx::query("SELECT l.id lesson_id,l.title lesson_title,c.question ref_title FROM learning_card_origins o JOIN learning_lessons l ON l.id=o.lesson_id JOIN study_cards c ON c.id=o.card_id WHERE o.program_id=? AND EXISTS(SELECT 1 FROM json_each(o.source_ids_json) WHERE value=?) ORDER BY l.ordinal,o.accepted_at")
-            .bind(program_id).bind(version_id).fetch_all(&self.pool).await.map_err(db)?;
-        for r in rows {
-            out.push(LearningSourceUsageDto {
-                lesson_id: r.get("lesson_id"),
-                lesson_title: r.get("lesson_title"),
-                reference_kind: "accepted_recall_card".into(),
-                reference_title: r.get("ref_title"),
-            });
-        }
-        Ok(out)
     }
 
     pub async fn search(
@@ -242,17 +96,15 @@ impl LearningSourceLibraryRepository {
             return Err(invalid("Search query must not be empty"));
         }
         let limit = req.limit.clamp(1, 50) as i64;
-        let mut rows=sqlx::query("SELECT source_id,id,title,full_text FROM learning_source_versions WHERE program_id=? ORDER BY acquired_at DESC,id")
-            .bind(&req.program_id).fetch(&self.pool);
+        let mut rows = stored::searchable_versions(&self.database, &req.program_id);
         let mut results = Vec::new();
-        while let Some(r) = rows.try_next().await.map_err(db)? {
-            let text: String = r.get("full_text");
-            if let Some(index) = find_case_insensitive(&text, query) {
+        while let Some(r) = rows.try_next().await? {
+            if let Some(index) = find_case_insensitive(&r.text, query) {
                 results.push(LearningSourceSearchResultDto {
-                    source_id: r.get("source_id"),
-                    version_id: r.get("id"),
-                    title: r.get("title"),
-                    excerpt: context_excerpt(&text, index),
+                    source_id: r.source_id,
+                    version_id: r.version_id,
+                    title: r.title,
+                    excerpt: context_excerpt(&r.text, index),
                 });
                 if results.len() as i64 >= limit {
                     break;
@@ -264,83 +116,29 @@ impl LearningSourceLibraryRepository {
 
     pub async fn prepare_sources(&self, program_id: &str) -> Result<Vec<LearningSourceDto>> {
         self.backfill_legacy(program_id).await?;
-        let rows=sqlx::query("SELECT v.id,v.title,v.resolved_url,v.requested_url,v.excerpt,v.acquired_at FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NULL ORDER BY s.created_at,s.id")
-            .bind(program_id).fetch_all(&self.pool).await.map_err(db)?;
-        Ok(rows
-            .into_iter()
-            .map(|r| LearningSourceDto {
-                id: r.get("id"),
-                title: r.get("title"),
-                url: r
-                    .get::<Option<String>, _>("resolved_url")
-                    .or_else(|| r.get("requested_url")),
-                excerpt: r.get("excerpt"),
-                acquired_at: r.get("acquired_at"),
-            })
-            .collect())
+        stored::excerpted_sources(&self.database, program_id).await
     }
     /// The active version of every source the program has not deleted, in
     /// the order [`Self::verification_sources`] returns them, without their
     /// text: what the course index holds, read cheaply enough to compare with
     /// it on every use.
     pub async fn active_versions(&self, program_id: &str) -> Result<Vec<ActiveVersion>> {
-        let rows = sqlx::query("SELECT v.id,v.title,v.content_sha256 FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NULL ORDER BY s.created_at,s.id")
-            .bind(program_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)?;
-        Ok(rows
-            .into_iter()
-            .map(|row| ActiveVersion {
-                id: row.get("id"),
-                title: row.get("title"),
-                content_sha256: row.get("content_sha256"),
-            })
-            .collect())
+        stored::active_versions(&self.database, program_id).await
     }
     /// The whole captured text of one version of the program's sources,
     /// deleted ones included.
     pub async fn version_text(&self, program_id: &str, version_id: &str) -> Result<Option<String>> {
-        sqlx::query_scalar(
-            "SELECT full_text FROM learning_source_versions WHERE program_id=? AND id=?",
-        )
-        .bind(program_id)
-        .bind(version_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db)
+        stored::version_text(&self.database, program_id, version_id).await
     }
 
     /// The whole captured text of every version in the program, by version
     /// ID: what a model receives in place of a stored preview.
     pub async fn version_texts(&self, program_id: &str) -> Result<HashMap<String, String>> {
-        let rows =
-            sqlx::query("SELECT id,full_text FROM learning_source_versions WHERE program_id=?")
-                .bind(program_id)
-                .fetch_all(&self.pool)
-                .await
-                .map_err(db)?;
-        Ok(rows
-            .into_iter()
-            .map(|r| (r.get("id"), r.get("full_text")))
-            .collect())
+        stored::version_texts(&self.database, program_id).await
     }
 
     pub async fn verification_sources(&self, program_id: &str) -> Result<Vec<LearningSourceDto>> {
         self.backfill_legacy(program_id).await?;
-        let rows=sqlx::query("SELECT v.id,v.title,v.resolved_url,v.requested_url,v.full_text AS excerpt,v.acquired_at FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NULL ORDER BY s.created_at,s.id")
-            .bind(program_id).fetch_all(&self.pool).await.map_err(db)?;
-        Ok(rows
-            .into_iter()
-            .map(|r| LearningSourceDto {
-                id: r.get("id"),
-                title: r.get("title"),
-                url: r
-                    .get::<Option<String>, _>("resolved_url")
-                    .or_else(|| r.get("requested_url")),
-                excerpt: r.get("excerpt"),
-                acquired_at: r.get("acquired_at"),
-            })
-            .collect())
+        stored::full_text_sources(&self.database, program_id).await
     }
 }

@@ -13,7 +13,7 @@ use tauri_plugin_dialog::DialogExt;
 fn pack_repository(container: &Container) -> LearningPackRepository {
     let data_dir = container.core.data_dir();
     LearningPackRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
         data_dir.join("learning-packs"),
         data_dir.clone(),
     )

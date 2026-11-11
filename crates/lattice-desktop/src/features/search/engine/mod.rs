@@ -76,6 +76,7 @@ pub mod fts_query;
 pub mod profiler;
 pub mod qwen3_reranker;
 pub mod recency;
+mod repository;
 pub mod reranker;
 pub mod snippet;
 

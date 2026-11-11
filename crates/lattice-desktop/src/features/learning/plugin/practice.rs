@@ -5,7 +5,7 @@ pub(super) fn practice_repo(
     container: &Container,
 ) -> crate::features::learning::practice_repository::LearningPracticeRepository {
     crate::features::learning::practice_repository::LearningPracticeRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
 }
 

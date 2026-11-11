@@ -52,9 +52,9 @@ async fn recheck_waiting(
     version_id: &str,
     on_progress: tauri::ipc::Channel<ClaimAttachProgressDto>,
 ) -> Result<Option<WaitingClaimsRecheckDto>, ApiError> {
-    let pool = container.db_pool();
-    let store = ClaimReviewRepository::new(pool.clone());
-    let lessons = recheck::waiting_lessons(&store, pool, program_id).await?;
+    let database = container.database();
+    let store = ClaimReviewRepository::new(database.clone());
+    let lessons = recheck::waiting_lessons(&store, database, program_id).await?;
     if lessons.is_empty() {
         return Ok(None);
     }
@@ -71,7 +71,7 @@ async fn recheck_waiting(
         let _ = on_progress.send(stage);
     };
     let deps = AttachDeps {
-        pool,
+        database,
         store: &store,
         web: web.as_ref(),
         snapshots: snapshots.as_ref(),
@@ -436,7 +436,7 @@ pub async fn create_learning_source_selector(
     container: State<'_, Container>,
 ) -> Result<LearningSourceSelectorDto, ApiError> {
     crate::features::learning::recall_repository::LearningRecallRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .create_selector(&request)
     .await
@@ -451,7 +451,7 @@ pub async fn get_learning_source_selector(
     container: State<'_, Container>,
 ) -> Result<LearningSourceSelectorDto, ApiError> {
     crate::features::learning::recall_repository::LearningRecallRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .get_selector(&program_id, &selector_id)
     .await
@@ -465,7 +465,7 @@ pub async fn match_learning_source_selector(
     container: State<'_, Container>,
 ) -> Result<crate::features::learning::source_selector::LearningQuoteMatch, ApiError> {
     crate::features::learning::recall_repository::LearningRecallRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .match_selector(&request)
     .await
@@ -481,7 +481,7 @@ pub async fn search_learning_sources_semantically(
     // The course's index searches by meaning once an embedding model is
     // active, and by words otherwise.
     crate::features::learning::recall_repository::LearningRecallRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .search_sources(&request, container.course_indexes())
     .await

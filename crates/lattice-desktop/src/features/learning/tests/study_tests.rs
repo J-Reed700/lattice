@@ -15,8 +15,8 @@ async fn generates_biology_cards_from_markdown_with_an_optional_learning_goal() 
     use wiremock::{matchers::path, Mock, MockServer, ResponseTemplate};
     let dir = tempfile::tempdir()?;
     let db = DatabaseConnection::new(dir.path().join("biology.db")).await?;
-    initialize_database(db.pool()).await?;
-    let repo = StudyRepository::new(db.pool().clone());
+    initialize_database(db.database()).await?;
+    let repo = StudyRepository::new(db.database().clone());
     let id = uuid::Uuid::new_v4().to_string();
     let passage = "Photosynthesis converts light energy into chemical energy. Chlorophyll absorbs the light used in photosynthesis.";
     let library = FakeLibrary::default().with_document(&id, &[passage]);
@@ -41,12 +41,14 @@ async fn generates_biology_cards_from_markdown_with_an_optional_learning_goal() 
             auth_header_value: String::new(),
         },
         ..Default::default()
-    })?;
+    })?
+    .into_port()
+    .await;
     for goal in ["", "High school biology exam"] {
         let deck = service::generate_deck(
             &repo,
             &library,
-            &llm,
+            llm.as_ref(),
             GenerateStudyDeckRequestDto {
                 title: "Biology".into(),
                 document_ids: vec![id.clone()],
@@ -66,7 +68,11 @@ async fn generates_biology_cards_from_markdown_with_an_optional_learning_goal() 
                 && passage.contains(&card.source.excerpt)));
     }
     let requests = server.received_requests().await.unwrap();
-    let body: serde_json::Value = serde_json::from_slice(&requests[1].body)?;
+    let completions: Vec<_> = requests
+        .iter()
+        .filter(|request| request.url.path() == "/v1/chat/completions")
+        .collect();
+    let body: serde_json::Value = serde_json::from_slice(&completions[1].body)?;
     let prompt: serde_json::Value =
         serde_json::from_str(body["messages"][1]["content"].as_str().unwrap())?;
     assert_eq!(prompt["learningGoal"], "High school biology exam");

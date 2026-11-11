@@ -29,7 +29,7 @@ async fn learning_model(
 }
 
 fn source_library(container: &Container) -> super::source_library::LearningSourceLibraryRepository {
-    super::source_library::LearningSourceLibraryRepository::new(container.db_pool().clone())
+    super::source_library::LearningSourceLibraryRepository::new(container.database().clone())
 }
 
 /// Source-acquisition dependencies, assembled once at the command layer so
@@ -38,7 +38,7 @@ fn source_deps(container: &Container) -> crate::features::learning::sources::Sou
     crate::features::learning::sources::SourceDeps {
         library: container.library_passages(),
         web: container.web_service(),
-        pool: container.db_pool().clone(),
+        database: container.database().clone(),
     }
 }
 
@@ -110,7 +110,7 @@ fn drill_worker(
     runtimes: BuiltinRuntimes,
 ) -> super::drills::jobs::DrillBuildWorker {
     super::drills::jobs::DrillBuildWorker {
-        pool: container.db_pool().clone(),
+        database: container.database().clone(),
         load_llm: drill_model(container),
         runtimes,
         grader: super::drills::jobs::judge_grader,
@@ -123,7 +123,7 @@ fn drill_grading_worker(
     runtimes: BuiltinRuntimes,
 ) -> super::drills::jobs::DrillGradingWorker {
     super::drills::jobs::DrillGradingWorker {
-        pool: container.db_pool().clone(),
+        database: container.database().clone(),
         load_llm: drill_model(container),
         runtimes,
         grader: super::drills::jobs::judge_grader,
@@ -197,7 +197,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                 });
             }
             let practical = super::practical_repository::LearningPracticalRepository::new(
-                container.db_pool().clone(),
+                container.database().clone(),
             );
             tauri::async_runtime::block_on(super::practical_runs::recover_at_startup(&practical))?;
             Ok(())

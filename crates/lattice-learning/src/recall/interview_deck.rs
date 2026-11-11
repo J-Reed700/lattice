@@ -2,7 +2,9 @@
 //! answer guides. Each question is answered from memory before its guide is
 //! shown, then comes back on a schedule that fits the interview date, so the
 //! guide is studied as feedback on an attempt rather than read in advance.
+use super::recall_repository::interview;
 use super::study_dto::{StudyCardDto, StudyCardFormat, StudyDeckDto, StudySourceDto};
+use crate::persistence::db;
 use crate::practice::{
     interview_answers::{InterviewAnswerGuide, InterviewAnswerGuides, INTERVIEW_ANSWERS_FILE_PATH},
     practical_dto::{
@@ -11,12 +13,8 @@ use crate::practice::{
     practical_generation::INTERVIEW_PLAN_FILE_PATH,
 };
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{Row, SqlitePool};
+use lattice_core::shared::persistence::{Database, Transactions};
 use std::collections::HashMap;
-
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
-}
 
 fn decode<T: serde::de::DeserializeOwned>(content: &str, what: &str) -> Result<T> {
     serde_json::from_str(content)
@@ -35,43 +33,34 @@ pub(crate) struct InterviewMaterial {
 }
 
 pub(crate) async fn load(
-    pool: &SqlitePool,
+    database: &Database,
     program_id: &str,
     activity_id: &str,
 ) -> Result<InterviewMaterial> {
-    let activity = sqlx::query(
-        "SELECT title,kind,status FROM learning_practical_activities WHERE program_id=? AND id=?",
-    )
-    .bind(program_id)
-    .bind(activity_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(db)?
-    .ok_or_else(|| AppError::NotFound("Interview activity not found".into()))?;
-    if activity.get::<String, _>("kind") != "interview" {
+    let mut read = database.begin_read().await.map_err(db)?;
+    let activity = interview::activity(&mut read, program_id, activity_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Interview activity not found".into()))?;
+    if activity.kind != "interview" {
         return Err(AppError::InvalidInput(
             "Only interview activities can become an interview drill.".into(),
         ));
     }
-    if activity.get::<String, _>("status") != "ready" {
+    if activity.status != "ready" {
         return Err(AppError::InvalidInput(
             "This interview is not ready yet. Wait for it to finish preparing.".into(),
         ));
     }
-    let files = sqlx::query(
-        "SELECT path,content FROM learning_practical_files WHERE activity_id=? AND path IN (?,?)",
+    let files = interview::files(
+        &mut read,
+        activity_id,
+        [INTERVIEW_PLAN_FILE_PATH, INTERVIEW_ANSWERS_FILE_PATH],
     )
-    .bind(activity_id)
-    .bind(INTERVIEW_PLAN_FILE_PATH)
-    .bind(INTERVIEW_ANSWERS_FILE_PATH)
-    .fetch_all(pool)
-    .await
-    .map_err(db)?;
+    .await?;
     let mut plan = None;
     let mut guides = None;
-    for file in files {
-        let content: String = file.get("content");
-        if file.get::<String, _>("path") == INTERVIEW_PLAN_FILE_PATH {
+    for (path, content) in files {
+        if path == INTERVIEW_PLAN_FILE_PATH {
             plan = Some(decode::<LearningInterviewPlanDto>(&content, "plan")?);
         } else {
             guides = Some(decode::<InterviewAnswerGuides>(&content, "answer guides")?);
@@ -91,20 +80,17 @@ pub(crate) async fn load(
             if sources.contains_key(version) {
                 continue;
             }
-            if let Some(row) = sqlx::query("SELECT title,COALESCE(resolved_url,requested_url) url FROM learning_source_versions WHERE program_id=? AND id=?")
-                .bind(program_id)
-                .bind(version)
-                .fetch_optional(pool)
-                .await
-                .map_err(db)?
+            if let Some(source) =
+                interview::source_title_and_link(&mut read, program_id, version).await?
             {
-                sources.insert(version.to_owned(), (row.get("title"), row.get("url")));
+                sources.insert(version.to_owned(), source);
             }
         }
     }
+    read.commit().await.map_err(db)?;
     Ok(InterviewMaterial {
         activity_id: activity_id.to_owned(),
-        title: activity.get("title"),
+        title: activity.title,
         plan,
         guides,
         sources,
@@ -314,7 +300,9 @@ pub(crate) fn deck(material: &InterviewMaterial, now: i64) -> StudyDeckDto {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::persistence::db;
     use serde_json::json;
+    use sqlx::SqlitePool;
 
     fn plan() -> LearningInterviewPlanDto {
         serde_json::from_value(json!({
@@ -499,6 +487,7 @@ mod tests {
     #[tokio::test]
     async fn a_saved_ready_interview_loads_with_its_guides_and_cited_sources() -> Result<()> {
         let pool = crate::tests::pool().await?;
+        let database = Database::from(pool.clone());
         // Only the rows `load` reads; their program, lesson and source library are not under test.
         sqlx::query("PRAGMA foreign_keys=OFF")
             .execute(&pool)
@@ -528,7 +517,7 @@ mod tests {
         sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES('v1','program','s1',1,'Acme engineering blog',NULL,'https://acme.example.com/requested','https://acme.example.com/blog','text','text','sha',1,0,'test',0)")
             .execute(&pool).await.map_err(db)?;
 
-        let material = load(&pool, "program", "ready").await?;
+        let material = load(&database, "program", "ready").await?;
         assert_eq!(material.title, "Acme loop");
         assert_eq!(material.plan.questions.len(), 2);
         assert_eq!(
@@ -558,7 +547,10 @@ mod tests {
             std::slice::from_ref(&plan_file),
         )
         .await?;
-        assert!(load(&pool, "program", "plan-only").await?.guides.is_none());
+        assert!(load(&database, "program", "plan-only")
+            .await?
+            .guides
+            .is_none());
         save(
             &pool,
             "draft",
@@ -572,14 +564,14 @@ mod tests {
         for activity in ["draft", "lab", "empty"] {
             assert!(
                 matches!(
-                    load(&pool, "program", activity).await,
+                    load(&database, "program", activity).await,
                     Err(AppError::InvalidInput(_))
                 ),
                 "{activity} cannot become a drill"
             );
         }
         assert!(matches!(
-            load(&pool, "other-program", "ready").await,
+            load(&database, "other-program", "ready").await,
             Err(AppError::NotFound(_))
         ));
         Ok(())
@@ -593,6 +585,7 @@ mod tests {
             study_service::create_interview_deck,
         };
         let pool = crate::tests::pool().await?;
+        let database = Database::from(pool.clone());
         sqlx::query("PRAGMA foreign_keys=OFF")
             .execute(&pool)
             .await
@@ -616,7 +609,7 @@ mod tests {
         let now = chrono::Utc::now().timestamp_millis();
         let day = super::super::schedule::DAY_MS;
         let interview = now + day;
-        let first = create_interview_deck(&repo, &pool, request(Some(interview))).await?;
+        let first = create_interview_deck(&repo, &database, request(Some(interview))).await?;
         // The first card was recalled well enough to rest until the interview.
         sqlx::query("UPDATE study_cards SET due_at=?, review_count=1 WHERE id=?")
             .bind(interview)
@@ -631,7 +624,7 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         for target in [Some(interview), None] {
-            let again = create_interview_deck(&repo, &pool, request(target)).await?;
+            let again = create_interview_deck(&repo, &database, request(target)).await?;
             assert_eq!(again.id, first.id);
             assert_eq!(ids(&again), ids(&first));
             assert_eq!(
@@ -645,7 +638,7 @@ mod tests {
                 "{target:?} keeps the review and its rest"
             );
         }
-        let moved = create_interview_deck(&repo, &pool, request(Some(now + 2 * day))).await?;
+        let moved = create_interview_deck(&repo, &database, request(Some(now + 2 * day))).await?;
         assert_eq!(moved.id, first.id);
         assert_eq!(moved.target_at, Some(now + 2 * day));
         assert_eq!(moved.cards[0].review_count, 1);

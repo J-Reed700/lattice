@@ -11,6 +11,7 @@ use syn::{
     Attribute, Item, UseTree,
 };
 
+mod data_access;
 mod feature_graph;
 mod ratchet;
 
@@ -623,6 +624,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mut failures = 0;
     ratchet::check(&roots, &files, options.write_baseline, &mut failures)?;
+    let mut data_roots = roots.to_vec();
+    data_roots.extend(options.api.as_deref());
+    data_roots.extend(&libraries);
+    data_access::check(&data_roots, &mut failures)?;
     check_app(&options.app, &mut failures)?;
     check_core(&options.core, &mut failures)?;
     if let Some(api) = &options.api {

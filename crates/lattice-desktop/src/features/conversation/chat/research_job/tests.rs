@@ -11,6 +11,7 @@ use lattice_core::application::ports::llm_port::{
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::conversation::{ChatModelChoice, MessageRole};
 use lattice_core::domain::models::model_ref::ModelRef;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::JobRuntime;
 use std::time::Duration;
 use tokio::sync::Notify;
@@ -191,7 +192,7 @@ impl JobHandler for SavesThenWaits {
 
 /// Runs the research job until it has saved a round, then closes the app.
 async fn closed_after_one_round(pool: &sqlx::SqlitePool, attempt: &FirstAttempt) -> String {
-    let before = JobRuntime::new(pool.clone());
+    let before = JobRuntime::new(Database::from(pool.clone()));
     let saved = Arc::new(Notify::new());
     before
         .register(
@@ -244,7 +245,8 @@ async fn a_research_turn_stopped_by_a_restart_resumes_from_its_last_round() {
     let llm = Scripted::new([CompletionResponse::from_text(
         "Shredding, then leaching recovers most of the lithium.",
     )]);
-    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let jobs =
+        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
     let runtime = FakeRuntime {
         llm: Some(llm.clone()),
         jobs: Some(jobs.clone()),
@@ -350,7 +352,8 @@ async fn a_research_turn_with_a_picture_saves_and_resumes_from_captions_only() {
     let llm = Scripted::new([CompletionResponse::from_text(
         "The teardown shows the cathode being shredded.",
     )]);
-    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let jobs =
+        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
     let runtime = FakeRuntime {
         llm: Some(llm.clone()),
         jobs: Some(jobs.clone()),
@@ -363,7 +366,7 @@ async fn a_research_turn_with_a_picture_saves_and_resumes_from_captions_only() {
         .transcript
         .push(with_picture("A second picture, seen in a round."));
 
-    let before = JobRuntime::new(pool.clone());
+    let before = JobRuntime::new(Database::from(pool.clone()));
     let saved = Arc::new(Notify::new());
     let stored: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
     before
@@ -424,7 +427,8 @@ async fn the_chat_stop_cancels_a_running_research_job() {
     let pool = pool().await;
     // Never answers: the turn runs until it is stopped.
     let llm = Scripted::new([]);
-    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let jobs =
+        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
     let runtime = FakeRuntime {
         llm: Some(llm.clone()),
         jobs: Some(jobs.clone()),
@@ -493,7 +497,7 @@ impl JobHandler for Holds {
 #[tokio::test]
 async fn stopping_a_research_turn_still_queued_answers_its_command() {
     let pool = pool().await;
-    let jobs = JobRuntime::with_poll_interval(pool, Duration::from_millis(50));
+    let jobs = JobRuntime::with_poll_interval(Database::from(pool), Duration::from_millis(50));
     jobs.register(DEEP_RESEARCH, Arc::new(Holds), job_config())
         .await
         .unwrap();
@@ -636,7 +640,8 @@ async fn chat_on_model_b(
     pool: &sqlx::SqlitePool,
     default: Arc<Scripted>,
 ) -> (FakeRuntime, Arc<JobRuntime>, FirstAttempt) {
-    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let jobs =
+        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
     let runtime = FakeRuntime {
         llm: Some(default),
         jobs: Some(jobs.clone()),
@@ -769,7 +774,8 @@ async fn reopened(
 async fn a_resumed_research_turn_stopped_before_it_registers_fails_its_question() {
     let pool = pool().await;
     let llm = Scripted::new([]);
-    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let jobs =
+        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
     let runtime = FakeRuntime {
         llm: Some(llm.clone()),
         jobs: Some(jobs.clone()),
@@ -803,7 +809,8 @@ async fn a_resumed_research_turn_stopped_before_it_registers_fails_its_question(
 #[tokio::test]
 async fn a_resumed_research_turn_that_finds_its_request_in_flight_fails_its_question() {
     let pool = pool().await;
-    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let jobs =
+        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
     let runtime = FakeRuntime {
         llm: Some(Scripted::new([])),
         jobs: Some(jobs.clone()),
@@ -840,7 +847,8 @@ async fn a_resumed_research_turn_that_finds_its_request_in_flight_fails_its_ques
 #[tokio::test]
 async fn a_saved_research_request_that_names_no_request_fails_its_question() {
     let pool = pool().await;
-    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let jobs =
+        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
     let runtime = FakeRuntime {
         llm: Some(Scripted::new([])),
         jobs: Some(jobs.clone()),
@@ -984,7 +992,8 @@ async fn a_question_is_kept_only_if_the_whole_saved_turn_can_be_read() {
 async fn a_research_job_whose_saved_turn_cannot_be_read_fails_with_its_question() {
     let pool = pool().await;
     let llm = Scripted::new([]);
-    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let jobs =
+        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
     let runtime = FakeRuntime {
         llm: Some(llm.clone()),
         jobs: Some(jobs.clone()),
@@ -1058,7 +1067,8 @@ async fn question_failed(runtime: &FakeRuntime, attempt: &FirstAttempt) {
 /// with that failure rather than left waiting for the session.
 #[tokio::test]
 async fn a_research_turn_whose_job_panics_answers_its_waiting_command() {
-    let jobs = JobRuntime::with_poll_interval(pool().await, Duration::from_millis(50));
+    let jobs =
+        JobRuntime::with_poll_interval(Database::from(pool().await), Duration::from_millis(50));
     let runtime = FakeRuntime {
         jobs: Some(jobs.clone()),
         ..FakeRuntime::default()
@@ -1087,7 +1097,8 @@ async fn a_research_turn_whose_job_panics_answers_its_waiting_command() {
 #[tokio::test]
 async fn a_research_turn_whose_job_panics_fails_its_saved_question() {
     let pool = pool().await;
-    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let jobs =
+        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
     let runtime = FakeRuntime {
         jobs: Some(jobs.clone()),
         ..FakeRuntime::default()
@@ -1113,7 +1124,8 @@ async fn a_research_turn_whose_job_panics_fails_its_saved_question() {
 #[tokio::test]
 async fn a_research_turn_the_runtime_failed_for_stopping_the_app_fails_its_saved_question() {
     let pool = pool().await;
-    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let jobs =
+        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
     let runtime = FakeRuntime {
         jobs: Some(jobs.clone()),
         ..FakeRuntime::default()
@@ -1149,7 +1161,8 @@ async fn a_research_turn_the_runtime_failed_for_stopping_the_app_fails_its_saved
 #[tokio::test]
 async fn stopping_a_research_job_that_never_started_fails_its_question() {
     let pool = pool().await;
-    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let jobs =
+        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
     let runtime = FakeRuntime {
         jobs: Some(jobs.clone()),
         ..FakeRuntime::default()

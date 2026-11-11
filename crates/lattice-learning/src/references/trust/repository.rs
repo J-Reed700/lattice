@@ -2,7 +2,7 @@
 //! built with the pool the way the other learning repositories are, so no
 //! dependency-injection module changes.
 
-use super::rows::{
+use self::rows::{
     delete_override, from_json, override_from_row, provenance_from_row, relation_from_row, to_json,
     tokens_from_column, tokens_to_column, unknown, write_override, write_provenance,
     write_relations, OVERRIDE_COLUMNS, PROVENANCE_COLUMNS, RELATION_COLUMNS,
@@ -16,9 +16,18 @@ use lattice_core::domain::provenance::{
     SubjectKey, TrackRecord, TrustLevel, TrustOverride,
 };
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{driver::DriverPool, Transactions};
 use sqlx::sqlite::SqliteRow;
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
+
+pub(crate) mod capture;
+pub(super) mod eval_export;
+pub(super) mod judgements;
+pub(super) mod outcomes;
+pub(super) mod overrides;
+pub(super) mod pack;
+pub(super) mod rows;
+pub(super) mod source_view;
 
 /// Unix seconds now: the clock the trust tables keep, like the domain's
 /// dates and outcomes.
@@ -32,13 +41,38 @@ pub struct SqliteSourceTrustStore {
 }
 
 impl SqliteSourceTrustStore {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
-    pub(crate) fn pool(&self) -> &SqlitePool {
-        &self.pool
+    /// Records the outcomes together: all or none.
+    pub(crate) async fn record_outcomes(&self, outcomes: &[OutcomeRecord]) -> Result<()> {
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        outcomes::insert_all_in(&mut tx, outcomes).await?;
+        tx.commit().await.map_err(db)
     }
+}
+
+async fn insert_outcome(conn: &mut SqliteConnection, outcome: &OutcomeRecord) -> Result<()> {
+    sqlx::query("INSERT INTO source_trust_outcomes(id,program_id,lesson_id,claim_id,source_version_id,origin_key,level,claim_kind,decision_sufficient,decision_right,label_source,policy,at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .bind(&outcome.id)
+        .bind(&outcome.program_id)
+        .bind(&outcome.lesson_id)
+        .bind(&outcome.claim_id)
+        .bind(&outcome.source_version_id)
+        .bind(&outcome.origin_key.0)
+        .bind(outcome.outcome.level.as_str())
+        .bind(outcome.outcome.kind.as_str())
+        .bind(outcome.outcome.decision_was_sufficient as i64)
+        .bind(outcome.outcome.right as i64)
+        .bind(outcome.label_source.as_str())
+        .bind(&outcome.policy)
+        .bind(outcome.outcome.at)
+        .execute(&mut *conn)
+        .await
+        .map_err(db)?;
+    Ok(())
 }
 
 fn judgement<T: serde::de::DeserializeOwned>(
@@ -318,36 +352,15 @@ impl SourceTrustStore for SqliteSourceTrustStore {
     }
 
     async fn record_outcome(&self, outcome: &OutcomeRecord) -> Result<()> {
-        sqlx::query("INSERT INTO source_trust_outcomes(id,program_id,lesson_id,claim_id,source_version_id,origin_key,level,claim_kind,decision_sufficient,decision_right,label_source,policy,at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
-            .bind(&outcome.id)
-            .bind(&outcome.program_id)
-            .bind(&outcome.lesson_id)
-            .bind(&outcome.claim_id)
-            .bind(&outcome.source_version_id)
-            .bind(&outcome.origin_key.0)
-            .bind(outcome.outcome.level.as_str())
-            .bind(outcome.outcome.kind.as_str())
-            .bind(outcome.outcome.decision_was_sufficient as i64)
-            .bind(outcome.outcome.right as i64)
-            .bind(outcome.label_source.as_str())
-            .bind(&outcome.policy)
-            .bind(outcome.outcome.at)
-            .execute(&self.pool)
-            .await
-            .map_err(db)?;
-        Ok(())
+        self.record_outcomes(std::slice::from_ref(outcome)).await
     }
 
     async fn outcomes(&self) -> Result<Vec<OutcomeRecord>> {
-        sqlx::query("SELECT id,program_id,lesson_id,claim_id,source_version_id,origin_key,level,claim_kind,decision_sufficient,decision_right,label_source,policy,at FROM source_trust_outcomes ORDER BY at,rowid")
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)?
-            .iter()
-            .map(outcome_from_row)
-            .collect()
+        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let outcomes = outcomes::list_in(&mut read).await?;
+        read.commit().await.map_err(db)?;
+        Ok(outcomes)
     }
-
     /// `right` counts the claims that held (a sufficient decision that was
     /// right, or an insufficient one that was wrong: `Outcome::held`),
     /// `wrong` the rest.

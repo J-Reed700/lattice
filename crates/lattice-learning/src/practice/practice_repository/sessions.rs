@@ -19,7 +19,7 @@ impl LearningPracticeRepository {
             "start",
             payload_hash,
         )
-        .seen(&mut *tx)
+        .seen(&mut tx)
         .await?
         {
             tx.commit().await.map_err(db)?;
@@ -150,7 +150,7 @@ impl LearningPracticeRepository {
             "start",
             payload_hash,
         )
-        .record(&mut *tx, &())
+        .record(&mut tx, &())
         .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await
@@ -190,7 +190,7 @@ impl LearningPracticeRepository {
             "save_artifact",
             payload_hash,
         )
-        .seen(&mut *tx)
+        .seen(&mut tx)
         .await?
         {
             tx.commit().await.map_err(db)?;
@@ -217,7 +217,7 @@ impl LearningPracticeRepository {
             "save_artifact",
             payload_hash,
         )
-        .record(&mut *tx, &())
+        .record(&mut tx, &())
         .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await
@@ -250,7 +250,7 @@ impl LearningPracticeRepository {
             "change_mode",
             payload_hash,
         )
-        .seen(&mut *tx)
+        .seen(&mut tx)
         .await?
         {
             tx.commit().await.map_err(db)?;
@@ -295,7 +295,7 @@ impl LearningPracticeRepository {
             "change_mode",
             payload_hash,
         )
-        .record(&mut *tx, &())
+        .record(&mut tx, &())
         .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await

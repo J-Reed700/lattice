@@ -18,6 +18,7 @@ use lattice_core::application::ports::llm_port::{
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::driver::DriverPool;
 use std::sync::Arc;
 
 fn columns() -> Vec<String> {
@@ -200,7 +201,7 @@ async fn container_with_chunks(contents: &[String]) -> crate::interfaces::di::Co
     let container = crate::tests::common::setup_test_container()
         .await
         .expect("container");
-    let pool = container.db_pool().clone();
+    let pool = DriverPool::sqlx_pool(container.database()).clone();
     sqlx::query(
         "INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, checksum)
          VALUES ('doc', '/lib/doc.md', 'doc.md', 1, '2026-01-01T00:00:00Z', 'sum')",

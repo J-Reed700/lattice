@@ -1,16 +1,18 @@
 //! Small persistence helpers every Learning repository shares.
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::{PersistenceError, PersistenceErrorKind};
 use serde::{de::DeserializeOwned, Serialize};
 use sha2::{Digest, Sha256};
 
 /// Map a SQLite error. A pool timeout means the database is busy rather than
 /// broken, so it is reported as a retryable condition.
-pub fn db(error: sqlx::Error) -> AppError {
-    match error {
-        sqlx::Error::PoolTimedOut => AppError::ServiceNotAvailable(
+pub fn db(error: impl Into<PersistenceError>) -> AppError {
+    let error = error.into();
+    match error.kind() {
+        PersistenceErrorKind::Busy => AppError::ServiceNotAvailable(
             "The learning database is temporarily busy. Saved work is retained.".into(),
         ),
-        error => AppError::Database(error.to_string()),
+        _ => AppError::Database(error.to_string()),
     }
 }
 
@@ -58,8 +60,21 @@ mod tests {
             AppError::ServiceNotAvailable(_)
         ));
         assert!(matches!(
+            db(PersistenceError::from(sqlx::Error::PoolTimedOut)),
+            AppError::ServiceNotAvailable(message) if message.contains("temporarily busy")
+        ));
+    }
+
+    #[test]
+    fn other_errors_keep_their_message() {
+        let expected = sqlx::Error::RowNotFound.to_string();
+        assert!(matches!(
             db(sqlx::Error::RowNotFound),
-            AppError::Database(_)
+            AppError::Database(message) if message == expected
+        ));
+        assert!(matches!(
+            db(PersistenceError::from(sqlx::Error::PoolClosed)),
+            AppError::Database(message) if message == sqlx::Error::PoolClosed.to_string()
         ));
     }
 }

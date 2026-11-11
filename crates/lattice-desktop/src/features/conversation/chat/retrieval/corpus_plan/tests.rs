@@ -5,6 +5,7 @@ use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::persistence::Database;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -142,7 +143,11 @@ async fn direct_evidence_survives_rewrite_omission_and_unavailable_search_models
     let embedder = Arc::new(MockEmbeddingPort::new_degraded());
     let index = Arc::new(USearchVectorIndex::new(384, None).unwrap());
     // The fixture deliberately lacks an FTS index too; both search branches fail.
-    let hybrid = HybridSearchUseCase::new(embedder, index, Arc::new(SqliteTextSearch::new(pool)));
+    let hybrid = HybridSearchUseCase::new(
+        embedder,
+        index,
+        Arc::new(SqliteTextSearch::new(Database::from(pool))),
+    );
     let scope = super::super::SpaceDocumentScope {
         space_id: super::super::DEFAULT_SPACE_ID.into(),
         document_ids: ["a".to_owned()].into(),
@@ -198,7 +203,11 @@ async fn keyword_search_in_a_named_space_finds_the_chats_attachment() {
     // Degraded embedder: the vector branch fails, so only keyword can answer.
     let embedder = Arc::new(MockEmbeddingPort::new_degraded());
     let index = Arc::new(USearchVectorIndex::new(384, None).unwrap());
-    let hybrid = HybridSearchUseCase::new(embedder, index, Arc::new(SqliteTextSearch::new(pool)));
+    let hybrid = HybridSearchUseCase::new(
+        embedder,
+        index,
+        Arc::new(SqliteTextSearch::new(Database::from(pool))),
+    );
     let scope = super::super::SpaceDocumentScope {
         space_id: "space_movies".into(),
         document_ids: ["member".to_owned(), "attached".to_owned()].into(),
@@ -252,7 +261,11 @@ async fn reading_from_the_beginning_reads_half_the_budget_round_robin() {
     let repository = ConversationRepository::new(pool.clone());
     let embedder = Arc::new(MockEmbeddingPort::new_degraded());
     let index = Arc::new(USearchVectorIndex::new(384, None).unwrap());
-    let hybrid = HybridSearchUseCase::new(embedder, index, Arc::new(SqliteTextSearch::new(pool)));
+    let hybrid = HybridSearchUseCase::new(
+        embedder,
+        index,
+        Arc::new(SqliteTextSearch::new(Database::from(pool))),
+    );
     let scope = super::super::SpaceDocumentScope {
         space_id: super::super::DEFAULT_SPACE_ID.into(),
         document_ids: ["intro".to_owned(), "ch1".to_owned()].into(),
@@ -551,7 +564,7 @@ async fn live_corpus_retrieval_and_answer() {
     let hybrid = HybridSearchUseCase::new(
         embedding.clone(),
         index.clone(),
-        Arc::new(SqliteTextSearch::new(pool.clone())),
+        Arc::new(SqliteTextSearch::new(Database::from(pool.clone()))),
     );
     let repository = ConversationRepository::new(pool.clone());
     let conversation: String = match std::env::var("LATTICE_RETRIEVAL_CONVERSATION_ID") {
@@ -587,10 +600,10 @@ async fn live_corpus_retrieval_and_answer() {
     .unwrap();
     let config: lattice_core::application::contracts::settings::LLMSettingsDto =
         serde_json::from_value(settings["settings"]["llm"].clone()).unwrap();
-    let llm = LlamaCppLlm::new(&config).unwrap();
+    let llm = LlamaCppLlm::new(&config).unwrap().into_port().await;
     let started = Instant::now();
     let plan = plan(
-        &llm,
+        llm.as_ref(),
         &question,
         None,
         &catalog,

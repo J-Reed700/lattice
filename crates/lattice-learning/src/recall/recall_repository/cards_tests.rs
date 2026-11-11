@@ -10,6 +10,7 @@ use crate::{
     source_library::{CapturedLearningSource, NewLearningSource},
     tests,
 };
+use lattice_core::shared::persistence::Database;
 
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -103,7 +104,7 @@ async fn add_version(
 ) -> Result<(String, String)> {
     let (op, source_id, version_id) = (id(), id(), id());
     let web = kind == LearningSourceKind::Web;
-    LearningSourceLibraryRepository::new(pool.clone())
+    LearningSourceLibraryRepository::new(Database::from(pool.clone()))
         .add(
             NewLearningSource {
                 operation_id: &op,

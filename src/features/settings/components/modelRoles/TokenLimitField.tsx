@@ -48,15 +48,19 @@ interface TokenLimitFieldProps {
   min: number;
   /** The top of the range. Null when nothing states one: the number alone. */
   max: number | null;
-  value: number;
+  /** Null shows the field empty. */
+  value: number | null;
+  placeholder?: string;
   onChange: (value: number) => void;
+  /** The input was emptied. Without it, an emptied input keeps its value. */
+  onClear?: () => void;
   /** When the value has settled: the field is left or the slider let go. */
   onCommit?: () => void;
   /** Under the slider, such as a warning about this value. */
   children?: ReactNode;
 }
 
-export function TokenLimitField({ label, help, min, max, value, onChange, onCommit, children }: TokenLimitFieldProps) {
+export function TokenLimitField({ label, help, min, max, value, placeholder, onChange, onClear, onCommit, children }: TokenLimitFieldProps) {
   return (
     <div>
       <div className="flex items-center justify-between gap-3">
@@ -83,8 +87,15 @@ export function TokenLimitField({ label, help, min, max, value, onChange, onComm
             min={min}
             max={max ?? undefined}
             step={512}
-            value={value}
-            onChange={(event) => onChange(Math.round(toFinite(event.target.value, value)))}
+            value={value ?? ''}
+            placeholder={placeholder}
+            onChange={(event) => {
+              if (onClear && event.target.value.trim() === '') {
+                onClear();
+                return;
+              }
+              onChange(Math.round(toFinite(event.target.value, value ?? min)));
+            }}
             onBlur={onCommit}
             className={NUMBER_FIELD_CLASS}
           />
@@ -99,7 +110,7 @@ export function TokenLimitField({ label, help, min, max, value, onChange, onComm
             min={0}
             max={max}
             step={512}
-            value={Math.min(Math.max(value, min), max)}
+            value={Math.min(Math.max(value ?? min, min), max)}
             onChange={(event) => onChange(Number(event.target.value))}
             onPointerUp={onCommit}
             onKeyUp={onCommit}

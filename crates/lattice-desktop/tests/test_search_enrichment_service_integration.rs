@@ -23,6 +23,7 @@
 //! - Performance benchmarks
 use chrono::Utc;
 use lattice::features::search::enrichment_service::{DocumentMetadata, SearchEnrichmentService};
+use lattice_core::shared::persistence::Database;
 use sqlx::SqlitePool;
 use std::time::Instant;
 use uuid::Uuid;
@@ -110,7 +111,7 @@ async fn insert_test_chunk(
 #[tokio::test]
 async fn test_enrich_empty_results() {
     let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(pool.clone());
+    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
 
     let result = service.enrich_results(&[]).await;
 
@@ -124,7 +125,7 @@ async fn test_enrich_empty_results() {
 #[tokio::test]
 async fn test_enrich_single_result() {
     let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(pool.clone());
+    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
 
     // Insert test data
     let doc_id = Uuid::new_v4().to_string();
@@ -157,7 +158,7 @@ async fn test_enrich_single_result() {
 #[tokio::test]
 async fn test_enrich_multiple_results() {
     let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(pool.clone());
+    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
 
     // Insert test data
     let doc_id = Uuid::new_v4().to_string();
@@ -195,7 +196,7 @@ async fn test_enrich_multiple_results() {
 #[tokio::test]
 async fn test_enrich_batching_large_input() {
     let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(pool.clone());
+    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
 
     // Create 2000 chunks (should create 3 batches: 900, 900, 200)
     let doc_id = Uuid::new_v4().to_string();
@@ -231,7 +232,7 @@ async fn test_enrich_batching_large_input() {
 #[tokio::test]
 async fn test_enrich_snippet_generation() {
     let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(pool.clone());
+    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
 
     // Create content longer than 200 chars
     let long_content = "a".repeat(500);
@@ -259,7 +260,7 @@ async fn test_enrich_snippet_generation() {
 #[tokio::test]
 async fn test_enrich_snippet_short_content() {
     let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(pool.clone());
+    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
 
     let short_content = "Short content";
 
@@ -286,7 +287,7 @@ async fn test_enrich_snippet_short_content() {
 #[tokio::test]
 async fn test_enrich_metadata_extraction() {
     let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(pool.clone());
+    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
 
     let doc_id = Uuid::new_v4().to_string();
     insert_test_document(&pool, &doc_id, "report.pdf", "/docs/report.pdf").await;
@@ -333,7 +334,7 @@ async fn test_enrich_metadata_extraction() {
 #[tokio::test]
 async fn test_enrich_missing_chunks() {
     let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(pool.clone());
+    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
 
     // Create some chunks
     let doc_id = Uuid::new_v4().to_string();
@@ -359,7 +360,7 @@ async fn test_enrich_missing_chunks() {
 #[tokio::test]
 async fn test_enrich_multiple_documents() {
     let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(pool.clone());
+    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
 
     // Create multiple documents
     let doc1_id = Uuid::new_v4().to_string();
@@ -399,7 +400,7 @@ async fn test_enrich_multiple_documents() {
 #[tokio::test]
 async fn test_enrich_parallel_performance() {
     let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(pool.clone());
+    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
 
     // Create 3600 chunks (4 batches of 900)
     let doc_id = Uuid::new_v4().to_string();
@@ -441,7 +442,7 @@ async fn test_enrich_parallel_performance() {
 #[tokio::test]
 async fn test_enrich_batch_boundaries() {
     let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(pool.clone());
+    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
 
     let doc_id = Uuid::new_v4().to_string();
     insert_test_document(&pool, &doc_id, "test.txt", "/path/test.txt").await;
@@ -472,7 +473,7 @@ async fn test_enrich_batch_boundaries() {
 #[tokio::test]
 async fn test_enrich_unicode_content() {
     let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(pool.clone());
+    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
 
     let unicode_content = "Hello 世界 🌍 Привет مرحبا";
 
@@ -498,7 +499,7 @@ async fn test_enrich_unicode_content() {
 #[ignore] // Run only when explicitly requested (slow test)
 async fn test_enrich_stress_test() {
     let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(pool.clone());
+    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
 
     // Create 10,000 chunks
     let doc_id = Uuid::new_v4().to_string();
@@ -537,7 +538,7 @@ async fn test_enrich_stress_test() {
 #[tokio::test]
 async fn test_enrich_query_timeout() {
     let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(pool.clone());
+    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
 
     // Normal operation should complete without timeout
     let doc_id = Uuid::new_v4().to_string();
@@ -562,8 +563,8 @@ async fn test_enrich_connection_pooling() {
     let pool = create_test_db().await;
 
     // Create multiple service instances (sharing pool)
-    let service1 = SearchEnrichmentService::new(pool.clone());
-    let service2 = SearchEnrichmentService::new(pool.clone());
+    let service1 = SearchEnrichmentService::new(Database::from(pool.clone()));
+    let service2 = SearchEnrichmentService::new(Database::from(pool.clone()));
 
     let doc_id = Uuid::new_v4().to_string();
     insert_test_document(&pool, &doc_id, "test.txt", "/path/test.txt").await;

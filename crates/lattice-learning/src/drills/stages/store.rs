@@ -11,6 +11,7 @@ use crate::drills::spec::DrillSpec;
 use crate::persistence::{db, now};
 use lattice_core::domain::learning::drills::{check_key, Drill, KeyFault};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
 
 /// What the stages made.
@@ -54,7 +55,7 @@ impl DrillBuild<'_> {
             built.checked,
             built.blind,
         );
-        let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let mut transaction = self.database.begin_write().await.map_err(db)?;
         repository::insert_in(
             &mut transaction,
             &NewDrill {

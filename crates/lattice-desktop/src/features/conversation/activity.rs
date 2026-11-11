@@ -2,26 +2,27 @@
 //! research turns named by their chat, and journal syntheses.
 
 use super::chat::DEEP_RESEARCH;
+use super::repository::ConversationRepository;
 use super::synthesis::JOURNAL_SYNTHESIS;
 use async_trait::async_trait;
 use lattice_core::application::ports::{
     ActivityItem, ActivityProgress, ActivitySource, ActivityTarget,
 };
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobRecord, JobRuntime};
-use lattice_core::shared::{AppError, Result};
-use sqlx::{Row, SqlitePool};
+use lattice_core::shared::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Research turns and syntheses, read from their jobs.
 pub struct ConversationActivity {
-    pool: SqlitePool,
+    database: Database,
     jobs: Arc<JobRuntime>,
 }
 
 impl ConversationActivity {
-    pub fn new(pool: SqlitePool, jobs: Arc<JobRuntime>) -> Self {
-        Self { pool, jobs }
+    pub fn new(database: Database, jobs: Arc<JobRuntime>) -> Self {
+        Self { database, jobs }
     }
 
     async fn chat_titles(&self, jobs: &[JobRecord]) -> Result<HashMap<String, String>> {
@@ -32,19 +33,9 @@ impl ConversationActivity {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let ids =
-            serde_json::to_string(&ids).map_err(|e| AppError::Serialization(e.to_string()))?;
-        let rows = sqlx::query(
-            "SELECT id, title FROM conversations WHERE id IN (SELECT value FROM json_each(?))",
-        )
-        .bind(ids)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(rows
-            .iter()
-            .map(|row| (row.get::<String, _>("id"), row.get::<String, _>("title")))
-            .collect())
+        ConversationRepository::new(self.database.clone())
+            .titles_of(&ids)
+            .await
     }
 }
 

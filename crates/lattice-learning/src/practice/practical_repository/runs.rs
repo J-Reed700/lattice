@@ -44,7 +44,7 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different run data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return Ok(None);
         }
@@ -165,7 +165,7 @@ impl LearningPracticalRepository {
             .bind(json(&request.learner_files)?).bind(timestamp).bind(activity.builtin_runtime.map(LearningBuiltinRuntime::as_str))
             .bind(&activity.builtin_runtime_version)
             .execute(&mut *tx).await.map_err(db)?;
-        operation.record(&mut *tx, &()).await?;
+        operation.record(&mut tx, &()).await?;
         tx.commit().await.map_err(db)?;
         let dto = self.run(&request.run_id).await?;
         Ok(Some(PreparedRun {
@@ -274,7 +274,7 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different cancellation data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return self.run(&request.run_id).await;
         }
@@ -292,7 +292,7 @@ impl LearningPracticalRepository {
         if exists.is_none() {
             return Err(AppError::NotFound("Practical run not found".into()));
         }
-        operation.record(&mut *tx, &()).await?;
+        operation.record(&mut tx, &()).await?;
         let changed = changed.rows_affected() == 1;
         if changed {
             sqlx::query("INSERT OR IGNORE INTO learning_practical_run_checks(run_id,ordinal,name,status,message,duration_ms) VALUES(?,0,'Contained evaluator','not_run','The run was cancelled; its contained evaluator was told to stop.',NULL)")

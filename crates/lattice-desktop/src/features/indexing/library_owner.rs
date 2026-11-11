@@ -11,12 +11,14 @@
 
 use std::path::{Path, PathBuf};
 
-use sqlx::SqlitePool;
 use tokio::io::AsyncWriteExt;
 
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::fs::roots;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, Transactions};
+
+mod repository;
+use repository::{holds_documents, recorded_owner};
 
 /// Where the files the startup sweeps delete live, and the file that names
 /// their owner.
@@ -45,8 +47,8 @@ impl LibraryFiles {
 /// what it does not reference. A database with no id yet takes the files when
 /// nothing else claims them, writing its id to the database and to the home.
 /// Any error means no; it is logged, never raised.
-pub async fn may_sweep(pool: &SqlitePool, files: &LibraryFiles) -> bool {
-    match claim(pool, files).await {
+pub async fn may_sweep(database: &Database, files: &LibraryFiles) -> bool {
+    match claim(database, files).await {
         Ok(None) => true,
         Ok(Some(reason)) => {
             tracing::warn!(
@@ -68,8 +70,8 @@ pub async fn may_sweep(pool: &SqlitePool, files: &LibraryFiles) -> bool {
 }
 
 /// `None` when this database owns the files, else why it does not.
-async fn claim(pool: &SqlitePool, files: &LibraryFiles) -> Result<Option<&'static str>> {
-    let recorded = recorded_owner(pool).await?;
+async fn claim(database: &Database, files: &LibraryFiles) -> Result<Option<&'static str>> {
+    let recorded = recorded_owner(database).await?;
     let filed = filed_owner(&files.owner_file).await?;
     match (recorded, filed) {
         (Some(recorded), Some(filed)) if recorded == filed => Ok(None),
@@ -87,26 +89,18 @@ async fn claim(pool: &SqlitePool, files: &LibraryFiles) -> Result<Option<&'stati
             Ok(None)
         }
         (None, None) => {
-            if holds_files(&files.roots).await? && !holds_documents(pool).await? {
+            if holds_files(&files.roots).await? && !holds_documents(database).await? {
                 return Ok(Some(
                     "this database has no documents and the library already holds files",
                 ));
             }
-            adopt(pool, &files.owner_file).await?;
+            adopt(database, &files.owner_file).await?;
             Ok(None)
         }
     }
 }
 
 /// The id this database holds, if it has one.
-async fn recorded_owner(pool: &SqlitePool) -> Result<Option<String>> {
-    Ok(
-        sqlx::query_scalar::<_, String>("SELECT owner_id FROM library_owner WHERE id = 1")
-            .fetch_optional(pool)
-            .await?,
-    )
-}
-
 /// The id in the owner file, if the file exists.
 async fn filed_owner(path: &Path) -> Result<Option<String>> {
     match tokio::fs::read_to_string(path).await {
@@ -114,14 +108,6 @@ async fn filed_owner(path: &Path) -> Result<Option<String>> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(file_error("read", path, &error)),
     }
-}
-
-async fn holds_documents(pool: &SqlitePool) -> Result<bool> {
-    Ok(
-        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM documents)")
-            .fetch_one(pool)
-            .await?,
-    )
 }
 
 /// Whether any of `directories` holds a file, at any depth.
@@ -156,13 +142,10 @@ async fn holds_files(directories: &[PathBuf]) -> Result<bool> {
 /// Give this database an id and the home a file naming it. The file is written
 /// before the id commits, so a file that cannot be written leaves the database
 /// as it was and the next start tries again.
-async fn adopt(pool: &SqlitePool, owner_file: &Path) -> Result<()> {
+async fn adopt(database: &Database, owner_file: &Path) -> Result<()> {
     let id = uuid::Uuid::new_v4().to_string();
-    let mut tx = pool.begin_write().await?;
-    sqlx::query("INSERT INTO library_owner (id, owner_id) VALUES (1, ?)")
-        .bind(&id)
-        .execute(&mut *tx)
-        .await?;
+    let mut tx = database.begin_write().await?;
+    repository::record_owner(&mut tx, &id).await?;
     write_owner_file(owner_file, &id).await?;
     tx.commit().await?;
     tracing::info!(

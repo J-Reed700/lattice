@@ -6,9 +6,10 @@ use chrono::Utc;
 use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
 use lattice_core::domain::value_objects::ContextualizedChunk;
 use lattice_core::shared::fs::path::path_to_string;
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 use serde::Deserialize;
-use sqlx::{Sqlite, SqlitePool, Transaction};
+use sqlx::SqliteConnection;
 use std::path::Path;
 use uuid::Uuid;
 
@@ -51,29 +52,18 @@ async fn get_web_article_title(path: &Path) -> Result<String> {
     Ok(metadata.title)
 }
 
-/// Helper to insert document metadata.
-/// Upsert the document row and return the id the row **actually has**.
-///
-/// The distinction matters. `ON CONFLICT(file_path) DO UPDATE` deliberately
-/// does not touch `id`, so re-indexing an existing file keeps that file's
-/// original id and ignores the freshly-generated `doc_id` passed in. Callers
-/// that kept using the generated id then wrote chunks referencing a document
-/// that does not exist: the `DELETE FROM text_chunks WHERE document_id = ?`
-/// matched nothing (stale chunks survived) and the chunk inserts hit
-/// `FOREIGN KEY constraint failed`, rolling back the whole transaction. Every
-/// re-index of a modified file failed, permanently, while search kept serving
-/// the pre-edit content.
-///
-/// `RETURNING id` closes that gap: children are always bound to the surviving
-/// row.
-async fn insert_document_metadata(
-    tx: &mut Transaction<'_, Sqlite>,
-    doc_id: &str,
-    path: &Path,
-    mime_type: &str,
-) -> Result<String> {
+/// File facts read before a write unit opens.
+pub struct DocumentFacts {
+    file_name: String,
+    file_path: String,
+    size_bytes: i64,
+    modified_at_str: String,
+    checksum: String,
+}
+
+/// Read the name, size, modification time and checksum of a document's file.
+pub async fn read_document_facts(path: &Path) -> Result<DocumentFacts> {
     let file_name = if is_web_article(path) {
-        // Web article: extract title from metadata.json
         match get_web_article_title(path).await {
             Ok(title) => title,
             Err(e) => {
@@ -88,7 +78,6 @@ async fn insert_document_metadata(
             }
         }
     } else {
-        // Local file: use filename
         path.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
@@ -118,13 +107,44 @@ async fn insert_document_metadata(
 
     let checksum = calculate_checksum(path).await?;
 
-    let indexed_at = Utc::now().to_rfc3339();
     let modified_at_str = chrono::DateTime::from_timestamp(modified_at as i64, 0)
         .map(|dt| dt.to_rfc3339())
         .unwrap_or_else(|| {
             tracing::warn!("Invalid timestamp {}, using current time", modified_at);
-            indexed_at.clone()
+            Utc::now().to_rfc3339()
         });
+
+    Ok(DocumentFacts {
+        file_name,
+        file_path,
+        size_bytes,
+        modified_at_str,
+        checksum,
+    })
+}
+
+/// Helper to insert document metadata.
+/// Upsert the document row and return the id the row **actually has**.
+///
+/// The distinction matters. `ON CONFLICT(file_path) DO UPDATE` deliberately
+/// does not touch `id`, so re-indexing an existing file keeps that file's
+/// original id and ignores the freshly-generated `doc_id` passed in. Callers
+/// that kept using the generated id then wrote chunks referencing a document
+/// that does not exist: the `DELETE FROM text_chunks WHERE document_id = ?`
+/// matched nothing (stale chunks survived) and the chunk inserts hit
+/// `FOREIGN KEY constraint failed`, rolling back the whole transaction. Every
+/// re-index of a modified file failed, permanently, while search kept serving
+/// the pre-edit content.
+///
+/// `RETURNING id` closes that gap: children are always bound to the surviving
+/// row.
+async fn insert_document_metadata(
+    tx: &mut SqliteConnection,
+    doc_id: &str,
+    facts: &DocumentFacts,
+    mime_type: &str,
+) -> Result<String> {
+    let indexed_at = Utc::now().to_rfc3339();
 
     // Non-macro form on purpose: `SQLX_OFFLINE=true`, and changing the SQL
     // inside a `query!` macro would require regenerating the offline cache.
@@ -145,21 +165,21 @@ async fn insert_document_metadata(
         "#,
     )
     .bind(doc_id)
-    .bind(&file_path)
-    .bind(&file_name)
+    .bind(&facts.file_path)
+    .bind(&facts.file_name)
     .bind(mime_type)
-    .bind(size_bytes)
-    .bind(&modified_at_str)
+    .bind(facts.size_bytes)
+    .bind(&facts.modified_at_str)
     .bind(&indexed_at)
-    .bind(&checksum)
-    .fetch_one(&mut **tx)
+    .bind(&facts.checksum)
+    .fetch_one(&mut *tx)
     .await?;
 
     if actual_id != doc_id {
         tracing::debug!(
             generated = %doc_id,
             actual = %actual_id,
-            path = %path.display(),
+            path = %facts.file_path,
             "re-indexing existing document; binding chunks to the existing row id"
         );
     }
@@ -169,14 +189,14 @@ async fn insert_document_metadata(
 
 /// Helper to insert chunks and embeddings.
 async fn insert_chunks_and_embeddings(
-    tx: &mut Transaction<'_, Sqlite>,
+    tx: &mut SqliteConnection,
     doc_id: &str,
     chunks: &[ContextualizedChunk],
     embeddings: &[Vec<f32>],
 ) -> Result<()> {
     sqlx::query("DELETE FROM text_chunks WHERE document_id = ?")
         .bind(doc_id)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await?;
 
     for (idx, chunk) in chunks.iter().enumerate() {
@@ -199,7 +219,7 @@ async fn insert_chunks_and_embeddings(
         .bind(idx as i32)
         .bind(chunk.start_idx as i32)
         .bind(chunk.end_idx as i32)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await?;
 
         let embedding = embeddings.get(idx).ok_or_else(|| {
@@ -228,7 +248,7 @@ async fn insert_chunks_and_embeddings(
             DEFAULT_EMBEDDING_MODEL_NAME,
             dimension,
         )
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await?;
     }
 
@@ -237,12 +257,13 @@ async fn insert_chunks_and_embeddings(
 
 /// Store document with contextualized chunks.
 pub async fn store_document_with_context(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     path: &Path,
     mime_type: &str,
     chunks: Vec<ContextualizedChunk>,
     embeddings: Vec<Vec<f32>>,
 ) -> Result<String> {
+    let pool = pool.sqlx_pool();
     if chunks.len() != embeddings.len() {
         return Err(IndexingError::InvalidConfig(format!(
             "Chunks and embeddings must have same length: {} chunks vs {} embeddings",
@@ -251,10 +272,11 @@ pub async fn store_document_with_context(
         )));
     }
 
+    let facts = read_document_facts(path).await?;
     let mut tx = pool.begin_write().await?;
     let doc_id = Uuid::new_v4().to_string();
 
-    let doc_id = insert_document_metadata(&mut tx, &doc_id, path, mime_type).await?;
+    let doc_id = insert_document_metadata(&mut tx, &doc_id, &facts, mime_type).await?;
     insert_chunks_and_embeddings(&mut tx, &doc_id, &chunks, &embeddings).await?;
 
     tx.commit().await?;
@@ -264,13 +286,14 @@ pub async fn store_document_with_context(
 
 /// Store document with context and file ID.
 pub async fn store_document_with_context_and_file(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     path: &Path,
     _file_id: &str,
     mime_type: &str,
     chunks: Vec<ContextualizedChunk>,
     embeddings: Vec<Vec<f32>>,
 ) -> Result<String> {
+    let pool = pool.sqlx_pool();
     if chunks.len() != embeddings.len() {
         return Err(IndexingError::InvalidConfig(format!(
             "Chunks and embeddings must have same length: {} chunks vs {} embeddings",
@@ -279,10 +302,11 @@ pub async fn store_document_with_context_and_file(
         )));
     }
 
+    let facts = read_document_facts(path).await?;
     let mut tx = pool.begin_write().await?;
     let doc_id = Uuid::new_v4().to_string();
 
-    let doc_id = insert_document_metadata(&mut tx, &doc_id, path, mime_type).await?;
+    let doc_id = insert_document_metadata(&mut tx, &doc_id, &facts, mime_type).await?;
     insert_chunks_and_embeddings(&mut tx, &doc_id, &chunks, &embeddings).await?;
 
     tx.commit().await?;
@@ -292,8 +316,8 @@ pub async fn store_document_with_context_and_file(
 
 /// Store document with context using external transaction.
 pub async fn store_document_with_context_and_file_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    path: &Path,
+    tx: &mut SqliteConnection,
+    facts: &DocumentFacts,
     _file_id: &str,
     mime_type: &str,
     chunks: Vec<ContextualizedChunk>,
@@ -309,7 +333,7 @@ pub async fn store_document_with_context_and_file_tx(
 
     let doc_id = Uuid::new_v4().to_string();
 
-    let doc_id = insert_document_metadata(tx, &doc_id, path, mime_type).await?;
+    let doc_id = insert_document_metadata(tx, &doc_id, facts, mime_type).await?;
     insert_chunks_and_embeddings(tx, &doc_id, &chunks, &embeddings).await?;
 
     Ok(doc_id)
@@ -320,6 +344,7 @@ pub async fn store_document_with_context_and_file_tx(
 mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
+    use sqlx::SqlitePool;
 
     async fn setup_pool() -> SqlitePool {
         let pool = SqlitePoolOptions::new()

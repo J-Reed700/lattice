@@ -9,6 +9,7 @@ use lattice_core::application::contracts::web::WebSearchResult;
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::shared::http::url_identity::identity;
+use lattice_core::shared::persistence::Database;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -21,7 +22,7 @@ use saving::Saving;
 
 #[derive(Clone)]
 struct Context {
-    pool: sqlx::SqlitePool,
+    database: Database,
     program_id: String,
     topic: String,
     web: Arc<dyn WebServiceTrait>,
@@ -251,7 +252,7 @@ fn selection(raw: &str, results: &[WebSearchResult]) -> Result<Vec<(WebSearchRes
 tokio::task_local! { static CURRENT:Context; }
 
 pub(crate) async fn run<T>(
-    pool: sqlx::SqlitePool,
+    database: Database,
     program_id: String,
     topic: String,
     web: Option<Arc<dyn WebServiceTrait>>,
@@ -262,7 +263,7 @@ pub(crate) async fn run<T>(
             CURRENT
                 .scope(
                     Context {
-                        pool,
+                        database,
                         program_id,
                         topic,
                         web,
@@ -657,8 +658,9 @@ async fn research<'a>(
         }
         return Ok(Expansion::Exhausted(exhausted, Searched::default()));
     }
-    let program_repo = crate::repository::LearningRepository::new(context.pool.clone());
-    let library = crate::source_library::LearningSourceLibraryRepository::new(context.pool.clone());
+    let program_repo = crate::repository::LearningRepository::new(context.database.clone());
+    let library =
+        crate::source_library::LearningSourceLibraryRepository::new(context.database.clone());
     let mut sources = program_repo
         .verification_sources(&context.program_id)
         .await?;

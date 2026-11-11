@@ -34,17 +34,17 @@ impl DownloadManager for DownloadManagerService {
         items: Vec<DownloadBatchItem>,
     ) -> Result<Vec<String>, DownloadError> {
         let _queue_guard = self.queue_gate.lock().await;
-        let mut ids = Vec::with_capacity(items.len());
+        let mut prepared = Vec::with_capacity(items.len());
 
         for item in items {
             let mut last_error = None;
-            let mut registered_id = None;
+            let mut ready = None;
 
             let candidate_count = item.requests.len();
             for (candidate_index, request) in item.requests.into_iter().enumerate() {
-                match self.enqueue_download(request).await {
-                    Ok(id) => {
-                        registered_id = Some(id);
+                match self.prepare_download(request).await {
+                    Ok(download) => {
+                        ready = Some(download);
                         break;
                     }
                     Err(error) => {
@@ -58,20 +58,9 @@ impl DownloadManager for DownloadManagerService {
                 }
             }
 
-            match registered_id {
-                Some(id) => ids.push(id),
+            match ready {
+                Some(download) => prepared.push(download),
                 None => {
-                    for id in &ids {
-                        self.repository.delete(id).await?;
-                    }
-                    {
-                        let mut queue = self.download_queue.write().await;
-                        queue.retain(|id| !ids.contains(id));
-                    }
-                    {
-                        let mut tokens = self.auth_tokens.write().await;
-                        tokens.retain(|id, _| !ids.contains(id));
-                    }
                     return Err(last_error.unwrap_or_else(|| {
                         DownloadError::NetworkError(
                             "Download batch item has no candidate URLs".to_string(),
@@ -81,111 +70,17 @@ impl DownloadManager for DownloadManagerService {
             }
         }
 
+        let ids = self.register_downloads(prepared).await?;
         self.process_queue().await?;
         Ok(ids)
     }
 
     async fn enqueue_download(&self, request: DownloadRequest) -> Result<String, DownloadError> {
-        if self.shutdown.is_cancelled() {
-            return Err(DownloadError::NetworkError(
-                "Application is shutting down".into(),
-            ));
-        }
-        if request.destination.as_os_str().is_empty() {
-            return Err(DownloadError::InvalidDestination(
-                "Destination path cannot be empty".to_string(),
-            ));
-        }
-
-        if request
-            .destination
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir))
-        {
-            return Err(DownloadError::InvalidDestination(
-                "Path traversal detected in destination path".to_string(),
-            ));
-        }
-
-        let cache_root = dirs::cache_dir().map(|p| p.join("lattice"));
-        let dot_cache_root = std::env::var("HOME")
-            .ok()
-            .map(std::path::PathBuf::from)
-            .map(|p| p.join(".cache").join("lattice"));
-        // Model files arrive confined, so canonicalized (on Windows with the
-        // `\\?\` prefix), while the roots are plain paths: each root is matched
-        // in both forms, or no model could ever download on Windows.
-        let under = |root: &std::path::Path| {
-            request.destination.starts_with(root)
-                || root
-                    .canonicalize()
-                    .is_ok_and(|canonical| request.destination.starts_with(canonical))
-        };
-        let within_allowed_root = under(self.allowed_root.as_path());
-        let within_cache_root = cache_root.as_deref().is_some_and(under);
-        let within_dot_cache_root = dot_cache_root.as_deref().is_some_and(under);
-
-        if !within_allowed_root && !within_cache_root && !within_dot_cache_root {
-            let mut roots = vec![self.allowed_root.display().to_string()];
-            if let Some(root) = &cache_root {
-                roots.push(root.display().to_string());
-            }
-            if let Some(root) = &dot_cache_root {
-                roots.push(root.display().to_string());
-            }
-            return Err(DownloadError::InvalidDestination(format!(
-                "Destination path must be within allowed roots: {}",
-                roots.join(", ")
-            )));
-        }
-
-        let (file_size, _final_url) = self.engine.get_file_size(&request.url).await?;
-        info!(url = %request.url, file_size = ?file_size, "✓ File size retrieved");
-
-        self.supersede_sessions_for(&request.destination).await?;
-
-        let id = Uuid::new_v4().to_string();
-        let mut session = DownloadSession::new(
-            id.clone(),
-            request.url.clone(),
-            request.destination.clone(),
-            file_size,
-            request.checksum,
-        )?;
-        info!(download_id = %id, url = %request.url, "✓ DownloadSession created");
-
-        if let (Some(model_name), Some(model_id)) =
-            (request.model_name.clone(), request.model_id.clone())
-        {
-            session = session.with_model_metadata(model_name, model_id);
-            info!(download_id = %id, "✓ Model metadata attached to session");
-        }
-        if let Some(model_file_name) = request.model_file_name {
-            session = session.with_model_file_name(model_file_name);
-        }
-
-        info!(download_id = %id, "→ Calling repository.create()...");
-
-        // Give pool time to release connections from prior operations
-        tokio::task::yield_now().await;
-
-        self.repository.create(&session).await?;
-        info!(download_id = %id, "✓ Download session created in database");
-
-        if let Some(token) = request.auth_token {
-            let mut tokens = self.auth_tokens.write().await;
-            tokens.insert(id.clone(), token);
-            info!(download_id = %id, "✓ Auth token stored");
-        }
-
-        {
-            let mut queue = self.download_queue.write().await;
-            queue.push_back(id.clone());
-            info!(download_id = %id, "✓ Added to download queue");
-        }
-
-        info!(download_id = %id, "✓ enqueue_download() returning ID");
-        Ok(id)
+        let prepared = self.prepare_download(request).await?;
+        self.register_downloads(vec![prepared])
+            .await?
+            .pop()
+            .ok_or_else(|| DownloadError::NetworkError("No download was registered".to_string()))
     }
 
     async fn pause_download(&self, id: &str) -> Result<(), DownloadError> {
@@ -399,6 +294,12 @@ impl DownloadManager for DownloadManagerService {
     }
 }
 
+/// A download checked and sized, ready to save.
+struct PreparedDownload {
+    session: DownloadSession,
+    auth_token: Option<String>,
+}
+
 impl DownloadManagerService {
     /// Stop and join before another transfer may use this session or its slot.
     /// The task flushes its last progress before the caller changes state.
@@ -414,16 +315,143 @@ impl DownloadManagerService {
         }
     }
 
+    /// Checks a request and sizes the file, building the session without saving it.
+    async fn prepare_download(
+        &self,
+        request: DownloadRequest,
+    ) -> Result<PreparedDownload, DownloadError> {
+        if self.shutdown.is_cancelled() {
+            return Err(DownloadError::NetworkError(
+                "Application is shutting down".into(),
+            ));
+        }
+        if request.destination.as_os_str().is_empty() {
+            return Err(DownloadError::InvalidDestination(
+                "Destination path cannot be empty".to_string(),
+            ));
+        }
+
+        if request
+            .destination
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(DownloadError::InvalidDestination(
+                "Path traversal detected in destination path".to_string(),
+            ));
+        }
+
+        let cache_root = dirs::cache_dir().map(|p| p.join("lattice"));
+        let dot_cache_root = std::env::var("HOME")
+            .ok()
+            .map(std::path::PathBuf::from)
+            .map(|p| p.join(".cache").join("lattice"));
+        // Model files arrive confined, so canonicalized (on Windows with the
+        // `\\?\` prefix), while the roots are plain paths: each root is matched
+        // in both forms, or no model could ever download on Windows.
+        let under = |root: &std::path::Path| {
+            request.destination.starts_with(root)
+                || root
+                    .canonicalize()
+                    .is_ok_and(|canonical| request.destination.starts_with(canonical))
+        };
+        let within_allowed_root = under(self.allowed_root.as_path());
+        let within_cache_root = cache_root.as_deref().is_some_and(under);
+        let within_dot_cache_root = dot_cache_root.as_deref().is_some_and(under);
+
+        if !within_allowed_root && !within_cache_root && !within_dot_cache_root {
+            let mut roots = vec![self.allowed_root.display().to_string()];
+            if let Some(root) = &cache_root {
+                roots.push(root.display().to_string());
+            }
+            if let Some(root) = &dot_cache_root {
+                roots.push(root.display().to_string());
+            }
+            return Err(DownloadError::InvalidDestination(format!(
+                "Destination path must be within allowed roots: {}",
+                roots.join(", ")
+            )));
+        }
+
+        let (file_size, _final_url) = self.engine.get_file_size(&request.url).await?;
+        info!(url = %request.url, file_size = ?file_size, "✓ File size retrieved");
+
+        let id = Uuid::new_v4().to_string();
+        let mut session = DownloadSession::new(
+            id.clone(),
+            request.url.clone(),
+            request.destination.clone(),
+            file_size,
+            request.checksum,
+        )?;
+        info!(download_id = %id, url = %request.url, "✓ DownloadSession created");
+
+        if let (Some(model_name), Some(model_id)) =
+            (request.model_name.clone(), request.model_id.clone())
+        {
+            session = session.with_model_metadata(model_name, model_id);
+            info!(download_id = %id, "✓ Model metadata attached to session");
+        }
+        if let Some(model_file_name) = request.model_file_name {
+            session = session.with_model_file_name(model_file_name);
+        }
+
+        Ok(PreparedDownload {
+            session,
+            auth_token: request.auth_token,
+        })
+    }
+
+    /// Saves prepared downloads, and deletes the sessions they supersede, in one
+    /// unit of work; then queues them in order.
+    async fn register_downloads(
+        &self,
+        prepared: Vec<PreparedDownload>,
+    ) -> Result<Vec<String>, DownloadError> {
+        let mut superseded = Vec::new();
+        for download in &prepared {
+            superseded.extend(
+                self.sessions_superseded_by(download.session.destination())
+                    .await?,
+            );
+        }
+        let sessions: Vec<DownloadSession> = prepared
+            .iter()
+            .map(|download| download.session.clone())
+            .collect();
+
+        // Give pool time to release connections from prior operations
+        tokio::task::yield_now().await;
+
+        self.repository.register(&superseded, &sessions).await?;
+        for id in &superseded {
+            self.auth_tokens.write().await.remove(id);
+            info!(download_id = %id, "Superseded an earlier session for the same destination");
+        }
+
+        let mut ids = Vec::with_capacity(prepared.len());
+        for download in prepared {
+            let id = download.session.id().to_string();
+            if let Some(token) = download.auth_token {
+                self.auth_tokens.write().await.insert(id.clone(), token);
+            }
+            self.download_queue.write().await.push_back(id.clone());
+            info!(download_id = %id, "✓ Added to download queue");
+            ids.push(id);
+        }
+        Ok(ids)
+    }
+
     /// A destination holds one file, so an earlier session for it that this
     /// manager is neither running nor holding in its queue is history: a
     /// finished or failed attempt, or one a previous launch left behind. Left
     /// in place it is reported beside the new session as a second row for the
     /// same file, and that row never moves. The partial file stays where it is;
     /// the new session resumes from its length.
-    async fn supersede_sessions_for(
+    async fn sessions_superseded_by(
         &self,
         destination: &std::path::Path,
-    ) -> Result<(), DownloadError> {
+    ) -> Result<Vec<String>, DownloadError> {
         let earlier: Vec<String> = self
             .repository
             .list()
@@ -432,16 +460,15 @@ impl DownloadManagerService {
             .filter(|session| session.destination() == destination)
             .map(|session| session.id().to_string())
             .collect();
+        let mut superseded = Vec::new();
         for id in earlier {
             let running = self.active_downloads.read().await.contains_key(&id);
             let queued = self.download_queue.read().await.contains(&id);
             if running || queued {
                 continue;
             }
-            self.repository.delete(&id).await?;
-            self.auth_tokens.write().await.remove(&id);
-            info!(download_id = %id, "Superseded an earlier session for the same destination");
+            superseded.push(id);
         }
-        Ok(())
+        Ok(superseded)
     }
 }

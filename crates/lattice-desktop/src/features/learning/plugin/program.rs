@@ -7,7 +7,7 @@ use lattice_core::shared::runtime::jobs::Backoff;
 pub async fn list_learning_programs(
     container: State<'_, Container>,
 ) -> Result<Vec<LearningProgramSummaryDto>, ApiError> {
-    LearningRepository::new(container.db_pool().clone())
+    LearningRepository::new(container.database().clone())
         .list()
         .await
         .map_err(ApiError::from)
@@ -18,7 +18,7 @@ pub async fn get_learning_program(
     id: String,
     container: State<'_, Container>,
 ) -> Result<LearningProgramDto, ApiError> {
-    LearningRepository::new(container.db_pool().clone())
+    LearningRepository::new(container.database().clone())
         .get(&id)
         .await
         .map_err(ApiError::from)
@@ -31,7 +31,7 @@ pub async fn get_learning_lesson_evidence(
     container: State<'_, Container>,
 ) -> Result<Option<crate::features::learning::lesson_evidence::LearningLessonEvidenceDto>, ApiError>
 {
-    crate::features::learning::lesson_evidence::get(container.db_pool(), &program_id, &lesson_id)
+    crate::features::learning::lesson_evidence::get(container.database(), &program_id, &lesson_id)
         .await
         .map_err(ApiError::from)
 }
@@ -45,7 +45,7 @@ pub async fn get_learning_outline_evidence(
     Option<crate::features::learning::outline_evidence_view::LearningOutlineEvidenceDto>,
     ApiError,
 > {
-    crate::features::learning::outline_evidence_view::get(container.db_pool(), &program_id)
+    crate::features::learning::outline_evidence_view::get(container.database(), &program_id)
         .await
         .map_err(ApiError::from)
 }
@@ -92,9 +92,9 @@ pub async fn generate_learning_program(
             // Supported outline assertions are weighed for their sources'
             // standing, as a lesson's claims are.
             crate::features::learning::content_verification::with_outline_trust(
-                container.db_pool().clone(),
+                container.database().clone(),
                 service::generate_with_references_and_progress(
-                    &LearningRepository::new(container.db_pool().clone()),
+                    &LearningRepository::new(container.database().clone()),
                     &container.draft_run_registry(),
                     &llm,
                     request,
@@ -147,9 +147,9 @@ pub async fn repair_learning_outline(
             )?;
             let llm = PatientModel::new(pin.llm.as_ref(), progress.as_ref());
             crate::features::learning::content_verification::with_outline_trust(
-                container.db_pool().clone(),
+                container.database().clone(),
                 crate::features::learning::outline_draft::repair_saved(
-                    &LearningRepository::new(container.db_pool().clone()),
+                    &LearningRepository::new(container.database().clone()),
                     &container.draft_run_registry(),
                     &llm,
                     &request,
@@ -183,7 +183,7 @@ pub async fn accept_learning_program(
     container: State<'_, Container>,
 ) -> Result<LearningProgramDto, ApiError> {
     service::accept(
-        &LearningRepository::new(container.db_pool().clone()),
+        &LearningRepository::new(container.database().clone()),
         &container.draft_run_registry(),
         request,
     )
@@ -196,7 +196,7 @@ pub async fn prepare_learning_lesson(
     request: PrepareLearningLessonRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningProgramDto, ApiError> {
-    let program = LearningRepository::new(container.db_pool().clone())
+    let program = LearningRepository::new(container.database().clone())
         .get(&request.program_id)
         .await
         .map_err(ApiError::from)?;
@@ -229,7 +229,7 @@ pub async fn prepare_learning_lesson(
     };
     let job_repo =
         crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
-            container.db_pool().clone(),
+            container.database().clone(),
         );
     let job = job_repo
         .start_lesson_job(&job_request)
@@ -238,7 +238,7 @@ pub async fn prepare_learning_lesson(
     container.jobs().submitted(&job.id).await;
     // Acknowledge the durable request immediately. Source refresh, model calls,
     // and publication belong to the worker; the UI observes the saved job.
-    LearningRepository::new(container.db_pool().clone())
+    LearningRepository::new(container.database().clone())
         .get(&request.program_id)
         .await
         .map_err(ApiError::from)
@@ -256,7 +256,7 @@ pub async fn prepare_learning_module(
         request.expected_revision,
     );
     let jobs = crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .start_module_jobs(&StartLearningModuleJobsRequestDto {
         operation_id,
@@ -269,7 +269,7 @@ pub async fn prepare_learning_module(
     for job in &jobs {
         container.jobs().submitted(&job.id).await;
     }
-    LearningRepository::new(container.db_pool().clone())
+    LearningRepository::new(container.database().clone())
         .get(&request.program_id)
         .await
         .map_err(ApiError::from)
@@ -282,7 +282,7 @@ pub async fn complete_learning_lesson(
     container: State<'_, Container>,
 ) -> Result<LearningProgramDto, ApiError> {
     service::complete(
-        &LearningRepository::new(container.db_pool().clone()),
+        &LearningRepository::new(container.database().clone()),
         request,
     )
     .await
@@ -299,7 +299,7 @@ pub async fn delete_learning_program(
             "Invalid program ID".into(),
         ))
     })?;
-    LearningRepository::new(container.db_pool().clone())
+    LearningRepository::new(container.database().clone())
         .delete(&id)
         .await
         .map_err(ApiError::from)?;

@@ -209,7 +209,8 @@ pub struct SourceFile {
 
 type Error = Box<dyn std::error::Error>;
 
-/// Production files reachable from the crate roots through `mod` declarations.
+/// Production files reachable from the crate roots through `mod` declarations; examples,
+/// tests, benches and `build.rs` are not production and stay unscanned.
 pub fn production_files(root: &Path) -> Result<(Vec<SourceFile>, HashSet<Vec<String>>), Error> {
     let mut crates = vec![(root.join("lib.rs"), true), (root.join("main.rs"), false)];
     let bin = root.join("bin");
@@ -742,7 +743,7 @@ impl<'ast> Visit<'ast> for UseAliases {
     }
 }
 
-fn impl_item_attrs(item: &ImplItem) -> Option<&[Attribute]> {
+pub(crate) fn impl_item_attrs(item: &ImplItem) -> Option<&[Attribute]> {
     match item {
         ImplItem::Const(i) => Some(&i.attrs),
         ImplItem::Fn(i) => Some(&i.attrs),
@@ -752,7 +753,7 @@ fn impl_item_attrs(item: &ImplItem) -> Option<&[Attribute]> {
     }
 }
 
-fn trait_item_attrs(item: &TraitItem) -> Option<&[Attribute]> {
+pub(crate) fn trait_item_attrs(item: &TraitItem) -> Option<&[Attribute]> {
     match item {
         TraitItem::Const(i) => Some(&i.attrs),
         TraitItem::Fn(i) => Some(&i.attrs),
@@ -1050,7 +1051,7 @@ impl<'ast> Visit<'ast> for Collector<'_> {
 }
 
 /// `a::b::c` sequences in unparsed macro input, with their first line.
-fn token_paths(tokens: TokenStream) -> Vec<(Vec<String>, bool, usize)> {
+pub(crate) fn token_paths(tokens: TokenStream) -> Vec<(Vec<String>, bool, usize)> {
     struct Paths {
         out: Vec<(Vec<String>, bool, usize)>,
         current: Vec<String>,

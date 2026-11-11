@@ -70,6 +70,9 @@ pub(crate) struct LessonBank {
     /// The outcome the items address.
     pub outcome_id: String,
     pub items: Vec<AuthoredItem>,
+    /// Items the checks or the blinded key review left out, with why.
+    #[serde(default)]
+    pub dropped: Vec<String>,
     pub author_model: Option<String>,
 }
 
@@ -78,7 +81,7 @@ pub(crate) struct LessonBank {
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn lesson_bank_stage(
     llm: &dyn LLMPort,
-    pool: &SqlitePool,
+    database: &Database,
     program_id: &str,
     lesson_id: &str,
     title: &str,
@@ -87,17 +90,17 @@ pub(crate) async fn lesson_bank_stage(
     seeds: Vec<StoredItem>,
 ) -> Result<LessonBank> {
     let (outcome_id, settings, quiz_formats) = {
-        let mut connection = pool.acquire().await.map_err(db)?;
-        let existing: Option<String> = sqlx::query_scalar("SELECT id FROM learning_outcome_definitions WHERE program_id=? AND lesson_id=? ORDER BY created_at,id LIMIT 1")
-            .bind(program_id)
-            .bind(lesson_id)
-            .fetch_optional(&mut *connection)
-            .await
-            .map_err(db)?;
+        let mut tx = database.begin_read().await.map_err(db)?;
+        let existing =
+            quiz_blueprints::repository::lesson_outcome_in(&mut tx, program_id, lesson_id).await?;
+        let settings = quiz_blueprints::settings_in(&mut tx, program_id).await?;
+        let quiz_formats =
+            quiz_blueprints::lesson_quiz_formats_in(&mut tx, program_id, lesson_id).await?;
+        tx.commit().await.map_err(db)?;
         (
             existing.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
-            quiz_blueprints::settings_in(&mut connection, program_id).await?,
-            quiz_blueprints::lesson_quiz_formats_in(&mut connection, program_id, lesson_id).await?,
+            settings,
+            quiz_formats,
         )
     };
     let facts = CourseFacts {
@@ -125,6 +128,7 @@ pub(crate) async fn lesson_bank_stage(
         });
     };
     let mut written: Vec<AuthoredItem> = Vec::new();
+    let mut dropped: Vec<String> = Vec::new();
     for slot in &blueprint.slots {
         let requirement = &slot.requirement;
         let have = seeds
@@ -150,11 +154,14 @@ pub(crate) async fn lesson_bank_stage(
                 .chain(written.iter().map(|w| w.candidate.prompt.clone()))
                 .collect(),
         };
-        written.extend(generation::author_items(llm, &need).await?.items);
+        let authored = generation::author_items(llm, &need).await?;
+        written.extend(authored.items);
+        dropped.extend(authored.dropped);
     }
     Ok(LessonBank {
         outcome_id,
         items: written,
+        dropped,
         author_model: Some(llm.model_name().to_string()),
     })
 }

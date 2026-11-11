@@ -6,16 +6,16 @@
 //! receipts), not this table's.
 
 use async_trait::async_trait;
+use lattice_core::shared::persistence::Database;
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool};
 
 use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::{AppError, Result};
 
 use crate::curriculum_repository::LearningCurriculumRepository;
-use crate::persistence::{db, decode, encode};
 
 use super::policy::consent;
+use super::repository;
 use super::{AuditGate, AuditStop};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,7 +55,7 @@ pub enum RunState {
 }
 
 impl RunState {
-    fn as_str(self) -> &'static str {
+    pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Running => "running",
             Self::Completed => "completed",
@@ -63,7 +63,7 @@ impl RunState {
         }
     }
 
-    fn from_column(value: &str) -> Result<Self> {
+    pub(super) fn from_column(value: &str) -> Result<Self> {
         [Self::Running, Self::Completed, Self::Stopped]
             .into_iter()
             .find(|state| state.as_str() == value)
@@ -121,144 +121,36 @@ pub struct CourseAuditUsage {
 
 #[derive(Clone)]
 pub struct SqliteAuditRuns {
-    pool: SqlitePool,
+    database: Database,
 }
 
 impl SqliteAuditRuns {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
-    }
-
-    async fn load(&self, key: &RunKey) -> Result<Option<AuditRun>> {
-        sqlx::query(
-            "SELECT * FROM learning_lesson_audits \
-             WHERE lesson_id=? AND draft_sha256=? AND verifier_model=?",
-        )
-        .bind(&key.lesson_id)
-        .bind(&key.draft_sha256)
-        .bind(&key.verifier_model)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db)?
-        .map(|row| run_from_row(&row))
-        .transpose()
+    pub fn new(database: Database) -> Self {
+        Self { database }
     }
 
     /// The lesson's most recently started audit.
     pub async fn latest(&self, lesson_id: &str) -> Result<Option<AuditRun>> {
-        sqlx::query(
-            "SELECT * FROM learning_lesson_audits WHERE lesson_id=? \
-             ORDER BY started_at DESC, rowid DESC LIMIT 1",
-        )
-        .bind(lesson_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db)?
-        .map(|row| run_from_row(&row))
-        .transpose()
+        repository::latest_run(&self.database, lesson_id).await
     }
 
     pub async fn course_usage(&self, program_id: &str) -> Result<CourseAuditUsage> {
-        let row = sqlx::query(
-            "SELECT count(*) AS audits, coalesce(sum(a.input_tokens),0) AS input_tokens, \
-             coalesce(sum(a.output_tokens),0) AS output_tokens \
-             FROM learning_lesson_audits a \
-             JOIN learning_lesson_reviews r ON r.lesson_id=a.lesson_id WHERE r.program_id=?",
-        )
-        .bind(program_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(db)?;
-        let count = |column: &str| u64::try_from(row.get::<i64, _>(column)).unwrap_or_default();
-        Ok(CourseAuditUsage {
-            audits: count("audits"),
-            input_tokens: count("input_tokens"),
-            output_tokens: count("output_tokens"),
-        })
+        repository::course_usage(&self.database, program_id).await
     }
-}
-
-fn run_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<AuditRun> {
-    let tokens = |column: &str| u64::try_from(row.get::<i64, _>(column)).unwrap_or_default();
-    Ok(AuditRun {
-        key: RunKey {
-            lesson_id: row.get("lesson_id"),
-            draft_sha256: row.get("draft_sha256"),
-            verifier_model: row.get("verifier_model"),
-        },
-        policy: row.get("policy"),
-        state: RunState::from_column(row.get("state"))?,
-        batches: decode(row.get("batches_json"))?,
-        input_tokens: tokens("input_tokens"),
-        output_tokens: tokens("output_tokens"),
-        started_at: row.get("started_at"),
-        finished_at: row.get("finished_at"),
-    })
-}
-
-fn signed(tokens: u64) -> i64 {
-    i64::try_from(tokens).unwrap_or(i64::MAX)
 }
 
 #[async_trait]
 impl AuditRunStore for SqliteAuditRuns {
     async fn begin(&self, key: &RunKey, policy: &str, at: i64) -> Result<AuditRun> {
-        sqlx::query(
-            "INSERT INTO learning_lesson_audits \
-             (lesson_id, draft_sha256, verifier_model, policy, state, batches_json, started_at) \
-             VALUES (?, ?, ?, ?, 'running', '[]', ?) \
-             ON CONFLICT(lesson_id, draft_sha256, verifier_model) \
-             DO UPDATE SET state='running', policy=excluded.policy, finished_at=NULL",
-        )
-        .bind(&key.lesson_id)
-        .bind(&key.draft_sha256)
-        .bind(&key.verifier_model)
-        .bind(policy)
-        .bind(at)
-        .execute(&self.pool)
-        .await
-        .map_err(db)?;
-        self.load(key)
-            .await?
-            .ok_or_else(|| AppError::Database("the audit row was not written".into()))
+        repository::open_run(&self.database, key, policy, at).await
     }
 
     async fn record(&self, key: &RunKey, batch: &BatchRecord) -> Result<()> {
-        let written = sqlx::query(
-            "UPDATE learning_lesson_audits \
-             SET batches_json=json_insert(batches_json, '$[#]', json(?)), \
-                 input_tokens=input_tokens+?, output_tokens=output_tokens+? \
-             WHERE lesson_id=? AND draft_sha256=? AND verifier_model=?",
-        )
-        .bind(encode(batch)?)
-        .bind(signed(batch.input_tokens))
-        .bind(signed(batch.output_tokens))
-        .bind(&key.lesson_id)
-        .bind(&key.draft_sha256)
-        .bind(&key.verifier_model)
-        .execute(&self.pool)
-        .await
-        .map_err(db)?;
-        if written.rows_affected() == 0 {
-            return Err(AppError::NotFound("The lesson's audit is gone".into()));
-        }
-        Ok(())
+        repository::append_batch(&self.database, key, batch).await
     }
 
     async fn finish(&self, key: &RunKey, state: RunState, at: i64) -> Result<()> {
-        sqlx::query(
-            "UPDATE learning_lesson_audits SET state=?, finished_at=? \
-             WHERE lesson_id=? AND draft_sha256=? AND verifier_model=?",
-        )
-        .bind(state.as_str())
-        .bind(at)
-        .bind(&key.lesson_id)
-        .bind(&key.draft_sha256)
-        .bind(&key.verifier_model)
-        .execute(&self.pool)
-        .await
-        .map_err(db)?;
-        Ok(())
+        repository::finish_run(&self.database, key, state, at).await
     }
 }
 

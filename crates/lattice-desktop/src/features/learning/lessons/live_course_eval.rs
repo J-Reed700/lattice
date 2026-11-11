@@ -20,6 +20,7 @@ use lattice_core::application::contracts::settings::{
     LLMProvider, LLMSettingsDto, LlamaCppSettingsDto, ThinkingOverrideDto,
 };
 use lattice_core::application::ports::WebServiceTrait;
+use lattice_core::shared::runtime::jobs::JobStatus;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -357,6 +358,28 @@ pub(super) fn lesson_step(
         Some((Status::Interrupted, _)) => LessonStep::Retry,
         Some((Status::Failed, Some(error))) if transient_text(error) => LessonStep::Retry,
         Some(_) => LessonStep::Record,
+    }
+}
+
+/// What the quiz stage does with a lesson's quiz job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum QuizJobStep {
+    /// Dispatch it.
+    Run,
+    /// A killed run left it running: requeue it, then dispatch.
+    Recover,
+    /// It stopped without finishing: a new attempt that reuses its saved work.
+    Retry,
+    /// It completed; record its numbers.
+    Record,
+}
+
+pub(super) fn quiz_job_step(status: JobStatus) -> QuizJobStep {
+    match status {
+        JobStatus::Pending => QuizJobStep::Run,
+        JobStatus::Running => QuizJobStep::Recover,
+        JobStatus::Failed | JobStatus::Cancelled | JobStatus::Interrupted => QuizJobStep::Retry,
+        JobStatus::Completed => QuizJobStep::Record,
     }
 }
 

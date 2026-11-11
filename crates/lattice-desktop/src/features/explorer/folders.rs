@@ -11,8 +11,8 @@ use super::dto::{ExplorerFolderDto, ExplorerFolderListDto};
 use super::index::manager::FolderIndexManager;
 use super::repository;
 use chrono::{DateTime, SecondsFormat, Utc};
-use lattice_core::shared::Result;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
+use lattice_core::shared::{AppError, Result};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tracing::info;
@@ -32,9 +32,9 @@ fn default_name(root: &Path) -> String {
 
 /// The folder at `root` (canonical) was opened: listed if it is new, marked
 /// opened now if not.
-pub async fn record_open(pool: &SqlitePool, root: &str) -> Result<()> {
+pub async fn record_open(database: &Database, root: &str) -> Result<()> {
     repository::record_folder_opened(
-        pool,
+        database,
         root,
         &default_name(Path::new(root)),
         &stamp(Utc::now()),
@@ -46,11 +46,11 @@ pub async fn record_open(pool: &SqlitePool, root: &str) -> Result<()> {
 /// its thread count and its index: live for the open folder, read from disk
 /// for the rest.
 pub async fn list(
-    pool: &SqlitePool,
+    database: &Database,
     manager: &FolderIndexManager,
 ) -> Result<ExplorerFolderListDto> {
     let indexes = manager.index_dirs().await;
-    let mut rows = repository::list_folders(pool).await?;
+    let mut rows = repository::list_folders(database).await?;
     let listed: HashSet<&str> = rows.iter().map(|row| row.root.as_str()).collect();
     let unlisted: Vec<(&Path, i64)> = indexes
         .iter()
@@ -63,7 +63,7 @@ pub async fn list(
                 .filter(|_| last_opened > 0)
                 .unwrap_or_else(Utc::now);
             repository::adopt_folder(
-                pool,
+                database,
                 &root.to_string_lossy(),
                 &default_name(root),
                 &stamp(opened),
@@ -71,10 +71,10 @@ pub async fn list(
             .await?;
             info!(root = %root.display(), "Explorer folder adopted from its index");
         }
-        rows = repository::list_folders(pool).await?;
+        rows = repository::list_folders(database).await?;
     }
 
-    let threads = repository::thread_counts(pool).await?;
+    let threads = repository::thread_counts(database).await?;
     let roots: Vec<PathBuf> = rows.iter().map(|row| PathBuf::from(&row.root)).collect();
     let summaries = manager.summaries(&roots, &indexes).await;
     let folders = rows
@@ -107,14 +107,14 @@ pub async fn list(
 }
 
 /// Renames a folder in the list. An empty name goes back to the folder's own.
-pub async fn rename(pool: &SqlitePool, root: &str, name: &str) -> Result<()> {
+pub async fn rename(database: &Database, root: &str, name: &str) -> Result<()> {
     let name = name.trim();
     let name = if name.is_empty() {
         default_name(Path::new(root))
     } else {
         name.to_owned()
     };
-    repository::rename_folder(pool, root, &name).await
+    repository::rename_folder(database, root, &name).await
 }
 
 /// Longest system prompt a folder keeps, in characters.
@@ -125,29 +125,22 @@ const MAX_INSTRUCTIONS_CHARS: usize = 20_000;
 /// the space with it, so its library and memory change for them too. Returns
 /// how many threads moved.
 pub async fn set_settings(
-    pool: &SqlitePool,
+    database: &Database,
     root: &str,
     instructions: &str,
     space_id: &str,
 ) -> Result<u64> {
     let instructions = instructions.trim();
     if instructions.chars().count() > MAX_INSTRUCTIONS_CHARS {
-        return Err(lattice_core::shared::AppError::InvalidInput(format!(
+        return Err(AppError::InvalidInput(format!(
             "Folder instructions are limited to {MAX_INSTRUCTIONS_CHARS} characters."
         )));
     }
     let space_id = space_id.trim();
     let own_space =
         (!space_id.is_empty() && space_id != repository::GENERAL_SPACE_ID).then_some(space_id);
-    if let Some(space) = own_space {
-        if !repository::space_is_open(pool, space).await? {
-            return Err(lattice_core::shared::AppError::NotFound(format!(
-                "Space not found or archived: {space}"
-            )));
-        }
-    }
-    let moved = repository::set_folder_settings(
-        pool,
+    let moved = repository::save_folder_settings(
+        database,
         root,
         (!instructions.is_empty()).then_some(instructions),
         own_space,
@@ -166,42 +159,34 @@ pub async fn set_settings(
 /// Binds a thread to a folder and files it in the folder's space, so a new
 /// thread never takes the space from whatever the Chat sidebar had selected.
 pub async fn bind_thread(
-    pool: &SqlitePool,
+    database: &Database,
     conversation_id: &str,
     root: Option<&str>,
 ) -> Result<()> {
-    repository::set_conversation_root(pool, conversation_id, root).await?;
-    if let Some(root) = root {
-        let space = repository::folder_space(pool, root).await?;
-        repository::move_thread_to_space(pool, conversation_id, &space, &stamp(Utc::now())).await?;
-    }
-    Ok(())
+    repository::bind_thread_to_folder(database, conversation_id, root, &stamp(Utc::now())).await
 }
 
 /// Remembers the thread the folder's chat is showing, so the folder reopens
 /// on it. Only a thread bound to the folder can be its thread.
-pub async fn remember_thread(pool: &SqlitePool, root: &str, conversation_id: &str) -> Result<()> {
-    if repository::conversation_root(pool, conversation_id)
-        .await?
-        .as_deref()
-        != Some(root)
-    {
-        return Err(lattice_core::shared::AppError::InvalidInput(format!(
-            "Conversation {conversation_id} is not a thread of {root}"
-        )));
-    }
-    repository::set_folder_last_thread(
-        pool,
+pub async fn remember_thread(database: &Database, root: &str, conversation_id: &str) -> Result<()> {
+    let remembered = repository::remember_folder_thread(
+        database,
         root,
         &default_name(Path::new(root)),
         conversation_id,
         &stamp(Utc::now()),
     )
-    .await
+    .await?;
+    if !remembered {
+        return Err(AppError::InvalidInput(format!(
+            "Conversation {conversation_id} is not a thread of {root}"
+        )));
+    }
+    Ok(())
 }
 
-pub async fn set_pinned(pool: &SqlitePool, root: &str, pinned: bool) -> Result<()> {
-    repository::set_folder_pinned(pool, root, pinned).await
+pub async fn set_pinned(database: &Database, root: &str, pinned: bool) -> Result<()> {
+    repository::set_folder_pinned(database, root, pinned).await
 }
 
 /// Deletes the folder's own index and keeps it listed, so the next open
@@ -226,14 +211,14 @@ pub trait FolderThreads: Send + Sync {
 /// kept stay bound to the folder and come back if it is added again. Returns
 /// how many threads were deleted.
 pub async fn remove(
-    pool: &SqlitePool,
+    database: &Database,
     conversations: &dyn FolderThreads,
     manager: &FolderIndexManager,
     root: &str,
     delete_threads: bool,
 ) -> Result<usize> {
     let threads = if delete_threads {
-        repository::folder_threads(pool, root).await?
+        repository::folder_threads(database, root).await?
     } else {
         Vec::new()
     };
@@ -242,7 +227,7 @@ pub async fn remove(
     for conversation_id in threads {
         conversations.delete_thread(&conversation_id).await?;
     }
-    repository::delete_folder(pool, root).await?;
+    repository::delete_folder(database, root).await?;
     info!(root, threads_deleted = deleted, "Explorer folder removed");
     Ok(deleted)
 }

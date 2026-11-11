@@ -12,6 +12,7 @@ use crate::tests::{fixture, pool};
 use lattice_core::application::contracts::web::{FetchUrlContentOutput, ReferencePage};
 use lattice_core::domain::provenance::{Origin, ProvenanceSignals, PAGE_SIGNALS_VERSION};
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use serde_json::{json, Value};
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
@@ -24,6 +25,7 @@ pub(super) fn id() -> String {
 /// An active course on a migrated database, with its store and library.
 pub(super) struct Course {
     pub pool: SqlitePool,
+    pub database: Database,
     pub program_id: String,
     pub library: LearningSourceLibraryRepository,
     pub store: SqliteSourceTrustStore,
@@ -32,11 +34,13 @@ pub(super) struct Course {
 pub(super) async fn course() -> Result<Course> {
     let pool = pool().await?;
     let program_id = course_on(&pool).await?;
+    let database = Database::from(pool.clone());
     Ok(Course {
-        library: LearningSourceLibraryRepository::new(pool.clone()),
+        library: LearningSourceLibraryRepository::new(database.clone()),
         store: SqliteSourceTrustStore::new(pool.clone()),
         program_id,
         pool,
+        database,
     })
 }
 
@@ -56,11 +60,13 @@ pub(super) async fn course_on_file() -> Result<(Course, tempfile::TempDir)> {
         .await
         .expect("migrations");
     let program_id = course_on(&pool).await?;
+    let database = Database::from(pool.clone());
     let course = Course {
-        library: LearningSourceLibraryRepository::new(pool.clone()),
+        library: LearningSourceLibraryRepository::new(database.clone()),
         store: SqliteSourceTrustStore::new(pool.clone()),
         program_id,
         pool,
+        database,
     };
     Ok((course, directory))
 }

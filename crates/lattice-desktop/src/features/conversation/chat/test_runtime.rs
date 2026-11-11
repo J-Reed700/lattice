@@ -582,9 +582,45 @@ impl ChatPolicy for FakeRuntime {
     }
     async fn create_conversation(
         &self,
-        _request: crate::features::conversation::dto::CreateConversationRequestDto,
+        request: crate::features::conversation::dto::CreateConversationRequestDto,
     ) -> Result<crate::features::conversation::dto::CreateConversationResponseDto> {
-        unreachable!("{UNUSED}")
+        use crate::features::conversation::dto::{ConversationDto, CreateConversationResponseDto};
+        use crate::features::conversation::ConversationServiceTrait;
+        use lattice_core::domain::conversation::ChatModelChoice;
+        let created = self
+            .conversations
+            .create_conversation(request.title, request.system_prompt)
+            .await?;
+        Ok(CreateConversationResponseDto {
+            conversation: ConversationDto {
+                id: created.id.to_string(),
+                title: created.title,
+                model_choice: ChatModelChoice::Default,
+                system_prompt: created.system_prompt,
+                created_at: created.created_at.to_rfc3339(),
+                updated_at: created.updated_at.to_rfc3339(),
+                message_count: 0,
+                total_tokens: 0,
+                space_id: None,
+                is_saved: None,
+                is_bookmarked: None,
+                is_pinned: None,
+                is_archived: None,
+                saved_at: None,
+                bookmarked_at: None,
+                pinned_at: None,
+                archived_at: None,
+                last_message_preview: None,
+                compaction: None,
+                forked_from_conversation_id: None,
+                forked_from_message_id: None,
+                explorer_root: None,
+                program_id: None,
+                lesson_id: None,
+                tangent_parent_id: None,
+            },
+            status: "created".to_string(),
+        })
     }
     async fn compact_for_turn(
         &self,
@@ -600,8 +636,11 @@ impl ChatPolicy for FakeRuntime {
         _summary_refold: Option<lattice_core::domain::conversation::memory::SummaryRefold>,
     ) {
     }
-    async fn delete_conversation(&self, _conversation_id: &str) -> Result<()> {
-        unreachable!("{UNUSED}")
+    async fn delete_conversation(&self, conversation_id: &str) -> Result<()> {
+        use crate::features::conversation::ConversationServiceTrait;
+        self.conversations
+            .delete_conversation(conversation_id)
+            .await
     }
 }
 

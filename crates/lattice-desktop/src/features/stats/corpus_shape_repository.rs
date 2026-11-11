@@ -12,6 +12,8 @@ use sqlx::{Row, SqlitePool};
 
 use crate::features::stats::type_label::type_label;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 
 /// How far back "recently grown" looks.
 pub const GROWTH_WINDOW_DAYS: i64 = 7;
@@ -34,7 +36,8 @@ pub struct SqliteCorpusShapeRepository {
 }
 
 impl SqliteCorpusShapeRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 }
@@ -42,6 +45,11 @@ impl SqliteCorpusShapeRepository {
 #[async_trait]
 impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
     async fn corpus_shape(&self) -> Result<CorpusShape> {
+        let mut tx = self
+            .pool
+            .begin_read()
+            .await
+            .map_err(|e| AppError::Database(format!("corpus shape begin: {}", e)))?;
         let rows = sqlx::query(
             r#"
             SELECT COALESCE(NULLIF(source_type, ''), 'local') AS source_type,
@@ -51,7 +59,7 @@ impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
             GROUP BY source_type, file_type
             "#,
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("corpus shape counts: {}", e)))?;
 
@@ -74,11 +82,14 @@ impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
         let grown_last_7_days: i64 =
             sqlx::query("SELECT COUNT(*) AS n FROM documents WHERE indexed_at >= ?")
                 .bind(&cutoff)
-                .fetch_one(&self.pool)
+                .fetch_one(&mut *tx)
                 .await
                 .map_err(|e| AppError::Database(format!("corpus shape growth: {}", e)))?
                 .try_get("n")
                 .unwrap_or(0);
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("corpus shape commit: {}", e)))?;
 
         Ok(CorpusShape {
             total,
