@@ -235,7 +235,7 @@ fn answer(planned: Value, used: Value, contradictions: Value, unseen: Value) -> 
 }
 
 fn used(quote: &str, what: &str) -> Value {
-    json!({"quote":quote,"what":what})
+    json!({"what":what,"uses":[quote],"taughtLater":""})
 }
 
 fn not_taught(item: &str) -> Value {
@@ -1320,7 +1320,7 @@ fn check_two_asks_for_a_noun_phrase_never_a_sentence() {
     let system = contract::SYSTEM;
     assert!(
         system.contains(
-            "Give the words copied exactly where the learner is asked to use it, and in what the name of what it asks for: a noun phrase, never a sentence."
+            "Give one entry for each such thing, however many parts use it: in what, its name, a noun phrase, never a sentence; in uses, the words copied exactly of every place that asks the learner to use it before the lesson has taught it; in taughtLater, the words copied exactly with which the lesson first teaches it after those places, empty when it never does."
         ),
         "{system}"
     );
@@ -1792,3 +1792,7 @@ fn the_check_and_the_confirming_read_define_taught_in_the_same_words() {
         assert!(system.contains("A variant is a new thing"), "{system}");
     }
 }
+
+#[cfg(test)]
+#[path = "contract_used_once_tests.rs"]
+mod used_once;

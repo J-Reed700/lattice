@@ -36,8 +36,8 @@ pub use batch::{render_batch_evidence, LocatedClaim};
 pub use bridge::{BridgeDecision, BridgeOutcome, BridgePart, PartKind, BRIDGE_SYSTEM};
 pub use classes::{
     ClassJudgment, ConsistencyOutcome, ConsistencyVerdict, KnowledgeOutcome, KnowledgeSample,
-    KnowledgeVerdict, CONSISTENCY_POLICY, CONSISTENCY_SYSTEM, KNOWLEDGE_POLICY, KNOWLEDGE_SAMPLES,
-    KNOWLEDGE_SYSTEM,
+    KnowledgeVerdict, CONSISTENCY_POLICY, CONSISTENCY_SYSTEM, KNOWLEDGE_CASE, KNOWLEDGE_POLICY,
+    KNOWLEDGE_SAMPLES, KNOWLEDGE_SYSTEM,
 };
 
 /// Judgments and the output tokens the model spent writing them, across
