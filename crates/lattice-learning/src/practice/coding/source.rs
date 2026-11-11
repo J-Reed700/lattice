@@ -289,7 +289,7 @@ struct ScaleAnswer {
 struct Answer {
     title: String,
     statement: String,
-    function: String,
+    function_name: String,
     params: Vec<SignatureParam>,
     returns: String,
     constraints: Vec<String>,
@@ -356,7 +356,7 @@ fn prompt(request: &ProblemRequest, runtime: &str) -> String {
 - The reference is a complete, correct solution.py that meets the target complexity.\n\
 - A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.\n\
 - Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.\n\
-- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.\n\
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals, arithmetic, comparisons, conditional expressions, indexing and comprehensions, such as list(range(50000)), [3] * 100000 or [i * 7919 % 100003 for i in range(100000)]. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.\n\
 - \"clarifications\" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume."
             .to_owned(),
     );
@@ -401,7 +401,7 @@ fn schema() -> Value {
     object(json!({
         "title": text(),
         "statement": text(),
-        "function": text(),
+        "functionName": text(),
         "params": list_of(object(json!({"name": text(), "annotation": text()}))),
         "returns": text(),
         "constraints": list_of(text()),
@@ -440,10 +440,10 @@ fn read(raw: &str, request: &ProblemRequest) -> Result<Draft> {
             return Err(refuse(format!("The {what} is empty.")));
         }
     }
-    if !is_identifier(&answer.function) {
+    if !is_identifier(&answer.function_name) {
         return Err(refuse(format!(
             "{} is not a Python function name.",
-            answer.function
+            answer.function_name
         )));
     }
     if answer.params.is_empty() {
@@ -562,7 +562,7 @@ fn read(raw: &str, request: &ProblemRequest) -> Result<Draft> {
     }
 
     let signature = ProblemSignature {
-        function: answer.function,
+        function: answer.function_name,
         params: answer.params,
         returns: answer.returns,
     };
