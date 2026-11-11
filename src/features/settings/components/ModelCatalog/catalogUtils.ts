@@ -85,8 +85,6 @@ export function modelMetaLine(
   const quantization = modelQuantization(metadata);
   if (quantization) parts.push(quantization);
 
-  if (metadata.format === 'safetensors') parts.push('Safetensors');
-
   if (metadata.requires_auth) parts.push('Token required');
 
   return parts.join(' · ');

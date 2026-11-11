@@ -164,7 +164,6 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
         model: result.model,
         popularity_downloads: result.popularity_downloads ?? null,
         popularity_likes: result.popularity_likes ?? null,
-        fit: result.fit,
       }));
       return sortModels(applyFilters(mapped));
     }

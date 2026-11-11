@@ -4,7 +4,7 @@
  * Comprehensive type system for the file browser feature
  */
 
-import type { CustomCollectionDto } from '../lib/bindings';
+import type { CustomCollectionDto, DocumentMetadataDto } from '../lib/bindings';
 
 export type ViewMode = 'tree' | 'list' | 'grid';
 export type SortField = 'name' | 'size' | 'modified' | 'type';
@@ -30,17 +30,7 @@ export interface SavedSearchPreset {
   updatedAt: string;
 }
 
-export interface DocumentMetadata {
-  id: string;
-  fileName: string;
-  filePath: string;
-  fileType: string;
-  category: string;
-  language: string;
-  modifiedAt: string;
-  indexedAt: string;
-  wordCount: number;
-}
+export type DocumentMetadata = DocumentMetadataDto;
 
 export type CustomCollection = CustomCollectionDto;
 

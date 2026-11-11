@@ -20,20 +20,3 @@ export type BatchJobStatus = Omit<import('../../lib/bindings').BatchJobStatusDto
 };
 
 export type BatchJobItem = import('../../lib/bindings').BatchJobItemDto & { id?: string; url?: string };
-
-export interface ListBatchJobsResponse {
-  jobs: BatchJobSummary[];
-}
-
-export interface DeleteBatchJobResponse {
-  success: boolean;
-}
-
-export interface RetryFailedItemsResponse {
-  newJobId: string;
-  retriedCount: number;
-}
-
-export interface CancelBatchJobResponse {
-  cancelledCount: number;
-}

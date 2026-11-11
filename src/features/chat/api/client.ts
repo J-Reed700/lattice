@@ -70,7 +70,7 @@ export const chatApi = {
     apiCall('create_conversation', {
       request: {
         title,
-        systemPrompt,
+        systemPrompt: systemPrompt ?? null,
       },
     }),
 
