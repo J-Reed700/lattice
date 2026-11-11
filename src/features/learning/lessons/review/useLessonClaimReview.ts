@@ -106,7 +106,7 @@ export function useRemoveTeachingSentences(programId: string, lessonId: string) 
 export function useSettleTeachingFindings(programId: string, lessonId: string) {
   const api = useApi();
   const client = useQueryClient();
-  return useMutation<void, Error, { findingKeys: string[]; settle: TeachingSettleDto }>({
+  return useMutation<null, Error, { findingKeys: string[]; settle: TeachingSettleDto }>({
     retry: false,
     mutationFn: async ({ findingKeys, settle }) => unwrap(await api.settleLearningTeachingFindings({ programId, lessonId, findingKeys, settle })),
     onSettled: () => client.invalidateQueries({ queryKey: learningClaimReviewKey(programId, lessonId) }),

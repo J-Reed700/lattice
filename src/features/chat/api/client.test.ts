@@ -108,7 +108,7 @@ describe('chatApi', () => {
       expect(invoke).toHaveBeenCalledWith(route('chat_with_conversation'), {
         conversationId: 'c1', message: '', requestId: 'r1', cancelOnly: true,
       });
-      expect(result).toEqual({ ok: true, data: undefined });
+      expect(result).toEqual({ ok: true, data: null });
     });
 
     it('passes the failure through when the cancel is refused', async () => {
