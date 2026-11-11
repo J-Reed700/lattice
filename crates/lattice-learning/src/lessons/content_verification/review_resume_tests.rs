@@ -7,7 +7,7 @@ use crate::{lesson_drafts, teaching_review};
 fn outcome() -> Outcome<'static> {
     Outcome {
         title: "Lesson",
-        description: "Choose the documented answer.".into(),
+        description: "Choose the documented answer.",
     }
 }
 

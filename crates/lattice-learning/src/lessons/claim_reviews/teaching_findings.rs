@@ -209,15 +209,6 @@ impl TeachingFindingsRepository {
         Ok(held)
     }
 
-    /// The text hashes of the lesson's questions whose findings wait for the
-    /// user, not those kept as written.
-    pub(crate) async fn waiting_question_texts(&self, lesson_id: &str) -> Result<BTreeSet<String>> {
-        Ok(table::waiting_question_hashes(&self.database, lesson_id)
-            .await?
-            .into_iter()
-            .collect())
-    }
-
     /// Record findings for `candidate`. A finding kept as written stays kept
     /// while its part's text is unchanged; otherwise it waits again with the
     /// latest note. With `replace`, the findings not raised again were

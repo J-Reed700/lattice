@@ -345,7 +345,6 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
         let mut kept = ledger.cuts.clone();
         for unit in &asked_to_go {
             kept.going.remove(unit);
-            kept.unsettled.remove(unit);
         }
         if unpublishable(&lesson, &kept, shape).is_none() {
             ledger.cuts = kept;

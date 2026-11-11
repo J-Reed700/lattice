@@ -285,19 +285,14 @@ impl Passes {
 
     /// A repair was sent `finding` and this became of its attempt at it: the
     /// repair is charged to it, unless its edit was only left out for
-    /// overlapping another finding's, or its edits could not be placed for
-    /// the first time since it was last charged.
+    /// overlapping another finding's.
     pub fn charge(&mut self, finding: &ReviewFinding, outcome: Outcome) {
         let id = finding.id();
-        let attempts = self.attempts.entry(id.clone()).or_default();
-        let refused_before = attempts
-            .iter()
-            .rev()
-            .find(|past| **past != Outcome::Deferred)
-            .is_some_and(|past| matches!(past, Outcome::NotApplied(_)));
-        let first_refusal = matches!(outcome, Outcome::NotApplied(_)) && !refused_before;
-        attempts.push(outcome.clone());
-        if outcome == Outcome::Deferred || first_refusal {
+        self.attempts
+            .entry(id.clone())
+            .or_default()
+            .push(outcome.clone());
+        if outcome == Outcome::Deferred {
             self.last.insert(id, outcome);
             return;
         }
@@ -922,7 +917,3 @@ mod tests {
         assert_eq!(passes.account(&second).inherited, 1);
     }
 }
-
-#[cfg(test)]
-#[path = "passes_refusal_tests.rs"]
-mod refusal_tests;

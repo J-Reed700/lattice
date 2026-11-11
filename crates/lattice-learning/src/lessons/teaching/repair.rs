@@ -22,14 +22,9 @@ impl Issue<'_> {
     fn entry(&self) -> Value {
         let finding = self.finding;
         let id = finding.id();
-        let part = if finding.mends_anywhere() {
-            None
-        } else {
-            finding.site.and_then(FindingSite::pointer)
-        };
         json!({
             "id": id.as_str(),
-            "part": part,
+            "part": finding.site.and_then(FindingSite::pointer),
             "also": finding.also.and_then(FindingSite::pointer),
             "passage": finding.passage.as_deref().or(finding.sentence.as_deref()),
             "note": finding.note,
@@ -80,8 +75,7 @@ impl Request<'_> {
 }
 
 /// Which parts a change naming one of `findings` may touch: its own part or
-/// its second part; any part when it is about the whole material or
-/// something the lesson lacks.
+/// its second part; any part when it is about the whole material.
 pub(super) fn reach<'a>(
     findings: impl IntoIterator<Item = &'a ReviewFinding>,
 ) -> impl Fn(Option<&str>, &str) -> std::result::Result<(), String> + 'a {
@@ -95,9 +89,6 @@ pub(super) fn reach<'a>(
             .iter()
             .filter(|finding| finding.id().as_str() == id)
         {
-            if finding.mends_anywhere() {
-                return Ok(());
-            }
             let Some(own) = finding.site.and_then(FindingSite::pointer) else {
                 return Ok(());
             };
@@ -167,7 +158,7 @@ fn parts(request: &Request<'_>, requirements: Value) -> [(&'static str, Value); 
 
 impl Form for Edits {
     fn system(&self, request: &Request<'_>) -> String {
-        format!("You are editing a rejected draft. Correct only the established teaching defects. issuesToFix lists them, one entry each: its id, the part it is about (the path of a block or question; null when it is about the material as a whole), a second part when it is about two (also), the words it is about when it names any (passage), what to correct (note), and what became of the last repair's attempt at it (lastAttempt; null on a first attempt). Each edit, citation and uncite names in finding the id of the entry it is for, and changes only that entry's part or its also part; one for an entry whose part is null may change any part. A defect that something is not taught is corrected by adding it: before is an existing sentence beside the place, after is that sentence followed by the added text. Add it after a sentence whose thought is complete, so that no sentence is parted from the one it continues. The learner sees only the lesson: added or changed text teaches in the lesson's own words and never mentions the course plan, the review, the sources' excerpts or these instructions. {}", text_edits::instructions(request.schema))
+        format!("You are editing a rejected draft. Correct only the established teaching defects. issuesToFix lists them, one entry each: its id, the part it is about (the path of a block or question; null when it is about the material as a whole), a second part when it is about two (also), the words it is about when it names any (passage), what to correct (note), and what became of the last repair's attempt at it (lastAttempt; null on a first attempt). Each edit, citation and uncite names in finding the id of the entry it is for, and changes only that entry's part or its also part; one for an entry whose part is null may change any part. A defect that something is not taught is corrected by adding it: before is an existing sentence beside the place, after is that sentence followed by the added text. The learner sees only the lesson: added or changed text teaches in the lesson's own words and never mentions the course plan, the review, the sources' excerpts or these instructions. {}", text_edits::instructions(request.schema))
     }
 
     fn schema(&self, request: &Request<'_>) -> Value {
@@ -419,7 +410,3 @@ mod tests {
         assert_eq!(sent.finding_ids(), ["reviewer/1", "reviewer/5"]);
     }
 }
-
-#[cfg(test)]
-#[path = "repair_reach_tests.rs"]
-mod reach_tests;

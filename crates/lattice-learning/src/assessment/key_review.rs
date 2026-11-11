@@ -2,10 +2,13 @@
 //! disagreement disputes the key. [`solve_items`] solves quiz bank items of
 //! every format and [`compare`] sets a solution against an item's key
 //! (docs/design/2026-10-23-quizzes-and-tests.md, section 5.2).
-use super::batched;
 use crate::assessment_engine::{self as engine, LearningAssessmentCandidate};
+use crate::lessons::structured_call::cut_off;
 use crate::model_call;
-use lattice_core::{application::ports::LLMPort, shared::error::Result};
+use lattice_core::{
+    application::ports::LLMPort,
+    shared::error::{AppError, Result},
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -108,40 +111,90 @@ pub(crate) async fn solve_items(
     llm: &dyn LLMPort,
     items: &[(&LearningAssessmentCandidate, &str)],
 ) -> Result<Vec<Solution>> {
-    batched::answers(
-        llm,
-        items.len(),
-        |indices| {
+    let unusable = || {
+        AppError::ModelAnswerUnusable("The model could not complete the quiz key review.".into())
+    };
+    let mut solutions: Vec<Option<Solution>> = vec![None; items.len()];
+    let mut start = 0;
+    // The most items one request may hold once an answer was cut off at the
+    // output reservation, which is an estimate.
+    let mut room = usize::MAX;
+    'chunks: while start < items.len() {
+        let mut size = (items.len() - start).min(room);
+        let request_for = |size: usize| {
+            let indices: Vec<usize> = (start..items.len()).take(size).collect();
             let questions: Vec<Value> = indices
                 .iter()
                 .filter_map(|i| items.get(*i).map(|(c, q)| blinded(*i, c, q)))
                 .collect();
-            model_call::structured(
-                BANK_SYSTEM,
-                json!({"questions": questions}).to_string(),
-                bank_schema(indices),
-                350 * indices.len() + 300,
-                "low",
+            let prompt = json!({"questions": questions}).to_string();
+            (
+                indices.clone(),
+                model_call::structured(
+                    BANK_SYSTEM,
+                    prompt,
+                    bank_schema(&indices),
+                    350 * size + 300,
+                    "low",
+                ),
             )
-        },
-        |parsed, _| {
-            let mut read = BTreeMap::new();
-            for value in parsed
-                .get("answers")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                if let Ok(solve) = serde_json::from_value::<Solution>(value.clone()) {
-                    read.entry(solve.index).or_insert(solve);
+        };
+        while size > 1 && !model_call::fits(llm, &request_for(size).1).await {
+            size = size.div_ceil(2);
+        }
+        let indices = request_for(size).0;
+        let mut solved: BTreeMap<usize, Solution> = BTreeMap::new();
+        for attempt in 0..2 {
+            let response = model_call::send(
+                llm,
+                request_for(size).1,
+                None,
+                model_call::TooLarge::Window("one quiz question with its reference passage"),
+            )
+            .await?;
+            if cut_off(&response.finish_reason) {
+                if size == 1 {
+                    return Err(unusable());
+                }
+                room = size.div_ceil(2);
+                continue 'chunks;
+            }
+            if let Ok(parsed) = crate::generation::parse_json::<Value>(&response.text) {
+                for value in parsed
+                    .get("answers")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Ok(solve) = serde_json::from_value::<Solution>(value.clone()) {
+                        if indices.contains(&solve.index) && !solved.contains_key(&solve.index) {
+                            solved.insert(solve.index, solve);
+                        }
+                    }
                 }
             }
-            read
-        },
-        "one quiz question with its reference passage",
-        "The model could not complete the quiz key review.",
-    )
-    .await
+            if indices.iter().all(|i| solved.contains_key(i)) {
+                break;
+            }
+            tracing::warn!(
+                attempt,
+                "Quiz key review answer was incomplete; asking again"
+            );
+        }
+        if !indices.iter().all(|i| solved.contains_key(i)) {
+            return Err(unusable());
+        }
+        for (index, solve) in solved {
+            if let Some(slot) = solutions.get_mut(index) {
+                *slot = Some(solve);
+            }
+        }
+        start += size;
+    }
+    solutions
+        .into_iter()
+        .map(|solution| solution.ok_or_else(unusable))
+        .collect()
 }
 
 #[cfg(test)]

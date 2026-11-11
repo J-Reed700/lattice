@@ -4,7 +4,6 @@
 use super::item_review::{self, Context, Entry};
 use crate::assessment_engine::LearningAssessmentCandidate;
 use crate::dto::{LessonAnswerKey, LessonQuestion, LessonQuestionKind};
-use crate::lessons::teaching::contract;
 use crate::review_findings::ReviewFinding;
 use lattice_core::{application::ports::LLMPort, shared::error::Result};
 use serde::{Deserialize, Serialize};
@@ -13,13 +12,12 @@ use serde_json::{json, Value};
 /// What the questions are for.
 pub(crate) struct Outcome<'a> {
     pub title: &'a str,
-    pub description: String,
+    pub description: &'a str,
 }
 
 impl<'a> Outcome<'a> {
-    /// The lesson an authoring context describes: its title, and its
-    /// objective followed by what the course plan gives it to teach; blank
-    /// when the context has none.
+    /// The lesson an authoring context describes: its title and objective,
+    /// blank when the context has none.
     pub fn of_lesson(authoring: &'a Value) -> Self {
         let field = |name: &str| {
             authoring
@@ -28,27 +26,9 @@ impl<'a> Outcome<'a> {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
         };
-        let plan = authoring
-            .pointer("/courseSequence/coursePlan")
-            .and_then(Value::as_array);
-        let planned: Vec<String> = contract::at_position(plan, "this")
-            .next()
-            .map(contract::items_of)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|item| item.text)
-            .collect();
-        let objective = field("objective");
-        let description = if planned.is_empty() {
-            objective.to_owned()
-        } else {
-            format!("{objective} The lesson teaches: {}.", planned.join("; "))
-                .trim_start()
-                .to_owned()
-        };
         Self {
             title: field("title"),
-            description,
+            description: field("objective"),
         }
     }
 }
@@ -128,7 +108,7 @@ pub(crate) async fn check(
         .iter()
         .map(|(_, question)| {
             format!(
-                "question-review-v3:{}",
+                "question-review-v2:{}",
                 crate::content_verification::digest(
                     &json!({
                         "model": llm.model_name(),
@@ -232,7 +212,7 @@ async fn review(
         .collect();
     let context = Context {
         outcome: outcome.title,
-        outcome_description: &outcome.description,
+        outcome_description: outcome.description,
         learner_has,
     };
     item_review::review(llm, &entries, &context).await

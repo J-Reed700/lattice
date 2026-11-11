@@ -4,7 +4,7 @@ use crate::review_findings::{site_sha256, FindingSite, Held, ReviewFinding};
 use crate::teaching_review::{Judged, Reported, Verdict};
 use serde_json::{json, Value};
 
-pub(super) fn lesson(bodies: &[&str]) -> Value {
+fn lesson(bodies: &[&str]) -> Value {
     let blocks: Vec<Value> = bodies
         .iter()
         .map(|body| json!({"kind":"explanation","title":"Part","body":body,"rubric":[],"sourceIndex":0,"quote":"q"}))
@@ -12,7 +12,7 @@ pub(super) fn lesson(bodies: &[&str]) -> Value {
     json!({"blocks":blocks,"questions":[]})
 }
 
-pub(super) fn report(site: Option<FindingSite>, note: &str, passage: Option<&str>) -> Reported {
+fn report(site: Option<FindingSite>, note: &str, passage: Option<&str>) -> Reported {
     Reported {
         site,
         note: note.to_owned(),
@@ -44,18 +44,15 @@ fn answer(
 }
 
 /// A standing that has reviewed `candidate` and keeps what it reported.
-pub(super) fn reviewed(
-    candidate: &Value,
-    reported: Vec<Reported>,
-) -> (Standing, Vec<ReviewFinding>) {
+fn reviewed(candidate: &Value, reported: Vec<Reported>) -> (Standing, Vec<ReviewFinding>) {
     let mut standing = Standing::new(&Held::default());
     let (_, fresh) = answer(&mut standing, candidate, Vec::new(), reported);
     standing.admit(candidate, fresh.clone());
     (standing, fresh)
 }
 
-pub(super) const FIRST: &str = "The first part states one plain fact.";
-pub(super) const SECOND: &str = "The second part states another.";
+const FIRST: &str = "The first part states one plain fact.";
+const SECOND: &str = "The second part states another.";
 
 #[test]
 fn a_first_review_covers_every_section_and_asks_about_nothing() {
@@ -65,6 +62,7 @@ fn a_first_review_covers_every_section_and_asks_about_nothing() {
     assert!(round.whole);
     assert!(round.first);
     assert!(round.asked.is_empty());
+    assert!(round.known.is_empty());
     assert!(round.scope().asked.is_none());
 }
 
@@ -95,6 +93,7 @@ fn a_changed_section_is_the_only_one_in_the_round_and_its_finding_is_asked_with_
     assert_eq!(asked[0].id, fresh[0].id());
     assert_eq!(asked[0].site, FindingSite::Section(0));
     assert_eq!(asked[0].passage_id.as_deref(), Some("section-0-passage-0"));
+    assert!(round.known.is_empty());
 }
 
 #[test]
@@ -114,10 +113,11 @@ fn a_finding_with_a_second_part_is_asked_again_when_only_the_second_part_changed
     let asked = round.asked;
     assert_eq!(asked.len(), 1);
     assert_eq!(asked[0].id, both.id());
+    assert!(round.known.is_empty());
 }
 
 #[test]
-fn a_finding_in_a_part_that_did_not_change_is_asked_again() {
+fn a_finding_in_a_part_that_did_not_change_is_known_and_not_asked() {
     let candidate = lesson(&[FIRST, SECOND]);
     let (standing, fresh) = reviewed(
         &candidate,
@@ -127,9 +127,10 @@ fn a_finding_in_a_part_that_did_not_change_is_asked_again() {
         .round(&lesson(&[FIRST, "The second part now states a third."]))
         .unwrap();
     assert_eq!(round.sections, vec![1]);
+    assert!(round.asked.is_empty());
     assert!(!round.first);
-    assert_eq!(round.asked.len(), 1);
-    assert_eq!(round.asked[0].id, fresh[0].id());
+    assert_eq!(round.known.len(), 1);
+    assert_eq!(round.known[0].id, fresh[0].id());
 }
 
 #[test]
@@ -312,6 +313,7 @@ fn a_standing_seeded_from_stored_findings_asks_about_them_in_a_first_review_and_
     assert!(round.whole);
     assert_eq!(round.asked.len(), 1);
     assert_eq!(round.asked[0].id, stored.id());
+    assert!(round.known.is_empty());
     assert_eq!(round.scope().asked.map(<[_]>::len), Some(1));
     let (_, new) = answer(
         &mut standing,
@@ -503,8 +505,7 @@ fn two_reports_that_continue_one_finding_leave_one_finding_and_no_new_number() {
 }
 
 #[test]
-fn a_report_that_continues_a_finding_in_an_unchanged_part_is_that_finding_restated_and_spends_no_number(
-) {
+fn a_report_that_continues_a_known_finding_is_that_finding_restated_and_spends_no_number() {
     let candidate = lesson(&[FIRST, SECOND]);
     let (mut standing, fresh) = reviewed(
         &candidate,
@@ -517,11 +518,11 @@ fn a_report_that_continues_a_finding_in_an_unchanged_part_is_that_finding_restat
         Vec::new(),
         vec![continuing(&fresh[0], "Wrong, in new words.", None)],
     );
-    assert_eq!(round.asked.len(), 1);
+    assert_eq!(round.known.len(), 1);
     assert!(new.is_empty());
     assert_eq!(standing.open().len(), 1);
     assert_eq!(standing.open()[0].id(), fresh[0].id());
-    assert_eq!(standing.open()[0].note, "Wrong, in new words.");
+    assert_eq!(standing.open()[0].note, "Wrong.");
     standing.admit(&changed, new);
     let again = lesson(&[FIRST, "The second part now states a fourth."]);
     let (_, later) = answer(
