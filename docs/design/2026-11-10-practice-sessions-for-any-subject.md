@@ -145,6 +145,7 @@ pub struct Kind {
     pub parts: Arc<dyn Parts>,
     pub diff: Arc<dyn Diff>,
     pub showing: Arc<dyn Showing>,
+    pub screen: Arc<dyn Screen>,                  // what the learner's screen draws of the work
     pub hinting: Arc<dyn Hinting>,
     pub reply_guard: Arc<dyn ReplyGuard>,
     pub rubric: Arc<dyn Rubric>,
@@ -164,7 +165,7 @@ pub struct Kinds(BTreeMap<KindId, Kind>);         // built once, in the composit
 | `Checker` | `check(exercise, piece, cases) -> CheckReport { results, marks }` | check command, proof, hint and reply guards |
 | `Parts` | which parts a piece has, whether a `PartRef` exists, its display name | debrief evidence, hints, marks |
 | `Diff` | the changes between two drafts, in the kind's own units | draft observation |
-| `Showing` | the brief, a piece and a result as text for a model; the public view for the screen; never the reference | observation, counterpart, hints, debrief |
+| `Showing` | the brief, a piece and a result as text for a model; never the reference | observation, counterpart, hints, debrief |
 | `Wording` | the nouns, verbs and stage labels for this work, per exercise | every prompt template and label |
 | `Hinting` | the hint for a rung, already checked | hint command |
 | `ReplyGuard` | why a counterpart reply may not be shown, if so | counterpart |
@@ -498,19 +499,29 @@ Tests come first in every step. Nothing is built locally; each step is pushed to
    - 6a The wire. Today the session view is Program's (`problem`, `examples`, `runs`, `draft` as files), it carries
      no kind, and the requests that carry the learner's work (`check_practice_piece`, `ask_practice_hint`,
      `send_practice_turn`, `observe_practice_draft`, `finish_practice_session`) take `files`. The view becomes the
-     engine's: the session's own fields, its `kind`, the kind's words for the labels the screen draws (`Wording`),
-     and `work`, the kind's public view as one JSON value (`Showing`, §3.2), with the debrief split the same way
-     (scorecard and counts from the engine, the rest in `work`). The requests carry `piece` as a JSON value, which
-     the engine already stores and hands on without looking inside (§3.2). Program's view and debrief types stay
-     typed in the bindings; Program's screen code reads `work` as them at its own boundary, as the kind does on the
-     server.
-   - 6b The screen. `session/` owns every call and everything a session is whatever the work: loading, the clock,
+     engine's, built by one function from the engine's `Session` for every kind: the session's own fields, its
+     `kind`, the labels the counterpart also says (the form, each stage, each rung, from `Wording`), a summary of
+     each check, the hints, the turns, how many misreadings the learner's own cases catch where the kind has such
+     cases, and `work`: what the kind's own screen code draws, as one JSON value from a new role, `Screen`. The
+     debrief is split the same way: scorecard, counts, misreadings and technique ratings from the engine, the rest
+     in the kind's `work`. `Showing` stays text for a model. The engine decides what a learner may see now
+     (`Seen`, from the setting and what the session has reached) and hands it to `Screen`, which leaves out what
+     it withholds; a kind never reads the setting. What `Screen` needs beyond the engine's record sits in the
+     record's kind-owned values (`CheckReport.detail`, a learner case's `found`), so the role is a pure function
+     of `Session`. The requests carry `piece` as a JSON value, which the engine already stores and hands on
+     without looking inside (§3.2). The engine's check takes the scopes it knows, `shown` and `all`; Program's
+     run on the learner's own input is its own command, `run_coding_input`, beside its two example commands
+     (§4.1). Program's `work` types stay typed in the bindings; Program's screen code reads `work` as them at
+     its own boundary, as the kind does on the server. A stage's instruction for the learner is display text and
+     stays with the kind's screen code: `Wording::stage_instruction` is what the counterpart is told.
+   - 6b The screen. `session/` owns every session call and everything a session is whatever the work: loading, the clock,
      the counterpart's turns and cues, stage moves, hints, the checks' status, finishing, the debrief frame. It
      takes a kind's view from a registry (`kinds/index.ts`, the one place that names every kind): the brief, the
      editor that yields the piece, the check controls, the results, the learner's own cases where the kind has
      them, and the kind's part of the debrief. `session/` imports nothing under `kinds/`, and no kind imports
      another; the architecture check holds both. The screen's tests run on a fake kind whose piece is a string.
-   Rejected: a kind's view making its own calls with its own request types. It keeps the wire Program's and
+   A kind's own commands are called from its view and hand the session back to `session/`. Rejected: a kind's
+   view making the session's calls with its own request types. It keeps the wire Program's and
    moves the same change to the second kind.
 7. Fit per kind.
 
