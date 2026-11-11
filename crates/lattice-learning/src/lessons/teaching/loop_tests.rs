@@ -65,7 +65,7 @@ pub(super) fn references() -> Vec<crate::dto::LearningSourceDto> {
     }]
 }
 
-pub(super) async fn run(model: &dyn LLMPort, candidate: Value) -> Result<Reviewed> {
+async fn run(model: &dyn LLMPort, candidate: Value) -> Result<Reviewed> {
     let sources = references();
     let references = ReferenceCollection::lexical(&sources)?;
     review_material(
@@ -3018,7 +3018,7 @@ async fn a_section_no_repair_touched_is_not_reviewed_again() -> Result<()> {
 }
 
 #[tokio::test]
-async fn a_finding_in_an_untouched_part_is_asked_about_again_and_stays() -> Result<()> {
+async fn a_finding_in_an_untouched_part_is_not_asked_about_and_stays() -> Result<()> {
     let model = ByRequest::new(
         |text| text.contains("first idea"),
         mend_the_first_part_first,
@@ -3027,12 +3027,11 @@ async fn a_finding_in_an_untouched_part_is_asked_about_again_and_stays() -> Resu
     let (reviews, repairs) = (model.reviews(), model.repairs());
     assert_eq!(
         reviews[1]["openFindings"].as_array().map(Vec::len),
-        Some(2),
+        Some(1),
         "{}",
         reviews[1]
     );
     assert_eq!(reviews[1]["openFindings"][0]["part"], "Section 1");
-    assert_eq!(reviews[1]["openFindings"][1]["part"], "Section 2");
     assert_eq!(repairs.len(), 2);
     let second = repairs[1]["issuesToFix"].as_array().unwrap();
     assert_eq!(second.len(), 1);
