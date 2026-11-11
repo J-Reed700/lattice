@@ -41,7 +41,7 @@ fn lesson() -> Value {
 #[test]
 fn rule_notes_are_the_findings_notes() {
     let mut candidate = lesson();
-    candidate["blocks"].as_array_mut().unwrap().swap(5, 6);
+    candidate["blocks"].as_array_mut().unwrap().swap(1, 3);
     let notes = lesson_rule_notes(&candidate);
     assert_eq!(notes.len(), 1);
     assert!(notes[0].contains("no worked example has shown"));
@@ -130,11 +130,14 @@ fn checks_follow_an_example_and_recall_comes_before_the_recap() {
 }
 
 /// The second idea's check before the second idea's example tests what
-/// the lesson has not worked through, even after the first idea's example.
+/// the lesson has not worked through, even after the first idea's example;
+/// the last check, which mixes the ideas, is not held to an example.
 #[test]
 fn a_check_needs_its_own_ideas_example_since_the_last_check() {
     let mut candidate = lesson();
-    candidate["blocks"].as_array_mut().unwrap().swap(5, 6);
+    let blocks = candidate["blocks"].as_array_mut().unwrap();
+    blocks.swap(5, 6);
+    blocks.insert(7, block("check", "Which idea applies"));
     let findings = lesson_rules(&candidate);
     let sites: Vec<_> = findings.iter().map(|f| f.place().site).collect();
     assert_eq!(sites, [FindingSite::Section(5)]);

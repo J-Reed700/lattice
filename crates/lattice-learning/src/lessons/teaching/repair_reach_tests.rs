@@ -108,6 +108,18 @@ fn the_edits_form_holds_what_a_repair_adds_to_what_the_lesson_is_held_to() {
 }
 
 #[test]
+fn the_edits_form_asks_for_an_answer_to_every_entry() {
+    let (schema, wording) = (Value::Null, Wording::default());
+    let system = Edits.system(&asked(true, &schema, &wording));
+    let told = "Answer every entry once in answers: its id (finding), what you will change for it and where (plan), then the edits, citations and uncite that make that change. These change only that entry's part or its also part; those for an entry whose part is null may change any part.";
+    assert!(system.contains(told), "{system}");
+    assert!(
+        !system.contains("Each edit, citation and uncite names in finding the id of the entry"),
+        "{system}"
+    );
+}
+
+#[test]
 fn the_rewrite_form_holds_what_a_repair_adds_to_what_the_lesson_is_held_to() {
     let (schema, wording) = (Value::Null, Wording::default());
     let prompt = Rewrite.prompt(&asked(false, &schema, &wording), Value::Null);

@@ -51,6 +51,8 @@ pub(super) enum Outcome {
     Reverted,
     /// No change named it.
     Unnamed,
+    /// Its entry in the repair's answer gave a plan and no change.
+    Declined(String),
     /// The repair's answer could not be used at all.
     Unusable(String),
     /// Its edit overlapped another finding's and was left out: not an attempt.
@@ -60,7 +62,10 @@ pub(super) enum Outcome {
 impl Outcome {
     /// The attempt changed nothing for the finding.
     fn is_miss(&self) -> bool {
-        matches!(self, Self::Unnamed | Self::NotApplied(_))
+        matches!(
+            self,
+            Self::Unnamed | Self::Declined(_) | Self::NotApplied(_)
+        )
     }
 
     /// What became of the attempt, for the user's log.
@@ -74,6 +79,9 @@ impl Outcome {
                 "its edits were put back: they touched a sentence that must stay".to_owned()
             }
             Self::Unnamed => "the repair made no change for it".to_owned(),
+            Self::Declined(plan) => {
+                format!("the repair gave no change for it; its plan was: \"{plan}\"")
+            }
             Self::Unusable(reason) => format!("the repair's answer could not be used: {reason}"),
             Self::Deferred => "its edit overlapped another finding's and was left out".to_owned(),
         }
@@ -354,6 +362,7 @@ impl Passes {
             ),
             Outcome::Reverted => "The last repair's edits for this finding changed a sentence that must stay as it is; they were put back.".to_owned(),
             Outcome::Unnamed => "The last repair gave no edit for this finding.".to_owned(),
+            Outcome::Declined(plan) => format!("The last repair gave no change for this finding; its plan was: \"{plan}\""),
             Outcome::Unusable(reason) => {
                 format!("The last repair's answer could not be used: {reason}")
             }

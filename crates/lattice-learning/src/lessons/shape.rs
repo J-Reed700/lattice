@@ -10,8 +10,8 @@
 //! spend. A lesson verification has begun to cut is held to the floor: a first
 //! explanation, at least one question, a third of the drafted sections at
 //! most gone, and the order rules (each check after a worked example shown
-//! since the previous check). The phase is the caller's to name; nothing infers
-//! it from the lesson.
+//! since the previous check, but the last of two or more checks). The phase
+//! is the caller's to name; nothing infers it from the lesson.
 use crate::dto::LessonQuestionKind;
 use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding, Rule};
 use serde_json::Value;
@@ -226,7 +226,7 @@ impl ShapePolicy for StandardShape {
             // What `shape_findings` holds a `Phase::Kept` lesson to: change the two together.
             Phase::Kept => vec![
                 "Verification takes out of a lesson what no source confirms, so this lesson is no longer held to the number of sections and questions it was drafted with.".to_owned(),
-                "It is held to this instead: at least one explanation; each check after a worked example shown since the previous check; the recap after the reflection when it has both; and at least one question.".to_owned(),
+                "It is held to this instead: at least one explanation; each check after a worked example shown since the previous check, except the last of two or more checks, which mixes the lesson's ideas; the recap after the reflection when it has both; and at least one question.".to_owned(),
             ],
         }
     }
@@ -241,25 +241,11 @@ impl ShapePolicy for StandardShape {
 
     fn dependants(&self, lesson: &Value, going: &BTreeSet<usize>) -> BTreeSet<usize> {
         let blocks = items(lesson, "blocks");
-        let failing_before: BTreeSet<usize> = unshown_checks(blocks).into_iter().collect();
-        let mut taken = BTreeSet::new();
-        let mut shown = false;
-        for (index, block) in blocks.iter().enumerate() {
-            if going.contains(&index) {
-                continue;
-            }
-            match text(block, "kind") {
-                "worked_example" => shown = true,
-                "check" => {
-                    if !shown && !failing_before.contains(&index) {
-                        taken.insert(index);
-                    }
-                    shown = false;
-                }
-                _ => {}
-            }
-        }
-        taken
+        let failing_before = unshown_checks(blocks, &BTreeSet::new());
+        unshown_checks(blocks, going)
+            .difference(&failing_before)
+            .copied()
+            .collect()
     }
 
     fn floor(&self, lesson: &Value, going: &BTreeSet<usize>) -> Option<String> {
@@ -415,18 +401,21 @@ fn question_kinds() -> String {
     join_plain(&kinds)
 }
 
-/// The sections that are checks and follow no worked example since the
-/// previous check: two checks in a row, or a check before its idea's example,
-/// test what the lesson has not yet worked through.
-fn unshown_checks(blocks: &[Value]) -> Vec<usize> {
+/// The sections, other than those in `going`, that are checks and follow no
+/// worked example since the previous check: two checks in a row, or a check
+/// before its idea's example, test what the lesson has not yet worked through.
+fn unshown_checks(blocks: &[Value], going: &BTreeSet<usize>) -> BTreeSet<usize> {
     let mut shown = false;
-    let mut found = Vec::new();
+    let mut found = BTreeSet::new();
     for (index, block) in blocks.iter().enumerate() {
+        if going.contains(&index) {
+            continue;
+        }
         match text(block, "kind") {
             "worked_example" => shown = true,
             "check" => {
                 if !shown {
-                    found.push(index);
+                    found.insert(index);
                 }
                 shown = false;
             }
@@ -436,9 +425,29 @@ fn unshown_checks(blocks: &[Value]) -> Vec<usize> {
     found
 }
 
+/// The last of two or more checks: the one the writer mixes the lesson's ideas
+/// in, which needs no worked example of its own.
+fn mixed_check(blocks: &[Value]) -> Option<usize> {
+    let checks: Vec<usize> = blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, block)| text(block, "kind") == "check")
+        .map(|(index, _)| index)
+        .collect();
+    if checks.len() >= 2 {
+        checks.last().copied()
+    } else {
+        None
+    }
+}
+
 fn order_findings(blocks: &[Value]) -> Vec<ReviewFinding> {
     let mut found = Vec::new();
-    for index in unshown_checks(blocks) {
+    let mixed = mixed_check(blocks);
+    for index in unshown_checks(blocks, &BTreeSet::new()) {
+        if mixed == Some(index) {
+            continue;
+        }
         let section = format!("Section {} (candidate blocks-{index})", index + 1);
         found.push(structure(
             Rule::UnshownCheck,
