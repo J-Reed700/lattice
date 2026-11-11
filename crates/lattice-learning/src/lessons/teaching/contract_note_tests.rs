@@ -94,3 +94,20 @@ fn a_use_in_a_passage_nothing_protects_keeps_its_note() {
         "{note}"
     );
 }
+
+#[test]
+fn the_answer_names_each_thing_once_with_every_use_and_where_it_is_taught_later() {
+    let schema = schema(&[]);
+    let entry = &schema["properties"]["usedBeforeTaught"]["items"];
+    assert_eq!(entry["required"], json!(["what", "uses", "taughtLater"]));
+    assert_eq!(entry["additionalProperties"], json!(false));
+    assert_eq!(entry["properties"]["uses"]["type"], json!("array"));
+    assert_eq!(entry["properties"]["uses"]["minItems"], json!(1));
+    assert_eq!(entry["properties"]["uses"]["items"]["minLength"], json!(1));
+    assert_eq!(entry["properties"]["what"]["minLength"], json!(1));
+    assert_eq!(
+        entry["properties"]["taughtLater"],
+        json!({"type": "string"})
+    );
+    assert!(entry["properties"].get("quote").is_none());
+}
