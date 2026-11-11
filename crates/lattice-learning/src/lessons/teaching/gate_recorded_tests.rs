@@ -22,6 +22,7 @@ struct Routed {
     inner: ScriptedModel,
     plan: Mutex<VecDeque<String>>,
     gate: Mutex<Vec<Value>>,
+    plan_asked: Mutex<Vec<Value>>,
 }
 
 #[async_trait::async_trait]
@@ -30,6 +31,9 @@ impl LLMPort for Routed {
         let (system, user) = crate::lessons::structured_call::task_messages(request);
         let drafting = crate::lessons::structured_call::is_draft_request(request);
         if !drafting && system.starts_with(contract::SYSTEM) {
+            if let Ok(asked) = serde_json::from_str::<Value>(user) {
+                self.plan_asked.lock().unwrap().push(asked);
+            }
             let reply = self
                 .plan
                 .lock()
@@ -70,6 +74,7 @@ fn routed(outputs: Vec<String>, plan: Vec<String>) -> Routed {
         },
         plan: Mutex::new(plan.into()),
         gate: Mutex::new(Vec::new()),
+        plan_asked: Mutex::new(Vec::new()),
     }
 }
 
@@ -236,5 +241,106 @@ async fn the_gate_is_told_what_each_of_the_three_checks_decides_in_order() -> Re
             {"id":"check-2","decides":RULES_DECIDE}
         ])
     );
+    Ok(())
+}
+
+const ONCE: &str = "The beads are counted once a day.";
+const TWICE: &str = "The beads are counted twice on one day.";
+
+/// The plan check lists a contradiction between two sentences of the beads lesson.
+fn contradiction() -> String {
+    json!({"planned":[],"usedBeforeTaught":[],"contradictions":[{"quote":ONCE,"otherQuote":TWICE}],"unseen":[]}).to_string()
+}
+
+fn beads() -> Value {
+    json!({"blocks":[
+        block("Example", &format!("{ONCE} "), EXCERPT),
+        block("Example", &format!("{TWICE} "), EXCERPT),
+    ],"questions":[]})
+}
+
+fn plan_requests(model: &Routed) -> Vec<Value> {
+    model.plan_asked.lock().unwrap().clone()
+}
+
+fn repair_edit() -> String {
+    json!({"edits":[{"path":"/blocks/0/title","before":"Example","after":"Corrected example"}]})
+        .to_string()
+}
+
+#[tokio::test]
+async fn what_the_review_reported_about_a_contradiction_is_ruled_on_by_the_plan_check() -> Result<()>
+{
+    let model = routed(
+        vec![
+            reporting(REVIEWER_ONLY, 2),
+            gate_answer("check-1"),
+            repair_edit(),
+            clean(2),
+        ],
+        vec![CONTRACT_NOTHING.to_owned(), contradiction()],
+    );
+    let reviewed = run(&model, &beads()).await?;
+    assert!(reviewed.set_aside.is_empty());
+    let asked = repair_requests(&model);
+    assert_eq!(asked.len(), 1);
+    let id = asked[0]["issuesToFix"][0]["id"].as_str().unwrap();
+    assert!(id.starts_with("plan/contradiction"), "{id}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_plan_check_is_asked_again_with_what_the_review_reported() -> Result<()> {
+    let model = routed(
+        vec![
+            reporting(REVIEWER_ONLY, 2),
+            gate_answer("check-1"),
+            repair_edit(),
+            clean(2),
+        ],
+        vec![CONTRACT_NOTHING.to_owned(), contradiction()],
+    );
+    run(&model, &beads()).await?;
+    let asks = plan_requests(&model);
+    assert!(asks.len() >= 2, "{}", asks.len());
+    assert!(asks[0].get("reported").is_none());
+    let reported = asks[1]["reported"].as_array().unwrap();
+    assert_eq!(reported.len(), 1);
+    assert_eq!(reported[0]["part"], "Section 1");
+    let gate = model.gate.lock().unwrap();
+    assert_eq!(reported[0]["defect"], gate[0]["proposals"][0]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_finding_left_to_the_question_review_is_not_given_to_the_plan_check() -> Result<()> {
+    let model = routed(
+        vec![
+            reporting(REVIEWER_ONLY, 2),
+            gate_answer("check-0"),
+            clean(2),
+        ],
+        vec![CONTRACT_NOTHING.to_owned(), contradiction()],
+    );
+    let reviewed = run(&model, &beads()).await?;
+    assert!(reviewed.set_aside.is_empty());
+    assert_eq!(plan_requests(&model).len(), 1);
+    assert!(repair_requests(&model).is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_report_the_plan_check_does_not_hold_up_repairs_nothing() -> Result<()> {
+    let model = routed(
+        vec![
+            reporting(REVIEWER_ONLY, 2),
+            gate_answer("check-1"),
+            clean(2),
+        ],
+        Vec::new(),
+    );
+    let reviewed = run(&model, &beads()).await?;
+    assert!(reviewed.set_aside.is_empty());
+    assert!(repair_requests(&model).is_empty());
     Ok(())
 }
