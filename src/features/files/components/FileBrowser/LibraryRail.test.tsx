@@ -34,7 +34,6 @@ const rail = (props: Partial<React.ComponentProps<typeof LibraryRail>> = {}) => 
       onApplySavedSearch={vi.fn()}
       onRenameSavedSearch={vi.fn()}
       onCreateSavedSearch={vi.fn()}
-      sources={[]}
       themes={[]}
       themesEnabled
       hasRunThemes={false}

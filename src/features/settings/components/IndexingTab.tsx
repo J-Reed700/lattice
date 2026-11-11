@@ -7,7 +7,7 @@
  * is gone.
  *
  * Watch folder add/remove still go through dedicated Tauri commands
- * (`useWatchFolderMutations`) so the backend can run path validation
+ * (`useIndexedFoldersActions`) so the backend can run path validation
  * (CWE-22 / CWE-158) and serialize concurrent mutations. Both invalidate
  * the SETTINGS query cache on success — React Query refetches the
  * canonical state.
@@ -20,23 +20,22 @@ import { X } from 'lucide-react';
 
 import { PageHeader, SettingsRow, SettingsSection, settingsFieldClass, Switch } from '@/components/ui';
 import { IndexingActivitySection } from '@/features/files/components/IndexingStatus/IndexingActivitySection';
+import { useIndexedFoldersActions } from '@/features/files/hooks/useIndexedFoldersQuery';
 import { cn } from '@/lib/utils';
 import { toast } from '@/stores/toastStore';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 import { NUMBER_FIELD_CLASS, ROW_ACTION_CLASS, SECONDARY_BUTTON_CLASS, SWITCH_CLASS } from './settingsStyles';
-import {
-  useSettingsQuery,
-  useUpdateSettingsMutation,
-  useWatchFolderMutations,
-} from '../hooks/useSettingsQuery';
+import { useSettingsQuery, useUpdateSettingsMutation } from '../hooks/useSettingsQuery';
 
 const DEFAULT_BATCH_SIZE = 32;
+
+const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 export function IndexingTab() {
   const { data: settings, isLoading } = useSettingsQuery();
   const updateSettingsMutation = useUpdateSettingsMutation();
-  const { addWatchFolder, removeWatchFolder } = useWatchFolderMutations();
+  const { addFolder, removeFolder } = useIndexedFoldersActions();
 
   const [newPattern, setNewPattern] = useState('');
   const [isAddingFolder, setIsAddingFolder] = useState(false);
@@ -79,9 +78,10 @@ export function IndexingTab() {
       if (selected && typeof selected === 'string') {
         if (watchFolders.includes(selected)) return;
 
-        const result = await addWatchFolder(selected);
-        if (!result.ok) {
-          toast.error("Couldn't add watch folder", { message: result.error });
+        try {
+          await addFolder(selected);
+        } catch (error) {
+          toast.error("Couldn't add watch folder", { message: errorMessage(error) });
         }
       }
     } catch (error) {
@@ -92,9 +92,10 @@ export function IndexingTab() {
   };
 
   const handleRemoveFolder = async (folder: string) => {
-    const result = await removeWatchFolder(folder);
-    if (!result.ok) {
-      toast.error("Couldn't remove watch folder", { message: result.error });
+    try {
+      await removeFolder(folder);
+    } catch (error) {
+      toast.error("Couldn't remove watch folder", { message: errorMessage(error) });
     }
   };
 

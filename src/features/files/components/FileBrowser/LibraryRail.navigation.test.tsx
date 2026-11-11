@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -24,7 +24,6 @@ const renderRail = (props: Props = {}) => {
     onApplySavedSearch: vi.fn(),
     onRenameSavedSearch: vi.fn(),
     onCreateSavedSearch: vi.fn(),
-    sources: [],
     themes: [],
     themesEnabled: true,
     hasRunThemes: false,
@@ -137,26 +136,21 @@ describe('LibraryRail navigation', () => {
     });
   });
 
-  describe('saved searches and sources', () => {
+  describe('saved searches', () => {
     it('applies a saved search on click and renames it on double-click', () => {
       const props = renderRail({
         savedSearches: [{ id: 's1', name: 'Saffron' }, { id: 's2', name: 'Cumin' }] as never,
         activeSavedSearchId: 's2',
-        sources: [{ id: 'src1', name: 'Dropbox recipes' }] as never,
       });
       fireEvent.click(screen.getByRole('button', { name: 'Saffron' }));
       fireEvent.doubleClick(screen.getByRole('button', { name: 'Cumin' }));
       expect(props.onApplySavedSearch).toHaveBeenCalledWith('s1');
       expect(props.onRenameSavedSearch).toHaveBeenCalledWith('s2', 'Cumin');
-      const sources = screen.getByRole('heading', { name: 'Sources' }).closest('section')!;
-      expect(within(sources).getByText('Dropbox recipes')).toBeInTheDocument();
-      expect(within(sources).queryByRole('button')).not.toBeInTheDocument();
     });
 
     it('saves the current search by name', () => {
       const props = renderRail();
       expect(screen.getByText('No saved searches.')).toBeInTheDocument();
-      expect(screen.getByText('No sources.')).toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: 'Save current search' }));
       fireEvent.change(screen.getByRole('textbox', { name: 'Save current search' }), { target: { value: 'Paprika' } });
       fireEvent.blur(screen.getByRole('textbox', { name: 'Save current search' }));
