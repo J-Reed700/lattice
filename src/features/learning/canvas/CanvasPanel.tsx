@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 
 import { AlertCircle, ArrowDownToLine, Check, ChevronDown, CircleHelp, Clock3, FileJson2, ImageDown, LoaderCircle, Plus, RotateCcw, Save, Sparkles, Text } from 'lucide-react';
 
@@ -191,15 +191,17 @@ export default function CanvasPanel({
     if (!enabled) return;
     if (!selectedId && canvases.length) setSelectedId(canvases[0].id);
   }, [enabled, canvases, selectedId]);
-  useEffect(() => {
+  // Selection is the only synchronization boundary: cache updates during autosave
+  // must not overwrite edits typed while a previous revision was being written.
+  const resetDraft = useEffectEvent(() => {
     if (!selected) return;
     const value = initialEditable(selected);
     setDraft(value); savedRef.current = value; revisionRef.current = selected.revision;
     retrySave.current = null; setSaveState('saved'); setError(null); setConflict(false); conflictRef.current = false; setSceneError(null); sceneErrorRef.current = null;
     setSurfaceVersion((version) => version + 1);
-  // Selection is the only synchronization boundary: cache updates during autosave
-  // must not overwrite edits typed while a previous revision was being written.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  });
+  useEffect(() => {
+    resetDraft();
   }, [selectedId]);
   useEffect(() => {
     if (!selected || !draft || samePayload(savedRef.current, draft) || sceneError || saveState !== 'dirty' || inFlight.current) return;
