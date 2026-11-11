@@ -1,7 +1,8 @@
 //! The reviewer's findings on one material across the passes of a review: a
-//! verdict stands while its text is unchanged and the reviewer is given the
-//! same inputs. After the reviewer has seen the material it is asked only
-//! about what changed since, by each part's digest; no wording is read.
+//! verdict stands while the material is unchanged and the reviewer is given
+//! the same inputs. After the reviewer has seen the material, a change asks
+//! about every open finding and has it read only the sections that changed,
+//! by each part's digest; no wording is read.
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -22,10 +23,8 @@ pub(super) struct Round {
     /// Whether no verdict stands, so this is a first review of the material
     /// under what the reviewer is given.
     pub first: bool,
-    /// The open findings to judge again.
+    /// Every open finding, to judge again.
     pub asked: Vec<Asked>,
-    /// The open findings whose parts did not change.
-    pub known: Vec<Asked>,
 }
 
 impl Round {
@@ -33,7 +32,6 @@ impl Round {
         Scope {
             sections: (!self.whole).then_some(self.sections.as_slice()),
             asked: (!(self.first && self.asked.is_empty())).then_some(self.asked.as_slice()),
-            known: &self.known,
         }
     }
 }
@@ -224,16 +222,6 @@ impl Standing {
             })
     }
 
-    /// Whether the reviewer's verdict on `finding` no longer stands: a part
-    /// it is about changed since the reviewer saw it. A finding about the
-    /// whole material is touched whenever the material changed.
-    fn touched(&self, candidate: &Value, finding: &ReviewFinding) -> bool {
-        self.changed(candidate, site_of(finding))
-            || finding
-                .also
-                .is_some_and(|also| self.changed(candidate, also))
-    }
-
     fn shown(&self, candidate: &Value, finding: &ReviewFinding) -> Asked {
         Asked {
             id: finding.id(),
@@ -245,6 +233,8 @@ impl Standing {
 
     /// What the reviewer is asked of `candidate`; none when it has seen
     /// exactly this material under what it is given, so its findings stand.
+    /// Otherwise it judges every open finding again: a change anywhere may
+    /// mend a defect elsewhere.
     pub fn round(&self, candidate: &Value) -> Option<Round> {
         if !self.changed(candidate, FindingSite::Lesson) {
             return None;
@@ -257,21 +247,16 @@ impl Standing {
             .filter(|index| self.changed(candidate, FindingSite::Section(*index)))
             .collect();
         let whole = sections.len() == count;
-        let (mut asked, mut known) = (Vec::new(), Vec::new());
-        for finding in &self.open {
-            let shown = self.shown(candidate, finding);
-            if self.touched(candidate, finding) {
-                asked.push(shown);
-            } else {
-                known.push(shown);
-            }
-        }
+        let asked = self
+            .open
+            .iter()
+            .map(|finding| self.shown(candidate, finding))
+            .collect();
         Some(Round {
             sections,
             whole,
             first: self.reviewed.is_empty(),
             asked,
-            known,
         })
     }
 
@@ -374,17 +359,6 @@ impl Standing {
             if continues.is_some() {
                 continue;
             }
-            let restated = report.continues.as_ref().filter(|id| {
-                round.known.iter().any(|known| known.id == **id)
-                    && self.open.iter().any(|finding| finding.id() == **id)
-            });
-            if let Some(id) = restated {
-                tracing::info!(
-                    finding = %id.as_str(),
-                    "A report restates a known finding and is not kept apart"
-                );
-                continue;
-            }
             let folded = report.passage_id.as_deref().and_then(|passage| {
                 round.asked.iter().find(|asked| {
                     asked.passage_id.as_deref() == Some(passage)
@@ -421,7 +395,11 @@ impl Standing {
     /// the reviewer last saw it.
     pub fn admit(&mut self, candidate: &Value, established: Vec<ReviewFinding>) {
         for finding in established {
-            if !self.touched(candidate, &finding) {
+            let changed = self.changed(candidate, site_of(&finding))
+                || finding
+                    .also
+                    .is_some_and(|also| self.changed(candidate, also));
+            if !changed {
                 tracing::info!(
                     part = %label(site_of(&finding)),
                     "A new finding is about text the reviewer had already judged and is not kept"
