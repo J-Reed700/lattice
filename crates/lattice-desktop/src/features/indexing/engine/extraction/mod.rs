@@ -245,4 +245,48 @@ mod tests {
             );
         }
     }
+
+    /// Every extension the file-type detector offers to index must reach an
+    /// extractor; audio is transcribed by the adapter instead.
+    #[tokio::test]
+    async fn every_extension_the_detector_calls_indexable_is_extracted() {
+        use crate::features::indexing::engine::error::IndexingError;
+        use crate::infrastructure::services::file_type_detector::{FileCategory, FileTypeDetector};
+
+        const EXTENSIONS: &[&str] = &[
+            "txt", "md", "markdown", "pdf", "docx", "doc", "rtf", "odt", "xlsx", "xls", "pptx",
+            "ppt", "rs", "toml", "js", "mjs", "cjs", "ts", "tsx", "jsx", "html", "htm", "css",
+            "scss", "sass", "less", "py", "pyw", "pyi", "c", "h", "cpp", "cxx", "cc", "hpp", "hxx",
+            "hh", "go", "java", "kt", "kts", "scala", "clj", "cljs", "cljc", "rb", "rake", "php",
+            "swift", "r", "m", "mm", "pl", "pm", "lua", "hs", "lhs", "cs", "vb", "fs", "ex", "exs",
+            "erl", "hrl", "sh", "bash", "zsh", "fish", "ps1", "psm1", "bat", "cmd", "json", "xml",
+            "yaml", "yml", "ini", "conf", "config", "sql", "graphql", "gql", "csv", "tsv",
+            "parquet", "arrow", "jpg", "jpeg", "png", "gif", "bmp", "svg", "webp", "ico", "tiff",
+            "tif", "heic", "heif", "mp4", "mov", "avi", "mkv", "webm", "flv", "wmv", "m4v", "mp3",
+            "wav", "ogg", "flac", "aac", "m4a", "wma", "zip", "tar", "gz", "tgz", "bz2", "7z",
+            "rar", "xz", "exe", "dll", "dylib", "so", "bin", "msi", "app", "apk", "deb", "rpm",
+            "pkg", "dmg", "iso",
+        ];
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut unsupported = Vec::new();
+        for extension in EXTENSIONS {
+            if !FileTypeDetector::is_indexable(extension)
+                || FileTypeDetector::get_category(extension) == FileCategory::Audio
+            {
+                continue;
+            }
+            let path = dir.path().join(format!("sample.{extension}"));
+            std::fs::write(&path, "hello world\n").unwrap();
+            if let Err(IndexingError::UnsupportedFileType { .. }) =
+                ContentExtractor::new().extract_from_file(&path).await
+            {
+                unsupported.push(*extension);
+            }
+        }
+        assert!(
+            unsupported.is_empty(),
+            "offered but rejected: {unsupported:?}"
+        );
+    }
 }

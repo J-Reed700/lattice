@@ -247,4 +247,20 @@ mod tests {
             "application/octet-stream"
         );
     }
+
+    #[test]
+    fn the_metadata_panel_and_the_detector_name_the_same_type() {
+        use crate::infrastructure::services::file_type_detector::FileTypeDetector;
+
+        for name in [
+            "a.lua", "a.pl", "a.hs", "a.heic", "a.cs", "a.7z", "a.gz", "a.rs", "a.mp3", "a.conf",
+        ] {
+            let path = Path::new(name);
+            assert_eq!(
+                GetFileMetadataUseCase::detect_mime_type(path),
+                FileTypeDetector::detect(path).unwrap().mime_type,
+                "{name}"
+            );
+        }
+    }
 }
