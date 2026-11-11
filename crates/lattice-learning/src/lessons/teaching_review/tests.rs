@@ -44,7 +44,7 @@ async fn retains_more_than_six_findings_without_rejecting_a_complete_review() ->
         json!({"issues":findings,"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])});
     let (_, passages) = review_candidate(&candidate());
     assert!(
-        jsonschema::JSONSchema::compile(&schema(&[0, 1, 2], &passages, &[]))
+        jsonschema::JSONSchema::compile(&schema(&[0, 1, 2], &passages, &[], &[]))
             .unwrap()
             .is_valid(&response)
     );
@@ -75,7 +75,8 @@ async fn retains_more_than_six_findings_without_rejecting_a_complete_review() ->
 #[test]
 fn response_slots_cannot_renumber_sections_or_cite_unknown_passages() {
     let (_, passages) = review_candidate(&candidate());
-    let compiled = jsonschema::JSONSchema::compile(&schema(&[0, 1, 2], &passages, &[])).unwrap();
+    let compiled =
+        jsonschema::JSONSchema::compile(&schema(&[0, 1, 2], &passages, &[], &[])).unwrap();
     let mut response =
         json!({"issues":[],"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])});
     assert!(compiled.is_valid(&response));
@@ -125,7 +126,7 @@ fn passages_preserve_every_byte_and_ids_are_scoped_to_the_section() {
     assert_eq!(original["blocks"][0]["body"], body);
     assert_eq!(reviewed["blocks"][0]["title"], "Unicode and code");
     for indices in [vec![0], vec![]] {
-        jsonschema::JSONSchema::compile(&schema(&indices, &ids, &[])).unwrap();
+        jsonschema::JSONSchema::compile(&schema(&indices, &ids, &[], &[])).unwrap();
     }
 }
 
@@ -454,8 +455,12 @@ async fn a_review_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_f
 #[test]
 fn the_review_schema_bounds_no_text_but_a_blank() {
     let (_, passages) = review_candidate(&candidate());
-    let bounds =
-        crate::lessons::course_generation_tests::length_bounds(&schema(&[0, 1, 2], &passages, &[]));
+    let bounds = crate::lessons::course_generation_tests::length_bounds(&schema(
+        &[0, 1, 2],
+        &passages,
+        &[],
+        &[],
+    ));
     assert!(bounds.is_empty(), "{bounds:?}");
 }
 
@@ -480,7 +485,7 @@ fn sent(model: &ScriptedModel, call: usize) -> Value {
 #[test]
 fn the_schema_asks_for_a_verdict_on_exactly_the_asked_ids_and_not_at_all_when_none_were_asked() {
     let (_, passages) = review_candidate(&candidate());
-    let with = schema(&[0], &passages, &["reviewer/1", "reviewer/2"]);
+    let with = schema(&[0], &passages, &["reviewer/1", "reviewer/2"], &[]);
     assert_eq!(
         with.pointer("/properties/openFindings/items/properties/id/enum"),
         Some(&json!(["reviewer/1", "reviewer/2"]))
@@ -494,7 +499,7 @@ fn the_schema_asks_for_a_verdict_on_exactly_the_asked_ids_and_not_at_all_when_no
         Some(&json!(2))
     );
     assert_eq!(with["required"][0], "openFindings");
-    let without = schema(&[0], &passages, &[]);
+    let without = schema(&[0], &passages, &[], &[]);
     assert!(without.pointer("/properties/openFindings").is_none());
     assert!(!without["required"]
         .as_array()
@@ -646,9 +651,32 @@ async fn a_first_review_sends_no_finding_keys_and_known_findings_are_sent_only_w
     let prompt = sent(&second, 0);
     assert_eq!(
         prompt["knownFindings"],
-        json!([{"part":"Section 3","note":"A defect."}])
+        json!([{"id":"reviewer/1","part":"Section 3","note":"A defect."}])
     );
     assert!(prompt.get("openFindings").is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_known_finding_is_shown_with_its_id() -> Result<()> {
+    let known = [asked(1, 2)];
+    let model = model(vec![
+        json!({"issues":[],"blockChecks":fixture_checks(vec![check(0), check(1), check(2)])}),
+    ]);
+    super::review(
+        &model,
+        "Review instructional quality.",
+        json!({}),
+        &candidate(),
+        Scope {
+            known: &known,
+            ..Scope::default()
+        },
+        None,
+        LengthRule::Fail,
+    )
+    .await?;
+    assert_eq!(sent(&model, 0)["knownFindings"][0]["id"], "reviewer/1");
     Ok(())
 }
 
@@ -749,7 +777,7 @@ async fn the_correction_lists_each_retained_issue_by_part_and_note() {
 #[test]
 fn a_schema_that_asks_about_open_findings_has_each_report_say_which_it_continues() {
     let (_, passages) = review_candidate(&candidate());
-    let with = schema(&[0], &passages, &["reviewer/1", "reviewer/2"]);
+    let with = schema(&[0], &passages, &["reviewer/1", "reviewer/2"], &[]);
     let choices = json!(["reviewer/1", "reviewer/2", "none"]);
     assert_eq!(
         with.pointer("/properties/blockChecks/items/properties/continues/enum"),
@@ -779,7 +807,51 @@ fn a_schema_that_asks_about_nothing_is_the_one_it_was_before_reports_could_conti
             "passageId":{"type":"string","enum":passages[0]},
             "finding":{"type":"string","minLength":1},
             "hasDefect":{"type":"boolean"}}}}}});
-    assert_eq!(schema(&[0], &passages, &[]), expected);
+    assert_eq!(schema(&[0], &passages, &[], &[]), expected);
+}
+
+/// The schema of a review that was asked about `asked` and shown `known`.
+fn issue_schema(asked: &[&str], known: &[&str]) -> Value {
+    let (_, passages) = review_candidate(&candidate());
+    schema(&[0], &passages, asked, known)
+}
+
+#[test]
+fn a_known_finding_can_be_continued_so_an_issue_is_an_object_when_any_finding_is_shown() {
+    let known = issue_schema(&[], &["reviewer/9"]);
+    assert_eq!(
+        known.pointer("/properties/issues/items/required"),
+        Some(&json!(["note", "continues"]))
+    );
+    let choices = json!(["reviewer/9", "none"]);
+    assert_eq!(
+        known.pointer("/properties/issues/items/properties/continues/enum"),
+        Some(&choices)
+    );
+    assert_eq!(
+        known.pointer("/properties/blockChecks/items/properties/continues/enum"),
+        Some(&choices)
+    );
+    assert!(known.pointer("/properties/openFindings").is_none());
+    let both = issue_schema(&["reviewer/1"], &["reviewer/9"]);
+    assert_eq!(
+        both.pointer("/properties/issues/items/properties/continues/enum"),
+        Some(&json!(["reviewer/1", "reviewer/9", "none"]))
+    );
+    assert_eq!(
+        both.pointer("/properties/openFindings/items/properties/id/enum"),
+        Some(&json!(["reviewer/1"]))
+    );
+}
+
+/// Passes before and after the fix: with nothing shown an issue is plain text.
+#[test]
+fn with_no_finding_shown_an_issue_is_a_plain_string() {
+    let plain = issue_schema(&[], &[]);
+    assert_eq!(
+        plain.pointer("/properties/issues/items"),
+        Some(&json!({"type":"string","minLength":1}))
+    );
 }
 
 #[tokio::test]
