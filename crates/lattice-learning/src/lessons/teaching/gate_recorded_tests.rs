@@ -85,7 +85,7 @@ fn context() -> String {
 
 /// The plan check finds the first section using what it has not taught.
 fn used_before_taught() -> String {
-    json!({"planned":[],"usedBeforeTaught":[{"quote":"returns the number 4","what":"the number 4"}],"contradictions":[],"unseen":[]}).to_string()
+    json!({"planned":[],"usedBeforeTaught":[{"what":"the number 4","uses":["returns the number 4"],"taughtLater":""}],"contradictions":[],"unseen":[]}).to_string()
 }
 
 /// A review that reports `defect` in the first of `sections` sections.
