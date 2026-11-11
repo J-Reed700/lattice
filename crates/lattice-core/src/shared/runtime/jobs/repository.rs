@@ -7,6 +7,8 @@
 use super::attempt::Attempt;
 use super::{Admitted, Backoff, Deferral, JobRecord, JobStatus, NewJob, RecoveryPolicy};
 use crate::shared::error::{AppError, Result};
+use crate::shared::persistence::driver::DriverPool;
+use crate::shared::persistence::{PersistenceError, PersistenceErrorKind, Transactions, WriteTx};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
 
 const SUSPENDED: &str = "Saved; resumes when the app opens";
@@ -19,12 +21,13 @@ pub const STOPPED_THE_APP: &str = "stopped_the_app";
 const STOPPED_THE_APP_MESSAGE: &str =
     "Lattice closed unexpectedly twice while this was running, so it was not resumed. Retry it to try again.";
 
-fn db(error: sqlx::Error) -> AppError {
-    match error {
-        sqlx::Error::PoolTimedOut => AppError::ServiceNotAvailable(
+fn db(error: impl Into<PersistenceError>) -> AppError {
+    let error = error.into();
+    match error.kind() {
+        PersistenceErrorKind::Busy => AppError::ServiceNotAvailable(
             "The database is temporarily busy. Saved work is retained.".into(),
         ),
-        error => AppError::Database(error.to_string()),
+        _ => AppError::Database(error.to_string()),
     }
 }
 
@@ -85,6 +88,7 @@ fn parse(row: &SqliteRow) -> Result<JobRecord> {
         started_at: row.get("started_at"),
         finished_at: row.get("finished_at"),
         heartbeat_at: row.get("heartbeat_at"),
+        rank: row.get("rank"),
     })
 }
 
@@ -113,14 +117,15 @@ pub struct JobStore {
 }
 
 impl JobStore {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
-    async fn immediate(&self) -> Result<sqlx::Transaction<'static, sqlx::Sqlite>> {
+    async fn immediate(&self) -> Result<WriteTx> {
         // Reserve the write lock before reading: upgrading a deferred WAL read
         // transaction can fail at once with SQLITE_BUSY instead of waiting.
-        self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)
+        self.pool.begin_write().await.map_err(db)
     }
 
     pub async fn get(&self, id: &str) -> Result<JobRecord> {
@@ -253,6 +258,23 @@ impl JobStore {
     }
 
     pub async fn submit_in(connection: &mut SqliteConnection, job: &NewJob) -> Result<Admitted> {
+        Self::submit_with_rank_in(connection, job, None).await
+    }
+
+    /// Like [`Self::submit`], for a job of a ranked kind: its model calls are
+    /// served in `rank` order, lowest first.
+    pub async fn submit_ranked(&self, job: &NewJob, rank: i64) -> Result<Admitted> {
+        let mut tx = self.immediate().await?;
+        let admitted = Self::submit_with_rank_in(&mut tx, job, Some(rank)).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(admitted)
+    }
+
+    pub async fn submit_with_rank_in(
+        connection: &mut SqliteConnection,
+        job: &NewJob,
+        rank: Option<i64>,
+    ) -> Result<Admitted> {
         if job.kind.is_empty() || job.operation_id.is_empty() || job.progress_total == 0 {
             return Err(AppError::InvalidInput(
                 "A job needs a kind, an operation ID and at least one step.".into(),
@@ -276,7 +298,7 @@ impl JobStore {
         }
         let id = uuid::Uuid::new_v4().to_string();
         let stamp = now();
-        sqlx::query("INSERT INTO jobs(id,kind,subject_id,operation_id,payload_hash,status,requested_json,progress_current,progress_total,progress_message,created_at,heartbeat_at) VALUES(?,?,?,?,?,'pending',?,0,?,?,?,?)")
+        sqlx::query("INSERT INTO jobs(id,kind,subject_id,operation_id,payload_hash,status,requested_json,progress_current,progress_total,progress_message,created_at,heartbeat_at,rank) VALUES(?,?,?,?,?,'pending',?,0,?,?,?,?,?)")
             .bind(&id)
             .bind(&job.kind)
             .bind(&job.subject_id)
@@ -287,6 +309,7 @@ impl JobStore {
             .bind(&job.message)
             .bind(stamp)
             .bind(stamp)
+            .bind(rank)
             .execute(&mut *connection)
             .await
             .map_err(db)?;
@@ -420,7 +443,7 @@ impl JobStore {
             Attempt::Retry => (None, None),
             Attempt::Continue { requested, total } => (Some(encode(requested)?), Some(total)),
         };
-        sqlx::query("INSERT INTO jobs(id,kind,subject_id,operation_id,payload_hash,status,requested_json,progress_current,progress_total,progress_message,activity_json,staged_result_json,retry_of_job_id,created_at,heartbeat_at) SELECT ?,kind,subject_id,?,payload_hash,'pending',coalesce(?,requested_json),0,coalesce(?,progress_total),?,activity_json,staged_result_json,id,?,? FROM jobs WHERE id=?")
+        sqlx::query("INSERT INTO jobs(id,kind,subject_id,operation_id,payload_hash,status,requested_json,progress_current,progress_total,progress_message,activity_json,staged_result_json,retry_of_job_id,created_at,heartbeat_at,rank) SELECT ?,kind,subject_id,?,payload_hash,'pending',coalesce(?,requested_json),0,coalesce(?,progress_total),?,activity_json,staged_result_json,id,?,?,rank FROM jobs WHERE id=?")
             .bind(&retry)
             .bind(operation_id)
             .bind(requested)

@@ -6091,14 +6091,15 @@ export type DownloadedModelResponse = { id: string; model_name: string; model_id
 supports_tool_calling?: boolean | null;
 /**
  * The context window saved for this model in Settings; `None` loads it
- * at its trained length.
+ * at the largest window that fits, up to its trained length.
  */
 configured_context_length?: number | null;
 /**
  * The largest window, up to its trained length, this model fits this
  * machine's memory at now, beside the other models loaded. Shown as a
- * warning beside a larger setting, never applied. `None` when the
- * machine does not report its memory or the header cannot say.
+ * warning beside a larger saved window, which it never changes; the
+ * window a model with none saved loads with. `None` when the machine
+ * does not report its memory or the header cannot say.
  */
 fits_context_length?: number | null;
 /**
@@ -6349,6 +6350,10 @@ export type ErrorCode =
  * Database migration failed
  */
 "MIGRATION_ERROR" |
+/**
+ * Another connection held the database; a later attempt gets it
+ */
+"DATABASE_BUSY" |
 /**
  * Network operation failed
  */
@@ -7300,8 +7305,9 @@ thinkingOverride: ThinkingOverrideDto;
  */
 thinkingSampling: SamplingProfileDto;
 /**
- * Maximum tokens to generate, for a model nothing more is known about: a
- * connected model's own limits come first (`model_windows`).
+ * Maximum tokens to generate on a local backend (downloaded, llama.cpp,
+ * Ollama). A cloud model's own limits are `model_windows` and what its
+ * provider reports.
  */
 maxTokens: number;
 /**

@@ -286,11 +286,11 @@ pub struct CaptureLearningSourceSnapshotRequestDto {
 
 /// The lesson claim ledger.
 fn claim_ledger(container: &Container) -> Arc<dyn ClaimReviewStore> {
-    Arc::new(ClaimReviewRepository::new(container.db_pool().clone()))
+    Arc::new(ClaimReviewRepository::new(container.database().clone()))
 }
 
 async fn claim_reviews(container: &Container) -> Result<ClaimReviewService, ApiError> {
-    Ok(ClaimReviewService::new(container.db_pool().clone())
+    Ok(ClaimReviewService::new(container.database().clone())
         .with_checker_model(container.learning_checker_name().await?))
 }
 
@@ -405,7 +405,7 @@ pub async fn attach_learning_claim_evidence(
     let store = claim_ledger(&container);
     let ledger = store.load(&request.lesson_id).await?;
     in_course(&ledger, &request.program_id)?;
-    let job_id = running_job(container.db_pool(), &ledger).await;
+    let job_id = running_job(container.database(), &ledger).await;
     let pin = learning_model(
         &container,
         ModelRequirements::default(),
@@ -425,7 +425,7 @@ pub async fn attach_learning_claim_evidence(
     };
     let report = attach::attach_to(
         &AttachDeps {
-            pool: container.db_pool(),
+            database: container.database(),
             store: store.as_ref(),
             web: web.as_ref(),
             snapshots: snapshots.as_ref(),
@@ -461,7 +461,7 @@ pub async fn attach_learning_lesson_source(
     let store = claim_ledger(&container);
     let ledger = store.load(&request.lesson_id).await?;
     in_course(&ledger, &request.program_id)?;
-    let job_id = running_job(container.db_pool(), &ledger).await;
+    let job_id = running_job(container.database(), &ledger).await;
     let pin = learning_model(
         &container,
         ModelRequirements::default(),
@@ -476,7 +476,7 @@ pub async fn attach_learning_lesson_source(
     };
     let report = attach::attach_to_lesson(
         &AttachDeps {
-            pool: container.db_pool(),
+            database: container.database(),
             store: store.as_ref(),
             web: web.as_ref(),
             snapshots: snapshots.as_ref(),
@@ -507,14 +507,16 @@ pub async fn settle_learning_teaching_findings(
     request: SettleLearningTeachingFindingsRequestDto,
     container: State<'_, Container>,
 ) -> Result<(), ApiError> {
-    Ok(TeachingFindingsRepository::new(container.db_pool().clone())
-        .settle(
-            &request.program_id,
-            &request.lesson_id,
-            &request.finding_keys,
-            request.settle,
-        )
-        .await?)
+    Ok(
+        TeachingFindingsRepository::new(container.database().clone())
+            .settle(
+                &request.program_id,
+                &request.lesson_id,
+                &request.finding_keys,
+                request.settle,
+            )
+            .await?,
+    )
 }
 
 /// Rewrites a section of a published lesson, its title and its text. The
@@ -664,7 +666,7 @@ pub async fn capture_learning_source_snapshot(
 pub async fn get_learning_checker_accuracy(
     container: State<'_, Container>,
 ) -> Result<Vec<CheckerAccuracyDto>, ApiError> {
-    Ok(CheckerExamples::new(container.db_pool().clone())
+    Ok(CheckerExamples::new(container.database().clone())
         .accuracy()
         .await?)
 }
@@ -696,7 +698,7 @@ pub async fn export_learning_checker_examples<R: Runtime>(
     let Some(path) = picked else {
         return Ok(None);
     };
-    let pairs = CheckerExamples::new(container.db_pool().clone())
+    let pairs = CheckerExamples::new(container.database().clone())
         .export(request.program_id.as_deref(), &path)
         .await?;
     Ok(Some(ExportedLearningCheckerExamplesDto {

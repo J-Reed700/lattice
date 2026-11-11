@@ -11,6 +11,7 @@ use crate::persistence::{db, now};
 use crate::quiz_bank_jobs::QUIZ_BANK;
 use crate::quiz_blueprints;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashSet;
 
@@ -199,7 +200,7 @@ impl LearningAssessmentRepository {
 
     pub async fn overview(&self, program_id: &str) -> Result<LearningQuizOverviewDto> {
         uuid(program_id, "program")?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut *tx)
@@ -318,7 +319,7 @@ impl LearningAssessmentRepository {
                 "A pass mark is a share of the points between 1 % and 100 %.",
             ));
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
         let operation = assessment_operation(
             &req.operation_id,
@@ -328,7 +329,7 @@ impl LearningAssessmentRepository {
             hash,
             "Operation ID was reused with different settings.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             return tx.commit().await.map_err(db);
         }
         Self::active_program(&mut tx, &req.program_id).await?;
@@ -342,7 +343,7 @@ impl LearningAssessmentRepository {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        operation.record(&mut *tx, &()).await?;
+        operation.record(&mut tx, &()).await?;
         tx.commit().await.map_err(db)
     }
 
@@ -353,7 +354,7 @@ impl LearningAssessmentRepository {
         program_id: &str,
     ) -> Result<Vec<LearningOutcomeDefinitionDto>> {
         uuid(program_id, "program")?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::ensure_outcomes(&mut tx, program_id).await?;
         let outcomes = Self::outcomes_in(&mut tx, program_id)
             .await?

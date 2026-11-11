@@ -11,9 +11,9 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
         "prompt":"Choose the documented answer.","options":["First","Second"],"correctIndex":0,"quote":"The reference identifies the second option."
     }]});
     let answer = json!({"answers":[{"index":0,"correctIndices":[1],"reason":"The source identifies the second option as correct."}]}).to_string();
-    let review = json!({"issues":["The candidate's answer conflicts with the reference."],"blockChecks":{
-        "section-0":{"passageId":"section-0-passage-0","finding":"The complete teaching passage was inspected for conflicts.","hasDefect":false}
-    }}).to_string();
+    let review = json!({"issues":["The candidate's answer conflicts with the reference."],"blockChecks":[
+        {"sectionId":"section-0","passageId":"section-0-passage-0","finding":"The complete teaching passage was inspected for conflicts.","hasDefect":false}
+    ]}).to_string();
     let model = ScriptedModel {
         outputs: Mutex::new(
             vec![
@@ -29,7 +29,7 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
     };
     for _ in 0..2 {
         // Re-enter the durable task scope, as a worker does after restart.
-        lesson_drafts::run(&repo, &job, &lesson, async {
+        lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
             assert_eq!(key_review::check(&model, &candidate).await?.len(), 1);
             assert_eq!(
                 teaching_review::review(
@@ -50,7 +50,7 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
     }
     assert_eq!(model.prompts.lock().unwrap().len(), 2);
     candidate["blocks"][0]["body"] = json!("A changed teaching passage to inspect.");
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         assert_eq!(key_review::check(&model, &candidate).await?.len(), 1);
         teaching_review::review(
             &model,
@@ -95,7 +95,7 @@ async fn incomplete_reviews_are_never_saved_as_completed() -> Result<()> {
         prompts: Default::default(),
     };
     for _ in 0..2 {
-        lesson_drafts::run(&repo, &job, &lesson, async {
+        lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
             assert!(key_review::check(&model, &candidate).await.is_err());
             assert!(teaching_review::review(
                 &model,

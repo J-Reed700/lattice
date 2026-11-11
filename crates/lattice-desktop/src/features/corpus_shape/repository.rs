@@ -11,6 +11,8 @@ use std::collections::HashMap;
 
 use crate::features::corpus_shape::entity::{Cluster, ClusterMember, ClusterRun, LabelSource};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 
 /// Port for persisting cluster runs + clusters. Kept narrow — `corpus_shape`
 /// is the only feature that writes this, so the contract stays here.
@@ -39,7 +41,8 @@ pub struct SqliteClusterRepository {
 }
 
 impl SqliteClusterRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
@@ -70,7 +73,7 @@ impl ClusterRepositoryPort for SqliteClusterRepository {
     ) -> Result<()> {
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("begin tx: {}", e)))?;
 
@@ -200,7 +203,7 @@ impl ClusterRepositoryPort for SqliteClusterRepository {
     }
 
     async fn get_clusters_for_run(&self, run_id: &str) -> Result<Vec<Cluster>> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_read().await?;
         let rows = sqlx::query(
             r#"
             SELECT id, run_id, label, description, centroid, fingerprint,

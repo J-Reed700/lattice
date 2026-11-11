@@ -11,6 +11,7 @@ use crate::dto::*;
 use crate::persistence::{db, now};
 use crate::quiz_bank_jobs;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection};
 
 /// What grading decided for one pending item.
@@ -185,7 +186,7 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
         let operation = assessment_operation(
             &req.operation_id,
@@ -195,7 +196,7 @@ impl LearningAssessmentRepository {
             hash,
             "Operation ID was reused with different quiz data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return Ok((self.get_form(&req.form_id).await?, None));
         }
@@ -329,7 +330,7 @@ impl LearningAssessmentRepository {
         } else {
             None
         };
-        operation.record(&mut *tx, &()).await?;
+        operation.record(&mut tx, &()).await?;
         tx.commit().await.map_err(db)?;
         Ok((self.get_form(&req.form_id).await?, job))
     }
@@ -342,7 +343,7 @@ impl LearningAssessmentRepository {
         grades: &[ItemGrade],
         grader_model: &str,
     ) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let facts = form_facts(&mut tx, form_id).await?;
         Self::writer_lock(&mut tx, &facts.program_id).await?;
         for grade in grades {
@@ -507,7 +508,7 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_assessment_item_results r JOIN learning_assessment_forms f ON f.id=r.form_id WHERE r.form_id=? AND f.program_id=? AND r.grade_status='pending'")
             .bind(&req.form_id)
             .bind(&req.program_id)
@@ -538,7 +539,7 @@ impl LearningAssessmentRepository {
         uuid(&req.program_id, "program")?;
         uuid(&req.follow_up_id, "follow-up")?;
         uuid(&req.operation_id, "operation")?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
         let operation = assessment_operation(
             &req.operation_id,
@@ -548,7 +549,7 @@ impl LearningAssessmentRepository {
             hash,
             "Operation ID was reused with different follow-up data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             return tx.commit().await.map_err(db);
         }
         Self::active_program(&mut tx, &req.program_id).await?;
@@ -557,7 +558,7 @@ impl LearningAssessmentRepository {
         if result.rows_affected() != 1 {
             return Err(AppError::NotFound("Pending follow-up not found".into()));
         }
-        operation.record(&mut *tx, &req.follow_up_id).await?;
+        operation.record(&mut tx, &req.follow_up_id).await?;
         tx.commit().await.map_err(db)
     }
 

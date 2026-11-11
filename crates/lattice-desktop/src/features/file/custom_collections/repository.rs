@@ -3,6 +3,8 @@ use crate::features::file::custom_collections::dto::{
 };
 use chrono::Utc;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 
@@ -12,12 +14,13 @@ pub struct CustomCollectionsRepository {
 }
 
 impl CustomCollectionsRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
     pub async fn list(&self) -> Result<Vec<CustomCollectionDto>> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_read().await?;
         let rows = sqlx::query("SELECT id, name, kind, parent_id, created_at, updated_at FROM custom_collections ORDER BY created_at DESC, rowid DESC")
             .fetch_all(&mut *tx).await?;
         let memberships = sqlx::query("SELECT collection_id, document_id FROM custom_collection_documents ORDER BY collection_id, ordinal")
@@ -52,7 +55,7 @@ impl CustomCollectionsRepository {
         validate_kind_memberships(request.kind, &request.document_ids)?;
         let id = format!("custom:{}", Uuid::new_v4());
         let now = Utc::now().to_rfc3339();
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let mut tx = self.pool.begin_write().await?;
         sqlx::query("INSERT INTO custom_collections (id, name, kind, parent_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
             .bind(&id).bind(name).bind(kind_str(request.kind)).bind(&request.parent_id).bind(&now).bind(&now)
             .execute(&mut *tx).await.map_err(map_unique_name)?;
@@ -79,7 +82,7 @@ impl CustomCollectionsRepository {
                 "A collection cannot be its own parent".into(),
             ));
         }
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let mut tx = self.pool.begin_write().await?;
         if let Some(parent) = parent_id {
             let cycle: bool = sqlx::query_scalar("WITH RECURSIVE descendants(id) AS (SELECT id FROM custom_collections WHERE parent_id = ? UNION ALL SELECT c.id FROM custom_collections c JOIN descendants d ON c.parent_id = d.id) SELECT EXISTS(SELECT 1 FROM descendants WHERE id = ?)")
                 .bind(id).bind(parent).fetch_one(&mut *tx).await?;
@@ -109,7 +112,7 @@ impl CustomCollectionsRepository {
     }
 
     pub async fn add_documents(&self, id: &str, document_ids: &[String]) -> Result<()> {
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let mut tx = self.pool.begin_write().await?;
         let kind =
             sqlx::query_scalar::<_, String>("SELECT kind FROM custom_collections WHERE id = ?")
                 .bind(id)
@@ -138,7 +141,7 @@ impl CustomCollectionsRepository {
     }
 
     pub async fn remove_documents(&self, id: &str, document_ids: &[String]) -> Result<()> {
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let mut tx = self.pool.begin_write().await?;
         let kind =
             sqlx::query_scalar::<_, String>("SELECT kind FROM custom_collections WHERE id = ?")
                 .bind(id)
@@ -164,7 +167,7 @@ impl CustomCollectionsRepository {
 }
 
 async fn insert_memberships(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    tx: &mut sqlx::SqliteConnection,
     id: &str,
     ids: &[String],
 ) -> Result<()> {
@@ -174,7 +177,7 @@ async fn insert_memberships(
             continue;
         }
         sqlx::query("INSERT INTO custom_collection_documents (collection_id, document_id, ordinal) VALUES (?, ?, ?)")
-            .bind(id).bind(document_id).bind(ordinal as i64).execute(&mut **tx).await?;
+            .bind(id).bind(document_id).bind(ordinal as i64).execute(&mut *tx).await?;
     }
     Ok(())
 }

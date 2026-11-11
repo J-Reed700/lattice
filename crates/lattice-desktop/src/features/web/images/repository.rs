@@ -12,14 +12,17 @@ use std::collections::{HashMap, HashSet};
 use chrono::Utc;
 use lattice_core::application::contracts::images::{ChatImageDto, ImageOrigin};
 use lattice_core::application::ports::chat_images::DRAFT_REQUEST_PREFIX;
-use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::PersistenceError;
+use lattice_core::shared::persistence::Transactions;
+use sqlx::{QueryBuilder, Sqlite, SqliteConnection, SqlitePool};
 
 use crate::infrastructure::storage::file_intents::{record_releases_sql, run_id};
 use crate::infrastructure::storage::{FileIntents, FileStore};
 use lattice_core::shared::error::{AppError, Result};
 
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
+fn db(error: impl Into<PersistenceError>) -> AppError {
+    AppError::from(error.into())
 }
 
 const COLUMNS: &str = "id, conversation_id, request_id, message_id, ref AS image_ref, ext, mime, \
@@ -127,7 +130,8 @@ pub struct ImageRepository {
 }
 
 impl ImageRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
@@ -241,24 +245,8 @@ impl ImageRepository {
         conversation_id: &str,
         ids: &[String],
     ) -> Result<Vec<ImageRow>> {
-        if ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut select: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
-            "SELECT {COLUMNS} FROM chat_images WHERE conversation_id = "
-        ));
-        select.push_bind(conversation_id).push(" AND id IN (");
-        let mut list = select.separated(", ");
-        for id in ids {
-            list.push_bind(id);
-        }
-        list.push_unseparated(")");
-        let rows: Vec<ImageRow> = select
-            .build_query_as()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)?;
-        Ok(in_order(rows, ids))
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        rows_in_conversation(&mut connection, conversation_id, ids).await
     }
 
     /// Gives the conversation's rows among `ids` that no other message holds
@@ -273,7 +261,11 @@ impl ImageRepository {
         message_id: &str,
         request_id: &str,
     ) -> Result<Vec<ImageRow>> {
-        let candidates = self.in_conversation(conversation_id, ids).await?;
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let candidates = rows_in_conversation(&mut tx, conversation_id, ids).await?;
         let claimable: Vec<String> = candidates
             .into_iter()
             .filter(|row| {
@@ -286,7 +278,6 @@ impl ImageRepository {
         if claimable.is_empty() {
             return Ok(Vec::new());
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
         for id in &claimable {
             sqlx::query(
                 "UPDATE chat_images SET message_id = ?, request_id = ?, ref = 'claim:' || id \
@@ -309,8 +300,8 @@ impl ImageRepository {
                 .await
                 .map_err(db)?;
         }
+        let rows = rows_in_conversation(&mut tx, conversation_id, &claimable).await?;
         tx.commit().await.map_err(db)?;
-        let rows = self.in_conversation(conversation_id, &claimable).await?;
         Ok(rows
             .into_iter()
             .filter(|row| row.message_id.as_deref() == Some(message_id))
@@ -350,6 +341,7 @@ impl ImageRepository {
         message_id: &str,
         refs: &[String],
     ) -> Result<Vec<ImageRow>> {
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         if !refs.is_empty() {
             let mut update: QueryBuilder<Sqlite> =
                 QueryBuilder::new("UPDATE chat_images SET message_id = ");
@@ -363,16 +355,18 @@ impl ImageRepository {
                 list.push_bind(r);
             }
             list.push_unseparated(")");
-            update.build().execute(&self.pool).await.map_err(db)?;
+            update.build().execute(&mut *tx).await.map_err(db)?;
         }
-        sqlx::query_as(&format!(
+        let rows = sqlx::query_as(&format!(
             "SELECT {COLUMNS} FROM chat_images WHERE request_id = ? AND message_id = ? {BY_REF}"
         ))
         .bind(request_id)
         .bind(message_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
-        .map_err(db)
+        .map_err(db)?;
+        tx.commit().await.map_err(db)?;
+        Ok(rows)
     }
 
     /// The request's rows no message holds.
@@ -410,22 +404,32 @@ impl ImageRepository {
     /// files were let go of: what lets a sweep free a file whose removal does
     /// not finish now.
     pub async fn delete_ids(&self, ids: &[String]) -> Result<u64> {
+        self.delete_where(ids, "").await
+    }
+
+    /// [`Self::delete_ids`] for rows that still no message holds when the
+    /// write lock is taken: one attached since they were read stays.
+    pub async fn delete_orphan_ids(&self, ids: &[String]) -> Result<u64> {
+        self.delete_where(ids, " AND message_id IS NULL").await
+    }
+
+    async fn delete_where(&self, ids: &[String], condition: &str) -> Result<u64> {
         if ids.is_empty() {
             return Ok(0);
         }
         let placeholders = vec!["?"; ids.len()].join(", ");
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let record_sql = record_releases_sql(
             FileStore::ChatImage,
             "id || '.' || ext",
-            &format!("chat_images WHERE id IN ({placeholders})"),
+            &format!("chat_images WHERE id IN ({placeholders}){condition}"),
         );
         let mut record = sqlx::query(&record_sql).bind(run_id());
         for id in ids {
             record = record.bind(id);
         }
         record.execute(&mut *tx).await.map_err(db)?;
-        let delete_sql = format!("DELETE FROM chat_images WHERE id IN ({placeholders})");
+        let delete_sql = format!("DELETE FROM chat_images WHERE id IN ({placeholders}){condition}");
         let mut delete = sqlx::query(&delete_sql);
         for id in ids {
             delete = delete.bind(id);
@@ -480,6 +484,32 @@ impl ImageRepository {
         .await
         .map_err(db)
     }
+}
+
+/// The conversation's rows among `ids`, in the order `ids` names them.
+async fn rows_in_conversation(
+    connection: &mut SqliteConnection,
+    conversation_id: &str,
+    ids: &[String],
+) -> Result<Vec<ImageRow>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut select: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
+        "SELECT {COLUMNS} FROM chat_images WHERE conversation_id = "
+    ));
+    select.push_bind(conversation_id).push(" AND id IN (");
+    let mut list = select.separated(", ");
+    for id in ids {
+        list.push_bind(id);
+    }
+    list.push_unseparated(")");
+    let rows: Vec<ImageRow> = select
+        .build_query_as()
+        .fetch_all(connection)
+        .await
+        .map_err(db)?;
+    Ok(in_order(rows, ids))
 }
 
 /// `rows` in the order `ids` names them; ids with no row are skipped.

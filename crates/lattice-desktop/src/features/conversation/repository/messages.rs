@@ -1,14 +1,16 @@
 //! Conversation messages: append, read and two-phase-commit status changes.
 
 use super::ConversationRepository;
-use crate::features::conversation::persistence_mapper::{
+use crate::features::conversation::repository::mapper::{
     ConversationMessageMapper, ConversationMessageModel,
 };
 use chrono::Utc;
 use lattice_core::domain::conversation::memory::compute_digest;
 use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::types::ConversationId;
+use sqlx::SqliteConnection;
 use std::str::FromStr;
 
 impl ConversationRepository {
@@ -19,14 +21,14 @@ impl ConversationRepository {
     /// statements rather than `RETURNING`, so it does not depend on the bundled
     /// SQLite version.
     pub(super) async fn allocate_sequence(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &mut sqlx::SqliteConnection,
         conversation_id: &str,
     ) -> Result<i64> {
         let updated = sqlx::query(
             "UPDATE conversations SET next_message_sequence = next_message_sequence + 1 WHERE id = ?",
         )
         .bind(conversation_id)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to allocate message sequence: {}", e)))?;
         if updated.rows_affected() != 1 {
@@ -38,7 +40,7 @@ impl ConversationRepository {
         let next: i64 =
             sqlx::query_scalar("SELECT next_message_sequence FROM conversations WHERE id = ?")
                 .bind(conversation_id)
-                .fetch_one(&mut **tx)
+                .fetch_one(&mut *tx)
                 .await
                 .map_err(|e| {
                     AppError::Database(format!("Failed to read message sequence: {}", e))
@@ -64,7 +66,7 @@ impl ConversationRepository {
         let parsed_id = ConversationId::from_str(conversation_id)?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now();
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_write().await?;
         let updated = sqlx::query("UPDATE conversation_messages SET status='completed' WHERE id=? AND conversation_id=? AND role='user' AND status='pending'")
             .bind(user_message_id).bind(conversation_id).execute(&mut *tx).await?;
         if updated.rows_affected() != 1 {
@@ -124,7 +126,7 @@ impl ConversationRepository {
 
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 
@@ -200,7 +202,7 @@ impl ConversationRepository {
 
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 
@@ -266,6 +268,11 @@ impl ConversationRepository {
     pub async fn update_message_status(&self, message_id: &str, status: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
 
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         let result = sqlx::query!(
             r#"
             UPDATE conversation_messages
@@ -275,7 +282,7 @@ impl ConversationRepository {
             status,
             message_id
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to update message status: {}", e)))?;
 
@@ -291,7 +298,7 @@ impl ConversationRepository {
         let conversation_id: Option<String> =
             sqlx::query_scalar("SELECT conversation_id FROM conversation_messages WHERE id = ?")
                 .bind(message_id)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut *tx)
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to get conversation_id: {}", e)))?;
 
@@ -301,31 +308,47 @@ impl ConversationRepository {
                 now,
                 conv_id
             )
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| {
                 AppError::Database(format!("Failed to update conversation timestamp: {}", e))
             })?;
         }
 
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
+
         Ok(())
     }
 
     pub async fn get_messages(&self, conversation_id: &str) -> Result<Vec<ConversationMessage>> {
-        let db_models = sqlx::query_as::<_, ConversationMessageModel>(
-            r#"
+        let mut connection = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to get messages: {}", e)))?;
+        messages_of(&mut connection, conversation_id).await
+    }
+}
+
+pub(super) async fn messages_of(
+    connection: &mut SqliteConnection,
+    conversation_id: &str,
+) -> Result<Vec<ConversationMessage>> {
+    let db_models = sqlx::query_as::<_, ConversationMessageModel>(
+        r#"
             SELECT id, conversation_id, role, content, tokens, created_at,
                    metadata, status
             FROM conversation_messages
             WHERE conversation_id = ?
             ORDER BY sequence ASC, created_at ASC, rowid ASC
             "#,
-        )
-        .bind(conversation_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to get messages: {}", e)))?;
+    )
+    .bind(conversation_id)
+    .fetch_all(connection)
+    .await
+    .map_err(|e| AppError::Database(format!("Failed to get messages: {}", e)))?;
 
-        Ok(ConversationMessageMapper::to_entities(&db_models))
-    }
+    Ok(ConversationMessageMapper::to_entities(&db_models))
 }

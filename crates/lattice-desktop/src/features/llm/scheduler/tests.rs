@@ -1,9 +1,13 @@
 use super::*;
+use crate::features::llm::backend::{ModelBackend, Progress};
+use crate::features::llm::fitting::{Fitted, OutputLimits, PortBackend, Sent, Thinking};
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, InferencePriority, ServedTiming,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::models::vision::VisionGeometry;
+use lattice_core::shared::runtime::jobs::{RankScope, RankTicket};
 use parking_lot::Mutex as SyncMutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -13,6 +17,7 @@ fn ask(priority: InferencePriority, tokens: usize) -> AdmissionRequest {
         priority,
         tokens,
         cache_key: None,
+        rank: None,
     }
 }
 
@@ -21,6 +26,7 @@ fn keyed(key: &str) -> AdmissionRequest {
         priority: InferencePriority::Interactive,
         tokens: 10,
         cache_key: Some(key.to_string()),
+        rank: None,
     }
 }
 
@@ -603,7 +609,10 @@ async fn a_scheduled_backend_measures_its_pace_from_its_own_answers() {
         "test",
         BackendCapacity::concurrent(1),
     ));
-    let llm = ScheduledLlm::new(Arc::new(TimedModel(logged_run())), scheduler, 512);
+    let llm = ScheduledLlm::new(
+        Arc::new(PortBackend(Arc::new(TimedModel(logged_run())))),
+        scheduler,
+    );
     assert_eq!(llm.pace(), None, "nothing is asked of the server");
     llm.complete(&request("hi", None)).await.unwrap();
     let pace = llm.pace().unwrap();
@@ -676,7 +685,7 @@ async fn exact_counts_come_from_the_server_once_per_text() {
 struct GatedModel {
     started: AtomicUsize,
     gate: tokio::sync::Semaphore,
-    seen: SyncMutex<Vec<CompletionRequest>>,
+    seen: SyncMutex<Vec<Sent>>,
 }
 
 impl GatedModel {
@@ -690,13 +699,44 @@ impl GatedModel {
 }
 
 #[async_trait]
-impl LLMPort for GatedModel {
-    async fn complete(
+impl ModelBackend for GatedModel {
+    fn model_name(&self) -> &str {
+        "gated"
+    }
+    fn provider_name(&self) -> &str {
+        "gated"
+    }
+    fn window(&self) -> usize {
+        8_192
+    }
+    fn thinking(&self, _request: &CompletionRequest) -> Thinking {
+        Thinking::Off
+    }
+    fn output_limits(&self) -> OutputLimits {
+        OutputLimits::of(None)
+    }
+    fn supports_tool_calling(&self) -> bool {
+        false
+    }
+    fn vision(&self) -> Option<VisionGeometry> {
+        None
+    }
+    fn keeps_read_prompts(&self) -> bool {
+        false
+    }
+    fn is_alive(&self) -> bool {
+        true
+    }
+    async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
+        Ok(true)
+    }
+    async fn send(
         &self,
-        request: &CompletionRequest,
+        fitted: &Fitted<'_>,
+        _progress: Progress<'_>,
     ) -> lattice_core::shared::error::Result<CompletionResponse> {
         self.started.fetch_add(1, Ordering::SeqCst);
-        self.seen.lock().push(request.clone());
+        self.seen.lock().push(fitted.sent());
         let _released = self.gate.acquire().await.unwrap();
         Ok(CompletionResponse {
             text: "ok".into(),
@@ -704,15 +744,6 @@ impl LLMPort for GatedModel {
             finish_reason: "stop".into(),
             ..Default::default()
         })
-    }
-    fn model_name(&self) -> &str {
-        "gated"
-    }
-    fn max_context_tokens(&self) -> usize {
-        8_192
-    }
-    async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
-        Ok(true)
     }
 }
 
@@ -736,11 +767,7 @@ async fn a_request_cancelled_in_flight_is_aborted_and_frees_its_slot() {
         "test",
         BackendCapacity::llama_server(1, 100_000),
     ));
-    let llm = Arc::new(ScheduledLlm::new(
-        model.clone(),
-        Arc::clone(&scheduler),
-        512,
-    ));
+    let llm = Arc::new(ScheduledLlm::new(model.clone(), Arc::clone(&scheduler)));
     let cancel = CancellationToken::new();
     let running = {
         let llm = Arc::clone(&llm);
@@ -776,14 +803,14 @@ async fn an_admitted_request_reaches_the_backend_pinned_to_its_slot() {
         "test",
         BackendCapacity::llama_server(2, 100_000),
     ));
-    let llm = ScheduledLlm::new(model.clone(), scheduler, 512);
+    let llm = ScheduledLlm::new(model.clone(), scheduler);
     llm.complete(&request(&"x".repeat(5_000), None))
         .await
         .unwrap();
     let seen = model.seen.lock().clone();
     assert_eq!(seen.len(), 1);
-    assert_eq!(seen[0].assigned_slot, Some(0));
-    assert_eq!(seen[0].cache_key.as_deref(), Some("conversation"));
+    assert_eq!(seen[0].slot, Some(0));
+    assert_eq!(seen[0].request.cache_key.as_deref(), Some("conversation"));
 
     // 5 000 characters reported as 1 000 tokens moves the estimate off four.
     assert!(llm.chars_per_token() > 4.0, "{}", llm.chars_per_token());
@@ -802,7 +829,7 @@ async fn a_call_queues_behind_a_busy_slot() {
         "test",
         BackendCapacity::concurrent(1),
     ));
-    let llm = ScheduledLlm::new(model, Arc::clone(&scheduler), 512);
+    let llm = ScheduledLlm::new(model, Arc::clone(&scheduler));
     let held = scheduler
         .admit(ask(InferencePriority::Interactive, 1), None)
         .await
@@ -822,7 +849,7 @@ fn scheduled(model: Arc<GatedModel>) -> ScheduledLlm {
         "test",
         BackendCapacity::concurrent(1),
     ));
-    ScheduledLlm::new(model, scheduler, 512)
+    ScheduledLlm::new(model, scheduler)
 }
 
 /// Whatever backend is behind the port, nothing whose prompt alone fills its
@@ -861,7 +888,8 @@ async fn an_answer_larger_than_the_room_left_is_cut_to_fit_not_refused() {
     let model = GatedModel::new();
     model.gate.add_permits(2);
     let llm = scheduled(model.clone());
-    // "user" and 31 564 characters: 7 892 tokens by the estimate, 300 left.
+    // "user" and 31 564 characters: 7 892 tokens by the estimate and 24 of
+    // framing, 276 left.
     let prompt = "x".repeat(31_564);
     llm.complete(&CompletionRequest {
         max_output_tokens: Some(302),
@@ -877,8 +905,79 @@ async fn an_answer_larger_than_the_room_left_is_cut_to_fit_not_refused() {
     .await
     .unwrap();
     let seen = model.seen.lock();
-    assert_eq!(seen[0].max_output_tokens, Some(300));
-    assert_eq!(seen[1].max_output_tokens, Some(256));
+    assert_eq!(
+        seen[0].request.max_output_tokens,
+        Some(302),
+        "the caller's cap is not rewritten"
+    );
+    assert_eq!(seen[0].ceiling, Some(276));
+    assert_eq!(seen[1].ceiling, Some(256));
+}
+
+/// A server's own count sizes the room, and the request says it was counted.
+#[tokio::test]
+async fn an_exact_count_sizes_the_room_the_backend_is_told() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/tokenize"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({ "tokens": vec![1; 3_000] })),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let model = GatedModel::new();
+    model.gate.add_permits(1);
+    let llm = scheduled(model.clone())
+        .with_tokenizer(ServerTokenizer::new(reqwest::Client::new(), &server.uri()));
+    // About 10 000 tokens by the estimate; the server counts 3 000, plus the
+    // template's framing for one message and the answer's opening.
+    llm.complete(&CompletionRequest {
+        max_output_tokens: Some(6_000),
+        ..request(&"x".repeat(40_000), None)
+    })
+    .await
+    .unwrap();
+    let seen = model.seen.lock();
+    assert!(seen[0].size.counted_exactly);
+    assert_eq!(seen[0].size.prompt_tokens, 3_000 + 8 + 16);
+    assert_eq!(seen[0].room, 8_192 - 3_024);
+    assert_eq!(seen[0].ceiling, Some(5_168));
+}
+
+/// A prompt the margined estimate plainly fits is not worth a round trip.
+#[tokio::test]
+async fn a_small_prompt_is_not_counted_by_the_server() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/tokenize"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "tokens": [1] })),
+        )
+        .expect(0)
+        .mount(&server)
+        .await;
+    let model = GatedModel::new();
+    model.gate.add_permits(1);
+    let llm = scheduled(model.clone())
+        .with_tokenizer(ServerTokenizer::new(reqwest::Client::new(), &server.uri()));
+    llm.complete(&CompletionRequest {
+        max_output_tokens: Some(512),
+        ..request("hello", None)
+    })
+    .await
+    .unwrap();
+    let seen = model.seen.lock();
+    assert!(!seen[0].size.counted_exactly);
+    assert!(seen[0].room > 512);
+    assert_eq!(seen[0].ceiling, Some(512));
 }
 
 /// The estimate never refuses what the backend's own tokenizer says fits.
@@ -906,4 +1005,518 @@ async fn an_exact_count_decides_before_a_request_is_refused() {
         .await
         .unwrap();
     assert_eq!(model.seen.lock().len(), 1);
+}
+
+/// A model with an 8,192-token window behind a tokenizer that answers
+/// `tokens`, or does not exist, sizing a request that asks `asked` tokens of
+/// answer. What the backend was sent, or the refusal.
+async fn measured(tokens: Option<usize>, content: &str, asked: Option<u32>) -> Result<Sent> {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let reply = match tokens {
+        Some(tokens) => {
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"tokens": vec![1; tokens]}))
+        }
+        None => ResponseTemplate::new(404),
+    };
+    Mock::given(method("POST"))
+        .and(path("/tokenize"))
+        .respond_with(reply)
+        .mount(&server)
+        .await;
+    let model = GatedModel::new();
+    model.gate.add_permits(1);
+    let llm = scheduled(model.clone())
+        .with_tokenizer(ServerTokenizer::new(reqwest::Client::new(), &server.uri()));
+    llm.complete(&CompletionRequest {
+        max_output_tokens: asked,
+        ..request(content, None)
+    })
+    .await?;
+    let sent = model.seen.lock()[0].clone();
+    Ok(sent)
+}
+
+#[tokio::test]
+async fn a_prompt_the_estimate_overcounts_keeps_the_output_it_asked_for() {
+    let long = "word ".repeat(8_000);
+    // The server counts 2,000 tokens, so 2,000 more still fit.
+    let sent = measured(Some(2_000), &long, Some(2_000)).await.unwrap();
+    assert_eq!(sent.ceiling, Some(2_000));
+    assert!(sent.size.counted_exactly);
+}
+
+#[tokio::test]
+async fn an_answer_the_window_cannot_hold_is_cut_to_the_room_the_count_leaves() {
+    let long = "word ".repeat(8_000);
+    // The server counts 6,500 tokens and the framing 24 more: the answer gets
+    // the 1,668 left, not the 2,000 asked.
+    let sent = measured(Some(6_500), &long, Some(2_000)).await.unwrap();
+    assert_eq!(sent.ceiling, Some(1_668));
+    // Only a prompt that fills the window is refused.
+    for (tokens, counted) in [(Some(8_200), "(counted exactly)"), (None, "(estimated)")] {
+        let refused = measured(tokens, &long, Some(2_000)).await.unwrap_err();
+        assert!(
+            matches!(
+                refused,
+                AppError::PromptExceedsWindow { window: 8_192, counted_exactly, .. }
+                    if counted_exactly == tokens.is_some()
+            ),
+            "{refused}"
+        );
+        let told = refused.to_string();
+        for expected in [
+            counted,
+            "leaves no room for an answer",
+            "configured context window is 8192",
+        ] {
+            assert!(told.contains(expected), "{told}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_server_that_cannot_count_is_not_refused_on_the_estimates_margin() {
+    // About 6,000 tokens at four characters a token: the margin reads 9,000,
+    // past the 8,192 window; the plain estimate leaves room.
+    let prose = "word ".repeat(4_800);
+    let sent = measured(None, &prose, Some(2_000)).await.unwrap();
+    assert_eq!(sent.ceiling, Some(2_000));
+    assert!(!sent.size.counted_exactly);
+    let sent = measured(None, &prose, None).await.unwrap();
+    assert_eq!(sent.size.prompt_tokens + sent.room as usize, 8_192);
+}
+
+#[tokio::test]
+async fn an_open_answer_is_given_the_room_the_prompt_leaves_and_never_more() {
+    let long = "word ".repeat(8_000);
+    // The estimate leaves nothing; the exact count leaves 2,168 of the 8,192.
+    let sent = measured(Some(6_000), &long, None).await.unwrap();
+    assert_eq!(sent.size.prompt_tokens + sent.room as usize, 8_192);
+    assert!(sent.size.counted_exactly);
+    // A prompt that fills the window leaves no room, and is refused.
+    let refused = measured(Some(8_192), &long, None).await.unwrap_err();
+    assert!(
+        refused.to_string().contains("leaves no room for an answer"),
+        "{refused}"
+    );
+}
+
+/// A prompt not worth counting is recorded at its estimate plus the
+/// template's framing (8 for the message, 16 for the answer), with or without
+/// a tokenizer behind the port.
+#[tokio::test]
+async fn a_prompt_not_worth_counting_is_recorded_at_its_estimate_and_framing() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/tokenize"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "tokens": [1] })),
+        )
+        .expect(0)
+        .mount(&server)
+        .await;
+    let without = GatedModel::new();
+    without.gate.add_permits(1);
+    let with = GatedModel::new();
+    with.gate.add_permits(1);
+    let llms = [
+        (scheduled(without.clone()), without),
+        (
+            scheduled(with.clone())
+                .with_tokenizer(ServerTokenizer::new(reqwest::Client::new(), &server.uri())),
+            with,
+        ),
+    ];
+    for (llm, model) in &llms {
+        // "user" and "hello!!!" are 12 characters: 3 tokens.
+        llm.complete(&CompletionRequest {
+            max_output_tokens: Some(512),
+            ..request("hello!!!", None)
+        })
+        .await
+        .unwrap();
+        let sent = model.seen.lock()[0].clone();
+        assert_eq!(sent.size.prompt_tokens, 3 + 8 + 16);
+        assert!(!sent.size.counted_exactly);
+    }
+}
+
+/// Admission reserves the prompt the server counted, not the larger estimate
+/// the count replaced.
+#[tokio::test]
+async fn a_counted_prompt_reserves_its_counted_size() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/tokenize"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({ "tokens": vec![1; 2_000] })),
+        )
+        .mount(&server)
+        .await;
+    let model = GatedModel::new();
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::llama_server(2, 8_192),
+    ));
+    let llm = Arc::new(
+        ScheduledLlm::new(model.clone(), scheduler)
+            .with_tokenizer(ServerTokenizer::new(reqwest::Client::new(), &server.uri())),
+    );
+    // About 10 000 tokens by the estimate each; the server counts 2 000.
+    let calls: Vec<_> = ["first", "second"]
+        .into_iter()
+        .map(|key| {
+            let llm = Arc::clone(&llm);
+            tokio::spawn(async move {
+                llm.complete(&CompletionRequest {
+                    max_output_tokens: Some(512),
+                    cache_key: Some(key.into()),
+                    ..request(&"x".repeat(40_000), None)
+                })
+                .await
+            })
+        })
+        .collect();
+    let both_started = tokio::time::timeout(Duration::from_secs(1), async {
+        while model.started.load(Ordering::SeqCst) < 2 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .is_ok();
+    model.gate.add_permits(2);
+    for call in calls {
+        call.await.unwrap().unwrap();
+    }
+    assert!(
+        both_started,
+        "both calls fit the window by their counted size and run together"
+    );
+}
+
+fn ranked(priority: InferencePriority, scope: &Arc<RankScope>) -> AdmissionRequest {
+    AdmissionRequest {
+        rank: Some(RankTicket::new(scope)),
+        ..ask(priority, 1)
+    }
+}
+
+/// A rank this scheduler has seen, whose scope stays alive: the scheduler
+/// learns a rank from its first request.
+async fn seen(scheduler: &Arc<InferenceScheduler>, rank: i64) -> Arc<RankScope> {
+    let scope = RankScope::new(rank);
+    let permit = scheduler
+        .admit(ranked(InferencePriority::Background, &scope), None)
+        .await
+        .unwrap();
+    drop(permit);
+    scope
+}
+
+fn admit_in_background(
+    scheduler: &Arc<InferenceScheduler>,
+    request: AdmissionRequest,
+) -> tokio::task::JoinHandle<Result<Permit>> {
+    let scheduler = Arc::clone(scheduler);
+    tokio::spawn(async move { scheduler.admit(request, None).await })
+}
+
+async fn admitted(handle: tokio::task::JoinHandle<Result<Permit>>) -> Permit {
+    tokio::time::timeout(Duration::from_secs(1), handle)
+        .await
+        .expect("the request was not admitted")
+        .unwrap()
+        .unwrap()
+}
+
+/// Like `admission_order`, but a request with a rank holds a scope of that
+/// rank from the moment it queues until it has run.
+async fn ranked_order(
+    scheduler: &Arc<InferenceScheduler>,
+    requests: Vec<(&'static str, InferencePriority, Option<i64>)>,
+) -> Vec<&'static str> {
+    let blocker = scheduler
+        .admit(ask(InferencePriority::Interactive, 1), None)
+        .await
+        .unwrap();
+    let order = Arc::new(SyncMutex::new(Vec::new()));
+    let mut waiters = Vec::new();
+    for (name, priority, rank) in requests {
+        let scheduler = Arc::clone(scheduler);
+        let order = Arc::clone(&order);
+        waiters.push(tokio::spawn(async move {
+            let scope = rank.map(RankScope::new);
+            let request = AdmissionRequest {
+                rank: scope.as_ref().map(RankTicket::new),
+                ..ask(priority, 1)
+            };
+            let permit = scheduler.admit(request, None).await.unwrap();
+            order.lock().push(name);
+            drop(permit);
+            drop(scope);
+        }));
+        settle().await;
+    }
+    drop(blocker);
+    for waiter in waiters {
+        tokio::time::timeout(Duration::from_secs(5), waiter)
+            .await
+            .expect("a request was never admitted")
+            .unwrap();
+    }
+    let order = order.lock().clone();
+    order
+}
+
+#[tokio::test]
+async fn interactive_then_unranked_then_ranked_by_rank() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(1),
+    ));
+    let order = ranked_order(
+        &scheduler,
+        vec![
+            ("rank-2", InferencePriority::Verification, Some(2)),
+            ("summary", InferencePriority::Background, None),
+            ("rank-1", InferencePriority::Background, Some(1)),
+            ("chat", InferencePriority::Interactive, None),
+            ("judge", InferencePriority::Verification, None),
+        ],
+    )
+    .await;
+    assert_eq!(order, ["chat", "judge", "summary", "rank-1", "rank-2"]);
+}
+
+#[tokio::test]
+async fn rank_comes_before_class_in_the_backlog() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(1),
+    ));
+    let order = ranked_order(
+        &scheduler,
+        vec![
+            ("rank-3-judge-1", InferencePriority::Verification, Some(3)),
+            ("rank-3-judge-2", InferencePriority::Verification, Some(3)),
+            ("rank-1-writer", InferencePriority::Background, Some(1)),
+            ("rank-1-summary", InferencePriority::Maintenance, Some(1)),
+        ],
+    )
+    .await;
+    assert_eq!(
+        order,
+        [
+            "rank-1-summary",
+            "rank-1-writer",
+            "rank-3-judge-1",
+            "rank-3-judge-2"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn an_interactive_request_with_a_rank_is_still_interactive() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(1),
+    ));
+    let order = ranked_order(
+        &scheduler,
+        vec![
+            ("summary", InferencePriority::Background, None),
+            ("rank-0-chat", InferencePriority::Interactive, Some(0)),
+        ],
+    )
+    .await;
+    assert_eq!(order, ["rank-0-chat", "summary"]);
+}
+
+#[tokio::test]
+async fn a_single_slot_waits_for_the_head_rank_and_runs_the_moment_it_ends() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(1),
+    ));
+    let head = seen(&scheduler, 1).await;
+    let later = RankScope::new(2);
+    let waiting = admit_in_background(&scheduler, ranked(InferencePriority::Background, &later));
+    settle().await;
+    assert!(
+        !waiting.is_finished(),
+        "rank 2 must wait while rank 1 is alive, though the slot is free"
+    );
+    assert_eq!(scheduler.queued(), 1);
+
+    // Nothing else happens: no request, no release.
+    drop(head);
+    let _permit = admitted(waiting).await;
+}
+
+#[tokio::test]
+async fn the_head_rank_and_unranked_work_take_a_single_slot() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(1),
+    ));
+    let head = seen(&scheduler, 1).await;
+    let first = scheduler
+        .admit(ranked(InferencePriority::Background, &head), None)
+        .await
+        .unwrap();
+    drop(first);
+    let second = scheduler
+        .admit(ask(InferencePriority::Background, 1), None)
+        .await
+        .unwrap();
+    drop(second);
+}
+
+#[tokio::test]
+async fn eight_slots_keep_one_for_interactive_work_and_one_for_the_head() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(8),
+    ));
+    let head = seen(&scheduler, 1).await;
+    let later = RankScope::new(2);
+    let mut shared = Vec::new();
+    for _ in 0..6 {
+        let handle = admit_in_background(&scheduler, ranked(InferencePriority::Background, &later));
+        shared.push(admitted(handle).await);
+    }
+    let seventh = admit_in_background(&scheduler, ranked(InferencePriority::Background, &later));
+    settle().await;
+    assert!(
+        !seventh.is_finished(),
+        "two slots are kept: one interactive, one for the head"
+    );
+
+    let head_call = admit_in_background(&scheduler, ranked(InferencePriority::Background, &head));
+    let _head_call = admitted(head_call).await;
+    let turn = admit_in_background(&scheduler, ask(InferencePriority::Interactive, 1));
+    let _turn = admitted(turn).await;
+    settle().await;
+    assert!(!seventh.is_finished());
+    assert_eq!(scheduler.queued(), 1);
+}
+
+#[tokio::test]
+async fn a_head_already_running_is_the_slot_kept_for_it() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(8),
+    ));
+    let head = RankScope::new(1);
+    let _running = scheduler
+        .admit(ranked(InferencePriority::Background, &head), None)
+        .await
+        .unwrap();
+    let later = RankScope::new(2);
+    let mut shared = Vec::new();
+    for _ in 0..6 {
+        let handle = admit_in_background(&scheduler, ranked(InferencePriority::Background, &later));
+        shared.push(admitted(handle).await);
+    }
+    let seventh = admit_in_background(&scheduler, ranked(InferencePriority::Background, &later));
+    settle().await;
+    assert!(
+        !seventh.is_finished(),
+        "one head, one interactive, six shared"
+    );
+}
+
+#[tokio::test]
+async fn unranked_work_may_use_the_slot_kept_for_the_head() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(8),
+    ));
+    let _head = seen(&scheduler, 1).await;
+    let later = RankScope::new(2);
+    let mut shared = Vec::new();
+    for _ in 0..6 {
+        let handle = admit_in_background(&scheduler, ranked(InferencePriority::Background, &later));
+        shared.push(admitted(handle).await);
+    }
+    let unranked = admit_in_background(&scheduler, ask(InferencePriority::Background, 1));
+    let _permit = admitted(unranked).await;
+}
+
+#[tokio::test]
+async fn a_dead_scope_stops_reserving_and_the_next_rank_becomes_the_head() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(1),
+    ));
+    let first = seen(&scheduler, 1).await;
+    let second = RankScope::new(2);
+    let third = RankScope::new(3);
+    let second_call =
+        admit_in_background(&scheduler, ranked(InferencePriority::Background, &second));
+    let third_call = admit_in_background(&scheduler, ranked(InferencePriority::Background, &third));
+    settle().await;
+    assert!(!second_call.is_finished() && !third_call.is_finished());
+
+    drop(first);
+    drop(admitted(second_call).await);
+    settle().await;
+    assert!(!third_call.is_finished(), "rank 2 is the head now");
+
+    drop(second);
+    let _permit = admitted(third_call).await;
+}
+
+#[tokio::test]
+async fn a_rank_that_ended_before_the_request_arrived_reserves_nothing() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(1),
+    ));
+    drop(seen(&scheduler, 1).await);
+    let later = RankScope::new(2);
+    let permit = scheduler
+        .admit(ranked(InferencePriority::Background, &later), None)
+        .await
+        .unwrap();
+    drop(permit);
+}
+
+#[tokio::test]
+async fn a_cancelled_waiting_ranked_request_leaves_with_an_error() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(1),
+    ));
+    let _head = seen(&scheduler, 1).await;
+    let later = RankScope::new(2);
+    let cancel = CancellationToken::new();
+    let waiting = {
+        let scheduler = Arc::clone(&scheduler);
+        let cancel = cancel.clone();
+        let request = ranked(InferencePriority::Background, &later);
+        tokio::spawn(async move { scheduler.admit(request, Some(&cancel)).await.map(|_| ()) })
+    };
+    settle().await;
+    assert_eq!(scheduler.queued(), 1);
+    cancel.cancel();
+    let result = tokio::time::timeout(Duration::from_secs(1), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        cancelled_error().to_string()
+    );
+    assert_eq!(scheduler.queued(), 0);
 }

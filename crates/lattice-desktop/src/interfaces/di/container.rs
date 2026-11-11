@@ -30,7 +30,7 @@ use lattice_core::application::ports::EmbeddingPort as EmbeddingServiceTrait;
 use lattice_core::application::ports::SettingsSideEffectsPort;
 use lattice_core::shared::constants::WEB_REQUEST_TIMEOUT;
 use lattice_core::shared::error::Result;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -209,7 +209,7 @@ impl Container {
     ///
     /// **Architecture**: Layer 0 (raw params) → Layer 1 (CoreModule) → Layer 2 (Features)
     pub async fn new(
-        db_pool: SqlitePool,
+        database: Database,
         db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
         app_handle: Option<tauri::AppHandle>,
         llm_endpoint: &str,
@@ -271,7 +271,7 @@ impl Container {
         // Stack frame for this construction is freed before Layer 2 begins
         let core = Arc::new(
             super::modules::CoreModule::new(
-                db_pool.clone(),
+                database.clone(),
                 db_conn.clone(),
                 data_dir.clone(),
                 background,
@@ -285,7 +285,7 @@ impl Container {
 
         let system = Arc::new(
             super::modules::SystemModule::new(
-                db_pool.clone(),
+                database.clone(),
                 core.clone(),
                 Arc::clone(&backend_devices),
             )
@@ -295,7 +295,7 @@ impl Container {
 
         let search = Arc::new(
             super::modules::SearchModule::new(
-                db_pool.clone(),
+                database.clone(),
                 core.clone(),
                 embedding_runtime.clone(),
                 embedding_starter.clone(),
@@ -306,12 +306,12 @@ impl Container {
         tracing::debug!("SearchModule initialized");
 
         let library =
-            Arc::new(super::modules::LibraryModule::new(db_pool.clone(), core.clone()).await?);
+            Arc::new(super::modules::LibraryModule::new(database.clone(), core.clone()).await?);
         tracing::debug!("LibraryModule initialized");
 
         let file_ops = Arc::new(
             super::modules::FileOpsModule::new(
-                db_pool.clone(),
+                database.clone(),
                 core.clone(),
                 extraction_workers.clone(),
             )
@@ -321,7 +321,7 @@ impl Container {
 
         let ai = Arc::new(
             super::modules::AIModule::new(
-                db_pool.clone(),
+                database.clone(),
                 core.clone(),
                 llm_instances.clone(),
                 llm_endpoint,
@@ -335,7 +335,7 @@ impl Container {
         let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
         let indexing = Arc::new(
             super::modules::IndexingModule::new(
-                db_pool,
+                database,
                 core.clone(),
                 embedding_runtime.clone(),
                 search.vector_search().clone(),
@@ -412,7 +412,7 @@ impl Container {
         let vault_writer = crate::features::vault::writeback::start_vault_writer(
             Arc::clone(system.get_settings_use_case()),
             vault_write_suppression.clone(),
-            core.db_pool().clone(),
+            core.database().clone(),
             core.background(),
         );
 
@@ -421,23 +421,23 @@ impl Container {
                 llm_instances: llm_instances.clone(),
                 function_executor: function_executor.clone(),
                 settings_repository: system.settings_repo().clone(),
-                db_pool: core.db_pool().clone(),
+                database: core.database().clone(),
                 vault_writer: vault_writer.clone(),
                 web_service: Arc::clone(&web_service),
                 credentials: Arc::clone(core.credentials()),
             });
 
-        let jobs = lattice_core::shared::runtime::jobs::JobRuntime::new(core.db_pool().clone());
+        let jobs = lattice_core::shared::runtime::jobs::JobRuntime::new(core.database().clone());
         let web_snapshot_events = Arc::new(crate::features::web::snapshots::AppEvents::default());
         let web_page_snapshots = crate::features::web::di::build_page_snapshots(
-            core.db_pool().clone(),
+            core.database().clone(),
             Arc::clone(&jobs),
             Arc::clone(&web_snapshot_events),
             Arc::clone(core.background()),
             Arc::clone(&sweep_gate),
         )?;
         let chat_images = crate::features::web::di::build_chat_images(
-            core.db_pool().clone(),
+            core.database().clone(),
             Arc::clone(&web_service),
             Arc::clone(core.background()),
             Arc::clone(&sweep_gate),
@@ -556,7 +556,7 @@ impl Container {
         // Watcher reads settings once and exits if disabled.
         crate::features::vault::watcher::start_vault_watcher(
             Arc::clone(self.system.get_settings_use_case()),
-            self.core.db_pool().clone(),
+            self.core.database().clone(),
             handle.clone(),
             self.vault_write_suppression.clone(),
             Arc::clone(self.core.background()),
@@ -606,7 +606,7 @@ impl Container {
         self.course_indexes = Some(
             crate::features::learning::references::course_index::CourseIndexes::new(
                 self.core.data_dir().join("course-index"),
-                self.core.db_pool().clone(),
+                self.core.database().clone(),
                 embedders,
                 searches,
                 Arc::clone(&self.jobs),

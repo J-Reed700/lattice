@@ -1,12 +1,14 @@
 //! Documents linked to a conversation, and the space memberships they imply.
 
 use super::ConversationRepository;
-use crate::features::conversation::persistence_mapper::{
+use crate::features::conversation::repository::mapper::{
     DocumentReferenceMapper, DocumentReferenceModel,
 };
 use chrono::Utc;
 use lattice_core::domain::conversation::DocumentReference;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
+use sqlx::SqliteConnection;
 
 impl ConversationRepository {
     pub async fn add_document_reference(
@@ -20,7 +22,7 @@ impl ConversationRepository {
 
         // Both inserts commit together, so a document linked to the conversation
         // is always also a member of its space.
-        let mut tx = self.pool.begin().await.map_err(|e| {
+        let mut tx = self.pool.begin_write().await.map_err(|e| {
             AppError::Database(format!(
                 "Failed to open tx for add_document_reference: {}",
                 e
@@ -78,19 +80,30 @@ impl ConversationRepository {
         &self,
         conversation_id: &str,
     ) -> Result<Vec<DocumentReference>> {
-        let db_models = sqlx::query_as::<_, DocumentReferenceModel>(
-            r#"
+        let mut connection =
+            self.pool.acquire().await.map_err(|e| {
+                AppError::Database(format!("Failed to get document references: {}", e))
+            })?;
+        document_references_of(&mut connection, conversation_id).await
+    }
+}
+
+pub(super) async fn document_references_of(
+    connection: &mut SqliteConnection,
+    conversation_id: &str,
+) -> Result<Vec<DocumentReference>> {
+    let db_models = sqlx::query_as::<_, DocumentReferenceModel>(
+        r#"
             SELECT document_id, chunk_id, relevance_score, added_at
             FROM conversation_documents
             WHERE conversation_id = ?
             ORDER BY added_at ASC
             "#,
-        )
-        .bind(conversation_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to get document references: {}", e)))?;
+    )
+    .bind(conversation_id)
+    .fetch_all(connection)
+    .await
+    .map_err(|e| AppError::Database(format!("Failed to get document references: {}", e)))?;
 
-        Ok(DocumentReferenceMapper::to_entities(&db_models))
-    }
+    Ok(DocumentReferenceMapper::to_entities(&db_models))
 }

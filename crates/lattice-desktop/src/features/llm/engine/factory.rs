@@ -10,14 +10,16 @@ use crate::features::llm::engine::gguf_metadata::GgufModelInfo;
 use crate::features::llm::engine::models::ModelFormat;
 #[cfg(test)]
 use crate::features::llm::engine::models::{ModelFamily, Quantization};
-use crate::features::llm::engine::sidecar_manager::{SidecarConfig, SpeculativeDecoding};
+use crate::features::llm::engine::sidecar_manager::{
+    memory_hint, SidecarConfig, SpeculativeDecoding,
+};
 use crate::features::llm::engine::system::{BackendDevices, SystemCapabilities};
 use crate::features::llm::engine::types::LLMError;
 use crate::features::llm::engine::vision::local_vision;
 #[cfg(test)]
 use crate::features::llm::engine::ModelInfo;
 use crate::features::llm::engine::{GenerationConfig, OllamaClient};
-use crate::features::llm::scheduler::{ScheduledLlm, SchedulerRegistry};
+use crate::features::llm::scheduler::SchedulerRegistry;
 use lattice_core::application::contracts::settings::{
     LLMSettingsDto, ModelWindowDto, SpeculativeDecodingDto,
 };
@@ -220,9 +222,7 @@ async fn create_local_llm_sidecar(
     schedulers: &SchedulerRegistry,
     devices: &BackendDevices,
 ) -> std::result::Result<CreatedLlm, LLMError> {
-    use crate::features::llm::engine::sidecar_manager::{
-        memory_hint, SidecarManager, SidecarRegistry,
-    };
+    use crate::features::llm::engine::sidecar_manager::{SidecarManager, SidecarRegistry};
     use crate::features::llm::engine::system::detect_capabilities_with_app;
     use tauri::Manager;
 
@@ -254,13 +254,28 @@ async fn create_local_llm_sidecar(
     );
 
     // Leave room for servers other models already hold on the GPU.
-    let other_models_bytes = app
-        .try_state::<SidecarRegistry>()
+    let registry = app.try_state::<SidecarRegistry>();
+    let other_models_bytes = registry
+        .as_ref()
         .map_or(0, |registry| registry.other_models_gpu_bytes(model_path));
     let gguf_info = crate::features::llm::engine::gguf_metadata::read_model_info(model_path);
-    let Some(window) = launch_window(server, gguf_info.as_ref()) else {
+    let Some(config) = starting_config(
+        model_path,
+        n_gpu_layers,
+        server,
+        &capabilities,
+        gguf_info.as_ref(),
+        other_models_bytes,
+    ) else {
         return Err(no_trained_length(model_path));
     };
+    // The server already running for this model is shared, whatever window
+    // it was fitted to while the memory was free.
+    let config = registry
+        .as_ref()
+        .and_then(|registry| registry.running_alike(&config))
+        .unwrap_or(config);
+    let window = config.context_size;
     if let Some(trained) = gguf_info
         .as_ref()
         .and_then(|info| info.trained_context_length)
@@ -273,16 +288,8 @@ async fn create_local_llm_sidecar(
              llama.cpp will extend it by rope scaling, which costs quality"
         );
     }
-    let config = sidecar_config(
-        model_path,
-        n_gpu_layers,
-        window,
-        server,
-        &capabilities,
-        gguf_info.as_ref(),
-    );
 
-    // Said, never acted on: the window is the user's to change.
+    // A saved window is the user's: said, never changed.
     let hint = memory_hint(
         &config,
         &capabilities,
@@ -374,9 +381,10 @@ fn no_trained_length(model_path: &Path) -> LLMError {
     ))
 }
 
-/// The window a bundled server of a model is launched with: the one the user
-/// saved, else the one the model's header, `gguf_info`, says it was trained
-/// for. Lattice never picks one of its own. `None` when neither is known.
+/// The window a bundled server of a model is launched with before the
+/// machine's memory is considered: the one the user saved, else the one the
+/// model's header, `gguf_info`, says it was trained for. `None` when neither
+/// is known.
 pub(crate) fn launch_window(
     server: LocalServerOptions,
     gguf_info: Option<&GgufModelInfo>,
@@ -385,6 +393,51 @@ pub(crate) fn launch_window(
         .context_window
         .filter(|window| *window > 0)
         .or_else(|| gguf_info.and_then(|info| info.trained_context_length))
+}
+
+/// The server `model_path` is started as, window included. A window the user
+/// saved is used as it is. With none saved, the window is the largest the
+/// memory hint says fits beside `other_models_bytes` held on the GPU, up to
+/// the trained length; where the hint cannot say, or not even the weights
+/// fit, it is the trained length. A GPU server also carries the window its
+/// CPU attempt is fitted to in system RAM. `None` when no window is known.
+///
+/// Admission prices a server with this before it is started, so it must
+/// arrive at exactly the configuration the start does.
+pub(crate) fn starting_config(
+    model_path: &Path,
+    n_gpu_layers: i32,
+    server: LocalServerOptions,
+    capabilities: &SystemCapabilities,
+    gguf_info: Option<&GgufModelInfo>,
+    other_models_bytes: u64,
+) -> Option<SidecarConfig> {
+    let window = launch_window(server, gguf_info)?;
+    let mut config = sidecar_config(
+        model_path,
+        n_gpu_layers,
+        window,
+        server,
+        capabilities,
+        gguf_info,
+    );
+    if server.context_window.is_some_and(|saved| saved > 0) {
+        return Some(config);
+    }
+    config.auto_window = true;
+    let fitted_below_trained = |config: &SidecarConfig, held: u64| {
+        memory_hint(config, capabilities, held, gguf_info)
+            .and_then(|hint| hint.fits_window)
+            .filter(|fits| (1..window).contains(fits))
+    };
+    if let Some(fits) = fitted_below_trained(&config, other_models_bytes) {
+        config.context_size = fits;
+    }
+    if config.n_gpu_layers > 0 {
+        let cpu = fitted_below_trained(&config.without_gpu_offload(), 0).unwrap_or(window);
+        config.cpu_context_size = (cpu != config.context_size).then_some(cpu);
+    }
+    Some(config)
 }
 
 /// The server `model_path` is started as: `window` tokens, offloaded as
@@ -508,7 +561,6 @@ pub(crate) async fn create_ollama_llm(
         }
     })?;
 
-    let output_limit = u32::try_from(generation_config.max_tokens).unwrap_or(u32::MAX);
     let client = client
         .with_generation_config(generation_config)
         .with_vision(vision);
@@ -529,15 +581,7 @@ pub(crate) async fn create_ollama_llm(
     let client = client.with_context_window(window);
 
     info!("Ollama LLM client created successfully");
-    let scheduler = schedulers.ollama(
-        endpoint,
-        crate::features::llm::engine::ollama_client::ollama_max_concurrency(),
-    );
-    Ok(Arc::new(ScheduledLlm::new(
-        Arc::new(client),
-        scheduler,
-        output_limit,
-    )))
+    Ok(client.schedule(schedulers))
 }
 
 /// Infer model information from file path.

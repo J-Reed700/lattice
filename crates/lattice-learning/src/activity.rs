@@ -9,15 +9,19 @@ use async_trait::async_trait;
 use lattice_core::application::ports::{
     ActivityItem, ActivityProgress, ActivityResource, ActivitySource, ActivityState, ActivityTarget,
 };
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobRecord, JobRuntime, JobStatus};
-use lattice_core::shared::{AppError, Result};
-use sqlx::{Row, SqlitePool};
+use lattice_core::shared::Result;
+pub(crate) use repository::course_titles;
+use repository::lesson_titles;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+mod repository;
+
 /// Learning's live work, read from its jobs, its tables and its outline runs.
 pub struct LearningActivity {
-    pool: SqlitePool,
+    database: Database,
     jobs: Arc<JobRuntime>,
     courses: Option<Arc<CourseIndexes>>,
     outlines: OutlineRunRegistry,
@@ -25,13 +29,13 @@ pub struct LearningActivity {
 
 impl LearningActivity {
     pub fn new(
-        pool: SqlitePool,
+        database: Database,
         jobs: Arc<JobRuntime>,
         courses: Option<Arc<CourseIndexes>>,
         outlines: OutlineRunRegistry,
     ) -> Self {
         Self {
-            pool,
+            database,
             jobs,
             courses,
             outlines,
@@ -59,9 +63,9 @@ impl ActivitySource for LearningActivity {
         };
         programs.sort();
         programs.dedup();
-        let titles = course_titles(&self.pool, &programs).await?;
+        let titles = course_titles(&self.database, &programs).await?;
         let lesson_ids: Vec<String> = lessons.iter().flat_map(requested_lessons).collect();
-        let lesson_titles = lesson_titles(&self.pool, &lesson_ids).await?;
+        let lesson_titles = lesson_titles(&self.database, &lesson_ids).await?;
 
         let mut items: Vec<ActivityItem> = lessons
             .iter()
@@ -75,44 +79,6 @@ impl ActivitySource for LearningActivity {
         );
         Ok(items)
     }
-}
-
-/// The titles of `programs` by id; a course deleted meanwhile is left out.
-pub(crate) async fn course_titles(
-    pool: &SqlitePool,
-    programs: &[String],
-) -> Result<HashMap<String, String>> {
-    titles(
-        pool,
-        "SELECT id, title FROM learning_programs WHERE id IN (SELECT value FROM json_each(?))",
-        programs,
-    )
-    .await
-}
-
-async fn lesson_titles(pool: &SqlitePool, lessons: &[String]) -> Result<HashMap<String, String>> {
-    titles(
-        pool,
-        "SELECT id, title FROM learning_lessons WHERE id IN (SELECT value FROM json_each(?))",
-        lessons,
-    )
-    .await
-}
-
-async fn titles(pool: &SqlitePool, sql: &str, ids: &[String]) -> Result<HashMap<String, String>> {
-    if ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let ids = serde_json::to_string(ids).map_err(|e| AppError::Serialization(e.to_string()))?;
-    let rows = sqlx::query(sql)
-        .bind(ids)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    Ok(rows
-        .iter()
-        .map(|row| (row.get::<String, _>("id"), row.get::<String, _>("title")))
-        .collect())
 }
 
 /// The lessons a preparation job was asked for, in order.
@@ -322,6 +288,7 @@ mod tests {
             started_at: Some(0),
             finished_at: None,
             heartbeat_at: None,
+            rank: None,
         }
     }
 

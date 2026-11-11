@@ -1,0 +1,220 @@
+//! Resumable preparation of a new vector space. Existing vectors remain untouched.
+use crate::infrastructure::persistence::repositories::embedding::generation::{
+    chunk_page_after, content_hash, is_prepared, store_prepared,
+};
+use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
+
+/// Reuses completed work only when both model artifacts and source content match.
+/// A passage the new model's window cannot take in one pass is represented by
+/// a normalized, length-weighted mean of its segments, preserving existing
+/// chunk IDs and citation anchors.
+///
+/// The text embedded is `contextualized_content` — the context prefix plus the
+/// chunk, exactly what the indexer embedded — so the prefix never has to be
+/// rebuilt from the document row here.
+pub async fn prepare(database: &Database, model: &dyn EmbeddingPort) -> Result<usize> {
+    let identity = model.model_identity();
+    let mut cursor = String::new();
+    let mut completed = 0;
+    loop {
+        let rows = chunk_page_after(database, &cursor).await?;
+        if rows.is_empty() {
+            break;
+        }
+        for (id, text) in rows {
+            cursor = id.clone();
+            let hash = content_hash(&text);
+            if is_prepared(database, &identity, &id, &hash, model.dimension()).await? {
+                completed += 1;
+                continue;
+            }
+            // Not `split_text`: that sizes to the chunk target, and a stored
+            // chunk already fills the target *plus* its context prefix, so it
+            // would cut nearly every full chunk in two and store an average.
+            let parts = model.window_parts(&text)?;
+            if parts.is_empty() {
+                continue;
+            }
+            let inputs: Vec<String> = parts.iter().map(|p| p.text.clone()).collect();
+            let vectors = model.embed_batch(&inputs).await?;
+            if vectors.len() != parts.len() {
+                return Err(AppError::InvalidState(
+                    "Embedding batch was incomplete".into(),
+                ));
+            }
+            let mut combined = vec![0.0f32; model.dimension()];
+            for (part, vector) in parts.iter().zip(vectors) {
+                if vector.len() != combined.len() || vector.iter().any(|v| !v.is_finite()) {
+                    return Err(AppError::InvalidState(
+                        "Invalid embedding during migration".into(),
+                    ));
+                }
+                let weight = part.token_count.max(1) as f32;
+                for (out, value) in combined.iter_mut().zip(vector) {
+                    *out += weight * value;
+                }
+            }
+            let norm = combined.iter().map(|v| v * v).sum::<f32>().sqrt();
+            if !norm.is_finite() || norm <= 0.0 {
+                return Err(AppError::InvalidState(
+                    "Zero or non-finite embedding during migration".into(),
+                ));
+            }
+            for value in &mut combined {
+                *value /= norm;
+            }
+            // The source may have been deleted or edited while inference ran.
+            store_prepared(database, &identity, &hash, &combined, &id, &text).await?;
+            completed += 1;
+        }
+        tracing::info!(completed, model_identity = %identity, "Preparing embedding generation");
+    }
+    Ok(completed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::infrastructure::persistence::repositories::embedding::generation::restore;
+    use lattice_core::application::ports::embedding_port::EmbeddingTextChunk;
+    use sqlx::SqlitePool;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Model {
+        identity: &'static str,
+        calls: AtomicUsize,
+        fail_at: usize,
+        split_batches: AtomicUsize,
+    }
+    fn part(text: &str, start: usize) -> EmbeddingTextChunk {
+        EmbeddingTextChunk {
+            text: text.to_owned(),
+            start,
+            end: start + text.len(),
+            token_count: text.len(),
+        }
+    }
+    impl Model {
+        fn new(identity: &'static str, fail_at: usize) -> Self {
+            Self {
+                identity,
+                calls: AtomicUsize::new(0),
+                fail_at,
+                split_batches: AtomicUsize::new(0),
+            }
+        }
+    }
+    #[async_trait::async_trait]
+    impl EmbeddingPort for Model {
+        fn model_identity(&self) -> String {
+            self.identity.into()
+        }
+        fn dimension(&self) -> usize {
+            2
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+        async fn embed_single(&self, _: &str) -> Result<Vec<f32>> {
+            Ok(vec![1.0, 0.0])
+        }
+        /// A chunk-target split that always halves, as the real one does for a
+        /// stored chunk that carries its context prefix.
+        fn split_text(&self, text: &str, _: &str) -> Result<Vec<EmbeddingTextChunk>> {
+            let mid = text.len() / 2;
+            Ok(vec![part(&text[..mid], 0), part(&text[mid..], mid)])
+        }
+        /// A window of eight bytes.
+        fn window_parts(&self, text: &str) -> Result<Vec<EmbeddingTextChunk>> {
+            if text.len() > 8 {
+                self.split_text(text, "")
+            } else {
+                Ok(vec![part(text, 0)])
+            }
+        }
+        async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            if texts.len() > 1 {
+                self.split_batches.fetch_add(1, Ordering::SeqCst);
+            }
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            if call == self.fail_at {
+                return Err(AppError::InvalidState("injected interruption".into()));
+            }
+            Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+        }
+    }
+    async fn database() -> SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE text_chunks (id TEXT PRIMARY KEY, content TEXT, contextualized_content TEXT, document_id TEXT)").execute(&pool).await.unwrap();
+        sqlx::query("CREATE TABLE text_embeddings (chunk_id TEXT, model_name TEXT, dimension INTEGER, embedding BLOB)").execute(&pool).await.unwrap();
+        sqlx::query("CREATE TABLE embedding_generation_vectors (model_identity TEXT NOT NULL, chunk_id TEXT NOT NULL REFERENCES text_chunks(id) ON DELETE CASCADE, content_hash TEXT NOT NULL, embedding BLOB NOT NULL, dimension INTEGER NOT NULL, PRIMARY KEY(model_identity, chunk_id))").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO text_chunks VALUES ('a', 'alpha', NULL, 'doc'), ('b', 'beta', NULL, 'doc')").execute(&pool).await.unwrap();
+        pool
+    }
+    #[tokio::test]
+    async fn interrupted_generation_resumes_and_never_restores_another_vector_space() {
+        let pool = database().await;
+        let first = Model::new("new", 1);
+        assert!(prepare(&Database::from(pool.clone()), &first)
+            .await
+            .is_err());
+        let resumed = Model::new("new", usize::MAX);
+        assert_eq!(
+            prepare(&Database::from(pool.clone()), &resumed)
+                .await
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            resumed.calls.load(Ordering::SeqCst),
+            1,
+            "completed source must not be recomputed"
+        );
+        assert_eq!(restore(&pool, "new", 2).await.unwrap().len(), 2);
+        assert!(restore(&pool, "old-same-dimension", 2)
+            .await
+            .unwrap()
+            .is_empty());
+        sqlx::query("UPDATE text_chunks SET content = 'changed' WHERE id = 'a'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            restore(&pool, "new", 2).await.unwrap().len(),
+            1,
+            "stale source must not reuse its old vector"
+        );
+        prepare(&Database::from(pool.clone()), &resumed)
+            .await
+            .unwrap();
+        assert_eq!(resumed.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(restore(&pool, "new", 2).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_stored_chunk_that_fits_the_window_is_embedded_whole() {
+        let pool = database().await;
+        sqlx::query(
+            "INSERT INTO text_chunks VALUES ('c', 'a much longer stored chunk', NULL, 'doc')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let model = Model::new("new", usize::MAX);
+        assert_eq!(
+            prepare(&Database::from(pool.clone()), &model)
+                .await
+                .unwrap(),
+            3
+        );
+        // 'alpha' and 'beta' fit the window and go in one piece; only the
+        // chunk past the window is split.
+        assert_eq!(model.calls.load(Ordering::SeqCst), 3);
+        assert_eq!(model.split_batches.load(Ordering::SeqCst), 1);
+    }
+}

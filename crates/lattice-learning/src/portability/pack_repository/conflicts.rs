@@ -21,6 +21,7 @@ use crate::{
     },
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::driver::DriverPool;
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::{borrow::Cow, collections::HashSet};
 
@@ -151,11 +152,12 @@ impl IdClaim {
 /// the course itself, then every record another course owns. A copy remaps
 /// every identifier, so its claims are read for validation only.
 pub(super) async fn scan(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program: &LearningProgramDto,
     policy: LearningPackConflictPolicy,
     checked: CheckedPack,
 ) -> Result<PreviewRecord> {
+    let pool = pool.sqlx_pool();
     let id = &program.summary.id;
     let local_title: Option<String> =
         sqlx::query_scalar("SELECT title FROM learning_programs WHERE id=?")
@@ -272,18 +274,20 @@ fn schema_conflict(pack: &DecodedLearningPack, local_schema: i64) -> Result<Opti
 
 /// The blocked preview of a pack written by another build, if it is one.
 pub(super) async fn schema_mismatch(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     pack: &DecodedLearningPack,
 ) -> Result<Option<PreviewRecord>> {
+    let pool = pool.sqlx_pool();
     let local = super::guards::schema_version(&mut *pool.acquire().await.map_err(db)?).await?;
     schema_conflict(pack, local)
 }
 
 /// Apply checks the stamp again: a preview never authorizes changed data.
 pub(super) async fn require_same_schema(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     pack: &DecodedLearningPack,
 ) -> Result<()> {
+    let pool = pool.sqlx_pool();
     match schema_mismatch(pool, pack).await? {
         Some(mut blocked) => Err(invalid(
             blocked

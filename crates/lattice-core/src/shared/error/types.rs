@@ -359,6 +359,22 @@ impl AppError {
         }
     }
 
+    /// Whether another connection kept this attempt out of the database:
+    /// SQLite's busy and locked errors, or a connection pool that timed out.
+    pub fn is_database_busy(&self) -> bool {
+        match self {
+            AppError::Database(message) => {
+                message.contains("database is locked")
+                    || message.contains("database table is locked")
+            }
+            AppError::ServiceNotAvailable(message) => {
+                message.contains("database is temporarily busy")
+                    || message.contains("Passage index: busy")
+            }
+            _ => false,
+        }
+    }
+
     /// Whether a web server's error status says to try again later: too many
     /// requests, or a gateway or service that is down or busy. Any other
     /// status is the server's settled answer.

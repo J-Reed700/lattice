@@ -2,6 +2,50 @@
 
 use super::*;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
+
+#[derive(sqlx::FromRow)]
+struct TangentRow {
+    conversation_id: String,
+    program_id: String,
+    program_title: String,
+    space_id: String,
+    module_id: String,
+    module_title: String,
+    lesson_id: String,
+    lesson_title: String,
+    section_index: Option<i64>,
+    section_title: Option<String>,
+    selected_text: String,
+    title: String,
+    created_at: i64,
+    updated_at: String,
+    message_count: i64,
+    context_message_count: i64,
+}
+
+impl From<TangentRow> for LearningTangentDto {
+    fn from(row: TangentRow) -> Self {
+        Self {
+            conversation_id: row.conversation_id,
+            program_id: row.program_id,
+            program_title: row.program_title,
+            space_id: row.space_id,
+            module_id: row.module_id,
+            module_title: row.module_title,
+            lesson_id: row.lesson_id,
+            lesson_title: row.lesson_title,
+            section_index: row.section_index,
+            section_title: row.section_title,
+            selected_text: row.selected_text,
+            title: row.title,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            message_count: row.message_count,
+            context_message_count: row.context_message_count,
+        }
+    }
+}
 
 impl LearningRepository {
     pub async fn create_tangent(
@@ -16,7 +60,7 @@ impl LearningRepository {
             ));
         }
 
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
 
         #[derive(sqlx::FromRow)]
         struct ProgramRow {
@@ -395,70 +439,39 @@ impl LearningRepository {
 
     pub async fn list_tangents(&self, program_id: Option<&str>) -> Result<Vec<LearningTangentDto>> {
         let pid = program_id.map(str::trim).filter(|s| !s.is_empty());
-        if let Some(pid) = pid {
-            sqlx::query_as::<_, LearningTangentDto>(
-                r#"
-                SELECT
-                    lt.conversation_id,
-                    lt.program_id,
-                    p.title AS program_title,
-                    COALESCE(c.space_id, 'space_learning_' || lt.program_id) AS space_id,
-                    lt.module_id,
-                    m.title AS module_title,
-                    lt.lesson_id,
-                    l.title AS lesson_title,
-                    lt.section_index,
-                    lt.section_title,
-                    lt.selected_text,
-                    c.title,
-                    lt.created_at,
-                    c.updated_at,
-                    c.message_count,
-                    lt.context_message_count
-                FROM learning_tangents lt
-                INNER JOIN conversations c ON c.id = lt.conversation_id
-                INNER JOIN learning_programs p ON p.id = lt.program_id
-                INNER JOIN learning_modules m ON m.id = lt.module_id AND m.program_id = lt.program_id
-                INNER JOIN learning_lessons l ON l.id = lt.lesson_id AND l.program_id = lt.program_id
-                WHERE lt.program_id = ?
-                ORDER BY c.updated_at DESC, lt.created_at DESC
-                "#,
-            )
-            .bind(pid)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)
-        } else {
-            sqlx::query_as::<_, LearningTangentDto>(
-                r#"
-                SELECT
-                    lt.conversation_id,
-                    lt.program_id,
-                    p.title AS program_title,
-                    COALESCE(c.space_id, 'space_learning_' || lt.program_id) AS space_id,
-                    lt.module_id,
-                    m.title AS module_title,
-                    lt.lesson_id,
-                    l.title AS lesson_title,
-                    lt.section_index,
-                    lt.section_title,
-                    lt.selected_text,
-                    c.title,
-                    lt.created_at,
-                    c.updated_at,
-                    c.message_count,
-                    lt.context_message_count
-                FROM learning_tangents lt
-                INNER JOIN conversations c ON c.id = lt.conversation_id
-                INNER JOIN learning_programs p ON p.id = lt.program_id
-                INNER JOIN learning_modules m ON m.id = lt.module_id AND m.program_id = lt.program_id
-                INNER JOIN learning_lessons l ON l.id = lt.lesson_id AND l.program_id = lt.program_id
-                ORDER BY c.updated_at DESC, lt.created_at DESC
-                "#,
-            )
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)
-        }
+        let rows = sqlx::query_as::<_, TangentRow>(
+            r#"
+            SELECT
+                lt.conversation_id,
+                lt.program_id,
+                p.title AS program_title,
+                COALESCE(c.space_id, 'space_learning_' || lt.program_id) AS space_id,
+                lt.module_id,
+                m.title AS module_title,
+                lt.lesson_id,
+                l.title AS lesson_title,
+                lt.section_index,
+                lt.section_title,
+                lt.selected_text,
+                c.title,
+                lt.created_at,
+                c.updated_at,
+                c.message_count,
+                lt.context_message_count
+            FROM learning_tangents lt
+            INNER JOIN conversations c ON c.id = lt.conversation_id
+            INNER JOIN learning_programs p ON p.id = lt.program_id
+            INNER JOIN learning_modules m ON m.id = lt.module_id AND m.program_id = lt.program_id
+            INNER JOIN learning_lessons l ON l.id = lt.lesson_id AND l.program_id = lt.program_id
+            WHERE (? IS NULL OR lt.program_id = ?)
+            ORDER BY c.updated_at DESC, lt.created_at DESC
+            "#,
+        )
+        .bind(pid)
+        .bind(pid)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db)?;
+        Ok(rows.into_iter().map(LearningTangentDto::from).collect())
     }
 }

@@ -571,7 +571,8 @@ impl RoleModels {
 
     /// The window `local` would launch with below `floor`, when that is
     /// known before loading it: the one saved in Settings → Downloaded, else the
-    /// one the model was trained for.
+    /// one the model was trained for. A window fitted to the machine's memory
+    /// is known only once the server runs.
     fn window_short_of(
         &self,
         floor: u32,

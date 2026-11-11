@@ -1,12 +1,15 @@
 use super::*;
+use crate::features::conversation::repository::space_rows::ConversationJournalRow;
+use lattice_core::shared::persistence::Transactions;
+use sqlx::SqliteConnection;
 
 pub(super) async fn ensure_journal_space(
-    pool: &SqlitePool,
+    connection: &mut SqliteConnection,
     journal_space_id: &str,
 ) -> Result<(), AppError> {
     let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM journals WHERE id = ?")
         .bind(journal_space_id)
-        .fetch_one(pool)
+        .fetch_one(connection)
         .await
         .map_err(|e| AppError::Database(format!("Failed to verify journal: {}", e)))?;
 
@@ -44,6 +47,11 @@ impl ConversationRepository {
         let id = format!("journal_{}", uuid::Uuid::new_v4().simple());
         let now = Utc::now().to_rfc3339();
 
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         sqlx::query(
             r#"
         INSERT INTO journals (
@@ -61,11 +69,11 @@ impl ConversationRepository {
         .bind(tool_preferences_json)
         .bind(&now)
         .bind(&now)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to create journal: {}", e)))?;
 
-        let created = sqlx::query_as::<_, ConversationJournalDto>(
+        let created = sqlx::query_as::<_, ConversationJournalRow>(
             r#"
         SELECT
             id, name, description, icon, accent_color, space_prompt,
@@ -75,15 +83,19 @@ impl ConversationRepository {
         "#,
         )
         .bind(&id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to fetch created journal: {}", e)))?;
 
-        Ok(created)
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
+
+        Ok(created.into())
     }
 
     pub async fn list_journals(&self) -> Result<Vec<ConversationJournalDto>, AppError> {
-        let journals = sqlx::query_as::<_, ConversationJournalDto>(
+        let journals = sqlx::query_as::<_, ConversationJournalRow>(
             r#"
         SELECT
             id, name, description, icon, accent_color, space_prompt,
@@ -96,7 +108,7 @@ impl ConversationRepository {
         .await
         .map_err(|e| AppError::Database(format!("Failed to list journals: {}", e)))?;
 
-        Ok(journals)
+        Ok(journals.into_iter().map(Into::into).collect())
     }
 
     pub async fn update_journal(
@@ -106,6 +118,11 @@ impl ConversationRepository {
         let now = Utc::now().to_rfc3339();
         let is_archived: Option<i64> = request.is_archived.map(|v| if v { 1 } else { 0 });
 
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         let result = sqlx::query(
             r#"
         UPDATE journals
@@ -132,7 +149,7 @@ impl ConversationRepository {
         .bind(request.sort_order)
         .bind(&now)
         .bind(&request.journal_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to update journal: {}", e)))?;
 
@@ -143,7 +160,7 @@ impl ConversationRepository {
             )));
         }
 
-        let updated = sqlx::query_as::<_, ConversationJournalDto>(
+        let updated = sqlx::query_as::<_, ConversationJournalRow>(
             r#"
         SELECT
             id, name, description, icon, accent_color, space_prompt,
@@ -153,11 +170,15 @@ impl ConversationRepository {
         "#,
         )
         .bind(&request.journal_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to fetch updated journal: {}", e)))?;
 
-        Ok(updated)
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
+
+        Ok(updated.into())
     }
 
     pub async fn archive_journal(
@@ -243,12 +264,17 @@ impl ConversationRepository {
             ));
         }
 
-        ensure_journal_space(&self.pool, journal_space_id).await?;
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
+        ensure_journal_space(&mut tx, journal_space_id).await?;
 
         let conversation_exists: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE id = ?")
                 .bind(conversation_id)
-                .fetch_one(&self.pool)
+                .fetch_one(&mut *tx)
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to verify conversation: {}", e)))?;
 
@@ -268,7 +294,7 @@ impl ConversationRepository {
     .bind(journal_space_id)
     .bind(conversation_id)
     .bind(lattice_core::shared::persistence::timestamps::now_db_timestamp())
-    .execute(&self.pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| {
         AppError::Database(format!(
@@ -276,6 +302,10 @@ impl ConversationRepository {
             e
         ))
     })?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         Ok(RenameConversationResponseDto {
             status: "success".to_string(),
@@ -300,7 +330,12 @@ impl ConversationRepository {
             ));
         }
 
-        ensure_journal_space(&self.pool, journal_space_id).await?;
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
+        ensure_journal_space(&mut tx, journal_space_id).await?;
 
         sqlx::query(
             r#"
@@ -310,11 +345,15 @@ impl ConversationRepository {
         )
         .bind(journal_space_id)
         .bind(conversation_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             AppError::Database(format!("Failed to remove conversation from journal: {}", e))
         })?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         Ok(RenameConversationResponseDto {
             status: "success".to_string(),
@@ -334,7 +373,12 @@ impl ConversationRepository {
                 "journalSpaceId and conversationId are required".to_string(),
             ));
         }
-        ensure_journal_space(&self.pool, journal_space_id).await?;
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
+        ensure_journal_space(&mut tx, journal_space_id).await?;
 
         let result = sqlx::query(
             "UPDATE journal_conversation_entries
@@ -345,7 +389,7 @@ impl ConversationRepository {
         .bind(lattice_core::shared::persistence::timestamps::now_db_timestamp())
         .bind(journal_space_id)
         .bind(conversation_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to pin journal entry: {}", e)))?;
         if result.rows_affected() == 0 {
@@ -354,6 +398,9 @@ impl ConversationRepository {
                 conversation_id, journal_space_id
             )));
         }
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
         Ok(())
     }
 
@@ -363,16 +410,25 @@ impl ConversationRepository {
         journal_space_id: &str,
     ) -> Result<Vec<String>, AppError> {
         let journal_space_id = journal_space_id.trim();
-        ensure_journal_space(&self.pool, journal_space_id).await?;
-        sqlx::query_scalar(
+        let mut tx = self
+            .pool
+            .begin_read()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
+        ensure_journal_space(&mut tx, journal_space_id).await?;
+        let pins = sqlx::query_scalar(
             "SELECT conversation_id FROM journal_conversation_entries
              WHERE journal_space_id = ? AND pinned_at IS NOT NULL
              ORDER BY pinned_at DESC, conversation_id",
         )
         .bind(journal_space_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
-        .map_err(|e| AppError::Database(format!("Failed to list journal pins: {}", e)))
+        .map_err(|e| AppError::Database(format!("Failed to list journal pins: {}", e)))?;
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
+        Ok(pins)
     }
 
     pub async fn list_journal_conversations(
@@ -385,8 +441,6 @@ impl ConversationRepository {
                 "journalSpaceId is required".to_string(),
             ));
         }
-
-        ensure_journal_space(&self.pool, journal_space_id).await?;
 
         let limit = query.limit.unwrap_or(120).clamp(1, 200);
         let offset = query.offset.unwrap_or(0).max(0);
@@ -482,13 +536,22 @@ impl ConversationRepository {
             .push(" OFFSET ")
             .push_bind(offset);
 
+        let mut tx = self
+            .pool
+            .begin_read()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
+        ensure_journal_space(&mut tx, journal_space_id).await?;
         let rows = qb
             .build_query_as::<ConversationExplorerRow>()
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *tx)
             .await
             .map_err(|e| {
                 AppError::Database(format!("Failed to list journal conversations: {}", e))
             })?;
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         let conversations = rows
             .into_iter()

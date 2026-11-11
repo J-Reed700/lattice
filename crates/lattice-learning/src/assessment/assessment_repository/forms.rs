@@ -10,6 +10,7 @@ use crate::persistence::{db, now};
 use crate::quiz_blueprints;
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashMap;
 
@@ -84,7 +85,7 @@ impl LearningAssessmentRepository {
         uuid(&req.form_id, "form")?;
         uuid(&req.operation_id, "operation")?;
         quiz_blueprints::validate_scope(&req.scope)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
         let operation = assessment_operation(
             &req.operation_id,
@@ -94,9 +95,10 @@ impl LearningAssessmentRepository {
             hash,
             "Operation ID was already used for a different quiz.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
+            let form = Self::form_in(&mut tx, &req.form_id).await?;
             tx.commit().await.map_err(db)?;
-            return self.get_form(&req.form_id).await;
+            return Ok(form);
         }
         Self::active_program(&mut tx, &req.program_id).await?;
         if let Some(parent) = req.retake_of_form_id.as_deref() {
@@ -221,14 +223,17 @@ impl LearningAssessmentRepository {
                 sqlx::query("INSERT INTO learning_assessment_form_item_outcomes(form_id,item_ordinal,outcome_id) VALUES(?,?,?)").bind(&req.form_id).bind(ordinal as i64).bind(outcome).execute(&mut *tx).await.map_err(db)?;
             }
         }
-        operation.record(&mut *tx, &req.form_id).await?;
+        operation.record(&mut tx, &req.form_id).await?;
+        let form = Self::form_in(&mut tx, &req.form_id).await?;
         tx.commit().await.map_err(db)?;
-        self.get_form(&req.form_id).await
+        Ok(form)
     }
 
     pub async fn get_form(&self, form_id: &str) -> Result<LearningAssessmentFormDto> {
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        Self::form_in(&mut connection, form_id).await
+        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let form = Self::form_in(&mut read, form_id).await?;
+        read.commit().await.map_err(db)?;
+        Ok(form)
     }
 
     pub(crate) async fn form_in(
@@ -514,7 +519,7 @@ impl LearningAssessmentRepository {
                 "Assistance notes are outside their allowed bounds.",
             ));
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
         let operation = assessment_operation(
             &req.operation_id,
@@ -524,9 +529,10 @@ impl LearningAssessmentRepository {
             hash,
             "Operation ID was reused with a different answer.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
+            let form = Self::form_in(&mut tx, &req.form_id).await?;
             tx.commit().await.map_err(db)?;
-            return self.get_form(&req.form_id).await;
+            return Ok(form);
         }
         Self::active_program(&mut tx, &req.program_id).await?;
         let h = sqlx::query(
@@ -588,9 +594,10 @@ impl LearningAssessmentRepository {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        operation.record(&mut *tx, &req.response.item_id).await?;
+        operation.record(&mut tx, &req.response.item_id).await?;
+        let form = Self::form_in(&mut tx, &req.form_id).await?;
         tx.commit().await.map_err(db)?;
-        self.get_form(&req.form_id).await
+        Ok(form)
     }
 
     pub async fn interrupt(
@@ -601,7 +608,7 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
         let operation = assessment_operation(
             &req.operation_id,
@@ -611,9 +618,10 @@ impl LearningAssessmentRepository {
             hash,
             "Operation ID was reused with different quiz data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
+            let form = Self::form_in(&mut tx, &req.form_id).await?;
             tx.commit().await.map_err(db)?;
-            return self.get_form(&req.form_id).await;
+            return Ok(form);
         }
         Self::active_program(&mut tx, &req.program_id).await?;
         let t = now();
@@ -623,9 +631,10 @@ impl LearningAssessmentRepository {
                 "This quiz changed or is not open; reload and retry.",
             ));
         }
-        operation.record(&mut *tx, &()).await?;
+        operation.record(&mut tx, &()).await?;
+        let form = Self::form_in(&mut tx, &req.form_id).await?;
         tx.commit().await.map_err(db)?;
-        self.get_form(&req.form_id).await
+        Ok(form)
     }
 }
 

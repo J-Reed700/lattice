@@ -1,11 +1,13 @@
 //! Delivers saved jobs to their kind's handler, within the kind's limits.
 use super::arrivals::{poll_once, Arrival, Arrivals};
+use super::rank::{within, RankScope};
 use super::{
     repository::STOPPED_THE_APP, Backoff, Deferral, JobDto, JobFailure, JobKindConfig, JobOutcome,
     JobRecord, JobStatus, JobStore, NewJob, RecoveryPolicy,
 };
 use crate::shared::{
     error::{AppError, Result},
+    persistence::Database,
     runtime::background::BackgroundTasks,
 };
 use async_trait::async_trait;
@@ -282,17 +284,17 @@ pub struct JobRuntime {
 }
 
 impl JobRuntime {
-    pub fn new(pool: sqlx::SqlitePool) -> Arc<Self> {
-        Self::with_poll_interval(pool, POLL)
+    pub fn new(database: Database) -> Arc<Self> {
+        Self::with_poll_interval(database, POLL)
     }
 
     /// The saved pending rows are the outbox. Besides wakeups, the dispatcher
     /// rereads them on this interval, so a missed wakeup, a transient database
     /// error or a deferred job's retry time cannot strand work.
-    pub fn with_poll_interval(pool: sqlx::SqlitePool, poll: Duration) -> Arc<Self> {
+    pub fn with_poll_interval(database: Database, poll: Duration) -> Arc<Self> {
         Arc::new(Self {
             events: Arc::new(Events {
-                store: JobStore::new(pool),
+                store: JobStore::new(database),
                 observer: RwLock::new(None),
             }),
             tasks: BackgroundTasks::default(),
@@ -546,7 +548,12 @@ impl JobRuntime {
             cancel: cancel.clone(),
         };
         let mut panicked = false;
-        let outcome = match std::panic::AssertUnwindSafe(kind.handler.run(&context))
+        let rank = context
+            .job()
+            .rank
+            .filter(|_| kind.config.ranked)
+            .map(RankScope::new);
+        let outcome = match std::panic::AssertUnwindSafe(within(rank, kind.handler.run(&context)))
             .catch_unwind()
             .await
         {

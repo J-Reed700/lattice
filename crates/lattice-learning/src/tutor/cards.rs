@@ -2,7 +2,8 @@
 //! here goes through the Recall tab's own review, into the same FSRS schedule.
 
 use super::course_turn::CourseTurn;
-use crate::persistence::{db, now};
+use super::repository::{assistant_replies, card_due_at, card_to_rate, due_cards, due_count};
+use crate::persistence::now;
 use crate::portability_dto::{
     LearningRecallCardFormat, LearningRecallContentDto, ReviewLearningRecallCardRequestDto,
     SaveLearningRecallCardRequestDto,
@@ -13,21 +14,9 @@ use crate::recall_repository::LearningRecallRepository;
 use crate::source_library::LearningSourceLibraryRepository;
 use futures::TryStreamExt;
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{Row, SqlitePool};
+use lattice_core::shared::persistence::Database;
 use std::collections::VecDeque;
 use std::fmt::Write as _;
-
-/// The cards of `program_id`'s deck due at `at`, as the Recall badge counts them.
-pub(super) async fn due_count(pool: &SqlitePool, program_id: &str, at: i64) -> Result<i64> {
-    sqlx::query_scalar(
-        "SELECT count(*) FROM study_cards c JOIN learning_memory m ON m.deck_id=c.deck_id WHERE m.program_id=? AND c.due_at<=?",
-    )
-    .bind(program_id)
-    .bind(at)
-    .fetch_one(pool)
-    .await
-    .map_err(db)
-}
 
 /// One due card, front only: its answer never reaches the model before the
 /// learner gives theirs.
@@ -84,14 +73,10 @@ fn plain_words(text: &str) -> String {
 
 /// Whether a reply of the chat put `front` to the learner. Newest first, as the
 /// card asked last is the one answered.
-async fn asked_in(pool: &SqlitePool, conversation_id: &str, front: &str) -> Result<bool> {
+async fn asked_in(database: &Database, conversation_id: &str, front: &str) -> Result<bool> {
     let front = plain_words(front);
-    let mut replies = sqlx::query_scalar::<_, String>(
-        "SELECT content FROM conversation_messages WHERE conversation_id=? AND role='assistant' AND status='completed' ORDER BY sequence DESC",
-    )
-    .bind(conversation_id)
-    .fetch(pool);
-    while let Some(reply) = replies.try_next().await.map_err(db)? {
+    let mut replies = assistant_replies(database, conversation_id);
+    while let Some(reply) = replies.try_next().await? {
         if plain_words(&reply).contains(&front) {
             return Ok(true);
         }
@@ -112,27 +97,7 @@ fn invalid(message: &str) -> AppError {
 
 impl CourseTurn {
     pub(super) async fn due_cards(&self) -> Result<Vec<DueCard>> {
-        let rows = sqlx::query(
-            "SELECT c.id,c.question,c.options_json,COALESCE(l.module_id,c.topic) group_key FROM study_cards c JOIN learning_memory m ON m.deck_id=c.deck_id LEFT JOIN learning_card_origins o ON o.card_id=c.id AND o.program_id=m.program_id LEFT JOIN learning_lessons l ON l.id=o.lesson_id WHERE m.program_id=? AND c.due_at<=? ORDER BY c.due_at,c.id",
-        )
-        .bind(&self.program_id)
-        .bind(now())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db)?;
-        let cards = rows
-            .iter()
-            .map(|row| {
-                Ok(DueCard {
-                    id: row.get("id"),
-                    front: row.get("question"),
-                    options: serde_json::from_str(row.get("options_json")).map_err(|error| {
-                        AppError::InvalidState(format!("Invalid recall options: {error}"))
-                    })?,
-                    group: row.get("group_key"),
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let cards = due_cards(&self.database, &self.program_id, now()).await?;
         Ok(interleaved(cards))
     }
 
@@ -147,52 +112,42 @@ impl CourseTurn {
         selected_option: Option<usize>,
     ) -> Result<String> {
         let at = now();
-        let row = sqlx::query(
-            "SELECT c.due_at,c.review_count,c.format,c.question FROM study_cards c JOIN learning_memory m ON m.deck_id=c.deck_id WHERE c.id=? AND m.program_id=?",
-        )
-        .bind(card_id)
-        .bind(&self.program_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db)?
-        .ok_or_else(|| {
-            invalid(
-                "That card is not in this course's deck. The turn's facts and due_reviews give \
-                 each card's card_id.",
-            )
-        })?;
-        if row.get::<i64, _>("due_at") > at {
+        let card = card_to_rate(&self.database, &self.program_id, card_id)
+            .await?
+            .ok_or_else(|| {
+                invalid(
+                    "That card is not in this course's deck. The turn's facts and due_reviews give \
+                     each card's card_id.",
+                )
+            })?;
+        if card.due_at > at {
             return Err(invalid(
                 "That card is not due: it was already reviewed, or it did not come from due_reviews or save_card. Nothing was recorded.",
             ));
         }
-        if !asked_in(&self.pool, &self.conversation_id, row.get("question")).await? {
+        if !asked_in(&self.database, &self.conversation_id, &card.question).await? {
             return Err(invalid(
                 "That card was not asked in this chat, so there is no answer to rate. Nothing was recorded. Ask it as written, then rate the learner's answer.",
             ));
         }
-        if row.get::<String, _>("format") == "multiple_choice" && selected_option.is_none() {
+        if card.format == "multiple_choice" && selected_option.is_none() {
             return Err(invalid(
                 "That card is multiple choice: pass the learner's selected_option.",
             ));
         }
-        let recall = LearningRecallRepository::new(self.pool.clone());
+        let recall = LearningRecallRepository::new(self.database.clone());
         recall
             .record_card_review(&ReviewLearningRecallCardRequestDto {
                 review_id: uuid::Uuid::new_v4().to_string(),
                 program_id: self.program_id.clone(),
                 card_id: card_id.to_string(),
-                expected_review_count: row.get("review_count"),
+                expected_review_count: card.review_count,
                 rating,
                 selected_option,
             })
             .await?;
-        let next: i64 = sqlx::query_scalar("SELECT due_at FROM study_cards WHERE id=?")
-            .bind(card_id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(db)?;
-        let still_due = due_count(&self.pool, &self.program_id, at).await?;
+        let next = card_due_at(&self.database, card_id).await?;
+        let still_due = due_count(&self.database, &self.program_id, at).await?;
         Ok(format!(
             "Recorded. This card comes back {}. Cards still due: {still_due}.",
             when(next - at)
@@ -203,7 +158,7 @@ impl CourseTurn {
     /// from. Due at once, as a new card is, so the tutor can ask and rate it.
     pub(super) async fn save_card(&self, card: NewCard<'_>) -> Result<String> {
         if card.source_ids.is_empty()
-            && !LearningSourceLibraryRepository::new(self.pool.clone())
+            && !LearningSourceLibraryRepository::new(self.database.clone())
                 .active_versions(&self.program_id)
                 .await?
                 .is_empty()
@@ -213,7 +168,7 @@ impl CourseTurn {
             ));
         }
         let card_id = uuid::Uuid::new_v4().to_string();
-        LearningRecallRepository::new(self.pool.clone())
+        LearningRecallRepository::new(self.database.clone())
             .store_card(&SaveLearningRecallCardRequestDto {
                 operation_id: uuid::Uuid::new_v4().to_string(),
                 program_id: self.program_id.clone(),

@@ -25,6 +25,7 @@ use lattice_core::domain::learning::drills::{
     PatternDue, PatternRating,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobOutcome, JobStore};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
@@ -246,13 +247,14 @@ enum State {
 async fn hand_out(pool: &SqlitePool, drill: &str, state: State) -> Result<()> {
     let mut connection = pool.acquire().await.map_err(db)?;
     repository::mark_taken_in(&mut connection, drill, 1).await?;
-    let attempt = attempts::insert_in(&mut connection, drill, AttemptMode::Practice).await?;
+    let attempt =
+        attempts::repository::open_in(&mut connection, drill, AttemptMode::Practice).await?;
     drop(connection);
     if matches!(state, State::Open) {
         return Ok(());
     }
     attempts::submit(
-        pool,
+        &Database::from(pool.clone()),
         &attempt.id,
         Submission {
             findings: vec![extra_finding()],
@@ -268,7 +270,7 @@ async fn hand_out(pool: &SqlitePool, drill: &str, state: State) -> Result<()> {
             let assessment = review_assessment();
             let scored = score(&key, &[operator_finding(), extra_finding()], &assessment);
             let rated = ratings(&key, &assessment);
-            attempts::record_graded_in(
+            attempts::repository::record_graded_in(
                 &mut connection,
                 &attempt.id,
                 &Graded {
@@ -282,7 +284,13 @@ async fn hand_out(pool: &SqlitePool, drill: &str, state: State) -> Result<()> {
             .await?;
         }
         State::CouldntGrade => {
-            attempts::record_ungraded_in(&mut connection, &attempt.id, None, "No answer.").await?;
+            attempts::repository::record_ungraded_in(
+                &mut connection,
+                &attempt.id,
+                None,
+                "No answer.",
+            )
+            .await?;
         }
         State::Open | State::Submitted => {}
     }
@@ -598,11 +606,16 @@ async fn graded_code_drill(link: bool) -> Result<(SqlitePool, String, String)> {
         program_id: &course,
         material: &python,
     };
-    let begun = attempts::start(&pool, shelf, None, AttemptMode::Practice)
-        .await?
-        .expect("a ready drill");
+    let begun = attempts::start(
+        &Database::from(pool.clone()),
+        shelf,
+        None,
+        AttemptMode::Practice,
+    )
+    .await?
+    .expect("a ready drill");
     let queued = attempts::submit(
-        &pool,
+        &Database::from(pool.clone()),
         &begun.attempt.id,
         Submission {
             findings: vec![operator_finding(), extra_finding()],
@@ -671,7 +684,7 @@ async fn a_code_drill_with_no_lesson_issue_rates_its_lesson_by_every_rated_issue
 
 async fn drilled_by(pool: &SqlitePool, program_id: &str, lesson_id: &str) -> Result<bool> {
     let mut connection = pool.acquire().await.map_err(db)?;
-    schedules::drills_lesson_in(&mut connection, program_id, lesson_id).await
+    schedules::repository::drills_lesson_in(&mut connection, program_id, lesson_id).await
 }
 
 #[tokio::test]
@@ -706,9 +719,10 @@ async fn a_course_drills_its_lessons_that_are_not_replaced_or_skipped() -> Resul
 #[tokio::test]
 async fn grading_an_attempt_a_second_time_moves_no_schedule_again() -> Result<()> {
     let waiting = Waiting::new(vec![operator_finding(), extra_finding()], None).await?;
-    let (attempt, drill) = attempts::waiting(&waiting.pool, &waiting.attempt)
-        .await?
-        .expect("waiting");
+    let (attempt, drill) =
+        attempts::waiting(&Database::from(waiting.pool.clone()), &waiting.attempt)
+            .await?
+            .expect("waiting");
     let model = none();
     let grader = FakeGrader::new(review_assessment());
     let context = waiting.context().await?;
@@ -737,15 +751,16 @@ async fn grading_an_attempt_a_second_time_moves_no_schedule_again() -> Result<()
 #[tokio::test]
 async fn a_grade_that_was_not_recorded_rates_nothing() -> Result<()> {
     let waiting = Waiting::new(vec![operator_finding(), extra_finding()], None).await?;
-    let (attempt, drill) = attempts::waiting(&waiting.pool, &waiting.attempt)
-        .await?
-        .expect("waiting");
+    let (attempt, drill) =
+        attempts::waiting(&Database::from(waiting.pool.clone()), &waiting.attempt)
+            .await?
+            .expect("waiting");
     let key = &drill.drill.key;
     let assessment = review_assessment();
     let scored = score(key, &[operator_finding(), extra_finding()], &assessment);
     let rated = ratings(key, &assessment);
     let mut connection = waiting.pool.acquire().await.map_err(db)?;
-    let recorded = attempts::record_graded_in(
+    let recorded = attempts::repository::record_graded_in(
         &mut connection,
         &attempt.id,
         &Graded {

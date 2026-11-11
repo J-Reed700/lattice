@@ -71,7 +71,7 @@ pub async fn create_conversation_impl(
             .map_err(ApiError::from)?;
 
     Ok(CreateConversationResponseDto {
-        conversation: ConversationRepository::new(container.db_pool().clone())
+        conversation: ConversationRepository::new(container.database().clone())
             .project_conversation(&conversation)
             .await
             .map_err(ApiError::from)?,
@@ -90,7 +90,7 @@ pub async fn get_conversation_impl(
     Ok(GetConversationResponseDto {
         conversation: match conversation {
             Some(c) => Some(
-                ConversationRepository::new(container.db_pool().clone())
+                ConversationRepository::new(container.database().clone())
                     .project_conversation(&c)
                     .await
                     .map_err(ApiError::from)?,
@@ -111,7 +111,7 @@ pub async fn list_conversations_impl(
     let mut items = Vec::with_capacity(conversations.len());
     for c in &conversations {
         items.push(
-            ConversationRepository::new(container.db_pool().clone())
+            ConversationRepository::new(container.database().clone())
                 .project_conversation(c)
                 .await
                 .map_err(ApiError::from)?,
@@ -262,7 +262,7 @@ pub async fn set_conversation_saved_impl(
     request: SetConversationStateRequestDto,
     container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
-    ConversationRepository::new(container.db_pool().clone())
+    ConversationRepository::new(container.database().clone())
         .set_conversation_saved(request)
         .await
         .map_err(ApiError::from)
@@ -272,7 +272,7 @@ pub async fn set_conversation_bookmarked_impl(
     request: SetConversationStateRequestDto,
     container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
-    ConversationRepository::new(container.db_pool().clone())
+    ConversationRepository::new(container.database().clone())
         .set_conversation_bookmarked(request)
         .await
         .map_err(ApiError::from)
@@ -282,7 +282,7 @@ pub async fn set_conversation_pinned_impl(
     request: SetConversationStateRequestDto,
     container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
-    ConversationRepository::new(container.db_pool().clone())
+    ConversationRepository::new(container.database().clone())
         .set_conversation_pinned(request)
         .await
         .map_err(ApiError::from)
@@ -292,7 +292,7 @@ pub async fn set_conversation_archived_impl(
     request: SetConversationStateRequestDto,
     container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
-    ConversationRepository::new(container.db_pool().clone())
+    ConversationRepository::new(container.database().clone())
         .set_conversation_archived(request)
         .await
         .map_err(ApiError::from)
@@ -302,7 +302,7 @@ pub async fn bookmark_conversation_message_impl(
     request: BookmarkConversationMessageRequestDto,
     container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
-    ConversationRepository::new(container.db_pool().clone())
+    ConversationRepository::new(container.database().clone())
         .bookmark_conversation_message(request)
         .await
         .map_err(ApiError::from)
@@ -312,7 +312,7 @@ pub async fn unbookmark_conversation_message_impl(
     request: UnbookmarkConversationMessageRequestDto,
     container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
-    ConversationRepository::new(container.db_pool().clone())
+    ConversationRepository::new(container.database().clone())
         .unbookmark_conversation_message(request)
         .await
         .map_err(ApiError::from)
@@ -330,7 +330,7 @@ pub async fn delete_conversation_message_impl(
     {
         tracing::warn!(%error, "Could not release a deleted message's pictures");
     }
-    ConversationRepository::new(container.db_pool().clone())
+    ConversationRepository::new(container.database().clone())
         .delete_conversation_message(request)
         .await
         .map_err(ApiError::from)
@@ -340,7 +340,7 @@ pub async fn list_message_bookmarks_impl(
     query: ListMessageBookmarksQueryDto,
     container: &Container,
 ) -> Result<ListMessageBookmarksResponseDto, ApiError> {
-    ConversationRepository::new(container.db_pool().clone())
+    ConversationRepository::new(container.database().clone())
         .list_message_bookmarks(query)
         .await
         .map_err(ApiError::from)
@@ -350,7 +350,7 @@ pub async fn list_conversations_explorer_impl(
     query: ListConversationsExplorerQueryDto,
     container: &Container,
 ) -> Result<ListConversationsResponseDto, ApiError> {
-    ConversationRepository::new(container.db_pool().clone())
+    ConversationRepository::new(container.database().clone())
         .list_conversations_explorer(query)
         .await
         .map_err(ApiError::from)

@@ -26,7 +26,7 @@ impl Container {
     /// conversations archived. A feature that keeps notes in the journal reads
     /// them back through this.
     pub async fn workspace_note(&self, note_id: &str) -> Result<WorkspaceNoteDto> {
-        let repository = DailyNotesRepository::new(self.db_pool().clone());
+        let repository = DailyNotesRepository::new(self.database().clone());
         get_note_by_id(self, &repository, note_id).await
     }
 }
@@ -35,7 +35,7 @@ pub async fn list_workspace_notes_impl(
     container: &Container,
     journal_id: Option<&str>,
 ) -> Result<Vec<WorkspaceNoteDto>> {
-    let repository = DailyNotesRepository::new(container.db_pool().clone());
+    let repository = DailyNotesRepository::new(container.database().clone());
     let rows = match journal_id.map(str::trim).filter(|id| !id.is_empty()) {
         Some(journal_id) => repository.list_for_journal(journal_id).await?,
         None => repository.list().await?,
@@ -59,7 +59,7 @@ pub async fn create_workspace_note_impl(
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "Untitled note".to_string());
     let now = now_db_timestamp();
-    let repository = DailyNotesRepository::new(container.db_pool().clone());
+    let repository = DailyNotesRepository::new(container.database().clone());
     repository
         .insert(&WorkspaceNoteRecord {
             id: note_id.clone(),
@@ -99,7 +99,7 @@ pub async fn update_workspace_note_impl(
         &mut note.sources,
     )
     .await;
-    let repository = DailyNotesRepository::new(container.db_pool().clone());
+    let repository = DailyNotesRepository::new(container.database().clone());
     let saved = repository
         .update(&WorkspaceNoteRecord {
             id: note_id.clone(),
@@ -230,7 +230,7 @@ pub async fn delete_workspace_note_impl(
     container: &Container,
     request: DeleteWorkspaceNoteRequestDto,
 ) -> Result<()> {
-    let repository = DailyNotesRepository::new(container.db_pool().clone());
+    let repository = DailyNotesRepository::new(container.database().clone());
     repository.delete(&request.note_id).await?;
 
     // Remove the mirrored markdown too. Without this the file outlives its
@@ -267,7 +267,7 @@ async fn most_recent_workspace_note(
 }
 
 pub async fn get_today_note_impl(container: &Container) -> Result<DailyNoteCompatDto> {
-    let repository = DailyNotesRepository::new(container.db_pool().clone());
+    let repository = DailyNotesRepository::new(container.database().clone());
     if let Some(note) = most_recent_workspace_note(&repository).await? {
         return Ok(workspace_note_to_compat(note));
     }
@@ -291,7 +291,7 @@ pub async fn quick_capture_impl(
     conversation_ids: Option<Vec<String>>,
 ) -> Result<QuickCaptureResultDto> {
     let result = super::capture_store::quick_capture(
-        container.db_pool(),
+        container.database(),
         &today_daily_title(),
         &content,
         sources.unwrap_or_default(),
@@ -306,7 +306,7 @@ pub async fn capture_reference_impl(
     container: &Container,
     request: CaptureReferenceRequestDto,
 ) -> Result<CaptureReferenceResultDto> {
-    let result = super::capture_store::capture_reference(container.db_pool(), request).await?;
+    let result = super::capture_store::capture_reference(container.database(), request).await?;
     container.note_saved();
     Ok(result)
 }
@@ -315,7 +315,7 @@ pub async fn get_daily_notes_range_impl(
     container: &Container,
     request: DailyNotesRangeRequestDto,
 ) -> Result<Vec<DailyNoteCompatDto>> {
-    let repository = DailyNotesRepository::new(container.db_pool().clone());
+    let repository = DailyNotesRepository::new(container.database().clone());
     let rows = repository
         .list_in_date_range(&request.start_date, &request.end_date)
         .await?;
@@ -330,7 +330,7 @@ pub async fn get_previous_daily_note_impl(
     container: &Container,
     request: DailyNoteCursorRequestDto,
 ) -> Result<Option<DailyNoteCompatDto>> {
-    let repository = DailyNotesRepository::new(container.db_pool().clone());
+    let repository = DailyNotesRepository::new(container.database().clone());
     let row = repository.previous_before(&request.current_date).await?;
 
     row.map(row_to_dto)
@@ -342,7 +342,7 @@ pub async fn get_next_daily_note_impl(
     container: &Container,
     request: DailyNoteCursorRequestDto,
 ) -> Result<Option<DailyNoteCompatDto>> {
-    let repository = DailyNotesRepository::new(container.db_pool().clone());
+    let repository = DailyNotesRepository::new(container.database().clone());
     let row = repository.next_after(&request.current_date).await?;
 
     row.map(row_to_dto)
@@ -355,7 +355,7 @@ pub async fn update_daily_note_content_impl(
     request: UpdateDailyNoteContentRequestDto,
 ) -> Result<()> {
     let note_id = request.note_id.clone();
-    let repository = DailyNotesRepository::new(container.db_pool().clone());
+    let repository = DailyNotesRepository::new(container.database().clone());
     repository
         .update_content(&note_id, &request.content, &now_db_timestamp())
         .await?;

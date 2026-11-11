@@ -6,13 +6,18 @@ use super::recall::{
     study_repository::StudyRepository,
 };
 use super::references::trust::capture;
+use super::references::trust::repository::capture::compare_all;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Database;
+use lattice_core::shared::persistence::{Transactions, WriteTx};
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::collections::HashMap;
 
 mod memory;
 #[cfg(test)]
 mod memory_tests;
+mod outline_draft;
 mod progress;
 mod tangents;
 
@@ -75,24 +80,29 @@ fn parse_block(s: &str) -> Result<LearningBlockKind> {
 
 #[derive(Clone)]
 pub struct LearningRepository {
-    pub(super) pool: SqlitePool,
+    pool: SqlitePool,
 }
 
 impl LearningRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
     pub async fn active_sources(&self, program_id: &str) -> Result<Vec<LearningSourceDto>> {
-        super::source_library::LearningSourceLibraryRepository::new(self.pool.clone())
-            .prepare_sources(program_id)
-            .await
+        super::source_library::LearningSourceLibraryRepository::new(Database::from(
+            self.pool.clone(),
+        ))
+        .prepare_sources(program_id)
+        .await
     }
 
     pub async fn verification_sources(&self, program_id: &str) -> Result<Vec<LearningSourceDto>> {
-        super::source_library::LearningSourceLibraryRepository::new(self.pool.clone())
-            .verification_sources(program_id)
-            .await
+        super::source_library::LearningSourceLibraryRepository::new(Database::from(
+            self.pool.clone(),
+        ))
+        .verification_sources(program_id)
+        .await
     }
 
     pub async fn create(&self, program: &LearningProgramDto) -> Result<()> {
@@ -115,7 +125,7 @@ impl LearningRepository {
     ) -> Result<()> {
         let s = &program.summary;
         let comparisons = compare_sources(&self.pool, &s.id, &program.sources, references).await?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         sqlx::query("INSERT INTO learning_programs(id,title,goal,status,revision,prior_knowledge,minutes_per_session,model_name,current_lesson_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
             .bind(&s.id).bind(&s.title).bind(&s.goal).bind(status(s.status.clone())).bind(s.revision).bind(&program.prior_knowledge).bind(program.minutes_per_session).bind(&program.model_name).bind(&s.current_lesson_id).bind(s.created_at).execute(&mut *tx).await.map_err(db)?;
         for (mi, m) in program.modules.iter().enumerate() {
@@ -172,7 +182,7 @@ impl LearningRepository {
     }
 
     pub async fn get(&self, id: &str) -> Result<LearningProgramDto> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
         let program = Self::get_on(&mut tx, id).await?;
         tx.commit().await.map_err(db)?;
         Ok(program)
@@ -324,7 +334,7 @@ fn source_text(
 /// Compares sources about to be saved together, one [`capture::Comparison`]
 /// per source in order.
 pub(super) async fn compare_sources(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
     sources: &[LearningSourceDto],
     references: &[super::sources::InitialReference],
@@ -342,11 +352,11 @@ pub(super) async fn compare_sources(
             text,
         })
         .collect();
-    capture::compare_all(pool, program_id, &versions).await
+    compare_all(pool, program_id, &versions).await
 }
 
 pub(super) async fn insert_source(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    tx: &mut WriteTx,
     program_id: &str,
     source: &LearningSourceDto,
     reference: Option<&super::sources::InitialReference>,

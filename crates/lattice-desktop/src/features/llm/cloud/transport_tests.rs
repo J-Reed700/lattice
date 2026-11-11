@@ -1,4 +1,10 @@
+use super::protocol::protocols;
 use super::*;
+use crate::features::llm::fitting::SendUnscheduled;
+use lattice_core::application::contracts::settings::LLMProvider;
+use lattice_core::application::ports::llm_port::CompletionInput;
+use lattice_core::domain::models::model_ref::CloudProvider;
+use serde_json::json;
 use wiremock::{
     matchers::{body_string_contains, header, method, path},
     Mock, MockServer, ResponseTemplate,
@@ -9,7 +15,8 @@ async fn client(server: &MockServer) -> CloudLlm {
         model: "test-model".into(),
         ..Default::default()
     };
-    let mut client = CloudLlm::new(&settings, "test-secret".into()).unwrap();
+    let mut client =
+        CloudLlm::new(&settings, "test-secret".into(), Some(settings.max_tokens)).unwrap();
     client.endpoint = format!("{}/responses", server.uri());
     client
 }
@@ -204,10 +211,9 @@ async fn refusals_are_typed_by_what_waiting_can_change() {
 }
 fn openai_status(status: u16, body: &str) -> AppError {
     status_error(
-        &LLMProvider::Openai,
-        "openai",
+        protocols(CloudProvider::Openai).completion,
         reqwest::StatusCode::from_u16(status).unwrap(),
-        body,
+        &serde_json::from_str(body).unwrap_or(Value::Null),
     )
 }
 
@@ -230,6 +236,27 @@ fn an_account_out_of_quota_is_a_setting_to_fix_not_an_outage() {
             "OpenAI says the account has no credit or quota left (HTTP 429): add credit to the account, or choose another model in Settings → AI"
         );
         assert!(!JobFailure::is_transient(&error), "{body}");
+    }
+}
+
+#[test]
+fn a_payment_required_refusal_says_the_accounts_billing_needs_fixing() {
+    use lattice_core::shared::runtime::jobs::JobFailure;
+    for protocol in [
+        protocols(CloudProvider::Openai).completion,
+        protocols(CloudProvider::Anthropic).completion,
+    ] {
+        let error = status_error(
+            protocol,
+            reqwest::StatusCode::PAYMENT_REQUIRED,
+            &Value::Null,
+        );
+        let AppError::InvalidConfig(text) = &error else {
+            panic!("{error:?}");
+        };
+        assert!(text.contains("HTTP 402"), "{text}");
+        assert!(text.contains("billing"), "{text}");
+        assert!(!JobFailure::is_transient(&error));
     }
 }
 
@@ -322,7 +349,8 @@ async fn anthropic_client(server: &MockServer) -> CloudLlm {
         model: "claude-test".into(),
         ..Default::default()
     };
-    let mut client = CloudLlm::new(&settings, "test-secret".into()).unwrap();
+    let mut client =
+        CloudLlm::new(&settings, "test-secret".into(), Some(settings.max_tokens)).unwrap();
     client.endpoint = format!("{}/messages", server.uri());
     client
 }
@@ -366,6 +394,64 @@ async fn a_schema_claude_refuses_is_asked_for_in_words() {
         .await
         .unwrap();
     assert_eq!(response.text, "{\"ok\":true}");
+}
+
+#[derive(Clone, Default)]
+struct Captured(std::sync::Arc<parking_lot::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Captured {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// The reason Claude gives for refusing a schema is what tells a schema that
+/// is too large from one it cannot read, so the fallback logs it with the
+/// fields of the schema it refused.
+#[tokio::test]
+async fn a_schema_claude_refuses_is_logged_with_the_apis_reason() {
+    let captured = Captured::default();
+    let writer = captured.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_ansi(false)
+        .with_writer(move || writer.clone())
+        .finish();
+    let _logs = tracing::subscriber::set_default(subscriber);
+    tracing::callsite::rebuild_interest_cache();
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(body_string_contains("json_schema"))
+        .respond_with(
+            ResponseTemplate::new(400).set_body_json(json!({"type":"error","error":{
+                "type":"invalid_request_error",
+                "message":"The compiled grammar is too large, which would cause performance issues."
+            }})),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(body_string_contains("matches this JSON Schema"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "content":[{"type":"text","text":"{\"ok\":true}"}],"stop_reason":"end_turn"
+        })))
+        .mount(&server)
+        .await;
+
+    anthropic_client(&server)
+        .await
+        .complete(&structured())
+        .await
+        .unwrap();
+
+    let logs = String::from_utf8(captured.0.lock().clone()).unwrap();
+    assert!(logs.contains("compiled grammar is too large"), "{logs}");
+    assert!(logs.contains("schema_fields=ok"), "{logs}");
 }
 
 /// Any other bad request is the request's own fault: it is not resent, and

@@ -8,6 +8,7 @@ import {
   type CloudModelCatalogs,
   cleanModelDisplayName,
   contextFitWarning,
+  fittedLaunchWindow,
   formatContextLabel,
   formatModelSize,
   formatServerEndpoint,
@@ -238,10 +239,32 @@ describe('resolveEffectiveChatOption', () => {
 });
 
 describe('formatContextLabel', () => {
-  it('shows a saved window exactly and the trained window it loads with otherwise rounded', () => {
-    expect(formatContextLabel({ configured_context_length: 8704, trained_context_length: 32768 })).toBe('8,704 ctx · set by you');
-    expect(formatContextLabel({ configured_context_length: null, trained_context_length: 32768 })).toBe('32K ctx');
-    expect(formatContextLabel({ configured_context_length: null, trained_context_length: null })).toBeNull();
+  const model = {
+    model_id: 'qwen',
+    configured_context_length: null,
+    trained_context_length: 262_144,
+    fits_context_length: 192_512,
+    fits_context_length_with_kv_quantization: 262_144,
+  };
+  const settings = (localContextWindow: number | null, kvCacheQuantization = false) =>
+    ({ localContextWindow, localModelConfigs: { qwen: { kvCacheQuantization } } });
+
+  it('shows a window saved for the model or for every model exactly, marked as set by the user', () => {
+    expect(formatContextLabel({ ...model, configured_context_length: 8704 }, settings(null))).toBe('8,704 ctx · set by you');
+    expect(formatContextLabel(model, settings(16_384))).toBe('16,384 ctx · set by you');
+  });
+
+  it('shows the fitted window, for the KV cache the model uses, when none is saved', () => {
+    expect(formatContextLabel(model, settings(null))).toBe('188K ctx');
+    expect(formatContextLabel(model, settings(null, true))).toBe('256K ctx');
+    expect(formatContextLabel(model)).toBe('188K ctx');
+  });
+
+  it('shows the trained window when nothing is fitted', () => {
+    expect(formatContextLabel({ ...model, fits_context_length: null }, settings(null))).toBe('256K ctx');
+    expect(formatContextLabel({ ...model, fits_context_length: 0 }, settings(null))).toBe('256K ctx');
+    expect(formatContextLabel({ ...model, trained_context_length: 512 }, settings(null))).toBe('512 ctx');
+    expect(formatContextLabel({ ...model, trained_context_length: null }, settings(null))).toBeNull();
   });
 });
 
@@ -254,6 +277,9 @@ describe('contextFitWarning', () => {
     );
     expect(contextFitWarning(model, 192_512, false)).toBeNull();
     expect(contextFitWarning(model, 262_144, true)).toBeNull();
+    expect(contextFitWarning({ ...model, fits_context_length: 0 }, 4_096, false)).toBe(
+      "This model may not fit in this machine's memory at any context window.",
+    );
     expect(tokensThatFit(model, 262_144, false)).toBe(192_512);
   });
 
@@ -371,5 +397,24 @@ describe('resolveDefaultChatOption', () => {
     expect(defaultLlamaOption?.triggerLabel).toBe('llama.cpp · Qwen3.8-27B-Q5_K_S.gguf');
     expect(defaultLlamaOption?.isDefault).toBe(true);
     expect(defaultLlamaOption?.backend).toBe('llamacpp');
+  });
+});
+
+describe('fittedLaunchWindow', () => {
+  const model = {
+    trained_context_length: 262_144,
+    fits_context_length: 192_512,
+    fits_context_length_with_kv_quantization: 262_144,
+  };
+
+  it('is the window that fits, for the KV cache the model uses, when it is below the trained length', () => {
+    expect(fittedLaunchWindow(model, false)).toBe(192_512);
+    expect(fittedLaunchWindow(model, true)).toBeNull();
+  });
+
+  it('is null when the machine does not say, when not even the weights fit, or when the model does not say', () => {
+    expect(fittedLaunchWindow({ ...model, fits_context_length: null }, false)).toBeNull();
+    expect(fittedLaunchWindow({ ...model, fits_context_length: 0 }, false)).toBeNull();
+    expect(fittedLaunchWindow({ ...model, trained_context_length: null }, false)).toBeNull();
   });
 });

@@ -35,9 +35,11 @@ pub use files::DestinationPicker;
 pub use files::PACK_EXTENSION;
 use files::{chosen_file, managed_path, next_free_path, read_untrusted};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 use records::{pack_operation, replay, PendingPreview};
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::{collections::HashMap, path::Path};
 use validation::validate_program;
 
@@ -109,10 +111,11 @@ pub struct LearningPackRepository {
 }
 impl LearningPackRepository {
     pub fn new(
-        pool: SqlitePool,
+        pool: impl DriverPool,
         managed_dir: std::path::PathBuf,
         app_data_dir: std::path::PathBuf,
     ) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self {
             pool,
             managed_dir,
@@ -237,7 +240,7 @@ impl LearningPackRepository {
             return self.workspace_for_preview(&req.preview_id).await;
         }
         let now = now();
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let row =
             sqlx::query("SELECT program_id,status FROM learning_pack_import_previews WHERE id=?")
                 .bind(&req.preview_id)
@@ -251,7 +254,7 @@ impl LearningPackRepository {
         let program_id: String = row.get("program_id");
         sqlx::query("UPDATE learning_pack_import_previews SET status='cancelled',decided_at=? WHERE id=? AND status='pending'").bind(now).bind(&req.preview_id).execute(&mut *tx).await.map_err(db)?;
         pack_operation(&req.operation_id, "cancel_import", &payload)
-            .record(&mut *tx, &req.preview_id)
+            .record(&mut tx, &req.preview_id)
             .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&program_id).await
@@ -289,7 +292,6 @@ impl LearningPackRepository {
         let original = program_entry::load_program(&decoded)?;
         validate_program(&original)?;
         entries::check(&decoded, &original)?;
-        let (program, ids) = self.target_program(&decoded, &original, &preview).await?;
         let replaces = preview.policy.on_existing() == ExistingAction::Replace;
         // Lock before capturing the backup, not merely before deleting rows.
         // Background saves either precede that snapshot or wait for completion.
@@ -301,6 +303,7 @@ impl LearningPackRepository {
             replaces,
         )
         .await?;
+        let (program, ids) = Self::target_program(&mut tx, &decoded, &original, &preview).await?;
         let mut local_links = None;
         if replaces {
             local_links =
@@ -342,7 +345,7 @@ impl LearningPackRepository {
     /// gets it there: a copy gets fresh identifiers everywhere; any other
     /// policy imports the course under the preview's target ID.
     async fn target_program(
-        &self,
+        connection: &mut SqliteConnection,
         pack: &DecodedLearningPack,
         original: &LearningProgramDto,
         preview: &PendingPreview,
@@ -350,7 +353,7 @@ impl LearningPackRepository {
         let existing: Option<i64> =
             sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
                 .bind(&preview.target_id)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut *connection)
                 .await
                 .map_err(db)?;
         if preview.policy.on_existing() == ExistingAction::Block && existing.is_some() {

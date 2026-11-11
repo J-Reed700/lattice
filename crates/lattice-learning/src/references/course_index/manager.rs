@@ -7,11 +7,13 @@
 //! workspace, or about to be read by a lesson, goes first ([`first`]).
 
 use super::job::CourseIndexJob;
+use super::repository;
 use super::search::{CourseSearch, IndexView};
 use super::sync::{self, CourseProgress};
 use super::{IndexMode, COURSE_INDEX};
 use crate::source_library::LearningSourceLibraryRepository;
 use lattice_core::application::ports::hybrid_search::HybridSearchFactory;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use lattice_core::shared::runtime::jobs::{JobKindRegistration, JobRuntime, NewJob};
 use lattice_core::shared::{AppError, Result};
@@ -19,7 +21,6 @@ use lattice_index::passage_index::job::build_job_config;
 use lattice_index::passage_index::{
     registry, Claim, EmbedTurns, EmbedderSource, LiveIndex, LiveIndexes,
 };
-use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -34,7 +35,7 @@ pub use status::CourseIndexStatusDto;
 pub struct CourseIndexes {
     /// `<data_dir>/course-index`.
     base_dir: PathBuf,
-    pool: SqlitePool,
+    database: Database,
     embedders: Arc<dyn EmbedderSource>,
     searches: Arc<dyn HybridSearchFactory>,
     pub jobs: Arc<JobRuntime>,
@@ -53,7 +54,7 @@ pub struct CourseIndexes {
 impl CourseIndexes {
     pub fn new(
         base_dir: PathBuf,
-        pool: SqlitePool,
+        database: Database,
         embedders: Arc<dyn EmbedderSource>,
         searches: Arc<dyn HybridSearchFactory>,
         jobs: Arc<JobRuntime>,
@@ -62,7 +63,7 @@ impl CourseIndexes {
     ) -> Arc<Self> {
         Arc::new(Self {
             base_dir,
-            pool,
+            database,
             embedders,
             searches,
             jobs,
@@ -85,7 +86,7 @@ impl CourseIndexes {
     }
 
     fn repository(&self) -> LearningSourceLibraryRepository {
-        LearningSourceLibraryRepository::new(self.pool.clone())
+        LearningSourceLibraryRepository::new(self.database.clone())
     }
 
     /// The directory of `program`'s index. A program id is an opaque UUID,
@@ -336,10 +337,7 @@ impl CourseIndexes {
                 Some((program, entry.meta.get(sync::META_REVISION)?.clone()))
             })
             .collect();
-        let programs: Vec<String> = sqlx::query_scalar("SELECT id FROM learning_programs")
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+        let programs = repository::program_ids(&self.database).await?;
         let repo = self.repository();
         let mut queued = 0;
         for program in programs {
@@ -408,10 +406,8 @@ impl CourseIndexes {
         let Ok(entries) = std::fs::read_dir(&self.base_dir) else {
             return Ok(());
         };
-        let programs: HashSet<String> = sqlx::query_scalar("SELECT id FROM learning_programs")
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?
+        let programs: HashSet<String> = repository::program_ids(&self.database)
+            .await?
             .into_iter()
             .collect();
         for entry in entries.filter_map(|entry| entry.ok()) {
@@ -427,12 +423,7 @@ impl CourseIndexes {
 
     /// Whether `program` still exists.
     pub(super) async fn exists(&self, program: &str) -> Result<bool> {
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM learning_programs WHERE id=?")
-            .bind(program)
-            .fetch_one(&self.pool)
-            .await
-            .map(|count| count > 0)
-            .map_err(|error| AppError::Database(error.to_string()))
+        repository::program_exists(&self.database, program).await
     }
 
     /// Brings `program`'s index current with no one watching: for a test, or

@@ -5,9 +5,11 @@ use super::dto::{
     FileIndexingOptionsDto,
 };
 use super::file_job::FileImportRequest;
-use super::items::{BatchItem, BatchItems, ItemCounts};
+use super::items::{BatchItem, ItemCounts};
+use super::repository::BatchItems;
 use crate::features::web::services::web::check_public_url;
 use lattice_core::application::ports::document_scope::DocumentScopePort;
+use lattice_core::shared::persistence::{Database, Transactions, WriteTx};
 use lattice_core::shared::{
     error::{AppError, Result},
     runtime::jobs::{JobRecord, JobRuntime, JobStore, NewJob},
@@ -86,6 +88,7 @@ pub struct FileImport {
 #[derive(Clone)]
 pub struct BatchImports {
     jobs: Arc<JobRuntime>,
+    database: Database,
     items: BatchItems,
     document_scope: Arc<dyn DocumentScopePort>,
 }
@@ -93,11 +96,13 @@ pub struct BatchImports {
 impl BatchImports {
     pub fn new(
         jobs: Arc<JobRuntime>,
+        database: Database,
         items: BatchItems,
         document_scope: Arc<dyn DocumentScopePort>,
     ) -> Self {
         Self {
             jobs,
+            database,
             items,
             document_scope,
         }
@@ -126,9 +131,8 @@ impl BatchImports {
             message: "Queued".into(),
         };
         let mut tx = self
-            .items
-            .pool()
-            .begin_with("BEGIN IMMEDIATE")
+            .database
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
         let admitted = JobStore::submit_in(&mut tx, &job).await?;
@@ -229,15 +233,28 @@ impl BatchImports {
         Ok(job)
     }
 
+    /// `import_job`, read inside the unit of work that goes on to change it.
+    async fn import_job_in(tx: &mut WriteTx, job_id: &str) -> Result<JobRecord> {
+        if job_id.trim().is_empty() {
+            return Err(AppError::InvalidInput("Job ID cannot be empty".into()));
+        }
+        let job = JobStore::find_in(tx, job_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Job not found".into()))?;
+        if !KINDS.contains(&job.kind.as_str()) {
+            return Err(not_an_import());
+        }
+        Ok(job)
+    }
+
     /// The import and its items, read from one snapshot.
     pub async fn status(&self, job_id: &str) -> Result<BatchJobStatusDto> {
         if job_id.trim().is_empty() {
             return Err(AppError::InvalidInput("Job ID cannot be empty".into()));
         }
         let mut tx = self
-            .items
-            .pool()
-            .begin()
+            .database
+            .begin_read()
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
         let job = JobStore::find_in(&mut tx, job_id)
@@ -302,16 +319,15 @@ impl BatchImports {
     /// Cancels the import and every item it has not finished. Returns how many
     /// items that stopped; an import that already ended stops none.
     pub async fn cancel(&self, job_id: &str) -> Result<usize> {
-        let job = self.import_job(job_id).await?;
+        let mut tx = self
+            .database
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let job = Self::import_job_in(&mut tx, job_id).await?;
         if job.status.is_finished() {
             return Ok(0);
         }
-        let mut tx = self
-            .items
-            .pool()
-            .begin_with("BEGIN IMMEDIATE")
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
         JobStore::cancel_in(&mut tx, job_id).await?;
         let cancelled = BatchItems::cancel_unfinished_in(&mut tx, job_id).await?;
         tx.commit()
@@ -338,7 +354,12 @@ impl BatchImports {
         item_id: Option<&str>,
         replacement: Option<&str>,
     ) -> Result<(String, usize)> {
-        let job = self.import_job(job_id).await?;
+        let mut tx = self
+            .database
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let job = Self::import_job_in(&mut tx, job_id).await?;
         if let Some(path) = replacement {
             if job.kind != FILE_IMPORT {
                 return Err(AppError::InvalidInput(
@@ -357,12 +378,6 @@ impl BatchImports {
                 "This import is still running".into(),
             ));
         }
-        let mut tx = self
-            .items
-            .pool()
-            .begin_with("BEGIN IMMEDIATE")
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
         let attempt = JobStore::retry_in(
             &mut tx,
             job_id,

@@ -1,5 +1,6 @@
 //! Saving, deduplicating and reviewing versioned recall cards.
 use super::*;
+use lattice_core::shared::persistence::Transactions;
 
 impl LearningRecallRepository {
     pub async fn save_card(
@@ -28,10 +29,10 @@ impl LearningRecallRepository {
             return Err(invalid("Card change reason must contain 1–500 characters."));
         }
         let hash = payload_hash(req)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &req.program_id).await?;
         let operation = recall_operation(&req.operation_id, &req.program_id, "save_card", &hash);
-        if let Some(card_id) = operation.replay::<String, _>(&mut *tx).await? {
+        if let Some(card_id) = operation.replay::<String>(&mut tx).await? {
             if card_id != req.card_id {
                 return Err(invalid("Operation replay does not match this card."));
             }
@@ -197,7 +198,7 @@ impl LearningRecallRepository {
             timestamp,
         )
         .await?;
-        operation.record(&mut *tx, &req.card_id).await?;
+        operation.record(&mut tx, &req.card_id).await?;
         tx.commit().await.map_err(db)
     }
 
@@ -209,7 +210,7 @@ impl LearningRecallRepository {
         validate_uuid(&req.program_id, "program")?;
         validate_uuid(&req.suggestion_id, "duplicate suggestion")?;
         let hash = payload_hash(req)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &req.program_id).await?;
         let operation = recall_operation(
             &req.operation_id,
@@ -217,7 +218,7 @@ impl LearningRecallRepository {
             "decide_duplicate",
             &hash,
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return self.workspace(&req.program_id).await;
         }
@@ -235,7 +236,7 @@ impl LearningRecallRepository {
                 "Pending duplicate suggestion not found in this program.".into(),
             ));
         }
-        operation.record(&mut *tx, &req.suggestion_id).await?;
+        operation.record(&mut tx, &req.suggestion_id).await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await
     }
@@ -267,10 +268,10 @@ impl LearningRecallRepository {
             req.selected_option,
             req.expected_review_count,
         ))?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &req.program_id).await?;
         let operation = recall_operation(&req.review_id, &req.program_id, "review", &hash);
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             return tx.commit().await.map_err(db);
         }
         let row = sqlx::query("SELECT c.format,c.options_json,c.correct_index FROM study_cards c JOIN learning_recall_card_profiles p ON p.card_id=c.id WHERE c.id=? AND p.program_id=?")
@@ -322,13 +323,13 @@ impl LearningRecallRepository {
                 .await
                 .map_err(db)?;
         }
-        operation.record(&mut *tx, &req.review_id).await?;
+        operation.record(&mut tx, &req.review_id).await?;
         tx.commit().await.map_err(db)
     }
 
     async fn canonical_sources(
         &self,
-        tx: &mut Transaction<'_, Sqlite>,
+        tx: &mut SqliteConnection,
         program_id: &str,
         version_ids: &[String],
     ) -> Result<Vec<StudySourceDto>> {
@@ -337,7 +338,7 @@ impl LearningRecallRepository {
             let row = sqlx::query("SELECT v.id,v.title,v.excerpt,v.resolved_url,v.requested_url,s.id source_id,s.origin,s.kind,d.file_name,d.file_path FROM learning_source_versions v JOIN learning_source_library s ON s.program_id=v.program_id AND s.id=v.source_id LEFT JOIN documents d ON d.id=s.origin WHERE v.program_id=? AND v.id=?")
                 .bind(program_id)
                 .bind(version_id)
-                .fetch_optional(&mut **tx)
+                .fetch_optional(&mut *tx)
                 .await
                 .map_err(db)?
                 .ok_or_else(|| invalid("Source version does not belong to this program."))?;
@@ -362,7 +363,7 @@ impl LearningRecallRepository {
 
     async fn suggest_duplicates(
         &self,
-        tx: &mut Transaction<'_, Sqlite>,
+        tx: &mut SqliteConnection,
         program_id: &str,
         card_id: &str,
         prompt: &str,
@@ -372,7 +373,7 @@ impl LearningRecallRepository {
         let rows = sqlx::query("SELECT card_id,prompt_json FROM learning_recall_card_profiles WHERE program_id=? AND card_id<>?")
             .bind(program_id)
             .bind(card_id)
-            .fetch_all(&mut **tx)
+            .fetch_all(&mut *tx)
             .await
             .map_err(db)?;
         for row in rows {
@@ -394,7 +395,7 @@ impl LearningRecallRepository {
                 .bind(program_id)
                 .bind(first)
                 .bind(second)
-                .fetch_optional(&mut **tx)
+                .fetch_optional(&mut *tx)
                 .await
                 .map_err(db)?;
             if exists.is_some() {
@@ -408,7 +409,7 @@ impl LearningRecallRepository {
                 .bind("similar_prompt")
                 .bind(similarity)
                 .bind(timestamp)
-                .execute(&mut **tx)
+                .execute(&mut *tx)
                 .await
                 .map_err(db)?;
         }

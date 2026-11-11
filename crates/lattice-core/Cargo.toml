@@ -53,6 +53,11 @@ uuid = { workspace = true }
 # (see shared/runtime/autorelease.rs). Already in the tree through `metal`.
 objc = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+# Power requests keep the PC awake while user work runs (shared/runtime/user_activity.rs).
+# Same version as lattice-desktop, so Cargo builds one copy.
+windows = { version = "0.52", features = ["Win32_Foundation", "Win32_System_Power", "Win32_System_Threading"] }
+
 [dev-dependencies]
 mockall = { workspace = true }
 proptest = { workspace = true }

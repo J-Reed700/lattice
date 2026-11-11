@@ -21,7 +21,9 @@ async fn live_claim_pairs_eval() -> Result<()> {
         std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
     )?)?;
     let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
-    let model = LlamaCppLlm::new(&config)?;
+    let model = LlamaCppLlm::new(&config)?
+        .schedule(&crate::features::llm::scheduler::SchedulerRegistry::default())
+        .await;
     let checker_name =
         std::env::var("LATTICE_CLAIM_CHECKER").unwrap_or_else(|_| "lesson-judge".into());
     let batch_size: usize = std::env::var("LATTICE_CLAIM_BATCH")
@@ -53,7 +55,7 @@ async fn live_claim_pairs_eval() -> Result<()> {
         finished.len()
     );
     let checker = ClaimChecker::new(
-        &model,
+        model.as_ref(),
         SamplingOverride::deterministic(),
         512,
         CheckPolicy::Strict,

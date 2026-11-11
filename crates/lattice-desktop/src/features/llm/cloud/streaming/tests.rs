@@ -1,5 +1,8 @@
 use super::*;
+use crate::features::llm::cloud::protocol::protocols;
 use lattice_core::application::ports::llm_port::CompletionInput;
+use lattice_core::domain::models::model_ref::CloudProvider;
+use serde_json::json;
 use std::sync::Mutex;
 
 /// What the response replays, as the provider's own JSON.
@@ -48,7 +51,7 @@ fn openai_stream_keeps_native_tools_and_opaque_state_out_of_displayable_reasonin
         reasoning.lock().unwrap().push_str(&delta);
         Ok(())
     };
-    let mut decoder = Decoder::new(LLMProvider::Openai);
+    let mut decoder = Decoder::new(protocols(CloudProvider::Openai).completion);
     // Split every UTF-8 character and SSE boundary across network packets.
     for byte in events.chunks(1) {
         decoder.push(byte, &on_text, &on_reasoning).unwrap();
@@ -97,7 +100,7 @@ fn anthropic_stream_preserves_signatures_tool_arguments_and_cumulative_usage() {
         reasoning.lock().unwrap().push_str(&delta);
         Ok(())
     };
-    let mut decoder = Decoder::new(LLMProvider::Anthropic);
+    let mut decoder = Decoder::new(protocols(CloudProvider::Anthropic).completion);
     for chunk in events.chunks(7) {
         decoder.push(chunk, &|_| Ok(()), &on_reasoning).unwrap();
     }
@@ -134,7 +137,7 @@ fn anthropic_counts_the_cached_prompt_as_prompt() {
         json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":12}}),
         json!({"type":"message_stop"}),
     ]);
-    let mut decoder = Decoder::new(LLMProvider::Anthropic);
+    let mut decoder = Decoder::new(protocols(CloudProvider::Anthropic).completion);
     decoder.push(&events, &|_| Ok(()), &|_| Ok(())).unwrap();
     let response = decoder.finish(&|_| Ok(()), &|_| Ok(())).unwrap();
     assert_eq!((response.input_tokens, response.output_tokens), (9340, 12));
@@ -155,7 +158,7 @@ async fn reasoning_is_delivered_before_the_completion_arrives() {
     let on_text = |_| Ok(());
     sender.send(Ok(frames(&[json!({"type":"response.reasoning_summary_text.delta","item_id":"r1","summary_index":0,"delta":"Checking evidence."})]))).unwrap();
     let completion = drain(
-        LLMProvider::Openai,
+        protocols(CloudProvider::Openai).completion,
         tokio_stream::wrappers::UnboundedReceiverStream::new(receiver),
         Duration::from_secs(1),
         Instant::now(),
@@ -177,12 +180,12 @@ async fn reasoning_is_delivered_before_the_completion_arrives() {
 
 #[test]
 fn incomplete_answers_keep_their_status_but_truncated_streams_fail() {
-    let mut decoder = Decoder::new(LLMProvider::Openai);
+    let mut decoder = Decoder::new(protocols(CloudProvider::Openai).completion);
     decoder.push(&frames(&[json!({"type":"response.incomplete","response":{"status":"incomplete","output":[{"type":"message","content":[{"type":"output_text","text":"Partial answer"}]}]}})]), &|_| Ok(()), &|_| Ok(())).unwrap();
     let response = decoder.finish(&|_| Ok(()), &|_| Ok(())).unwrap();
     assert_eq!(response.finish_reason, "incomplete");
     assert_eq!(response.text, "Partial answer");
-    let mut decoder = Decoder::new(LLMProvider::Openai);
+    let mut decoder = Decoder::new(protocols(CloudProvider::Openai).completion);
     decoder
         .push(b"data: [DONE]\n\n", &|_| Ok(()), &|_| Ok(()))
         .unwrap();
@@ -196,7 +199,7 @@ async fn stalled_streams_and_oversized_events_fail() {
     let pending =
         futures::stream::iter([Ok::<_, String>(started)]).chain(futures::stream::pending());
     let error = drain(
-        LLMProvider::Openai,
+        protocols(CloudProvider::Openai).completion,
         pending,
         Duration::from_secs(2),
         Instant::now(),
@@ -206,7 +209,7 @@ async fn stalled_streams_and_oversized_events_fail() {
     .await
     .unwrap_err();
     assert!(error.to_string().contains("stalled"));
-    let mut decoder = Decoder::new(LLMProvider::Openai);
+    let mut decoder = Decoder::new(protocols(CloudProvider::Openai).completion);
     assert!(decoder
         .push(
             &vec![b'x'; Decoder::MAX_EVENT_BYTES + 1],
@@ -236,7 +239,7 @@ fn google_stream_preserves_tool_arguments_reasoning_and_usage() {
         reasoning.lock().unwrap().push_str(&delta);
         Ok(())
     };
-    let mut decoder = Decoder::new(LLMProvider::Google);
+    let mut decoder = Decoder::new(protocols(CloudProvider::Google).completion);
     for byte in events.chunks(3) {
         decoder.push(byte, &on_text, &on_reasoning).unwrap();
     }
@@ -260,7 +263,7 @@ fn google_stream_keeps_each_calls_thought_signature_for_the_replay() {
         json!({"choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call-g1","type":"function","function":{"name":"search","arguments":"{}"},"extra_content":{"google":{"thought_signature":"sig-1"}}}]}}]}),
         json!({"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}),
     ]);
-    let mut decoder = Decoder::new(LLMProvider::Google);
+    let mut decoder = Decoder::new(protocols(CloudProvider::Google).completion);
     decoder.push(&events, &|_| Ok(()), &|_| Ok(())).unwrap();
     let response = decoder.finish(&|_| Ok(()), &|_| Ok(())).unwrap();
     let replay = replayed(&response).to_string();
@@ -287,7 +290,7 @@ async fn silence_before_the_first_delta_is_not_a_stall() {
             .unwrap();
     });
     let response = drain(
-        LLMProvider::Openai,
+        protocols(CloudProvider::Openai).completion,
         tokio_stream::wrappers::UnboundedReceiverStream::new(receiver),
         Duration::from_secs(2),
         Instant::now(),
@@ -315,7 +318,7 @@ fn anthropic_calls_with_no_or_broken_arguments_do_not_fail_the_reply() {
         json!({"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":8}}),
         json!({"type":"message_stop"}),
     ]);
-    let mut decoder = Decoder::new(LLMProvider::Anthropic);
+    let mut decoder = Decoder::new(protocols(CloudProvider::Anthropic).completion);
     decoder.push(&events, &|_| Ok(()), &|_| Ok(())).unwrap();
     let response = decoder.finish(&|_| Ok(()), &|_| Ok(())).unwrap();
     let arguments: Vec<_> = response

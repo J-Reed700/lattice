@@ -12,10 +12,11 @@
 //!
 //! # Implementations
 //!
-//! - `LlamaCppLlm` - llama-server, bundled or remote
-//! - `OllamaClient` - Ollama's native `/api/chat`
-//! - `CloudLlm` - OpenAI Responses and Anthropic Messages
-//! - `ScheduledLlm` - the decorator that admits each call through its backend's scheduler
+//! - `ScheduledLlm` - admits each call through its backend's scheduler and
+//!   sends it to the backend, which is one of:
+//!   - `LlamaCppLlm` - llama-server, bundled or remote
+//!   - `OllamaClient` - Ollama's native `/api/chat`
+//!   - `CloudLlm` - OpenAI Responses, Anthropic Messages and Google
 
 use crate::application::contracts::settings::LLMSettingsDto;
 use crate::domain::models::model_ref::{CloudProvider, ModelRef};
@@ -488,8 +489,9 @@ pub struct CompletionRequest {
     /// see [`ThinkingMode`] for why tool rounds never think.
     #[serde(default)]
     pub thinking: ThinkingMode,
-    /// Caps generated tokens for this request, overriding the provider's own
-    /// configured ceiling when it is lower.
+    /// Caps generated tokens for this request, overriding the model's own
+    /// ceiling when it is lower. A model that thinks first spends its thinking
+    /// out of the same ceiling, so there the model's ceiling alone applies.
     ///
     /// The context assembler reserves output room out of the model's window, and
     /// a reservation nothing enforces is only bookkeeping: without this the model
@@ -533,10 +535,6 @@ pub struct CompletionRequest {
     /// the key, so the server reuses that prefix from its KV cache.
     #[serde(default)]
     pub cache_key: Option<String>,
-    /// The llama-server slot the backend's scheduler admitted this request to.
-    /// Set by the scheduler on the copy it forwards; callers leave it unset.
-    #[serde(skip)]
-    pub assigned_slot: Option<u32>,
 }
 
 /// Tool-use policy for one request, mirroring the OpenAI `tool_choice` field.
@@ -563,18 +561,6 @@ impl CompletionRequest {
         match self.wall_clock_budget() {
             Some(budget) => tokio::time::timeout(budget, work).await,
             None => Ok(work.await),
-        }
-    }
-
-    /// The output ceiling to send, given the provider's own configured limit.
-    ///
-    /// The smaller of the two always wins: a request-level cap must be able to
-    /// tighten the provider's default, and must never be able to raise it past
-    /// what the user configured.
-    pub fn effective_max_output_tokens(&self, provider_limit: u32) -> u32 {
-        match self.max_output_tokens {
-            Some(requested) if requested > 0 => requested.min(provider_limit),
-            _ => provider_limit,
         }
     }
 

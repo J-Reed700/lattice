@@ -1,3 +1,4 @@
+use lattice_core::shared::persistence::Database;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -99,7 +100,7 @@ async fn fixture() -> Fixture {
     let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
     sweep_gate.open();
     let service = Arc::new(ChatImageService::new(
-        pool.clone(),
+        Database::from(pool.clone()),
         dir.path().join("chat-images"),
         Arc::new(NoNetwork),
         Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),

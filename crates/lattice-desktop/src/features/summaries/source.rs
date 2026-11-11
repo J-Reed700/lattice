@@ -8,10 +8,10 @@
 //! The whole text is read: the summarizer describes a long document from all
 //! of it, part by part, rather than from its opening.
 
+use crate::features::summaries::repository;
 use async_trait::async_trait;
-use sqlx::SqlitePool;
-
-use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 
 /// One top-level section's text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,44 +89,29 @@ pub fn assemble(
 }
 
 pub struct SqliteSummarySource {
-    pool: SqlitePool,
+    database: Database,
 }
 
 impl SqliteSummarySource {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(database: Database) -> Self {
+        Self { database }
     }
 }
 
 #[async_trait]
 impl SummarySourcePort for SqliteSummarySource {
     async fn load(&self, document_id: &str) -> Result<Option<SummarySource>> {
-        let Some(title): Option<String> =
-            sqlx::query_scalar("SELECT file_name FROM documents WHERE id = ?")
-                .bind(document_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| AppError::Database(format!("summary source title: {e}")))?
-        else {
-            return Ok(None);
-        };
         // The newest cluster run wins; older runs describe a corpus shape that
         // no longer exists. Absent clustering simply contributes no label.
-        let cluster_label: Option<String> = sqlx::query_scalar(
-            "SELECT c.label FROM cluster_members cm JOIN clusters c ON c.id = cm.cluster_id JOIN cluster_runs r ON r.id = c.run_id WHERE cm.document_id = ? ORDER BY r.ran_at DESC LIMIT 1",
-        )
-        .bind(document_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("summary source cluster label: {e}")))?;
-        let chunks: Vec<(Option<String>, String)> = sqlx::query_as(
-            "SELECT section, content FROM text_chunks WHERE document_id = ? ORDER BY chunk_index",
-        )
-        .bind(document_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("summary source chunks: {e}")))?;
-        Ok(Some(assemble(document_id, &title, cluster_label, chunks)))
+        let Some(parts) = repository::source_parts(&self.database, document_id).await? else {
+            return Ok(None);
+        };
+        Ok(Some(assemble(
+            document_id,
+            &parts.title,
+            parts.cluster_label,
+            parts.chunks,
+        )))
     }
 }
 

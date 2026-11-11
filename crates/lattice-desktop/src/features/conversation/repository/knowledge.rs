@@ -8,7 +8,9 @@ use crate::features::conversation::memory_dto::MemoryEvidenceDto;
 use lattice_core::application::ports::conversation_memory::SHARED_RELEVANCE_FLOOR;
 use lattice_core::domain::conversation::memory::compute_digest;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::text::informative_terms;
+use sqlx::SqliteConnection;
 use std::collections::HashMap;
 
 /// Items read for one prompt at a time; a larger pool is read in pages.
@@ -33,11 +35,12 @@ struct Row {
 
 impl ConversationRepository {
     pub async fn knowledge(&self, request: &KnowledgeRequestDto) -> Result<KnowledgeResponseDto> {
-        if request.action != "list" {
-            self.change_knowledge(request).await?;
+        if request.action == "list" {
+            return self
+                .list_knowledge(&request.conversation_id, request.offset.unwrap_or(0), false)
+                .await;
         }
-        self.list_knowledge(&request.conversation_id, request.offset.unwrap_or(0), false)
-            .await
+        self.change_knowledge(request).await
     }
 
     pub async fn list_knowledge(
@@ -46,8 +49,19 @@ impl ConversationRepository {
         offset: i64,
         for_prompt: bool,
     ) -> Result<KnowledgeResponseDto> {
-        let mut tx = self.pool.begin().await?;
-        let chat_pool = Self::chat_pool(&mut tx, conversation).await?;
+        let mut tx = self.pool.begin_read().await?;
+        let response = Self::list_knowledge_on(&mut tx, conversation, offset, for_prompt).await?;
+        tx.commit().await?;
+        Ok(response)
+    }
+
+    async fn list_knowledge_on(
+        conn: &mut SqliteConnection,
+        conversation: &str,
+        offset: i64,
+        for_prompt: bool,
+    ) -> Result<KnowledgeResponseDto> {
+        let chat_pool = Self::chat_pool(&mut *conn, conversation).await?;
         let page_size = if for_prompt { PROMPT_PAGE } else { 50 };
         let sql = format!(
             "SELECT i.id,i.conversation_id,c.title AS conversation_title,i.label,i.kind,i.state,COALESCE(a.scope_kind,CASE WHEN i.kind IN ({SHARED_KINDS}) THEN ? ELSE 'conversation' END) AS scope,i.created_at AS learned_at,a.valid_from,a.valid_until,a.verified_at,COALESCE(a.forgotten,0) AS forgotten,i.superseded_by FROM conversation_memory_items i JOIN conversations c ON c.id=i.conversation_id LEFT JOIN conversation_memory_attributes a ON a.item_id=i.id LEFT JOIN conversation_memory_state s ON s.conversation_id=i.conversation_id WHERE {} AND (?=0 OR (i.state='active' AND COALESCE(a.forgotten,0)=0 AND s.validity='ready' AND s.schema_version=1 AND (a.valid_from IS NULL OR julianday(a.valid_from)<=julianday('now')) AND (a.valid_until IS NULL OR julianday(a.valid_until)>julianday('now')))) ORDER BY i.created_at DESC,i.id LIMIT ? OFFSET ?",
@@ -61,7 +75,7 @@ impl ConversationRepository {
             .bind(for_prompt)
             .bind(page_size as i64 + 1)
             .bind(offset.max(0))
-            .fetch_all(&mut *tx)
+            .fetch_all(&mut *conn)
             .await?;
         let has_more = rows.len() > page_size;
         let item_ids: Vec<_> = rows.iter().take(page_size).map(|row| &row.id).collect();
@@ -87,7 +101,7 @@ impl ConversationRepository {
              WHERE e.item_id IN (SELECT value FROM json_each(?)) ORDER BY e.item_id,e.ordinal",
         )
         .bind(serde_json::to_string(&item_ids)?)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut *conn)
         .await?
         };
         // Read each source message once. Joining its full body onto every
@@ -101,7 +115,7 @@ impl ConversationRepository {
             "SELECT id,content FROM conversation_messages WHERE id IN (SELECT value FROM json_each(?))",
         )
         .bind(serde_json::to_string(&message_ids)?)
-        .fetch_all(&mut *tx).await?
+        .fetch_all(&mut *conn).await?
         };
         let messages: HashMap<_, _> = messages
             .into_iter()
@@ -162,11 +176,10 @@ impl ConversationRepository {
             });
         }
         let raw: Option<String> = sqlx::query_scalar("SELECT json_extract(metadata,'$.memory.items') FROM conversation_messages WHERE conversation_id=? AND role='assistant' AND status='completed' ORDER BY sequence DESC LIMIT 1")
-            .bind(conversation).fetch_optional(&mut *tx).await?.flatten();
+            .bind(conversation).fetch_optional(&mut *conn).await?.flatten();
         let last_answer_memory_ids = raw
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        tx.commit().await?;
         Ok(KnowledgeResponseDto {
             items,
             has_more,
@@ -175,7 +188,7 @@ impl ConversationRepository {
         })
     }
 
-    async fn change_knowledge(&self, r: &KnowledgeRequestDto) -> Result<()> {
+    async fn change_knowledge(&self, r: &KnowledgeRequestDto) -> Result<KnowledgeResponseDto> {
         if r.scope
             .as_deref()
             .is_some_and(|scope| !["conversation", "pool", "personal"].contains(&scope))
@@ -191,7 +204,7 @@ impl ConversationRepository {
                 ));
             }
         }
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_write().await?;
         let chat_pool = Self::chat_pool(&mut tx, &r.conversation_id).await?;
         let mut source = r.conversation_id.clone();
         let (scope_kind, scope_key) = match r.scope.as_deref() {
@@ -341,8 +354,11 @@ impl ConversationRepository {
             sqlx::query("INSERT INTO conversation_memory_events(id,conversation_id,operation_id,memory_revision,operation,item_ids) SELECT ?,?,?,memory_revision,?,? FROM conversation_memory_state WHERE conversation_id=?")
                 .bind(uuid::Uuid::new_v4().to_string()).bind(conversation).bind(uuid::Uuid::new_v4().to_string()).bind(format!("user_{}",r.action)).bind(serde_json::to_string(&affected)?).bind(conversation).execute(&mut *tx).await?;
         }
+        let response =
+            Self::list_knowledge_on(&mut tx, &r.conversation_id, r.offset.unwrap_or(0), false)
+                .await?;
         tx.commit().await?;
-        Ok(())
+        Ok(response)
     }
 }
 fn timestamp(value: Option<&str>) -> Result<Option<String>> {
@@ -365,19 +381,24 @@ impl ConversationRepository {
         conversation: &str,
         query: &str,
     ) -> Result<lattice_core::application::ports::conversation_memory::PreparedMemory> {
-        let revisions = self.knowledge_revisions(conversation).await?;
+        let vector = self.embed_knowledge_query(query).await;
+        let mut tx = self.pool.begin_read().await?;
+        let revisions = Self::knowledge_revisions(&mut tx, conversation).await?;
         let mut applicable = Vec::new();
         let mut offset = 0;
         loop {
-            let page = self.list_knowledge(conversation, offset, true).await?;
+            let page = Self::list_knowledge_on(&mut tx, conversation, offset, true).await?;
             applicable.extend(page.items);
             if !page.has_more {
                 break;
             }
             offset += PROMPT_PAGE as i64;
         }
+        let semantic = self
+            .semantic_scores_on(&mut tx, conversation, vector.as_deref())
+            .await;
+        tx.commit().await?;
         let terms: Vec<_> = informative_terms(query).into_iter().take(32).collect();
-        let semantic = self.knowledge_semantic_scores(conversation, query).await;
         let mut prepared =
             lattice_core::application::ports::conversation_memory::PreparedMemory::default();
         let mut optional = Vec::new();
@@ -418,12 +439,6 @@ impl ConversationRepository {
             .filter(|(_, label, _)| seen.insert(label.clone()))
             .map(|(_, _, text)| text)
             .collect();
-        if self.knowledge_revisions(conversation).await? != revisions {
-            return Err(AppError::ConcurrentModification {
-                resource: "conversation memory".into(),
-                details: "Memory changed while resolving evidence; retry".into(),
-            });
-        }
         prepared.revisions = Some(revisions);
         Ok(prepared)
     }
@@ -448,11 +463,15 @@ impl ConversationRepository {
         text: &str,
     ) -> Result<Vec<lattice_core::domain::conversation::memory::MemoryItem>> {
         let terms = informative_terms(text);
-        let semantic = self.knowledge_semantic_scores(conversation, text).await;
+        let vector = self.embed_knowledge_query(text).await;
+        let mut tx = self.pool.begin_read().await?;
+        let semantic = self
+            .semantic_scores_on(&mut tx, conversation, vector.as_deref())
+            .await;
         let mut ranked = Vec::new();
         let mut offset = 0;
         loop {
-            let page = self.list_knowledge(conversation, offset, true).await?;
+            let page = Self::list_knowledge_on(&mut tx, conversation, offset, true).await?;
             for item in page.items {
                 if item.conversation_id == conversation {
                     continue;
@@ -481,7 +500,9 @@ impl ConversationRepository {
         ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
         ranked.truncate(lattice_core::domain::conversation::memory::MAX_OPERATIONS_PER_RESPONSE);
         let ids: Vec<String> = ranked.into_iter().map(|(_, id)| id).collect();
-        self.memory_items_by_id(&ids).await
+        let items = Self::memory_items_by_id_on(&mut tx, &ids).await?;
+        tx.commit().await?;
+        Ok(items)
     }
 }
 
@@ -583,32 +604,51 @@ impl ConversationRepository {
         conversation: &str,
         query: &str,
     ) -> std::collections::HashMap<String, f32> {
-        let mut scores = std::collections::HashMap::new();
-        let Some(embedder) = &self.memory_embedding else {
-            return scores;
+        let vector = self.embed_knowledge_query(query).await;
+        let Ok(mut tx) = self.pool.begin_read().await else {
+            return std::collections::HashMap::new();
         };
+        let scores = self
+            .semantic_scores_on(&mut tx, conversation, vector.as_deref())
+            .await;
+        let _ = tx.commit().await;
+        scores
+    }
+
+    /// The query's vector; none without an embedder, or when the query cannot
+    /// be embedded in time.
+    async fn embed_knowledge_query(&self, query: &str) -> Option<Vec<f32>> {
+        let embedder = self.memory_embedding.as_ref()?;
         let query: String = query.chars().take(2048).collect();
-        let vector = match tokio::time::timeout(
+        match tokio::time::timeout(
             std::time::Duration::from_secs(5),
             embedder.embed_query(&query),
         )
         .await
         {
-            Ok(Ok(v)) => v,
-            _ => return scores,
+            Ok(Ok(v)) => Some(v),
+            _ => None,
+        }
+    }
+
+    async fn semantic_scores_on(
+        &self,
+        conn: &mut SqliteConnection,
+        conversation: &str,
+        vector: Option<&[f32]>,
+    ) -> std::collections::HashMap<String, f32> {
+        let mut scores = std::collections::HashMap::new();
+        let (Some(embedder), Some(vector)) = (&self.memory_embedding, vector) else {
+            return scores;
         };
         #[derive(sqlx::FromRow)]
         struct VectorRow {
             item_id: String,
             embedding: Vec<u8>,
         }
-        let Ok(mut connection) = self.pool.acquire().await else {
+        let Ok(chat_pool) = Self::chat_pool(&mut *conn, conversation).await else {
             return scores;
         };
-        let Ok(chat_pool) = Self::chat_pool(&mut connection, conversation).await else {
-            return scores;
-        };
-        drop(connection);
         let readable = chat_pool.readable_by_sql();
         let Ok(values) = chat_pool.bind_values(conversation) else {
             return scores;
@@ -628,7 +668,7 @@ impl ConversationRepository {
                 .bind(vector.len() as i64)
                 .bind(page)
                 .bind(offset)
-                .fetch_all(&self.pool)
+                .fetch_all(&mut *conn)
                 .await;
             let Ok(rows) = rows else { break };
             let read = rows.len() as i64;
@@ -638,7 +678,7 @@ impl ConversationRepository {
                         &row.embedding,
                     )
                 {
-                    if let Some(score) = super::memory_semantic::cosine(&vector, &stored) {
+                    if let Some(score) = super::memory_semantic::cosine(vector, &stored) {
                         let previous = scores.entry(row.item_id).or_insert(0.0_f32);
                         *previous = previous.max(score);
                     }
@@ -661,8 +701,11 @@ impl ConversationRepository {
 }
 
 impl ConversationRepository {
-    async fn knowledge_revisions(&self, conversation: &str) -> Result<(i64, i64)> {
+    async fn knowledge_revisions(
+        conn: &mut SqliteConnection,
+        conversation: &str,
+    ) -> Result<(i64, i64)> {
         Ok(sqlx::query_as("SELECT COALESCE(s.memory_revision,0),c.transcript_revision FROM conversations c LEFT JOIN conversation_memory_state s ON s.conversation_id=c.id WHERE c.id=?")
-            .bind(conversation).fetch_one(&self.pool).await?)
+            .bind(conversation).fetch_one(&mut *conn).await?)
     }
 }

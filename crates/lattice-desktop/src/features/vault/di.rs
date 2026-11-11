@@ -51,7 +51,7 @@ impl Container {
             )
         })?;
         crate::features::vault::watcher::rescan_vault(
-            self.core.db_pool().clone(),
+            self.core.database().clone(),
             vault_root,
             self.vault_write_suppression.clone(),
             &self.vault_rescan_lock,

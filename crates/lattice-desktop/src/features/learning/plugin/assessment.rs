@@ -6,7 +6,7 @@ pub(super) fn assessment_repo(
     container: &Container,
 ) -> crate::features::learning::assessment_repository::LearningAssessmentRepository {
     crate::features::learning::assessment_repository::LearningAssessmentRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
 }
 
@@ -45,7 +45,7 @@ pub async fn prepare_learning_quiz_bank(
     container: State<'_, Container>,
 ) -> Result<LearningGenerationJob, ApiError> {
     let id = crate::features::learning::quiz_bank_jobs::queue_bank(
-        container.db_pool(),
+        container.database(),
         &request.operation_id,
         &request.program_id,
         &request.scope,
@@ -55,7 +55,7 @@ pub async fn prepare_learning_quiz_bank(
     .map_err(ApiError::from)?;
     container.jobs().submitted(&id).await;
     crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .job(&id)
     .await
@@ -262,11 +262,11 @@ pub(super) fn quiz_workers(
     };
     (
         crate::features::learning::quiz_bank_jobs::QuizBankWorker {
-            pool: container.db_pool().clone(),
+            database: container.database().clone(),
             load_llm: loader(container.clone(), model_requirements::assessment()),
         },
         crate::features::learning::quiz_bank_jobs::QuizGradingWorker {
-            pool: container.db_pool().clone(),
+            database: container.database().clone(),
             load_llm: loader(container.clone(), model_requirements::assessment()),
         },
     )

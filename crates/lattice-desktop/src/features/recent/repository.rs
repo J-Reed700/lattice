@@ -13,6 +13,8 @@ use chrono::Utc;
 use lattice_core::application::contracts::recent_documents::RecentDocumentRecord as RecentDocumentDto;
 use lattice_core::application::ports::RecentDocumentsRepositoryPort;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqlitePool};
 
 /// SQLite implementation of recent documents repository.
@@ -30,7 +32,8 @@ pub struct RecentDocumentsRepository {
 
 impl RecentDocumentsRepository {
     /// Create a new recent documents repository.
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 }
@@ -43,7 +46,7 @@ impl RecentDocumentsRepositoryPort for RecentDocumentsRepository {
         let now = Utc::now().to_rfc3339();
 
         let tracked = query_with_timeout(|| async {
-            let mut tx = pool.begin().await?;
+            let mut tx = pool.begin_write().await?;
             let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents WHERE id = ?")
                 .bind(&document_id).fetch_one(&mut *tx).await?;
             if exists == 0 { return Ok(false); }
@@ -120,6 +123,7 @@ impl RecentDocumentsRepositoryPort for RecentDocumentsRepository {
         let pool = self.pool.clone();
 
         query_with_timeout(|| async {
+            let mut tx = pool.begin_write().await?;
             let result = if let Some(date) = before_date {
                 let date = date.to_string();
                 sqlx::query!(
@@ -129,7 +133,7 @@ impl RecentDocumentsRepositoryPort for RecentDocumentsRepository {
                     "#,
                     date
                 )
-                .execute(&pool)
+                .execute(&mut *tx)
                 .await?
             } else {
                 // Clear all history if no date specified
@@ -138,9 +142,10 @@ impl RecentDocumentsRepositoryPort for RecentDocumentsRepository {
                     DELETE FROM recent_documents
                     "#
                 )
-                .execute(&pool)
+                .execute(&mut *tx)
                 .await?
             };
+            tx.commit().await?;
 
             Ok(result.rows_affected() as usize)
         })

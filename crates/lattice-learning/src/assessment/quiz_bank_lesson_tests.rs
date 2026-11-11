@@ -12,6 +12,7 @@ use crate::{
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobContext, JobHandler, JobOutcome, JobStore};
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -28,7 +29,7 @@ type BankRow = (
 fn worker(pool: &SqlitePool, model: Arc<Recorder>) -> QuizBankWorker {
     let llm: Arc<dyn LLMPort> = model;
     QuizBankWorker {
-        pool: pool.clone(),
+        database: pool.clone().into(),
         load_llm: Arc::new(move || {
             let llm = llm.clone();
             Box::pin(async move { Ok(crate::generation_jobs::pinned_for_test(llm)) })
@@ -223,7 +224,7 @@ async fn a_failed_quiz_job_leaves_the_lesson_published_and_a_prepare_can_still_w
     let (published, job_id) = published(&pool).await?;
     let context = claimed(&pool, &job_id).await?;
     let failing = QuizBankWorker {
-        pool: pool.clone(),
+        database: pool.clone().into(),
         load_llm: Arc::new(|| {
             Box::pin(async { Err(AppError::InvalidInput("the model is gone".into())) })
         }),
@@ -252,7 +253,7 @@ async fn a_failed_quiz_job_leaves_the_lesson_published_and_a_prepare_can_still_w
     assert_eq!(seeds, 3);
 
     let again = crate::quiz_bank_jobs::queue_bank(
-        &pool,
+        &Database::from(pool.clone()),
         &uuid::Uuid::new_v4().to_string(),
         &published.program_id,
         &lesson_scope(lesson),
@@ -335,7 +336,7 @@ async fn a_lesson_quiz_job_keeps_what_its_checks_left_out() -> Result<()> {
     let context = claimed(&pool, &job_id).await?;
     let llm: Arc<dyn LLMPort> = Arc::new(Unciting);
     let quiz_worker = QuizBankWorker {
-        pool: pool.clone(),
+        database: pool.clone().into(),
         load_llm: Arc::new(move || {
             let llm = llm.clone();
             Box::pin(async move { Ok(crate::generation_jobs::pinned_for_test(llm)) })
@@ -366,7 +367,10 @@ async fn a_lesson_quiz_job_keeps_what_its_checks_left_out() -> Result<()> {
 async fn lesson_stage_report_reads_a_completed_jobs_numbers() -> Result<()> {
     let pool = crate::tests::pool().await?;
     let (published, job_id) = published(&pool).await?;
-    assert_eq!(lesson_stage_report(&pool, &job_id).await?, None);
+    assert_eq!(
+        lesson_stage_report(&Database::from(pool.clone()), &job_id).await?,
+        None
+    );
 
     let outcome_id = lesson_outcome(&pool, &published.lesson_id).await;
     let item_id = uuid::Uuid::new_v4().to_string();
@@ -381,7 +385,10 @@ async fn lesson_stage_report_reads_a_completed_jobs_numbers() -> Result<()> {
         author_model: Some("the-authoring-model".into()),
     };
     let context = claimed(&pool, &job_id).await?;
-    assert_eq!(lesson_stage_report(&pool, &job_id).await?, None);
+    assert_eq!(
+        lesson_stage_report(&Database::from(pool.clone()), &job_id).await?,
+        None
+    );
     assert!(
         context
             .put_checkpoint(LESSON_BANK_CHECKPOINT, &serde_json::to_value(&bank)?)
@@ -409,7 +416,9 @@ async fn lesson_stage_report_reads_a_completed_jobs_numbers() -> Result<()> {
             .fetch_one(&pool)
             .await
             .unwrap();
-    let report = lesson_stage_report(&pool, &job_id).await?.unwrap();
+    let report = lesson_stage_report(&Database::from(pool.clone()), &job_id)
+        .await?
+        .unwrap();
     assert_eq!(i64::try_from(report.written).unwrap(), stored_rows);
     assert_eq!(report.dropped, bank.dropped);
     Ok(())

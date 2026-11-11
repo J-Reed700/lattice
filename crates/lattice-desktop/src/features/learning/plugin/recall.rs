@@ -7,7 +7,7 @@ pub async fn get_learning_recall_workspace(
     container: State<'_, Container>,
 ) -> Result<LearningRecallWorkspaceDto, ApiError> {
     crate::features::learning::recall_repository::LearningRecallRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .workspace(&program_id)
     .await
@@ -21,7 +21,7 @@ pub async fn save_learning_recall_card(
     container: State<'_, Container>,
 ) -> Result<LearningRecallWorkspaceDto, ApiError> {
     crate::features::learning::recall_repository::LearningRecallRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .save_card(&request)
     .await
@@ -35,7 +35,7 @@ pub async fn decide_learning_recall_duplicate(
     container: State<'_, Container>,
 ) -> Result<LearningRecallWorkspaceDto, ApiError> {
     crate::features::learning::recall_repository::LearningRecallRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .decide_duplicate(&request)
     .await
@@ -49,7 +49,7 @@ pub async fn review_learning_recall_card(
     container: State<'_, Container>,
 ) -> Result<LearningRecallWorkspaceDto, ApiError> {
     crate::features::learning::recall_repository::LearningRecallRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .review_card(&request)
     .await

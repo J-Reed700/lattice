@@ -1,12 +1,12 @@
 use lattice_core::shared::error::{AppError, Result, ResultExt};
-use lattice_core::shared::resilience::{retry_with_backoff, RetryConfig};
+use lattice_core::shared::persistence::Database;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub struct DatabaseConnection {
-    pool: SqlitePool,
+    database: Database,
     /// Where a corrupt database was moved before a fresh one was created, when
     /// that happened on this open. The user otherwise sees only an empty
     /// library; this is what lets the app say why.
@@ -83,7 +83,7 @@ impl DatabaseConnection {
         }
 
         Ok(Self {
-            pool,
+            database: pool.into(),
             recovered_from,
         })
     }
@@ -197,114 +197,12 @@ impl DatabaseConnection {
         }
     }
 
-    pub fn pool(&self) -> &SqlitePool {
-        &self.pool
+    pub fn database(&self) -> &Database {
+        &self.database
     }
 
     pub async fn close(self) -> Result<()> {
-        self.pool.close().await;
-        Ok(())
-    }
-
-    pub async fn begin_immediate(&self) -> Result<sqlx::Transaction<'_, sqlx::Sqlite>> {
-        tracing::info!("→ begin_immediate: Starting transaction acquisition...");
-        let pool = self.pool.clone();
-        let result = retry_with_backoff(
-            RetryConfig::default(),
-            || async {
-                tracing::info!("→ begin_immediate: Calling pool.begin_with()...");
-                let tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-                tracing::info!("✓ begin_immediate: Transaction acquired successfully");
-                Ok(tx)
-            },
-            |e: &AppError| {
-                // Retry on database locked errors
-                tracing::warn!("begin_immediate: Database locked, will retry: {}", e);
-                matches!(e, AppError::Database(msg) if
-                    msg.contains("database is locked") ||
-                    msg.contains("SQLITE_BUSY") ||
-                    msg.contains("SQLITE_LOCKED")
-                )
-            },
-        )
-        .await;
-
-        match &result {
-            Ok(_) => tracing::info!("✓ begin_immediate: Transaction acquired successfully"),
-            Err(e) => tracing::error!("✗ begin_immediate: Failed to acquire transaction: {}", e),
-        }
-
-        result
-    }
-
-    // Issue #7: Add VACUUM Strategy (P0 - Disk Bloat)
-    // Retry on transient database errors
-    pub async fn vacuum_if_needed(&self, threshold_bytes: i64) -> Result<bool> {
-        let pool = self.pool.clone();
-        retry_with_backoff(
-            RetryConfig::conservative(), // Less aggressive for maintenance tasks
-            || async {
-                let size_result: (i64, i64) = sqlx::query_as(
-                    "SELECT page_count, page_size FROM pragma_page_count(), pragma_page_size()",
-                )
-                .fetch_one(&pool)
-                .await?;
-
-                let db_size = size_result.0 * size_result.1;
-
-                let freelist: (i64,) =
-                    sqlx::query_as("SELECT freelist_count FROM pragma_freelist_count()")
-                        .fetch_one(&pool)
-                        .await?;
-
-                let free_ratio = freelist.0 as f64 / size_result.0 as f64;
-
-                // Vacuum if database is over threshold and more than 20% fragmented
-                if db_size > threshold_bytes && free_ratio > 0.2 {
-                    tracing::info!(
-                        "Vacuuming database: size={} bytes, fragmentation={:.1}%",
-                        db_size,
-                        free_ratio * 100.0
-                    );
-                    sqlx::query("VACUUM").execute(&pool).await?;
-                    return Ok(true);
-                }
-
-                Ok(false)
-            },
-            |e: &AppError| {
-                // Retry on database locked errors
-                matches!(e, AppError::Database(msg) if
-                    msg.contains("database is locked") ||
-                    msg.contains("SQLITE_BUSY")
-                )
-            },
-        )
-        .await
-    }
-
-    // Helper for running maintenance tasks
-    // Retry on transient database errors
-    pub async fn run_maintenance(&self) -> Result<()> {
-        let pool = self.pool.clone();
-        retry_with_backoff(
-            RetryConfig::conservative(),
-            || async {
-                sqlx::query("PRAGMA optimize").execute(&pool).await?;
-                Ok(())
-            },
-            |e: &AppError| {
-                matches!(e, AppError::Database(msg) if
-                    msg.contains("database is locked") ||
-                    msg.contains("SQLITE_BUSY")
-                )
-            },
-        )
-        .await?;
-
-        // Vacuum if database is over 100MB
-        self.vacuum_if_needed(100_000_000).await?;
-
+        self.database.close().await;
         Ok(())
     }
 }
@@ -360,13 +258,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lattice_core::shared::persistence::driver::DriverPool;
 
     #[tokio::test]
     async fn file_backed_pool_applies_connection_pragmas_and_closes_with_a_clone() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("settings.db");
         let connection = DatabaseConnection::new(db).await.unwrap();
-        let pool = connection.pool();
+        let pool = connection.database().sqlx_pool();
 
         // Holding two connections at once verifies these settings are applied
         // to every SQLite connection, rather than one arbitrary pooled handle.
@@ -539,7 +438,7 @@ mod tests {
         // closed. What matters here is that nothing was replayed into the
         // fresh file.
         let fresh: (i32,) = sqlx::query_as("PRAGMA schema_version")
-            .fetch_one(connection.pool())
+            .fetch_one(connection.database().sqlx_pool())
             .await
             .unwrap();
         assert_eq!(

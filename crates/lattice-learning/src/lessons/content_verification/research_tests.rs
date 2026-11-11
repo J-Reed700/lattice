@@ -13,6 +13,7 @@ use lattice_core::application::contracts::web::{
 };
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::MockWebService;
+use lattice_core::shared::persistence::Database;
 
 pub(crate) const CAPTURE: &str =
     "Random assignment reduces confounding in comparisons between treatment groups. A study that assigns participants to its groups by chance spreads every characteristic it did not measure across the groups in the same way, so the difference it finds afterward is not owed to who was placed where. Researchers give this as the reason a randomised comparison can support a causal claim where an observational one cannot. The method does not remove chance variation, which shrinks as the groups grow, and it does not repair a measurement that was biased or a trial in which many participants left. Those need their own safeguards, such as blinding the people who record the outcome and following up everyone who was assigned. Random assignment is also distinct from random sampling: sampling decides who is studied, assignment decides who receives which treatment, and the two protect different conclusions. Reports of trials state how the sequence of assignments was generated so a reader can judge whether the groups were comparable at the start.";
@@ -305,7 +306,7 @@ async fn research_searches_the_site_the_planner_named_and_reads_a_page_where_it_
         prompts: Mutex::new(vec![]),
     };
     run(
-        pool,
+        Database::from(pool.clone()),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web.clone()),
@@ -351,7 +352,8 @@ async fn research_can_save_evidence_after_one_hundred_sources() -> Result<()> {
         })
         .collect();
     repo.create(&program).await?;
-    let library = crate::source_library::LearningSourceLibraryRepository::new(pool.clone());
+    let library =
+        crate::source_library::LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     library
         .preflight_new_source(
             &program.summary.id,
@@ -363,7 +365,7 @@ async fn research_can_save_evidence_after_one_hundred_sources() -> Result<()> {
     let references = ReferenceCollection::lexical(&sources)?;
     let llm = model();
     run(
-        pool,
+        Database::from(pool.clone()),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(false)),
@@ -399,7 +401,7 @@ async fn research_persists_full_capture_and_deduplicates_without_approving_claim
     let llm = model();
     let findings = vec![gap()];
     run(
-        pool,
+        Database::from(pool.clone()),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(false)),
@@ -434,6 +436,102 @@ async fn research_persists_full_capture_and_deduplicates_without_approving_claim
     .await
 }
 
+fn saved_page(url: &str, text: &str) -> crate::source_library::CapturedLearningSource {
+    crate::source_library::CapturedLearningSource {
+        title: "Research methods".into(),
+        publisher: None,
+        requested_url: Some(url.into()),
+        resolved_url: Some(url.into()),
+        text: text.into(),
+        truncated: false,
+        extraction_version: "test_v1".into(),
+        signals: crate::references::trust::capture::not_extracted("test fixture"),
+    }
+}
+
+/// Saves two pages at once, each as a lesson that read the course's sources
+/// before the other saved anything: how many saves returned a new source, and
+/// how many sources the course gained.
+async fn save_together(pages: [(&str, &str); 2]) -> Result<(usize, usize)> {
+    let pool = crate::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let mut program = crate::tests::fixture();
+    program.summary.status = crate::dto::LearningProgramStatus::Active;
+    repo.create(&program).await?;
+    let before = repo.verification_sources(&program.summary.id).await?.len();
+    let context = Context {
+        database: pool.clone().into(),
+        program_id: program.summary.id.clone(),
+        topic: program.summary.goal.clone(),
+        web: web(false),
+        searched: Default::default(),
+    };
+    let library = crate::source_library::LearningSourceLibraryRepository::new(Database::from(pool));
+    let saving = Saving {
+        context: &context,
+        program_repo: &repo,
+        library: &library,
+    };
+    let (mut first_sources, mut first_urls) = (Vec::new(), HashSet::new());
+    let (mut second_sources, mut second_urls) = (Vec::new(), HashSet::new());
+    let (first, second) = tokio::join!(
+        saving.save(
+            &mut first_sources,
+            &mut first_urls,
+            pages[0].0,
+            saved_page(pages[0].0, pages[0].1),
+            None
+        ),
+        saving.save(
+            &mut second_sources,
+            &mut second_urls,
+            pages[1].0,
+            saved_page(pages[1].0, pages[1].1),
+            None
+        ),
+    );
+    let returned = [first?, second?].iter().flatten().count();
+    let held = repo.verification_sources(&program.summary.id).await?.len();
+    Ok((returned, held - before))
+}
+
+#[tokio::test]
+async fn two_lessons_saving_the_same_page_leave_one_source() -> Result<()> {
+    let (returned, added) = save_together([
+        ("https://example.org/same", CAPTURE),
+        ("https://example.org/same#section", CAPTURE),
+    ])
+    .await?;
+    assert_eq!((returned, added), (1, 1));
+    Ok(())
+}
+
+#[tokio::test]
+async fn two_lessons_saving_the_same_address_with_different_text_leave_one_source() -> Result<()> {
+    let (returned, added) = save_together([
+        ("https://example.org/same", CAPTURE),
+        (
+            "https://example.org/same",
+            "The page was edited between the two reads.",
+        ),
+    ])
+    .await?;
+    assert_eq!((returned, added), (1, 1));
+    Ok(())
+}
+
+#[tokio::test]
+async fn two_lessons_saving_different_pages_leave_two_sources() -> Result<()> {
+    let other = format!("{CAPTURE} A second page says more.");
+    let (returned, added) = save_together([
+        ("https://example.org/one", CAPTURE),
+        ("https://example.org/two", other.as_str()),
+    ])
+    .await?;
+    assert_eq!((returned, added), (2, 2));
+    Ok(())
+}
+
 #[tokio::test]
 async fn research_rejects_truncated_pages_and_does_not_search_for_judge_failures() -> Result<()> {
     let pool = crate::tests::pool().await?;
@@ -444,7 +542,7 @@ async fn research_rejects_truncated_pages_and_does_not_search_for_judge_failures
     let sources = repo.verification_sources(&program.summary.id).await?;
     let references = ReferenceCollection::lexical(&sources)?;
     run(
-        pool,
+        Database::from(pool.clone()),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(true)),
@@ -485,7 +583,7 @@ async fn an_empty_claim_plan_ends_research_honestly_instead_of_failing() -> Resu
     let sources = repo.verification_sources(&program.summary.id).await?;
     let references = ReferenceCollection::lexical(&sources)?;
     run(
-        pool,
+        Database::from(pool.clone()),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(false)),
@@ -557,7 +655,7 @@ async fn a_hint_with_no_terms_besides_its_sites_is_not_searched_and_the_log_says
     let sources = repo.verification_sources(&program.summary.id).await?;
     let references = ReferenceCollection::lexical(&sources)?;
     run(
-        pool,
+        Database::from(pool.clone()),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(false)),
@@ -704,7 +802,7 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
     let references = ReferenceCollection::lexical(&sources)?;
     let runtimes = crate::embedded_runtime::BuiltinRuntimes::for_tests();
     let (_, report, owned) = run(
-        pool,
+        Database::from(pool.clone()),
         program.summary.id,
         program.summary.goal,
         Some(Arc::new(ResearchRounds {
@@ -823,7 +921,7 @@ async fn a_planned_official_docs_need_is_searched_with_its_subject_and_site() ->
     };
 
     run(
-        pool,
+        Database::from(pool.clone()),
         program.summary.id,
         program.summary.goal,
         Some(web.clone()),
@@ -1059,7 +1157,7 @@ async fn a_research_round_that_fails_leaves_the_claims_held_and_the_lesson_going
     let sources = repo.verification_sources(&program.summary.id).await?;
     let references = ReferenceCollection::lexical(&sources)?;
     run(
-        pool,
+        Database::from(pool.clone()),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(false)),
@@ -1103,7 +1201,7 @@ async fn a_round_whose_searches_found_nothing_did_reach_a_search_engine() -> Res
     let empty = web(false);
     empty.0.set_search_results(Vec::new());
     run(
-        pool,
+        Database::from(pool.clone()),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(empty),
@@ -1234,7 +1332,7 @@ async fn a_round_fetches_the_selectors_first_choice_and_one_page_on_the_owners_s
         prompts: Mutex::new(vec![]),
     };
     run(
-        pool,
+        Database::from(pool.clone()),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web),
@@ -1273,7 +1371,7 @@ async fn a_fetched_page_that_is_not_a_source_counts_against_the_pages_and_is_not
         "Please sign in to continue to the library.",
     );
     run(
-        pool,
+        Database::from(pool.clone()),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web),
@@ -1341,7 +1439,7 @@ async fn a_claim_research_round_records_what_it_cost_a_claim_on_each_researched_
         prompts: Mutex::new(vec![]),
     };
     let expansion = run(
-        pool,
+        Database::from(pool.clone()),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(false)),

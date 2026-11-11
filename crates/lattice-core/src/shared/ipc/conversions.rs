@@ -98,6 +98,7 @@ impl From<ApplicationError> for ApiError {
 /// Convert AppError (shared layer) to ApiError
 impl From<AppError> for ApiError {
     fn from(err: AppError) -> Self {
+        let busy = err.is_database_busy();
         match err {
             // Domain errors
             AppError::Domain(domain_err) => (*domain_err).into(),
@@ -199,6 +200,11 @@ impl From<AppError> for ApiError {
             },
 
             // Database errors
+            AppError::Database(ref msg) if busy => ApiError {
+                code: ErrorCode::DatabaseBusy,
+                message: "Database busy".to_string(),
+                details: Some(sanitize_database_error(msg)),
+            },
             AppError::Database(ref msg) => ApiError {
                 code: ErrorCode::DatabaseError,
                 message: "Database error".to_string(),
@@ -233,6 +239,11 @@ impl From<AppError> for ApiError {
             },
 
             // Service errors
+            AppError::ServiceNotAvailable(ref msg) if busy => ApiError {
+                code: ErrorCode::DatabaseBusy,
+                message: "Database busy".to_string(),
+                details: Some(msg.clone()),
+            },
             AppError::ServiceNotAvailable(ref msg) => ApiError {
                 code: ErrorCode::ServiceNotAvailable,
                 message: "Service not available".to_string(),
@@ -457,29 +468,6 @@ impl From<std::io::Error> for ApiError {
     }
 }
 
-/// Convert sqlx::Error to ApiError
-impl From<sqlx::Error> for ApiError {
-    fn from(err: sqlx::Error) -> Self {
-        use sqlx::Error;
-
-        let (code, message) = match &err {
-            Error::RowNotFound => (ErrorCode::NotFound, "Record not found"),
-            Error::PoolTimedOut | Error::PoolClosed => (
-                ErrorCode::DatabaseConnectionError,
-                "Database connection error",
-            ),
-            Error::Configuration(_) => (ErrorCode::InvalidConfig, "Database configuration error"),
-            _ => (ErrorCode::DatabaseError, "Database error"),
-        };
-
-        ApiError {
-            code,
-            message: message.to_string(),
-            details: Some(sanitize_database_error(&err.to_string())),
-        }
-    }
-}
-
 /// Convert serde_json::Error to ApiError
 impl From<serde_json::Error> for ApiError {
     fn from(err: serde_json::Error) -> Self {
@@ -487,6 +475,29 @@ impl From<serde_json::Error> for ApiError {
             code: ErrorCode::SerializationError,
             message: "JSON serialization error".to_string(),
             details: Some(err.to_string()),
+        }
+    }
+}
+
+/// Convert a database failure to ApiError by what kind of failure it was.
+impl From<crate::shared::persistence::PersistenceError> for ApiError {
+    fn from(err: crate::shared::persistence::PersistenceError) -> Self {
+        use crate::shared::persistence::PersistenceErrorKind as Kind;
+
+        let (code, message) = match err.kind() {
+            Kind::NotFound => (ErrorCode::NotFound, "Record not found"),
+            Kind::Busy | Kind::Closed => (
+                ErrorCode::DatabaseConnectionError,
+                "Database connection error",
+            ),
+            Kind::Misconfigured => (ErrorCode::InvalidConfig, "Database configuration error"),
+            Kind::Other => (ErrorCode::DatabaseError, "Database error"),
+        };
+
+        ApiError {
+            code,
+            message: message.to_string(),
+            details: Some(sanitize_database_error(&err.to_string())),
         }
     }
 }

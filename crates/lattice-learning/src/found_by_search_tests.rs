@@ -4,6 +4,7 @@
 //! every outline source was, and a document is left alone.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use crate::source_library::LearningSourceLibraryRepository;
+use lattice_core::shared::persistence::Database;
 use sqlx::migrate::{Migrate, Migrator};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
@@ -113,7 +114,7 @@ async fn an_outline_page_saved_from_the_web_before_the_mark_stays_under_the_swee
             .await
             .unwrap();
     assert_eq!(marks, [("s-doc".to_owned(), 0), ("s-web".to_owned(), 1)]);
-    let refused = LearningSourceLibraryRepository::new(pool.clone())
+    let refused = LearningSourceLibraryRepository::new(Database::from(pool.clone()))
         .sweep_admission("p1")
         .await
         .unwrap();

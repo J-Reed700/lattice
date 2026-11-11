@@ -20,6 +20,7 @@ pub(crate) const ENDED_BY_UPDATE: &str = "ended_by_update";
 pub fn lesson_job_config() -> JobKindConfig {
     JobKindConfig::new(RecoveryPolicy::Requeue)
         .exclusive_per_subject()
+        .ranked()
         .backoff(Backoff::default())
 }
 
@@ -56,7 +57,7 @@ pub(crate) fn lesson_failure(job: &JobRecord, error: &AppError) -> JobFailure {
             "The model service is rate limiting requests; preparation will retry automatically"
         }
         error if JobFailure::is_database_busy(error) => {
-            "Another task is writing to the database; preparation will retry automatically"
+            "Another task is using the database; preparation will retry automatically"
         }
         _ => "The model service could not finish the request; preparation will retry automatically",
     };

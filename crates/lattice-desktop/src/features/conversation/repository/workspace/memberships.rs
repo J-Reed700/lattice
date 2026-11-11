@@ -1,4 +1,6 @@
 use super::*;
+use crate::features::conversation::repository::space_rows::ConversationSpaceMemberRow;
+use lattice_core::shared::persistence::Transactions;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct DocumentSpaceMembershipRow {
@@ -23,7 +25,7 @@ impl ConversationRepository {
         &self,
         space_id: String,
     ) -> Result<Vec<ConversationSpaceMemberDto>, AppError> {
-        let members = sqlx::query_as::<_, ConversationSpaceMemberDto>(
+        let members = sqlx::query_as::<_, ConversationSpaceMemberRow>(
             r#"
         SELECT
             sm.space_id AS space_id,
@@ -53,7 +55,7 @@ impl ConversationRepository {
             AppError::Database(format!("Failed to list conversation space members: {}", e))
         })?;
 
-        Ok(members)
+        Ok(members.into_iter().map(Into::into).collect())
     }
 
     pub async fn upsert_conversation_space_member(
@@ -62,10 +64,17 @@ impl ConversationRepository {
     ) -> Result<ConversationSpaceMemberDto, AppError> {
         let role = validate_space_role(&request.role)?;
 
+        let mut tx = self.pool.begin_write().await.map_err(|e| {
+            AppError::Database(format!(
+                "Failed to begin transaction while upserting space member: {}",
+                e
+            ))
+        })?;
+
         let space_exists: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
                 .bind(&request.space_id)
-                .fetch_one(&self.pool)
+                .fetch_one(&mut *tx)
                 .await
                 .map_err(|e| {
                     AppError::Database(format!(
@@ -85,13 +94,6 @@ impl ConversationRepository {
             .display_name
             .clone()
             .unwrap_or_else(|| request.member_id.clone());
-
-        let mut tx = self.pool.begin().await.map_err(|e| {
-            AppError::Database(format!(
-                "Failed to begin transaction while upserting space member: {}",
-                e
-            ))
-        })?;
 
         sqlx::query(
             r#"
@@ -136,14 +138,7 @@ impl ConversationRepository {
             AppError::Database(format!("Failed to upsert conversation space member: {}", e))
         })?;
 
-        tx.commit().await.map_err(|e| {
-            AppError::Database(format!(
-                "Failed to commit conversation space member transaction: {}",
-                e
-            ))
-        })?;
-
-        let member = sqlx::query_as::<_, ConversationSpaceMemberDto>(
+        let member = sqlx::query_as::<_, ConversationSpaceMemberRow>(
             r#"
         SELECT
             sm.space_id AS space_id,
@@ -162,7 +157,7 @@ impl ConversationRepository {
         )
         .bind(&request.space_id)
         .bind(&request.member_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| {
             AppError::Database(format!(
@@ -171,13 +166,25 @@ impl ConversationRepository {
             ))
         })?;
 
-        Ok(member)
+        tx.commit().await.map_err(|e| {
+            AppError::Database(format!(
+                "Failed to commit conversation space member transaction: {}",
+                e
+            ))
+        })?;
+
+        Ok(member.into())
     }
 
     pub async fn remove_conversation_space_member(
         &self,
         request: RemoveConversationSpaceMemberRequestDto,
     ) -> Result<RenameConversationResponseDto, AppError> {
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         let current_role = sqlx::query_scalar::<_, String>(
             r#"
         SELECT role
@@ -188,7 +195,7 @@ impl ConversationRepository {
         )
         .bind(&request.space_id)
         .bind(&request.member_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|e| {
             AppError::Database(format!("Failed to verify conversation space member: {}", e))
@@ -205,7 +212,7 @@ impl ConversationRepository {
             "SELECT COUNT(*) FROM conversation_space_members WHERE space_id = ? AND role = 'owner'",
         )
         .bind(&request.space_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| {
             AppError::Database(format!(
@@ -229,11 +236,15 @@ impl ConversationRepository {
         )
         .bind(&request.space_id)
         .bind(&request.member_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             AppError::Database(format!("Failed to remove conversation space member: {}", e))
         })?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         Ok(RenameConversationResponseDto {
             status: "success".to_string(),
@@ -281,10 +292,15 @@ impl ConversationRepository {
         space_id: String,
         assigned: bool,
     ) -> Result<RenameConversationResponseDto, AppError> {
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         let document_exists: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM documents WHERE id = ?")
                 .bind(&document_id)
-                .fetch_one(&self.pool)
+                .fetch_one(&mut *tx)
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to verify document: {}", e)))?;
 
@@ -299,7 +315,7 @@ impl ConversationRepository {
             let space_exists: i64 =
                 sqlx::query_scalar("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
                     .bind(&space_id)
-                    .fetch_one(&self.pool)
+                    .fetch_one(&mut *tx)
                     .await
                     .map_err(|e| AppError::Database(format!("Failed to verify space: {}", e)))?;
 
@@ -317,7 +333,7 @@ impl ConversationRepository {
             .bind(&document_id)
             .bind(&space_id)
             .bind(now)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| {
                 AppError::Database(format!("Failed to assign document to space: {}", e))
@@ -331,12 +347,16 @@ impl ConversationRepository {
             )
             .bind(&document_id)
             .bind(&space_id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| {
                 AppError::Database(format!("Failed to remove document space membership: {}", e))
             })?;
         }
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         Ok(RenameConversationResponseDto {
             status: "success".to_string(),
@@ -365,10 +385,15 @@ impl ConversationRepository {
             ));
         }
 
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         let space_exists: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
                 .bind(&space_id)
-                .fetch_one(&self.pool)
+                .fetch_one(&mut *tx)
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to verify space: {}", e)))?;
 
@@ -389,7 +414,7 @@ impl ConversationRepository {
 
             let found = qb
                 .build_query_scalar::<String>()
-                .fetch_all(&self.pool)
+                .fetch_all(&mut *tx)
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to verify documents: {}", e)))?;
 
@@ -421,7 +446,7 @@ impl ConversationRepository {
                         .push_bind(now.as_str());
                 });
 
-                qb.build().execute(&self.pool).await.map_err(|e| {
+                qb.build().execute(&mut *tx).await.map_err(|e| {
                     AppError::Database(format!("Failed to assign documents to space: {}", e))
                 })?;
             }
@@ -440,11 +465,15 @@ impl ConversationRepository {
                 }
                 qb.push(")");
 
-                qb.build().execute(&self.pool).await.map_err(|e| {
+                qb.build().execute(&mut *tx).await.map_err(|e| {
                     AppError::Database(format!("Failed to remove documents from space: {}", e))
                 })?;
             }
         }
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         Ok(RenameConversationResponseDto {
             status: "success".to_string(),

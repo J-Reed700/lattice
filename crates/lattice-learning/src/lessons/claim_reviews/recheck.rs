@@ -5,16 +5,16 @@
 //! claims.
 
 use lattice_core::application::ports::ClaimReviewStore;
-use lattice_core::domain::learning::claim_review::{Ledger, LessonReviewState};
+use lattice_core::domain::learning::claim_review::Ledger;
 use lattice_core::shared::error::Result;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 
 use super::attach::report::ClaimAttachProgressDto;
 use super::attach::{check_others, course_material, AttachDeps, Checking, OtherClaims, Others};
+use super::repository;
 use crate::curriculum::LearningGenerationJobStatus;
 use crate::curriculum_repository::LearningCurriculumRepository;
 use crate::dto::WaitingClaimsRecheckDto;
-use crate::persistence::db;
 use crate::reference_collection::ReferenceCollection;
 
 /// Every claim a new source is checked for: open or waiting, in any lesson.
@@ -27,11 +27,11 @@ const WAITING: OtherClaims<'static> = OtherClaims {
 /// empty when a new source has nothing to be checked for.
 pub async fn waiting_lessons(
     store: &dyn ClaimReviewStore,
-    pool: &SqlitePool,
+    database: &Database,
     program_id: &str,
 ) -> Result<Vec<Ledger>> {
     let mut ledgers = Vec::new();
-    for lesson_id in held_lessons(pool, program_id).await? {
+    for lesson_id in repository::reviews::held_lessons(database, program_id).await? {
         let ledger = store.load(&lesson_id).await?;
         if ledger.claims.iter().any(|entry| WAITING.take(entry)) {
             ledgers.push(ledger);
@@ -70,7 +70,7 @@ pub async fn waiting_claims(
     let mut recheck = WaitingClaimsRecheckDto::default();
     for ledger in lessons {
         let lesson_deps = AttachDeps {
-            job_id: running_job(deps.pool, ledger).await,
+            job_id: running_job(deps.database, ledger).await,
             ..*deps
         };
         let (tally, _) = check_others(
@@ -97,24 +97,10 @@ pub async fn waiting_claims(
     Ok(recheck)
 }
 
-/// The course's lessons held for review: waiting for the user, or being
-/// verified.
-async fn held_lessons(pool: &SqlitePool, program_id: &str) -> Result<Vec<String>> {
-    sqlx::query_scalar(
-        "SELECT lesson_id FROM learning_lesson_reviews WHERE program_id=? AND state IN (?,?) ORDER BY opened_at,lesson_id",
-    )
-    .bind(program_id)
-    .bind(LessonReviewState::NeedsReview.as_str())
-    .bind(LessonReviewState::Verifying.as_str())
-    .fetch_all(pool)
-    .await
-    .map_err(db)
-}
-
 /// The lesson's preparation job while it runs, for event provenance.
-pub async fn running_job(pool: &SqlitePool, ledger: &Ledger) -> Option<String> {
+pub async fn running_job(database: &Database, ledger: &Ledger) -> Option<String> {
     let job_id = &ledger.review.as_ref()?.job_id;
-    let job = LearningCurriculumRepository::new(pool.clone())
+    let job = LearningCurriculumRepository::new(database.clone())
         .job(job_id)
         .await
         .ok()?;

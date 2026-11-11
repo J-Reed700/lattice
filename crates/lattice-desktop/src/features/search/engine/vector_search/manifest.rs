@@ -29,7 +29,6 @@
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 
 use crate::infrastructure::vector_index::index_config::{manifest_path_for, IndexConfig};
 use crate::infrastructure::vector_index::usearch_index::write_file_atomically;
@@ -50,41 +49,6 @@ pub struct SourceStamp {
     pub row_count: u64,
     /// Global monotonic write counter from `vector_index_state`.
     pub write_counter: u64,
-}
-
-/// Read the stamp for one generation.
-///
-/// Two aggregate queries against covering indexes; no embedding blob is
-/// touched. The counter is a single-row primary key lookup.
-pub async fn read_source_stamp(
-    pool: &SqlitePool,
-    identity: &str,
-    dimension: usize,
-) -> Result<SourceStamp> {
-    let dimension = dimension as i64;
-    // Mirrors `generation::restore`'s row set. `restore` also drops
-    // a prepared vector whose source text has since changed, which this count
-    // cannot see; that direction is safe, because the extra row makes the
-    // stamp differ and buys a rebuild.
-    // Read both values in one SQLite snapshot. Separate SELECTs can combine
-    // an old count with a new counter when a writer commits between them.
-    let (row_count, write_counter): (i64, i64) = sqlx::query_as(
-        "SELECT COUNT(*), COALESCE((SELECT write_counter FROM vector_index_state WHERE id = 1), 0) FROM text_chunks tc \
-         LEFT JOIN text_embeddings te ON te.chunk_id = tc.id AND te.model_name = ? AND te.dimension = ? \
-         LEFT JOIN embedding_generation_vectors eg ON eg.chunk_id = tc.id AND eg.model_identity = ? AND eg.dimension = ? \
-         WHERE te.chunk_id IS NOT NULL OR eg.chunk_id IS NOT NULL",
-    )
-    .bind(identity)
-    .bind(dimension)
-    .bind(identity)
-    .bind(dimension)
-    .fetch_one(pool)
-    .await?;
-
-    Ok(SourceStamp {
-        row_count: row_count.max(0) as u64,
-        write_counter: write_counter.max(0) as u64,
-    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -214,10 +178,12 @@ pub fn write_manifest(index_path: &Path, manifest: &IndexManifest) -> Result<()>
 #[cfg(test)]
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
+    use super::super::repository::read_source_stamp;
     use super::*;
     use crate::infrastructure::vector_index::compression::{
         VectorIndexCompression, VectorQuantization,
     };
+    use sqlx::SqlitePool;
     use std::path::PathBuf;
 
     fn config() -> IndexConfig {

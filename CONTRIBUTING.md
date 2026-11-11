@@ -116,6 +116,17 @@ smaller baselines; never add a line to get a change through. To find every
 site of a rule, run
 `bash scripts/check-rust-layer-boundaries.sh --list <rule> [subject]`.
 
+The same check holds three data-access rules at zero, with no baseline. A
+transaction begins only with `begin_write()` or `begin_read()` (SQLite crates;
+the Postgres sync server keeps `.begin()`). Only a data module builds or runs
+SQL: a `lattice-store` file, or a path segment or file stem that is
+`repository`, `repositories`, `persistence`, `store`, `storage`, `database` or
+`migrations`, or ends in `_repository` or `_store`. A data-module function that
+runs two or more statements on the pool, one of them a write, runs them in one
+`begin_write()` instead; a function SQLite refuses to run in a transaction is
+listed in `EXCEPTIONS` in `scripts/rust-architecture-check/src/data_access.rs`
+with its reason.
+
 Use the shared mechanisms instead of a feature-local copy:
 `shared::runtime::background::spawn` for detached tasks (a deliberate raw
 spawn needs a `// raw-spawn: <reason>` comment); a job kind on the shared job

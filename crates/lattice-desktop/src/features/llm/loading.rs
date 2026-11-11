@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::features::llm::cloud::limits::ReportedLimits;
+use crate::features::llm::cloud::limits::{ceiling_to_send, ReportedLimits};
 use crate::features::llm::engine::factory::{CreatedLlm, LLMConfig, LocalServerOptions};
 use crate::features::llm::engine::system::BackendDevices;
 use crate::features::llm::engine::types::LLMError;
@@ -236,20 +236,18 @@ impl ModelLoader {
                         .await,
                 ))
             }
-            ModelRef::Cloud {
-                provider,
-                model: name,
-            } => {
+            ModelRef::Cloud { provider, .. } => {
                 let key = cloud_api_key(*provider)?;
-                let reported = self.runtime.reported_limits.of(*provider, name, &key).await;
-                let mut connection = cloud_connection(settings, model, tuning, &reported);
-                connection.provider = llm_provider(*provider);
-                connection.model = name.clone();
-                Ok(remote(
-                    crate::features::llm::cloud::CloudLlm::new(&connection, key)?
-                        .with_vision(declared_vision(settings, model))
-                        .schedule(&self.runtime.schedulers),
-                ))
+                load_cloud(
+                    settings,
+                    model,
+                    tuning,
+                    key,
+                    &self.runtime.reported_limits,
+                    &self.runtime.schedulers,
+                )
+                .await
+                .map(remote)
             }
         }
     }
@@ -405,13 +403,14 @@ fn with_generation(settings: &LLMSettingsDto, generation: &GenerationConfig) -> 
 
 /// `settings` for a client of `model`, at the window and output ceiling it
 /// runs with. A role with an output ceiling of its own keeps it, within what
-/// the model allows.
+/// the model allows. Also the model's output ceiling when anyone knows one
+/// (chosen, the role's own, or reported), `None` otherwise.
 fn cloud_connection(
     settings: &LLMSettingsDto,
     model: &ModelRef,
     tuning: Tuning,
     reported: &ModelWindowDto,
-) -> LLMSettingsDto {
+) -> (LLMSettingsDto, Option<u32>) {
     let generation = tuning.generation(settings);
     let chosen = settings.model_window(model);
     let chosen = ModelWindowDto {
@@ -421,11 +420,80 @@ fn cloud_connection(
         },
         ..chosen
     };
-    LLMSettingsDto {
+    let known_ceiling = chosen.max_output_known(reported);
+    let connection = LLMSettingsDto {
         context_window: chosen.context_window_within(reported, settings.context_window),
-        max_tokens: chosen.max_output_within(reported, settings.max_tokens),
         ..with_generation(settings, &generation)
+    };
+    (connection, known_ceiling)
+}
+
+/// A cloud `model` behind its provider's scheduler: the provider is asked what
+/// the model can take, and a model it cannot be asked about runs on the
+/// Settings numbers.
+pub(crate) async fn load_cloud(
+    settings: &LLMSettingsDto,
+    model: &ModelRef,
+    tuning: Tuning,
+    key: String,
+    reported_limits: &ReportedLimits,
+    schedulers: &SchedulerRegistry,
+) -> Result<Arc<dyn LLMPort>> {
+    let (provider, name) = cloud_ref(model)?;
+    let lookup = reported_limits.of(provider, name, &key).await;
+    Ok(cloud_client_after(settings, model, tuning, lookup, key)?.schedule(schedulers))
+}
+
+fn cloud_ref(model: &ModelRef) -> Result<(CloudProvider, &str)> {
+    match model {
+        ModelRef::Cloud {
+            provider,
+            model: name,
+        } => Ok((*provider, name)),
+        _ => Err(AppError::InvalidConfig("Not a cloud model".into())),
     }
+}
+
+/// The unscheduled client of a cloud `model` once its limits were asked for.
+fn cloud_client_after(
+    settings: &LLMSettingsDto,
+    model: &ModelRef,
+    tuning: Tuning,
+    lookup: Result<ModelWindowDto>,
+    key: String,
+) -> Result<crate::features::llm::cloud::CloudLlm> {
+    let (provider, name) = cloud_ref(model)?;
+    let reported = match lookup {
+        Ok(reported) => reported,
+        Err(failure) => {
+            let unreported = ModelWindowDto::default();
+            let (_, known) = cloud_connection(settings, model, tuning, &unreported);
+            if ceiling_to_send(provider, name, known).is_err() {
+                return Err(failure);
+            }
+            tracing::warn!(model = %name, error = %failure, "Running without the provider's limits");
+            unreported
+        }
+    };
+    cloud_client(settings, model, tuning, &reported, key)
+}
+
+/// The unscheduled client of a cloud `model`, as the loader builds it.
+fn cloud_client(
+    settings: &LLMSettingsDto,
+    model: &ModelRef,
+    tuning: Tuning,
+    reported: &ModelWindowDto,
+    key: String,
+) -> Result<crate::features::llm::cloud::CloudLlm> {
+    let (provider, name) = cloud_ref(model)?;
+    let (mut connection, known_ceiling) = cloud_connection(settings, model, tuning, reported);
+    connection.provider = llm_provider(provider);
+    connection.model = name.to_owned();
+    Ok(
+        crate::features::llm::cloud::CloudLlm::new(&connection, key, known_ceiling)?
+            .with_vision(declared_vision(settings, model)),
+    )
 }
 
 fn llm_provider(provider: CloudProvider) -> LLMProvider {

@@ -12,6 +12,7 @@ use crate::{
     tests::{fixture, pool},
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 
 mod destinations;
 mod evidence_entries;
@@ -210,7 +211,7 @@ async fn create_copy_preserves_tombstones_versions_selectors_and_curriculum_link
         .await
         .expect("lesson state set");
 
-    let sources = LearningSourceLibraryRepository::new(pool.clone());
+    let sources = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let source_id = id();
     let first_version_id = id();
     sources
@@ -891,7 +892,7 @@ async fn a_source_body_past_a_million_bytes_round_trips_through_a_pack() -> Resu
     let body = body.trim();
     assert!(body.len() > 1_000_000, "past the old import bound");
     let url = "https://example.org/a-long-source";
-    LearningSourceLibraryRepository::new(pool.clone())
+    LearningSourceLibraryRepository::new(Database::from(pool.clone()))
         .add_by(
             crate::source_library::NewLearningSource {
                 operation_id: &id(),

@@ -14,9 +14,11 @@ use lattice_core::{
     application::ports::llm_port::PinnedModel,
     shared::{
         error::{AppError, Result},
+        persistence::Database,
         runtime::jobs::{JobContext, JobFailure, JobHandler, JobOutcome, JobRecord},
     },
 };
+#[cfg(test)]
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
@@ -44,7 +46,7 @@ pub fn pinned_for_test(llm: Arc<dyn lattice_core::application::ports::LLMPort>) 
 
 #[derive(Clone)]
 pub struct LessonGenerationWorker {
-    pub pool: SqlitePool,
+    pub database: Database,
     /// Where a lesson's worked examples run while it is verified.
     pub runtimes: crate::embedded_runtime::BuiltinRuntimes,
     pub load_llm: ModelLoader,
@@ -56,12 +58,14 @@ pub struct LessonGenerationWorker {
     /// The Verifier, for courses that opted into its audit (§14.3); `None`
     /// publishes every lesson without the audit gate.
     pub verifier: Option<Arc<dyn crate::lessons::verifier_audit::lesson::VerifierAccess>>,
+    /// Shared by every lesson job this worker runs.
+    pub course_setups: crate::lessons::course_setup::CourseSetups,
 }
 
 #[async_trait::async_trait]
 impl JobHandler for LessonGenerationWorker {
     async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
-        let repo = LearningCurriculumRepository::new(self.pool.clone());
+        let repo = LearningCurriculumRepository::new(self.database.clone());
         // The worker is independent of the webview. Also tell macOS this
         // user-requested work must continue when the window loses focus.
         let _activity = lattice_core::shared::runtime::user_activity::UserActivity::begin(
@@ -133,6 +137,36 @@ struct Prepared {
 }
 
 impl LessonGenerationWorker {
+    /// What a lesson does to the course's shared state before it reads it,
+    /// one lesson of the course at a time.
+    pub(crate) async fn set_up_course(
+        &self,
+        repo: &LearningCurriculumRepository,
+        program_id: &str,
+    ) -> Result<()> {
+        let _setup = self.course_setups.enter(program_id).await;
+        // Publication needs an accepted snapshot even when the renderer never
+        // opened the plan view (including recovered background-only work).
+        // This snapshots the already accepted outline; it approves no content.
+        repo.seed_accepted(program_id).await?;
+        (self.refresh_sources)(program_id.to_owned()).await?;
+        // Pages the admission gate refuses leave retrieval and citation before
+        // anything is compared with them (claim classes design §3.6).
+        crate::lesson_progress::stage("Checking that the course's saved pages are sources");
+        let refused =
+            crate::source_library::LearningSourceLibraryRepository::new(self.database.clone())
+                .sweep_admission(program_id)
+                .await?;
+        if !refused.is_empty() {
+            tracing::info!(
+                program_id,
+                pages = refused.len(),
+                "Saved pages that are not sources are left out of retrieval"
+            );
+        }
+        Ok(())
+    }
+
     async fn prepare(
         &self,
         repo: &LearningCurriculumRepository,
@@ -160,7 +194,7 @@ impl LessonGenerationWorker {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let program_repo = LearningRepository::new(self.pool.clone());
+        let program_repo = LearningRepository::new(self.database.clone());
         let mut program = program_repo.get(&job.program_id).await?;
         if !repo.job_content_is_current(job_id).await? {
             return Err(lattice_core::shared::error::AppError::InvalidState(
@@ -172,25 +206,7 @@ impl LessonGenerationWorker {
                 "Only active programs can prepare lessons.".into(),
             ));
         }
-        // Publication needs an accepted snapshot even when the renderer never
-        // opened the plan view (including recovered background-only work).
-        // This snapshots the already accepted outline; it approves no content.
-        repo.seed_accepted(&job.program_id).await?;
-        (self.refresh_sources)(job.program_id.clone()).await?;
-        // Pages the admission gate refuses leave retrieval and citation before
-        // anything is compared with them (claim classes design §3.6).
-        crate::lesson_progress::stage("Checking that the course's saved pages are sources");
-        let refused =
-            crate::source_library::LearningSourceLibraryRepository::new(self.pool.clone())
-                .sweep_admission(&job.program_id)
-                .await?;
-        if !refused.is_empty() {
-            tracing::info!(
-                program_id = %job.program_id,
-                pages = refused.len(),
-                "Saved pages that are not sources are left out of retrieval"
-            );
-        }
+        self.set_up_course(repo, &job.program_id).await?;
         let had_sources = program_repo.has_source_history(&job.program_id).await?;
         program.sources = program_repo.verification_sources(&job.program_id).await?;
         if had_sources && program.sources.is_empty() {
@@ -230,7 +246,7 @@ impl LessonGenerationWorker {
             return Err(AppError::InvalidInput("Add reference material in Sources before preparing a lesson. Lattice checks what it teaches against saved sources.".into()));
         }
         let workspace =
-            crate::source_library::LearningSourceLibraryRepository::new(self.pool.clone())
+            crate::source_library::LearningSourceLibraryRepository::new(self.database.clone())
                 .workspace(&job.program_id)
                 .await?;
         if workspace
@@ -313,18 +329,19 @@ impl LessonGenerationWorker {
                     ));
                     let topic = format!("{}: {}", program.summary.goal, lesson.title);
                     let prepared = crate::lesson_drafts::run(
+                        &self.database,
                         repo,
                         job_id,
                         &lesson.id,
                         crate::content_verification::research::run(
-                            self.pool.clone(),
+                            self.database.clone(),
                             job.program_id.clone(),
                             topic.clone(),
                             self.research_web.clone(),
                             // Source provenance and trust weigh every
                             // supported claim's support (§6.2).
                             crate::content_verification::with_trust(
-                                self.pool.clone(),
+                                self.database.clone(),
                                 job.program_id.clone(),
                                 topic,
                                 crate::lessons::verifier_audit::lesson::scope(
@@ -341,7 +358,9 @@ impl LessonGenerationWorker {
                             // A lesson whose claims wait for the user is held,
                             // not failed; the others still publish (§6.1).
                             let hold = crate::content_verification::held_for_review(
-                                &self.pool, &lesson.id, job_id,
+                                &self.database,
+                                &lesson.id,
+                                job_id,
                             )
                             .await?;
                             let Some(hold) = hold else {
@@ -421,7 +440,7 @@ impl LessonGenerationWorker {
 pub async fn run_attempt(worker: LessonGenerationWorker, job_id: &str) -> Result<()> {
     use crate::curriculum_repository::{lesson_job_config, LESSON_PREPARATION};
     use lattice_core::shared::runtime::jobs::JobRuntime;
-    let runtime = JobRuntime::new(worker.pool.clone());
+    let runtime = JobRuntime::new(worker.database.clone());
     runtime
         .register(LESSON_PREPARATION, Arc::new(worker), lesson_job_config())
         .await?;
@@ -551,11 +570,12 @@ mod repository_tests {
             let entered = Arc::new(tokio::sync::Notify::new());
             let notification = entered.clone();
             let worker = LessonGenerationWorker {
+                course_setups: Default::default(),
                 runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
                 research_web: None,
                 verifier: None,
                 courses: None,
-                pool: pool.clone(),
+                database: pool.clone().into(),
                 refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
                 load_llm: Arc::new(move || {
                     let entered = notification.clone();
@@ -565,7 +585,7 @@ mod repository_tests {
                     })
                 }),
             };
-            let runtime = JobRuntime::new(pool.clone());
+            let runtime = JobRuntime::new(Database::from(pool.clone()));
             runtime
                 .register(LESSON_PREPARATION, Arc::new(worker), lesson_job_config())
                 .await
@@ -664,3 +684,7 @@ mod recovery_tests;
 #[cfg(test)]
 #[path = "generation_overlap_tests.rs"]
 pub(crate) mod overlap_tests;
+
+#[cfg(test)]
+#[path = "generation_setup_tests.rs"]
+mod setup_tests;

@@ -1,5 +1,6 @@
 //! Recording assistance: opened sources, tutor turns and revealed solutions.
 use super::*;
+use lattice_core::shared::persistence::Transactions;
 
 impl LearningPracticeRepository {
     pub async fn open_source(
@@ -20,7 +21,7 @@ impl LearningPracticeRepository {
         {
             return self.workspace(&req.program_id).await;
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
         if practice_operation(
             &req.operation_id,
@@ -29,7 +30,7 @@ impl LearningPracticeRepository {
             "open_source",
             payload_hash,
         )
-        .seen(&mut *tx)
+        .seen(&mut tx)
         .await?
         {
             tx.commit().await.map_err(db)?;
@@ -88,7 +89,7 @@ impl LearningPracticeRepository {
             "open_source",
             payload_hash,
         )
-        .record(&mut *tx, &())
+        .record(&mut tx, &())
         .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await
@@ -103,7 +104,7 @@ impl LearningPracticeRepository {
     ) -> Result<LearningPracticeWorkspaceDto> {
         Self::validate_ids(program_id, session_id, Some(&turn.operation_id))?;
         uuid(&turn.id, "tutor turn")?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, program_id).await?;
         if practice_operation(
             &turn.operation_id,
@@ -112,7 +113,7 @@ impl LearningPracticeRepository {
             "tutor",
             &turn.payload_hash,
         )
-        .seen(&mut *tx)
+        .seen(&mut tx)
         .await?
         {
             tx.commit().await.map_err(db)?;
@@ -169,7 +170,7 @@ impl LearningPracticeRepository {
             "tutor",
             &turn.payload_hash,
         )
-        .record(&mut *tx, &turn.id)
+        .record(&mut tx, &turn.id)
         .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(program_id).await
@@ -183,7 +184,7 @@ impl LearningPracticeRepository {
         citations: &[LearningPracticeCitationDto],
     ) -> Result<LearningPracticeWorkspaceDto> {
         Self::validate_ids(&req.program_id, &req.session_id, Some(&req.operation_id))?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
         if practice_operation(
             &req.operation_id,
@@ -192,7 +193,7 @@ impl LearningPracticeRepository {
             "reveal_solution",
             payload_hash,
         )
-        .seen(&mut *tx)
+        .seen(&mut tx)
         .await?
         {
             tx.commit().await.map_err(db)?;
@@ -236,7 +237,7 @@ impl LearningPracticeRepository {
             "reveal_solution",
             payload_hash,
         )
-        .record(&mut *tx, &())
+        .record(&mut tx, &())
         .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await

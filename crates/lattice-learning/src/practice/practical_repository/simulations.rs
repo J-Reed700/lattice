@@ -7,6 +7,7 @@ use super::{
 use crate::persistence::{db, hash, now};
 use crate::practical_dto::*;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::Row;
 
 impl LearningPracticalRepository {
@@ -26,7 +27,10 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different practical activity data.",
         );
-        if operation.seen(&self.pool).await? {
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        let seen = operation.seen(&mut connection).await?;
+        drop(connection);
+        if seen {
             return Ok(Some(self.workspace(program_id).await?));
         }
         Ok(None)
@@ -49,7 +53,10 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different simulation data.",
         );
-        if operation.seen(&self.pool).await? {
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        let seen = operation.seen(&mut connection).await?;
+        drop(connection);
+        if seen {
             return Ok(Some(self.simulation(session_id).await?));
         }
         Ok(None)
@@ -65,7 +72,7 @@ impl LearningPracticalRepository {
     )> {
         uuid(program_id, "program")?;
         uuid(activity_id, "activity")?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
         let activity = Self::internal_activity(&mut tx, program_id, activity_id).await?;
         tx.commit().await.map_err(db)?;
         Ok((
@@ -133,7 +140,7 @@ impl LearningPracticalRepository {
                 return Err(invalid(format!("{label} must contain 1–100 characters.")));
             }
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
         let operation = practical_operation(
             "simulation",
@@ -144,7 +151,7 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different simulation data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return self.simulation(&request.session_id).await;
         }
@@ -187,7 +194,7 @@ impl LearningPracticalRepository {
                 .bind(&question.question).bind(&activity.generator_model).bind(timestamp)
                 .execute(&mut *tx).await.map_err(db)?;
         }
-        operation.record(&mut *tx, &request.session_id).await?;
+        operation.record(&mut tx, &request.session_id).await?;
         tx.commit().await.map_err(db)?;
         self.simulation(&request.session_id).await
     }
@@ -205,7 +212,7 @@ impl LearningPracticalRepository {
         if reply.content.trim().is_empty() {
             return Err(invalid("Simulation reply must not be blank."));
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
         let operation = practical_operation(
             "simulation",
@@ -216,7 +223,7 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different turn data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return self.simulation(&request.session_id).await;
         }
@@ -260,7 +267,7 @@ impl LearningPracticalRepository {
         if updated.rows_affected() != 1 {
             return Err(invalid("Simulation changed; reload and retry."));
         }
-        operation.record(&mut *tx, &reply_id).await?;
+        operation.record(&mut tx, &reply_id).await?;
         tx.commit().await.map_err(db)?;
         self.simulation(&request.session_id).await
     }
@@ -274,7 +281,7 @@ impl LearningPracticalRepository {
         uuid(&request.operation_id, "operation")?;
         uuid(&request.program_id, "program")?;
         uuid(&request.session_id, "simulation")?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
         let operation = practical_operation(
             "simulation",
@@ -285,7 +292,7 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different finish data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return self.simulation(&request.session_id).await;
         }
@@ -344,7 +351,7 @@ impl LearningPracticalRepository {
                 .bind(json(&serde_json::json!({"mode":activity.practice_mode,"allowedAids":activity.allowed_aids}))?)
                 .bind(timestamp).execute(&mut *tx).await.map_err(db)?;
         }
-        operation.record(&mut *tx, &feedback_id).await?;
+        operation.record(&mut tx, &feedback_id).await?;
         tx.commit().await.map_err(db)?;
         self.simulation(&request.session_id).await
     }

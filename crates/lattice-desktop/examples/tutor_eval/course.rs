@@ -16,6 +16,7 @@ use lattice::features::learning::source_library::{
     PASTED_TEXT_EXTRACTION,
 };
 use lattice::infrastructure::persistence::repositories::workspace_notes::DailyNotesRepository;
+use lattice_core::shared::persistence::Database;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
@@ -153,7 +154,7 @@ fn program_of(course: &Course) -> (LearningProgramDto, HashMap<String, String>) 
 
 async fn add_source(pool: &SqlitePool, program_id: &str, source: &Source) -> Res<String> {
     let version = id();
-    LearningSourceLibraryRepository::new(pool.clone())
+    LearningSourceLibraryRepository::new(Database::from(pool.clone()))
         .add(
             NewLearningSource {
                 operation_id: &id(),

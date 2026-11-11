@@ -46,7 +46,7 @@ pub async fn list_space_documents_impl(
     limit: Option<u32>,
     container: &Container,
 ) -> Result<Vec<SpaceDocumentDto>, ApiError> {
-    ConversationRepository::new(container.db_pool().clone())
+    ConversationRepository::new(container.database().clone())
         .space_documents(
             space_id.as_deref(),
             conversation_id.as_deref(),
@@ -61,7 +61,7 @@ pub async fn list_conversation_linked_documents_impl(
     conversation_id: String,
     container: &Container,
 ) -> Result<Vec<ConversationLinkedDocumentDto>, ApiError> {
-    ConversationRepository::new(container.db_pool().clone())
+    ConversationRepository::new(container.database().clone())
         .list_conversation_linked_documents(conversation_id)
         .await
         .map_err(ApiError::from)
@@ -104,7 +104,7 @@ pub async fn remove_conversation_linked_document_impl(
         });
     }
 
-    ConversationRepository::new(container.db_pool().clone())
+    ConversationRepository::new(container.database().clone())
         .remove_conversation_linked_document(conversation_id, document_id)
         .await
         .map_err(ApiError::from)
@@ -118,7 +118,7 @@ pub async fn add_conversation_web_source_impl(
     relevance_score: Option<f32>,
     container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
-    ConversationRepository::new(container.db_pool().clone())
+    ConversationRepository::new(container.database().clone())
         .add_conversation_web_source(conversation_id, url, title, excerpt, relevance_score)
         .await
         .map_err(ApiError::from)
@@ -128,7 +128,7 @@ pub async fn list_conversation_web_sources_impl(
     conversation_id: String,
     container: &Container,
 ) -> Result<Vec<ConversationWebSourceDto>, ApiError> {
-    ConversationRepository::new(container.db_pool().clone())
+    ConversationRepository::new(container.database().clone())
         .list_conversation_web_sources(conversation_id)
         .await
         .map_err(ApiError::from)
@@ -139,7 +139,7 @@ pub async fn remove_conversation_web_source_impl(
     source_id: String,
     container: &Container,
 ) -> Result<RenameConversationResponseDto, ApiError> {
-    ConversationRepository::new(container.db_pool().clone())
+    ConversationRepository::new(container.database().clone())
         .remove_conversation_web_source(conversation_id, source_id)
         .await
         .map_err(ApiError::from)

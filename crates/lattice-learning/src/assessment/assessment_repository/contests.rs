@@ -11,6 +11,7 @@ use crate::persistence::{db, now};
 use crate::quiz_bank_jobs;
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashMap;
@@ -131,7 +132,7 @@ impl LearningAssessmentRepository {
                 "A note is at most {MAX_CHAT_MESSAGE_CHARS} characters."
             )));
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
         let operation = assessment_operation(
             &req.operation_id,
@@ -141,7 +142,7 @@ impl LearningAssessmentRepository {
             hash,
             "Operation ID was reused with a different contest.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return Ok((self.get_form(&req.form_id).await?, None));
         }
@@ -217,7 +218,7 @@ impl LearningAssessmentRepository {
             &format!("contest:{}", req.operation_id),
         )
         .await?;
-        operation.record(&mut *tx, &contest_id).await?;
+        operation.record(&mut tx, &contest_id).await?;
         tx.commit().await.map_err(db)?;
         Ok((self.get_form(&req.form_id).await?, Some(job)))
     }
@@ -243,7 +244,7 @@ impl LearningAssessmentRepository {
         regrade: Regrade,
         model: &str,
     ) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let contest = sqlx::query("SELECT form_id,item_ordinal,first_score,program_id FROM learning_assessment_grade_contests WHERE id=? AND status='open'")
             .bind(contest_id)
             .fetch_optional(&mut *tx)
@@ -319,7 +320,7 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
         let operation = assessment_operation(
             &req.operation_id,
@@ -329,7 +330,7 @@ impl LearningAssessmentRepository {
             hash,
             "Operation ID was reused with a different override.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return self.get_form(&req.form_id).await;
         }
@@ -356,7 +357,7 @@ impl LearningAssessmentRepository {
             .map_err(db)?;
         Self::record_override_evidence_in(&mut tx, &req.form_id, ordinal).await?;
         Self::finalize_in(&mut tx, &req.form_id).await?;
-        operation.record(&mut *tx, &()).await?;
+        operation.record(&mut tx, &()).await?;
         tx.commit().await.map_err(db)?;
         self.get_form(&req.form_id).await
     }
@@ -376,7 +377,7 @@ impl LearningAssessmentRepository {
                 "A note is at most {MAX_CHAT_MESSAGE_CHARS} characters."
             )));
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
         let operation = assessment_operation(
             &req.operation_id,
@@ -386,7 +387,7 @@ impl LearningAssessmentRepository {
             hash,
             "Operation ID was reused with a different report.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return self.get_form(&req.form_id).await;
         }
@@ -421,7 +422,7 @@ impl LearningAssessmentRepository {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        operation.record(&mut *tx, &()).await?;
+        operation.record(&mut tx, &()).await?;
         tx.commit().await.map_err(db)?;
         self.get_form(&req.form_id).await
     }

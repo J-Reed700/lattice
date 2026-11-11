@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 use lattice_core::domain::learning::claim_review::TrustCause;
 use lattice_core::domain::provenance::OverrideScope;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 
 use super::trust_changed::{override_changed, Redecidable, Redecided};
 use crate::dto::{
@@ -29,26 +30,27 @@ fn count(value: usize) -> u32 {
 /// (and each of the claim's supports) says what an override of the source,
 /// and of its site, would re-decide.
 pub async fn view(
-    store: &SqliteSourceTrustStore,
+    database: &Database,
     request: &GetLearningSourceTrustRequestDto,
 ) -> Result<LearningSourceTrustViewDto> {
-    let mut view = source_view::view(store, request).await?;
+    let store = SqliteSourceTrustStore::new(database.clone());
+    let mut view = source_view::view(database, &store, request).await?;
     if !request.include_impact {
         return Ok(view);
     }
-    let ledger = Redecidable::load(store.pool()).await?;
+    let ledger = Redecidable::load(database).await?;
     let supports = view
         .claim
         .iter_mut()
         .flat_map(|claim| claim.supports.iter_mut());
     for entry in view.sources.iter_mut().chain(supports) {
-        entry.impact = Some(impacts(store, &ledger, &request.program_id, entry).await?);
+        entry.impact = Some(impacts(database, &ledger, &request.program_id, entry).await?);
     }
     Ok(view)
 }
 
 async fn impacts(
-    store: &SqliteSourceTrustStore,
+    database: &Database,
     ledger: &Redecidable,
     program_id: &str,
     entry: &LearningSourceTrustEntryDto,
@@ -57,7 +59,7 @@ async fn impacts(
         program_id: program_id.to_owned(),
         source_id: entry.source_id.clone(),
     };
-    let source = reach(ledger, &preview(store, &source).await?);
+    let source = reach(ledger, &preview(database, &source).await?);
     let site = match entry
         .provenance
         .as_ref()
@@ -65,7 +67,7 @@ async fn impacts(
     {
         Some(registrable_domain) => {
             let scope = OverrideScope::Site { registrable_domain };
-            Some(reach(ledger, &preview(store, &scope).await?))
+            Some(reach(ledger, &preview(database, &scope).await?))
         }
         None => None,
     };
@@ -96,32 +98,29 @@ fn reach(ledger: &Redecidable, versions: &[CoveredVersion]) -> LearningTrustImpa
 /// Creates or replaces the override at its scope, then re-decides the
 /// claims it touches.
 pub async fn set(
-    store: &SqliteSourceTrustStore,
+    database: &Database,
     input: &LearningTrustOverrideInputDto,
 ) -> Result<LearningTrustChangeResultDto> {
     let entry = dto_map::override_input(input, unix_seconds())?;
-    let change = overrides::set(store, &entry).await?;
-    changed(store, change).await
+    let change = overrides::set(database, &entry).await?;
+    changed(database, change).await
 }
 
 /// Removes the override at `scope`, then re-decides the claims it touched;
 /// `None` when there was none.
 pub async fn clear(
-    store: &SqliteSourceTrustStore,
+    database: &Database,
     scope: &LearningTrustOverrideScopeDto,
 ) -> Result<Option<LearningTrustChangeResultDto>> {
-    match overrides::clear(store, &dto_map::core_scope(scope)).await? {
-        Some(change) => Ok(Some(changed(store, change).await?)),
+    match overrides::clear(database, &dto_map::core_scope(scope)).await? {
+        Some(change) => Ok(Some(changed(database, change).await?)),
         None => Ok(None),
     }
 }
 
-async fn changed(
-    store: &SqliteSourceTrustStore,
-    change: TrustChange,
-) -> Result<LearningTrustChangeResultDto> {
-    let redecided = override_changed(store.pool(), &change).await?;
-    let impact = reach(&Redecidable::load(store.pool()).await?, &change.versions);
+async fn changed(database: &Database, change: TrustChange) -> Result<LearningTrustChangeResultDto> {
+    let redecided = override_changed(database, &change).await?;
+    let impact = reach(&Redecidable::load(database).await?, &change.versions);
     Ok(LearningTrustChangeResultDto {
         change: LearningTrustChangeDto {
             scope: dto_map::scope(&change.scope),

@@ -14,6 +14,7 @@
 //! left beside it would put old vectors behind new passages.
 
 use super::chunking::NewPassage;
+use lattice_core::shared::persistence::{PersistenceError, PersistenceErrorKind, Transactions};
 use lattice_core::shared::{AppError, Result};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
 use sqlx::{Connection, Row, SqliteConnection, SqlitePool};
@@ -71,12 +72,15 @@ fn under(column: &str) -> String {
 
 /// A pool that timed out is a busy store, not a broken one: the index job
 /// waits and resumes from its checkpoints instead of ending as failed.
-pub(super) fn db_error(action: &str) -> impl Fn(sqlx::Error) -> AppError + '_ {
-    move |error| match error {
-        sqlx::Error::PoolTimedOut => AppError::ServiceNotAvailable(format!(
-            "Passage index: busy, could not {action}; saved work is retained"
-        )),
-        error => AppError::Database(format!("Passage index: failed to {action}: {error}")),
+pub(super) fn db_error<E: Into<PersistenceError>>(action: &str) -> impl Fn(E) -> AppError + '_ {
+    move |error| {
+        let error = error.into();
+        match error.kind() {
+            PersistenceErrorKind::Busy => AppError::ServiceNotAvailable(format!(
+                "Passage index: busy, could not {action}; saved work is retained"
+            )),
+            _ => AppError::Database(format!("Passage index: failed to {action}: {error}")),
+        }
     }
 }
 
@@ -111,7 +115,7 @@ pub struct Counts {
 
 /// Documents and passages under `prefix`. Every passage has its document's
 /// row (both are written in one transaction), so the join drops nothing.
-pub(super) async fn read_counts(
+async fn read_counts(
     connection: &mut SqliteConnection,
     prefix: &str,
 ) -> std::result::Result<Counts, sqlx::Error> {
@@ -140,7 +144,7 @@ pub(super) async fn read_counts(
     })
 }
 
-pub(super) async fn read_meta(
+async fn read_meta(
     connection: &mut SqliteConnection,
 ) -> std::result::Result<HashMap<String, String>, sqlx::Error> {
     let rows = sqlx::query("SELECT key, value FROM meta")
@@ -152,9 +156,17 @@ pub(super) async fn read_meta(
         .collect())
 }
 
+async fn read_document_keys(
+    connection: &mut SqliteConnection,
+) -> std::result::Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar::<_, String>("SELECT key FROM index_documents")
+        .fetch_all(connection)
+        .await
+}
+
 /// A short-lived connection to `dir`'s store; `None` when it has none or it
 /// will not open. Reading through one leaves a live store's pool untouched.
-pub(super) async fn connect(dir: &Path) -> Option<SqliteConnection> {
+async fn connect(dir: &Path) -> Option<SqliteConnection> {
     let db = dir.join(DB_FILE);
     if !db.exists() {
         return None;
@@ -163,6 +175,52 @@ pub(super) async fn connect(dir: &Path) -> Option<SqliteConnection> {
         .filename(&db)
         .busy_timeout(Duration::from_secs(2));
     SqliteConnection::connect_with(&options).await.ok()
+}
+
+async fn connect_or_fail(dir: &Path) -> Result<SqliteConnection> {
+    connect(dir).await.ok_or_else(|| {
+        AppError::Database(format!(
+            "Passage index: could not open {}",
+            dir.join(DB_FILE).display()
+        ))
+    })
+}
+
+/// The meta of `dir`'s store, read through a short-lived connection; empty
+/// when it has none or it is unreadable.
+pub(super) async fn read_meta_of(dir: &Path) -> HashMap<String, String> {
+    match connect(dir).await {
+        Some(mut connection) => {
+            let meta = read_meta(&mut connection).await;
+            let _ = connection.close().await;
+            meta.unwrap_or_default()
+        }
+        None => HashMap::new(),
+    }
+}
+
+/// The counts under `prefix` and the meta of `dir`'s store.
+pub(super) async fn read_counts_and_meta_of(
+    dir: &Path,
+    prefix: &str,
+) -> Result<(Counts, HashMap<String, String>)> {
+    let mut connection = connect_or_fail(dir).await?;
+    let read = async {
+        let meta = read_meta(&mut connection).await?;
+        let counts = read_counts(&mut connection, prefix).await?;
+        Ok::<_, sqlx::Error>((counts, meta))
+    }
+    .await;
+    let _ = connection.close().await;
+    read.map_err(db_error("read the index"))
+}
+
+/// The document keys `dir`'s store holds.
+pub(super) async fn read_document_keys_of(dir: &Path) -> Result<Vec<String>> {
+    let mut connection = connect_or_fail(dir).await?;
+    let keys = read_document_keys(&mut connection).await;
+    let _ = connection.close().await;
+    keys.map_err(db_error("read the index's documents"))
 }
 
 /// The store file of the index layout before this one, which a rebuild
@@ -232,10 +290,14 @@ async fn connect_pool(dir: &Path) -> Result<SqlitePool> {
 
 /// Whether the store in `pool` holds tables of another shape than this one.
 async fn other_version(pool: &SqlitePool) -> Result<bool> {
+    let mut tx = pool
+        .begin_read()
+        .await
+        .map_err(db_error("read the schema"))?;
     let tables: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
     )
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(db_error("read the schema"))?;
     if tables == 0 {
@@ -243,10 +305,43 @@ async fn other_version(pool: &SqlitePool) -> Result<bool> {
     }
     let version: Option<String> = sqlx::query_scalar("SELECT value FROM meta WHERE key = ?")
         .bind(META_VERSION)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *tx)
         .await
         .unwrap_or(None);
     Ok(version.as_deref() != Some(SCHEMA_VERSION))
+}
+
+/// Creates the tables and records the version in one transaction, so a store
+/// never has tables without the version that vouches for them.
+async fn install_schema(pool: &SqlitePool) -> Result<()> {
+    let mut tx = pool
+        .begin_write()
+        .await
+        .map_err(db_error("create the schema"))?;
+    // Not raw_sql(..).execute(&mut *tx): that future is not Send on a connection.
+    sqlx::Executor::execute(&mut *tx, sqlx::raw_sql(SCHEMA))
+        .await
+        .map_err(db_error("create the schema"))?;
+    put_meta(&mut tx, META_VERSION, SCHEMA_VERSION)
+        .await
+        .map_err(db_error("write meta"))?;
+    tx.commit().await.map_err(db_error("create the schema"))
+}
+
+async fn put_meta(
+    connection: &mut SqliteConnection,
+    key: &str,
+    value: &str,
+) -> std::result::Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO meta (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(key)
+    .bind(value)
+    .execute(connection)
+    .await
+    .map(|_| ())
 }
 
 pub struct PassageStore {
@@ -274,16 +369,11 @@ impl PassageStore {
             cleared(dir).await?;
             pool = connect_pool(dir).await?;
         }
-        sqlx::raw_sql(SCHEMA)
-            .execute(&pool)
-            .await
-            .map_err(db_error("create the schema"))?;
-        let store = Self {
+        install_schema(&pool).await?;
+        Ok(Self {
             dir: dir.to_path_buf(),
             pool,
-        };
-        store.set_meta(META_VERSION, SCHEMA_VERSION).await?;
-        Ok(store)
+        })
     }
 
     /// A store that lives in memory for as long as it is open: no directory,
@@ -301,16 +391,11 @@ impl PassageStore {
             .connect_with(options)
             .await
             .map_err(db_error("open an in-memory store"))?;
-        sqlx::raw_sql(SCHEMA)
-            .execute(&pool)
-            .await
-            .map_err(db_error("create the schema"))?;
-        let store = Self {
+        install_schema(&pool).await?;
+        Ok(Self {
             dir: PathBuf::new(),
             pool,
-        };
-        store.set_meta(META_VERSION, SCHEMA_VERSION).await?;
-        Ok(store)
+        })
     }
 
     /// The index directory; empty for a [`Self::memory`] store.
@@ -331,16 +416,10 @@ impl PassageStore {
     }
 
     pub async fn set_meta(&self, key: &str, value: &str) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO meta (key, value) VALUES (?, ?)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        )
-        .bind(key)
-        .bind(value)
-        .execute(&self.pool)
-        .await
-        .map(|_| ())
-        .map_err(db_error("write meta"))
+        let mut connection = self.pool.acquire().await.map_err(db_error("write meta"))?;
+        put_meta(&mut connection, key, value)
+            .await
+            .map_err(db_error("write meta"))
     }
 
     pub async fn delete_meta(&self, key: &str) -> Result<()> {
@@ -411,7 +490,7 @@ impl PassageStore {
         content_hash: &str,
         passages: &[NewPassage],
     ) -> Result<Vec<i64>> {
-        let mut tx = self.pool.begin().await.map_err(db_error("begin"))?;
+        let mut tx = self.pool.begin_write().await.map_err(db_error("begin"))?;
         let old: Vec<i64> = sqlx::query_scalar("SELECT id FROM passages WHERE document = ?")
             .bind(key)
             .fetch_all(&mut *tx)
@@ -452,7 +531,7 @@ impl PassageStore {
 
     /// Forgets the documents at `keys`. Returns their passage ids.
     pub async fn remove(&self, keys: &[String]) -> Result<Vec<i64>> {
-        let mut tx = self.pool.begin().await.map_err(db_error("begin"))?;
+        let mut tx = self.pool.begin_write().await.map_err(db_error("begin"))?;
         let mut removed = Vec::new();
         for key in keys {
             let ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM passages WHERE document = ?")
@@ -521,7 +600,7 @@ impl PassageStore {
 
     /// Their passages are in the saved vectors file.
     pub async fn mark_embedded(&self, keys: &[String]) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(db_error("begin"))?;
+        let mut tx = self.pool.begin_write().await.map_err(db_error("begin"))?;
         for key in keys {
             sqlx::query("UPDATE index_documents SET embedded = 1 WHERE key = ?")
                 .bind(key)
@@ -575,10 +654,12 @@ impl PassageStore {
     }
 
     pub async fn counts(&self, prefix: &str) -> Result<Counts> {
-        let mut connection = self.pool.acquire().await.map_err(db_error("count"))?;
-        read_counts(&mut connection, prefix)
+        let mut tx = self.pool.begin_read().await.map_err(db_error("count"))?;
+        let counts = read_counts(&mut tx, prefix)
             .await
-            .map_err(db_error("count documents and passages"))
+            .map_err(db_error("count documents and passages"))?;
+        tx.commit().await.map_err(db_error("count"))?;
+        Ok(counts)
     }
 
     /// Whether anything under `prefix` has passages.

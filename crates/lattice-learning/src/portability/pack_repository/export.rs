@@ -20,22 +20,25 @@ use crate::{
     portability_dto::LearningPackExportOptionsDto,
     practical_repository::LearningPracticalRepository,
     repository::LearningRepository,
-    source_library::LearningSourceLibraryRepository,
+    source_library::workspace_in,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use sqlx::{Row, SqliteConnection};
 use std::collections::HashMap;
 
 /// A user-requested export: refused while the course is still being
 /// generated or before it has an outline another computer could import.
 pub(crate) async fn snapshot(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
     options: &LearningPackExportOptionsDto,
 ) -> Result<LearningPackInput> {
-    let mut tx = pool.begin().await.map_err(db)?;
+    let pool = pool.sqlx_pool();
+    let mut tx = pool.begin_read().await.map_err(db)?;
     guards::require_exportable(&mut tx, program_id).await?;
     let input = snapshot_on(&mut tx, program_id, options).await?;
     tx.commit().await.map_err(db)?;
@@ -219,8 +222,7 @@ pub(super) async fn source_library(
     tx: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<Vec<LearningPackEntry>> {
-    let mut source_workspace =
-        LearningSourceLibraryRepository::workspace_on(tx, program_id, true).await?;
+    let mut source_workspace = workspace_in(tx, program_id, true).await?;
     let source_rows =
         sqlx::query("SELECT id,full_text FROM learning_source_versions WHERE program_id=?")
             .bind(program_id)
@@ -307,8 +309,7 @@ pub(super) async fn source_bodies(
     tx: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<Vec<LearningPackEntry>> {
-    let source_workspace =
-        LearningSourceLibraryRepository::workspace_on(tx, program_id, true).await?;
+    let source_workspace = workspace_in(tx, program_id, true).await?;
     let source_rows =
         sqlx::query("SELECT id,full_text FROM learning_source_versions WHERE program_id=?")
             .bind(program_id)

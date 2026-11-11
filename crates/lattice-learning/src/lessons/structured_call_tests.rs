@@ -5,6 +5,7 @@ use super::*;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
+use lattice_core::shared::persistence::Database;
 use std::sync::Mutex;
 
 const SYSTEM: &str = "Teach one idea to a beginner.";
@@ -344,8 +345,9 @@ async fn an_empty_draft_falls_back_to_the_one_step_request() -> Result<()> {
     Ok(())
 }
 
-/// A claimed lesson preparation job: its repository, id and lesson.
+/// A claimed lesson preparation job: its database, repository, id and lesson.
 async fn lesson_job() -> Result<(
+    Database,
     crate::curriculum_repository::LearningCurriculumRepository,
     String,
     String,
@@ -386,15 +388,16 @@ async fn lesson_job() -> Result<(
         })
         .await?;
     JobStore::new(pool.clone()).claim(&job.id).await?;
-    Ok((jobs, job.id, lesson))
+    Ok((Database::from(pool), jobs, job.id, lesson))
 }
 
 #[tokio::test]
 async fn a_lesson_job_interrupted_before_the_answer_resumes_from_its_saved_draft() -> Result<()> {
-    let (jobs, job_id, lesson) = lesson_job().await?;
+    let (database, jobs, job_id, lesson) = lesson_job().await?;
     let mut interrupted = Recorder::new(32_000);
     interrupted.answer = None;
     let first = lesson_drafts::run(
+        &database,
         &jobs,
         &job_id,
         &lesson,
@@ -405,8 +408,14 @@ async fn a_lesson_job_interrupted_before_the_answer_resumes_from_its_saved_draft
     assert_eq!(interrupted.sent().len(), 2);
 
     let resumed = Recorder::new(32_000);
-    let answer =
-        lesson_drafts::run(&jobs, &job_id, &lesson, call(&resumed, CallKind::Authoring)).await?;
+    let answer = lesson_drafts::run(
+        &database,
+        &jobs,
+        &job_id,
+        &lesson,
+        call(&resumed, CallKind::Authoring),
+    )
+    .await?;
     assert_eq!(answer, ANSWER);
     let sent = resumed.sent();
     assert_eq!(sent.len(), 1, "the saved draft is not written again");
@@ -417,14 +426,14 @@ async fn a_lesson_job_interrupted_before_the_answer_resumes_from_its_saved_draft
 
 #[tokio::test]
 async fn a_draft_whose_answer_cannot_be_read_is_written_again_on_retry() -> Result<()> {
-    let (jobs, job_id, lesson) = lesson_job().await?;
+    let (database, jobs, job_id, lesson) = lesson_job().await?;
     let mut unreadable = Recorder::new(32_000);
     unreadable.answer = Some("not an answer");
-    let first = lesson_drafts::run(&jobs, &job_id, &lesson, parsed(&unreadable)).await;
+    let first = lesson_drafts::run(&database, &jobs, &job_id, &lesson, parsed(&unreadable)).await;
     assert!(first.is_err());
 
     let retried = Recorder::new(32_000);
-    let answer = lesson_drafts::run(&jobs, &job_id, &lesson, parsed(&retried)).await?;
+    let answer = lesson_drafts::run(&database, &jobs, &job_id, &lesson, parsed(&retried)).await?;
     assert_eq!(answer, ANSWER);
     assert_eq!(
         retried.sent().len(),

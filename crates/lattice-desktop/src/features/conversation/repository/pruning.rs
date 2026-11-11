@@ -4,6 +4,7 @@ use super::ConversationRepository;
 use crate::infrastructure::storage::file_intents::{record_releases_sql, run_id, FileStore};
 use chrono::Utc;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 
 impl ConversationRepository {
     /// Deletes specific messages from a conversation; returns how many.
@@ -18,7 +19,7 @@ impl ConversationRepository {
 
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin pruning: {}", e)))?;
         let deleted = Self::delete_message_ids(&mut tx, conversation_id, message_ids).await?;
@@ -38,7 +39,7 @@ impl ConversationRepository {
     ) -> Result<u64> {
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin truncate: {}", e)))?;
 
@@ -75,7 +76,7 @@ impl ConversationRepository {
         &self,
         conversation_id: &str,
     ) -> Result<Option<(String, i64, Option<String>)>> {
-        let mut tx = self.pool.begin().await.map_err(|e| {
+        let mut tx = self.pool.begin_write().await.map_err(|e| {
             AppError::Database(format!("Failed to begin take_last_user_turn: {}", e))
         })?;
 
@@ -128,7 +129,7 @@ impl ConversationRepository {
     }
     /// `(created_at, rowid)` of one message, scoped to its conversation.
     pub(super) async fn load_message_position(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &mut sqlx::SqliteConnection,
         conversation_id: &str,
         message_id: &str,
     ) -> Result<Option<MessagePosition>> {
@@ -141,14 +142,14 @@ impl ConversationRepository {
         )
         .bind(message_id)
         .bind(conversation_id)
-        .fetch_optional(&mut **tx)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to locate message: {}", e)))
     }
 
     /// Ids of every message strictly after `anchor`, oldest first.
     async fn load_message_ids_after(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &mut sqlx::SqliteConnection,
         conversation_id: &str,
         anchor: &MessagePosition,
     ) -> Result<Vec<String>> {
@@ -165,7 +166,7 @@ impl ConversationRepository {
         .bind(&anchor.created_at)
         .bind(&anchor.created_at)
         .bind(anchor.rowid)
-        .fetch_all(&mut **tx)
+        .fetch_all(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to list messages to remove: {}", e)))
     }
@@ -174,7 +175,7 @@ impl ConversationRepository {
     /// conversation. Runs inside the caller's transaction so a partial
     /// truncate can never be observed.
     async fn delete_message_ids(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &mut sqlx::SqliteConnection,
         conversation_id: &str,
         message_ids: &[String],
     ) -> Result<u64> {
@@ -197,7 +198,7 @@ impl ConversationRepository {
         for id in message_ids {
             record = record.bind(id);
         }
-        record.execute(&mut **tx).await.map_err(|e| {
+        record.execute(&mut *tx).await.map_err(|e| {
             AppError::Database(format!("Failed to record released pictures: {}", e))
         })?;
 
@@ -213,7 +214,7 @@ impl ConversationRepository {
             bookmark_query = bookmark_query.bind(id);
         }
         bookmark_query
-            .execute(&mut **tx)
+            .execute(&mut *tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to delete bookmarks: {}", e)))?;
 
@@ -226,7 +227,7 @@ impl ConversationRepository {
             query = query.bind(id);
         }
         let deleted = query
-            .execute(&mut **tx)
+            .execute(&mut *tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to delete messages: {}", e)))?
             .rows_affected();
@@ -245,7 +246,7 @@ impl ConversationRepository {
             "#,
         )
         .bind(conversation_id)
-        .fetch_one(&mut **tx)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to recount messages: {}", e)))?;
 
@@ -261,7 +262,7 @@ impl ConversationRepository {
         .bind(stats.total)
         .bind(&now)
         .bind(conversation_id)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to update conversation stats: {}", e)))?;
 
