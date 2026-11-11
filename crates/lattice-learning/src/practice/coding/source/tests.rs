@@ -244,10 +244,7 @@ async fn source_in_the_function_name_is_refused_and_asked_again() {
     let whole = with(
         answer(),
         "functionName",
-        json!(
-            "def pair_positions(numbers, target):
-    return []"
-        ),
+        json!("def pair_positions(numbers, target):\n    return []"),
     );
     let runner = runner(killers());
     let (problem, model) =

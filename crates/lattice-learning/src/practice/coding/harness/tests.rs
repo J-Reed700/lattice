@@ -693,9 +693,7 @@ mod real_python {
 
     #[tokio::test]
     async fn a_scale_input_may_be_a_comprehension_a_conditional_or_a_slice() -> Result<()> {
-        let code = "def add(xs, _unused):
-    return sum(xs)
-";
+        let code = "def add(xs, _unused):\n    return sum(xs)\n";
         for source in [
             "[i % 7 for i in range(1000) if i != 3]",
             "[0 if i % 2 else i for i in range(100)][::-1]",
@@ -719,9 +717,7 @@ mod real_python {
     #[tokio::test]
     async fn a_scale_input_with_an_attribute_a_lambda_or_a_called_loop_variable_is_refused(
     ) -> Result<()> {
-        let code = "def add(xs, _unused):
-    return 0
-";
+        let code = "def add(xs, _unused):\n    return 0\n";
         for source in [
             "[i for i in range(3)].__class__",
             "(lambda: 1)()",
