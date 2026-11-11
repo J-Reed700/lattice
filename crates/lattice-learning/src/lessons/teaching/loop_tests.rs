@@ -14,13 +14,14 @@ use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-const EXCERPT: &str = "This saved reference describes the exact behavior of the example tool.";
+pub(super) const EXCERPT: &str =
+    "This saved reference describes the exact behavior of the example tool.";
 
 fn lesson(quote: &str) -> Value {
     json!({"blocks":[{"kind":"explanation","title":"Example","body":"The function returns the number 4 for the sum of two and two. ".repeat(12),"rubric":[],"sourceIndex":0,"quote":quote}],"questions":[]})
 }
 
-fn context() -> String {
+pub(super) fn context() -> String {
     json!({"sources":[{"sourceIndex":0,"excerpt":EXCERPT}]}).to_string()
 }
 
@@ -54,7 +55,7 @@ fn retitle_from(before: &str, after: &str) -> String {
     json!({"edits":[{"path":"/blocks/0/title","before":before,"after":after}]}).to_string()
 }
 
-fn references() -> Vec<crate::dto::LearningSourceDto> {
+pub(super) fn references() -> Vec<crate::dto::LearningSourceDto> {
     vec![crate::dto::LearningSourceDto {
         id: "saved-reference".into(),
         title: "Example reference".into(),
@@ -1339,7 +1340,7 @@ async fn the_same_unusable_repair_twice_leaves_the_finding_waiting_and_the_lesso
     Ok(())
 }
 
-const INPUT: &str = "teaching-review-resume";
+pub(super) const INPUT: &str = "teaching-review-resume";
 
 /// The scripted review, its connection lost on the first call after its first
 /// repair is answered: the recheck. The error leaves the review as a requeue
@@ -1702,7 +1703,7 @@ fn part_body(index: usize) -> String {
     format!("{name} states one plain fact about the tool. {name} then gives a first idea.")
 }
 
-fn parts_lesson(count: usize) -> Value {
+pub(super) fn parts_lesson(count: usize) -> Value {
     let blocks: Vec<Value> = (0..count)
         .map(|index| {
             json!({
@@ -2647,7 +2648,7 @@ async fn a_draft_review_is_told_what_the_writer_was() -> Result<()> {
 /// reviewer from the passages it is shown and the sections and verdicts its
 /// schema allows, the evidence check from the issues it lists, a repair from
 /// `repair`. The reviews and repairs it is sent are kept.
-struct ByRequest {
+pub(super) struct ByRequest {
     /// Whether a passage's words are a defect.
     defective: fn(&str) -> bool,
     /// Whether a section's check reports a defect again that an open finding
@@ -2667,7 +2668,10 @@ fn no_whole_defects(_: &Value, _: usize) -> Vec<&'static str> {
 }
 
 impl ByRequest {
-    fn new(defective: fn(&str) -> bool, repair: fn(&Value, usize) -> Vec<Value>) -> Self {
+    pub(super) fn new(
+        defective: fn(&str) -> bool,
+        repair: fn(&Value, usize) -> Vec<Value>,
+    ) -> Self {
         Self {
             defective,
             restates: false,
@@ -2689,12 +2693,12 @@ impl ByRequest {
     }
 
     /// The review requests, as the JSON each carries.
-    fn reviews(&self) -> Vec<Value> {
+    pub(super) fn reviews(&self) -> Vec<Value> {
         self.seen_reviews.lock().unwrap().clone()
     }
 
     /// The repair requests, as the JSON each carries.
-    fn repairs(&self) -> Vec<Value> {
+    pub(super) fn repairs(&self) -> Vec<Value> {
         self.seen_repairs.lock().unwrap().clone()
     }
 
@@ -2910,7 +2914,7 @@ fn parts_sent(sent: &Value) -> Vec<usize> {
 }
 
 /// An edit of a block's title: a change that fixes nothing.
-fn retitled(sent: &Value, index: usize) -> Value {
+pub(super) fn retitled(sent: &Value, index: usize) -> Value {
     let title = sent["candidate"]["blocks"][index]["title"]
         .as_str()
         .unwrap_or_default();
@@ -3229,7 +3233,7 @@ async fn review_in_the_job(
     .await
 }
 
-fn part_a_is_wrong(text: &str) -> bool {
+pub(super) fn part_a_is_wrong(text: &str) -> bool {
     text.contains("Part A") && text.contains("first idea")
 }
 

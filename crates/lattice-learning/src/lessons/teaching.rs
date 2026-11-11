@@ -465,6 +465,8 @@ mod contract_tests;
 #[cfg(test)]
 mod loop_tests;
 #[cfg(test)]
+mod memory_tests;
+#[cfg(test)]
 mod question_tests;
 #[cfg(test)]
 mod standing_tests;

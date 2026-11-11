@@ -604,3 +604,113 @@ async fn a_repair_write_failing_for_another_reason_fails_the_call() {
         "{result:?}"
     );
 }
+
+const HAD: &str = "Where does a torn green stamp go first?";
+const THIRD: &str = "A torn green stamp arrives at the desk. Which place takes it first?";
+
+fn writes(llm: &Script) -> usize {
+    llm.kinds().iter().filter(|k| **k == "write").count()
+}
+
+#[tokio::test]
+async fn an_item_dropped_as_a_repeat_is_not_written_again() -> Result<()> {
+    let llm = Script::new(
+        vec![
+            written(&[FIRST, SECOND]),
+            written(&[SECOND_FIXED]),
+            written(&[THIRD]),
+        ],
+        agrees(),
+        finds(|item| match item["prompt"].as_str() {
+            Some(SECOND | SECOND_FIXED) => (String::new(), vec!["have-0".into()]),
+            _ => (String::new(), vec![]),
+        }),
+    );
+
+    let result = author_items(&llm, &need(LearningItemFormat::SingleChoice, 2, &[HAD])).await;
+
+    llm.no_lesson_review();
+    assert_eq!(writes(&llm), 2, "{:?}", llm.kinds());
+    assert_eq!(prompts(&result?), [FIRST]);
+    Ok(())
+}
+
+/// Passes before and after the change: a defect the rewrite keeps is not a repeat.
+#[tokio::test]
+async fn an_item_dropped_for_a_defect_is_written_again() -> Result<()> {
+    let llm = Script::new(
+        vec![
+            written(&[FIRST, SECOND]),
+            written(&[SECOND_FIXED]),
+            written(&[THIRD]),
+        ],
+        agrees(),
+        finds(|item| match item["prompt"].as_str() {
+            Some(SECOND | SECOND_FIXED) => ("The question needs a value.".into(), vec![]),
+            _ => (String::new(), vec![]),
+        }),
+    );
+
+    let result = author_items(&llm, &need(LearningItemFormat::SingleChoice, 2, &[])).await;
+
+    llm.no_lesson_review();
+    assert_eq!(writes(&llm), 3, "{:?}", llm.kinds());
+    assert_eq!(prompts(&result?), [FIRST, THIRD]);
+    Ok(())
+}
+
+/// Passes before and after the change: a defect beside the repeat keeps it a defect drop.
+#[tokio::test]
+async fn an_item_dropped_for_a_defect_and_a_repeat_is_written_again() -> Result<()> {
+    let llm = Script::new(
+        vec![
+            written(&[FIRST, SECOND]),
+            written(&[SECOND_FIXED]),
+            written(&[THIRD]),
+        ],
+        agrees(),
+        finds(|item| match item["prompt"].as_str() {
+            Some(SECOND) => (String::new(), vec!["have-0".into()]),
+            Some(SECOND_FIXED) => ("The question needs a value.".into(), vec!["have-0".into()]),
+            _ => (String::new(), vec![]),
+        }),
+    );
+
+    let result = author_items(&llm, &need(LearningItemFormat::SingleChoice, 2, &[HAD])).await;
+
+    llm.no_lesson_review();
+    assert_eq!(writes(&llm), 3, "{:?}", llm.kinds());
+    assert_eq!(prompts(&result?), [FIRST, THIRD]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn review_reports_a_repeat_apart_from_the_defects() -> Result<()> {
+    let need = need(LearningItemFormat::SingleChoice, 1, &[HAD]);
+    let raw: RawItem = serde_json::from_value(choice(FIRST)).unwrap();
+    let passage = &need.material[0];
+    let authored = to_candidate(raw, &need, &[passage]).unwrap();
+    let candidate: crate::assessment_engine::LearningAssessmentCandidate =
+        authored.candidate.clone().into();
+    let entries = [Entry {
+        item: &candidate,
+        quote: &authored.source_quote,
+    }];
+    let context = Context {
+        outcome: &need.outcome_title,
+        outcome_description: &need.outcome_description,
+        learner_has: &need.existing_prompts,
+    };
+    let llm = Script::new(
+        vec![],
+        agrees(),
+        finds(|_| (String::new(), vec!["have-0".into()])),
+    );
+
+    let found = item_review::review(&llm, &entries, &context).await?;
+
+    assert_eq!(found.len(), 1);
+    assert!(found[0].defects.is_empty(), "{:?}", found[0]);
+    assert_eq!(found[0].repeats.len(), 1, "{:?}", found[0]);
+    Ok(())
+}
