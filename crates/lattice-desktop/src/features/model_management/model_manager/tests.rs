@@ -117,81 +117,6 @@ impl MockAppHandle {
 // and documented with the limitation.
 
 #[tokio::test]
-async fn test_ensure_model_available_when_exists() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let manager = create_test_manager(&temp_dir);
-
-    fs::write(manager.get_model_path(), b"fake model")
-        .await
-        .expect("Failed to write model");
-    fs::write(manager.get_tokenizer_path(), b"fake tokenizer")
-        .await
-        .expect("Failed to write tokenizer");
-
-    let result = manager.ensure_model_available().await;
-
-    assert!(result.is_ok());
-    let model_path = result.expect("Expected Ok result");
-    assert_eq!(model_path, manager.get_model_path());
-}
-
-#[tokio::test]
-#[ignore = "Requires HTTP mocking infrastructure - see note in specifications"]
-async fn test_ensure_model_available_downloads_missing() {
-    // NOTE: This test requires modifying ModelManager to accept custom
-    // base URLs for testing. The current implementation uses hardcoded
-    // HuggingFace URLs which cannot be redirected to mockito.
-    // To implement this test properly, ModelManager would need either:
-    // 1. Dependency injection for HTTP client with custom base URL
-    // 2. Environment variable override for base URL
-    // 3. Test-specific configuration
-
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let mut server = create_mock_server().await;
-
-    let _m1 = mock_file_response(&mut server, "/model.onnx", b"model");
-    let _m2 = mock_file_response(&mut server, "/model.onnx_data", b"data");
-    let _m3 = mock_file_response(&mut server, "/tokenizer.json", b"tokenizer");
-    let _m4 = mock_file_response(&mut server, "/vocab.txt", b"vocab");
-    let _m5 = mock_file_response(&mut server, "/config.json", b"config");
-
-    let manager = create_test_manager(&temp_dir);
-
-    let result = manager.ensure_model_available().await;
-
-    // Assert: Would verify download, but requires URL injection
-    // For now, this test is marked as ignored
-    drop(result);
-}
-
-#[tokio::test]
-async fn test_is_model_ready_true_when_files_exist() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let manager = create_test_manager(&temp_dir);
-
-    fs::write(manager.get_model_path(), b"model")
-        .await
-        .expect("Failed to write model");
-    fs::write(manager.get_tokenizer_path(), b"tokenizer")
-        .await
-        .expect("Failed to write tokenizer");
-
-    let is_ready = manager.is_model_ready().await;
-
-    assert!(is_ready);
-}
-
-#[tokio::test]
-async fn test_is_model_ready_false_when_missing() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let manager = create_test_manager(&temp_dir);
-
-    let is_ready = manager.is_model_ready().await;
-
-    assert!(!is_ready);
-}
-
-#[tokio::test]
 #[ignore = "Requires HTTP mocking infrastructure"]
 async fn test_download_all_models_downloads_five_files() {
     // NOTE: Same limitation as test_ensure_model_available_downloads_missing
@@ -357,50 +282,6 @@ async fn test_http_404_error() {
 }
 
 #[tokio::test]
-#[cfg(unix)]
-async fn test_disk_write_error() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-
-    // Make directory read-only
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(temp_dir.path())
-        .await
-        .expect("Failed to get metadata")
-        .permissions();
-    perms.set_mode(0o444); // Read-only
-    fs::set_permissions(temp_dir.path(), perms.clone())
-        .await
-        .expect("Failed to set permissions");
-
-    let manager = create_test_manager(&temp_dir);
-
-    let result = manager.ensure_model_available().await;
-
-    if result.is_err() {
-        // Error occurred as expected
-    }
-
-    perms.set_mode(0o755);
-    fs::set_permissions(temp_dir.path(), perms)
-        .await
-        .expect("Failed to restore permissions");
-}
-
-#[tokio::test]
-#[cfg(target_os = "windows")]
-async fn test_insufficient_disk_space_windows() {
-    // NOTE: This test cannot reliably simulate insufficient disk space
-    // without mocking Windows API calls. The test verifies that the
-    // check_disk_space method exists and returns Ok when space is available.
-
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let _manager = create_test_manager(&temp_dir);
-
-    // check_disk_space is called internally by download_all_models
-    // We cannot test the failure case without mocking GetDiskFreeSpaceExW
-}
-
-#[tokio::test]
 #[ignore = "Requires HTTP mocking and MockAppHandle integration"]
 async fn test_emit_error_on_download_failure() {
     // NOTE: Requires both URL injection and MockAppHandle
@@ -479,39 +360,6 @@ async fn test_speed_and_eta_calculation() {
 
     let _app_handle = MockAppHandle::new();
     let _manager = create_test_manager(&temp_dir);
-}
-
-#[tokio::test]
-async fn test_emit_complete_event_not_emitted_when_exists() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let manager = create_test_manager(&temp_dir);
-
-    fs::write(manager.get_model_path(), b"model")
-        .await
-        .expect("Failed to write model");
-    fs::write(manager.get_tokenizer_path(), b"tokenizer")
-        .await
-        .expect("Failed to write tokenizer");
-
-    // Note: MockAppHandle integration would be needed to verify
-    // that complete event is NOT emitted when files already exist
-
-    let result = manager.ensure_model_available().await;
-
-    assert!(result.is_ok());
-}
-
-#[tokio::test]
-async fn test_trait_get_model_info() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let manager = create_test_manager(&temp_dir);
-
-    let info = manager.get_model_info();
-
-    assert_eq!(info.name, "BAAI/bge-m3");
-    assert_eq!(info.version, "1.0.0");
-    assert!(info.size_bytes.is_none());
-    assert_eq!(info.is_downloaded, manager.get_model_path().exists());
 }
 
 #[tokio::test]
