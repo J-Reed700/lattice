@@ -5,6 +5,7 @@
 use super::protected;
 use crate::lessons::content_verification::{unit_fields, Protected};
 use crate::lessons::same_text;
+use crate::lessons::shape::TEACHING_KINDS;
 use crate::lessons::structured_call::{self, CallKind, ReasonFirst};
 use crate::review_findings::{subject_of, FindingSite, PlanCheck, ReviewFinding};
 use lattice_core::{application::ports::LLMPort, shared::error::Result};
@@ -252,6 +253,32 @@ fn label(site: FindingSite) -> String {
     }
 }
 
+/// The last teaching block before a part that sets a task or asks a question, when the part itself does not teach.
+fn teaching_before(candidate: &Value, site: FindingSite) -> Option<FindingSite> {
+    let blocks = candidate.get("blocks").and_then(Value::as_array)?;
+    let teaches = |block: &Value| {
+        block
+            .get("kind")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| TEACHING_KINDS.contains(&kind))
+    };
+    let upto = match site {
+        FindingSite::Section(index) => {
+            if blocks.get(index).is_some_and(teaches) {
+                return None;
+            }
+            index
+        }
+        FindingSite::Question(_) => blocks.len(),
+        FindingSite::Lesson => return None,
+    };
+    blocks
+        .iter()
+        .take(upto)
+        .rposition(teaches)
+        .map(FindingSite::Section)
+}
+
 fn how_to_teach(kind: &str) -> &'static str {
     match kind {
         "idea" => "explain it in a section.",
@@ -433,8 +460,22 @@ fn findings(
         } else {
             ""
         };
+        let before = match later {
+            None => teaching_before(candidate, part.site),
+            Some(_) => None,
+        };
         let how = match later {
-            None => teach.to_owned(),
+            None => match before {
+                Some(site) if in_guarded => format!(
+                    concat!("Teach it in {place}, the last part before this one that teaches (", each_shown!(), "), in sentences added there; the quoted words stay exactly as they are."),
+                    place = label(site)
+                ),
+                Some(site) => format!(
+                    concat!("Teach it in {place}, the last part before this one that teaches (", each_shown!(), "), in sentences added there, and do not teach it inside this step: a step that sets a task does not give away what it asks for. Or change this step to use only what the lesson has taught (a record asked for in the learner's own notes needs nothing taught)."),
+                    place = label(site)
+                ),
+                None => teach.to_owned(),
+            },
             Some(later) if later.part.id == part.id => format!(
                 concat!("This step teaches it only after it is used (\"{words}\"). Move that teaching before the words that use it (", each_shown!(), "), so that the lesson teaches it once.{keep}"),
                 words = later.found.exact,
@@ -452,13 +493,14 @@ fn findings(
             .iter()
             .map(|other| label(other.site))
             .collect();
+        let one_place = before.map_or_else(|| "this step".to_owned(), label);
         let too = match labels.split_last() {
             None => String::new(),
             Some((only, [])) => {
-                format!(" {only} uses it too: this step is the one place that teaches it.")
+                format!(" {only} uses it too: {one_place} is the one place that teaches it.")
             }
             Some((last, rest)) => format!(
-                " {} and {last} use it too: this step is the one place that teaches it.",
+                " {} and {last} use it too: {one_place} is the one place that teaches it.",
                 rest.join(", ")
             ),
         };
@@ -475,10 +517,13 @@ fn findings(
         )
         .with_summary(format!("{} uses {} before the lesson teaches it.", label(part.site), unmet.what))
         .with_passage(passage);
-        found.push(match later.filter(|later| later.part.id != part.id) {
-            Some(later) => finding.with_also(later.part.site),
-            None => finding,
-        });
+        found.push(
+            match (later.filter(|later| later.part.id != part.id), before) {
+                (Some(later), _) => finding.with_also(later.part.site),
+                (None, Some(site)) => finding.with_also(site),
+                (None, None) => finding,
+            },
+        );
     }
     for clash in &answer.contradictions {
         let (Some(first), Some(second)) = (
