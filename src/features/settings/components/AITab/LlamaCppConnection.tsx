@@ -43,10 +43,10 @@ export function LlamaCppConnection() {
       if (!(await saveAuthHeaderValue('llamaCpp', typedValue))) return;
       setValueDraft('');
     }
-    if (await saveLlmUpdates({ llamaCpp: connection as LlamaCppSettingsDto })) toast.success('llama.cpp settings saved');
+    if (await saveLlmUpdates({ llamaCpp: connection })) toast.success('llama.cpp settings saved');
   };
   const clearHeader = async () => {
-    if (!(await saveLlmUpdates({ llamaCpp: { ...connection, authHeaderName: '' } as LlamaCppSettingsDto }))) return;
+    if (!(await saveLlmUpdates({ llamaCpp: { ...connection, authHeaderName: '' } }))) return;
     if (await saveAuthHeaderValue('llamaCpp', null)) {
       setDraft(current => ({ ...current, authHeaderName: '' }));
       setValueDraft('');
