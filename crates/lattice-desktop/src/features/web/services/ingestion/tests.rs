@@ -206,6 +206,18 @@ fn test_builder_builds_with_custom_config() {
 }
 
 #[test]
+fn the_builder_needs_no_tokenizer_because_chunking_is_the_embedders_split() {
+    let result = WebIngestionService::builder()
+        .article_extractor(Arc::new(MockArticleExtractorService::new()))
+        .web_archive(Arc::new(MockWebArchiveService))
+        .embedding_service(Arc::new(MockEmbeddingService))
+        .index_storage(Arc::new(MockIndexStorage))
+        .build();
+
+    assert!(result.is_ok(), "{:?}", result.err());
+}
+
+#[test]
 fn test_builder_rejects_invalid_chunk_config() {
     let article_extractor = Arc::new(MockArticleExtractorService::new());
     let web_archive = Arc::new(MockWebArchiveService);
