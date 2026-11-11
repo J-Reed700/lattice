@@ -447,6 +447,8 @@ async fn list_documents_uses_migrated_schema_for_inventory_favorites_and_recent(
         assert_eq!(filtered.documents[0].document_id, *id);
         assert!(filtered.documents[0].is_favorite);
     }
+    let none_asked = list(json!({"filter_mode": "recent", "limit": 0})).await;
+    assert_eq!(none_asked.total, 1);
     let second =
         list(json!({"limit": 1, "offset": 1, "sort_by": "name", "sort_order": "asc"})).await;
     assert_eq!(second.total, 2);

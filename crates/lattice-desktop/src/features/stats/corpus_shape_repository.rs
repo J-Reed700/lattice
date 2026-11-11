@@ -179,6 +179,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_chat_attachment_is_not_part_of_the_library_summary() {
+        let pool = pool().await;
+        let now = Utc::now().to_rfc3339();
+        insert_doc(&pool, "kept", "pdf", "local", &now).await;
+        insert_doc(&pool, "attached", "pdf", "local", &now).await;
+        sqlx::query("UPDATE documents SET owner_conversation_id = 'chat-1' WHERE id = 'attached'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let repo = SqliteCorpusShapeRepository::new(pool);
+        let shape = repo.corpus_shape().await.unwrap();
+
+        assert_eq!(shape.total, 1);
+        assert_eq!(shape.by_type, vec![("PDF".to_string(), 1)]);
+        assert_eq!(shape.grown_last_7_days, 1);
+    }
+
+    #[tokio::test]
     async fn empty_vault_reports_zeroes() {
         let repo = SqliteCorpusShapeRepository::new(pool().await);
         let shape = repo.corpus_shape().await.unwrap();
