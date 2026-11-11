@@ -20,6 +20,18 @@ impl DynamicEmbedding {
     ) -> Self {
         Self { provider }
     }
+
+    fn loaded_model(&self) -> lattice_core::shared::error::Result<Arc<dyn EmbeddingPort>> {
+        let model = self.provider.current_model().ok_or_else(|| {
+            lattice_core::shared::error::AppError::AiModelsNotInstalled(
+                "Load an embedding model before indexing".into(),
+            )
+        })?;
+        match model.load_failure() {
+            Some(error) => Err(error),
+            None => Ok(model),
+        }
+    }
 }
 
 #[async_trait]
@@ -81,14 +93,7 @@ impl EmbeddingPort for DynamicEmbedding {
     ) -> lattice_core::shared::error::Result<
         Vec<lattice_core::application::ports::embedding_port::EmbeddingTextChunk>,
     > {
-        self.provider
-            .current_model()
-            .ok_or_else(|| {
-                lattice_core::shared::error::AppError::AiModelsNotInstalled(
-                    "Load an embedding model before indexing".into(),
-                )
-            })?
-            .split_text(text, prefix)
+        self.loaded_model()?.split_text(text, prefix)
     }
 
     fn window_parts(
@@ -97,14 +102,7 @@ impl EmbeddingPort for DynamicEmbedding {
     ) -> lattice_core::shared::error::Result<
         Vec<lattice_core::application::ports::embedding_port::EmbeddingTextChunk>,
     > {
-        self.provider
-            .current_model()
-            .ok_or_else(|| {
-                lattice_core::shared::error::AppError::AiModelsNotInstalled(
-                    "Load an embedding model before indexing".into(),
-                )
-            })?
-            .window_parts(text)
+        self.loaded_model()?.window_parts(text)
     }
 
     fn load_failure(&self) -> Option<lattice_core::shared::error::AppError> {

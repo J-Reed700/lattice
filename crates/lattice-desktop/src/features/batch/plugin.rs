@@ -31,21 +31,10 @@ fn imports(container: &Container) -> BatchImports {
 /// An import waits for the embedding model, so starting one without a model
 /// that can load is refused up front.
 async fn require_embedding(container: &Container) -> Result<(), AppError> {
-    let embedding = container.get_or_load_embedding().await.map_err(|error| {
-        AppError::ServiceNotAvailable(format!(
-            "Could not load the active embedding model: {error}"
-        ))
-    })?;
-    if !embedding.is_ready().await? {
-        if let Some(error) = embedding.load_failure() {
-            return Err(error);
-        }
-        return Err(AppError::AiModelsNotInstalled(
-            "AI embedding model is not ready yet. Activate an embedding model in Settings → Downloaded and try again."
-                .into(),
-        ));
-    }
-    Ok(())
+    crate::features::embedding::readiness::require_loaded_ready(
+        container.get_or_load_embedding().await,
+    )
+    .await
 }
 
 #[tauri::command]

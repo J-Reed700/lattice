@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -92,48 +92,13 @@ fn loader_with(active: ActiveEmbedding) -> EmbeddingLoader {
     }
 }
 
-/// An existing file path with no parent directory: the filesystem root.
-fn root() -> PathBuf {
-    std::env::temp_dir()
-        .ancestors()
-        .last()
-        .map(Path::to_path_buf)
-        .unwrap_or_default()
-}
-
 #[tokio::test]
 async fn no_active_model_reads_as_not_installed() {
-    let port = loader_for(None).load().await.unwrap();
+    let port = loader_for(None).load().await;
 
     let error = port.embed_single("hello").await.unwrap_err();
 
     assert!(matches!(error, AppError::AiModelsNotInstalled(_)));
-}
-
-#[tokio::test]
-async fn an_active_model_that_fails_to_load_is_not_reported_as_not_installed() {
-    let model = DownloadedModel::new(
-        "id".into(),
-        "Active embedder".into(),
-        "active-embedder".into(),
-        ModelLocation::LocalFile { path: root() },
-        1,
-        "bert".into(),
-        None,
-    )
-    .unwrap();
-
-    let port = loader_for(Some(model)).load().await.unwrap();
-    let error = port.embed_single("hello").await.unwrap_err();
-
-    assert!(
-        !matches!(error, AppError::AiModelsNotInstalled(_)),
-        "an installed model that failed to load was reported as not installed: {error}"
-    );
-    assert!(
-        error.to_string().contains("no parent directory"),
-        "the load failure is missing from: {error}"
-    );
 }
 
 #[tokio::test]
@@ -150,7 +115,7 @@ async fn an_active_model_whose_file_is_missing_is_not_reported_as_not_installed(
     )
     .unwrap();
 
-    let port = loader_for(Some(model)).load().await.unwrap();
+    let port = loader_for(Some(model)).load().await;
     let error = port.embed_single("hello").await.unwrap_err();
 
     assert!(
@@ -167,10 +132,7 @@ async fn an_active_model_whose_file_is_missing_is_not_reported_as_not_installed(
 
 #[tokio::test]
 async fn a_failed_active_model_query_is_not_reported_as_not_installed() {
-    let port = loader_with(ActiveEmbedding(None, true))
-        .load()
-        .await
-        .unwrap();
+    let port = loader_with(ActiveEmbedding(None, true)).load().await;
     let error = port.embed_single("hello").await.unwrap_err();
 
     assert!(

@@ -154,22 +154,23 @@ impl EmbeddingLoader {
         }
     }
 
-    pub(crate) async fn load(&self) -> Result<Arc<dyn EmbeddingPort>> {
+    /// The active embedding model, or the port that says why there is none:
+    /// not installed, or the error that kept the active model from loading.
+    pub(crate) async fn load(&self) -> Arc<dyn EmbeddingPort> {
         tracing::debug!("Step 1: Checking for active downloaded embedding model...");
         match self.try_load_active_embedding_model().await {
             Ok(Some(embedding)) => {
                 tracing::info!("Using active downloaded embedding model");
-                Ok(embedding)
+                embedding
             }
             Ok(None) => {
                 tracing::info!("No active embedding model; embedding is unavailable");
                 tracing::info!("💡 Download an embedding model to enable semantic search features");
-                Ok(Arc::new(UnavailableEmbedding::not_installed()))
+                Arc::new(UnavailableEmbedding::not_installed())
             }
-            Err(e @ AppError::ModelLoadFailed(_)) => Err(e),
             Err(e) => {
                 tracing::warn!("Error loading active embedding model: {}", e);
-                Ok(Arc::new(UnavailableEmbedding::failed_to_load(e)))
+                Arc::new(UnavailableEmbedding::failed_to_load(e))
             }
         }
     }
