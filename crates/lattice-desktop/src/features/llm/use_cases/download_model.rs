@@ -19,13 +19,14 @@ use lattice_core::domain::ports::file_access::{ChecksumService, FileSystemAccess
 use lattice_core::domain::value_objects::model_status::FileStatus;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::persistence::{Database, Transactions};
+use plan::{planned_files, PlannedFile};
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{info, warn};
 
 mod metadata;
-mod multi_file;
-mod single_file;
+mod plan;
+mod start;
 
 #[cfg(test)]
 mod write_tests;
@@ -107,44 +108,28 @@ impl DownloadModelUseCase {
             .map_err(|e| AppError::Database(format!("Failed to mark download failed: {}", e)))
     }
 
-    /// Verifies all required files exist on disk for a model
+    /// Verifies every planned file exists on disk.
     /// Returns Ok(true) if all files present, Ok(false) if any missing, Err on filesystem errors
     async fn verify_model_files(
         &self,
-        _model_id: &str,
-        curated: &lattice_core::domain::models::selection::ModelMetadata,
+        plan: &[PlannedFile],
         model_path: &Path,
     ) -> Result<bool, AppError> {
         use lattice_core::domain::models::validation::FileExpectation;
 
-        let mut expectations = Vec::new();
-
-        if !curated.files.is_empty() {
-            for file in &curated.files {
+        let expectations: Vec<FileExpectation> = plan
+            .iter()
+            .map(|file| {
                 let mut expectation = FileExpectation::new(file.filename.clone());
-
-                // `size_bytes == 0` means "size unknown" in the curated catalog
-                // (see `build_gguf_embedding_file_list` and the
-                // transcription entries). Asserting an exact size of 0 would
-                // fail verification for every such file and force a needless
-                // re-download on every startup.
-                if file.size_bytes > 0 {
-                    expectation = expectation.with_size(file.size_bytes);
+                if let Some(size) = file.expected_size {
+                    expectation = expectation.with_size(size);
                 }
-
                 if let Some(checksum) = &file.checksum {
                     expectation = expectation.with_checksum(checksum.clone());
                 }
-
-                expectations.push(expectation);
-            }
-        } else if let Some(filename) = &curated.default_filename {
-            expectations.push(FileExpectation::new(filename.clone()));
-        } else {
-            return Err(AppError::InvalidInput(
-                "No files or default filename specified for model".into(),
-            ));
-        }
+                expectation
+            })
+            .collect();
 
         let validator = ModelFileValidator::new(
             self.checksum_service.clone(),
@@ -153,27 +138,6 @@ impl DownloadModelUseCase {
         validator
             .verify_expected_files(model_path, &expectations)
             .await
-    }
-
-    /// Reconcile database state with filesystem reality after verification
-    async fn reconcile_download_records(
-        &self,
-        model_id: &str,
-        _curated: &lattice_core::domain::models::selection::ModelMetadata,
-        _model_path: &std::path::Path,
-    ) -> Result<(), AppError> {
-        if let Err(e) = self
-            .download_manager
-            .delete_pending_by_model(model_id)
-            .await
-        {
-            warn!("Failed to cleanup stale downloads for {}: {}", model_id, e);
-        }
-
-        // Note: Model addition to database happens in download completion handler
-        // This function just ensures cleanup of stale download records
-
-        Ok(())
     }
 
     pub async fn execute(
@@ -224,16 +188,15 @@ impl DownloadModelUseCase {
             }
         }
 
+        let plan = planned_files(model_id, &model_metadata)?;
+
         let paths = ModelPaths::new(model_id)?;
         let model_path = paths.unified_path();
 
         self.file_system.create_directory_all(model_path).await?;
 
         if self.storage.is_model_downloaded(model_id).await? {
-            match self
-                .verify_model_files(model_id, &model_metadata, model_path)
-                .await
-            {
+            match self.verify_model_files(&plan, model_path).await {
                 Ok(true) => {
                     // Fast path: All files verified present
                     let path = self.storage.get_model_path(model_id).await?;
@@ -241,24 +204,16 @@ impl DownloadModelUseCase {
 
                     // Reconcile database and cleanup stale records
                     if let Err(e) = self
-                        .reconcile_download_records(model_id, &model_metadata, model_path)
+                        .download_manager
+                        .delete_pending_by_model(model_id)
                         .await
                     {
-                        warn!(
-                            "Failed to reconcile download records for {}: {}",
-                            model_id, e
-                        );
+                        warn!("Failed to cleanup stale downloads for {}: {}", model_id, e);
                     }
-
-                    let verified_files = if !model_metadata.files.is_empty() {
-                        model_metadata.files.len()
-                    } else {
-                        1
-                    };
 
                     return Ok(DownloadModelResponseDto {
                         state: DownloadOperationState::AlreadyDownloaded {
-                            verified_files,
+                            verified_files: plan.len(),
                             total_size_bytes: model_metadata.total_size_bytes,
                         },
                         path: Some(path.to_string_lossy().to_string()),
@@ -284,20 +239,7 @@ impl DownloadModelUseCase {
             }
         }
 
-        if !model_metadata.files.is_empty() {
-            // Multi-file model (an embedding GGUF and its tokenizer, OCR weights and projector)
-            info!(
-                model_id = %model_id,
-                file_count = model_metadata.files.len(),
-                "Downloading multi-file model"
-            );
-            self.download_multi_file_model(model_id, &model_metadata, model_path, &paths)
-                .await
-        } else {
-            // Single-file model (legacy path)
-            info!(model_id = %model_id, "Downloading single-file model");
-            self.download_single_file_model(model_id, &model_metadata, model_path, &paths)
-                .await
-        }
+        self.download_planned(model_id, &model_metadata, model_path, &paths, &plan)
+            .await
     }
 }
