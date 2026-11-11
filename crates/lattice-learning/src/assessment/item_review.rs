@@ -381,7 +381,7 @@ fn add_repeats(
                 if let (Some(prompt), Some(slot)) =
                     (context.learner_has.get(n), findings.get_mut(*position))
                 {
-                    slot.defects.push(format!(
+                    slot.repeats.push(format!(
                         "It asks for the same decision as a question the learner already has: “{prompt}”."
                     ));
                 }
@@ -400,7 +400,7 @@ fn add_repeats(
     for (position, earlier) in later {
         for other in earlier {
             if let (Some(entry), Some(slot)) = (entries.get(other), findings.get_mut(position)) {
-                slot.defects.push(format!(
+                slot.repeats.push(format!(
                     "It asks for the same decision as another new question: “{}”.",
                     entry.item.prompt
                 ));
