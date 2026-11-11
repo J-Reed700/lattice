@@ -1,10 +1,12 @@
 //! PowerPoint (PPTX) extraction.
 
 use super::archive_budget::{run_archive_work, ArchiveBudget};
-use super::markup::{attr, decode_entities, tidy_lines, Markup, MarkupCursor};
 use super::types::{ContentMetadata, ExtractedContent};
 use super::ExtractionWorkers;
 use crate::features::indexing::engine::error::{IndexingError, Result};
+use crate::infrastructure::extraction::markup::{
+    attr, decode_entities, tidy_lines, Markup, MarkupCursor,
+};
 use std::fs::File;
 use std::path::Path;
 use zip::ZipArchive;

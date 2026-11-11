@@ -3,12 +3,13 @@
 //! assertions as well as the original section. A section whose audit found a gap
 //! keeps its receipt: the gap is a finding, not an addition to the inventory.
 use super::*;
+use lattice_core::shared::hash::sha256_hex;
 
 fn key(llm: &dyn LLMPort, input: &Value) -> String {
     format!(
         "coverage-unit-v2:{}",
-        digest(
-            &json!({
+        sha256_hex(
+            json!({
                 "inventoryPolicy": INVENTORY_POLICY,
                 "coveragePolicy": POLICY,
                 "model": llm.model_name(), "context": llm.max_context_tokens(),

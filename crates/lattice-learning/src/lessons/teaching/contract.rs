@@ -8,6 +8,7 @@ use crate::lessons::same_text;
 use crate::lessons::shape::TEACHING_KINDS;
 use crate::lessons::structured_call::{self, CallKind, ReasonFirst};
 use crate::review_findings::{subject_of, FindingSite, PlanCheck, ReviewFinding};
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{application::ports::LLMPort, shared::error::Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -796,8 +797,8 @@ pub(super) async fn check(
     let brief = brief_for(reported);
     let key = format!(
         "lesson-contract-answer:{}",
-        crate::content_verification::digest(
-            &json!({"policy":POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"system":system,"prompt":prompt,"schema":schema}).to_string()
+        sha256_hex(
+            json!({"policy":POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"system":system,"prompt":prompt,"schema":schema}).to_string()
         )
     );
     let saved = crate::lesson_drafts::checkpoint(&key)

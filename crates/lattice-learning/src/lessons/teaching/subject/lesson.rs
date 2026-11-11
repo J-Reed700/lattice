@@ -22,6 +22,7 @@ use crate::review_findings::{
     new_sentences, part_at, plain_part, sentences_of, FindingSite, Held, ReviewFinding, SetAside,
 };
 use crate::teaching_review::LengthRule;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -113,20 +114,17 @@ impl<'a> LessonSubject<'a> {
         self.references
             .sources
             .iter()
-            .map(|source| {
-                (
-                    source.id.clone(),
-                    crate::content_verification::digest(&source.excerpt),
-                )
-            })
+            .map(|source| (source.id.clone(), sha256_hex(&source.excerpt)))
             .collect()
     }
 
     /// Each reference's id and the digest of its excerpt, as the reviewer is shown them.
     fn reference_versions(&self) -> Vec<Value> {
-        self.references.sources.iter().map(|source| {
-            json!({"id":source.id,"contentHash":crate::content_verification::digest(&source.excerpt)})
-        }).collect()
+        self.references
+            .sources
+            .iter()
+            .map(|source| json!({"id":source.id,"contentHash":sha256_hex(&source.excerpt)}))
+            .collect()
     }
 }
 

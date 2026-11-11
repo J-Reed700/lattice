@@ -4,6 +4,7 @@ use crate::dto::{LearningPracticeCriterionDto, LearningPracticeEvidenceDimension
 use crate::generation::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use crate::lessons::shape::LessonShape;
 use crate::review_findings::{plain_part, FindingKind, FindingSite, Remedy, ReviewFinding, Rule};
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -336,7 +337,7 @@ async fn review_and_repair_under(
     output_tokens: usize,
 ) -> Result<String> {
     let context = json!({"policy":"lesson-teaching","model":llm.model_name(),"system":system,"prompt":prompt,"schema":schema.value()});
-    let receipt = crate::content_verification::digest(&context.to_string());
+    let receipt = sha256_hex(context.to_string());
     if crate::lesson_drafts::teaching_completed(&candidate, &receipt).await? {
         crate::lesson_progress::phase(
             crate::lesson_progress::Phase::Review,
@@ -379,12 +380,7 @@ pub(crate) async fn review_lesson<'s>(
     let mut sources: Vec<(String, String)> = references
         .sources
         .iter()
-        .map(|source| {
-            (
-                source.id.clone(),
-                crate::content_verification::digest(&source.excerpt),
-            )
-        })
+        .map(|source| (source.id.clone(), sha256_hex(&source.excerpt)))
         .collect();
     sources.sort();
     // Teaching structure is bound to the candidate and authoring inputs. New
@@ -394,16 +390,14 @@ pub(crate) async fn review_lesson<'s>(
     let source_key = |candidate: &str| {
         format!(
             "teaching-sources:{}",
-            crate::content_verification::digest(
-                &json!({"input":review_input,"candidate":candidate}).to_string()
-            )
+            sha256_hex(json!({"input":review_input,"candidate":candidate}).to_string())
         )
     };
     let unchanged_review = crate::lesson_drafts::checkpoint(&source_key(&candidate))
         .await?
         .and_then(|value| serde_json::from_value::<Vec<(String, String)>>(value).ok())
         .is_some_and(|saved| standing::references_hold(&saved, &sources));
-    let receipt = crate::content_verification::digest(&json!({"policy":"lesson-teaching-review","findingPolicy":crate::review_evidence::POLICY,"sectionReviewPolicy":crate::teaching_review::POLICY,"model":llm.model_name(),"system":system,"prompt":prompt,"schema":schema,"reviewReferenceHashes":sources}).to_string());
+    let receipt = sha256_hex(json!({"policy":"lesson-teaching-review","findingPolicy":crate::review_evidence::POLICY,"sectionReviewPolicy":crate::teaching_review::POLICY,"model":llm.model_name(),"system":system,"prompt":prompt,"schema":schema,"reviewReferenceHashes":sources}).to_string());
     if unchanged_review || crate::lesson_drafts::teaching_completed(&candidate, &receipt).await? {
         if !unchanged_review {
             crate::lesson_drafts::record_checkpoint(&source_key(&candidate), json!(sources))

@@ -6,6 +6,7 @@ use super::WebIngestionService;
 use crate::features::web::services::web::validate_url_resolved;
 use lattice_core::application::contracts::web::CleanArticle;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::text::normalize_whitespace;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -164,7 +165,7 @@ impl WebIngestionService {
     fn normalize_transcript_for_storage(transcript: &str) -> String {
         transcript
             .lines()
-            .map(Self::normalize_whitespace)
+            .map(normalize_whitespace)
             .filter(|line| !line.is_empty())
             .collect::<Vec<_>>()
             .join("\n")
@@ -212,7 +213,7 @@ impl WebIngestionService {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let stderr = Self::normalize_whitespace(stderr.as_ref());
+            let stderr = normalize_whitespace(stderr.as_ref());
             return Err(AppError::ContentExtraction {
                 path: url.to_string(),
                 reason: format!("yt-dlp audio download failed: {}", stderr),
@@ -318,7 +319,7 @@ impl WebIngestionService {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let stderr = Self::normalize_whitespace(stderr.as_ref());
+            let stderr = normalize_whitespace(stderr.as_ref());
             return Err(AppError::ContentExtraction {
                 path: url.to_string(),
                 reason: format!("ASR transcription failed: {}", stderr),
@@ -413,7 +414,7 @@ impl WebIngestionService {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let stderr = Self::normalize_whitespace(stderr.as_ref());
+            let stderr = normalize_whitespace(stderr.as_ref());
             let stderr_preview = if stderr.chars().count() > 280 {
                 format!("{}...", stderr.chars().take(280).collect::<String>())
             } else {
