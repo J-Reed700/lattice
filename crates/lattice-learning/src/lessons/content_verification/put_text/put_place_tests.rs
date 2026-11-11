@@ -150,34 +150,3 @@ fn a_text_with_none_of_the_neighbours_is_unknown() {
         Placing::Unknown
     );
 }
-
-#[test]
-fn a_sentence_the_text_already_has_is_not_inserted_again() {
-    let present = text(&[A, B]);
-    for anchor in [
-        Anchor::After(A.into()),
-        Anchor::Before(B.into()),
-        Anchor::End,
-    ] {
-        assert_eq!(insert_sentence(&present, &anchor, A), None);
-    }
-    assert_eq!(
-        insert_sentence(&present, &Anchor::End, &format!("  {B}\n")),
-        None,
-        "whitespace does not make it another sentence"
-    );
-    assert!(insert_sentence(&present, &Anchor::End, C).is_some());
-}
-
-#[test]
-fn a_sentence_too_short_to_quote_that_the_text_already_has_is_not_inserted_again() {
-    const SHORT: &str = "No.";
-    let present = text(&[SHORT, A]);
-    for anchor in [
-        Anchor::After(A.into()),
-        Anchor::Before(A.into()),
-        Anchor::End,
-    ] {
-        assert_eq!(insert_sentence(&present, &anchor, SHORT), None);
-    }
-}

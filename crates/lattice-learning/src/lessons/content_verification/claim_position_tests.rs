@@ -18,14 +18,12 @@ fn at(
     class: Class,
     (changed_class, reasked): (bool, bool),
     node: &str,
-    rewrites_left: u8,
 ) -> Position {
     Position {
         class,
         changed_class,
         reasked,
         node: policy.graph(class).id_of(node).unwrap(),
-        rewrites_left,
     }
 }
 
@@ -146,8 +144,7 @@ async fn a_claim_with_no_steps_stands_at_the_entry_of_the_strongest_class_it_was
             &policy,
             Class::Sourced,
             (false, false),
-            "s.read",
-            2
+            "s.read"
         )))
     );
     assert_eq!(
@@ -156,8 +153,7 @@ async fn a_claim_with_no_steps_stands_at_the_entry_of_the_strongest_class_it_was
             &policy,
             Class::Reasoning,
             (false, false),
-            "r.read",
-            2
+            "r.read"
         )))
     );
     Ok(())
@@ -188,7 +184,7 @@ async fn a_claim_with_recorded_steps_stands_where_they_walk_it_to() -> Result<()
     let policy = StandardPolicy::new();
     let mut ledger = open().await?;
     let sorted = [(Class::Reasoning, ClassifiedBy::Model)];
-    let start = at(&policy, Class::Reasoning, (false, false), "r.read", 2);
+    let start = at(&policy, Class::Reasoning, (false, false), "r.read");
     let goal = Goal::AgreeWithThePassages;
 
     let walking = claim(&mut ledger, "walking", "Walking.", &sorted).await?;
@@ -203,8 +199,7 @@ async fn a_claim_with_recorded_steps_stands_where_they_walk_it_to() -> Result<()
             &policy,
             Class::Reasoning,
             (false, false),
-            "r.rewrite.again",
-            1
+            "r.rewrite.again"
         )))
     );
 
@@ -238,8 +233,7 @@ async fn a_claim_with_recorded_steps_stands_where_they_walk_it_to() -> Result<()
             &policy,
             Class::Reasoning,
             (false, true),
-            "r.read",
-            2
+            "r.read"
         )))
     );
     ledger
@@ -273,7 +267,7 @@ async fn a_claim_whose_class_changed_by_evidence_stands_in_the_graph_it_entered(
 
     // Every part common, none stated: the citation goes and the statement is
     // checked as Common, which the ledger records as the evidence's class.
-    let start = at(&policy, Class::Sourced, (false, false), "s.read", 2);
+    let start = at(&policy, Class::Sourced, (false, false), "s.read");
     let steps = [
         taken(Reading::Parts, Outcome::AllCommon),
         Taken {
@@ -298,8 +292,7 @@ async fn a_claim_whose_class_changed_by_evidence_stands_in_the_graph_it_entered(
             &policy,
             Class::Common,
             (true, false),
-            "c.read",
-            2
+            "c.read"
         )))
     );
     // The class the ledger holds is now the evidence's; the walk began from
@@ -317,7 +310,7 @@ async fn a_successor_starts_at_the_post_rewrite_node_of_the_claim_it_follows() -
     let mut ledger = open().await?;
     let sorted = [(Class::Reasoning, ClassifiedBy::Model)];
     let before = claim(&mut ledger, "before", "Before.", &sorted).await?;
-    let start = at(&policy, Class::Reasoning, (false, false), "r.read", 2);
+    let start = at(&policy, Class::Reasoning, (false, false), "r.read");
     let steps = [
         taken(Reading::Consistency, Outcome::Refuted),
         rewrite_step(Goal::AgreeWithThePassages, Outcome::Rewritten),
@@ -329,7 +322,7 @@ async fn a_successor_starts_at_the_post_rewrite_node_of_the_claim_it_follows() -
     superseded(&mut ledger, &before, &after, Actor::Machine).await?;
     superseded(&mut ledger, &before, &unsorted, Actor::Machine).await?;
 
-    let after_rewrite = at(&policy, Class::Reasoning, (false, false), "r.final", 0);
+    let after_rewrite = at(&policy, Class::Reasoning, (false, false), "r.final");
     assert_eq!(
         ledger.position(&policy, &after),
         Some(Walked::At(after_rewrite))
@@ -353,8 +346,7 @@ async fn a_successor_starts_at_the_post_rewrite_node_of_the_claim_it_follows() -
             &policy,
             Class::Reasoning,
             (false, false),
-            "r.reveto",
-            0
+            "r.reveto"
         )))
     );
     Ok(())
@@ -386,7 +378,7 @@ async fn a_successor_takes_the_class_and_the_spent_re_ask_its_predecessor_had_co
         taken(Reading::Ground, Outcome::Refuted),
         rewrite_step(Goal::AsTheFieldHasIt, Outcome::Rewritten),
     ];
-    let start = at(&policy, Class::Sourced, (false, false), "s.read", 2);
+    let start = at(&policy, Class::Sourced, (false, false), "s.read");
     step(&mut ledger, &policy, &before, start, &steps).await?;
     let after = claim(&mut ledger, "after", "After.", &[]).await?;
     superseded(&mut ledger, &before, &after, Actor::Machine).await?;
@@ -397,8 +389,7 @@ async fn a_successor_takes_the_class_and_the_spent_re_ask_its_predecessor_had_co
             &policy,
             Class::Common,
             (true, true),
-            "c.final",
-            0
+            "c.final"
         )))
     );
     Ok(())
@@ -410,7 +401,7 @@ async fn the_successor_of_a_claim_that_had_ended_still_starts_after_its_rewrite(
     let mut ledger = open().await?;
     let sorted = [(Class::Reasoning, ClassifiedBy::Model)];
     let passed = claim(&mut ledger, "passed", "Passed.", &sorted).await?;
-    let start = at(&policy, Class::Reasoning, (false, false), "r.read", 2);
+    let start = at(&policy, Class::Reasoning, (false, false), "r.read");
     let steps = [
         taken(Reading::Consistency, Outcome::Stands),
         taken(Reading::Veto, Outcome::Stands),
@@ -430,8 +421,7 @@ async fn the_successor_of_a_claim_that_had_ended_still_starts_after_its_rewrite(
             &policy,
             Class::Reasoning,
             (false, false),
-            "r.final",
-            1
+            "r.final"
         )))
     );
     Ok(())
@@ -451,8 +441,7 @@ async fn a_claim_the_user_edited_began_afresh_and_a_record_that_loops_still_ends
             &policy,
             Class::Sourced,
             (false, false),
-            "s.read",
-            2
+            "s.read"
         )))
     );
 
@@ -474,7 +463,7 @@ async fn the_sort_is_told_where_each_live_statement_is_and_a_statement_with_more
     let policy = StandardPolicy::new();
     let mut ledger = open().await?;
     let sorted = [(Class::Reasoning, ClassifiedBy::Model)];
-    let start = at(&policy, Class::Reasoning, (false, false), "r.read", 2);
+    let start = at(&policy, Class::Reasoning, (false, false), "r.read");
     let passed = claim(&mut ledger, "passed", "Said twice.", &sorted).await?;
     step(
         &mut ledger,
@@ -504,7 +493,7 @@ async fn the_plans_statements_are_followed_to_the_claims_that_carry_their_senten
     let policy = StandardPolicy::new();
     let mut ledger = open().await?;
     let sorted = [(Class::Reasoning, ClassifiedBy::Model)];
-    let start = at(&policy, Class::Reasoning, (false, false), "r.read", 2);
+    let start = at(&policy, Class::Reasoning, (false, false), "r.read");
     let first = claim(&mut ledger, "first", "First.", &sorted).await?;
     let steps = [
         taken(Reading::Consistency, Outcome::Refuted),
@@ -513,7 +502,7 @@ async fn the_plans_statements_are_followed_to_the_claims_that_carry_their_senten
     step(&mut ledger, &policy, &first, start, &steps).await?;
     let carried = claim(&mut ledger, "carried", "Carried.", &sorted).await?;
     superseded(&mut ledger, &first, &carried, Actor::Machine).await?;
-    let after_rewrite = at(&policy, Class::Reasoning, (false, false), "r.final", 0);
+    let after_rewrite = at(&policy, Class::Reasoning, (false, false), "r.final");
     let finished = [
         taken(Reading::Consistency, Outcome::Stands),
         taken(Reading::Veto, Outcome::Stands),
@@ -532,7 +521,7 @@ async fn the_plans_statements_are_followed_to_the_claims_that_carry_their_senten
     assert_eq!(
         planned,
         [
-            plan(Class::Reasoning, PlannedAt::Ended(None)),
+            plan(Class::Reasoning, PlannedAt::Ended),
             plan(Class::Reasoning, PlannedAt::At(start)),
             plan(Class::Sourced, PlannedAt::Entry),
         ]
@@ -572,7 +561,7 @@ async fn the_ceiling_falls_as_the_ledger_walks_the_plans_claims_to_their_ends_an
         assert_eq!(crate::lesson_progress::plan_claims(), Some(planned.clone()));
 
         // Each claim, in its turn, is read for consistency and passes the veto.
-        let start = at(&policy, Class::Reasoning, (false, false), "r.read", 2);
+        let start = at(&policy, Class::Reasoning, (false, false), "r.read");
         let passes = [
             taken(Reading::Consistency, Outcome::Stands),
             taken(Reading::Veto, Outcome::Stands),
@@ -586,11 +575,10 @@ async fn the_ceiling_falls_as_the_ledger_walks_the_plans_claims_to_their_ends_an
     .await;
     done?;
 
-    // The sort's ceiling (0 sorting calls, 19 for each statement, 1 flow
+    // The sort's ceiling (0 sorting calls, 15 for each statement, 1 flow
     // repair), the same once the claims were identified with nothing done,
-    // then 6 less as each ends: the teaching review may still rewrite its
-    // sentence, so the 13 calls of its successor's readings stay held.
-    assert_eq!(trace.ceilings, [39, 39, 33, 27]);
+    // then 15 less as each ends.
+    assert_eq!(trace.ceilings, [31, 31, 16, 1]);
     assert!(trace.only_came_down(), "{:?}", trace.ceilings);
     Ok(())
 }

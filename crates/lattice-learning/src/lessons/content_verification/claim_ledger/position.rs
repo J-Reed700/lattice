@@ -6,16 +6,15 @@ use std::collections::HashMap;
 use super::ClaimLedger;
 use crate::lessons::call_plan::{Joining, Planned, PlannedAt};
 use lattice_core::domain::learning::acceptance::{
-    decide, start, stepped, successor, walk_from, AcceptancePolicy, End, Position, Step, Taken,
-    Walked,
+    decide, walk_from, AcceptancePolicy, Position, Step, Taken, Walked,
 };
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, Class, ClassifiedBy,
 };
 use serde_json::Value;
 
-/// A claim's walk: where its steps leave it, and where it stood last with
-/// every step it took counted: the position it left to end, when it ended.
+/// A claim's walk: where its steps leave it, and the position it stood at
+/// last, which is the one it left to end when it ended.
 struct Course {
     walked: Walked,
     last: Position,
@@ -196,14 +195,12 @@ impl ClaimLedger {
             tracing::warn!(claim = %id.0, "claim.plan: a claim's steps do not fit its graph; the plan keeps it where it was");
         }
         // A claim gone with its sentence makes no more calls, wherever its
-        // steps left it. One that ended may still have its sentence rewritten
-        // by the teaching review, and its successor read again.
-        let gone = entry.is_some_and(|entry| super::is_gone(entry.state()));
-        let at = if gone {
-            PlannedAt::Ended(None)
+        // steps left it.
+        let at = if entry.is_some_and(|entry| super::is_gone(entry.state())) {
+            PlannedAt::Ended
         } else {
-            match (PlannedAt::of(walked), walked) {
-                (PlannedAt::At(at), _)
+            match PlannedAt::of(walked) {
+                PlannedAt::At(at)
                     if policy
                         .graph(at.class)
                         .node(at.node)
@@ -212,12 +209,7 @@ impl ClaimLedger {
                 {
                     PlannedAt::Narrowing(at)
                 }
-                (PlannedAt::Ended(_), Some(Walked::Ended(end)))
-                    if !matches!(end, End::Removed { .. }) =>
-                {
-                    PlannedAt::Ended(self.teaching_successor(policy, id))
-                }
-                (other, _) => other,
+                other => other,
             }
         };
         Planned {
@@ -319,7 +311,7 @@ impl ClaimLedger {
     }
 
     /// The claim `id` succeeds.
-    pub(super) fn predecessor(&self, id: &ClaimId) -> Option<&ClaimLedgerEntry> {
+    fn predecessor(&self, id: &ClaimId) -> Option<&ClaimLedgerEntry> {
         self.entries
             .iter()
             .find(|entry| successors(entry).any(|next| next == id))
@@ -328,15 +320,15 @@ impl ClaimLedger {
     /// `id`'s walk, its start following at most `hops` predecessors.
     fn course(&self, policy: &dyn AcceptancePolicy, id: &ClaimId, hops: usize) -> Option<Course> {
         let entry = self.entry(id)?;
-        let from = self.begins(policy, entry, hops)?;
+        let start = self.begins(policy, entry, hops)?;
         let taken: Vec<Taken> = entry.steps().into_iter().map(|(taken, _)| taken).collect();
-        let walked = walk_from(policy, from, &taken);
+        let walked = walk_from(policy, start, &taken);
         let last = match walked {
             Walked::At(at) | Walked::Diverged { at, .. } => at,
             Walked::Ended(_) | Walked::Stopped => {
                 let (_, before) = taken.split_last()?;
-                match walk_from(policy, from, before) {
-                    Walked::At(at) => stepped(policy, at),
+                match walk_from(policy, start, before) {
+                    Walked::At(at) => at,
                     _ => return None,
                 }
             }
@@ -344,20 +336,9 @@ impl ClaimLedger {
         Some(Course { walked, last })
     }
 
-    /// Where `id` stood last, with every step it took counted: the position
-    /// its next machine rewrite would leave from.
-    pub(super) fn stood_last(
-        &self,
-        policy: &dyn AcceptancePolicy,
-        id: &ClaimId,
-    ) -> Option<Position> {
-        self.course(policy, id, self.entries.len())
-            .map(|course| course.last)
-    }
-
     /// Where `entry` begins: after the rewrite of the claim it succeeds, with
-    /// that claim's class and what it had spent, one rewrite more; otherwise
-    /// at the start of the class it was sorted into.
+    /// that claim's class and what it had spent; otherwise at the entry of the
+    /// class it was sorted into.
     fn begins(
         &self,
         policy: &dyn AcceptancePolicy,
@@ -369,9 +350,18 @@ impl ClaimLedger {
             self.course(policy, before.claim_id(), hops)
         });
         if let Some(Course { last, .. }) = before {
-            return Some(successor(policy, last));
+            return Some(Position {
+                node: policy.graph(last.class).after_rewrite(),
+                ..last
+            });
         }
-        Some(start(policy, sorted_class(entry)?))
+        let class = sorted_class(entry)?;
+        Some(Position {
+            class,
+            changed_class: false,
+            reasked: false,
+            node: policy.graph(class).entry(),
+        })
     }
 }
 

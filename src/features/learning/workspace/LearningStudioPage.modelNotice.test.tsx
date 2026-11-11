@@ -22,7 +22,7 @@ import type { AppSettings } from '@/types/api/settings';
 const mocks = vi.hoisted(() => ({
   getSettings: vi.fn(), updateSettings: vi.fn(), downloadedModels: vi.fn(),
 }));
-vi.mock('@/lib/api', () => ({ default: {
+vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
   listConversationSpaces: async () => ({ ok: true, data: [] }),
   listSpaceDocuments: async () => ({ ok: true, data: [] }),
   listLearningPrograms: async () => ({ ok: true, data: [] }),

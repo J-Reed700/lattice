@@ -19,7 +19,6 @@ use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
 
 use super::batches::{Context, Item};
 use super::{AuditClaim, AuditPassage, AuditUnit};
-use crate::lessons::same_text::fold;
 
 /// The policy's identity: the `learning_lesson_audits.policy` column and
 /// part of every audit receipt, so a changed policy audits again.
@@ -388,8 +387,22 @@ fn ground(raw: &RawVerdict, passages: &HashMap<&str, &AuditPassage>) -> Judged {
 /// Whether `quote` occurs in `text`, ignoring case, spacing and typographic
 /// quotes and dashes. An empty quote occurs nowhere.
 pub(super) fn occurs(text: &str, quote: &str) -> bool {
-    let quote = fold(quote);
-    !quote.is_empty() && fold(text).contains(&quote)
+    let quote = normalize(quote);
+    !quote.is_empty() && normalize(text).contains(&quote)
+}
+
+fn normalize(text: &str) -> String {
+    let mapped: String = text
+        .chars()
+        .map(|c| match c {
+            '\u{2018}' | '\u{2019}' | '\u{201B}' => '\'',
+            '\u{201C}' | '\u{201D}' | '\u{201F}' => '"',
+            '\u{2013}' | '\u{2014}' | '\u{2212}' => '-',
+            other => other,
+        })
+        .flat_map(char::to_lowercase)
+        .collect();
+    mapped.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Whether sending lesson text to `model` is consented to for the course.

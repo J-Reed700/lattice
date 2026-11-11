@@ -279,6 +279,22 @@ async fn an_item_whose_reply_is_cut_off_alone_stays_pending_and_the_rest_are_gra
     assert_eq!(ids, ["a", "c"], "[b] stays pending");
 }
 
+#[test]
+fn a_disputed_item_may_keep_its_own_question_when_repaired() {
+    let mut authored = need("Reduce iron oxide.".into(), 1);
+    authored.existing_prompts = vec![
+        "Which gas reduces the ore?".into(),
+        "Why is coke added?".into(),
+    ];
+    let repair = repair_need(&authored, "Which gas reduces the ore?");
+    assert_eq!(repair.existing_prompts, ["Why is coke added?"]);
+    assert_eq!(
+        authored.existing_prompts.len(),
+        2,
+        "the bank's list is unchanged"
+    );
+}
+
 /// Every reply cut off at the output limit.
 struct CutOff;
 
@@ -448,156 +464,4 @@ fn a_long_distractor_rationale_is_kept_whole() {
         .candidate
         .distractor_rationales
         .contains(&rationale.trim().to_string()));
-}
-
-/// Keeps the instructions of each request and writes nothing.
-struct InstructionRecorder(Mutex<Vec<String>>);
-
-#[async_trait::async_trait]
-impl LLMPort for InstructionRecorder {
-    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        let (system, _) = crate::lessons::structured_call::task_messages(request);
-        self.0.lock().unwrap().push(system.to_owned());
-        Ok(CompletionResponse::from_text("{\"items\":[]}"))
-    }
-    fn model_name(&self) -> &str {
-        "instruction-recorder"
-    }
-    fn max_context_tokens(&self) -> usize {
-        131_072
-    }
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(true)
-    }
-}
-
-async fn writer_instructions() -> Result<String> {
-    let need = need("Explain iron oxide reduction.".into(), 2);
-    let documents = documents(&need);
-    let collection = ReferenceCollection::lexical(&documents)?;
-    let batch = Batch {
-        need: &need,
-        count: 1,
-        notes: vec![],
-        repair: None,
-    };
-    let llm = InstructionRecorder(Mutex::new(Vec::new()));
-    batch.send(&llm, &collection).await?;
-    let sent = llm.0.lock().unwrap().clone();
-    Ok(sent.into_iter().next().unwrap_or_default())
-}
-
-#[tokio::test]
-async fn the_writer_is_told_what_the_learner_sees_and_never_to_cite_passages() -> Result<()> {
-    let system = writer_instructions().await?;
-    for sentence in [
-        "The learner sees each question with its options, explanation and rationales beside the lesson, never these passages as excerpts or the sources behind them.",
-        "never mention a passage, an excerpt, a tutorial, a document or a source",
-        "never give what one says or does not say as the reason an answer is right or wrong",
-    ] {
-        assert!(system.contains(sentence), "missing \"{sentence}\" in {system}");
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_writer_is_told_an_explanation_is_about_its_own_question() -> Result<()> {
-    let system = writer_instructions().await?;
-    let sentence = "An explanation and its rationales are about the question's own case: they use the names and values its prompt gives, never another example's.";
-    assert!(
-        system.contains(sentence),
-        "missing \"{sentence}\" in {system}"
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_writer_is_told_a_prompt_states_every_value_its_answer_depends_on() -> Result<()> {
-    let system = writer_instructions().await?;
-    let sentence = "A prompt states every value its answer depends on, so it can be answered from the prompt and the lesson alone.";
-    assert!(
-        system.contains(sentence),
-        "missing \"{sentence}\" in {system}"
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_bank_writer_names_no_subjects_values() -> Result<()> {
-    let system = writer_instructions().await?;
-    let start = system
-        .find("An explanation and its rationales are about the question's own case")
-        .unwrap_or_default();
-    let end = system.find("doNotRepeat lists").unwrap_or_default();
-    assert!(start < end, "the two rules are missing from {system}");
-    let rules = &system[start..end];
-    assert!(!rules.contains("path"), "{rules}");
-    assert!(!rules.contains("such as"), "{rules}");
-    assert!(
-        rules.contains("they use the names and values its prompt gives"),
-        "{rules}"
-    );
-    assert!(
-        rules.contains("depends on, so it can be answered from the prompt and the lesson alone"),
-        "{rules}"
-    );
-    Ok(())
-}
-
-#[test]
-fn the_writer_is_told_options_are_shuffled_so_they_are_named_by_their_words() {
-    assert!(
-        SYSTEM.contains("shuffled order"),
-        "SYSTEM must say options are shown in a shuffled order"
-    );
-    assert!(
-        SYSTEM.contains("never by its position, number or letter"),
-        "SYSTEM must forbid naming an option by position, number or letter"
-    );
-}
-
-#[test]
-fn the_instructions_say_what_do_not_repeat_requires() {
-    assert!(
-        SYSTEM.contains("doNotRepeat"),
-        "SYSTEM never names doNotRepeat"
-    );
-    assert!(
-        SYSTEM.contains("never asks one of them again"),
-        "SYSTEM never says a new item does not ask one of its questions again"
-    );
-}
-
-#[test]
-fn do_not_repeat_holds_every_existing_prompt_in_full() {
-    let mut need = need("Explain iron oxide reduction.".into(), 1);
-    need.existing_prompts = (0..45)
-        .map(|i| format!("Question {i}: {}", "which case decides it? ".repeat(12)))
-        .collect();
-    assert!(need
-        .existing_prompts
-        .iter()
-        .all(|p| p.chars().count() > 160));
-    let batch = Batch {
-        need: &need,
-        count: 1,
-        notes: vec![],
-        repair: None,
-    };
-
-    let skeleton = batch.skeleton();
-
-    let listed: Vec<&str> = skeleton["doNotRepeat"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .collect();
-    assert_eq!(listed.len(), need.existing_prompts.len());
-    for prompt in &need.existing_prompts {
-        assert!(
-            listed.contains(&prompt.as_str()),
-            "cut or missing: {prompt}"
-        );
-    }
 }

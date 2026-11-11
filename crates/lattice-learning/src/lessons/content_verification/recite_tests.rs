@@ -152,12 +152,11 @@ async fn a_source_the_lesson_does_not_number_is_added_and_cited() -> Result<()> 
         }
     ));
     // A lesson schema's source indices then allow the new source.
-    let policy = crate::lessons::shape::policy();
-    let schema = policy
-        .schema(crate::lessons::shape::Phase::Kept, 1)
-        .numbered(policy, numbered.len());
+    let mut schema = json!({"properties":{"blocks":{"items":{"properties":{
+        "sourceIndex":{"type":"integer","minimum":0,"maximum":0}}}}}});
+    repair::number_sources(&mut schema, numbered.len());
     assert_eq!(
-        schema.value()["properties"]["blocks"]["items"]["properties"]["sourceIndex"]["maximum"],
+        schema["properties"]["blocks"]["items"]["properties"]["sourceIndex"]["maximum"],
         1
     );
     Ok(())

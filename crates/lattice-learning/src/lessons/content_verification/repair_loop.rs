@@ -7,7 +7,6 @@ use super::repair::Cited;
 use super::repair_request::{repair_context, repair_fingerprint, PendingRepair};
 use super::round::{self, Audit, Researched, Review, Settled, Unsettled, Verdict};
 use super::*;
-use crate::lessons::shape::{LessonSchema, LessonShape, Phase, ShapePolicy};
 use async_trait::async_trait;
 use lattice_core::domain::learning::acceptance::{
     AcceptancePolicy, Outcome, Position, StandardPolicy, Step, Taken,
@@ -31,7 +30,7 @@ pub(crate) async fn verify_and_repair(
         llm,
         &BuiltinRuntimes::for_tests(),
         prompt,
-        &crate::lessons::shape::FixedSchema(schema.clone()),
+        schema,
         raw,
         &references,
         (output_tokens, &mut sources.to_vec()),
@@ -79,9 +78,8 @@ async fn renumber(
 /// author to rewrite valid content.
 ///
 /// `numbered` is the lesson's numbered sources, what its `sourceIndex`es
-/// name; the lesson is parsed against it and the kept schema's indices are
-/// widened to it. Verification holds the lesson to what it is kept with
-/// (`Phase::Kept`), so it builds that schema from `shape` itself.
+/// name; the lesson is parsed against it and `writer_schema`'s indices are
+/// widened to it.
 ///
 /// Gives, with the lesson and its report, the ids of the program's references
 /// as they stand once verification is done: those of the collection research
@@ -90,49 +88,19 @@ pub(crate) async fn verify_and_repair_with_references(
     llm: &dyn LLMPort,
     runtimes: &BuiltinRuntimes,
     prompt: &str,
-    shape: &dyn ShapePolicy,
+    writer_schema: &Value,
     raw: String,
     references: &ReferenceCollection<'_>,
     (output_tokens, numbered): (usize, &mut Vec<LearningSourceDto>),
 ) -> Result<(String, LessonVerificationReport, HashSet<String>)> {
     let policy = StandardPolicy::new();
-    let mut review = open(
-        llm,
-        runtimes,
-        prompt,
-        shape,
-        raw,
-        references,
-        (output_tokens, numbered),
-    )
-    .await?;
-    let (raw, report) = round::run(&mut review, &policy).await?;
-    let held = review.expanded.as_ref().unwrap_or(review.references);
-    let owned = held
-        .sources
-        .iter()
-        .map(|source| source.id.clone())
-        .collect();
-    Ok((raw, report, owned))
-}
-
-/// The review of `raw`, held to the kept lesson's schema: the one choice of
-/// the promise verification holds a lesson to.
-async fn open<'a, 'r>(
-    llm: &'a dyn LLMPort,
-    runtimes: &'a BuiltinRuntimes,
-    prompt: &'a str,
-    shape: &'a dyn ShapePolicy,
-    raw: String,
-    references: &'a ReferenceCollection<'r>,
-    (output_tokens, numbered): (usize, &'a mut Vec<LearningSourceDto>),
-) -> Result<PreparationReview<'a, 'r>> {
     let readers = Readers::standard();
     let writers = numbered.len();
     renumber(numbered, references).await?;
-    let schema = shape.schema(Phase::Kept, numbered.len());
+    let mut numbered_schema = writer_schema.clone();
+    repair::number_sources(&mut numbered_schema, numbered.len());
     let ledger = ClaimLedger::open(llm, &raw).await?;
-    Ok(PreparationReview {
+    let mut review = PreparationReview {
         llm,
         runtimes,
         prompt,
@@ -140,8 +108,7 @@ async fn open<'a, 'r>(
         references,
         numbered,
         writers,
-        shape,
-        schema,
+        schema: numbered_schema,
         readers,
         ledger,
         raw,
@@ -153,37 +120,15 @@ async fn open<'a, 'r>(
         extraction: None,
         pass: None,
         report: None,
-    })
-}
-
-/// The step that settles the sections after cuts, on a review opened as
-/// `verify_and_repair_with_references` opens it, with each of `going` sent
-/// out first: whether the lesson was settled.
-#[cfg(test)]
-pub(crate) async fn settle_after_cuts(
-    llm: &dyn LLMPort,
-    prompt: &str,
-    shape: &dyn ShapePolicy,
-    raw: String,
-    references: &ReferenceCollection<'_>,
-    going: &[(usize, &str)],
-) -> Result<bool> {
-    let runtimes = BuiltinRuntimes::for_tests();
-    let mut numbered = Vec::new();
-    let mut review = open(
-        llm,
-        &runtimes,
-        prompt,
-        shape,
-        raw,
-        references,
-        (4_000, &mut numbered),
-    )
-    .await?;
-    for (unit, label) in going {
-        review.ledger.cuts.go(*unit, (*label).to_owned());
-    }
-    Ok(matches!(review.settle().await?, Settled::Done))
+    };
+    let (raw, report) = round::run(&mut review, &policy).await?;
+    let held = review.expanded.as_ref().unwrap_or(review.references);
+    let owned = held
+        .sources
+        .iter()
+        .map(|source| source.id.clone())
+        .collect();
+    Ok((raw, report, owned))
 }
 
 /// The preparation job's review of a lesson (acceptance design §2.7): the
@@ -198,9 +143,8 @@ struct PreparationReview<'a, 'r> {
     numbered: &'a mut Vec<LearningSourceDto>,
     /// How many of `numbered` the writer was given.
     writers: usize,
-    shape: &'a dyn ShapePolicy,
-    /// The kept schema, its source indices widened to `numbered`.
-    schema: LessonSchema,
+    /// The writer's schema, its source indices widened to `numbered`.
+    schema: Value,
     readers: Readers,
     ledger: ClaimLedger,
     raw: String,
@@ -242,17 +186,15 @@ impl Review for PreparationReview<'_, '_> {
             self.raw = self.candidate.to_string();
             crate::lesson_drafts::save(&self.raw).await?;
             // The user's text gets the teaching review a rewrite gets (§6.2).
-            let protected =
-                repair::teaching_protected(&mut self.ledger, policy, &self.candidate, &[]).await?;
             self.raw = crate::teaching::review_lesson(
                 self.llm,
                 crate::teaching::LESSON_REPAIR_SYSTEM,
                 self.prompt,
-                LessonShape::new(&self.schema, self.shape),
+                &self.schema,
                 std::mem::take(&mut self.raw),
                 self.output_tokens,
                 active,
-                &protected,
+                &repair::Protected::of_ledger(&self.ledger, &[]),
             )
             .await?;
             self.candidate = crate::generation::parse_json(&self.raw)?;
@@ -266,13 +208,7 @@ impl Review for PreparationReview<'_, '_> {
             .await?
             .and_then(|raw| serde_json::from_str::<PendingRepair>(&raw).ok())
             .filter(|saved| {
-                saved.matches(
-                    self.llm,
-                    self.prompt,
-                    self.schema.value(),
-                    &self.candidate,
-                    active,
-                )
+                saved.matches(self.llm, self.prompt, &self.schema, &self.candidate, active)
             });
         let left = saved.map(|saved| still_repairable(&self.ledger, policy, saved.context));
         if matches!(left, Some(None)) {
@@ -290,7 +226,7 @@ impl Review for PreparationReview<'_, '_> {
             self.llm,
             policy,
             self.prompt,
-            LessonShape::new(&self.schema, self.shape),
+            &self.schema,
             context,
             self.output_tokens,
             active,
@@ -555,7 +491,7 @@ impl Review for PreparationReview<'_, '_> {
                 .map(|source| source.id.as_str())
                 .collect();
             crate::lesson_drafts::record_checkpoint(NUMBERED_KEY, json!(added)).await?;
-            self.schema = self.schema.numbered(self.shape, self.numbered.len());
+            repair::number_sources(&mut self.schema, self.numbered.len());
             self.raw = self.candidate.to_string();
             crate::lesson_drafts::save(&self.raw).await?;
         }
@@ -611,9 +547,6 @@ impl Review for PreparationReview<'_, '_> {
             targets,
             active,
         )?;
-        if let Some(requirements) = context.get_mut("requirements") {
-            LessonShape::new(&self.schema, self.shape).state_in(requirements);
-        }
         repair::number_evidence(&mut context, self.numbered);
         self.ledger
             .begin_repairs(policy, &self.candidate, targets)
@@ -622,7 +555,7 @@ impl Review for PreparationReview<'_, '_> {
             fingerprint: repair_fingerprint(
                 self.llm,
                 self.prompt,
-                self.schema.value(),
+                &self.schema,
                 &self.candidate,
                 active,
             ),
@@ -638,7 +571,7 @@ impl Review for PreparationReview<'_, '_> {
             self.llm,
             policy,
             self.prompt,
-            LessonShape::new(&self.schema, self.shape),
+            &self.schema,
             context,
             self.output_tokens,
             active,
@@ -663,11 +596,7 @@ impl Review for PreparationReview<'_, '_> {
         let active = self.expanded.as_ref().unwrap_or(self.references);
         let settled = crate::lesson_progress::checks(sections::settle(
             self.llm,
-            (
-                self.prompt,
-                LessonShape::new(&self.schema, self.shape),
-                self.output_tokens,
-            ),
+            (self.prompt, &self.schema, self.output_tokens),
             active,
             &self.raw,
             &mut self.ledger,

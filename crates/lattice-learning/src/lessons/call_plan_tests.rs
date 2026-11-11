@@ -1,8 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 use super::*;
 use lattice_core::domain::learning::acceptance::{
-    next_rewrite, start, stepped, walk_from, End, Graph, Next, Node, Outcome, StandardPolicy, Step,
-    Taken, CLASSES,
+    walk_from, End, Graph, Next, Node, Outcome, StandardPolicy, Step, Taken, CLASSES,
 };
 use std::collections::{HashSet, VecDeque};
 
@@ -23,7 +22,7 @@ fn on_sentence(class: Class, sentence: u32) -> Planned {
 
 fn ended(statement: Planned) -> Planned {
     Planned {
-        at: PlannedAt::Ended(None),
+        at: PlannedAt::Ended,
         ..statement
     }
 }
@@ -36,15 +35,13 @@ fn moved_to(statement: Planned, position: Position) -> Planned {
     }
 }
 
-/// The node `name` of `class`'s graph, with `rewrites_left` rewrites left and
-/// nothing else spent.
-fn at_node(policy: &dyn AcceptancePolicy, class: Class, name: &str, rewrites_left: u8) -> Position {
+/// The node `name` of `class`'s graph, nothing spent.
+fn at_node(policy: &dyn AcceptancePolicy, class: Class, name: &str) -> Position {
     Position {
         class,
         changed_class: false,
         reasked: false,
         node: policy.graph(class).id_of(name).unwrap(),
-        rewrites_left,
     }
 }
 
@@ -72,46 +69,44 @@ fn the_ceiling_at_the_sort_is_the_sorting_calls_each_longest_path_the_reserves_a
     ];
     let plan = CallPlan::new(&policy, &statements, 2);
 
-    assert_eq!(mosts(&plan), [19, 19, 19, 19, 19, 19]);
+    assert_eq!(mosts(&plan), [16, 15, 16, 16, 16, 16]);
     assert_eq!(reserves(&plan), [17, 17, 0, 15, 15, 0]);
-    // The 3 sorting calls, made; the longest path from each entry with the
-    // re-ask and a teaching rewrite, 19 for each of the six (114 in all); the
-    // reserve of each of the four that share a sentence, two readings
+    // The 3 sorting calls, made; the longest path from each entry, 16 for a
+    // Sourced or a Common statement and 15 for a Reasoning one (95 in all);
+    // the reserve of each of the four that share a sentence, two readings
     // from the post-rewrite node with the re-ask still possible and the
     // narrowing call, 2 × 8 + 1 = 17 for the Sourced and the Reasoning one
     // and 2 × 7 + 1 = 15 for a Common one (64 in all); a flow repair for
     // each of the 2 sections.
     assert_eq!(
         plan.ceiling(3),
-        3 + (19 + 19 + 19 + 19 + 19 + 19) + (17 + 17 + 15 + 15) + 2
+        3 + (16 + 15 + 16 + 16 + 16 + 16) + (17 + 17 + 15 + 15) + 2
     );
 }
 
 #[test]
 fn a_statement_the_ledger_has_part_way_costs_what_is_left_of_its_path() {
     let policy = StandardPolicy::new();
-    let at = |class: Class, node: &str, reasked: bool, rewrites_left: u8| {
+    let at = |class: Class, node: &str, reasked: bool| {
         PlannedAt::At(Position {
             class,
             changed_class: false,
             reasked,
             node: policy.graph(class).id_of(node).unwrap(),
-            rewrites_left,
         })
     };
     let statements = [
         Planned {
-            at: at(Class::Sourced, "s.recite", false, 2),
+            at: at(Class::Sourced, "s.recite", false),
             ..alone(Class::Sourced)
         },
         Planned {
-            at: at(Class::Common, "c.ground", false, 2),
+            at: at(Class::Common, "c.ground", false),
             ..alone(Class::Common)
         },
-        // A rewrite's successor, which has read once already and has no
-        // rewrite left.
+        // A rewrite's successor, which has read once already.
         Planned {
-            at: at(Class::Reasoning, "r.final", true, 0),
+            at: at(Class::Reasoning, "r.final", true),
             ..alone(Class::Reasoning)
         },
         ended(alone(Class::Common)),
@@ -120,10 +115,9 @@ fn a_statement_the_ledger_has_part_way_costs_what_is_left_of_its_path() {
 
     // The citation to move and the readings after it; a ground reading and
     // what follows it; the post-rewrite readings alone; a finished statement
-    // costs nothing. A statement with its rewrites left holds the readings of
-    // the successor a rewrite would give it too.
-    assert_eq!(mosts(&plan), [17, 13, 5, 0]);
-    assert_eq!(plan.ceiling(0), 17 + 13 + 5);
+    // costs nothing.
+    assert_eq!(mosts(&plan), [14, 10, 5, 0]);
+    assert_eq!(plan.ceiling(0), 14 + 10 + 5);
 }
 
 /// One way through the graphs: where it starts and the steps it takes, one
@@ -134,7 +128,12 @@ struct Journey {
 }
 
 fn entry(policy: &dyn AcceptancePolicy, class: Class) -> Position {
-    start(policy, class)
+    Position {
+        class,
+        changed_class: false,
+        reasked: false,
+        node: policy.graph(class).entry(),
+    }
 }
 
 /// A shortest way from each class's entry to every edge of every graph
@@ -186,16 +185,7 @@ fn place(policy: &dyn AcceptancePolicy, journey: &Journey, steps: usize) -> Plan
     let taken = &journey.taken[..steps.min(journey.taken.len())];
     match walk_from(policy, journey.start, taken) {
         Walked::At(at) => PlannedAt::At(at),
-        Walked::Ended(End::Removed { .. }) => PlannedAt::Ended(None),
-        Walked::Ended(_) => {
-            // The teaching review may still rewrite the sentence of a
-            // statement that ended with a rewrite left.
-            let (_, before) = taken.split_last().unwrap();
-            let Walked::At(left) = walk_from(policy, journey.start, before) else {
-                panic!("a journey ends from a place in the graph");
-            };
-            PlannedAt::Ended(next_rewrite(policy, stepped(policy, left)))
-        }
+        Walked::Ended(_) => PlannedAt::Ended,
         other => panic!("{other:?} after {taken:?}"),
     }
 }
@@ -237,7 +227,7 @@ fn calls_of(policy: &dyn AcceptancePolicy, journey: &Journey, at: PlannedAt) -> 
             policy.graph(journey.start.class).entry(),
         ),
         PlannedAt::At(at) | PlannedAt::Narrowing(at) => (at.class, at.node),
-        PlannedAt::Ended(_) => return 0,
+        PlannedAt::Ended => return 0,
     };
     policy.graph(class).node(node).map_or(0, |node| node.calls)
 }
@@ -321,8 +311,8 @@ fn a_statement_that_reads_again_for_an_answer_it_could_not_read_costs_no_more() 
     );
 
     // The reading that could not be read was the node's one call.
-    assert_eq!(before, 19);
-    assert_eq!(plan.ceiling(1), 17);
+    assert_eq!(before, 16);
+    assert_eq!(plan.ceiling(1), 14);
 }
 
 #[test]
@@ -336,7 +326,7 @@ fn a_groups_reserves_are_released_when_the_whole_sentence_has_ended_and_never_co
     ];
     let mut plan = CallPlan::new(&policy, &statements, 0);
     assert_eq!(reserves(&plan), [17, 17, 15, 0]);
-    assert_eq!(plan.ceiling(0), (19 + 19 + 19 + 19) + (17 + 17 + 15));
+    assert_eq!(plan.ceiling(0), (16 + 15 + 16 + 16) + (17 + 17 + 15));
 
     // Two of the three end. Every reserve stays: the one that has not ended
     // can still rewrite the sentence, and itself waits to be read again.
@@ -350,7 +340,7 @@ fn a_groups_reserves_are_released_when_the_whole_sentence_has_ended_and_never_co
         ],
     );
     assert_eq!(reserves(&plan), [17, 17, 15, 0]);
-    assert_eq!(plan.ceiling(0), (19 + 19) + (17 + 17 + 15));
+    assert_eq!(plan.ceiling(0), (16 + 16) + (17 + 17 + 15));
 
     // The last of them ends: the whole sentence has, and nothing is reserved.
     plan.moved(
@@ -363,13 +353,13 @@ fn a_groups_reserves_are_released_when_the_whole_sentence_has_ended_and_never_co
         ],
     );
     assert_eq!(reserves(&plan), [0, 0, 0, 0]);
-    assert_eq!(plan.ceiling(0), 19);
+    assert_eq!(plan.ceiling(0), 16);
 
     // Shown at their entries again, they cost what that costs, a rise the
     // ceiling shows, and no reserve comes back to pay for it.
     plan.moved(&policy, &statements);
     assert_eq!(reserves(&plan), [0, 0, 0, 0]);
-    assert_eq!(mosts(&plan), [19, 19, 19, 19]);
+    assert_eq!(mosts(&plan), [16, 15, 16, 16]);
 }
 
 #[test]
@@ -404,7 +394,7 @@ fn a_statement_that_has_not_ended_keeps_its_reserve_though_every_neighbour_had_w
     // The finished Sourced statement is read again if the Reasoning one is
     // rewritten, and the Reasoning one has not ended itself.
     assert_eq!(reserves(&plan), [17, 17]);
-    assert_eq!(mosts(&plan), [0, 19]);
+    assert_eq!(mosts(&plan), [0, 15]);
 
     let both_ended = [
         ended(on_sentence(Class::Sourced, 0)),
@@ -428,14 +418,14 @@ fn a_statement_the_plan_does_not_hold_is_ignored() {
     // Fewer statements than the plan holds leaves the rest where they were.
     let mut plan = CallPlan::new(&policy, &[alone(Class::Sourced), alone(Class::Common)], 0);
     plan.moved(&policy, &[ended(alone(Class::Sourced))]);
-    assert_eq!(mosts(&plan), [0, 19]);
+    assert_eq!(mosts(&plan), [0, 16]);
 }
 
 #[test]
 fn a_place_that_costs_more_than_a_statement_held_is_a_rise_that_is_shown_not_clamped() {
     let policy = StandardPolicy::new();
     let mut plan = CallPlan::new(&policy, &[alone(Class::Common)], 0);
-    let cut = at_node(&policy, Class::Common, "c.cut", 0);
+    let cut = at_node(&policy, Class::Common, "c.cut");
 
     plan.moved(&policy, &[moved_to(alone(Class::Common), cut)]);
     assert_eq!(plan.ceiling(0), 0);
@@ -443,7 +433,7 @@ fn a_place_that_costs_more_than_a_statement_held_is_a_rise_that_is_shown_not_cla
     // It has no reserve, so shown at its entry again it costs what the entry
     // costs, and the ceiling says so.
     plan.moved(&policy, &[alone(Class::Common)]);
-    assert_eq!(plan.ceiling(0), 19);
+    assert_eq!(plan.ceiling(0), 16);
 }
 
 #[test]
@@ -455,15 +445,15 @@ fn a_passed_statements_successor_reads_again_from_its_reserve_and_the_ceiling_do
 
     // The Reasoning statement passes while its neighbour is still to be read.
     plan.moved(&policy, &[ended(reasoning), sourced]);
-    assert_eq!(mosts(&plan), [0, 19]);
+    assert_eq!(mosts(&plan), [0, 16]);
     assert_eq!(reserves(&plan), [17, 17]);
     let before = plan.ceiling(0);
 
     // The neighbour is rewritten, so the Reasoning statement's successor
     // reads from the post-rewrite node, its re-ask unspent: 8 calls, drawn
     // from the 17 held for it. What the statement is held for stays 17.
-    let reading = moved_to(reasoning, at_node(&policy, Class::Reasoning, "r.final", 0));
-    let rewritten = moved_to(sourced, at_node(&policy, Class::Sourced, "s.final", 0));
+    let reading = moved_to(reasoning, at_node(&policy, Class::Reasoning, "r.final"));
+    let rewritten = moved_to(sourced, at_node(&policy, Class::Sourced, "s.final"));
     plan.moved(&policy, &[reading, rewritten]);
     assert_eq!(mosts(&plan), [8, 8]);
     assert_eq!(reserves(&plan), [9, 17]);
@@ -472,7 +462,7 @@ fn a_passed_statements_successor_reads_again_from_its_reserve_and_the_ceiling_do
 
     // The successor reads on: what it may still cost falls, and the rest of
     // the reserve stays for the neighbour's narrowing.
-    let reveto = moved_to(reasoning, at_node(&policy, Class::Reasoning, "r.reveto", 0));
+    let reveto = moved_to(reasoning, at_node(&policy, Class::Reasoning, "r.reveto"));
     plan.moved(&policy, &[reveto, rewritten]);
     assert_eq!(mosts(&plan), [7, 8]);
     assert_eq!(reserves(&plan), [9, 17]);
@@ -492,7 +482,7 @@ fn a_reserve_is_held_while_the_statements_own_successor_reads_though_its_neighbo
 
     // The neighbour is rewritten and passes; the Reasoning statement's
     // successor is still to read.
-    let reading = moved_to(reasoning, at_node(&policy, Class::Reasoning, "r.final", 0));
+    let reading = moved_to(reasoning, at_node(&policy, Class::Reasoning, "r.final"));
     plan.moved(&policy, &[reading, ended(sourced)]);
 
     // The neighbour's end releases nothing: the statement has not ended, so
@@ -513,8 +503,8 @@ fn two_re_readings_in_a_row_each_with_the_re_ask_unspent_are_paid_from_the_reser
     let reasoning = on_sentence(Class::Reasoning, 0);
     let sourced = on_sentence(Class::Sourced, 0);
     let mut plan = CallPlan::new(&policy, &[reasoning, sourced], 0);
-    let reading = moved_to(reasoning, at_node(&policy, Class::Reasoning, "r.final", 0));
-    let rewritten = moved_to(sourced, at_node(&policy, Class::Sourced, "s.final", 0));
+    let reading = moved_to(reasoning, at_node(&policy, Class::Reasoning, "r.final"));
+    let rewritten = moved_to(sourced, at_node(&policy, Class::Sourced, "s.final"));
     let mut ceilings = Vec::new();
     let mut step = |plan: &mut CallPlan, statements: [Planned; 2]| {
         plan.moved(&policy, &statements);
@@ -537,7 +527,7 @@ fn two_re_readings_in_a_row_each_with_the_re_ask_unspent_are_paid_from_the_reser
     // Neither re-reading raises the ceiling: the statement is held for 17
     // while its first successor reads (8 + 9), for 9 once that has passed
     // (0 + 9), and for 9 again while the second reads (8 + 1).
-    assert_eq!(ceilings, [53, 42, 34, 34, 0]);
+    assert_eq!(ceilings, [50, 42, 34, 34, 0]);
     assert!(ceilings.windows(2).all(|pair| pair[1] <= pair[0]));
 }
 
@@ -596,7 +586,7 @@ fn a_re_reading_beyond_the_reserve_is_a_rise_that_is_shown_not_clamped() {
 
     let sourced = Position {
         changed_class: true,
-        ..at_node(&policy, Class::Sourced, "again", 0)
+        ..at_node(&policy, Class::Sourced, "again")
     };
     plan.moved(&policy, &[moved_to(first, sourced), second]);
 
@@ -620,12 +610,12 @@ fn a_statement_the_evidence_moved_to_another_class_is_costed_there_and_keeps_the
     // Sent to its source: Sourced's entry, the class changed.
     let sourced = Position {
         changed_class: true,
-        ..at_node(&policy, Class::Sourced, "s.read", 2)
+        ..at_node(&policy, Class::Sourced, "s.read")
     };
     plan.moved(&policy, &[moved_to(first, sourced), second]);
 
     assert_eq!(plan.slots[0].class, Class::Sourced);
-    assert_eq!(mosts(&plan), [16, 19]);
+    assert_eq!(mosts(&plan), [13, 16]);
     assert_eq!(reserves(&plan), [15, 15]);
 }
 
@@ -635,7 +625,7 @@ fn a_statement_the_ledger_holds_in_another_class_but_has_not_moved_stays_at_the_
     let mut plan = CallPlan::new(&policy, &[alone(Class::Reasoning)], 0);
 
     // Held as Sourced after a later sort, with no step taken: no move, and
-    // no rise from Reasoning's entry to Sourced's.
+    // no rise from Reasoning's 15 to Sourced's 16.
     let held_as_sourced = entry(&policy, Class::Sourced);
     plan.moved(
         &policy,
@@ -643,7 +633,7 @@ fn a_statement_the_ledger_holds_in_another_class_but_has_not_moved_stays_at_the_
     );
 
     assert_eq!(plan.slots[0].class, Class::Reasoning);
-    assert_eq!(plan.ceiling(0), 19);
+    assert_eq!(plan.ceiling(0), 15);
 }
 
 #[test]
@@ -651,7 +641,7 @@ fn the_cuts_known_bring_the_flow_repairs_to_the_sections_that_took_one_and_never
     let policy = StandardPolicy::new();
     let mut plan = CallPlan::new(&policy, &[alone(Class::Sourced), alone(Class::Common)], 3);
     let before = plan.ceiling(7);
-    assert_eq!(before, 7 + 19 + 19 + 3);
+    assert_eq!(before, 7 + 16 + 16 + 3);
 
     // Of the lesson's three sections that could take cuts, one did.
     plan.cuts_known(1);
@@ -699,9 +689,9 @@ fn a_statement_taken_in_adds_its_share_and_beside_others_the_reserves_a_rewrite_
     // Alone on its sentence it brings its longest path from its entry.
     assert_eq!(
         plan.take_in(&policy, &[joining(alone(Class::Common), vec![])]),
-        19
+        16
     );
-    assert_eq!(plan.ceiling(3), before + 19);
+    assert_eq!(plan.ceiling(3), before + 16);
     assert_eq!(reserves(&plan), [0, 0, 0]);
 
     // Beside the Reasoning statement it brings its reserve too, and the
@@ -709,7 +699,7 @@ fn a_statement_taken_in_adds_its_share_and_beside_others_the_reserves_a_rewrite_
     // has the other read again.
     assert_eq!(
         plan.take_in(&policy, &[joining(alone(Class::Sourced), vec![0])]),
-        19 + 17 + 17
+        16 + 17 + 17
     );
     assert_eq!(reserves(&plan), [17, 0, 0, 17]);
 
@@ -743,9 +733,9 @@ fn a_cut_that_narrows_its_sentence_holds_the_narrowings_call() {
     let target = on_sentence(Class::Reasoning, 0);
     let mate = on_sentence(Class::Reasoning, 0);
     let mut plan = CallPlan::new(&policy, &[target, mate], 0);
-    let reading = moved_to(mate, at_node(&policy, Class::Reasoning, "r.final", 0));
+    let reading = moved_to(mate, at_node(&policy, Class::Reasoning, "r.final"));
     let narrowing = Planned {
-        at: PlannedAt::Narrowing(at_node(&policy, Class::Reasoning, "r.cut", 0)),
+        at: PlannedAt::Narrowing(at_node(&policy, Class::Reasoning, "r.cut")),
         ..target
     };
 
@@ -767,7 +757,7 @@ fn the_ledgers_walk_is_where_the_plan_puts_a_statement() {
     let at = entry(&policy, Class::Reasoning);
     assert_eq!(PlannedAt::of(Some(Walked::At(at))), PlannedAt::At(at));
     for walked in [Walked::Ended(End::Consistent), Walked::Stopped] {
-        assert_eq!(PlannedAt::of(Some(walked)), PlannedAt::Ended(None));
+        assert_eq!(PlannedAt::of(Some(walked)), PlannedAt::Ended);
     }
     // Nothing known, or a record the graph does not fit: no move on a guess.
     let taken = Taken {

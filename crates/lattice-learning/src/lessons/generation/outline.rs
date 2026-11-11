@@ -2,15 +2,14 @@
 //! references, and decoding a drafted outline into modules and lessons.
 
 use super::{
-    grounding_instructions, invalid, optional_citation, optional_source_index_schema, parse_json,
-    validate_outline_request, validate_text, OUTLINE_OUTPUT_RESERVE,
+    grounding_instructions, invalid, normalize, optional_citation, optional_source_index_schema,
+    parse_json, validate_outline_request, validate_text, OUTLINE_OUTPUT_RESERVE,
     OUTLINE_REFERENCE_INSTRUCTIONS,
 };
 use crate::dto::{
     GenerateLearningProgramRequestDto, LearningCourseDepth, LearningLessonDto, LearningModuleDto,
     LearningPreparation, LearningSourceDto,
 };
-use crate::lessons::same_text::fold;
 use crate::lessons::structured_call::{complete_checked_request, CallKind, ReasonFirst};
 use crate::model_call;
 use lattice_core::application::ports::LLMPort;
@@ -119,7 +118,7 @@ pub async fn generate_outline_with_progress(
         &outline_schema(request.course_depth, sources.len()),
         raw,
         output_tokens,
-        crate::teaching::OutlineReviewContext { progress, sources },
+        Some(crate::teaching::OutlineReviewContext { progress, sources }),
     )
     .await?;
     decode_outline(&raw, request, sources)
@@ -447,7 +446,7 @@ pub(crate) fn decode_outline(
                 module.lessons.len()
             )));
         }
-        if let Some(earlier) = module_titles.insert(fold(&module.title), number) {
+        if let Some(earlier) = module_titles.insert(normalize(&module.title), number) {
             return Err(invalid(format!(
                 "Modules {earlier} and {number} share the title \"{}\"; give each module its own title.",
                 module.title.trim()
@@ -480,7 +479,7 @@ pub(crate) fn decode_outline(
                     "{at} needs an estimate of 5 to 180 minutes."
                 )));
             }
-            if let Some((m, l)) = lesson_titles.insert(fold(&lesson.title), place) {
+            if let Some((m, l)) = lesson_titles.insert(normalize(&lesson.title), place) {
                 return Err(invalid(format!(
                     "Lessons {m}.{l} and {}.{} share the title \"{}\"; give each lesson its own title.",
                     place.0,

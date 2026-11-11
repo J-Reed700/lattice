@@ -1,7 +1,5 @@
 //! Generate questions from bounded passages and require an attributable excerpt.
 use super::study_dto::*;
-use crate::generation::long_enough_quote;
-use crate::lessons::same_text::fold;
 use crate::model_call;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
@@ -38,6 +36,10 @@ fn json_object(raw: &str, start: usize) -> &str {
     raw.get(start..end).unwrap_or_default()
 }
 
+fn normalize(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 pub(super) fn parse_cards(
     raw: &str,
     sources: &[StudySourceDto],
@@ -68,16 +70,17 @@ pub(super) fn parse_cards(
     let checked: Vec<Result<StudyCardDto>> = parsed.cards.into_iter().enumerate().map(|(i, item)| {
         let invalid = || AppError::InvalidInput(format!("Question {} could not be tied to a complete source passage. Try generating again with a narrower focus.", i+1));
         let source = sources.get(item.source_index).ok_or_else(invalid)?;
-        if !long_enough_quote(&item.quote) || !fold(&source.excerpt).contains(&fold(&item.quote)) {
+        let quote = normalize(&item.quote);
+        if quote.chars().count() < 25 || quote.split_whitespace().count() < 5 || !normalize(&source.excerpt).contains(&quote) {
             return Err(invalid());
         }
         if item.question.trim().is_empty() || item.explanation.trim().is_empty() || item.topic.trim().is_empty() {
             return Err(invalid());
         }
-        if item.options.len() != 5 || item.correct_index >= 5 || item.options.iter().any(|o| o.trim().is_empty()) || item.options.iter().map(|o| fold(o)).collect::<HashSet<_>>().len() != 5 {
+        if item.options.len() != 5 || item.correct_index >= 5 || item.options.iter().any(|o| o.trim().is_empty()) || item.options.iter().map(|o| normalize(o).to_lowercase()).collect::<HashSet<_>>().len() != 5 {
             return Err(invalid());
         }
-        if !seen.insert(fold(&item.question)) { return Err(invalid()); }
+        if !seen.insert(normalize(&item.question).to_lowercase()) { return Err(invalid()); }
         let answer = item
             .options
             .get(item.correct_index)
@@ -154,7 +157,7 @@ pub(super) fn parse_conversation_cards(
         let Some(source) = claim.citations.first().cloned() else {
             continue;
         };
-        let mut choices = HashSet::from([fold(&claim.answer)]);
+        let mut choices = HashSet::from([normalize(&claim.answer).to_lowercase()]);
         let distractors = item
             .distractors
             .into_iter()
@@ -162,7 +165,7 @@ pub(super) fn parse_conversation_cards(
             .collect::<Vec<_>>();
         if distractors
             .iter()
-            .any(|value| value.is_empty() || !choices.insert(fold(value)))
+            .any(|value| value.is_empty() || !choices.insert(normalize(value).to_lowercase()))
         {
             continue;
         }

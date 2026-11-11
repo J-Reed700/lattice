@@ -102,11 +102,12 @@ pub struct ClaimLocation {
     pub field: String,
     /// The exact lesson text the claim was extracted from.
     pub quote: String,
-    /// Byte span of `quote` in the field. A claim a pass extracted has the
-    /// earliest place its quote stands, so a short sentence that recurs in
-    /// the field still has one place. A location made by [`Self::locate`]
-    /// has the span of the quote's only occurrence, and `None` when it
-    /// occurs more than once (or not at all).
+    /// Byte span of `quote` in the field. A claim located to its sentence
+    /// (`lattice_core::shared::text::claim_sentence`) keeps the span the
+    /// locator found, so a short sentence that recurs elsewhere in the field
+    /// still has its one place; otherwise the span of the quote's only
+    /// occurrence, and `None` when it occurs more than once (or not at all),
+    /// so no single place can be named.
     pub span: Option<(usize, usize)>,
 }
 

@@ -6,8 +6,7 @@ use super::super::readings::driver::{read_until_remedy, settled, ReadSteps};
 use super::super::readings::{Read, ReadContext, Reader, ReaderSet, Statement};
 use super::*;
 use lattice_core::domain::learning::acceptance::{
-    start, walk_from, AcceptancePolicy, End, NodeId, Outcome, Position, Reading, Step, Taken, Then,
-    Walked,
+    walk_from, AcceptancePolicy, End, NodeId, Outcome, Position, Reading, Step, Taken, Then, Walked,
 };
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -205,7 +204,12 @@ fn statement(claim: &Claim, class: Class, by: ClassifiedBy) -> Statement<'_> {
 
 /// Where a statement of `class` begins.
 fn entry(policy: &dyn AcceptancePolicy, class: Class) -> Position {
-    start(policy, class)
+    Position {
+        class,
+        changed_class: false,
+        reasked: false,
+        node: policy.graph(class).entry(),
+    }
 }
 
 /// Where a statement of `class` stands at `node`, having changed class or not.
@@ -215,7 +219,6 @@ fn at(policy: &dyn AcceptancePolicy, class: Class, changed_class: bool, node: &s
         changed_class,
         reasked: false,
         node: policy.graph(class).id_of(node).unwrap(),
-        rewrites_left: 2,
     }
 }
 

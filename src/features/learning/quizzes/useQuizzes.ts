@@ -22,15 +22,11 @@ import type {
   StartLearningQuizRequestDto,
   UpdateLearningQuizSettingsRequestDto,
 } from '@/lib/bindings';
+import { unwrapApiResult as unwrap, type ApiResult } from '@/types/api/result';
 
-type Result<T> = { ok: true; data: T } | { ok: false; error: string };
+type Result<T> = ApiResult<T>;
 
 const POLL_MS = 2_000;
-
-function unwrap<T>(result: Result<T>): T {
-  if (!result.ok) throw new Error(result.error);
-  return result.data;
-}
 
 export function newOperationId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `op-${Date.now()}-${Math.random().toString(16).slice(2)}`;

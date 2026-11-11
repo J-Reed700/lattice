@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PlanPanel } from '@/features/learning/curriculum/PlanPanel';
 
 const mocks = vi.hoisted(() => ({ getPlan: vi.fn(), preview: vi.fn(), accept: vi.fn(), discard: vi.fn(), startDiagnostic: vi.fn(), submitDiagnostic: vi.fn(), skipDiagnostic: vi.fn(), cancelJob: vi.fn(), retryJob: vi.fn() }));
-vi.mock('@/lib/api', () => ({ default: {
+vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
   getLearningPlan: mocks.getPlan,
   // The Verifier audit switch sits on the Plan tab; off, with no Verifier set.
   getLearningProgramVerifierAudit: async (programId: string) => ({ ok: true, data: {
@@ -65,14 +65,6 @@ describe('Learning Studio Plan editor', () => {
     const pause = screen.getByRole('button', { name: 'Pause lesson preparation' });
     await userEvent.setup().click(pause);
     await waitFor(() => expect(mocks.cancelJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'job-1', expectedRevision: 9 })));
-  });
-
-  it('names a course-plan job by what it does', async () => {
-    const running = plan().jobs[0];
-    mocks.getPlan.mockResolvedValue(ok(plan({ jobs: [{ ...running, id: 'plan-job', kind: 'course_plan', status: 'completed', lessonIds: undefined }] })));
-    renderPlan();
-    expect(await screen.findByRole('heading', { name: 'Planning topics' })).toBeVisible();
-    expect(screen.queryByText(/course plan/i)).not.toBeInTheDocument();
   });
 
   it('folds attempts a retry superseded into one closed list of one-line outcomes', async () => {

@@ -90,4 +90,17 @@ describe('drillsApi', () => {
     ipc.invoke.mockRejectedValueOnce('This review is not there.');
     await expect(drillsApi.codeReviewResult('gone')).rejects.toThrow('This review is not there.');
   });
+
+  it('reads the language of the course’s practice profile through the learning plugin', async () => {
+    ipc.invoke.mockResolvedValueOnce({ programId: 'course-1', details: '', language: 'python', revision: 2 });
+    await expect(drillsApi.practiceLanguage('course-1')).resolves.toBe('python');
+    expect(sent()).toEqual([
+      { route: 'plugin:learning|get_learning_practice_profile', args: { request: { programId: 'course-1' } } },
+    ]);
+  });
+
+  it('gives no language when the profile names none', async () => {
+    ipc.invoke.mockResolvedValueOnce({ programId: 'course-1', details: '', language: null, revision: 0 });
+    await expect(drillsApi.practiceLanguage('course-1')).resolves.toBeNull();
+  });
 });
