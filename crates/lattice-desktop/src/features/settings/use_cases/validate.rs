@@ -180,6 +180,10 @@ mod tests {
         let is_valid = use_case.validate_folder_path(existing.path().to_str().unwrap());
         assert!(is_valid);
 
+        let file = existing.path().join("notes.md");
+        std::fs::write(&file, "a file, not a folder").unwrap();
+        assert!(!use_case.validate_folder_path(file.to_str().unwrap()));
+
         // Nonexistent path, spelled absolutely for this host.
         let is_valid =
             use_case.validate_folder_path(&test_paths::abs_str("nonexistent/path/12345"));
