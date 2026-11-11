@@ -37,6 +37,9 @@ async fn require_embedding(container: &Container) -> Result<(), AppError> {
         ))
     })?;
     if !embedding.is_ready().await? {
+        if let Some(error) = embedding.load_failure() {
+            return Err(error);
+        }
         return Err(AppError::AiModelsNotInstalled(
             "AI embedding model is not ready yet. Activate an embedding model in Settings → Downloaded and try again."
                 .into(),

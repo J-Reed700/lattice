@@ -36,7 +36,10 @@ impl UnavailableEmbedding {
     fn error(&self) -> AppError {
         match &self.reason {
             EmbeddingUnavailable::NotInstalled => {
-                AppError::AiModelsNotInstalled("AI embedding models not installed".to_string())
+                AppError::AiModelsNotInstalled(
+                    "No embedding model is installed. Download one in Settings → Models to enable search."
+                        .to_string(),
+                )
             }
             EmbeddingUnavailable::FailedToLoad(error) => error.clone(),
         }
@@ -51,6 +54,13 @@ impl EmbeddingPort for UnavailableEmbedding {
 
     async fn embed_batch(&self, _texts: &[String]) -> Result<Vec<Vec<f32>>> {
         Err(self.error())
+    }
+
+    fn load_failure(&self) -> Option<AppError> {
+        match &self.reason {
+            EmbeddingUnavailable::NotInstalled => None,
+            EmbeddingUnavailable::FailedToLoad(error) => Some(error.clone()),
+        }
     }
 
     fn model_identity(&self) -> String {

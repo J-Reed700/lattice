@@ -166,11 +166,7 @@ pub async fn find_similar(
         .get(&chunk_id)
         .ok_or_else(|| AppError::NotFound(format!("Chunk not found: {}", chunk_id)))?;
 
-    let embedding_service = container.get_or_load_embedding().await.map_err(|e| {
-        AppError::AiModelsNotInstalled(
-            format!("Failed to load embedding model: {}. Download models from Settings → Models to enable search.", e)
-        )
-    })?;
+    let embedding_service = container.get_or_load_embedding().await?;
     let doc_embedding = embedding_service.embed_single(&doc_content.snippet).await?;
 
     let search_service = container.search_service();
@@ -348,11 +344,7 @@ pub async fn batch_search(
         _ => LibraryMode::Hybrid,
     };
 
-    container.get_or_load_embedding().await.map_err(|e| {
-        AppError::AiModelsNotInstalled(
-            format!("Failed to load embedding model: {}. Download models from Settings → Models to enable search.", e)
-        )
-    })?;
+    container.get_or_load_embedding().await?;
 
     let search = container.hybrid_search_use_case();
     let enrichment_service = container.search_enrichment_service();

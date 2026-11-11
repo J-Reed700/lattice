@@ -17,6 +17,32 @@ async fn a_port_with_no_model_installed_reports_models_not_installed() {
 }
 
 #[tokio::test]
+async fn the_not_installed_error_says_where_to_download_a_model() {
+    let error = UnavailableEmbedding::not_installed()
+        .embed_single("test")
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        AppError::AiModelsNotInstalled(
+            "No embedding model is installed. Download one in Settings → Models to enable search."
+                .into()
+        )
+        .to_string()
+    );
+}
+
+#[test]
+fn only_a_port_whose_model_failed_to_load_reports_a_load_failure() {
+    assert!(UnavailableEmbedding::not_installed()
+        .load_failure()
+        .is_none());
+    let failed = UnavailableEmbedding::failed_to_load(AppError::ModelLoadFailed("boom".into()));
+    assert_eq!(failed.load_failure().unwrap().to_string(), "boom");
+}
+
+#[tokio::test]
 async fn a_port_whose_model_failed_to_load_returns_the_loaders_own_error() {
     let port = UnavailableEmbedding::failed_to_load(AppError::ModelLoadFailed(
         "server exited with code 3".into(),
