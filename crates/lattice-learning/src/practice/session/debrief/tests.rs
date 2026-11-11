@@ -586,6 +586,7 @@ fn the_schema_lists_the_kinds_of_evidence_and_the_fields_of_an_item() {
 #[tokio::test]
 async fn a_kind_with_stated_keys_must_have_them_written() {
     let stating = fake_kind(&["a", "b", "c"])
+        .with_learner_cases()
         .stating_a_model_and_a_pitfall()
         .build();
     let without_pitfall = json!({"rows": good_rows(), "model": "Fill a, b, c."}).to_string();
