@@ -9,6 +9,7 @@ pub mod constants;
 pub mod encoding;
 pub mod error;
 pub mod fs;
+pub mod hash;
 pub mod http;
 pub mod ipc;
 pub mod markdown_math;

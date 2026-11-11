@@ -20,6 +20,7 @@ use lattice_core::application::contracts::settings::{
     LLMProvider, LLMSettingsDto, LlamaCppSettingsDto, ThinkingOverrideDto,
 };
 use lattice_core::application::ports::WebServiceTrait;
+use lattice_core::shared::hash::sha256_hex;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -389,10 +390,6 @@ mod quiz;
 mod tests;
 
 // ---- the live run -------------------------------------------------------
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    hex::encode(Sha256::digest(bytes))
-}
 
 fn file_sha256(path: &Path) -> Result<String> {
     use std::io::Read;

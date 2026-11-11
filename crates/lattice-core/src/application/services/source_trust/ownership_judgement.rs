@@ -7,10 +7,11 @@ use serde_json::{json, Value};
 use super::{data_prompt, judge, names, sanitised, CallOutcome};
 use crate::application::ports::LLMPort;
 use crate::domain::provenance::{
-    canonical_json, sha256_hex, AuthorityAssessment, ClaimSubject, Judged, JudgementKey, Origin,
+    canonical_json, AuthorityAssessment, ClaimSubject, Judged, JudgementKey, Origin,
     ProvenanceSignals, Reason, ReasonCode, SubjectRelation,
 };
 use crate::shared::error::Result;
+use crate::shared::hash::sha256_hex;
 
 pub const OWNERSHIP_POLICY: &str = "subject-ownership-v1";
 
