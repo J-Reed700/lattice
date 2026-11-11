@@ -65,7 +65,6 @@ fn a_first_review_covers_every_section_and_asks_about_nothing() {
     assert!(round.whole);
     assert!(round.first);
     assert!(round.asked.is_empty());
-    assert!(round.known.is_empty());
     assert!(round.scope().asked.is_none());
 }
 
@@ -96,7 +95,6 @@ fn a_changed_section_is_the_only_one_in_the_round_and_its_finding_is_asked_with_
     assert_eq!(asked[0].id, fresh[0].id());
     assert_eq!(asked[0].site, FindingSite::Section(0));
     assert_eq!(asked[0].passage_id.as_deref(), Some("section-0-passage-0"));
-    assert!(round.known.is_empty());
 }
 
 #[test]
@@ -116,7 +114,6 @@ fn a_finding_with_a_second_part_is_asked_again_when_only_the_second_part_changed
     let asked = round.asked;
     assert_eq!(asked.len(), 1);
     assert_eq!(asked[0].id, both.id());
-    assert!(round.known.is_empty());
 }
 
 #[test]
@@ -315,7 +312,6 @@ fn a_standing_seeded_from_stored_findings_asks_about_them_in_a_first_review_and_
     assert!(round.whole);
     assert_eq!(round.asked.len(), 1);
     assert_eq!(round.asked[0].id, stored.id());
-    assert!(round.known.is_empty());
     assert_eq!(round.scope().asked.map(<[_]>::len), Some(1));
     let (_, new) = answer(
         &mut standing,

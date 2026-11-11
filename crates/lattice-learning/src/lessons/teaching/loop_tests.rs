@@ -2689,7 +2689,7 @@ impl ByRequest {
         let candidate = &sent["candidate"];
         let listed =
             |key: &str| -> Vec<Value> { sent[key].as_array().cloned().unwrap_or_default() };
-        let (open, known) = (listed("openFindings"), listed("knownFindings"));
+        let open = listed("openFindings");
         let sections: Vec<usize> = schema
             .pointer("/properties/blockChecks/items/properties/sectionId/enum")
             .and_then(Value::as_array)
@@ -2714,7 +2714,6 @@ impl ByRequest {
             let part = format!("Section {}", index + 1);
             open.iter()
                 .any(|entry| entry["part"] == part.as_str() && entry["passageId"] == id)
-                || known.iter().any(|entry| entry["part"] == part.as_str())
         };
         let mut checks = Vec::new();
         for index in &sections {
@@ -2738,7 +2737,6 @@ impl ByRequest {
             .filter(|note| {
                 !open
                     .iter()
-                    .chain(&known)
                     .any(|entry| entry["note"].as_str() == Some(**note))
             })
             .map(|note| (*note).to_owned())
@@ -3168,7 +3166,6 @@ async fn a_stored_reviewer_finding_is_judged_again_by_the_first_review_and_is_no
         .map(|entry| entry["id"].clone())
         .collect();
     assert_eq!(asked, [json!("reviewer/1")]);
-    assert!(first.get("knownFindings").is_none());
     assert!(model.repairs().is_empty());
     assert_eq!(reviewed.set_aside.len(), 1);
     assert_eq!(reviewed.set_aside[0].finding.id().as_str(), "reviewer/1");

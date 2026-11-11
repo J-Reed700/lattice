@@ -77,7 +77,6 @@ fn a_recheck_is_told_to_judge_the_correction_and_to_check_only_the_sections_that
     assert!(text.starts_with(RECHECK_SYSTEM));
     assert!(text.contains(CHANGED_CHECKS));
     assert!(!text.contains(SHARED_CHECKS));
-    assert!(!text.contains(KNOWN_FINDINGS));
 }
 
 #[test]
