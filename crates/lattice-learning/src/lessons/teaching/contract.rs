@@ -772,3 +772,7 @@ mod own_notes_tests;
 #[cfg(test)]
 #[path = "contract_note_tests.rs"]
 mod note_tests;
+
+#[cfg(test)]
+#[path = "contract_clash_tests.rs"]
+mod clash_tests;
