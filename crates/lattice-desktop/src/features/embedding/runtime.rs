@@ -1,4 +1,4 @@
-//! Embedding lifecycle: readiness, single-flight loading, and retry cooldown.
+//! Embedding lifecycle: readiness, single-flight loading, and failure memory.
 use std::{
     future::Future,
     sync::Arc,
@@ -9,19 +9,29 @@ use crate::features::embedding::loading::EmbeddingLoader;
 use lattice_core::application::ports::{EmbeddingPort, LoadedEmbeddingModelPort};
 use lattice_core::shared::error::{AppError, Result};
 
+/// How long a model that failed to load is not loaded again.
+const RELOAD_AFTER_FAILURE: Duration = Duration::from_secs(60);
+
+/// A port that failed to load, with the generation and time it failed at.
+struct FailedLoad {
+    generation: u64,
+    failed_at: Instant,
+    port: Arc<dyn EmbeddingPort>,
+}
+
 use crate::infrastructure::ml::model_cache::ModelCache;
 
 pub(crate) struct EmbeddingRuntime {
     cache: ModelCache<(), Arc<dyn EmbeddingPort>>,
-    // Serializes cooldown updates with invalidation, never held across awaits.
-    cooldown: parking_lot::Mutex<Option<(Instant, AppError)>>,
+    // Serializes failure updates with invalidation, never held across awaits.
+    failed: parking_lot::Mutex<Option<FailedLoad>>,
 }
 
 impl EmbeddingRuntime {
     pub(crate) fn new() -> Self {
         Self {
             cache: ModelCache::new(),
-            cooldown: parking_lot::Mutex::new(None),
+            failed: parking_lot::Mutex::new(None),
         }
     }
 
@@ -36,17 +46,39 @@ impl EmbeddingRuntime {
     }
 
     pub(crate) fn invalidate(&self) {
-        let mut cooldown = self.cooldown.lock();
+        let mut failed = self.failed.lock();
         self.cache.invalidate();
-        *cooldown = None;
+        *failed = None;
     }
 
     fn invalidate_generation(&self, generation: u64) {
-        let mut cooldown = self.cooldown.lock();
+        let mut failed = self.failed.lock();
         if self.cache.generation() == generation {
             self.cache.invalidate();
-            *cooldown = None;
+            *failed = None;
         }
+    }
+
+    /// The failed port of the current generation, however long ago it failed.
+    fn failed_port(&self) -> Option<Arc<dyn EmbeddingPort>> {
+        let failed = self.failed.lock();
+        failed
+            .as_ref()
+            .filter(|f| f.generation == self.cache.generation())
+            .map(|f| Arc::clone(&f.port))
+    }
+
+    /// The failed port of `generation` while it is within the reload delay.
+    fn recent_failure(&self, generation: u64) -> Option<Arc<dyn EmbeddingPort>> {
+        let failed = self.failed.lock();
+        failed
+            .as_ref()
+            .filter(|f| {
+                f.generation == generation
+                    && self.cache.generation() == generation
+                    && f.failed_at.elapsed() < RELOAD_AFTER_FAILURE
+            })
+            .map(|f| Arc::clone(&f.port))
     }
 
     pub(crate) async fn get_or_load<F, Fut>(&self, load: F) -> Result<Arc<dyn EmbeddingPort>>
@@ -68,24 +100,10 @@ impl EmbeddingRuntime {
         // Capture before the loader reads configuration or the active model.
         let generation = self.cache.generation();
         self.cache.get_or_load_with_policy((), generation, || async {
-            {
-                let cooldown = self.cooldown.lock();
-                if self.cache.generation() == generation {
-                    if let Some((failed_at, error)) = cooldown.as_ref() {
-                        if failed_at.elapsed() < Duration::from_secs(60) {
-                            return Err(error.clone());
-                        }
-                    }
-                }
+            if let Some(port) = self.recent_failure(generation) {
+                return Ok::<_, AppError>((Some(port), false));
             }
-            let result = load().await;
-            {
-                let mut cooldown = self.cooldown.lock();
-                if self.cache.generation() == generation {
-                    *cooldown = result.as_ref().err().map(|e| (Instant::now(), e.clone()));
-                }
-            }
-            let model = result?;
+            let model = load().await?;
             let cacheable = match model.is_ready().await {
                 Ok(ready) => ready,
                 Err(error) => {
@@ -93,6 +111,16 @@ impl EmbeddingRuntime {
                     false
                 }
             };
+            {
+                let mut failed = self.failed.lock();
+                if self.cache.generation() == generation {
+                    *failed = (!cacheable && model.load_failure().is_some()).then(|| FailedLoad {
+                        generation,
+                        failed_at: Instant::now(),
+                        port: Arc::clone(&model),
+                    });
+                }
+            }
             Ok((Some(model), cacheable))
         }).await?.ok_or_else(|| AppError::InternalError("Embedding loader returned no model".into()))
     }
@@ -113,15 +141,19 @@ impl ActiveEmbedding {
     }
 
     /// A ready cached model, or a single-flight load through the loader,
-    /// subject to the runtime's retry cooldown.
+    /// subject to the runtime's reload delay after a failed load.
     pub(crate) async fn get_or_load(&self) -> Result<Arc<dyn EmbeddingPort>> {
-        self.runtime.get_or_load(|| self.loader.load()).await
+        self.runtime
+            .get_or_load(|| async { Ok(self.loader.load().await) })
+            .await
     }
 }
 
 impl LoadedEmbeddingModelPort for EmbeddingRuntime {
     fn current_model(&self) -> Option<Arc<dyn EmbeddingPort>> {
-        self.cache.get(&(), self.cache.generation())
+        self.cache
+            .get(&(), self.cache.generation())
+            .or_else(|| self.failed_port())
     }
 }
 
@@ -178,6 +210,67 @@ mod tests {
         assert!(!port.is_ready().await.unwrap());
     }
 
+    fn failed() -> Arc<dyn EmbeddingPort> {
+        Arc::new(
+            lattice_core::application::ports::UnavailableEmbedding::failed_to_load(
+                AppError::ModelLoadFailed("weights are corrupt".into()),
+            ),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_dynamic_port_over_a_failed_load_reports_the_load_error() {
+        use crate::features::embedding::service::DynamicEmbedding;
+
+        let runtime = Arc::new(EmbeddingRuntime::new());
+        let port = DynamicEmbedding::new(runtime.clone());
+        runtime
+            .get_or_load(|| async { Ok(failed()) })
+            .await
+            .unwrap();
+
+        let error = port.embed_query("text").await.unwrap_err();
+
+        assert!(
+            matches!(&error, AppError::ModelLoadFailed(m) if m == "weights are corrupt"),
+            "the load failure was lost: {error}"
+        );
+        assert!(port.load_failure().is_some());
+    }
+
+    #[tokio::test]
+    async fn a_dynamic_port_over_a_failed_load_refuses_to_split_text_with_the_load_error() {
+        use crate::features::embedding::service::DynamicEmbedding;
+
+        let runtime = Arc::new(EmbeddingRuntime::new());
+        let port = DynamicEmbedding::new(runtime.clone());
+        runtime
+            .get_or_load(|| async { Ok(failed()) })
+            .await
+            .unwrap();
+
+        let error = port.split_text("text", "").unwrap_err();
+
+        assert!(matches!(&error, AppError::ModelLoadFailed(m) if m == "weights are corrupt"));
+    }
+
+    #[tokio::test]
+    async fn a_failed_load_is_not_retried_within_the_delay() {
+        let runtime = EmbeddingRuntime::new();
+        let calls = AtomicUsize::new(0);
+        for _ in 0..2 {
+            let port = runtime
+                .get_or_load(|| async {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(failed())
+                })
+                .await
+                .unwrap();
+            assert!(port.load_failure().is_some());
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
     #[tokio::test]
     async fn concurrent_loads_share_a_ready_model() {
         let runtime = EmbeddingRuntime::new();
@@ -228,30 +321,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cooldown_suppresses_retries_until_expiry_or_invalidation() {
+    async fn a_failed_load_is_retried_after_the_delay_and_forgotten_on_invalidation() {
         let runtime = EmbeddingRuntime::new();
-        assert!(runtime
-            .get_or_load(|| async { Err(AppError::Other("load failed".into())) })
+        runtime
+            .get_or_load(|| async { Ok(failed()) })
             .await
-            .is_err());
-        assert!(runtime
-            .get_or_load(|| async { panic!("cooldown must suppress loader") })
+            .unwrap();
+        let again = runtime
+            .get_or_load(|| async { panic!("the failure must suppress the loader") })
             .await
-            .is_err());
-        runtime.cooldown.lock().as_mut().unwrap().0 = Instant::now() - Duration::from_secs(61);
+            .unwrap();
+        assert!(again.load_failure().is_some());
+        assert!(runtime.current_model().unwrap().load_failure().is_some());
+        runtime.failed.lock().as_mut().unwrap().failed_at =
+            Instant::now() - Duration::from_secs(61);
         runtime.get_or_load(|| async { Ok(ready()) }).await.unwrap();
-        assert!(runtime.cooldown.lock().is_none());
+        assert!(runtime.failed.lock().is_none());
         runtime.invalidate();
-        assert!(runtime
-            .get_or_load(|| async { Err(AppError::Other("load failed".into())) })
+        runtime
+            .get_or_load(|| async { Ok(failed()) })
             .await
-            .is_err());
+            .unwrap();
         runtime.invalidate();
+        assert!(runtime.current_model().is_none());
         runtime.get_or_load(|| async { Ok(ready()) }).await.unwrap();
     }
 
     #[tokio::test]
-    async fn invalidated_load_cannot_publish_model_or_failure_cooldown() {
+    async fn invalidated_load_cannot_publish_model_or_failure() {
         let runtime = EmbeddingRuntime::new();
         runtime
             .get_or_load(|| async {
@@ -261,14 +358,15 @@ mod tests {
             .await
             .unwrap();
         assert!(runtime.current_model().is_none());
-        assert!(runtime
+        runtime
             .get_or_load(|| async {
                 runtime.invalidate();
-                Err(AppError::Other("stale failure".into()))
+                Ok(failed())
             })
             .await
-            .is_err());
-        assert!(runtime.cooldown.lock().is_none());
+            .unwrap();
+        assert!(runtime.failed.lock().is_none());
+        assert!(runtime.current_model().is_none());
         runtime.get_or_load(|| async { Ok(ready()) }).await.unwrap();
     }
 
@@ -287,7 +385,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancelled_load_leaves_no_cooldown_and_allows_retry() {
+    async fn cancelled_load_leaves_no_failure_and_allows_retry() {
         let runtime = Arc::new(EmbeddingRuntime::new());
         let task_runtime = runtime.clone();
         let (started, ready_rx) = tokio::sync::oneshot::channel();
@@ -302,7 +400,7 @@ mod tests {
         ready_rx.await.unwrap();
         task.abort();
         assert!(task.await.err().unwrap().is_cancelled());
-        assert!(runtime.cooldown.lock().is_none());
+        assert!(runtime.failed.lock().is_none());
         tokio::time::timeout(
             Duration::from_secs(1),
             runtime.get_or_load(|| async { Ok(ready()) }),

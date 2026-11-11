@@ -133,7 +133,6 @@ describe('ModelPickerPopover', () => {
       url: 'http://localhost:8080',
       model: '/models/Qwen3.8-27B-Q5_K_S.gguf',
       authHeaderName: '',
-      authHeaderValue: '',
     };
     s.llm.ollamaConfigured = false;
     appSettings.current = s;
@@ -251,7 +250,7 @@ describe('ModelPickerPopover', () => {
     const s = makeAppSettings();
     s.llm.provider = 'anthropic';
     s.llm.model = 'claude-test';
-    s.llm.llamaCpp = { url: 'http://127.0.0.1:8080', model: 'served-model', authHeaderName: '', authHeaderValue: '' };
+    s.llm.llamaCpp = { url: 'http://127.0.0.1:8080', model: 'served-model', authHeaderName: '' };
     s.llm.visionDeclarations = { 'llamacpp:served-model': { enabled: true, geometry: { kind: 'fixed', side: 896, tokens: 256 } } };
     appSettings.current = s;
     models.current = [model({ id: 'a' })];

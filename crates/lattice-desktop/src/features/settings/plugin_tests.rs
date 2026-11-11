@@ -6,12 +6,11 @@ use lattice_core::shared::ipc::ErrorCode;
 use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-fn ollama(url: &str, name: &str, value: &str) -> TestOllamaConnectionRequest {
-    TestOllamaConnectionRequest {
-        ollama_url: url.into(),
-        auth_header_name: name.into(),
-        auth_header_value: value.into(),
-    }
+fn key(name: &str, value: &str) -> Option<RemoteHeader> {
+    Some(RemoteHeader {
+        name: name.into(),
+        value: value.into(),
+    })
 }
 
 fn tool(endpoint: &str, query_param: &str, query: &str) -> TestCustomToolRequest {
@@ -68,20 +67,14 @@ fn ollama_urls_are_trimmed_and_must_be_plain_http_without_credentials() {
 }
 
 #[test]
-fn auth_headers_must_come_as_a_valid_pair() {
-    assert!(build_http_client(&ollama("http://x", "", "")).is_ok());
-    assert!(build_http_client(&ollama("http://x", "  ", "  ")).is_ok());
-    assert!(build_http_client(&ollama("http://x", "X-Api-Key", "secret")).is_ok());
-    for (name, value) in [
-        ("X-Api-Key", ""),
-        ("", "secret"),
-        ("bad header", "secret"),
-        ("X-Api-Key", "line\nbreak"),
-    ] {
+fn auth_headers_must_be_valid() {
+    assert!(build_http_client(None).is_ok());
+    assert!(build_http_client(key("X-Api-Key", "secret").as_ref()).is_ok());
+    for (name, value) in [("bad header", "secret"), ("X-Api-Key", "line\nbreak")] {
         assert!(
             matches!(
-                build_http_client(&ollama("http://x", name, value)),
-                Err(AppError::InvalidInput(_))
+                build_http_client(key(name, value).as_ref()),
+                Err(AppError::InvalidConfig(_))
             ),
             "{name:?}/{value:?} should be refused"
         );
@@ -107,14 +100,14 @@ async fn ollama_probe_lists_unique_trimmed_model_names_with_the_auth_header() {
         .await;
 
     let response =
-        test_ollama_connection(ollama(&format!("{}/", server.uri()), "X-Api-Key", "secret"))
+        probe_ollama_connection(&format!("{}/", server.uri()), key("X-Api-Key", "secret"))
             .await
             .unwrap();
     assert_eq!(response.endpoint, "/api/tags");
     assert_eq!(response.models, vec!["llama3", "phi3"]);
 
     // Without the header the mock does not match and wiremock answers 404.
-    let refused = test_ollama_connection(ollama(&server.uri(), "", "")).await;
+    let refused = probe_ollama_connection(&server.uri(), None).await;
     let error = refused.expect_err("unauthenticated probe fails");
     assert!(matches!(error.code, ErrorCode::NetworkError), "{error:?}");
 }
@@ -127,23 +120,14 @@ async fn ollama_probe_refuses_an_empty_model_list_and_bad_input() {
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"models": []})))
         .mount(&server)
         .await;
-    assert!(test_ollama_connection(ollama(&server.uri(), "", ""))
-        .await
-        .is_err());
+    assert!(probe_ollama_connection(&server.uri(), None).await.is_err());
 
-    let bad_url = test_ollama_connection(ollama("ftp://example.org", "", ""))
+    let bad_url = probe_ollama_connection("ftp://example.org", None)
         .await
         .expect_err("ftp is refused");
     assert!(
         matches!(bad_url.code, ErrorCode::InvalidInput),
         "{bad_url:?}"
-    );
-    let half_header = test_ollama_connection(ollama(&server.uri(), "X-Api-Key", ""))
-        .await
-        .expect_err("a header name needs a value");
-    assert!(
-        matches!(half_header.code, ErrorCode::InvalidInput),
-        "{half_header:?}"
     );
 }
 

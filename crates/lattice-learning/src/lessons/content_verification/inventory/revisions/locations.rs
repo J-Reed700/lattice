@@ -141,7 +141,6 @@ pub(super) fn relocate(before: &Basis, current: &Value) -> Relocated {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
 
     /// A section whose body is `body`, with a claim for each `(quote,

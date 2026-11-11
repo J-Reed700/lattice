@@ -4,6 +4,7 @@
 
 // Common test utilities module (used by all tests)
 pub mod common;
+pub mod live_llama_cpp;
 pub mod sqlite;
 
 // Plugin smoke tests

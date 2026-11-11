@@ -12,6 +12,21 @@ async fn create_test_repository() -> (SettingsRepository, TempDir) {
     (repo, temp_dir)
 }
 
+async fn create_keyring_repository() -> (
+    SettingsRepository,
+    Arc<lattice_core::application::services::credentials::memory::InMemoryCredentials>,
+    TempDir,
+) {
+    let temp_dir = TempDir::new().unwrap();
+    let keyring = Arc::new(
+        lattice_core::application::services::credentials::memory::InMemoryCredentials::default(),
+    );
+    let repo = SettingsRepository::with_credentials(temp_dir.path().to_path_buf(), keyring.clone())
+        .await
+        .unwrap();
+    (repo, keyring, temp_dir)
+}
+
 #[tokio::test]
 async fn ollama_connection_registration_survives_provider_changes_and_reopening() {
     let (repo, dir) = create_test_repository().await;
@@ -119,11 +134,11 @@ async fn concurrent_updates_to_distinct_categories_do_not_lose_writes() {
 }
 
 #[tokio::test]
-async fn import_merges_and_restores_secrets_after_the_previous_writer_finishes() {
-    let (repo, _dir) = create_test_repository().await;
+async fn import_merges_and_keeps_stored_secrets_after_the_previous_writer_finishes() {
+    use lattice_core::application::services::credentials::CredentialKey;
+    let (repo, keyring, _dir) = create_keyring_repository().await;
     let mut imported = repo.get_all().await.unwrap();
     imported.llm.ollama_auth_header_name = "Authorization".into();
-    imported.llm.ollama_auth_header_value.clear();
     imported.search.max_results = 42;
 
     let held = repo.write_lock.lock().await;
@@ -132,7 +147,13 @@ async fn import_merges_and_restores_secrets_after_the_previous_writer_finishes()
     let mut current = repo.get_all().await.unwrap();
     current.vault.enabled = true;
     current.llm.ollama_auth_header_name = "Authorization".into();
-    current.llm.ollama_auth_header_value = "Bearer newly-rotated-token".into();
+    keyring
+        .set_api_key(
+            CredentialKey::OllamaAuthHeader.as_str(),
+            "Bearer newly-rotated-token",
+        )
+        .await
+        .unwrap();
     repo.persist(&current).await.unwrap();
     drop(held);
 
@@ -145,16 +166,14 @@ async fn import_merges_and_restores_secrets_after_the_previous_writer_finishes()
         !result.vault_just_enabled,
         "transition must use the state under the lock"
     );
-    assert_eq!(
-        result.settings.llm.ollama_auth_header_value,
-        "Bearer newly-rotated-token"
-    );
+    assert_eq!(result.settings.llm.ollama_auth_header_name, "Authorization");
     let saved = repo.get_all().await.unwrap();
     assert_eq!(saved.search.max_results, 42);
     assert!(saved.vault.enabled);
+    assert_eq!(saved.llm.ollama_auth_header_name, "Authorization");
     assert_eq!(
-        saved.llm.ollama_auth_header_value,
-        "Bearer newly-rotated-token"
+        keyring.stored(CredentialKey::OllamaAuthHeader.as_str()),
+        Some("Bearer newly-rotated-token".to_string())
     );
 }
 
@@ -349,13 +368,23 @@ async fn test_export_and_import() {
 }
 
 #[tokio::test]
-async fn export_leaves_out_auth_tokens_and_import_restores_them() {
-    let (repo, temp_dir) = create_test_repository().await;
+async fn export_leaves_out_auth_tokens_and_import_keeps_the_stored_ones() {
+    use lattice_core::application::services::credentials::CredentialKey;
+    let (repo, keyring, temp_dir) = create_keyring_repository().await;
     let mut settings = repo.get_all().await.unwrap();
     settings.llm.ollama_auth_header_name = "Authorization".to_string();
-    settings.llm.ollama_auth_header_value = "Bearer ollama-secret".to_string();
     settings.llm.llama_cpp.auth_header_name = "X-Api-Key".to_string();
-    settings.llm.llama_cpp.auth_header_value = "llama-secret".to_string();
+    keyring
+        .set_api_key(
+            CredentialKey::OllamaAuthHeader.as_str(),
+            "Bearer ollama-secret",
+        )
+        .await
+        .unwrap();
+    keyring
+        .set_api_key(CredentialKey::LlamaCppAuthHeader.as_str(), "llama-secret")
+        .await
+        .unwrap();
     repo.save_all(&settings).await.unwrap();
 
     let export_path = temp_dir.path().join("export.json");
@@ -370,11 +399,16 @@ async fn export_leaves_out_auth_tokens_and_import_restores_them() {
         .await
         .unwrap()
         .settings;
+    assert_eq!(imported.llm.ollama_auth_header_name, "Authorization");
+    assert_eq!(imported.llm.llama_cpp.auth_header_name, "X-Api-Key");
     assert_eq!(
-        imported.llm.ollama_auth_header_value,
-        "Bearer ollama-secret"
+        keyring.stored(CredentialKey::OllamaAuthHeader.as_str()),
+        Some("Bearer ollama-secret".to_string())
     );
-    assert_eq!(imported.llm.llama_cpp.auth_header_value, "llama-secret");
+    assert_eq!(
+        keyring.stored(CredentialKey::LlamaCppAuthHeader.as_str()),
+        Some("llama-secret".to_string())
+    );
 }
 
 #[test]
@@ -383,10 +417,9 @@ fn a_header_whose_token_is_not_here_is_dropped_on_import() {
     imported.llm.ollama_auth_header_name = "Authorization".to_string();
     let existing = SettingsDto::default();
 
-    restore_redacted_secrets(&mut imported, &existing);
+    drop_unbacked_header_names(&mut imported, &existing, false, false);
 
     assert!(imported.llm.ollama_auth_header_name.is_empty());
-    assert!(imported.llm.ollama_auth_header_value.is_empty());
 }
 
 #[tokio::test]
@@ -621,4 +654,219 @@ async fn version_two_rerank_candidates_default_migrates_to_the_pool() {
             expected
         );
     }
+}
+
+const LEGACY_OLLAMA_VALUE: &str = "Bearer legacy-ollama-secret";
+const LEGACY_LLAMA_VALUE: &str = "Basic legacy-llama-secret";
+
+/// A settings directory holding a file written before auth header values
+/// moved to the keyring.
+async fn legacy_settings_dir() -> TempDir {
+    let dir = TempDir::new().unwrap();
+    SettingsRepository::new(dir.path().to_path_buf())
+        .await
+        .unwrap();
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut file: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).await.unwrap()).unwrap();
+    let llm = &mut file["settings"]["llm"];
+    llm["ollamaAuthHeaderName"] = "Authorization".into();
+    llm["ollamaAuthHeaderValue"] = LEGACY_OLLAMA_VALUE.into();
+    llm["llamaCpp"]["authHeaderName"] = "Authorization".into();
+    llm["llamaCpp"]["authHeaderValue"] = LEGACY_LLAMA_VALUE.into();
+    fs::write(&path, serde_json::to_string_pretty(&file).unwrap())
+        .await
+        .unwrap();
+    dir
+}
+
+#[tokio::test]
+async fn a_legacy_auth_header_value_moves_to_the_keyring_and_leaves_the_file() {
+    use lattice_core::application::services::credentials::CredentialKey;
+    let dir = legacy_settings_dir().await;
+    let keyring = Arc::new(
+        lattice_core::application::services::credentials::memory::InMemoryCredentials::default(),
+    );
+
+    let repo = SettingsRepository::with_credentials(dir.path().to_path_buf(), keyring.clone())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        keyring.stored(CredentialKey::OllamaAuthHeader.as_str()),
+        Some(LEGACY_OLLAMA_VALUE.to_string())
+    );
+    assert_eq!(
+        keyring.stored(CredentialKey::LlamaCppAuthHeader.as_str()),
+        Some(LEGACY_LLAMA_VALUE.to_string())
+    );
+    let on_disk = fs::read_to_string(dir.path().join(SETTINGS_FILE_NAME))
+        .await
+        .unwrap();
+    assert!(!on_disk.contains("legacy-ollama-secret"), "{on_disk}");
+    assert!(!on_disk.contains("legacy-llama-secret"), "{on_disk}");
+    assert!(on_disk.contains("Authorization"), "names stay in the file");
+    assert_eq!(
+        repo.get_all().await.unwrap().llm.ollama_auth_header_name,
+        "Authorization"
+    );
+}
+
+#[tokio::test]
+async fn a_legacy_value_the_keyring_refuses_stays_for_the_next_start() {
+    use lattice_core::application::services::credentials::CredentialKey;
+    let dir = legacy_settings_dir().await;
+    let locked =
+        Arc::new(lattice_core::application::services::credentials::memory::InMemoryCredentials::refusing_writes());
+
+    let repo = SettingsRepository::with_credentials(dir.path().to_path_buf(), locked.clone())
+        .await
+        .unwrap();
+    // An unrelated save must not be the thing that loses the secret.
+    let mut settings = repo.get_all().await.unwrap();
+    settings.search.max_results = 33;
+    repo.save_all(&settings).await.unwrap();
+
+    assert_eq!(
+        locked.stored(CredentialKey::OllamaAuthHeader.as_str()),
+        None
+    );
+    let on_disk = fs::read_to_string(dir.path().join(SETTINGS_FILE_NAME))
+        .await
+        .unwrap();
+    assert!(on_disk.contains("legacy-ollama-secret"), "{on_disk}");
+    assert!(on_disk.contains("legacy-llama-secret"), "{on_disk}");
+
+    let keyring = Arc::new(
+        lattice_core::application::services::credentials::memory::InMemoryCredentials::default(),
+    );
+    SettingsRepository::with_credentials(dir.path().to_path_buf(), keyring.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        keyring.stored(CredentialKey::OllamaAuthHeader.as_str()),
+        Some(LEGACY_OLLAMA_VALUE.to_string())
+    );
+    let on_disk = fs::read_to_string(dir.path().join(SETTINGS_FILE_NAME))
+        .await
+        .unwrap();
+    assert!(!on_disk.contains("legacy-ollama-secret"), "{on_disk}");
+}
+
+#[tokio::test]
+async fn the_legacy_value_in_use_replaces_an_older_one_in_the_keyring() {
+    use lattice_core::application::services::credentials::CredentialKey;
+    let dir = legacy_settings_dir().await;
+    let keyring = Arc::new(
+        lattice_core::application::services::credentials::memory::InMemoryCredentials::default(),
+    );
+    keyring
+        .set_api_key(CredentialKey::OllamaAuthHeader.as_str(), "Bearer older")
+        .await
+        .unwrap();
+
+    SettingsRepository::with_credentials(dir.path().to_path_buf(), keyring.clone())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        keyring.stored(CredentialKey::OllamaAuthHeader.as_str()),
+        Some(LEGACY_OLLAMA_VALUE.to_string())
+    );
+}
+
+type Keyring = lattice_core::application::services::credentials::memory::InMemoryCredentials;
+
+/// A keyring whose first write fails, as one that was locked at startup.
+struct FirstWriteFails {
+    inner: Keyring,
+    failed: std::sync::atomic::AtomicBool,
+}
+
+impl FirstWriteFails {
+    fn new() -> Self {
+        Self {
+            inner: Keyring::default(),
+            failed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+}
+
+#[async_trait]
+impl CredentialsPort for FirstWriteFails {
+    async fn set_api_key(&self, service: &str, key: &str) -> Result<()> {
+        if !self.failed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return Err(AppError::Security("keyring locked".into()));
+        }
+        self.inner.set_api_key(service, key).await
+    }
+    async fn get_api_key(&self, service: &str) -> Result<Option<String>> {
+        self.inner.get_api_key(service).await
+    }
+    async fn delete_api_key(&self, service: &str) -> Result<()> {
+        self.inner.delete_api_key(service).await
+    }
+    async fn has_api_key(&self, service: &str) -> Result<bool> {
+        self.inner.has_api_key(service).await
+    }
+    async fn clear_all_credentials(&self) -> Result<()> {
+        self.inner.clear_all_credentials().await
+    }
+    async fn set_custom_endpoint(&self, endpoint: &str) -> Result<()> {
+        self.inner.set_custom_endpoint(endpoint).await
+    }
+    async fn get_custom_endpoint(&self) -> Result<Option<String>> {
+        self.inner.get_custom_endpoint().await
+    }
+}
+
+/// Opens a legacy settings directory whose migration fails, stores
+/// `value` for llama.cpp, then opens it again on the same keyring.
+async fn store_after_a_failed_migration(value: Option<&str>) -> (TempDir, Arc<FirstWriteFails>) {
+    let dir = legacy_settings_dir().await;
+    let keyring = Arc::new(FirstWriteFails::new());
+    let repo = SettingsRepository::with_credentials(dir.path().to_path_buf(), keyring.clone())
+        .await
+        .unwrap();
+    repo.store_header_value(RemoteServer::LlamaCpp, value)
+        .await
+        .unwrap();
+    SettingsRepository::with_credentials(dir.path().to_path_buf(), keyring.clone())
+        .await
+        .unwrap();
+    (dir, keyring)
+}
+
+#[tokio::test]
+async fn a_value_saved_after_a_failed_migration_survives_the_next_start() {
+    use lattice_core::application::services::credentials::CredentialKey;
+    let (dir, keyring) = store_after_a_failed_migration(Some("new-value")).await;
+
+    assert_eq!(
+        keyring
+            .inner
+            .stored(CredentialKey::LlamaCppAuthHeader.as_str()),
+        Some("new-value".to_string())
+    );
+    let on_disk = fs::read_to_string(dir.path().join(SETTINGS_FILE_NAME))
+        .await
+        .unwrap();
+    assert!(!on_disk.contains("legacy-llama-secret"), "{on_disk}");
+}
+
+#[tokio::test]
+async fn a_value_cleared_after_a_failed_migration_stays_cleared_at_the_next_start() {
+    use lattice_core::application::services::credentials::CredentialKey;
+    let (dir, keyring) = store_after_a_failed_migration(None).await;
+
+    assert_eq!(
+        keyring
+            .inner
+            .stored(CredentialKey::LlamaCppAuthHeader.as_str()),
+        None
+    );
+    let on_disk = fs::read_to_string(dir.path().join(SETTINGS_FILE_NAME))
+        .await
+        .unwrap();
+    assert!(!on_disk.contains("legacy-llama-secret"), "{on_disk}");
 }

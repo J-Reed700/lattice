@@ -47,10 +47,7 @@ pub(super) async fn search_fast_impl(
             return ApiResult::error_with_details(
                 ErrorCode::ModelNotLoaded,
                 "Failed to load embedding model",
-                format!(
-                    "{}. Download models from Settings → Models to enable search.",
-                    e
-                ),
+                e.to_string(),
             );
         }
     };
@@ -174,10 +171,7 @@ pub async fn hybrid_search_impl(
         return ApiResult::error_with_details(
             ErrorCode::ModelNotLoaded,
             "Failed to load embedding model",
-            format!(
-                "{}. Download models from Settings → Models to enable search.",
-                e
-            ),
+            e.to_string(),
         );
     }
 
@@ -289,11 +283,7 @@ pub async fn search_documents_impl(
 
     container.metrics().record_cache_miss();
 
-    let embedding_service = container.get_or_load_embedding().await.map_err(|e| {
-        AppError::AiModelsNotInstalled(
-            format!("Failed to load embedding model: {}. Download models from Settings → Models to enable search.", e)
-        )
-    })?;
+    let embedding_service = container.get_or_load_embedding().await?;
 
     let enrichment_service = container.search_enrichment_service();
 
@@ -365,11 +355,7 @@ pub async fn find_similar_impl(
         .get(&chunk_id)
         .ok_or_else(|| AppError::NotFound(format!("Chunk not found: {}", chunk_id)))?;
 
-    let embedding_service = container.get_or_load_embedding().await.map_err(|e| {
-        AppError::AiModelsNotInstalled(
-            format!("Failed to load embedding model: {}. Download models from Settings → Models to enable search.", e)
-        )
-    })?;
+    let embedding_service = container.get_or_load_embedding().await?;
     let doc_embedding = embedding_service.embed_single(&doc_content.snippet).await?;
 
     let search_service = container.search_service();

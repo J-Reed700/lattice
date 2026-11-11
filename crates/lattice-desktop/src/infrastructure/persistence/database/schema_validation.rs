@@ -275,7 +275,6 @@ mod tests {
         #[derive(sqlx::FromRow)]
         struct ForeignKey {
             table: String,
-            #[allow(dead_code)]
             _from: String,
             to: String,
         }

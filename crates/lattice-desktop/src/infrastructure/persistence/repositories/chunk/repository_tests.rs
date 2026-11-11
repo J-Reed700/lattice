@@ -213,7 +213,7 @@ async fn chunk_batch_writes_are_bounded_and_late_batch_failure_rolls_back() {
     );
     assert_eq!(
         repo.count_by_document(owner.as_str()).await.unwrap(),
-        2 * CHUNK_ROWS_PER_INSERT as i64 + 1
+        2 * CHUNK_ROWS_PER_INSERT + 1
     );
 
     let other = document(&pool, "indexed").await;

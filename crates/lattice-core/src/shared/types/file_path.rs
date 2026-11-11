@@ -1,4 +1,5 @@
 use super::DomainTypeError;
+use crate::shared::path_safety::reject_parent_components;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -22,16 +23,8 @@ impl ValidatedFilePath {
             return Err(DomainTypeError::EmptyValue);
         }
 
-        // Check for path traversal attacks (CWE-22)
-        // Only reject ".." as a path component, not in file/directory names
-        for component in path.components() {
-            if let std::path::Component::ParentDir = component {
-                return Err(DomainTypeError::InvalidId(
-                    "Path contains parent directory reference '..' which is not allowed"
-                        .to_string(),
-                ));
-            }
-        }
+        reject_parent_components(&path)
+            .map_err(|reason| DomainTypeError::InvalidId(format!("Path {reason}")))?;
 
         Ok(Self(path))
     }

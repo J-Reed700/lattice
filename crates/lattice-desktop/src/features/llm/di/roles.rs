@@ -31,7 +31,7 @@ use crate::features::llm::instances::{
     Acquire, Acquired, GpuBudget, Holder, LaunchProfile, LearningShortfall, LlmInstances, ModelKey,
     Tuning,
 };
-use crate::features::llm::loading::{cloud_key_saved, launch_profile_for, LocalModel, ModelLoader};
+use crate::features::llm::loading::{launch_profile_for, LocalModel, ModelLoader};
 
 /// What a turn or job asks a model for.
 pub(crate) struct ModelRequest {
@@ -126,7 +126,13 @@ impl RoleModels {
                 Some(resolved)
             }
             ModelSelection::Verifier => {
-                let resolved = resolve_verifier(&settings, cloud_key_saved).map_err(|error| {
+                let key_saved = match &settings.verifier_model {
+                    Some(ModelRef::Cloud { provider, .. }) => {
+                        self.loader.cloud_key_saved(*provider).await
+                    }
+                    _ => Ok(false),
+                };
+                let resolved = resolve_verifier(&settings, |_| key_saved).map_err(|error| {
                     refusal::refused(request.role, None, "verifier_unavailable", error)
                 })?;
                 Some(resolved)

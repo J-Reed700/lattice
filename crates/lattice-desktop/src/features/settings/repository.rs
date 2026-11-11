@@ -19,15 +19,20 @@ use crate::features::settings::dto::{
     MIN_LLM_STALL_TIMEOUT_SECONDS,
 };
 use async_trait::async_trait;
+use lattice_core::application::ports::credentials_port::CredentialsPort;
+use lattice_core::application::ports::llm_port::RemoteServer;
 use lattice_core::application::ports::settings_port::SettingsImportOutcome;
 use lattice_core::application::ports::{merge_json_update, SettingsRepositoryPort};
+use lattice_core::application::services::credentials::CredentialKey;
 use lattice_core::shared::error::{AppError, Result};
 use serde_json;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::fs;
 
 mod file_store;
+use file_store::legacy_secrets;
 
 /// File name for settings storage.
 const SETTINGS_FILE_NAME: &str = "settings.json";
@@ -98,6 +103,9 @@ pub struct SettingsRepository {
     /// behind an `Arc`, so a single mutex here is enough to make the whole
     /// cycle atomic.
     write_lock: tokio::sync::Mutex<()>,
+    /// Where auth header values are kept; the only place they live. Without
+    /// one, the repository neither moves nor checks them.
+    credentials: Option<Arc<dyn CredentialsPort>>,
 }
 
 impl SettingsRepository {
@@ -110,6 +118,31 @@ impl SettingsRepository {
     /// - Cannot read or write settings file
     /// - Settings file is corrupted
     pub async fn new(app_data_dir: PathBuf) -> Result<Self> {
+        Self::open(app_data_dir, None).await
+    }
+
+    /// A repository that keeps auth header values in `credentials`, moving any
+    /// a settings file written before that still holds. The file is left
+    /// untouched until the keyring has accepted every value, and the move is
+    /// retried at every start until then.
+    pub async fn with_credentials(
+        app_data_dir: PathBuf,
+        credentials: Arc<dyn CredentialsPort>,
+    ) -> Result<Self> {
+        let repository = Self::open(app_data_dir, Some(credentials)).await?;
+        if let Err(error) = repository.migrate_legacy_secrets().await {
+            tracing::warn!(
+                error_code = error.error_code(),
+                "Could not move auth header values to the keyring; the settings file keeps them and the move is retried at the next start"
+            );
+        }
+        Ok(repository)
+    }
+
+    async fn open(
+        app_data_dir: PathBuf,
+        credentials: Option<Arc<dyn CredentialsPort>>,
+    ) -> Result<Self> {
         // repository-barrier-allow: this repository's resource is the settings file and its containing directory.
         // Ensure app data directory exists
         if !app_data_dir.exists() {
@@ -123,6 +156,7 @@ impl SettingsRepository {
         let repository = Self {
             settings_path,
             write_lock: tokio::sync::Mutex::new(()),
+            credentials,
         };
 
         // repository-barrier-allow: the settings repository owns existence of its file resource.
@@ -138,6 +172,12 @@ impl SettingsRepository {
 
     /// Validate and atomically replace the file. The caller holds `write_lock`.
     async fn persist(&self, settings: &SettingsDto) -> Result<()> {
+        self.persist_with(settings, true).await
+    }
+
+    /// As [`Self::persist`]; `carry_legacy` keeps a plaintext header value a
+    /// failed migration left in the file (see `write_settings_file`).
+    async fn persist_with(&self, settings: &SettingsDto, carry_legacy: bool) -> Result<()> {
         let validation = settings.validate();
         if validation.has_errors() {
             return Err(AppError::ValidationFailed(format!(
@@ -151,7 +191,111 @@ impl SettingsRepository {
             settings: settings.clone(),
         };
 
-        self.write_settings_file(&settings_file).await
+        if carry_legacy {
+            self.write_settings_file(&settings_file).await
+        } else {
+            self.write_settings_file_without_legacy(&settings_file)
+                .await
+        }
+    }
+
+    /// Move the auth header values a settings file written before they lived
+    /// in the keyring still holds. They are read from the raw file, since the
+    /// settings types no longer have a field for them. Only after the keyring
+    /// holds every one is the file rewritten without them.
+    async fn migrate_legacy_secrets(&self) -> Result<()> {
+        let _guard = self.write_lock.lock().await;
+        self.migrate_legacy_secrets_locked().await
+    }
+
+    /// As [`Self::migrate_legacy_secrets`]; the caller holds `write_lock`.
+    async fn migrate_legacy_secrets_locked(&self) -> Result<()> {
+        let Some(credentials) = &self.credentials else {
+            return Ok(());
+        };
+        let Some(raw) = self.read_raw_settings().await else {
+            return Ok(());
+        };
+        let legacy = legacy_secrets(&raw);
+        if legacy.is_empty() {
+            return Ok(());
+        }
+        for (server, _, secret) in &legacy {
+            credentials
+                .set_api_key(CredentialKey::for_server(*server).as_str(), secret)
+                .await?;
+        }
+        let settings_file = self.read_settings_file().await?;
+        self.write_settings_file_without_legacy(&settings_file)
+            .await
+    }
+
+    /// Refuse a header name saved with no value behind it in the keyring.
+    /// Names `updates` leaves alone are not checked, so a keyring that lost a
+    /// value does not stop unrelated settings from saving.
+    async fn require_header_values(
+        &self,
+        llm: &crate::features::settings::dto::LLMSettingsDto,
+        updates: &HashMap<String, serde_json::Value>,
+    ) -> Result<()> {
+        let Some(credentials) = &self.credentials else {
+            return Ok(());
+        };
+        let ollama_edited = updates.contains_key("ollamaAuthHeaderName");
+        let llama_edited = updates
+            .get("llamaCpp")
+            .is_some_and(|connection| connection.get("authHeaderName").is_some());
+        for (edited, server, name) in [
+            (
+                ollama_edited,
+                RemoteServer::Ollama,
+                &llm.ollama_auth_header_name,
+            ),
+            (
+                llama_edited,
+                RemoteServer::LlamaCpp,
+                &llm.llama_cpp.auth_header_name,
+            ),
+        ] {
+            if edited
+                && !name.trim().is_empty()
+                && !credentials
+                    .has_api_key(CredentialKey::for_server(server).as_str())
+                    .await?
+            {
+                return Err(AppError::ValidationFailed(
+                    "Set both authentication header fields, or clear both".to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Delete the stored auth header values.
+    async fn forget_header_secrets(&self) {
+        let Some(credentials) = &self.credentials else {
+            return;
+        };
+        for key in [
+            CredentialKey::OllamaAuthHeader,
+            CredentialKey::LlamaCppAuthHeader,
+        ] {
+            if let Err(error) = credentials.delete_api_key(key.as_str()).await {
+                tracing::warn!(credential = key.as_str(), %error, "Could not delete a stored auth header value");
+            }
+        }
+    }
+
+    /// Whether the keyring holds a value for `server`.
+    async fn header_value_stored(&self, server: RemoteServer) -> Result<bool> {
+        match &self.credentials {
+            Some(credentials) => {
+                credentials
+                    .has_api_key(CredentialKey::for_server(server).as_str())
+                    .await
+            }
+            None => Ok(false),
+        }
     }
 
     async fn import_settings(
@@ -166,7 +310,9 @@ impl SettingsRepository {
         let _guard = self.write_lock.lock().await;
         let existing = self.get_all().await?;
         let previous_vault_enabled = existing.vault.enabled;
-        restore_redacted_secrets(&mut imported_settings, &existing);
+        let ollama_held = self.header_value_stored(RemoteServer::Ollama).await?;
+        let llama_held = self.header_value_stored(RemoteServer::LlamaCpp).await?;
+        drop_unbacked_header_names(&mut imported_settings, &existing, ollama_held, llama_held);
 
         let validation = imported_settings.validate();
         if validation.has_errors() {
@@ -294,20 +440,16 @@ impl SettingsRepositoryPort for SettingsRepository {
                     SettingsCategory::Llm => {
                         let previously_selected = settings.llm.provider == LLMProvider::Ollama;
                         settings.llm = serde_json::from_value(merged)?;
+                        self.require_header_values(&settings.llm, &updates).await?;
                         // Keep an explicitly configured connection discoverable after
                         // switching providers. The shared `model` field also stores
                         // cloud model names, so it cannot establish this on its own.
                         if !updates.contains_key("ollamaConfigured")
                             && (previously_selected
                                 || settings.llm.provider == LLMProvider::Ollama
-                                || [
-                                    "ollamaUrl",
-                                    "ollamaUtilityModel",
-                                    "ollamaAuthHeaderName",
-                                    "ollamaAuthHeaderValue",
-                                ]
-                                .iter()
-                                .any(|key| updates.contains_key(*key)))
+                                || ["ollamaUrl", "ollamaUtilityModel", "ollamaAuthHeaderName"]
+                                    .iter()
+                                    .any(|key| updates.contains_key(*key)))
                         {
                             settings.llm.ollama_configured = true;
                         }
@@ -365,6 +507,11 @@ impl SettingsRepositoryPort for SettingsRepository {
 
         let mut settings = self.get_all().await?;
 
+        let deletes_secrets = matches!(category, None | Some(SettingsCategory::Llm));
+        if deletes_secrets {
+            self.forget_header_secrets().await;
+        }
+
         match category {
             Some(cat) => match cat {
                 SettingsCategory::Indexing => settings.indexing = Default::default(),
@@ -383,19 +530,13 @@ impl SettingsRepositoryPort for SettingsRepository {
             }
         }
 
-        self.persist(&settings).await?;
+        self.persist_with(&settings, !deletes_secrets).await?;
 
         Ok(settings)
     }
 
     async fn export(&self, path: &str) -> Result<()> {
-        let mut settings = self.get_all().await?;
-        // The remote servers' auth headers are bearer tokens. An export is a
-        // file the user moves around and shares; it carries the header names
-        // and the import puts back this machine's tokens (see
-        // `restore_redacted_secrets`).
-        settings.llm.ollama_auth_header_value.clear();
-        settings.llm.llama_cpp.auth_header_value.clear();
+        let settings = self.get_all().await?;
 
         let json = serde_json::to_string_pretty(&settings)
             .map_err(|e| AppError::Serialization(format!("Failed to serialize settings: {}", e)))?;
@@ -418,35 +559,49 @@ impl SettingsRepositoryPort for SettingsRepository {
 
         self.import_settings(imported_settings, merge).await
     }
+
+    async fn store_header_value(&self, server: RemoteServer, value: Option<&str>) -> Result<()> {
+        let Some(credentials) = &self.credentials else {
+            return Err(AppError::InvalidState(
+                "No credential store to save the authentication header value in".into(),
+            ));
+        };
+        let _guard = self.write_lock.lock().await;
+        self.migrate_legacy_secrets_locked().await?;
+        let key = CredentialKey::for_server(server);
+        match value.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(value) => credentials.set_api_key(key.as_str(), value).await,
+            None => credentials.delete_api_key(key.as_str()).await,
+        }
+    }
 }
 
-/// Put this machine's auth tokens back into an imported export, which never
-/// carries them. A header whose token is not here (another machine, or a
-/// different header) loses its name too: a name without a token is refused by
-/// validation and useless to a request, and the user re-enters both.
-fn restore_redacted_secrets(imported: &mut SettingsDto, existing: &SettingsDto) {
-    fn restore(name: &mut String, value: &mut String, existing_name: &str, existing_value: &str) {
-        if !value.trim().is_empty() || name.trim().is_empty() {
-            return;
-        }
-        if name.trim() == existing_name.trim() && !existing_value.trim().is_empty() {
-            *value = existing_value.to_string();
-        } else {
+/// Keep an imported header name only when this machine holds a value for that
+/// very header, since an export never carries values. A header whose value is
+/// not here (another machine, or a different header) loses its name too: a
+/// name without a value is refused by a connection, and the user re-enters
+/// both.
+fn drop_unbacked_header_names(
+    imported: &mut SettingsDto,
+    existing: &SettingsDto,
+    ollama_held: bool,
+    llama_held: bool,
+) {
+    fn keep(name: &mut String, existing_name: &str, held: bool) {
+        if !name.trim().is_empty() && !(held && name.trim() == existing_name.trim()) {
             name.clear();
         }
     }
     let llm = &mut imported.llm;
-    restore(
+    keep(
         &mut llm.ollama_auth_header_name,
-        &mut llm.ollama_auth_header_value,
         &existing.llm.ollama_auth_header_name,
-        &existing.llm.ollama_auth_header_value,
+        ollama_held,
     );
-    restore(
+    keep(
         &mut llm.llama_cpp.auth_header_name,
-        &mut llm.llama_cpp.auth_header_value,
         &existing.llm.llama_cpp.auth_header_name,
-        &existing.llm.llama_cpp.auth_header_value,
+        llama_held,
     );
 }
 

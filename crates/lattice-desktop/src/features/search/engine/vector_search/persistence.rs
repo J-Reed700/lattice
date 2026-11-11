@@ -368,7 +368,6 @@ impl IndexPersistence {
 }
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 #[path = "persistence_tests.rs"]
 mod tests;
 

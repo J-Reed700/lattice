@@ -209,7 +209,6 @@ pub enum DimensionCheck {
 }
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
     use super::*;
     use crate::vector_index::compression::VectorQuantization;

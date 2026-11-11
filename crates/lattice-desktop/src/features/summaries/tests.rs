@@ -6,7 +6,6 @@
 //! are the two places a summary can be written and then not found again.
 
 #![cfg(test)]
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use std::collections::HashSet;
 use std::sync::Arc;
