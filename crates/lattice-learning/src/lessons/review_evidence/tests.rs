@@ -25,14 +25,7 @@ fn first(
     issues: &[ReviewFinding],
     evidence: &HashMap<String, EvidenceKind>,
 ) -> Result<Vec<ReviewFinding>> {
-    accepted(
-        raw,
-        issues,
-        Beside::NONE,
-        evidence,
-        false,
-        &mut HashMap::new(),
-    )
+    accepted(raw, issues, &[], evidence, false, &mut HashMap::new())
 }
 
 fn placed(findings: Vec<ReviewFinding>) -> Vec<(String, Option<FindingSite>)> {
@@ -61,7 +54,7 @@ async fn every_matching_reference_is_offered_while_the_window_has_room() -> Resu
     check(
         &model,
         &issues,
-        Beside::NONE,
+        &[],
         &json!({}),
         &json!({"blocks":[],"questions":[]}),
         &references,
@@ -96,7 +89,7 @@ async fn a_malformed_actionable_finding_is_asked_for_once_more() -> Result<()> {
             check(
                 &model,
                 &issues,
-                Beside::NONE,
+                &[],
                 &json!({"deliverable":"Record the resulting state."}),
                 &json!({"blocks":[{"body":"Read the instructions."}],"questions":[]}),
                 &sources,
@@ -142,7 +135,7 @@ async fn a_decision_broken_again_leaves_its_finding_not_established() -> Result<
     let established = check(
         &model,
         &issues,
-        Beside::NONE,
+        &[],
         &json!({"deliverable":"Record the resulting state."}),
         &json!({"blocks":[{"body":"Read the instructions."}],"questions":[]}),
         &sources,
@@ -173,7 +166,7 @@ async fn established_from(
     let established = check(
         &model,
         issues,
-        Beside::NONE,
+        &[],
         &json!({"deliverable":"Record the resulting state."}),
         &json!({"blocks":[{"body":"Read the instructions."}],"questions":[]}),
         &sources,
@@ -523,7 +516,7 @@ async fn each_candidate_part_is_offered_with_the_label_the_user_sees() -> Result
     check(
         &model,
         &proposal("Section 2 of the lesson is wrong."),
-        Beside::NONE,
+        &[],
         &json!({}),
         &json!({"blocks":[{"body":"one"},{"body":"two"}],"questions":[{"prompt":"ask"}]}),
         &sources,
@@ -550,12 +543,7 @@ async fn each_candidate_part_is_offered_with_the_label_the_user_sees() -> Result
     Ok(())
 }
 
-const LEFT_TO_SENTENCE: &str = " otherChecks lists the checks that have already read this whole candidate, each with what it decides. recordedFindings, when given, are the defects those checks recorded and will see corrected. For every proposal give in leftTo the id of the recorded finding that describes the same defect; when no recorded finding does, the id of the check that decides what the proposal is about; and none when no check decides it. What another check decides is not corrected from a review finding, whether that check recorded the defect or found none: return not_established for every proposal whose leftTo is not none.";
-
-const DECIDES: [&str; 2] = [
-    "whether the kettle is full; whether the lid is shut",
-    "whether the rope is tied",
-];
+const RECORDED_SENTENCE: &str = " recordedFindings are defects that other checks have already recorded in this candidate and will see corrected. For every proposal give in recordedAs the id of the recorded finding that describes the same defect, or none when no recorded finding does. A proposal that only says again what a recorded finding says needs no second correction: return not_established for it.";
 
 fn recorded_findings() -> Vec<ReviewFinding> {
     vec![
@@ -575,12 +563,12 @@ fn recorded_findings() -> Vec<ReviewFinding> {
     ]
 }
 
-fn gate_decision(verdict: &str, left_to: &str) -> String {
+fn gate_decision(verdict: &str, recorded_as: &str) -> String {
     let grounded = verdict == "actionable";
     json!({"decisions":[{"issueId":"issue-0","verdict":verdict,"basis":"internal_conflict",
         "evidenceIds":if grounded { json!(["blocks-0"]) } else { json!([]) },
         "requirementId":null,"partId":if grounded { "blocks-0" } else { "lesson" },
-        "leftTo":left_to,"reason":"The candidate contradicts itself."}]})
+        "recordedAs":recorded_as,"reason":"The candidate contradicts itself."}]})
     .to_string()
 }
 
@@ -627,11 +615,11 @@ impl LLMPort for Seen {
     }
 }
 
-/// The gate asked about one proposal while `beside` stand, answering
+/// The gate asked about one proposal while `recorded` stand, answering
 /// `outputs`: what it sent and the findings it established.
-async fn gate_beside(
+async fn gate_with(
     outputs: Vec<String>,
-    beside: Beside<'_>,
+    recorded: &[ReviewFinding],
 ) -> Result<(Vec<Sent>, Vec<ReviewFinding>)> {
     use crate::dto::LearningSourceDto;
     use crate::lessons::course_generation_tests::ScriptedModel;
@@ -653,7 +641,7 @@ async fn gate_beside(
     let established = check(
         &model,
         &proposal("The kettle is described twice."),
-        beside,
+        recorded,
         &json!({}),
         &json!({"blocks":[{"title":"Part"}],"questions":[]}),
         &references,
@@ -663,51 +651,13 @@ async fn gate_beside(
     Ok((model.sent.into_inner().unwrap(), established))
 }
 
-/// The gate asked while `recorded` stand and no other check is listed.
-async fn gate_with(
-    outputs: Vec<String>,
-    recorded: &[ReviewFinding],
-) -> Result<(Vec<Sent>, Vec<ReviewFinding>)> {
-    gate_beside(
-        outputs,
-        Beside {
-            decides: &[],
-            recorded,
-        },
-    )
-    .await
-}
-
-/// The gate asked while two other checks have read the candidate.
-async fn gate_checks(
-    outputs: Vec<String>,
-    recorded: &[ReviewFinding],
-) -> Result<(Vec<Sent>, Vec<ReviewFinding>)> {
-    gate_beside(
-        outputs,
-        Beside {
-            decides: &DECIDES,
-            recorded,
-        },
-    )
-    .await
-}
-
 #[tokio::test]
-async fn the_gate_is_shown_the_checks_and_the_recorded_findings_and_asked_where_each_is_left(
-) -> Result<()> {
-    let (sent, _) = gate_checks(
+async fn the_gate_is_shown_the_recorded_findings_and_asked_to_name_one() -> Result<()> {
+    let (sent, _) = gate_with(
         vec![gate_decision("not_established", "none")],
         &recorded_findings(),
     )
     .await?;
-    assert_eq!(
-        sent[0].user["otherChecks"],
-        json!([
-            {"id":"check-0","decides":DECIDES[0]},
-            {"id":"check-1","decides":DECIDES[1]}
-        ])
-    );
     assert_eq!(
         sent[0].user["recordedFindings"],
         json!([
@@ -715,68 +665,23 @@ async fn the_gate_is_shown_the_checks_and_the_recorded_findings_and_asked_where_
             {"id":"recorded-1","part":"Question 2","defect":"The second recorded defect."}
         ])
     );
-    assert_eq!(sent[0].system, format!("{SYSTEM}{LEFT_TO_SENTENCE}"));
+    assert_eq!(sent[0].system, format!("{SYSTEM}{RECORDED_SENTENCE}"));
     let decision = &sent[0].schema["properties"]["decisions"]["items"];
     assert!(decision["required"]
         .as_array()
         .unwrap()
-        .contains(&json!("leftTo")));
+        .contains(&json!("recordedAs")));
     assert_eq!(
-        decision["properties"]["leftTo"]["enum"],
-        json!(["recorded-0", "recorded-1", "check-0", "check-1", "none"])
-    );
-    assert!(decision["properties"].get("recordedAs").is_none());
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_gate_is_shown_the_recorded_findings_alone_as_before() -> Result<()> {
-    let (sent, _) = gate_with(
-        vec![gate_decision("not_established", "none")],
-        &recorded_findings(),
-    )
-    .await?;
-    assert!(sent[0].user.get("otherChecks").is_none());
-    assert_eq!(
-        sent[0].user["recordedFindings"].as_array().map(Vec::len),
-        Some(2)
-    );
-    assert_eq!(sent[0].system, format!("{SYSTEM}{LEFT_TO_SENTENCE}"));
-    let decision = &sent[0].schema["properties"]["decisions"]["items"];
-    assert_eq!(
-        decision["properties"]["leftTo"]["enum"],
+        decision["properties"]["recordedAs"]["enum"],
         json!(["recorded-0", "recorded-1", "none"])
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn with_checks_and_no_recorded_findings_only_the_checks_are_offered() -> Result<()> {
-    let (sent, _) = gate_checks(vec![gate_decision("not_established", "none")], &[]).await?;
-    assert_eq!(
-        sent[0].user["otherChecks"].as_array().map(Vec::len),
-        Some(2)
-    );
+async fn without_recorded_findings_nothing_about_them_is_asked() -> Result<()> {
+    let (sent, _) = gate_with(vec![gate_decision("not_established", "none")], &[]).await?;
     assert!(sent[0].user.get("recordedFindings").is_none());
-    assert_eq!(sent[0].system, format!("{SYSTEM}{LEFT_TO_SENTENCE}"));
-    let decision = &sent[0].schema["properties"]["decisions"]["items"];
-    assert!(decision["required"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("leftTo")));
-    assert_eq!(
-        decision["properties"]["leftTo"]["enum"],
-        json!(["check-0", "check-1", "none"])
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn beside_nothing_nothing_about_other_checks_is_asked() -> Result<()> {
-    let (sent, _) =
-        gate_beside(vec![gate_decision("not_established", "none")], Beside::NONE).await?;
-    assert!(sent[0].user.get("recordedFindings").is_none());
-    assert!(sent[0].user.get("otherChecks").is_none());
     assert_eq!(sent[0].system, SYSTEM);
     let decision = &sent[0].schema["properties"]["decisions"]["items"];
     assert_eq!(
@@ -791,7 +696,6 @@ async fn beside_nothing_nothing_about_other_checks_is_asked() -> Result<()> {
             "partId"
         ])
     );
-    assert!(decision["properties"].get("leftTo").is_none());
     assert!(decision["properties"].get("recordedAs").is_none());
     Ok(())
 }
@@ -810,8 +714,8 @@ async fn a_proposal_naming_a_recorded_finding_is_not_established_and_not_asked_a
 }
 
 #[tokio::test]
-async fn a_proposal_naming_no_check_is_established_as_before() -> Result<()> {
-    let (_, established) = gate_checks(
+async fn a_proposal_naming_no_recorded_finding_is_established_as_before() -> Result<()> {
+    let (_, established) = gate_with(
         vec![gate_decision("actionable", "none")],
         &recorded_findings(),
     )
@@ -833,42 +737,17 @@ async fn a_not_established_proposal_naming_a_recorded_finding_stays_so() -> Resu
 }
 
 #[tokio::test]
-async fn an_actionable_proposal_left_to_a_check_is_not_established_and_not_asked_again(
-) -> Result<()> {
-    let (sent, established) =
-        gate_checks(vec![gate_decision("actionable", "check-1")], &[]).await?;
-    assert!(established.is_empty());
-    assert_eq!(sent.len(), 1);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_proposal_left_to_a_check_needs_none_of_the_evidence_rules() -> Result<()> {
-    // Actionable with no evidence and no part would break the protocol otherwise.
-    let bare =
-        json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"external_fact",
-        "evidenceIds":[],"requirementId":null,"partId":"lesson","leftTo":"check-0",
-        "reason":"The kettle is described twice."}]})
-        .to_string();
-    let (sent, established) = gate_checks(vec![bare], &[]).await?;
-    assert!(established.is_empty());
-    assert_eq!(sent.len(), 1);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_decision_naming_an_id_that_was_not_offered_is_asked_for_again() -> Result<()> {
-    for unknown in ["recorded-7", "check-9"] {
-        let (sent, established) = gate_checks(
-            vec![
-                gate_decision("actionable", unknown),
-                gate_decision("actionable", "none"),
-            ],
-            &recorded_findings(),
-        )
-        .await?;
-        assert_eq!(sent.len(), 2, "{unknown}");
-        assert_eq!(established.len(), 1, "{unknown}");
-    }
+async fn a_decision_naming_a_recorded_finding_that_was_not_offered_is_asked_for_again() -> Result<()>
+{
+    let (sent, established) = gate_with(
+        vec![
+            gate_decision("actionable", "recorded-7"),
+            gate_decision("actionable", "none"),
+        ],
+        &recorded_findings(),
+    )
+    .await?;
+    assert_eq!(sent.len(), 2);
+    assert_eq!(established.len(), 1);
     Ok(())
 }

@@ -266,16 +266,3 @@ fn the_lessons_priority_and_evidence_scope_leave_facts_to_the_checks_that_own_th
         crate::lessons::teaching::LESSON_REVIEW_EVIDENCE_SCOPE.contains("do not report it here")
     );
 }
-
-#[test]
-fn every_phrase_a_check_decides_is_among_what_the_reviewer_is_told_others_own() {
-    for decides in [
-        crate::question_review::DECIDES,
-        crate::lessons::teaching::contract::DECIDES,
-        crate::lessons::teaching::RULES_DECIDE,
-    ] {
-        for phrase in decides.split("; ") {
-            assert!(LESSON_REVIEW_SYSTEM.contains(phrase), "{phrase}");
-        }
-    }
-}
