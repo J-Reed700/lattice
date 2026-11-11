@@ -3,19 +3,17 @@
 #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 
 use crate::lab_runtime::LearningLabFile;
-use crate::practice::coding::dto::{
-    CaseViewDto, CodingRunScope, PracticeCheckDto, PracticeSessionDto,
-};
 use crate::practice::coding::golden_support::{assert_golden, rich_session, Golden};
-use crate::practice::coding::observation::test_support::{problem, session};
+use crate::practice::coding::observation::test_support::{problem, session, ObservedSession};
 use crate::practice::coding::problem::{
     CaseCompare, CaseResult as RunResult, CaseStatus as RunStatus, CaseVisibility as RunVisibility,
     Problem, ProblemCase,
 };
 use crate::practice::coding::proof::fakes::{Behaviour, FakeRunner};
-use crate::practice::coding::session::{case_is_open, cut_case};
 use crate::practice::kinds::program::diff::ProgramDiff;
+use crate::practice::kinds::program::dto::{CaseViewDto, CodingRunScope, ProgramRunDto};
 use crate::practice::kinds::program::kind;
+use crate::practice::kinds::program::screen::{case_is_open, cut_case};
 use crate::practice::kinds::program::shape::{
     brief_of, case_of, piece_of, result_of, run_detail_of,
 };
@@ -86,7 +84,7 @@ fn case_view_of(view: &CaseViewDto, disclose: bool) -> CaseView {
 /// with.
 pub(super) fn engine_observation(
     problem: &Problem,
-    session: &PracticeSessionDto,
+    session: &ObservedSession,
     seen: Option<&[LearningLabFile]>,
     disclose: bool,
 ) -> Observation {
@@ -136,7 +134,13 @@ pub(super) fn engine_observation(
                 .iter()
                 .map(|view| case_view_of(view, disclose))
                 .collect(),
-            detail: run_detail_of(&run.stdout, &run.stderr).unwrap(),
+            detail: run_detail_of(
+                &run.stdout,
+                &run.stderr,
+                run.duration_ms,
+                run.reference_actual.as_deref(),
+            )
+            .unwrap(),
         }),
         learner_cases: session
             .examples
@@ -158,7 +162,7 @@ pub(super) fn engine_observation(
             .map(|hint| HintView {
                 rung: hint.rung,
                 text: hint.text.clone(),
-                check_id: hint.run_id.clone(),
+                check_id: hint.check_id.clone(),
             })
             .collect(),
         turns: session.turns.clone(),
@@ -167,7 +171,7 @@ pub(super) fn engine_observation(
 
 fn rendered(
     problem: &Problem,
-    session: &PracticeSessionDto,
+    session: &ObservedSession,
     seen: Option<&[LearningLabFile]>,
     disclose: bool,
 ) -> String {
@@ -197,8 +201,8 @@ fn run_of(
     scope: CodingRunScope,
     status: LearningPracticalRunStatus,
     cases: Vec<CaseViewDto>,
-) -> PracticeCheckDto {
-    PracticeCheckDto {
+) -> ProgramRunDto {
+    ProgramRunDto {
         run_id: "run-3333-cccc".to_owned(),
         scope,
         status,

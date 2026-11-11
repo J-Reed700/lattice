@@ -6,11 +6,11 @@ use super::super::{
 use super::{from_name, parse_row, problem_of, row_on, scope_of, to_u32, verdict_of};
 use crate::persistence::db;
 use crate::practical_dto::{CaseCheckDetailDto, LearningSimulationTurnDto};
-use crate::practice::coding::dto::{PatternRatingDto, PracticeDueDto, PracticeSessionSummaryDto};
 use crate::practice::coding::patterns;
 use crate::practice::coding::records::{
-    SessionBundle, StoredDebrief, StoredEvent, StoredExample, StoredRun,
+    SessionBundle, StoredDebrief, StoredEvent, StoredExample, StoredRating, StoredRun,
 };
+use crate::practice::session::dto::{PracticeDueDto, PracticeSessionSummaryDto};
 use lattice_core::domain::learning::practice::{Scorecard, ScorecardRow};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
@@ -181,7 +181,7 @@ async fn debrief_on(
             Ok(StoredDebrief {
                 approach: row.get("approach"),
                 complexity: row.get("complexity"),
-                ratings: decode::<Vec<PatternRatingDto>>(row.get("ratings_json"))?,
+                ratings: decode::<Vec<StoredRating>>(row.get("ratings_json"))?,
                 model: row.get("model"),
             })
         })
@@ -246,7 +246,7 @@ impl LearningPracticalRepository {
     pub async fn list_coding_sessions(
         &self,
         program_id: &str,
-    ) -> Result<Vec<crate::practice::coding::dto::PracticeSessionSummaryDto>> {
+    ) -> Result<Vec<PracticeSessionSummaryDto>> {
         uuid(program_id, "program")?;
         let mut tx = self.pool.begin_read().await.map_err(db)?;
         let rows = sqlx::query("SELECT s.*,a.title AS title FROM learning_exercise_sessions s JOIN learning_practical_activities a ON a.id=s.activity_id WHERE s.program_id=? ORDER BY s.created_at DESC,s.id DESC")
@@ -282,6 +282,7 @@ impl LearningPracticalRepository {
                 finished: session.finished_at.is_some(),
                 session_id: session.id,
                 activity_id: session.activity_id,
+                kind: session.kind.as_str().to_owned(),
                 form: session.form,
                 setting: session.setting,
                 stage: session.stage,

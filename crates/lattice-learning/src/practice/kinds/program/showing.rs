@@ -1,12 +1,11 @@
 //! A program as text for a model: the brief, the numbered draft, one line per case and the notes of a run.
 
 use crate::lab_runtime::LearningLabFile;
-use crate::practical_dto::CaseCheckDetailDto;
-use crate::practice::coding::dto::CaseViewDto;
-use crate::practice::coding::problem::{CaseStatus, ProblemClarification, ProblemSignature};
-use crate::practice::coding::session::{cut_case, example_view};
+use crate::practice::coding::problem::{ProblemClarification, ProblemSignature};
+use crate::practice::kinds::program::dto::CaseViewDto;
+use crate::practice::kinds::program::screen::{cut_case, example_view};
 use crate::practice::kinds::program::shape::{
-    files_of, problem_case_of, run_output_of, run_result_of, spec_of,
+    case_detail_of, files_of, problem_case_of, run_output_of, spec_of,
 };
 use crate::practice::session::kind::Showing;
 use lattice_core::domain::learning::practice::problem_patterns::problem_pattern;
@@ -156,22 +155,7 @@ impl Showing for ProgramShowing {
         result: Option<&CaseResult>,
         open: bool,
     ) -> Result<String> {
-        let body = problem_case_of(case)?;
-        let run = result.map(run_result_of).transpose()?;
-        let detail = CaseCheckDetailDto {
-            case_id: body.id,
-            category: body.category,
-            visibility: body.visibility,
-            scale: body.scale,
-            mine: false,
-            status: run.as_ref().map_or(CaseStatus::NotRun, |run| run.status),
-            args: Some(body.args),
-            expected: body.expected,
-            actual: run.as_ref().and_then(|run| run.actual.clone()),
-            printed: run.as_ref().map(|run| run.printed.clone()),
-            error: run.as_ref().and_then(|run| run.error.clone()),
-            elapsed_ms: run.as_ref().and_then(|run| run.elapsed_ms),
-        };
+        let detail = case_detail_of(case, result, false)?;
         Ok(case_text(&cut_case(&detail, open)))
     }
 

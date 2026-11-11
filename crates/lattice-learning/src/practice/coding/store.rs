@@ -5,19 +5,21 @@ use super::problem::{CaseCompare, Problem, ProblemCase};
 use super::records::{
     self as stored, CodingOp, FinishWrite, NewCodingSession, RunFinished, SessionBundle, StoredRun,
 };
-use super::session::evidence::{hints_of, last_draft_seen, result_of};
-use super::session::view::settings_used;
+use super::session::evidence::{
+    hints_of, last_draft_seen, reference_actual_of, result_of, settings_used,
+};
 use crate::practical_repository::LearningPracticalRepository;
 use crate::practice::kinds::program::parts::line_of;
+use crate::practice::kinds::program::rubric::{APPROACH, COMPLEXITY};
 use crate::practice::kinds::program::shape::{
-    case_of, check_status_of, coding_scope_of, exercise_of, files_of, piece_of,
+    case_of, check_status_of, coding_scope_of, exercise_of, files_of, learner_found_of, piece_of,
     result_of as case_result_of, run_detail_of, scope_of, verdict_of,
 };
 use crate::practice::session::policy::Cue;
 use crate::practice::session::ports::{At, CheckFinished, SessionStore};
 use crate::practice::session::record::{
     Applied, CheckedCase, Finish, Help, NewHint, NewSession, Op, Session, SessionCheck,
-    SessionLearnerCase, SessionRow, StageMove,
+    SessionDebrief, SessionLearnerCase, SessionRow, StageMove, TechniqueRating,
 };
 use async_trait::async_trait;
 use lattice_core::domain::learning::practice::work::{CheckReport, Piece, Setting, Stage};
@@ -47,7 +49,11 @@ fn applied<T, U>(written: stored::Applied<T>, make: impl FnOnce(T) -> U) -> Appl
     }
 }
 
-fn check_of(run: &StoredRun, compare: &CaseCompare) -> Result<SessionCheck> {
+fn check_of(
+    run: &StoredRun,
+    compare: &CaseCompare,
+    reference_actual: Option<&str>,
+) -> Result<SessionCheck> {
     let results = run
         .cases
         .iter()
@@ -79,7 +85,7 @@ fn check_of(run: &StoredRun, compare: &CaseCompare) -> Result<SessionCheck> {
         report: CheckReport {
             results,
             marks: Vec::new(),
-            detail: run_detail_of(&run.stdout, &run.stderr)?,
+            detail: run_detail_of(&run.stdout, &run.stderr, run.duration_ms, reference_actual)?,
         },
         at: run.created_at,
         status: check_status_of(run.status),
@@ -93,7 +99,37 @@ fn learner_case_of(example: &stored::StoredExample) -> SessionLearnerCase {
         body: json!({"args": example.args, "expected": example.expected}),
         verdict: verdict_of(example.verdict),
         catches: example.catches.clone(),
+        found: learner_found_of(
+            example.reference_actual.as_deref(),
+            example.why_invalid.as_deref(),
+        ),
     }
+}
+
+fn debrief_of_bundle(bundle: &SessionBundle) -> Option<SessionDebrief> {
+    let (Some(stored), Some(scorecard)) = (&bundle.debrief, &bundle.scorecard) else {
+        return None;
+    };
+    Some(SessionDebrief {
+        scorecard: scorecard.clone(),
+        stated: vec![
+            (APPROACH.to_owned(), stored.approach.clone()),
+            (COMPLEXITY.to_owned(), stored.complexity.clone()),
+        ],
+        model: stored.model.clone(),
+        techniques: stored
+            .ratings
+            .iter()
+            .map(|rating| TechniqueRating {
+                id: rating.pattern_id.clone(),
+                name: rating.name.clone(),
+                family: rating.family.clone(),
+                cue: rating.cue.clone(),
+                rating: rating.rating,
+                due_at: rating.due_at,
+            })
+            .collect(),
+    })
 }
 
 /// The session the engine reads, from what the tables hold.
@@ -121,6 +157,7 @@ pub fn session_of(bundle: &SessionBundle) -> Result<Session> {
             revision: row.revision,
             created_at: row.created_at,
         },
+        lesson_id: bundle.lesson_id.clone(),
         activity_revision: bundle.activity_revision,
         exercise,
         settings: settings_used(bundle)?,
@@ -128,10 +165,17 @@ pub fn session_of(bundle: &SessionBundle) -> Result<Session> {
         checks: bundle
             .runs
             .iter()
-            .map(|run| check_of(run, &compare))
+            .map(|run| {
+                check_of(
+                    run,
+                    &compare,
+                    reference_actual_of(bundle, &run.run_id).as_deref(),
+                )
+            })
             .collect::<Result<Vec<_>>>()?,
         learner_cases: bundle.examples.iter().map(learner_case_of).collect(),
         hints: hints_of(bundle)?.iter().map(hint_of).collect(),
+        debrief: debrief_of_bundle(bundle),
         events: bundle
             .events
             .iter()
@@ -152,7 +196,7 @@ pub fn session_of(bundle: &SessionBundle) -> Result<Session> {
 
 /// The check a stored run is, with the learner's cases compared as `compare` says.
 pub fn run_as_check(run: &StoredRun, compare: &CaseCompare) -> Result<SessionCheck> {
-    check_of(run, compare)
+    check_of(run, compare, None)
 }
 
 #[async_trait]

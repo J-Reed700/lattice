@@ -48,6 +48,7 @@ fn learner_case(ordinal: u32, args: &[&str], expected: &str) -> SessionLearnerCa
         body: json!({"args": args, "expected": expected}),
         verdict: lattice_core::domain::learning::practice::work::LearnerCaseVerdict::Right,
         catches: Vec::new(),
+        found: serde_json::Value::Null,
     }
 }
 

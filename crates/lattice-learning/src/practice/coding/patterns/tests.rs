@@ -1,5 +1,5 @@
 use super::*;
-use crate::practice::coding::dto::{DueKind, PracticeDueDto};
+use crate::practice::session::dto::{DueKind, PracticeDueDto};
 use crate::repository::LearningRepository;
 use lattice_core::domain::learning::drills::PatternRating;
 use lattice_core::domain::learning::practice::{problem_pattern, PROBLEM_PATTERNS};

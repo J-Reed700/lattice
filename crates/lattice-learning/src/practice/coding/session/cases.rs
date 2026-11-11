@@ -8,9 +8,7 @@ use lattice_core::shared::error::{AppError, Result};
 pub const INPUT_CASE_ID: &str = "input";
 
 /// The case that runs `input` and asks for no verdict.
-pub fn input_case(exercise: &Exercise, input: Option<&[String]>) -> Result<Case> {
-    let args =
-        input.ok_or_else(|| AppError::InvalidInput("An input run needs an input.".into()))?;
+pub fn input_case(exercise: &Exercise, args: &[String]) -> Result<Case> {
     if args.len() != spec_of(&exercise.brief)?.signature.params.len() {
         return Err(AppError::InvalidInput(
             "The input needs one value for each parameter.".into(),

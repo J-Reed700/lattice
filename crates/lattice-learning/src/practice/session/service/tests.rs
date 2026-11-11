@@ -274,11 +274,17 @@ fn held_session(case: CaseStatus, hint: Option<Rung>) -> Session {
                 text: String::new(),
                 stage: Stage::Make,
                 check_id: None,
+                reason: String::new(),
+                parts: Vec::new(),
+                in_role: false,
+                at: 0,
             })
             .into_iter()
             .collect(),
         events: Vec::new(),
         draft_seen: None,
+        lesson_id: "lesson-1".to_owned(),
+        debrief: None,
     }
 }
 

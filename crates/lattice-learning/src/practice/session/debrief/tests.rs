@@ -63,6 +63,10 @@ fn hint(ordinal: u32, rung: Rung) -> SessionHint {
         text: "Look at the second slot.".to_owned(),
         stage: Stage::Make,
         check_id: None,
+        reason: String::new(),
+        parts: Vec::new(),
+        in_role: false,
+        at: 0,
     }
 }
 
@@ -95,6 +99,7 @@ fn session() -> DebriefSession {
             body: json!({"letter": "a"}),
             verdict: LearnerCaseVerdict::Right,
             catches: Vec::new(),
+            found: Value::Null,
         }],
         hints: vec![hint(0, Rung::Nudge)],
         events: Vec::new(),

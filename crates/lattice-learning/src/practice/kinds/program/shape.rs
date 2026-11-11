@@ -1,8 +1,9 @@
 //! How a Program's values are written in the core vocabulary, and back.
 
 use crate::lab_runtime::LearningLabFile;
-use crate::practice::coding::dto::{CodingRunScope, ExampleVerdict};
+use crate::practical_dto::CaseCheckDetailDto;
 use crate::practice::coding::problem::{self as coding, Problem, ProblemCase, ProblemSpec};
+use crate::practice::kinds::program::dto::{CodingRunScope, ExampleVerdict};
 use crate::practice::kinds::program::KIND;
 use crate::practice::practical_dto::LearningPracticalRunStatus;
 use lattice_core::domain::learning::practice::work::{
@@ -36,11 +37,24 @@ struct ResultDetail {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct RunDetail {
     #[serde(default)]
     stdout: String,
     #[serde(default)]
     stderr: String,
+    #[serde(default)]
+    duration_ms: Option<i64>,
+    #[serde(default)]
+    reference_actual: Option<String>,
+}
+
+/// What a learner's case was found to be by the reference.
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LearnerFound {
+    pub reference_actual: Option<String>,
+    pub why_invalid: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -245,24 +259,98 @@ pub fn run_result_of(result: &work::CaseResult) -> Result<coding::CaseResult> {
     })
 }
 
-/// The detail of a check whose program printed `stdout` and `stderr` outside any case.
-pub fn run_detail_of(stdout: &str, stderr: &str) -> Result<serde_json::Value> {
+/// The detail of a check whose program printed `stdout` and `stderr` outside any case, ran for `duration_ms`, and,
+/// for an input run in Coached, whose input the reference answered `reference_actual`.
+pub fn run_detail_of(
+    stdout: &str,
+    stderr: &str,
+    duration_ms: Option<i64>,
+    reference_actual: Option<&str>,
+) -> Result<serde_json::Value> {
     serde_json::to_value(RunDetail {
         stdout: stdout.to_owned(),
         stderr: stderr.to_owned(),
+        duration_ms,
+        reference_actual: reference_actual.map(str::to_owned),
     })
     .map_err(|error| invalid("The run could not be written", error))
+}
+
+fn read_run_detail(detail: &serde_json::Value) -> Result<Option<RunDetail>> {
+    if detail.is_null() {
+        return Ok(None);
+    }
+    serde_json::from_value(detail.clone())
+        .map(Some)
+        .map_err(|error| invalid("The detail of the check is not a program's", error))
 }
 
 /// What a check's detail says the program printed outside any case, as `(stdout, stderr)`. A detail of `Null`
 /// says nothing.
 pub fn run_output_of(detail: &serde_json::Value) -> Result<(String, String)> {
-    if detail.is_null() {
-        return Ok((String::new(), String::new()));
+    Ok(read_run_detail(detail)?.map_or_else(
+        || (String::new(), String::new()),
+        |detail| (detail.stdout, detail.stderr),
+    ))
+}
+
+/// What a check's detail says about how long the run took and, for an input run in Coached, what the reference
+/// answered, as `(duration_ms, reference_actual)`. A detail of `Null` says nothing.
+pub fn run_report_of(detail: &serde_json::Value) -> Result<(Option<i64>, Option<String>)> {
+    Ok(read_run_detail(detail)?.map_or((None, None), |detail| {
+        (detail.duration_ms, detail.reference_actual)
+    }))
+}
+
+/// What the reference found of a case the learner wrote.
+pub fn learner_found_of(
+    reference_actual: Option<&str>,
+    why_invalid: Option<&str>,
+) -> serde_json::Value {
+    serde_json::json!({"referenceActual": reference_actual, "whyInvalid": why_invalid})
+}
+
+/// What the reference found of a case the learner wrote, from the value `learner_found_of` made.
+pub fn learner_found_in(found: &serde_json::Value) -> Result<LearnerFound> {
+    if found.is_null() {
+        return Ok(LearnerFound::default());
     }
-    let detail: RunDetail = serde_json::from_value(detail.clone())
-        .map_err(|error| invalid("The detail of the check is not a program's", error))?;
-    Ok((detail.stdout, detail.stderr))
+    serde_json::from_value(found.clone()).map_err(|error| {
+        invalid(
+            "What the reference found of the case is not a program's",
+            error,
+        )
+    })
+}
+
+/// A case with its result, as the run stored it; `mine` says the learner wrote the case. Without a result the case
+/// has not run.
+pub fn case_detail_of(
+    case: &Case,
+    result: Option<&work::CaseResult>,
+    mine: bool,
+) -> Result<CaseCheckDetailDto> {
+    let body = problem_case_of(case)?;
+    let run = result.map(run_result_of).transpose()?;
+    Ok(CaseCheckDetailDto {
+        case_id: body.id,
+        category: body.category,
+        visibility: body.visibility,
+        scale: body.scale,
+        mine,
+        status: run
+            .as_ref()
+            .map_or(coding::CaseStatus::NotRun, |run| run.status),
+        args: Some(body.args),
+        expected: body.expected,
+        actual: run.as_ref().and_then(|run| run.actual.clone()),
+        printed: run
+            .as_ref()
+            .map(|run| run.printed.clone())
+            .filter(|printed| !printed.is_empty()),
+        error: run.as_ref().and_then(|run| run.error.clone()),
+        elapsed_ms: run.as_ref().and_then(|run| run.elapsed_ms),
+    })
 }
 
 pub fn misreading_of(misreading: &coding::Misreading) -> Result<Misreading> {
@@ -390,6 +478,14 @@ pub fn coding_scope_of(scope: CheckScope) -> CodingRunScope {
     }
 }
 
+pub fn example_verdict_of(verdict: LearnerCaseVerdict) -> ExampleVerdict {
+    match verdict {
+        LearnerCaseVerdict::Right => ExampleVerdict::Right,
+        LearnerCaseVerdict::Wrong => ExampleVerdict::Wrong,
+        LearnerCaseVerdict::Invalid => ExampleVerdict::Invalid,
+    }
+}
+
 pub fn verdict_of(verdict: ExampleVerdict) -> LearnerCaseVerdict {
     match verdict {
         ExampleVerdict::Right => LearnerCaseVerdict::Right,
@@ -409,5 +505,19 @@ pub fn check_status_of(status: LearningPracticalRunStatus) -> CheckStatus {
         LearningPracticalRunStatus::Cancelled => CheckStatus::Cancelled,
         LearningPracticalRunStatus::Interrupted => CheckStatus::Interrupted,
         LearningPracticalRunStatus::RuntimeUnavailable => CheckStatus::Unavailable,
+    }
+}
+
+/// How a check stands, as a run stands.
+pub fn run_status_of_check(status: CheckStatus) -> LearningPracticalRunStatus {
+    match status {
+        CheckStatus::Pending => LearningPracticalRunStatus::Pending,
+        CheckStatus::Running => LearningPracticalRunStatus::Running,
+        CheckStatus::Passed => LearningPracticalRunStatus::Passed,
+        CheckStatus::Failed => LearningPracticalRunStatus::Failed,
+        CheckStatus::TimedOut => LearningPracticalRunStatus::TimedOut,
+        CheckStatus::Cancelled => LearningPracticalRunStatus::Cancelled,
+        CheckStatus::Interrupted => LearningPracticalRunStatus::Interrupted,
+        CheckStatus::Unavailable => LearningPracticalRunStatus::RuntimeUnavailable,
     }
 }

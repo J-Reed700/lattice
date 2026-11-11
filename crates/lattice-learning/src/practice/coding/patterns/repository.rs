@@ -3,7 +3,8 @@
 use super::{family_name, material_of, plural, problem_material, Standing};
 use crate::drills::schedules;
 use crate::persistence::db;
-use crate::practice::coding::dto::{DueItemDto, DueKind, PatternRatingDto, PracticeDueDto};
+use crate::practice::coding::records::StoredRating;
+use crate::practice::session::dto::{DueItemDto, DueKind, PracticeDueDto};
 use lattice_core::domain::learning::drills::{Material, PatternRating};
 use lattice_core::domain::learning::practice::{problem_pattern, ProblemPattern, PROBLEM_PATTERNS};
 use lattice_core::shared::error::Result;
@@ -19,7 +20,7 @@ pub async fn record_ratings_in(
     rating: PatternRating,
     now: i64,
     target: Option<i64>,
-) -> Result<Vec<PatternRatingDto>> {
+) -> Result<Vec<StoredRating>> {
     let material = problem_material(language);
     let mut rated = Vec::with_capacity(pattern_ids.len());
     for id in pattern_ids {
@@ -29,7 +30,7 @@ pub async fn record_ratings_in(
         let schedule =
             schedules::review_pattern_in(connection, &material, pattern.id, rating, now, target)
                 .await?;
-        rated.push(PatternRatingDto {
+        rated.push(StoredRating {
             pattern_id: pattern.id.to_owned(),
             name: pattern.name.to_owned(),
             family: family_name(pattern),

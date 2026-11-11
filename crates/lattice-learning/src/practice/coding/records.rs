@@ -1,17 +1,18 @@
 //! What the coding tables hold, as the session reads and writes it. The repository fills these in; the session turns
 //! them into what the screen sees.
 
-use super::dto::{CodingRunScope, ExampleVerdict, PatternRatingDto};
 use super::problem::Problem;
 use crate::lab_runtime::LearningLabFile;
 use crate::practical_dto::{
     CaseCheckDetailDto, LearningPracticalRunStatus, LearningSimulationTurnDto,
 };
+use crate::practice::kinds::program::dto::{CodingRunScope, ExampleVerdict};
 use crate::practice::session::policy::Cue;
 use lattice_core::domain::learning::drills::PatternRating;
 use lattice_core::domain::learning::practice::work::{Form, KindId, Rung, Setting, Stage};
 use lattice_core::domain::learning::practice::Scorecard;
 use lattice_core::shared::error::Result;
+use serde::{Deserialize, Serialize};
 
 /// The request a write answers, so the same operation id replays the first answer instead of repeating the work.
 #[derive(Debug, Clone, Copy)]
@@ -74,6 +75,35 @@ pub struct StoredExample {
     pub catches: Vec<String>,
 }
 
+/// The payload of a `hint` event, as it is stored.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredHint {
+    pub ordinal: u32,
+    pub rung: Rung,
+    pub text: String,
+    pub reason: String,
+    /// Rung Point: 1-based lines of `path` in the draft the hint was written for.
+    pub lines: Vec<u32>,
+    pub path: Option<String>,
+    pub stage: Stage,
+    pub run_id: Option<String>,
+    pub in_role: bool,
+    pub at: i64,
+}
+
+/// A technique the session was rated on, as `ratings_json` stores it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredRating {
+    pub pattern_id: String,
+    pub name: String,
+    pub family: String,
+    pub cue: String,
+    pub rating: PatternRating,
+    pub due_at: i64,
+}
+
 /// A run of the session and the full result of each of its cases.
 #[derive(Debug, Clone)]
 pub struct StoredRun {
@@ -93,7 +123,7 @@ pub struct StoredRun {
 pub struct StoredDebrief {
     pub approach: String,
     pub complexity: String,
-    pub ratings: Vec<PatternRatingDto>,
+    pub ratings: Vec<StoredRating>,
     pub model: String,
 }
 

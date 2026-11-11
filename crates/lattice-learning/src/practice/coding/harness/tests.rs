@@ -4,8 +4,8 @@ use crate::embedded_runtime::LearningBuiltinRuntime;
 use crate::lab_runtime::{LearningLabExecutionResult, LearningLabRunStatus};
 use crate::persistence::{db, now};
 use crate::practical_dto::{LearningPracticalCheckStatus, StartLearningPracticalRunRequestDto};
-use crate::practice::coding::dto::CodingRunScope;
 use crate::practice::coding::problem::{CaseCompare, CaseStatus, CaseVisibility, ProblemCase};
+use crate::practice::kinds::program::dto::CodingRunScope;
 use crate::practice::practical_repository::{
     LearningPracticalRepository, PreparedExecution, PreparedHarness, PreparedRun,
 };

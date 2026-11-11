@@ -17,13 +17,15 @@ pub const MINE_CASE_PREFIX: &str = "mine-";
 
 pub struct ProgramLearnerCases;
 
+/// The body of a case the learner wrote.
 #[derive(Deserialize)]
-struct LearnerCaseBody {
-    args: Vec<String>,
-    expected: String,
+pub(crate) struct LearnerCaseBody {
+    pub(crate) args: Vec<String>,
+    pub(crate) expected: String,
 }
 
-fn read_body(body: &serde_json::Value) -> Result<LearnerCaseBody> {
+/// The arguments and the expected value of a case the learner wrote.
+pub(crate) fn read_body(body: &serde_json::Value) -> Result<LearnerCaseBody> {
     serde_json::from_value(body.clone()).map_err(|error| {
         AppError::InvalidState(format!(
             "The case is not a program's learner case: {error}."

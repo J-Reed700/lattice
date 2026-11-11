@@ -11,6 +11,7 @@ use crate::practice::kinds::program::learner_cases::ProgramLearnerCases;
 use crate::practice::kinds::program::parts::ProgramParts;
 use crate::practice::kinds::program::reply::ProgramReply;
 use crate::practice::kinds::program::rubric::ProgramRubric;
+use crate::practice::kinds::program::screen::ProgramScreen;
 use crate::practice::kinds::program::showing::ProgramShowing;
 use crate::practice::kinds::program::toolchain::Toolchains;
 use crate::practice::kinds::program::truth::ProgramTruth;
@@ -23,11 +24,13 @@ pub mod account;
 pub mod budget;
 pub mod checker;
 pub mod diff;
+pub mod dto;
 pub mod hinting;
 pub mod learner_cases;
 pub mod parts;
 pub mod reply;
 pub mod rubric;
+pub mod screen;
 pub mod shape;
 pub mod showing;
 pub mod toolchain;
@@ -82,6 +85,7 @@ pub fn kind(tools: Arc<dyn Toolchains>) -> Kind {
         parts: Arc::new(ProgramParts),
         diff: Arc::new(ProgramDiff),
         showing: Arc::new(ProgramShowing),
+        screen: Arc::new(ProgramScreen),
         truth: Arc::new(ProgramTruth { tools }),
         gaps: None,
         order: None,

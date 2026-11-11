@@ -305,6 +305,7 @@ fn the_cases_a_learner_wrote_are_told_with_their_verdict() {
         body: json!({"args": ["[1]", "2"], "expected": "3"}),
         verdict: LearnerCaseVerdict::Right,
         catches: Vec::new(),
+        found: serde_json::Value::Null,
     };
 
     let told = ProgramLearnerCases

@@ -3,11 +3,11 @@
 
 use crate::drills::runner::{CodeRunner, RunOutcome};
 use crate::lab_runtime::LearningLabFile;
-use crate::practice::coding::dto::ExampleVerdict;
 use crate::practice::coding::harness::{run_cases, CaseHarness};
 use crate::practice::coding::problem::{
     CaseResult, CaseStatus, CaseVisibility, Problem, ProblemCase,
 };
+use crate::practice::kinds::program::dto::ExampleVerdict;
 use lattice_core::shared::error::{AppError, Result};
 use tokio_util::sync::CancellationToken;
 

@@ -73,6 +73,8 @@ fn session(setting: Setting) -> Session {
         hints: Vec::new(),
         events: Vec::new(),
         draft_seen: None,
+        lesson_id: "lesson-1".to_owned(),
+        debrief: None,
     }
 }
 
@@ -154,6 +156,7 @@ fn learner_case(ordinal: u32, verdict: LearnerCaseVerdict, catches: &[&str]) -> 
         body: json!({"letter": "b"}),
         verdict,
         catches: catches.iter().map(|id| (*id).to_owned()).collect(),
+        found: Value::Null,
     }
 }
 
@@ -290,6 +293,10 @@ fn a_hint_carries_the_check_it_was_given_after() {
         text: "Look at the second slot.".to_owned(),
         stage: Stage::Make,
         check_id: Some("c1".to_owned()),
+        reason: String::new(),
+        parts: Vec::new(),
+        in_role: false,
+        at: 0,
     });
     let hints = observed(&each).hints;
     assert_eq!(hints.len(), 1);
@@ -406,6 +413,10 @@ fn the_highest_rung_given_is_the_outcomes() {
             text: String::new(),
             stage: Stage::Make,
             check_id: None,
+            reason: String::new(),
+            parts: Vec::new(),
+            in_role: false,
+            at: 0,
         });
     }
     assert_eq!(outcome(&each).highest_rung, Some(Rung::Plan));

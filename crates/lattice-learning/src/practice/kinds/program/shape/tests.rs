@@ -196,16 +196,66 @@ fn a_misreading_round_trips_as_a_solution_piece() {
 }
 
 #[test]
-fn a_run_detail_round_trips_what_was_printed() {
-    let detail = run_detail_of("out", "err").unwrap();
+fn a_run_detail_round_trips_what_was_printed_and_measured() {
+    let detail = run_detail_of("out", "err", Some(9), Some("4")).unwrap();
     assert_eq!(
         detail,
-        serde_json::json!({"stdout": "out", "stderr": "err"})
+        serde_json::json!({
+            "stdout": "out",
+            "stderr": "err",
+            "durationMs": 9,
+            "referenceActual": "4"
+        })
     );
     assert_eq!(
         run_output_of(&detail).unwrap(),
         ("out".to_owned(), "err".to_owned())
     );
+    assert_eq!(
+        run_report_of(&detail).unwrap(),
+        (Some(9), Some("4".to_owned()))
+    );
+}
+
+#[test]
+fn a_detail_without_the_measures_reports_none_and_a_null_one_reports_none() {
+    assert_eq!(
+        run_report_of(&serde_json::json!({"stdout": "only"})).unwrap(),
+        (None, None)
+    );
+    assert_eq!(
+        run_report_of(&serde_json::Value::Null).unwrap(),
+        (None, None)
+    );
+}
+
+#[test]
+fn what_the_reference_found_of_a_learners_case_round_trips() {
+    let found = learner_found_of(Some("4"), None);
+    assert_eq!(
+        found,
+        serde_json::json!({"referenceActual": "4", "whyInvalid": null})
+    );
+    let read = learner_found_in(&found).unwrap();
+    assert_eq!(read.reference_actual.as_deref(), Some("4"));
+    assert_eq!(read.why_invalid, None);
+}
+
+#[test]
+fn a_status_maps_to_a_check_and_back_one_to_one() {
+    use crate::practice::practical_dto::LearningPracticalRunStatus as Run;
+    for status in [
+        Run::Pending,
+        Run::Running,
+        Run::Passed,
+        Run::Failed,
+        Run::TimedOut,
+        Run::Cancelled,
+        Run::Interrupted,
+        Run::RuntimeUnavailable,
+    ] {
+        assert_eq!(run_status_of_check(check_status_of(status)), status);
+    }
 }
 
 #[test]

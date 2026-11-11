@@ -22,12 +22,13 @@ use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
 
 use crate::lab_runtime::LearningLabFile;
-use crate::practice::coding::dto::{
-    CodingExampleDto, ExampleCoverageDto, ExampleVerdict, PracticeHintDto, PracticeSessionDto,
+use crate::practice::coding::observation::test_support::{
+    failing_run, problem, session, ObservedSession,
 };
-use crate::practice::coding::observation::test_support::{failing_run, problem, session};
 use crate::practice::coding::problem::Problem;
+use crate::practice::kinds::program::dto::{CodingExampleDto, ExampleVerdict};
 use crate::practice::practical_dto::{LearningSimulationSpeaker, LearningSimulationTurnDto};
+use crate::practice::session::dto::{MisreadingCoverageDto, PracticeHintDto};
 
 /// Compares `actual` with the golden text `expected` (from `include_str!`). A mismatch panics with the whole
 /// actual text between the marker lines `<<<GOLDEN name` and `GOLDEN>>>`.
@@ -175,13 +176,12 @@ fn turn(
 pub(crate) fn rich_session(
     task: Form,
     setting: Setting,
-) -> (Problem, PracticeSessionDto, Vec<LearningLabFile>) {
+) -> (Problem, ObservedSession, Vec<LearningLabFile>) {
     let problem = problem();
     let stages = task.stages(true);
     let stage: Stage = stages.get(2).copied().unwrap_or(Stage::Make);
     let mut session = session(&problem, setting, stage);
     session.form = task;
-    session.stages = stages.to_vec();
     session.runs.push(failing_run());
     session.examples = vec![
         CodingExampleDto {
@@ -201,7 +201,7 @@ pub(crate) fn rich_session(
             why_invalid: None,
         },
     ];
-    session.coverage = ExampleCoverageDto {
+    session.coverage = MisreadingCoverageDto {
         caught: 1,
         total: 2,
         uncaught: Some("Ignores negative values".to_owned()),
@@ -211,10 +211,8 @@ pub(crate) fn rich_session(
         rung: Rung::Nudge,
         text: "What should the loop do with each value?".to_owned(),
         reason: "The draft never reads the values.".to_owned(),
-        lines: Vec::new(),
-        path: None,
         stage,
-        run_id: None,
+        check_id: None,
         in_role: false,
         at: 20,
     }];

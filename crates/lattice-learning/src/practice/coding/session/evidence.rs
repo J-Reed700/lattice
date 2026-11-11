@@ -1,15 +1,15 @@
 //! What a finished session is judged on: the evidence the debrief reads.
-use super::view::{example_views, settings_used};
 use crate::lab_runtime::LearningLabFile;
 use crate::practical_dto::CaseCheckDetailDto;
 use crate::practice::coding::debrief::{CodingEventRow, EvidenceRun, SessionEvidence};
-use crate::practice::coding::dto::{CodingRunScope, PracticeHintDto};
 use crate::practice::coding::problem::CaseResult;
-use crate::practice::coding::records::{SessionBundle, StoredRun};
+use crate::practice::coding::records::{SessionBundle, StoredExample, StoredHint};
+use crate::practice::kinds::program::dto::{CodingExampleDto, ExampleVerdict};
+use lattice_core::domain::learning::practice::work::Setting;
 use lattice_core::shared::error::{AppError, Result};
 
 /// The hints the session gave, in order.
-pub fn hints_of(bundle: &SessionBundle) -> Result<Vec<PracticeHintDto>> {
+pub fn hints_of(bundle: &SessionBundle) -> Result<Vec<StoredHint>> {
     bundle
         .events
         .iter()
@@ -21,13 +21,59 @@ pub fn hints_of(bundle: &SessionBundle) -> Result<Vec<PracticeHintDto>> {
         .collect()
 }
 
-/// The last run that covered every case.
-pub fn last_all_run(bundle: &SessionBundle) -> Option<&StoredRun> {
-    bundle
-        .runs
+/// The settings a session has used, in order, from the one it started in.
+pub fn settings_used(bundle: &SessionBundle) -> Result<Vec<Setting>> {
+    let mut changes = Vec::new();
+    for event in bundle.events.iter().filter(|event| event.kind == "setting") {
+        let setting = |key: &str| -> Result<Setting> {
+            let value = event
+                .payload
+                .get(key)
+                .ok_or_else(|| AppError::Database("A setting event lacks its setting.".into()))?;
+            serde_json::from_value(value.clone())
+                .map_err(|error| AppError::Serialization(error.to_string()))
+        };
+        changes.push((setting("from")?, setting("to")?));
+    }
+    let mut used = vec![changes
+        .first()
+        .map_or(bundle.row.setting, |(from, _)| *from)];
+    for (_, to) in changes {
+        if !used.contains(&to) {
+            used.push(to);
+        }
+    }
+    Ok(used)
+}
+
+/// The stored examples as the learner sees them. `expects` is what the reference returned for a wrong example.
+pub fn example_views(examples: &[StoredExample], expects_shown: bool) -> Vec<CodingExampleDto> {
+    examples
         .iter()
-        .rev()
-        .find(|run| run.scope == CodingRunScope::All)
+        .map(|example| CodingExampleDto {
+            ordinal: example.ordinal,
+            args: example.args.clone(),
+            expected: example.expected.clone(),
+            verdict: example.verdict,
+            expects: example
+                .reference_actual
+                .clone()
+                .filter(|_| expects_shown && example.verdict == ExampleVerdict::Wrong),
+            why_invalid: example.why_invalid.clone(),
+        })
+        .collect()
+}
+
+/// What the reference answered on the input of a run, from the run's `check` event.
+pub fn reference_actual_of(bundle: &SessionBundle, run_id: &str) -> Option<String> {
+    bundle
+        .events
+        .iter()
+        .filter(|event| event.kind == "check")
+        .find(|event| event.payload.get("runId").and_then(|id| id.as_str()) == Some(run_id))
+        .and_then(|event| event.payload.get("referenceActual"))
+        .and_then(|actual| actual.as_str())
+        .map(str::to_owned)
 }
 
 pub fn result_of(detail: &CaseCheckDetailDto) -> CaseResult {

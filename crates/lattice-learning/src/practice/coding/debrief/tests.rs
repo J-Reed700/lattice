@@ -1,9 +1,9 @@
 use super::*;
-use crate::practice::coding::dto::ExampleVerdict;
 use crate::practice::coding::problem::{
     CaseCompare, CaseStatus, CaseVisibility, Misreading, ProblemCase, ProblemDifficulty,
     ProblemSignature, ProblemSpec, SignatureParam,
 };
+use crate::practice::kinds::program::dto::ExampleVerdict;
 use crate::practice::practical_dto::LearningSimulationSpeaker;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
@@ -156,8 +156,8 @@ fn example(ordinal: u32) -> CodingExampleDto {
     }
 }
 
-fn hint(ordinal: u32, rung: Rung) -> PracticeHintDto {
-    PracticeHintDto {
+fn hint(ordinal: u32, rung: Rung) -> StoredHint {
+    StoredHint {
         ordinal,
         rung,
         text: "Think about what you have already seen.".into(),
@@ -655,18 +655,11 @@ fn facts_count_runs_submits_hints_and_settings() {
     ];
     session.settings = vec![Setting::Coached, Setting::Mock];
 
-    let facts = facts(&session);
+    let facts = facts(&session).unwrap();
 
-    assert_eq!(facts.runs, 4);
+    assert_eq!(facts.checks, 4);
     assert_eq!(facts.submits, 2);
-    assert_eq!(
-        facts
-            .hints
-            .iter()
-            .map(|hint| (hint.rung, hint.count))
-            .collect::<Vec<_>>(),
-        [(Rung::Nudge, 2), (Rung::Plan, 1)]
-    );
+    assert_eq!(facts.hints, [(Rung::Nudge, 2), (Rung::Plan, 1)]);
     assert_eq!(facts.settings, [Setting::Coached, Setting::Mock]);
 }
 
@@ -701,11 +694,7 @@ fn timeline() -> Vec<CodingEventRow> {
 }
 
 fn times(session: &SessionEvidence) -> Vec<(Stage, u64)> {
-    facts(session)
-        .stage_ms
-        .iter()
-        .map(|time| (time.stage, time.active_ms))
-        .collect()
+    facts(session).unwrap().stage_ms
 }
 
 #[test]
@@ -792,7 +781,7 @@ fn events_are_read_in_ordinal_order() {
 
 #[test]
 fn a_session_with_no_events_has_no_stage_time() {
-    assert!(facts(&evidence()).stage_ms.is_empty());
+    assert!(facts(&evidence()).unwrap().stage_ms.is_empty());
 }
 
 #[test]

@@ -1,15 +1,15 @@
 //! The debrief of a coding session: the engine's debrief, over a program's roles, in the vocabulary the rest of the
 //! coding code speaks (docs/design/2026-11-08-coding-sessions-and-one-practice-area.md 4.8).
 
-use super::dto::{
-    CodingExampleDto, CodingRunScope, DebriefFactsDto, PracticeHintDto, RungCountDto, StageTimeDto,
-};
 use super::harness::CaseHarness;
 use super::problem::{CaseResult, Problem};
+use super::records::StoredHint;
 use crate::drills::runner::CodeRunner;
 use crate::lab_runtime::LearningLabFile;
+use crate::practice::kinds::program::dto::{CodingExampleDto, CodingRunScope};
 use crate::practice::kinds::program::kind;
-use crate::practice::kinds::program::parts::line_of;
+use crate::practice::kinds::program::parts::{line_of, part_of};
+use crate::practice::kinds::program::rubric::{APPROACH, COMPLEXITY};
 use crate::practice::kinds::program::shape::{
     exercise_of, piece_of, result_of, scope_of, verdict_of,
 };
@@ -18,7 +18,7 @@ use crate::practice::practical_dto::LearningSimulationTurnDto;
 use crate::practice::session::debrief::{self as engine, Evidence};
 use crate::practice::session::kind::Kind;
 use crate::practice::session::record::{
-    Counted, DebriefSession, EventKind, SessionCheck, SessionEvent, SessionHint, SessionLearnerCase,
+    DebriefSession, EventKind, SessionCheck, SessionEvent, SessionHint, SessionLearnerCase,
 };
 use async_trait::async_trait;
 use lattice_core::application::ports::LLMPort;
@@ -38,7 +38,7 @@ pub struct SessionEvidence {
     pub turns: Vec<LearningSimulationTurnDto>,
     pub runs: Vec<EvidenceRun>,
     pub examples: Vec<CodingExampleDto>,
-    pub hints: Vec<PracticeHintDto>,
+    pub hints: Vec<StoredHint>,
     pub events: Vec<CodingEventRow>,
     pub draft: Vec<LearningLabFile>,
 }
@@ -121,13 +121,19 @@ pub(super) fn event_of(row: &CodingEventRow) -> SessionEvent {
     }
 }
 
-pub(super) fn hint_of(hint: &PracticeHintDto) -> SessionHint {
+pub(super) fn hint_of(hint: &StoredHint) -> SessionHint {
     SessionHint {
         ordinal: hint.ordinal,
         rung: hint.rung,
         text: hint.text.clone(),
+        reason: hint.reason.clone(),
+        parts: hint.path.as_deref().map_or_else(Vec::new, |path| {
+            hint.lines.iter().map(|line| part_of(path, *line)).collect()
+        }),
         stage: hint.stage,
         check_id: hint.run_id.clone(),
+        in_role: hint.in_role,
+        at: hint.at,
     }
 }
 
@@ -175,6 +181,7 @@ fn engine_session(evidence: &SessionEvidence) -> Result<DebriefSession> {
                 body: json!({"args": example.args, "expected": example.expected}),
                 verdict: verdict_of(example.verdict),
                 catches: Vec::new(),
+                found: Value::Null,
             })
             .collect(),
         hints: evidence.hints.iter().map(hint_of).collect(),
@@ -184,37 +191,12 @@ fn engine_session(evidence: &SessionEvidence) -> Result<DebriefSession> {
 }
 
 /// What the session shows beside the scores, counted rather than judged.
-pub fn facts(evidence: &SessionEvidence) -> DebriefFactsDto {
-    let settings = &evidence.settings;
-    let hints: Vec<_> = evidence.hints.iter().map(hint_of).collect();
-    let events: Vec<_> = evidence.events.iter().map(event_of).collect();
-    let counted = Counted {
-        form: evidence.form,
-        settings,
-        scopes: evidence
-            .runs
-            .iter()
-            .map(|run| scope_of(run.scope))
-            .collect(),
-        hints: &hints,
-        events: &events,
-    };
-    let counts = engine::facts(&program_kind(), &counted);
-    DebriefFactsDto {
-        stage_ms: counts
-            .stage_ms
-            .into_iter()
-            .map(|(stage, active_ms)| StageTimeDto { stage, active_ms })
-            .collect(),
-        runs: counts.checks,
-        submits: counts.submits,
-        hints: counts
-            .hints
-            .into_iter()
-            .map(|(rung, count)| RungCountDto { rung, count })
-            .collect(),
-        settings: counts.settings,
-    }
+#[cfg(test)]
+fn facts(evidence: &SessionEvidence) -> Result<engine::Facts> {
+    Ok(engine::facts(
+        &program_kind(),
+        &engine_session(evidence)?.counted(),
+    ))
 }
 
 /// Cited lines are the first and the last line of the parts the engine kept.
@@ -252,10 +234,7 @@ fn stated(debrief: &engine::Debrief, key: &str) -> Result<String> {
 }
 
 pub(super) fn debrief_of(debrief: engine::Debrief) -> Result<Debrief> {
-    let (approach, complexity) = (
-        stated(&debrief, "approach")?,
-        stated(&debrief, "complexity")?,
-    );
+    let (approach, complexity) = (stated(&debrief, APPROACH)?, stated(&debrief, COMPLEXITY)?);
     let rows = debrief
         .rows
         .into_iter()

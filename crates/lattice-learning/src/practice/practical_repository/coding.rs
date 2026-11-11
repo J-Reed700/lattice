@@ -8,14 +8,15 @@ use crate::lab_runtime::LearningLabFile;
 use crate::operations::Operation;
 use crate::persistence::db;
 use crate::practical_dto::LearningPracticalActivityKind;
-use crate::practice::coding::dto::{ClockDto, CodingRunScope, ExampleVerdict, PracticeHintDto};
 use crate::practice::coding::examples::ExampleCheck;
 use crate::practice::coding::problem::Problem;
 use crate::practice::coding::records::{
-    Applied, CodingOp, CodingRow, NewCodingSession, NewHint, RunFinished, StageMove,
+    Applied, CodingOp, CodingRow, NewCodingSession, NewHint, RunFinished, StageMove, StoredHint,
 };
+use crate::practice::kinds::program::dto::{CodingRunScope, ExampleVerdict};
 use crate::practice::kinds::program::KIND;
 use crate::practice::session::budget;
+use crate::practice::session::dto::ClockDto;
 use crate::practice::session::policy::Cue;
 use lattice_core::domain::learning::practice::work::{Form, Hidden, KindId, Setting, Stage};
 use lattice_core::shared::error::{AppError, Result};
@@ -707,7 +708,7 @@ impl LearningPracticalRepository {
         files: &[LearningLabFile],
         expected_revision: i64,
         at: i64,
-    ) -> Result<Applied<PracticeHintDto>> {
+    ) -> Result<Applied<StoredHint>> {
         uuid(session_id, "coding session")?;
         uuid(op.operation_id, "operation")?;
         let mut tx = self.begin_coding_write(program_id).await?;
@@ -732,7 +733,7 @@ impl LearningPracticalRepository {
         .fetch_optional(&mut *tx)
         .await
         .map_err(db)?;
-        let stored = PracticeHintDto {
+        let stored = StoredHint {
             ordinal: to_u32(given + 1)?,
             rung: hint.rung,
             text: hint.text.to_owned(),

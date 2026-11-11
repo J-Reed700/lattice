@@ -132,15 +132,16 @@ pub(crate) mod test_support {
     use std::collections::BTreeMap;
 
     use crate::lab_runtime::LearningLabFile;
-    use crate::practice::coding::dto::{
-        CaseViewDto, ClockDto, ExampleCoverageDto, PracticeCheckDto, PracticeSessionDto,
-        PublicProblemDto,
-    };
     use crate::practice::coding::problem::{
         CaseCompare, CaseStatus, CaseVisibility, Misreading, Problem, ProblemCase,
         ProblemClarification, ProblemDifficulty, ProblemSignature, ProblemSpec, SignatureParam,
     };
-    use lattice_core::domain::learning::practice::work::{Form, Rung, Setting, Stage};
+    use crate::practice::kinds::program::dto::{
+        CaseViewDto, CodingExampleDto, ProgramRunDto, PublicProblemDto,
+    };
+    use crate::practice::practical_dto::LearningSimulationTurnDto;
+    use crate::practice::session::dto::{ClockDto, MisreadingCoverageDto, PracticeHintDto};
+    use lattice_core::domain::learning::practice::work::{Form, Setting, Stage};
 
     pub const REFERENCE: &str = "def total(values):\n    return REFERENCE_SECRET_BODY\n";
     pub const MISREADING_ID: &str = "misreading-secret-id";
@@ -213,18 +214,28 @@ pub(crate) mod test_support {
         }
     }
 
-    pub fn session(problem: &Problem, setting: Setting, stage: Stage) -> PracticeSessionDto {
-        let form = Form::Build;
-        PracticeSessionDto {
+    /// What a program session holds of the work, as the observation tests read it.
+    pub struct ObservedSession {
+        pub session_id: String,
+        pub form: Form,
+        pub setting: Setting,
+        pub stage: Stage,
+        pub problem: PublicProblemDto,
+        pub clock: ClockDto,
+        pub examples: Vec<CodingExampleDto>,
+        pub coverage: MisreadingCoverageDto,
+        pub runs: Vec<ProgramRunDto>,
+        pub hints: Vec<PracticeHintDto>,
+        pub turns: Vec<LearningSimulationTurnDto>,
+        pub draft: Vec<LearningLabFile>,
+    }
+
+    pub fn session(problem: &Problem, setting: Setting, stage: Stage) -> ObservedSession {
+        ObservedSession {
             session_id: SESSION_ID.to_owned(),
-            program_id: "program-1".to_owned(),
-            activity_id: "activity-1".to_owned(),
-            lesson_id: None,
-            form,
+            form: Form::Build,
             setting,
-            settings_used: vec![setting],
             stage,
-            stages: form.stages(true).to_vec(),
             problem: PublicProblemDto {
                 title: problem.spec.title.clone(),
                 statement: problem.spec.statement.clone(),
@@ -254,33 +265,25 @@ pub(crate) mod test_support {
                 budget_seconds: None,
             },
             examples: Vec::new(),
-            coverage: ExampleCoverageDto {
+            coverage: MisreadingCoverageDto {
                 caught: 0,
                 total: 1,
                 uncaught: None,
             },
             runs: Vec::new(),
             hints: Vec::new(),
-            next_rung: Rung::Nudge,
             turns: Vec::new(),
-            cue_pending: false,
             draft: vec![LearningLabFile {
                 path: "solution.py".to_owned(),
                 content: "def total(values):\n    result = 0\n    return result\n".to_owned(),
             }],
-            submitted: false,
-            solution_available: false,
-            worked_solution: None,
-            debrief: None,
-            finished: false,
-            revision: 1,
         }
     }
 
-    pub fn failing_run() -> PracticeCheckDto {
-        use crate::practice::coding::dto::CodingRunScope;
+    pub fn failing_run() -> ProgramRunDto {
+        use crate::practice::kinds::program::dto::CodingRunScope;
         use crate::practice::practical_dto::LearningPracticalRunStatus;
-        PracticeCheckDto {
+        ProgramRunDto {
             run_id: "run-77777777-aaaa".to_owned(),
             scope: CodingRunScope::All,
             status: LearningPracticalRunStatus::Failed,
