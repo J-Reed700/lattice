@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 
 use crate::infrastructure::persistence::repositories::traits::DocumentRepositoryTrait;
-use lattice_core::application::ports::{DocumentRepositoryPort, Filter, RepositoryPort};
+use lattice_core::application::ports::{DocumentRepositoryPort, RepositoryPort};
 use lattice_core::domain::entities::Document;
 use lattice_core::shared::error::{AppError, Result};
 
@@ -182,7 +182,7 @@ impl DocumentRepositoryTrait for MockDocumentRepository {
 }
 */
 
-// DocumentRepositoryPort, Filter, RepositoryPort already imported at top
+// DocumentRepositoryPort, RepositoryPort already imported at top
 // Document already imported at line 34 with Chunk and Mention
 
 /// Mock document repository for testing with DDD ports.
@@ -238,10 +238,6 @@ impl Default for MockDocumentRepository {
 impl RepositoryPort<Document> for MockDocumentRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<Document>> {
         Ok(self.documents.read().get(id).cloned())
-    }
-
-    async fn find_by_filter(&self, _filter: &dyn Filter) -> Result<Vec<Document>> {
-        Ok(self.documents.read().values().cloned().collect())
     }
 
     async fn find_all(&self) -> Result<Vec<Document>> {

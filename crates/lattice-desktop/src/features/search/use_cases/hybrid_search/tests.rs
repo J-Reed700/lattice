@@ -491,11 +491,7 @@ async fn attachment_fixture() -> Arc<dyn lattice_core::application::ports::Chunk
     .execute(&pool)
     .await
     .unwrap();
-    Arc::new(
-        crate::infrastructure::persistence::repositories::chunk_repository::ChunkRepository::new(
-            pool,
-        ),
-    )
+    Arc::new(crate::infrastructure::persistence::repositories::ChunkRepository::new(pool))
 }
 
 fn attachment_search(

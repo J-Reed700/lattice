@@ -158,9 +158,6 @@ pub struct ListConversationsQuery {
 pub struct ListConversationsResponseDto {
     /// List of conversations
     pub conversations: Vec<ConversationDto>,
-
-    /// Total count
-    pub total: usize,
 }
 
 /// Request to get a conversation by ID.

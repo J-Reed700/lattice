@@ -5,7 +5,7 @@
 //! else depends on it: only the crate entry points (`main.rs`, `lib.rs` and
 //! `bin/*`) may reference this module, which the architecture ratchet
 //! enforces as `composition-root-import`. Plain setup steps with no feature
-//! imports (directories, database, tracing, tokenizer, the renderer shutdown
+//! imports (directories, database, tracing, the renderer shutdown
 //! hook) stay in `infrastructure::setup` and are called from here.
 
 pub mod app;

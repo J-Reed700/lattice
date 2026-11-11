@@ -102,7 +102,9 @@ impl StandaloneServers {
         let child = Arc::new(parking_lot::Mutex::new(child));
         self.children.lock().push(Arc::clone(&child));
         let endpoint = format!("http://127.0.0.1:{port}");
-        let http = reqwest::Client::new();
+        let http = lattice_core::shared::http::loopback_client_builder()
+            .build()
+            .map_err(|e| AppError::ModelLoadFailed(format!("No HTTP client: {e}")))?;
         loop {
             if let Ok(Some(status)) = child.lock().try_wait() {
                 return Err(AppError::ModelLoadFailed(format!(

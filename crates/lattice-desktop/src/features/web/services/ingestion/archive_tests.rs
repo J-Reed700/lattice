@@ -11,7 +11,6 @@ use lattice_core::domain::value_objects::ContextualizedChunk;
 use lattice_core::shared::error::{AppError, Result};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use tokenizers::Tokenizer;
 
 const URL: &str = "https://example.org/essay";
 
@@ -113,9 +112,6 @@ async fn an_article_whose_document_cannot_be_stored_leaves_no_archived_file() {
         archive.clone(),
         Arc::new(Embedder),
         Arc::new(RefusingStore),
-        Arc::new(Tokenizer::new(
-            tokenizers::models::wordpiece::WordPiece::default(),
-        )),
     );
 
     let result = service.ingest_url(URL).await;

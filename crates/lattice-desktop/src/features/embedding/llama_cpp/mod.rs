@@ -72,11 +72,14 @@ impl LlamaEmbeddingService {
         facts: EmbeddingModelFacts,
         policy: InputPolicy,
         prefixes: &'static EmbeddingPrefixes,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        let http = lattice_core::shared::http::loopback_client_builder()
+            .build()
+            .map_err(|e| AppError::ModelLoadFailed(format!("No HTTP client: {e}")))?;
+        Ok(Self {
             server: parking_lot::Mutex::new(server),
             restart: None,
-            http: reqwest::Client::new(),
+            http,
             facts,
             policy,
             prefixes,
@@ -84,7 +87,7 @@ impl LlamaEmbeddingService {
             query_cache: parking_lot::Mutex::new(LruCache::new(
                 NonZeroUsize::new(QUERY_CACHE_CAPACITY).unwrap_or(NonZeroUsize::MIN),
             )),
-        }
+        })
     }
 
     /// Read `model`'s header, start its server through `starter`, and
@@ -145,7 +148,7 @@ impl LlamaEmbeddingService {
             "embedding.server.starting"
         );
         let server = starter.start(&launch).await?;
-        let mut service = Self::connect(server, facts, policy, prefixes);
+        let mut service = Self::connect(server, facts, policy, prefixes)?;
         service.slots = tokio::sync::Semaphore::new(launch.slots as usize);
         service.restart = Some(Restart {
             starter,

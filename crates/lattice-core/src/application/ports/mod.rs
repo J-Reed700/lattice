@@ -91,10 +91,6 @@ pub use corpus_listeners::{DocumentIndexObserver, SearchResultCachePort};
 pub use credentials_port::CredentialsPort;
 pub use database_stats_port::DatabaseStatsPort;
 pub use document_repository_port::DocumentRepositoryPort;
-#[cfg(any(test, feature = "test-support"))]
-pub use mock_web_service::MockWebService;
-mod document_filter;
-pub use document_filter::DocumentFilter;
 pub use embedding_index_binding::EmbeddingIndexBinding;
 pub use embedding_port::EmbeddingPort;
 pub use embedding_repository_port::EmbeddingRepositoryPort;
@@ -120,7 +116,7 @@ pub use note_index_sink::NoteIndexSink;
 pub use ocr_port::{NoopOcr, OcrError, OcrPort};
 pub use recent_documents_port::RecentDocumentsRepositoryPort;
 pub use reference_snapshots::{ReferenceSnapshot, ReferenceSnapshotPort};
-pub use repository_port::{Filter, NoFilter, RepositoryPort};
+pub use repository_port::RepositoryPort;
 pub use search_engines::{BM25SearchTrait, SearchServiceTrait};
 pub use settings_port::merge_json_update;
 #[cfg(any(test, feature = "test-support"))]

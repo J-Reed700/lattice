@@ -139,7 +139,7 @@ impl ArchiveRestorer {
 
         // 3. A key already on this device beats asking the user for anything.
         let (master, from_secret) = match self.key_store.load()? {
-            Some(key) if crypto::kcv_matches(&header.envelope, &key) => (key, false),
+            Some(key) if crypto::kcv_matches(&header.envelope, &key)? => (key, false),
             _ => match secret {
                 // WrongSecret propagates: "that is not the right passphrase"
                 // is a different message from "needs a secret".
@@ -268,7 +268,7 @@ impl ArchiveRestorer {
             .ok()
             .and_then(|bytes| bytes.try_into().ok())
             .ok_or_else(|| ArchiveError::Corrupt("bad stream nonce".to_string()))?;
-        let file_key = crypto::derive_file_key(master, &file_salt);
+        let file_key = crypto::derive_file_key(master, &file_salt)?;
         let chunk_size = header.chunk_size as usize;
 
         let source = source.to_path_buf();

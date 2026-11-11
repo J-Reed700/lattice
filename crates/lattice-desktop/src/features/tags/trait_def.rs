@@ -31,12 +31,6 @@ pub trait TagRepositoryTrait: Send + Sync {
     /// Find tag by ID
     async fn find_by_id(&self, id: &str) -> Result<Option<lattice_core::domain::entities::Tag>>;
 
-    /// Find tags by filter criteria
-    async fn find_by_filter(
-        &self,
-        filter: &dyn lattice_core::application::ports::Filter,
-    ) -> Result<Vec<lattice_core::domain::entities::Tag>>;
-
     /// Find all tags
     async fn find_all(&self) -> Result<Vec<lattice_core::domain::entities::Tag>>;
 

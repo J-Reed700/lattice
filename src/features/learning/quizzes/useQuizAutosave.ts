@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
 
 import { draftOf, fingerprintOf, responseOf, type ItemDraft } from '@/features/learning/quizzes/items/itemResponse';
 import { newOperationId, useSaveQuizResponse } from '@/features/learning/quizzes/useQuizzes';
@@ -43,8 +43,8 @@ export function useQuizAutosave(form: LearningAssessmentFormDto, programId: stri
   // The status after the last save: answering a paused form resumes it.
   const statusRef = useRef(form.status);
 
-  useEffect(() => {
-    // A new immutable form is the only reason to replace the local answers.
+  // A new immutable form is the only reason to replace the local answers.
+  const resetForForm = useEffectEvent(() => {
     const initial = draftsOf(form);
     setDrafts(initial);
     draftsRef.current = initial;
@@ -55,7 +55,10 @@ export function useQuizAutosave(form: LearningAssessmentFormDto, programId: stri
     conflictRef.current = false;
     setConflict(false);
     setSaveError(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  });
+
+  useEffect(() => {
+    resetForForm();
   }, [form.id]);
 
   const send = useCallback(async (request: SaveLearningAssessmentResponseRequestDto, fingerprint: string) => {

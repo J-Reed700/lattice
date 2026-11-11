@@ -16,11 +16,10 @@ import {
   type DocumentMetadata,
 } from '@/types/fileBrowser';
 
-import { loadSavedSearches, loadSourceConnections } from './fileBrowserPersistence';
+import { loadSavedSearches } from './fileBrowserPersistence';
 import { type FileBrowserStore } from './fileBrowserStore.types';
 import { normalizeToken } from './libraryDocumentFilters';
 import { createSavedSearchActions } from './savedSearchActions';
-import { createSourceConnectionActions } from './sourceConnectionActions';
 
 export {
   filterLibraryDocuments,
@@ -41,7 +40,6 @@ export const useFileBrowserStore = create<FileBrowserStore>((set, get) => ({
   isContentSearchLoading: false,
   savedSearches: loadSavedSearches(),
   activeSavedSearchId: null,
-  sourceConnections: loadSourceConnections(),
   scope: { kind: 'all' },
   selectedDocumentIds: new Set(),
   focusedDocumentId: null,
@@ -172,8 +170,6 @@ export const useFileBrowserStore = create<FileBrowserStore>((set, get) => ({
   },
 
   ...createSavedSearchActions(set, get),
-
-  ...createSourceConnectionActions(set),
 
   // Context menu
   openContextMenu: (position: { x: number; y: number }, document: DocumentMetadata) => {
