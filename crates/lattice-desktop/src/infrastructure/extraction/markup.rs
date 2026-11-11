@@ -358,6 +358,37 @@ mod tests {
     }
 
     #[test]
+    fn a_raw_text_body_is_not_closed_by_a_longer_tag_name() {
+        let mut cursor = MarkupCursor::new("a</scripts>b</script>tail");
+        assert_eq!(cursor.skip_raw_text("script"), "a</scripts>b");
+        assert_eq!(cursor.next(), Some(Markup::Text("tail")));
+    }
+
+    #[test]
+    fn a_raw_text_close_tag_matches_any_case_and_trailing_space() {
+        let mut cursor = MarkupCursor::new("x < y</ScRiPt >tail");
+        assert_eq!(cursor.skip_raw_text("script"), "x < y");
+        assert_eq!(cursor.next(), Some(Markup::Text("tail")));
+    }
+
+    #[test]
+    fn a_raw_text_body_without_a_close_tag_runs_to_the_end() {
+        let mut cursor = MarkupCursor::new("body </b> only");
+        assert_eq!(cursor.skip_raw_text("style"), "body </b> only");
+        assert_eq!(cursor.next(), None);
+    }
+
+    #[test]
+    fn multi_byte_text_before_a_raw_text_close_tag_is_kept() {
+        let mut cursor = MarkupCursor::new("caf\u{e9} \u{2014} \u{1F600}</SCRIPT>tail");
+        assert_eq!(
+            cursor.skip_raw_text("script"),
+            "caf\u{e9} \u{2014} \u{1F600}"
+        );
+        assert_eq!(cursor.next(), Some(Markup::Text("tail")));
+    }
+
+    #[test]
     fn attributes_match_whole_keys() {
         assert_eq!(attr(r#" r="B2" t="s""#, "t").as_deref(), Some("s"));
         assert_eq!(attr(r#" rt="x""#, "t"), None);
