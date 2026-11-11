@@ -3,13 +3,24 @@
 use crate::lab_runtime::LearningLabFile;
 use crate::practice::kinds::program::parts::part_of;
 use crate::practice::kinds::program::shape::{
-    coding_scope_of, files_of, problem_case_of, problem_of, run_result_of,
+    files_of, problem_case_of, problem_of, run_result_of,
 };
 use crate::practice::session::kind::{Account, Citation};
 use crate::practice::session::record::SessionCheck;
-use lattice_core::domain::learning::practice::work::{CaseStatus, Exercise, Form, PartRef, Piece};
+use lattice_core::domain::learning::practice::work::{
+    CaseStatus, CheckScope, Exercise, Form, PartRef, Piece,
+};
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Map, Value};
+
+/// The word the debrief's model reads for the cases a run covered.
+fn scope_word(scope: CheckScope) -> &'static str {
+    match scope {
+        CheckScope::Shown => "examples",
+        CheckScope::All => "all",
+        CheckScope::Own => "input",
+    }
+}
 
 pub struct ProgramAccount;
 
@@ -110,7 +121,7 @@ impl Account for ProgramAccount {
         };
         Ok(json!({
             "runId": check.id,
-            "scope": tag(&coding_scope_of(check.scope)),
+            "scope": scope_word(check.scope),
             "passed": check.report.results.iter().filter(|result| result.status == CaseStatus::Passed).count(),
             "total": check.report.results.len(),
             "failing": failing,
