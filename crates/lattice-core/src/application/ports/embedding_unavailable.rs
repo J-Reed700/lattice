@@ -36,10 +36,7 @@ impl UnavailableEmbedding {
     fn error(&self) -> AppError {
         match &self.reason {
             EmbeddingUnavailable::NotInstalled => {
-                AppError::AiModelsNotInstalled(
-                    "No embedding model is installed. Download one in Settings → Models to enable search."
-                        .to_string(),
-                )
+                AppError::AiModelsNotInstalled("No embedding model is installed".to_string())
             }
             EmbeddingUnavailable::FailedToLoad(error) => error.clone(),
         }

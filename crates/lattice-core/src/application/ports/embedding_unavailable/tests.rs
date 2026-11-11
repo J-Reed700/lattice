@@ -25,11 +25,7 @@ async fn the_not_installed_error_says_where_to_download_a_model() {
 
     assert_eq!(
         error.to_string(),
-        AppError::AiModelsNotInstalled(
-            "No embedding model is installed. Download one in Settings → Models to enable search."
-                .into()
-        )
-        .to_string()
+        AppError::AiModelsNotInstalled("No embedding model is installed".into()).to_string()
     );
 }
 
