@@ -456,12 +456,12 @@ impl ModelManager {
                 .await
                 .context("Failed to create reranker directory")?;
         }
-        // A file of another size is a stale or foreign one; the download
-        // finishes by renaming over it.
         if let Ok(mut guard) = self.download_start_time.lock() {
             *guard = Some(std::time::Instant::now());
         }
         tracing::info!("Downloading reranker {}...", CURATED_RERANKER.file);
+        // A file of another size is a stale or foreign one; the download
+        // finishes by renaming over it.
         self.download_with_retry(
             &CURATED_RERANKER.url(),
             gguf,
