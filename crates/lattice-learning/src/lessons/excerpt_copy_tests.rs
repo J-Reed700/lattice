@@ -32,7 +32,12 @@ fn a_sentence_copied_from_an_excerpt_with_no_quote_and_no_citation_is_a_finding(
     assert_eq!(found[0].place().site, FindingSite::Section(0));
     assert!(found[0].note.contains(SENTENCE), "{}", found[0].note);
     assert!(
-        found[0].note.contains("double quotation marks"),
+        found[0].note.contains("the lesson's own words"),
+        "{}",
+        found[0].note
+    );
+    assert!(
+        !found[0].note.contains("double quotation marks"),
         "{}",
         found[0].note
     );
@@ -113,7 +118,8 @@ fn a_repair_edit_adding_a_copied_sentence_is_refused() {
     assert!(refused.is_err(), "{refused:?}");
     let message = refused.unwrap_err().to_string();
     assert!(message.contains(SENTENCE), "{message}");
-    assert!(message.contains("double quotation marks"), "{message}");
+    assert!(message.contains("the lesson's own words"), "{message}");
+    assert!(!message.contains("double quotation marks"), "{message}");
 }
 
 #[test]
