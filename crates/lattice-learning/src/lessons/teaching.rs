@@ -126,6 +126,9 @@ pub const LESSON_REVIEW_EVIDENCE_SCOPE: &str = "The authoring reference excerpts
 /// What the reviewer of quiz material is told of the excerpts; no separate fact check stands behind it.
 pub const MATERIAL_REVIEW_EVIDENCE_SCOPE: &str = "The authoring reference excerpts are a partial selection, not the complete saved evidence collection. Subsequent research and factual repairs can introduce details supported by other saved references. Do not report a teaching defect solely because a detail is absent from these original excerpts. Evidence completeness is checked separately, for every extracted factual claim, against the current saved collection before publication. Still reject concrete factual or mathematical errors, internal contradictions, and citations that misrepresent their attached source. Missing evidence is not proof that a claim is false, and this teaching review is not factual publication approval.";
 
+/// What the code rules of a lesson pass decide, in the words the evidence gate is given.
+pub(crate) const RULES_DECIDE: &str = "repeated sentences";
+
 /// Deterministic findings: the schema, each section's body and rubric,
 /// and, under a lesson's schema, the lesson's own rules. Nothing is
 /// dropped; a caller that sends six at a time decides what waits. `wording` is

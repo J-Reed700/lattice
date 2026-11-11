@@ -6,7 +6,7 @@ use super::super::repair::{self, Repaired};
 use super::super::standing::Standing;
 use super::super::{
     holds_up_review, quotation_findings, structural_findings, whole_repairs,
-    LESSON_REVIEW_EVIDENCE_SCOPE,
+    LESSON_REVIEW_EVIDENCE_SCOPE, RULES_DECIDE,
 };
 use super::{
     review_instructions, review_prompt, settle_lesson_quotes, Decision, Found, Pass, ReviewTexts,
@@ -252,7 +252,14 @@ impl Subject for LessonSubject<'_> {
             let established = crate::review_evidence::check(
                 llm,
                 &raised,
-                &recorded,
+                crate::review_evidence::Beside {
+                    decides: &[
+                        crate::question_review::DECIDES,
+                        contract::DECIDES,
+                        RULES_DECIDE,
+                    ],
+                    recorded: &recorded,
+                },
                 pass.authoring,
                 pass.value,
                 self.references,
