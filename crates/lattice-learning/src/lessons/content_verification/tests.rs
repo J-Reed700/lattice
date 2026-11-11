@@ -10,6 +10,7 @@ use lattice_core::domain::learning::acceptance::{Outcome, Reading, StandardPolic
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::JobStore;
 use readings_tests::{claim, read_all, read_one, world_of};
+use sentence_naming_tests::{passage_text, sentence_id};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -443,10 +444,10 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
         return Some(inventory::fixture_response(units.iter().map(|v| {
             let passages = v["passages"].as_array().unwrap();
             let passage = passages.iter().find(|p|p["field"]=="/body" || p["field"]=="/explanation").unwrap();
-            let quote = passage["text"].as_str().unwrap();
+            let quote = passage_text(passage);
             let index = v["index"].as_u64().unwrap() as usize;
-            let statement = if quote.contains(BAD) { BAD } else if quote.contains(GOOD) { GOOD } else if quote.contains(FIXED) { FIXED } else { quote };
-            json!({"index":index,"claims":[{"passageId":passage["id"],"statement":statement}],"nonFactualReason":""})
+            let statement = if quote.contains(BAD) { BAD } else if quote.contains(GOOD) { GOOD } else if quote.contains(FIXED) { FIXED } else { quote.as_str() };
+            json!({"index":index,"claims":[{"sentenceId":sentence_id(passage, statement),"statement":statement}],"nonFactualReason":""})
         }).collect::<Vec<_>>()).to_string());
     }
     if prompt.starts_with("Audit claim coverage independently.") {
@@ -526,9 +527,9 @@ impl Model {
                 if data["targetPassage"]["id"]
                     .as_str()
                     .is_some_and(|id| id.starts_with(&format!("unit-{index}-")))
-                    && data["targetPassage"]["text"] == GOOD
+                    && passage_text(&data["targetPassage"]) == GOOD
                 {
-                    return Ok(json!({"missingAssertions":["An additional original assertion is missing from this fixture inventory."],"reason":"The fixture names one omission."}).to_string());
+                    return Ok(json!({"missingAssertions":[{"sentenceId":data["targetPassage"]["sentences"][0]["id"],"statement":"An additional original assertion is missing from this fixture inventory."}],"reason":"The fixture names one omission."}).to_string());
                 }
             }
             if prompt.starts_with("Audit claim coverage independently.") {
@@ -1310,11 +1311,11 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
                     .iter()
                     .find(|p| p["field"] == "/body")
                     .unwrap();
-                let text = passage["text"].as_str().unwrap();
+                let text = passage_text(passage);
                 let claims: Vec<_> = [BAD, SECOND, GOOD]
                     .into_iter()
                     .filter(|s| text.contains(s))
-                    .map(|statement| json!({"passageId":passage["id"],"statement":statement}))
+                    .map(|statement| json!({"sentenceId":sentence_id(passage, statement),"statement":statement}))
                     .collect();
                 return Ok(inventory::fixture_response(vec![
                     json!({"index":0,"claims":claims,"nonFactualReason":""}),
@@ -1517,6 +1518,7 @@ fn saved_coverage_rejects_foreign_duplicate_or_contradictory_locations() {
     let content = units(&candidate(GOOD)).unwrap();
     let gap = |passage_id: &str| MissingAssertion {
         passage_id: passage_id.into(),
+        sentence_id: None,
         statement: "Missing condition".into(),
     };
     let valid = CoverageUnit {
@@ -1583,6 +1585,7 @@ fn saved_coverage_with_a_long_missing_assertion_is_reused() {
         0,
         vec![MissingAssertion {
             passage_id: "unit-0-passage-0".into(),
+            sentence_id: None,
             statement,
         }],
         "",

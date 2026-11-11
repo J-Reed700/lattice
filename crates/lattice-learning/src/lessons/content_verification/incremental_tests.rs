@@ -132,7 +132,7 @@ async fn one_fact_edit_in_175_claims_rechecks_only_that_fact_and_resume_reuses_a
                 assert!(prompt.starts_with("Extract lesson claims."));
                 let data = context(prompt);
                 let passage = &data["units"][0]["passages"][0];
-                Ok(inventory::fixture_response(vec![json!({"index":0,"claims":[{"passageId":passage["id"],"statement":"mineral0"}],"nonFactualReason":""})]).to_string())
+                Ok(inventory::fixture_response(vec![json!({"index":0,"claims":[{"sentenceId":sentence_id(passage, "mineral0"),"statement":"mineral0"}],"nonFactualReason":""})]).to_string())
             }
         }
 

@@ -25,6 +25,7 @@ use apparatus::strip_citation_apparatus;
 pub(crate) use apparatus::{fences, strip_draft_apparatus};
 mod citations;
 mod claim_ledger;
+mod claim_sentences;
 pub(crate) use citations::names_a_source;
 use citations::{
     overlaps, restates, section_citations, source_mentions, take_cited, Citations, CITED,
@@ -137,7 +138,7 @@ pub(crate) fn evidence_policy() -> &'static str {
 }
 // Extraction is versioned independently of coverage and factual judgment.
 // Its exact-content checkpoint contains no factual approvals to inherit.
-const INVENTORY_POLICY: &str = "lesson-evidence-v8";
+const INVENTORY_POLICY: &str = "lesson-evidence-v9";
 
 pub(crate) async fn normalize_example_fences(llm: &dyn LLMPort, raw: String) -> Result<String> {
     execution::label_unlabeled(llm, raw).await
@@ -186,11 +187,14 @@ struct InventoryCheckpoint {
     coverage_policy: Option<String>,
 }
 /// An assertion of one original passage that the fidelity audit found
-/// unrepresented, located by its app-owned passage ID.
+/// unrepresented, located by its app-owned passage ID and, once the judge
+/// named it, the ID of the sentence that states it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct MissingAssertion {
     passage_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sentence_id: Option<String>,
     statement: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]

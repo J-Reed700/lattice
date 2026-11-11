@@ -303,3 +303,31 @@ async fn a_sentence_id_the_request_did_not_show_is_refused_by_name() {
         "the refusal names the id: {reason}"
     );
 }
+
+/// The text of a passage as a model is shown it: its sentences, in order,
+/// joined by a space.
+pub(super) fn passage_text(passage: &Value) -> String {
+    passage["sentences"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|sentence| sentence["text"].as_str())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The ID of the sentence of a shown `passage` that holds `statement`, the
+/// first when none does: how a fixture extractor names the sentence a claim
+/// sits in.
+pub(super) fn sentence_id(passage: &Value, statement: &str) -> Value {
+    let sentences = passage["sentences"].as_array().cloned().unwrap_or_default();
+    sentences
+        .iter()
+        .find(|sentence| {
+            sentence["text"]
+                .as_str()
+                .is_some_and(|text| text.contains(statement))
+        })
+        .or(sentences.first())
+        .map_or(Value::Null, |sentence| sentence["id"].clone())
+}
