@@ -1,7 +1,6 @@
 //! Binding, validating and persisting the verification report at publication.
 use super::resolution::Resolution;
 use super::*;
-use lattice_core::shared::hash::sha256_hex;
 
 mod repository;
 

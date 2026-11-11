@@ -24,7 +24,6 @@ use lattice_core::domain::learning::claim_review::{
     ClaimLocation, ClaimState, EventProvenance, EvidenceFingerprint, EvidenceSeen, LessonReview,
     LessonReviewState, RepairOutcome, Revision, UnitKind, VerdictKind,
 };
-use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Database;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

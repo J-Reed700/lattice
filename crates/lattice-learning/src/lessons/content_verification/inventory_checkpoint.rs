@@ -3,7 +3,6 @@ use super::claim_ledger::Rewrites;
 use super::classify::{rule_class, Case};
 use super::*;
 use lattice_core::domain::learning::claim_review::{identities, ClaimLedgerEntry, ExtractedClaim};
-use lattice_core::shared::hash::sha256_hex;
 
 async fn save_inventory(
     llm: &dyn LLMPort,

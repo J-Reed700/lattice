@@ -12,7 +12,6 @@ use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Position, Wal
 use lattice_core::domain::learning::claim_review::{
     CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, VerdictKind,
 };
-use lattice_core::shared::hash::sha256_hex;
 
 /// What a pass extracts from a candidate lesson before anything is read.
 pub(super) struct Extraction {

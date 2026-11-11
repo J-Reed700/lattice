@@ -7,7 +7,6 @@
 use super::*;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::domain::learning::acceptance::{Outcome, Reading, StandardPolicy};
-use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::JobStore;
 use readings_tests::{claim, read_all, read_one, world_of};

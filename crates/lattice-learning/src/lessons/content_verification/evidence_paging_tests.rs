@@ -4,7 +4,6 @@
 use super::readings_tests::{claim, paged, read_one, world_of};
 use super::*;
 use lattice_core::domain::learning::acceptance::{Outcome, Reading};
-use lattice_core::shared::hash::sha256_hex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 

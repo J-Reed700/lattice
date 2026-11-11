@@ -10,7 +10,6 @@ use crate::lessons::verifier_audit::lesson::{self, LessonAudit, LessonAuditReque
 use crate::lessons::verifier_audit::material::AuditMaterial;
 use crate::lessons::verifier_audit::{AuditOutcome, AuditProgress};
 use lattice_core::domain::learning::claim_review::StopReason;
-use lattice_core::shared::hash::sha256_hex;
 
 /// What the audit lets the loop do with a lesson whose claims are resolved.
 pub(crate) enum Audited {

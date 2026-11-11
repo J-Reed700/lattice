@@ -13,7 +13,6 @@ use lattice_core::application::services::claim_verification::{
     CONSISTENCY_POLICY, KNOWLEDGE_POLICY,
 };
 use lattice_core::domain::learning::acceptance::AcceptancePolicy;
-use lattice_core::shared::hash::sha256_hex;
 
 /// Tokens a passage costs beside its text in the consistency check: its
 /// label and the blank line after it.

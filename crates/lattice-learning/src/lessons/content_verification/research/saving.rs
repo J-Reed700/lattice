@@ -1,6 +1,5 @@
 //! Saving the pages a research round captures.
 use super::*;
-use lattice_core::shared::hash::sha256_hex;
 
 /// Where a research round saves what it captures.
 pub(super) struct Saving<'s> {

@@ -2,7 +2,6 @@
 //! A receipt saved under the earlier key is found by the claim's own unit,
 //! quote, statement and passages, never by an equal statement on another quote.
 use super::*;
-use lattice_core::shared::hash::sha256_hex;
 
 pub(super) async fn legacy_receipt(
     llm: &dyn LLMPort,

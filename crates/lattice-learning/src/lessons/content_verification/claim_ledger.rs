@@ -47,7 +47,6 @@ use lattice_core::domain::learning::claim_review::{
     ClaimState, CutPlace, EventProvenance, LessonReview, LessonReviewState, RepairOutcome,
     Revision, StopReason, UserAction, MACHINE_ATTEMPTS,
 };
-use lattice_core::shared::hash::sha256_hex;
 
 pub(crate) use fields::{field_pointer, field_text, locate, unit_fields, unit_texts};
 pub(crate) use held::{held_for_review, held_lessons, needs_review, review_outcome, HeldForReview};

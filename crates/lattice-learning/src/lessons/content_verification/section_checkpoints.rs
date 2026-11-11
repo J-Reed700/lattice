@@ -2,7 +2,6 @@
 //! repairs and restarts. These are not factual approvals: current references,
 //! execution, teaching review, and the final publication gate still apply.
 use super::*;
-use lattice_core::shared::hash::sha256_hex;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

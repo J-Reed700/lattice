@@ -4,7 +4,6 @@
 //! leads its page.
 use super::*;
 use crate::reference_collection::Scope;
-use lattice_core::shared::hash::sha256_hex;
 
 /// The retrieval kind of a passage research found for the claim it serves.
 pub(super) const RESEARCHED: &str = "researched";

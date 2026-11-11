@@ -4,7 +4,6 @@ use super::repair::goal_words;
 use super::*;
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal};
 use lattice_core::domain::learning::claim_review::ClaimId;
-use lattice_core::shared::hash::sha256_hex;
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct PendingRepair {

@@ -2,7 +2,6 @@
 
 use super::*;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Transactions;
 
 #[derive(sqlx::FromRow)]

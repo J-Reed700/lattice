@@ -15,7 +15,6 @@ use crate::dto::LessonQuestionKind;
 use crate::generation::{parse_json, split_check, teaching_sentences};
 use crate::lessons::text_edits;
 use lattice_core::domain::learning::claim_review::ClaimId;
-use lattice_core::shared::hash::sha256_hex;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// What the flow repair is told besides the edit protocol.
