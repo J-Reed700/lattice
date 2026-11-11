@@ -428,17 +428,23 @@ fn findings(
             .later
             .as_ref()
             .filter(|later| !guarded(later.part, &later.found.exact));
+        let keep = if in_guarded {
+            " The words that use it stay exactly as they are."
+        } else {
+            ""
+        };
         let how = match later {
             None => teach.to_owned(),
-            Some(later) if in_guarded => format!(
-                concat!("The lesson teaches it only afterwards, in {place} (\"{words}\"). Move that teaching to this step, where it is first used (", each_shown!(), "), in sentences added before or after the quoted words, which stay exactly as they are, so that the lesson teaches it once."),
-                place = label(later.part.site).to_lowercase(),
-                words = later.found.exact
+            Some(later) if later.part.id == part.id => format!(
+                concat!("This step teaches it only after it is used (\"{words}\"). Move that teaching before the words that use it (", each_shown!(), "), so that the lesson teaches it once.{keep}"),
+                words = later.found.exact,
+                keep = keep
             ),
             Some(later) => format!(
-                concat!("The lesson teaches it only afterwards, in {place} (\"{words}\"). Move that teaching to this step, where it is first used (", each_shown!(), "), so that the lesson teaches it once."),
+                concat!("The lesson teaches it only afterwards, in {place} (\"{words}\"). Move that teaching to this step, where it is first used (", each_shown!(), "), so that the lesson teaches it once.{keep}"),
                 place = label(later.part.site).to_lowercase(),
-                words = later.found.exact
+                words = later.found.exact,
+                keep = keep
             ),
         };
         let labels: Vec<String> = unmet
