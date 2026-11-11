@@ -282,7 +282,7 @@ impl LearningPracticalRepository {
                 finished: session.finished_at.is_some(),
                 session_id: session.id,
                 activity_id: session.activity_id,
-                task: session.task,
+                form: session.form,
                 setting: session.setting,
                 stage: session.stage,
                 created_at: session.created_at,

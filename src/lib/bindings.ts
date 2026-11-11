@@ -1611,9 +1611,9 @@ async respondPracticeSession(request: PracticeSessionRequestDto) : Promise<Resul
     else return { status: "error", error: e  as any };
 }
 },
-async observeCodingDraft(request: ObserveCodingDraftRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
+async observePracticeDraft(request: ObservePracticeDraftRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|observe_coding_draft", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|observe_practice_draft", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -9629,7 +9629,7 @@ export type NextDrillStatus =
  */
 "to_build"
 export type NoteHighlightDto = { id: string; text: string; createdAt: string }
-export type ObserveCodingDraftRequestDto = { programId: string; sessionId: string; files: LearningLabFile[]; reason: DraftObservation }
+export type ObservePracticeDraftRequestDto = { programId: string; sessionId: string; files: LearningLabFile[]; reason: DraftObservation }
 /**
  * Onboarding state — what the user has already been through.
  *
@@ -9757,7 +9757,7 @@ lines: number[]; path: string | null; stage: Stage; runId: string | null;
  * Watched: given by the interviewer, in the thread.
  */
 inRole: boolean; at: number }
-export type PracticeSessionDto = { sessionId: string; programId: string; activityId: string; lessonId: string | null; task: Form; setting: Setting; settingsUsed: Setting[]; stage: Stage; stages: Stage[]; problem: PublicProblemDto; clock: ClockDto; examples: CodingExampleDto[]; coverage: ExampleCoverageDto;
+export type PracticeSessionDto = { sessionId: string; programId: string; activityId: string; lessonId: string | null; form: Form; setting: Setting; settingsUsed: Setting[]; stage: Stage; stages: Stage[]; problem: PublicProblemDto; clock: ClockDto; examples: CodingExampleDto[]; coverage: ExampleCoverageDto;
 /**
  * Oldest first.
  */
@@ -9770,7 +9770,7 @@ workedSolution: string | null; debrief: PracticeDebriefDto | null; finished: boo
  * Names a session: get and respond.
  */
 export type PracticeSessionRequestDto = { programId: string; sessionId: string }
-export type PracticeSessionSummaryDto = { sessionId: string; activityId: string; title: string; task: Form; setting: Setting; stage: Stage; finished: boolean;
+export type PracticeSessionSummaryDto = { sessionId: string; activityId: string; title: string; form: Form; setting: Setting; stage: Stage; finished: boolean;
 /**
  * Cases passed on the last submit.
  */
@@ -11059,7 +11059,7 @@ export type StartLearningPracticalRunRequestDto = { operationId: string; runId: 
 export type StartLearningPracticeSessionRequestDto = { operationId: string; sessionId: string; programId: string; lessonId: string; expectedProgramRevision: number; mode: LearningPracticeMode; taskKind?: LearningPracticeTaskKind; revisesSessionId?: string | null }
 export type StartLearningQuizRequestDto = { operationId: string; formId: string; programId: string; scope: LearningQuizScopeDto; mode: LearningQuizMode; retakeOfFormId: string | null }
 export type StartLearningSimulationRequestDto = { operationId: string; sessionId: string; programId: string; activityId: string; expectedActivityRevision: number; practiceSessionId: string | null; learnerRole: string; counterpartRole: string }
-export type StartPracticeBuildRequestDto = { operationId: string; programId: string; lessonId: string | null; task: Form; language: string; difficulty: ProblemDifficulty; focus: string | null }
+export type StartPracticeBuildRequestDto = { operationId: string; programId: string; lessonId: string | null; form: Form; language: string; difficulty: ProblemDifficulty; focus: string | null }
 export type StartPracticeBuildResultDto = { jobId: string }
 export type StartPracticeSessionRequestDto = { operationId: string; programId: string; activityId: string; setting: Setting; budgetSeconds: number | null }
 /**

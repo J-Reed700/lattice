@@ -83,7 +83,7 @@ pub fn practice_build_request(
         program_id: request.program_id.clone(),
         lesson_id: request.lesson_id.clone(),
         kind: KindId::new(KIND),
-        form: request.task,
+        form: request.form,
         options,
     })
 }

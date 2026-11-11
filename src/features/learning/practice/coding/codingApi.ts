@@ -30,8 +30,8 @@ export const codingApi = {
     call<Wire.PracticeSessionDto>('send_practice_turn', { request }),
   respond: (request: Wire.PracticeSessionRequestDto) =>
     call<Wire.PracticeSessionDto>('respond_practice_session', { request }),
-  observeDraft: (request: Wire.ObserveCodingDraftRequestDto) =>
-    call<Wire.PracticeSessionDto>('observe_coding_draft', { request }),
+  observeDraft: (request: Wire.ObservePracticeDraftRequestDto) =>
+    call<Wire.PracticeSessionDto>('observe_practice_draft', { request }),
   setClock: (request: Wire.SetPracticeClockRequestDto) =>
     call<Wire.ClockDto>('set_practice_clock', { request }),
   setSetting: (request: Wire.SetPracticeSettingRequestDto) =>

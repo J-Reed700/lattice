@@ -220,8 +220,8 @@ async fn deleting_a_session_removes_its_events_and_examples_and_keeps_its_runs()
         &[
             "INSERT INTO learning_simulation_sessions (id, program_id, activity_id, activity_revision, activity_snapshot_json, practice_session_id, operation_id, payload_hash, learner_role, counterpart_role, status, revision, created_at, updated_at, submitted_at) \
              VALUES ('s1', 'p1', 'coding', 0, '{}', NULL, 'op1', 'hash', 'Candidate', 'Coach', 'active', 0, 1000, 1000, NULL)".into(),
-            "INSERT INTO learning_exercise_sessions (id, program_id, activity_id, task, setting, stage, draft_json, created_at) \
-             VALUES ('s1', 'p1', 'coding', 'problem', 'coached', 'understand', '[]', 1000)".into(),
+            "INSERT INTO learning_exercise_sessions (id, program_id, activity_id, kind, form, setting, stage, draft_json, created_at) \
+             VALUES ('s1', 'p1', 'coding', 'program', 'build', 'coached', 'understand', '[]', 1000)".into(),
             "INSERT INTO learning_exercise_session_events (session_id, ordinal, kind, payload_json, at) VALUES ('s1', 0, 'stage', '{}', 1000)".into(),
             "INSERT INTO learning_coding_examples (session_id, ordinal, args_json, expected, verdict, catches_json, created_at) \
              VALUES ('s1', 1, '[]', '1', 'right', '[]', 1000)".into(),

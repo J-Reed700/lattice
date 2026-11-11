@@ -90,7 +90,7 @@ pub(super) fn engine_observation(
     disclose: bool,
 ) -> Observation {
     let brief = brief_of(&problem.spec).unwrap();
-    let form = session.task;
+    let form = session.form;
     let stage = session.stage;
     let mut stages_reached = Vec::new();
     for reached in form.stages(true) {

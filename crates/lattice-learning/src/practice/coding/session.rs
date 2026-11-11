@@ -369,7 +369,7 @@ impl CodingSessions<'_> {
 
     pub async fn observe_draft(
         &self,
-        request: &ObserveCodingDraftRequestDto,
+        request: &ObservePracticeDraftRequestDto,
     ) -> Result<PracticeSessionDto> {
         let piece = piece_of(&request.files)?;
         let reason = match request.reason {

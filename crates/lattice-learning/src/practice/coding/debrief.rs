@@ -33,7 +33,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub struct SessionEvidence {
     pub problem: Problem,
-    pub task: Form,
+    pub form: Form,
     pub settings: Vec<Setting>,
     pub turns: Vec<LearningSimulationTurnDto>,
     pub runs: Vec<EvidenceRun>,
@@ -159,7 +159,7 @@ fn check_of(run: &EvidenceRun) -> Result<SessionCheck> {
 fn engine_session(evidence: &SessionEvidence) -> Result<DebriefSession> {
     Ok(DebriefSession {
         exercise: exercise_of(&evidence.problem)?,
-        form: evidence.task,
+        form: evidence.form,
         settings: evidence.settings.clone(),
         turns: evidence.turns.clone(),
         checks: evidence
@@ -189,7 +189,7 @@ pub fn facts(evidence: &SessionEvidence) -> DebriefFactsDto {
     let hints: Vec<_> = evidence.hints.iter().map(hint_of).collect();
     let events: Vec<_> = evidence.events.iter().map(event_of).collect();
     let counted = Counted {
-        form: evidence.task,
+        form: evidence.form,
         settings,
         scopes: evidence
             .runs

@@ -45,7 +45,7 @@ pub fn result_of(detail: &CaseCheckDetailDto) -> CaseResult {
 pub fn evidence_of(bundle: &SessionBundle, draft: &[LearningLabFile]) -> Result<SessionEvidence> {
     Ok(SessionEvidence {
         problem: bundle.problem.clone(),
-        task: bundle.row.task,
+        form: bundle.row.form,
         settings: settings_used(bundle)?,
         turns: bundle.turns.clone(),
         runs: bundle

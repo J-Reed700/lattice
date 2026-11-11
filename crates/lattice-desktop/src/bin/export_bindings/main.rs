@@ -250,7 +250,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::learning::plugin::ask_practice_hint,
             lattice::features::learning::plugin::send_practice_turn,
             lattice::features::learning::plugin::respond_practice_session,
-            lattice::features::learning::plugin::observe_coding_draft,
+            lattice::features::learning::plugin::observe_practice_draft,
             lattice::features::learning::plugin::set_practice_clock,
             lattice::features::learning::plugin::set_practice_setting,
             lattice::features::learning::plugin::reveal_practice_solution,

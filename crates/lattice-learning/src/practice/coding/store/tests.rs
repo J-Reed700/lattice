@@ -51,7 +51,7 @@ fn bundle() -> SessionBundle {
             program_id: "p1".into(),
             activity_id: "a1".into(),
             kind: KindId::new("program"),
-            task: Form::Build,
+            form: Form::Build,
             setting: Setting::Mock,
             stage: Stage::Make,
             budget_seconds: Some(600),

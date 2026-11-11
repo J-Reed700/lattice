@@ -41,7 +41,7 @@ export function codingSession(overrides: Partial<Wire.PracticeSessionDto> = {}):
     programId: 'program-1',
     activityId: 'activity-1',
     lessonId: null,
-    task: 'build',
+    form: 'build',
     setting: 'coached',
     settingsUsed: ['coached'],
     stage: 'understand',

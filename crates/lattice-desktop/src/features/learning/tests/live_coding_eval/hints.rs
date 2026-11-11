@@ -15,7 +15,7 @@ use lattice_core::shared::error::Result;
 use lattice_learning::lab_runtime::LearningLabFile;
 use lattice_learning::practice::coding::dto::{
     AskPracticeHintRequestDto, CaseViewDto, CheckPracticePieceRequestDto, CodingRunScope,
-    DraftObservation, MovePracticeStageRequestDto, ObserveCodingDraftRequestDto, PracticeHintDto,
+    DraftObservation, MovePracticeStageRequestDto, ObservePracticeDraftRequestDto, PracticeHintDto,
     PracticeSessionDto, StartPracticeSessionRequestDto,
 };
 use lattice_learning::practice::coding::observation::{diff_lines, LineChange, LineChangeKind};
@@ -410,7 +410,7 @@ async fn hint_ladder(
         })
         .await?;
     sessions
-        .observe_draft(&ObserveCodingDraftRequestDto {
+        .observe_draft(&ObservePracticeDraftRequestDto {
             program_id: lab.program_id.clone(),
             session_id: session_id.clone(),
             files: file(code),

@@ -253,7 +253,7 @@ async fn setup(pool: &SqlitePool) -> Result<Setup> {
         .execute(pool)
         .await
         .map_err(db)?;
-    sqlx::query("INSERT INTO learning_exercise_sessions(id,program_id,activity_id,task,setting,stage,draft_json,created_at) VALUES(?,?,?,'problem','coached','understand','[]',?)")
+    sqlx::query("INSERT INTO learning_exercise_sessions(id,program_id,activity_id,kind,form,setting,stage,draft_json,created_at) VALUES(?,?,?,'program','build','coached','understand','[]',?)")
         .bind(&session_id)
         .bind(&program_id)
         .bind(&activity_id)

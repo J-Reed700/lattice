@@ -1266,7 +1266,7 @@ async fn an_observed_draft_is_saved_and_idle_waits_for_a_quiet_spell() {
     ctx.clear_cue(&session).await;
     let ctx = &ctx;
     let observe = |reason: DraftObservation, content: &str| {
-        let request = ObserveCodingDraftRequestDto {
+        let request = ObservePracticeDraftRequestDto {
             program_id: ctx.program_id.clone(),
             session_id: session.session_id.clone(),
             files: starter_files(content),
@@ -1300,7 +1300,7 @@ async fn a_pause_over_an_unchanged_draft_cues_nothing_and_a_changed_one_cues_a_c
     ctx.clear_cue(&session).await;
     let ctx = &ctx;
     let pause = |content: &str| {
-        let request = ObserveCodingDraftRequestDto {
+        let request = ObservePracticeDraftRequestDto {
             program_id: ctx.program_id.clone(),
             session_id: session.session_id.clone(),
             files: starter_files(content),

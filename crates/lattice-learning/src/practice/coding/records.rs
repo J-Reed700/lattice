@@ -37,7 +37,7 @@ pub struct CodingRow {
     pub program_id: String,
     pub activity_id: String,
     pub kind: KindId,
-    pub task: Form,
+    pub form: Form,
     pub setting: Setting,
     pub stage: Stage,
     pub budget_seconds: Option<u32>,

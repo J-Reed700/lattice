@@ -12,7 +12,7 @@ import { codingApi } from './codingApi';
 
 export interface CodingBuildChoice {
   lessonId?: string | null;
-  task: Wire.Form;
+  form: Wire.Form;
   setting: Wire.Setting;
   language: string;
   difficulty: Wire.ProblemDifficulty;
@@ -92,7 +92,7 @@ export function CodingEntry({ programId, choice, onReady, onCancel }: CodingEntr
         operationId: operationId.current,
         programId,
         lessonId: picked.lessonId ?? null,
-        task: picked.task,
+        form: picked.form,
         language: picked.language,
         difficulty: picked.difficulty,
         focus: picked.focus ?? null,

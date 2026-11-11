@@ -390,20 +390,26 @@ Anything shared is named for practice sessions. Only what is truly about code ke
 
 | Today | Becomes |
 |---|---|
-| `learning_coding_sessions` (`task`) | `learning_practice_sessions` (`kind`, `form`) |
+| `learning_coding_sessions` (`task`) | `learning_exercise_sessions` (`kind`, `form`) |
 | `task`: `problem`, `bug_fix` | `form`: `build`, `repair`, `complete`, `arrange` |
 | `stage`: `code`, `test` | `make`, `check` (the other names stay) |
-| `learning_coding_events`, kind `run` | `learning_practice_session_events`, kind `check` |
-| `learning_coding_debriefs` | `learning_practice_debriefs` |
-| `learning_practical_runs.coding_session_id`, scope `examples` | `practice_session_id`, scope `shown` (`all` and Program's `input` stay) |
+| `learning_coding_events`, kind `run` | `learning_exercise_session_events`, kind `check` |
+| `learning_coding_debriefs` | `learning_exercise_debriefs` |
+| `learning_practical_runs.coding_session_id`, scope `examples` | `exercise_session_id`, scope `shown` (`all` and Program's `input` stay) |
 | `learning_practical_activities.kind = 'coding_problem'` | `'exercise'` |
 | `learning_practice_fits.teaches_code` | one row per course and kind: `kind`, `fits` |
 | hint rung `line` | `point` |
 | `learning_coding_examples` | stays: learner-written cases are Program's |
 | material `problem:<language>` | stays: Program's technique targets |
-| commands `*_coding_session`, `move_coding_stage`, `ask_coding_hint`, `send_coding_turn`, `set_coding_clock`, `set_coding_setting`, `reveal_coding_solution`, `start_coding_build`, `run_coding_session` | `*_practice_session`, `move_practice_stage`, `ask_practice_hint`, `send_practice_turn`, `set_practice_clock`, `set_practice_setting`, `reveal_practice_solution`, `start_practice_build`, `check_practice_piece` |
+| commands `*_coding_session`, `move_coding_stage`, `ask_coding_hint`, `send_coding_turn`, `set_coding_clock`, `set_coding_setting`, `reveal_coding_solution`, `start_coding_build`, `observe_coding_draft`, `run_coding_session` | `*_practice_session`, `move_practice_stage`, `ask_practice_hint`, `send_practice_turn`, `set_practice_clock`, `set_practice_setting`, `reveal_practice_solution`, `start_practice_build`, `observe_practice_draft`, `check_practice_piece` |
 | `check_coding_example`, `remove_coding_example` | stay; `run_coding_input` is new for Program's run on the learner's own input |
-| types `CodingSessions`, `CodingStage`, `CodingSetting`, `CodingTask`, `CodingEvent`, `CodingCue`, `CodeHintRung`, `Problem*` in the engine | `PracticeSessions`, `Stage`, `Setting`, `Form`, `SessionEvent`, `SessionCue`, `Rung`, `Exercise`; `Problem*` stays inside the Program kind |
+| types `CodingStage`, `CodingSetting`, `CodingTask`, `CodingEvent`, `CodingCue`, `CodeHintRung`, `Problem*` in the engine | `Stage`, `Setting`, `Form`, `SessionEvent`, `Cue`, `Rung`, `Exercise`; `Problem*` stays inside the Program kind |
+| `CodingSessions` | stays: it is Program's adapter over the engine's `PracticeSessions` |
+| wire field `task` | `form` |
+| query key `learning-coding-sessions` | `learning-exercise-sessions` |
+
+The tables and the run column take `exercise_` because `learning_practice_sessions` and
+`learning_practical_runs.practice_session_id` already belong to the workbench.
 
 The migration `20261109100000_learning_coding_sessions.sql` is edited in place and renamed for what it creates. It
 has never been on main.
@@ -478,12 +484,12 @@ Tests come first in every step. Nothing is built locally; each step is pushed to
      `get_practice_session`, `list_practice_sessions`, `finish_practice_session`, `respond_practice_session`,
      `move_practice_stage`, `ask_practice_hint`, `send_practice_turn`, `set_practice_clock`,
      `set_practice_setting`, `reveal_practice_solution`, `start_practice_build` and `check_practice_piece` (was
-     `run_coding_session`); `check_coding_example`, `remove_coding_example` and `observe_coding_draft` keep their
-     names. The request and result DTOs follow their commands; the session, summary, debrief, check and hint views
+     `run_coding_session`); `observe_coding_draft` became `observe_practice_draft`; `check_coding_example` and
+     `remove_coding_example` keep their names. The request and result DTOs follow their commands; the session, summary, debrief, check and hint views
      are `PracticeSessionDto`, `PracticeSessionSummaryDto`, `PracticeDebriefDto`, `PracticeCheckDto` and
      `PracticeHintDto`. The wire types `CodingStage`, `CodingSetting`, `CodingTask` and `CodeHintRung` are the
-     engine's `Stage`, `Setting`, `Form` and `Rung`. The wire field `task` keeps its name and now holds a `Form`.
-     `CodingSessions` stays: `PracticeSessions` is the engine's service and the Program type is its adapter.
+     engine's `Stage`, `Setting`, `Form` and `Rung`. The wire field `task` is `form`, and so are Program's `ProblemRequest.task` and the
+     session records' `task`. `CodingSessions` stays: `PracticeSessions` is the engine's service and the Program type is its adapter.
      `run_coding_input`, the new command for Program's run on the learner's own input, is not part of this step.
      The screen's API follows (calls, types, one query key); the components are step 6.
 6. The screen: `session/` and the kind registry, with Program's editor and results views under `kinds/program/`;

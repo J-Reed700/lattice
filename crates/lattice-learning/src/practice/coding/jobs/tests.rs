@@ -13,7 +13,7 @@ fn build_request(operation_id: &str, program_id: &str) -> StartPracticeBuildRequ
         operation_id: operation_id.to_owned(),
         program_id: program_id.to_owned(),
         lesson_id: None,
-        task: Form::Build,
+        form: Form::Build,
         language: "python".into(),
         difficulty: ProblemDifficulty::Easy,
         focus: None,
@@ -141,7 +141,7 @@ fn a_programs_build_request_names_its_kind_form_and_options() {
 #[test]
 fn a_bug_fix_is_a_repair_and_keeps_its_focus() {
     let mut asked = build_request("operation", "program-1");
-    asked.task = Form::Repair;
+    asked.form = Form::Repair;
     asked.focus = Some("arrays".into());
     asked.lesson_id = Some("lesson-1".into());
     let request = practice_build_request(&asked).unwrap();

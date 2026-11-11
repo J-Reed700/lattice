@@ -47,7 +47,7 @@ describe('what Start does', () => {
     const action = startAction('code', { difficulty: 'hard', language: 'go', task: 'repair' }, context);
     expect(action).toMatchObject({
       kind: 'coding-build',
-      choice: { lessonId: 'lesson-1', task: 'repair', setting: 'coached', language: 'python', difficulty: 'hard' },
+      choice: { lessonId: 'lesson-1', form: 'repair', setting: 'coached', language: 'python', difficulty: 'hard' },
     });
   });
 
@@ -69,7 +69,7 @@ describe('what Start does', () => {
 
   it('turns a coding round of the Mock card into a timed build in the chosen setting', () => {
     const action = startAction('mock', { round: 'debugging', setting: 'watched', minutes: '30' }, context);
-    expect(action).toMatchObject({ kind: 'coding-build', choice: { task: 'repair', setting: 'watched', budgetSeconds: 1800 } });
+    expect(action).toMatchObject({ kind: 'coding-build', choice: { form: 'repair', setting: 'watched', budgetSeconds: 1800 } });
   });
 
   it('uses one difficulty for coding rounds of the Mock card', () => {

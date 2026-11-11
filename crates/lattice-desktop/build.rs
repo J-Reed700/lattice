@@ -646,7 +646,7 @@ fn main() {
                     "check_practice_piece",
                     "ask_practice_hint",
                     "send_practice_turn",
-                    "observe_coding_draft",
+                    "observe_practice_draft",
                     "set_practice_clock",
                     "finish_practice_session",
                     "practice_due",

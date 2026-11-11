@@ -67,7 +67,7 @@ pub(super) fn parse_row(row: &SqliteRow) -> Result<CodingRow> {
         program_id: row.get("program_id"),
         activity_id: row.get("activity_id"),
         kind: KindId::new(&row.get::<String, _>("kind")),
-        task: from_name(row.get("form"))?,
+        form: from_name(row.get("form"))?,
         setting: from_name(row.get("setting"))?,
         stage: from_name(row.get("stage"))?,
         budget_seconds: row
@@ -329,7 +329,7 @@ impl LearningPracticalRepository {
         }
         let row = open_row_on(&mut tx, program_id, session_id).await?;
         check_revision(&row, expected_revision)?;
-        let stages = row.task.stages(true);
+        let stages = row.form.stages(true);
         let position = |stage: Stage| stages.iter().position(|each| *each == stage);
         let target = position(to).ok_or_else(|| invalid("That stage is not part of this task."))?;
         let current = position(row.stage).ok_or_else(|| {

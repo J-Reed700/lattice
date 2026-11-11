@@ -214,17 +214,17 @@ pub(crate) mod test_support {
     }
 
     pub fn session(problem: &Problem, setting: Setting, stage: Stage) -> PracticeSessionDto {
-        let task = Form::Build;
+        let form = Form::Build;
         PracticeSessionDto {
             session_id: SESSION_ID.to_owned(),
             program_id: "program-1".to_owned(),
             activity_id: "activity-1".to_owned(),
             lesson_id: None,
-            task,
+            form,
             setting,
             settings_used: vec![setting],
             stage,
-            stages: task.stages(true).to_vec(),
+            stages: form.stages(true).to_vec(),
             problem: PublicProblemDto {
                 title: problem.spec.title.clone(),
                 statement: problem.spec.statement.clone(),

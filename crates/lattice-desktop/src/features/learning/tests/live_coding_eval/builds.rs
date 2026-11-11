@@ -242,7 +242,7 @@ async fn live_coding_build_eval() -> Result<()> {
         let request = ProblemRequest {
             program_id: lab.program_id.clone(),
             lesson: None,
-            task: Form::Build,
+            form: Form::Build,
             language: "python".into(),
             difficulty: ProblemDifficulty::Easy,
             patterns: requested.clone(),

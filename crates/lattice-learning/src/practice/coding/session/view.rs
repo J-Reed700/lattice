@@ -233,11 +233,11 @@ pub fn session_view(bundle: &SessionBundle) -> Result<PracticeSessionDto> {
         program_id: row.program_id.clone(),
         activity_id: row.activity_id.clone(),
         lesson_id: Some(bundle.lesson_id.clone()),
-        task: row.task,
+        form: row.form,
         setting: row.setting,
         settings_used: settings_used(bundle)?,
         stage: row.stage,
-        stages: row.task.stages(true).to_vec(),
+        stages: row.form.stages(true).to_vec(),
         problem: public_problem(&bundle.problem),
         clock: ClockDto {
             active_ms: row.active_ms,

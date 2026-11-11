@@ -107,7 +107,7 @@ pub fn session_of(bundle: &SessionBundle) -> Result<Session> {
             id: row.id.clone(),
             program_id: row.program_id.clone(),
             activity_id: row.activity_id.clone(),
-            form: row.task,
+            form: row.form,
             setting: row.setting,
             stage: row.stage,
             budget_seconds: row.budget_seconds,

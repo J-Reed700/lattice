@@ -288,7 +288,7 @@ export const COMMAND_PLUGINS = {
   move_conversation_to_space: 'conversation',
   move_custom_collection: 'file',
   move_practice_stage: 'learning',
-  observe_coding_draft: 'learning',
+  observe_practice_draft: 'learning',
   open_file: 'file',
   open_file_by_id: 'file',
   open_learning_practice_source: 'learning',

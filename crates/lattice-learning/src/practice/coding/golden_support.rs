@@ -180,7 +180,7 @@ pub(crate) fn rich_session(
     let stages = task.stages(true);
     let stage: Stage = stages.get(2).copied().unwrap_or(Stage::Make);
     let mut session = session(&problem, setting, stage);
-    session.task = task;
+    session.form = task;
     session.stages = stages.to_vec();
     session.runs.push(failing_run());
     session.examples = vec![

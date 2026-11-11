@@ -140,7 +140,7 @@ export function startAction(card: CardId, values: Record<string, string>, contex
         kind: 'coding-build',
         choice: {
           lessonId: context.lessonId,
-          task,
+          form: task,
           setting: 'coached',
           language: CODING_LANGUAGE,
           difficulty: asDifficulty(values.difficulty),
@@ -157,7 +157,7 @@ export function startAction(card: CardId, values: Record<string, string>, contex
           kind: 'coding-build',
           choice: {
             lessonId: context.lessonId,
-            task: round === 'debugging' ? 'repair' : 'build',
+            form: round === 'debugging' ? 'repair' : 'build',
             setting: values.setting === 'watched' ? 'watched' : 'mock',
             language: CODING_LANGUAGE,
             difficulty: MOCK_DIFFICULTY,

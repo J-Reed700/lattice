@@ -86,7 +86,7 @@ export function PracticeArea({ program, currentLesson, currentModule, view }: Pr
       if (item.kind === 'coding_patterns') {
         view.openCodingBuild({
           lessonId: item.lessonId ?? currentLesson?.id ?? null,
-          task: 'build',
+          form: 'build',
           setting: 'coached',
           language: CODING_LANGUAGE,
           difficulty: 'easy',
@@ -102,7 +102,7 @@ export function PracticeArea({ program, currentLesson, currentModule, view }: Pr
     (setting: Wire.Setting) => {
       view.openCodingBuild({
         lessonId: currentLesson?.id ?? null,
-        task: 'build',
+        form: 'build',
         setting,
         language: CODING_LANGUAGE,
         difficulty: MOCK_DIFFICULTY,

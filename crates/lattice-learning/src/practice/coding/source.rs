@@ -61,7 +61,7 @@ pub struct LessonBrief {
 pub struct ProblemRequest {
     pub program_id: String,
     pub lesson: Option<LessonBrief>,
-    pub task: Form,
+    pub form: Form,
     pub language: String,
     pub difficulty: ProblemDifficulty,
     /// Ids from the pattern catalogue that the problem must call for.
@@ -144,7 +144,7 @@ fn request_of(commission: &Commission<'_>) -> Result<ProblemRequest> {
             title: lesson.title.clone(),
             objective: lesson.objective.clone(),
         }),
-        task: program_form(commission.form)?,
+        form: program_form(commission.form)?,
         language: facts.language,
         difficulty: options.difficulty,
         patterns: facts.patterns,
@@ -235,7 +235,7 @@ pub async fn build_problem(
     let making = Making {
         program_id: &request.program_id,
         lesson: parts.lesson.as_ref(),
-        form: request.task,
+        form: request.form,
         options: &parts.options,
         facts: &parts.facts,
     };
@@ -360,7 +360,7 @@ fn prompt(request: &ProblemRequest, runtime: &str) -> String {
 - \"clarifications\" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume."
             .to_owned(),
     );
-    if request.task == Form::Repair {
+    if request.form == Form::Repair {
         parts.push(
             "The learner will be handed one misreading as buggy code to repair, so write each misreading as a small, realistic change to the reference (an off-by-one, a wrong comparison, a missed case) that keeps the function's shape."
                 .to_owned(),

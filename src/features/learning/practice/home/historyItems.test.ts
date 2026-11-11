@@ -15,7 +15,7 @@ const session = (patch: Partial<Wire.PracticeSessionSummaryDto>): Wire.PracticeS
   sessionId: 's1',
   activityId: 'coding-act',
   title: 'Two sum',
-  task: 'build',
+  form: 'build',
   setting: 'coached',
   stage: 'make',
   finished: false,

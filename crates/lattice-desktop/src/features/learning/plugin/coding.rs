@@ -369,8 +369,8 @@ pub async fn respond_practice_session(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn observe_coding_draft(
-    request: ObserveCodingDraftRequestDto,
+pub async fn observe_practice_draft(
+    request: ObservePracticeDraftRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
     kinds: State<'_, Kinds>,

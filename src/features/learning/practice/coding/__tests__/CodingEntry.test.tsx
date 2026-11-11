@@ -25,7 +25,7 @@ vi.mock('@/features/jobs/api', () => ({
 }));
 
 const choice: CodingBuildChoice = {
-  task: 'build',
+  form: 'build',
   setting: 'mock',
   language: 'python',
   difficulty: 'easy',
@@ -73,7 +73,7 @@ describe('CodingEntry', () => {
     render(<CodingEntry programId="program-1" choice={choice} onReady={vi.fn()} onCancel={vi.fn()} />);
     await waitFor(() =>
       expect(codingApi.startBuild).toHaveBeenCalledWith(
-        expect.objectContaining({ programId: 'program-1', task: 'build', language: 'python', difficulty: 'easy' }),
+        expect.objectContaining({ programId: 'program-1', form: 'build', language: 'python', difficulty: 'easy' }),
       ),
     );
     expect(screen.getByRole('progressbar')).toBeInTheDocument();

@@ -121,7 +121,7 @@ fn request(task: Form) -> ProblemRequest {
             title: "Lookups".into(),
             objective: "Use a table to avoid repeated scans.".into(),
         }),
-        task,
+        form: task,
         language: "python".into(),
         difficulty: ProblemDifficulty::Easy,
         patterns: vec!["hash_map_lookup".into()],

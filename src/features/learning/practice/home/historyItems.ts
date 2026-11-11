@@ -97,7 +97,7 @@ export function buildHistory(sources: HistorySources): HistoryItem[] {
       card: entry.setting === 'coached' ? 'code' : 'mock',
       title: entry.title,
       when: entry.finishedAt ?? entry.createdAt,
-      detail: `${SETTING_LABELS[entry.setting]} · ${TASK_LABELS[entry.task]}`,
+      detail: `${SETTING_LABELS[entry.setting]} · ${TASK_LABELS[entry.form]}`,
       result: entry.finished
         ? entry.passed !== null && entry.total !== null
           ? `${entry.passed} of ${entry.total} passed`

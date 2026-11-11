@@ -179,7 +179,7 @@ pub struct PracticeSessionDto {
     pub program_id: String,
     pub activity_id: String,
     pub lesson_id: Option<String>,
-    pub task: Form,
+    pub form: Form,
     pub setting: Setting,
     pub settings_used: Vec<Setting>,
     pub stage: Stage,
@@ -210,7 +210,7 @@ pub struct PracticeSessionSummaryDto {
     pub session_id: String,
     pub activity_id: String,
     pub title: String,
-    pub task: Form,
+    pub form: Form,
     pub setting: Setting,
     pub stage: Stage,
     pub finished: bool,
@@ -317,7 +317,7 @@ pub struct StartPracticeBuildRequestDto {
     pub operation_id: String,
     pub program_id: String,
     pub lesson_id: Option<String>,
-    pub task: Form,
+    pub form: Form,
     pub language: String,
     pub difficulty: ProblemDifficulty,
     pub focus: Option<String>,
@@ -421,7 +421,7 @@ pub struct SendPracticeTurnRequestDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct ObserveCodingDraftRequestDto {
+pub struct ObservePracticeDraftRequestDto {
     pub program_id: String,
     pub session_id: String,
     pub files: Vec<LearningLabFile>,

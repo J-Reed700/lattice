@@ -200,7 +200,7 @@ fn event(ordinal: u32, kind: &str, payload: Value, at: i64) -> CodingEventRow {
 fn evidence() -> SessionEvidence {
     SessionEvidence {
         problem: problem(),
-        task: Form::Build,
+        form: Form::Build,
         settings: vec![Setting::Coached],
         turns: vec![
             turn(
@@ -798,7 +798,7 @@ fn a_session_with_no_events_has_no_stage_time() {
 #[test]
 fn a_bug_fix_lists_its_own_stages() {
     let mut session = evidence();
-    session.task = Form::Repair;
+    session.form = Form::Repair;
     session.events = vec![
         event(0, "stage", json!({"to": "reproduce"}), 0),
         event(1, "opened", json!({}), 0),

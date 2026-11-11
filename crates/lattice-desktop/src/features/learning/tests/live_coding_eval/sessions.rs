@@ -27,7 +27,7 @@ use lattice_core::shared::error::{AppError, Result};
 use lattice_learning::coding::dto::{
     AskPracticeHintRequestDto, CheckCodingExampleRequestDto, CheckPracticePieceRequestDto,
     CodingRunScope, DebriefFactsDto, DraftObservation, FinishPracticeSessionRequestDto,
-    MovePracticeStageRequestDto, ObserveCodingDraftRequestDto, PracticeCheckDto, PracticeHintDto,
+    MovePracticeStageRequestDto, ObservePracticeDraftRequestDto, PracticeCheckDto, PracticeHintDto,
     PracticeSessionDto, PracticeSessionRequestDto, SendPracticeTurnRequestDto,
     StartPracticeSessionRequestDto,
 };
@@ -418,7 +418,7 @@ impl<'a> Player<'a> {
 
     async fn pause(&mut self, code: &str, which: &str) -> Result<()> {
         self.draft = files(code);
-        let request = ObserveCodingDraftRequestDto {
+        let request = ObservePracticeDraftRequestDto {
             program_id: self.lab.program_id.clone(),
             session_id: self.session.session_id.clone(),
             files: self.draft.clone(),
