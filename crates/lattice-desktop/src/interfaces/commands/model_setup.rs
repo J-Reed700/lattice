@@ -192,9 +192,10 @@ pub async fn test_llama_cpp_connection(
     let header = lattice_core::application::services::credentials::remote_auth::header_for_test(
         container.credentials().as_ref(),
         lattice_core::application::ports::llm_port::RemoteServer::LlamaCpp,
+        &request.url,
         &request.auth_header_name,
         &request.auth_header_value,
-        &saved.llm.llama_cpp.auth_header_name,
+        &saved.llm.llama_cpp.url,
     )
     .await?;
     let connection = lattice_core::application::contracts::settings::LlamaCppSettingsDto {

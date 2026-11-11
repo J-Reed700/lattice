@@ -869,3 +869,99 @@ async fn the_legacy_value_in_use_replaces_an_older_one_in_the_keyring() {
         Some(LEGACY_OLLAMA_VALUE.to_string())
     );
 }
+
+type Keyring = lattice_core::application::services::credentials::memory::InMemoryCredentials;
+
+/// A keyring whose first write fails, as one that was locked at startup.
+struct FirstWriteFails {
+    inner: Keyring,
+    failed: std::sync::atomic::AtomicBool,
+}
+
+impl FirstWriteFails {
+    fn new() -> Self {
+        Self {
+            inner: Keyring::default(),
+            failed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+}
+
+#[async_trait]
+impl CredentialsPort for FirstWriteFails {
+    async fn set_api_key(&self, service: &str, key: &str) -> Result<()> {
+        if !self.failed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return Err(AppError::Security("keyring locked".into()));
+        }
+        self.inner.set_api_key(service, key).await
+    }
+    async fn get_api_key(&self, service: &str) -> Result<Option<String>> {
+        self.inner.get_api_key(service).await
+    }
+    async fn delete_api_key(&self, service: &str) -> Result<()> {
+        self.inner.delete_api_key(service).await
+    }
+    async fn has_api_key(&self, service: &str) -> Result<bool> {
+        self.inner.has_api_key(service).await
+    }
+    async fn clear_all_credentials(&self) -> Result<()> {
+        self.inner.clear_all_credentials().await
+    }
+    async fn set_custom_endpoint(&self, endpoint: &str) -> Result<()> {
+        self.inner.set_custom_endpoint(endpoint).await
+    }
+    async fn get_custom_endpoint(&self) -> Result<Option<String>> {
+        self.inner.get_custom_endpoint().await
+    }
+}
+
+/// Opens a legacy settings directory whose migration fails, stores
+/// `value` for llama.cpp, then opens it again on the same keyring.
+async fn store_after_a_failed_migration(value: Option<&str>) -> (TempDir, Arc<FirstWriteFails>) {
+    let dir = legacy_settings_dir().await;
+    let keyring = Arc::new(FirstWriteFails::new());
+    let repo = SettingsRepository::with_credentials(dir.path().to_path_buf(), keyring.clone())
+        .await
+        .unwrap();
+    repo.store_header_value(RemoteServer::LlamaCpp, value)
+        .await
+        .unwrap();
+    SettingsRepository::with_credentials(dir.path().to_path_buf(), keyring.clone())
+        .await
+        .unwrap();
+    (dir, keyring)
+}
+
+#[tokio::test]
+async fn a_value_saved_after_a_failed_migration_survives_the_next_start() {
+    use lattice_core::application::services::credentials::CredentialKey;
+    let (dir, keyring) = store_after_a_failed_migration(Some("Bearer new")).await;
+
+    assert_eq!(
+        keyring
+            .inner
+            .stored(CredentialKey::LlamaCppAuthHeader.as_str()),
+        Some("Bearer new".to_string())
+    );
+    let on_disk = fs::read_to_string(dir.path().join(SETTINGS_FILE_NAME))
+        .await
+        .unwrap();
+    assert!(!on_disk.contains("legacy-llama-secret"), "{on_disk}");
+}
+
+#[tokio::test]
+async fn a_value_cleared_after_a_failed_migration_stays_cleared_at_the_next_start() {
+    use lattice_core::application::services::credentials::CredentialKey;
+    let (dir, keyring) = store_after_a_failed_migration(None).await;
+
+    assert_eq!(
+        keyring
+            .inner
+            .stored(CredentialKey::LlamaCppAuthHeader.as_str()),
+        None
+    );
+    let on_disk = fs::read_to_string(dir.path().join(SETTINGS_FILE_NAME))
+        .await
+        .unwrap();
+    assert!(!on_disk.contains("legacy-llama-secret"), "{on_disk}");
+}

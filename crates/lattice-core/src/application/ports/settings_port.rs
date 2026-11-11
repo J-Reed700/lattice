@@ -8,6 +8,7 @@
 use crate::application::contracts::settings::{
     LLMProvider, SettingsCategory, SettingsDto, ValidationResult,
 };
+use crate::application::ports::llm_port::RemoteServer;
 use crate::shared::error::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -109,6 +110,10 @@ pub trait SettingsRepositoryPort: Send + Sync {
 
     /// Check if a file path is valid and accessible.
     fn validate_folder_path(&self, path: &str) -> bool;
+
+    /// Store (`Some`) or delete (`None`, or blank) the authentication header
+    /// value of a remote model server.
+    async fn store_header_value(&self, server: RemoteServer, value: Option<&str>) -> Result<()>;
 }
 
 /// The committed import and its vault transition, observed in one serialized mutation.
@@ -588,6 +593,10 @@ impl SettingsRepositoryPort for MockSettingsRepository {
         }
 
         result
+    }
+
+    async fn store_header_value(&self, _server: RemoteServer, _value: Option<&str>) -> Result<()> {
+        Ok(())
     }
 
     fn validate_folder_path(&self, path: &str) -> bool {

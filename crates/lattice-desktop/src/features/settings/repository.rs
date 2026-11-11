@@ -563,6 +563,17 @@ impl SettingsRepositoryPort for SettingsRepository {
         self.validate_settings(settings)
     }
 
+    async fn store_header_value(&self, server: RemoteServer, value: Option<&str>) -> Result<()> {
+        let Some(credentials) = &self.credentials else {
+            return Ok(());
+        };
+        let key = CredentialKey::for_server(server);
+        match value.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(value) => credentials.set_api_key(key.as_str(), value).await,
+            None => credentials.delete_api_key(key.as_str()).await,
+        }
+    }
+
     fn validate_folder_path(&self, path: &str) -> bool {
         let path = Path::new(path);
         // repository-barrier-allow: settings validation checks a user-selected folder resource.

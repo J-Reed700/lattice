@@ -185,9 +185,10 @@ pub async fn test_ollama_connection(
     let header = remote_auth::header_for_test(
         container.credentials().as_ref(),
         RemoteServer::Ollama,
+        &request.ollama_url,
         &request.auth_header_name,
         &request.auth_header_value,
-        &saved.llm.ollama_auth_header_name,
+        &saved.llm.ollama_url,
     )
     .await?;
     probe_ollama_connection(&request.ollama_url, header).await

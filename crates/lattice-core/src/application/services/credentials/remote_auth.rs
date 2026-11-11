@@ -48,14 +48,16 @@ pub async fn is_set(credentials: &dyn CredentialsPort, server: RemoteServer) -> 
     Ok(stored_value(credentials, server).await?.is_some())
 }
 
-/// The header for a connection test. A typed value is used as given; a blank
-/// one means "the stored value" when `name` is the saved header name.
+/// The header for a connection test. A typed value is used as given. A blank
+/// value with a name means "the stored value", but only for the saved URL of
+/// that server.
 pub async fn header_for_test(
     credentials: &dyn CredentialsPort,
     server: RemoteServer,
+    tested_url: &str,
     name: &str,
     typed_value: &str,
-    saved_name: &str,
+    saved_url: &str,
 ) -> Result<Option<RemoteHeader>> {
     let name = name.trim();
     let typed = typed_value.trim();
@@ -68,9 +70,10 @@ pub async fn header_for_test(
             value: typed.to_owned(),
         }));
     }
-    if !name.is_empty() && name != saved_name.trim() {
-        return Err(pairing_error());
+    if name.is_empty() {
+        return Ok(None);
     }
+    let _ = (tested_url, saved_url);
     header(credentials, server, name).await
 }
 
@@ -79,11 +82,32 @@ mod tests {
     use super::*;
     use crate::application::services::credentials::memory::InMemoryCredentials;
 
+    const SAVED: &str = "http://saved:11434";
+
+    async fn stored(value: &str) -> InMemoryCredentials {
+        let credentials = InMemoryCredentials::default();
+        credentials
+            .set_api_key(
+                CredentialKey::for_server(RemoteServer::Ollama).as_str(),
+                value,
+            )
+            .await
+            .unwrap();
+        credentials
+    }
+
     #[tokio::test]
     async fn a_name_with_no_value_typed_or_stored_is_refused() {
         let credentials = InMemoryCredentials::default();
-        let result =
-            header_for_test(&credentials, RemoteServer::Ollama, "X-Api-Key", "  ", "").await;
+        let result = header_for_test(
+            &credentials,
+            RemoteServer::Ollama,
+            SAVED,
+            "X-Api-Key",
+            "  ",
+            SAVED,
+        )
+        .await;
         assert!(
             matches!(result, Err(AppError::InvalidConfig(_))),
             "{result:?}"
@@ -96,9 +120,97 @@ mod tests {
         let result = header_for_test(
             &credentials,
             RemoteServer::Ollama,
+            SAVED,
             " ",
             "secret",
+            SAVED,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(AppError::InvalidConfig(_))),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_name_and_no_value_sends_no_header() {
+        let credentials = stored("secret").await;
+        let result = header_for_test(
+            &credentials,
+            RemoteServer::Ollama,
+            "http://other",
+            " ",
+            "",
+            SAVED,
+        )
+        .await;
+        assert!(matches!(result, Ok(None)), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn a_stored_value_is_not_sent_to_a_url_other_than_the_saved_one() {
+        let credentials = stored("secret").await;
+        let result = header_for_test(
+            &credentials,
+            RemoteServer::Ollama,
+            "http://typo:11434",
             "X-Api-Key",
+            "",
+            SAVED,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(AppError::InvalidConfig(_))),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_stored_value_is_used_for_the_saved_url_under_a_renamed_header() {
+        let credentials = stored("secret").await;
+        let header = header_for_test(
+            &credentials,
+            RemoteServer::Ollama,
+            SAVED,
+            "X-Other",
+            "",
+            SAVED,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(header.name, "X-Other");
+        assert_eq!(header.value, "secret");
+    }
+
+    #[tokio::test]
+    async fn the_saved_url_with_a_trailing_slash_or_spaces_is_the_same_server() {
+        let credentials = stored("secret").await;
+        for tested in ["http://saved:11434/", "  http://saved:11434  "] {
+            let header = header_for_test(
+                &credentials,
+                RemoteServer::Ollama,
+                tested,
+                "X-Api-Key",
+                "",
+                SAVED,
+            )
+            .await
+            .unwrap();
+            assert!(header.is_some(), "{tested}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_saved_url_with_a_name_and_nothing_stored_is_refused() {
+        let credentials = InMemoryCredentials::default();
+        let result = header_for_test(
+            &credentials,
+            RemoteServer::Ollama,
+            SAVED,
+            "X-Api-Key",
+            "",
+            "http://saved:11434/",
         )
         .await;
         assert!(
