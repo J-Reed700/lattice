@@ -98,16 +98,33 @@ pub(super) struct ConversationListing<'a> {
     pub(super) has_message_bookmarks: bool,
     pub(super) include_archived: bool,
     pub(super) search: Option<&'a str>,
-    pub(super) limit: i64,
+    pub(super) limit: Option<i64>,
     pub(super) offset: i64,
 }
 
+/// Appends the page: nothing without a limit or offset, and `LIMIT -1`,
+/// SQLite's "no limit", for an offset alone.
+pub(super) fn push_page(qb: &mut QueryBuilder<'_, Sqlite>, limit: Option<i64>, offset: i64) {
+    match (limit, offset) {
+        (Some(limit), offset) => {
+            qb.push(" LIMIT ")
+                .push_bind(limit)
+                .push(" OFFSET ")
+                .push_bind(offset);
+        }
+        (None, 0) => {}
+        (None, offset) => {
+            qb.push(" LIMIT -1 OFFSET ").push_bind(offset);
+        }
+    }
+}
+
 impl<'a> ConversationListing<'a> {
-    pub(super) fn page(limit: Option<i64>, offset: Option<i64>, default_limit: i64) -> (i64, i64) {
-        (
-            limit.unwrap_or(default_limit).clamp(1, 200),
-            offset.unwrap_or(0).max(0),
-        )
+    pub(super) fn page(
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<(Option<i64>, i64), AppError> {
+        crate::features::conversation::paging::validate_page(limit, offset)
     }
 
     pub(super) fn query(&self) -> QueryBuilder<'a, Sqlite> {
@@ -201,10 +218,7 @@ impl<'a> ConversationListing<'a> {
             qb.push(" ORDER BY c.is_pinned DESC, c.updated_at DESC");
         }
 
-        qb.push(" LIMIT ")
-            .push_bind(self.limit)
-            .push(" OFFSET ")
-            .push_bind(self.offset);
+        push_page(&mut qb, self.limit, self.offset);
         qb
     }
 }

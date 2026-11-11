@@ -10,9 +10,6 @@ use crate::features::llm::cloud::reply::call_arguments;
 use crate::features::llm::cloud::streaming::{invalid, Callback, ReasoningParts};
 use crate::features::llm::cloud::{field, set_field};
 
-/// The most content blocks one message can have.
-const MAX_BLOCKS: u64 = 1024;
-
 #[derive(Default)]
 pub(super) struct Events {
     completed: Option<Value>,
@@ -197,7 +194,6 @@ impl EventDecoder for Events {
 fn block_index(event: &Value) -> Result<u64> {
     field(event, "index")
         .as_u64()
-        .filter(|index| *index < MAX_BLOCKS)
         .ok_or_else(|| invalid("invalid content block index"))
 }
 

@@ -37,7 +37,7 @@ export function useSidebarBookmarksQuery(query: string, spaceId: string | null, 
     queryKey: [...SIDEBAR_BOOKMARKS_QUERY_KEY, query, spaceId],
     enabled,
     queryFn: async () => {
-      const response = value(await api.listMessageBookmarks({ query: query.trim() || undefined, limit: 60, offset: 0 }));
+      const response = value(await api.listMessageBookmarks({ query: query.trim() || undefined }));
       const bookmarks = Array.isArray(response) ? [] : response.bookmarks;
       return spaceId ? bookmarks.filter(bookmark => bookmark.spaceId === spaceId) : bookmarks;
     },

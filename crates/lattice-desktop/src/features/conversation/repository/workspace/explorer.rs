@@ -5,7 +5,7 @@ impl ConversationRepository {
         &self,
         query: ListConversationsExplorerQueryDto,
     ) -> Result<ListConversationsResponseDto, AppError> {
-        let (limit, offset) = ConversationListing::page(query.limit, query.offset, 100);
+        let (limit, offset) = ConversationListing::page(query.limit, query.offset)?;
 
         if let Some(space_id) = &query.space_id {
             let mut connection = self

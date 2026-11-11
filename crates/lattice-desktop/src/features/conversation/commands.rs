@@ -58,22 +58,21 @@ pub async fn create_conversation(
 }
 
 /// Lists conversations, most recently updated first, without their messages.
-/// `limit` defaults to, and is capped at, 100.
+/// Without a `limit`, every conversation.
 ///
 /// # Errors
 ///
+/// * `AppError::InvalidInput` - `limit` below 1 or `offset` below 0
 /// * `AppError::Other` - Database query failed
 pub async fn list_conversations_impl(
     runtime: &dyn ChatRuntime,
     limit: Option<i64>,
     offset: Option<i64>,
 ) -> Result<Vec<Conversation>> {
-    // 1. Validate and cap limit
-    let limit = limit.map(|l| l.min(100)); // Cap at 100
+    let (limit, offset) = crate::features::conversation::paging::validate_page(limit, offset)?;
 
-    // 2. Delegate to service
     let service = runtime.conversation_service();
-    service.list_conversations(limit, offset).await
+    service.list_conversations(limit, Some(offset)).await
 }
 
 /// Tauri command wrapper

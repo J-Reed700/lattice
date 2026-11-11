@@ -72,8 +72,6 @@ export const fetchBookmarks = async (id: string, query = '', api: ApiClient = Va
   const result = await api.listMessageBookmarks({
     conversationId: id,
     query: query.trim() || undefined,
-    limit: 200,
-    offset: 0,
   });
   if (!result.ok) throw new Error(result.error);
   return result.data.bookmarks as ConversationMessageBookmark[];

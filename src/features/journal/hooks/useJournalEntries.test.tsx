@@ -64,7 +64,7 @@ it('loads newest entries first, selects one and requests its messages once', asy
   await waitFor(() => expect(result.current.selectedId).toBe('b'));
   await waitFor(() => expect(result.current.selectedMessagesLoading).toBe(false));
   expect(result.current.selectedMessages).toEqual([]);
-  expect(VaultAPI.listJournalConversations).toHaveBeenCalledWith({ journalSpaceId: 'journal-a', includeArchived: true, limit: 100, offset: 0 });
+  expect(VaultAPI.listJournalConversations).toHaveBeenCalledWith({ journalSpaceId: 'journal-a', includeArchived: true });
   rerender({ ...initial });
   expect(VaultAPI.getConversationMessages).toHaveBeenCalledExactlyOnceWith('b');
 });

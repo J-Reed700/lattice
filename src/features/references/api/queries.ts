@@ -39,8 +39,6 @@ export function useInboxBookmarksQuery(search: string) {
       unwrapApiResult(
         await api.listMessageBookmarks({
           query: query || undefined,
-          limit: 200,
-          offset: 0,
         }),
       ).bookmarks,
   });

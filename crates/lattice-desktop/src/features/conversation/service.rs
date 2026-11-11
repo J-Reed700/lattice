@@ -45,8 +45,8 @@ impl ConversationService {
         self.repository.load_aggregate(id).await
     }
 
-    /// Conversations, most recently updated first, without messages. `limit`
-    /// defaults to 100 and `offset` to 0.
+    /// Conversations, most recently updated first, without messages. Without
+    /// a `limit`, every conversation.
     ///
     /// # Errors
     /// - `AppError::Database` if database query fails

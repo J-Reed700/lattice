@@ -45,6 +45,7 @@ pub struct DeleteConversationMessageRequestDto {
 pub struct ListMessageBookmarksQueryDto {
     pub conversation_id: Option<String>,
     pub query: Option<String>,
+    /// At most this many bookmarks; none means every matching bookmark.
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }

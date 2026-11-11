@@ -150,8 +150,7 @@ impl ConversationRepository {
         limit: Option<i64>,
         offset: Option<i64>,
     ) -> Result<Vec<Conversation>> {
-        let limit = limit.unwrap_or(100);
-        let offset = offset.unwrap_or(0);
+        let (limit, offset) = crate::features::conversation::paging::validate_page(limit, offset)?;
 
         let db_models = sqlx::query_as::<_, ConversationModel>(
             r#"
@@ -163,7 +162,7 @@ impl ConversationRepository {
             LIMIT ? OFFSET ?
             "#,
         )
-        .bind(limit)
+        .bind(limit.unwrap_or(-1))
         .bind(offset)
         .fetch_all(&self.pool)
         .await

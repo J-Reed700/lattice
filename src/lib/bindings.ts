@@ -8902,17 +8902,21 @@ export type ListConversationsExplorerQueryDto = { spaceId: string | null;
 /**
  * Only the tutor chats of this course.
  */
-programId?: string | null; query: string | null; savedOnly: boolean | null; bookmarkedOnly: boolean | null; pinnedOnly: boolean | null; hasMessageBookmarks: boolean | null; includeArchived: boolean | null; limit: number | null; offset: number | null }
+programId?: string | null; query: string | null; savedOnly: boolean | null; bookmarkedOnly: boolean | null; pinnedOnly: boolean | null; hasMessageBookmarks: boolean | null; includeArchived: boolean | null;
+/**
+ * At most this many conversations; none means every matching one.
+ */
+limit: number | null; offset: number | null }
 /**
  * Query parameters for listing conversations.
  */
 export type ListConversationsQuery = {
 /**
- * Maximum number of conversations to return
+ * At most this many conversations; none means every conversation
  */
 limit: number | null;
 /**
- * Offset for pagination
+ * Rows to skip
  */
 offset: number | null }
 /**
@@ -8923,9 +8927,17 @@ export type ListConversationsResponseDto = {
  * List of conversations
  */
 conversations: ConversationDto[] }
-export type ListJournalConversationsQueryDto = { journalSpaceId: string; query: string | null; includeArchived: boolean | null; limit: number | null; offset: number | null }
+export type ListJournalConversationsQueryDto = { journalSpaceId: string; query: string | null; includeArchived: boolean | null;
+/**
+ * At most this many conversations; none means every matching one.
+ */
+limit: number | null; offset: number | null }
 export type ListLearningTangentsRequestDto = { programId?: string | null }
-export type ListMessageBookmarksQueryDto = { conversationId: string | null; query: string | null; limit: number | null; offset: number | null }
+export type ListMessageBookmarksQueryDto = { conversationId: string | null; query: string | null;
+/**
+ * At most this many bookmarks; none means every matching bookmark.
+ */
+limit: number | null; offset: number | null }
 export type ListMessageBookmarksResponseDto = { bookmarks: ConversationMessageBookmarkDto[] }
 export type ListWorkspaceNotesRequestDto = {
 /**
