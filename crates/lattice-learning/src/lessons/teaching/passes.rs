@@ -926,3 +926,7 @@ mod tests {
 #[cfg(test)]
 #[path = "passes_refusal_tests.rs"]
 mod refusal_tests;
+
+#[cfg(test)]
+#[path = "passes_misses_tests.rs"]
+mod misses_tests;
