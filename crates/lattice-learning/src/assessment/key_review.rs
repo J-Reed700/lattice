@@ -251,4 +251,19 @@ mod tests {
         assert!(!prompts[0].contains("SECRET_EXPLANATION"));
         Ok(())
     }
+
+    #[test]
+    fn a_blinded_item_carries_its_passage_as_quote() {
+        let blind = blinded(0, &rubric_item(), "A passage.");
+        assert_eq!(blind["quote"], "A passage.");
+        assert!(blind.get("referenceQuote").is_none(), "{blind}");
+    }
+
+    #[test]
+    fn the_bank_solver_system_names_the_passage_quote() {
+        assert!(!BANK_SYSTEM.contains("referenceQuote"));
+        assert!(BANK_SYSTEM.contains(
+            "from its premises and its quote, the lesson passage it rests on, when one is given"
+        ));
+    }
 }

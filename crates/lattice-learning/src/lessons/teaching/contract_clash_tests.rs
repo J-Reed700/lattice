@@ -107,6 +107,7 @@ async fn found(
         reported,
     )
     .await
+    .map(|ruled| ruled.findings)
 }
 
 fn clashes(found: &[ReviewFinding]) -> Vec<&ReviewFinding> {
@@ -117,7 +118,7 @@ fn clashes(found: &[ReviewFinding]) -> Vec<&ReviewFinding> {
 }
 
 fn told(case: &str) -> String {
-    format!("The lesson contradicts itself: Section 1 says \"{EMPTY_WORDS}\" and Section 2 says \"{FULL_WORDS}\". Correct the one that is wrong so the lesson says one thing.{case}")
+    format!("The lesson contradicts itself: Section 1 says \"{EMPTY}\" and Section 2 says \"{FULL}\". Correct the one that is wrong so the lesson says one thing.{case}")
 }
 
 #[tokio::test]
@@ -130,7 +131,7 @@ async fn a_contradiction_the_confirming_read_refuses_is_no_finding() -> Result<(
     let result = found(&model, &[], &[]).await?;
     assert!(clashes(&result).is_empty(), "{result:?}");
     assert_eq!(model.requests().len(), 1);
-    assert_eq!(model.requests()[0]["task"], "Confirm that two statements of a lesson contradict each other");
+    assert_eq!(model.requests()[0]["task"], confirm::CLASH_TASK);
     Ok(())
 }
 
@@ -170,7 +171,7 @@ async fn the_confirming_request_gives_both_statements_in_their_parts_and_the_who
     let requests = model.requests();
     assert_eq!(requests.len(), 1);
     let request = &requests[0];
-    assert_eq!(request["task"], "Confirm that two statements of a lesson contradict each other");
+    assert_eq!(request["task"], confirm::CLASH_TASK);
     assert_eq!(
         request["question"],
         format!("Can the first statement, section-0's words '{EMPTY_WORDS}', and the second, section-1's words '{FULL_WORDS}', both be true? If they can, give in case a situation in which both hold. If they cannot, give in case what one says happens or holds that the other says cannot. In case, call them the first and the second statement.")
@@ -239,7 +240,7 @@ async fn a_contradiction_with_both_sides_guarded_is_held_at_the_first() -> Resul
     assert_eq!(clash.len(), 1, "{result:?}");
     assert_eq!(clash[0].site, Some(FindingSite::Section(0)));
     assert_eq!(clash[0].also, None);
-    assert_eq!(clash[0].passage.as_deref(), Some(EMPTY_WORDS));
+    assert_eq!(clash[0].passage.as_deref(), Some(EMPTY));
     Ok(())
 }
 
@@ -251,7 +252,7 @@ async fn a_contradiction_with_one_side_guarded_is_placed_on_the_other() -> Resul
     assert_eq!(clash.len(), 1, "{result:?}");
     assert_eq!(clash[0].site, Some(FindingSite::Section(1)));
     assert_eq!(clash[0].also, None);
-    assert_eq!(clash[0].passage.as_deref(), Some(FULL_WORDS));
+    assert_eq!(clash[0].passage.as_deref(), Some(FULL));
     let result = found(&model, &[guard(1, FULL)], &[]).await?;
     let clash = clashes(&result);
     assert_eq!(clash[0].site, Some(FindingSite::Section(0)));

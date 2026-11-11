@@ -132,7 +132,7 @@ pub(crate) fn fixture_completion(
         return CompletionResponse::from_text(
             if user.contains(crate::lessons::teaching::contract::confirm::PLANNED_TASK) {
                 CONFIRM_PLANNED_NOTHING
-            } else if user.contains("Confirm that two statements of a lesson contradict each other") {
+            } else if user.contains(crate::lessons::teaching::contract::confirm::CLASH_TASK) {
                 CONFIRM_CLASH_NOTHING
             } else {
                 CONFIRM_USE_NOTHING
