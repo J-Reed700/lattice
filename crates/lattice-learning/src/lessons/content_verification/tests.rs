@@ -415,28 +415,10 @@ fn verdict_last(reply: &str, ids: &[String]) -> String {
     }
 }
 
-/// The default answer to the form read: no option stands apart in any question.
-pub(crate) fn form_review_response(prompt: &str) -> Option<String> {
-    if !prompt.starts_with("You are shown multiple-choice questions") {
-        return None;
-    }
-    let answers: Vec<Value> = context(prompt)["questions"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|question| json!({"index":question["index"],"standsApart":null,"why":""}))
-        .collect();
-    Some(json!({"answers":answers}).to_string())
-}
-
-/// The default answers to the three calls that review a question as a quiz
+/// The default answers to the two calls that review a question as a quiz
 /// item: a blind solver that picks the first option, which the fixtures' keys
-/// are, a form read that finds no option standing apart, and an item judge
-/// that finds nothing in any item.
+/// are, and an item judge that finds nothing in any item.
 pub(crate) fn question_review_response(prompt: &str) -> Option<String> {
-    if let Some(reply) = form_review_response(prompt) {
-        return Some(reply);
-    }
     if prompt.starts_with("Solve quiz questions independently") {
         let answers: Vec<Value> = context(prompt)["questions"]
             .as_array()
@@ -615,7 +597,7 @@ impl Model {
             if let Some(open) = data["openFindings"].as_array() {
                 answer["openFindings"] = open
                     .iter()
-                    .map(|finding| json!({"id":finding["id"],"verdict":"resolved","note":""}))
+                    .map(|finding| json!({"id":finding["id"],"quote":"","verdict":"resolved"}))
                     .collect();
             }
             return Ok(answer.to_string());

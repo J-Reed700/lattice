@@ -240,6 +240,21 @@ pub(in crate::lessons::content_verification) fn cite_where_supported(
             continue;
         }
         let (field, item) = super::location(candidate, finding.unit)?;
+        let numbered_at = numbered.iter().position(|known| known.id == source.id);
+        let index = numbered_at.unwrap_or(numbered.len());
+        let added = candidate
+            .get(field)
+            .and_then(Value::as_array)
+            .and_then(|items| items.get(item))
+            .and_then(|part| {
+                crate::lessons::text_edits::citation_entry(
+                    part,
+                    field != "blocks",
+                    sentence,
+                    json!(index),
+                    quote,
+                )
+            });
         let Some(section) = candidate
             .get_mut(field)
             .and_then(Value::as_array_mut)
@@ -249,8 +264,6 @@ pub(in crate::lessons::content_verification) fn cite_where_supported(
             repairs.push(Cited::Cannot);
             continue;
         };
-        let numbered_at = numbered.iter().position(|known| known.id == source.id);
-        let index = numbered_at.unwrap_or(numbered.len());
         let listed = section.get("citations").and_then(Value::as_array);
         let own = listed.and_then(|listed| {
             listed.iter().position(|entry| {
@@ -292,14 +305,13 @@ pub(in crate::lessons::content_verification) fn cite_where_supported(
                     entry.insert("quote".into(), json!(quote));
                     entry.insert("sourceIndex".into(), json!(index));
                 }),
-            None => section
-                .entry("citations")
-                .or_insert_with(|| json!([]))
-                .as_array_mut()
-                .map(|listed| {
-                    listed
-                        .push(json!({"sentence": sentence, "sourceIndex": index, "quote": quote}));
-                }),
+            None => added.and_then(|entry| {
+                section
+                    .entry("citations")
+                    .or_insert_with(|| json!([]))
+                    .as_array_mut()
+                    .map(|listed| listed.push(entry))
+            }),
         };
         if wrote.is_none() {
             repairs.push(Cited::Cannot);
