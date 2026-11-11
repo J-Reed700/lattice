@@ -597,7 +597,9 @@ proptest! {
 
 #[test]
 fn a_list_marker_and_the_whitespace_after_it_end_where_the_line_text_starts() {
-    let line = |text: &str| item_marker_end(text).map(|end| &text[..end]);
+    fn line(text: &str) -> Option<&str> {
+        item_marker_end(text).map(|end| &text[..end])
+    }
     assert_eq!(line("3. Alpha holds."), Some("3. "));
     assert_eq!(line("- Alpha holds."), Some("- "));
     assert_eq!(line("   2) Alpha holds."), Some("   2) "));
