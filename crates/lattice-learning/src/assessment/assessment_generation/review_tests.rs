@@ -42,6 +42,8 @@ impl LLMPort for Script {
             "write"
         } else if system.starts_with("Solve quiz questions") {
             "solve"
+        } else if system.starts_with("You are shown multiple-choice questions") {
+            "form"
         } else if system.starts_with("Review quiz questions") {
             "judge"
         } else {
@@ -74,6 +76,11 @@ impl LLMPort for Script {
                 next
             }
             "solve" => (self.solve)(&context),
+            "form" => {
+                json!({"answers": context["questions"].as_array().into_iter().flatten().map(|q| json!({
+                "index": q["index"], "standsApart": null, "why": ""
+            })).collect::<Vec<_>>()})
+            }
             "judge" => (self.judge)(&context),
             _ => return Err(AppError::InvalidInput("an unscripted request".into())),
         };
@@ -119,8 +126,15 @@ impl Script {
         self
     }
 
+    /// The kinds of request in order, the form read left out: it runs beside the solver.
     fn kinds(&self) -> Vec<&'static str> {
-        self.seen.lock().unwrap().iter().map(|(k, _)| *k).collect()
+        self.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(k, _)| *k)
+            .filter(|k| *k != "form")
+            .collect()
     }
 
     fn raw(&self, kind: &str, nth: usize) -> String {

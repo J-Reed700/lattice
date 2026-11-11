@@ -65,7 +65,7 @@ pub(super) fn references() -> Vec<crate::dto::LearningSourceDto> {
     }]
 }
 
-async fn run(model: &dyn LLMPort, candidate: Value) -> Result<Reviewed> {
+pub(super) async fn run(model: &dyn LLMPort, candidate: Value) -> Result<Reviewed> {
     let sources = references();
     let references = ReferenceCollection::lexical(&sources)?;
     review_material(
@@ -2689,7 +2689,7 @@ impl ByRequest {
         let candidate = &sent["candidate"];
         let listed =
             |key: &str| -> Vec<Value> { sent[key].as_array().cloned().unwrap_or_default() };
-        let (open, known) = (listed("openFindings"), listed("knownFindings"));
+        let open = listed("openFindings");
         let sections: Vec<usize> = schema
             .pointer("/properties/blockChecks/items/properties/sectionId/enum")
             .and_then(Value::as_array)
@@ -2714,7 +2714,6 @@ impl ByRequest {
             let part = format!("Section {}", index + 1);
             open.iter()
                 .any(|entry| entry["part"] == part.as_str() && entry["passageId"] == id)
-                || known.iter().any(|entry| entry["part"] == part.as_str())
         };
         let mut checks = Vec::new();
         for index in &sections {
@@ -2738,7 +2737,6 @@ impl ByRequest {
             .filter(|note| {
                 !open
                     .iter()
-                    .chain(&known)
                     .any(|entry| entry["note"].as_str() == Some(**note))
             })
             .map(|note| (*note).to_owned())
@@ -3018,7 +3016,7 @@ async fn a_section_no_repair_touched_is_not_reviewed_again() -> Result<()> {
 }
 
 #[tokio::test]
-async fn a_finding_in_an_untouched_part_is_not_asked_about_and_stays() -> Result<()> {
+async fn a_finding_in_an_untouched_part_is_asked_about_again_and_stays() -> Result<()> {
     let model = ByRequest::new(
         |text| text.contains("first idea"),
         mend_the_first_part_first,
@@ -3027,11 +3025,12 @@ async fn a_finding_in_an_untouched_part_is_not_asked_about_and_stays() -> Result
     let (reviews, repairs) = (model.reviews(), model.repairs());
     assert_eq!(
         reviews[1]["openFindings"].as_array().map(Vec::len),
-        Some(1),
+        Some(2),
         "{}",
         reviews[1]
     );
     assert_eq!(reviews[1]["openFindings"][0]["part"], "Section 1");
+    assert_eq!(reviews[1]["openFindings"][1]["part"], "Section 2");
     assert_eq!(repairs.len(), 2);
     let second = repairs[1]["issuesToFix"].as_array().unwrap();
     assert_eq!(second.len(), 1);
@@ -3167,7 +3166,6 @@ async fn a_stored_reviewer_finding_is_judged_again_by_the_first_review_and_is_no
         .map(|entry| entry["id"].clone())
         .collect();
     assert_eq!(asked, [json!("reviewer/1")]);
-    assert!(first.get("knownFindings").is_none());
     assert!(model.repairs().is_empty());
     assert_eq!(reviewed.set_aside.len(), 1);
     assert_eq!(reviewed.set_aside[0].finding.id().as_str(), "reviewer/1");

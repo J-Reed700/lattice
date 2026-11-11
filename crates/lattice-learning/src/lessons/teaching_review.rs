@@ -114,8 +114,6 @@ pub struct Scope<'a> {
     pub sections: Option<&'a [usize]>,
     /// The open findings to judge again; none on a first review.
     pub asked: Option<&'a [Asked]>,
-    /// Open findings in parts that have not changed: shown, not judged.
-    pub known: &'a [Asked],
 }
 
 /// The reviewer's judgement of one finding it was asked about.
@@ -236,12 +234,7 @@ fn passage_text(reviewed: &Value, index: usize, id: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn schema(
-    indices: &[usize],
-    passages: &[Vec<String>],
-    verdict_ids: &[&str],
-    known_ids: &[&str],
-) -> Value {
+fn schema(indices: &[usize], passages: &[Vec<String>], verdict_ids: &[&str]) -> Value {
     let mut required = Vec::new();
     let mut properties = serde_json::Map::new();
     if !verdict_ids.is_empty() {
@@ -250,10 +243,9 @@ fn schema(
         properties.insert("openFindings".into(), json!({"type":"array","minItems":count,"maxItems":count,"items":{"type":"object","additionalProperties":false,"required":["id","verdict","note"],"properties":{"id":{"type":"string","enum":verdict_ids},"verdict":{"type":"string","enum":["present","resolved"]},"note":{"type":"string"}}}}));
     }
     required.push("issues");
-    let continues = (!verdict_ids.is_empty() || !known_ids.is_empty()).then(|| {
+    let continues = (!verdict_ids.is_empty()).then(|| {
         let choices: Vec<&str> = verdict_ids
             .iter()
-            .chain(known_ids)
             .copied()
             .chain(std::iter::once("none"))
             .collect();
@@ -326,23 +318,13 @@ pub(crate) fn basis(llm: &dyn LLMPort, system: &str, scope: &str, inputs: &Value
 
 /// The entries of `openFindings`: the findings to be judged.
 fn open_entries<'a>(asked: impl IntoIterator<Item = &'a Asked>) -> Value {
-    finding_entries(asked, true)
-}
-
-/// The entries of `knownFindings`: shown with their ids so a report can
-/// continue one, and not judged.
-fn known_entries<'a>(known: impl IntoIterator<Item = &'a Asked>) -> Value {
-    finding_entries(known, false)
-}
-
-fn finding_entries<'a>(findings: impl IntoIterator<Item = &'a Asked>, passages: bool) -> Value {
-    let entries: Vec<Value> = findings
+    let entries: Vec<Value> = asked
         .into_iter()
         .map(|finding| {
             let mut entry = serde_json::Map::new();
             entry.insert("id".into(), json!(finding.id.as_str()));
             entry.insert("part".into(), json!(label(finding.site)));
-            if let Some(passage_id) = finding.passage_id.as_ref().filter(|_| passages) {
+            if let Some(passage_id) = &finding.passage_id {
                 entry.insert("passageId".into(), json!(passage_id));
             }
             entry.insert("note".into(), json!(finding.note));
@@ -388,9 +370,6 @@ pub async fn review(
     if let Some(asked) = scope.asked {
         prompt.insert("openFindings".into(), open_entries(asked));
     }
-    if !scope.known.is_empty() {
-        prompt.insert("knownFindings".into(), known_entries(scope.known));
-    }
     // Save findings, including defects, before the later grounding/repair step.
     // Reusing a completed review never approves the lesson or skips grounding.
     let mut inputs = run_inputs(llm);
@@ -403,7 +382,7 @@ pub async fn review(
         inputs.insert(name.into(), value);
     }
     let key = format!(
-        "teaching-review-findings-v4:{}",
+        "teaching-review-findings-v5:{}",
         crate::content_verification::digest(&Value::Object(inputs).to_string())
     );
     if let Some(saved) = crate::lesson_drafts::checkpoint(&key)
@@ -459,7 +438,6 @@ async fn review_sections(
             .asked
             .into_iter()
             .flatten()
-            .chain(scope.known)
             .find(|asked| asked.id.as_str() == id)
             .map(|asked| asked.id.clone())
     };
@@ -523,11 +501,6 @@ async fn review_sections(
                 &indices,
                 &passages,
                 &remaining
-                    .iter()
-                    .map(|finding| finding.id.as_str())
-                    .collect::<Vec<_>>(),
-                &scope
-                    .known
                     .iter()
                     .map(|finding| finding.id.as_str())
                     .collect::<Vec<_>>(),

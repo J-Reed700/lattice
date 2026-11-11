@@ -613,6 +613,10 @@ pub(crate) fn review_reply(
 
 impl ScriptedModel {
     async fn respond(&self, prompt: &str) -> Result<String> {
+        // The form read runs beside the blind solver, so it takes no queued reply and leaves no prompt.
+        if let Some(reply) = crate::content_verification::tests::form_review_response(prompt) {
+            return Ok(reply);
+        }
         self.prompts
             .lock()
             .map_err(|_| AppError::InternalError("fixture lock".into()))?
