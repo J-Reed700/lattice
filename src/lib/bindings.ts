@@ -12220,6 +12220,7 @@ export type CommandArgs = {
 	apply_tags: { request: ApplyTagsRequestDto };
 	archive_conversation_space: { request: ArchiveConversationSpaceRequestDto };
 	archive_journal: { request: ArchiveConversationJournalRequestDto };
+	ask_practice_hint: { request: AskPracticeHintRequestDto };
 	attach_learning_claim_evidence: { request: AttachLearningClaimEvidenceRequestDto; onProgress: TAURI_CHANNEL<ClaimAttachProgressDto> };
 	attach_learning_lesson_source: { request: AttachLearningLessonSourceRequestDto; onProgress: TAURI_CHANNEL<ClaimAttachProgressDto> };
 	attach_message_images: { conversationId: string; paths: string[] };
@@ -12240,9 +12241,12 @@ export type CommandArgs = {
 	capture_web_page_snapshot: { conversationId: string; url: string };
 	change_learning_practice_mode: { request: ChangeLearningPracticeModeRequestDto };
 	chat_with_conversation: { conversationId?: string | null; message: string; toolPreferences?: ToolPreferences | null; cancelOnly?: boolean | null; requestId?: string | null; attachmentNames?: string[] | null; attachmentDocumentIds?: string[] | null; attachmentImageIds?: string[] | null };
+	check_coding_example: { request: CheckCodingExampleRequestDto };
 	check_first_run_status: void;
 	check_for_updates: void;
 	check_llm_health: void;
+	check_practice_fit: { request: PracticeFitRequestDto };
+	check_practice_piece: { request: CheckPracticePieceRequestDto };
 	clear_active_chat_model: void;
 	clear_active_embedding_model: void;
 	clear_active_utility_model: void;
@@ -12333,6 +12337,7 @@ export type CommandArgs = {
 	find_similar: { chunkId: string; limit?: number | null };
 	find_similar_documents: { documentId: string; limit?: number | null };
 	finish_learning_simulation: { request: FinishLearningSimulationRequestDto };
+	finish_practice_session: { request: FinishPracticeSessionRequestDto };
 	fork_conversation: { request: ForkConversationRequestDto };
 	generate_chat_starters: void | { spaceId?: string | null };
 	generate_conversation_study_deck: { request: GenerateConversationStudyDeckRequestDto };
@@ -12389,6 +12394,7 @@ export type CommandArgs = {
 	get_learning_portability_workspace: { programId: string };
 	get_learning_practical_draft: { request: GetLearningPracticalDraftRequestDto };
 	get_learning_practical_workspace: { programId: string };
+	get_learning_practice_profile: { request: GetLearningPracticeProfileRequestDto };
 	get_learning_practice_session: { id: string };
 	get_learning_practice_workspace: { id: string };
 	get_learning_program: { id: string };
@@ -12407,6 +12413,8 @@ export type CommandArgs = {
 	get_model_limits: { model: ModelRef };
 	get_model_variants: { repoId: string };
 	get_next_daily_note: { request: DailyNoteCursorRequestDto };
+	get_practice_fit: { request: PracticeFitRequestDto };
+	get_practice_session: { request: PracticeSessionRequestDto };
 	get_previous_daily_note: { request: DailyNoteCursorRequestDto };
 	get_recent_documents: { limit: number };
 	get_remote_auth_header_status: void;
@@ -12462,6 +12470,7 @@ export type CommandArgs = {
 	list_loaded_models: void;
 	list_message_bookmarks: { query: ListMessageBookmarksQueryDto };
 	list_passage_references: void | { limit?: number | null };
+	list_practice_sessions: { request: ListPracticeSessionsRequestDto };
 	list_source_trust_overrides: void;
 	list_space_documents: void | { spaceId?: string | null; conversationId?: string | null; query?: string | null; limit?: number | null };
 	list_study_decks: void;
@@ -12472,6 +12481,8 @@ export type CommandArgs = {
 	match_learning_source_selector: { request: MatchLearningSourceSelectorRequestDto };
 	move_conversation_to_space: { request: MoveConversationToSpaceRequestDto };
 	move_custom_collection: { collectionId: string; parentId?: string | null };
+	move_practice_stage: { request: MovePracticeStageRequestDto };
+	observe_practice_draft: { request: ObservePracticeDraftRequestDto };
 	open_file: { path: string };
 	open_file_by_id: { fileId: string };
 	open_learning_practice_source: { request: OpenLearningPracticeSourceRequestDto };
@@ -12495,6 +12506,7 @@ export type CommandArgs = {
 	plugin_rotate_recovery_code: void;
 	plugin_set_archive_keep_count: { request: SetArchiveKeepCountRequestDto };
 	plugin_set_archive_passphrase: { request: SetArchivePassphraseRequestDto };
+	practice_due: { request: PracticeDueRequestDto };
 	prepare_learning_lesson: { request: PrepareLearningLessonRequestDto };
 	prepare_learning_module: { request: PrepareLearningModuleRequestDto };
 	prepare_learning_quiz_bank: { request: PrepareLearningQuizBankRequestDto };
@@ -12517,6 +12529,7 @@ export type CommandArgs = {
 	reindex_file: { path: string };
 	reject_learning_practice_proposal: { request: DecideLearningPracticeProposalRequestDto };
 	release_message_images: { conversationId: string; imageIds: string[] };
+	remove_coding_example: { request: RemoveCodingExampleRequestDto };
 	remove_conversation_from_journal: { request: RemoveConversationFromJournalRequestDto };
 	remove_conversation_linked_document: { conversationId: string; documentId: string };
 	remove_conversation_space_member: { request: RemoveConversationSpaceMemberRequestDto };
@@ -12543,6 +12556,7 @@ export type CommandArgs = {
 	resolve_learning_claim: { request: ResolveLearningClaimRequestDto };
 	resolve_learning_claims: { request: ResolveLearningClaimsRequestDto };
 	resolve_wikilink: { target: string; sourcePath: string; availableDocuments: DocumentRefDto[] };
+	respond_practice_session: { request: PracticeSessionRequestDto };
 	restage_message_image: { conversationId: string; imageId: string };
 	restore_learning_canvas_snapshot: { request: RestoreLearningCanvasSnapshotRequestDto };
 	resume_download: { id: string };
@@ -12554,14 +12568,17 @@ export type CommandArgs = {
 	retry_journal_synthesis: { jobId: string };
 	retry_learning_generation_job: { request: LearningGenerationJobActionRequestDto };
 	reveal_learning_practice_solution: { request: RevealLearningPracticeSolutionRequestDto };
+	reveal_practice_solution: { request: RevealPracticeSolutionRequestDto };
 	review_learning_recall_card: { request: ReviewLearningRecallCardRequestDto };
 	review_study_card: { request: ReviewStudyCardRequestDto };
+	run_coding_input: { request: RunCodingInputRequestDto };
 	save_learning_assessment_response: { request: SaveLearningAssessmentResponseRequestDto };
 	save_learning_canvas: { request: SaveLearningCanvasRequestDto };
 	save_learning_card_draft: { request: SaveLearningCardDraftRequestDto };
 	save_learning_pack_as: { request: ExportLearningPackRequestDto };
 	save_learning_practical_draft: { request: SaveLearningPracticalDraftRequestDto };
 	save_learning_practice_artifact: { request: SaveLearningPracticeArtifactRequestDto };
+	save_learning_practice_profile: { request: SaveLearningPracticeProfileRequestDto };
 	save_learning_recall_card: { request: SaveLearningRecallCardRequestDto };
 	save_learning_runtime_profile: { request: SaveLearningRuntimeProfileRequestDto };
 	save_remote_auth_header_value: { server: RemoteServer; value?: string | null };
@@ -12576,6 +12593,7 @@ export type CommandArgs = {
 	search_with_recency: { options: RecencySearchOptions };
 	semantic_search: { request: SearchRequestDto };
 	send_learning_simulation_turn: { request: SendLearningSimulationTurnRequestDto };
+	send_practice_turn: { request: SendPracticeTurnRequestDto };
 	set_active_chat_model: { modelId: string };
 	set_active_embedding_model: { modelId: string };
 	set_active_utility_model: { modelId: string };
@@ -12592,6 +12610,8 @@ export type CommandArgs = {
 	set_huggingface_token: { token: string };
 	set_journal_entry_pinned: { request: SetJournalEntryPinnedRequestDto };
 	set_learning_program_verifier_audit: { programId: string; on: boolean; webSearch: boolean; consentConfirmed: boolean };
+	set_practice_clock: { request: SetPracticeClockRequestDto };
+	set_practice_setting: { request: SetPracticeSettingRequestDto };
 	set_source_trust_override: { request: LearningTrustOverrideInputDto };
 	set_study_deck_target: { request: SetStudyDeckTargetRequestDto };
 	settle_learning_teaching_findings: { request: SettleLearningTeachingFindingsRequestDto };
@@ -12605,6 +12625,8 @@ export type CommandArgs = {
 	start_learning_quiz: { request: StartLearningQuizRequestDto };
 	start_learning_simulation: { request: StartLearningSimulationRequestDto };
 	start_model_download: { request: StartDownloadRequest };
+	start_practice_build: { request: StartPracticeBuildRequestDto };
+	start_practice_session: { request: StartPracticeSessionRequestDto };
 	start_vision_projector_download: { id: string };
 	submit_code_review: { attemptId: string; findings: CodeReviewFindingDto[]; fixFiles?: CodeReviewFileDto[] | null; timeSpentMs: number };
 	submit_learning_assessment_form: { request: MutateLearningAssessmentFormRequestDto };
@@ -12658,6 +12680,7 @@ export type CommandResults = {
 	apply_tags: TagDto[];
 	archive_conversation_space: RenameConversationResponseDto;
 	archive_journal: RenameConversationResponseDto;
+	ask_practice_hint: PracticeSessionDto;
 	attach_learning_claim_evidence: ClaimAttachReportDto;
 	attach_learning_lesson_source: ClaimAttachReportDto;
 	attach_message_images: ChatImageDto[];
@@ -12678,9 +12701,12 @@ export type CommandResults = {
 	capture_web_page_snapshot: WebPageSnapshotDto;
 	change_learning_practice_mode: LearningPracticeWorkspaceDto;
 	chat_with_conversation: ChatResponse;
+	check_coding_example: PracticeSessionDto;
 	check_first_run_status: string;
 	check_for_updates: UpdateInfoDto;
 	check_llm_health: LLMHealthStatusDto;
+	check_practice_fit: PracticeFitDto;
+	check_practice_piece: PracticeSessionDto;
 	clear_active_chat_model: null;
 	clear_active_embedding_model: null;
 	clear_active_utility_model: null;
@@ -12771,6 +12797,7 @@ export type CommandResults = {
 	find_similar: SearchResultDto[];
 	find_similar_documents: SimilarDocumentDto[];
 	finish_learning_simulation: LearningSimulationSessionDto;
+	finish_practice_session: PracticeSessionDto;
 	fork_conversation: ForkConversationResponseDto;
 	generate_chat_starters: ChatStartersDto;
 	generate_conversation_study_deck: StudyDeckDto;
@@ -12827,6 +12854,7 @@ export type CommandResults = {
 	get_learning_portability_workspace: LearningPortabilityWorkspaceDto;
 	get_learning_practical_draft: LearningPracticalDraftDto;
 	get_learning_practical_workspace: LearningPracticalWorkspaceDto;
+	get_learning_practice_profile: LearningPracticeProfileDto;
 	get_learning_practice_session: LearningPracticeSessionDto;
 	get_learning_practice_workspace: LearningPracticeWorkspaceDto;
 	get_learning_program: LearningProgramDto;
@@ -12845,6 +12873,8 @@ export type CommandResults = {
 	get_model_limits: ModelWindowDto;
 	get_model_variants: ModelMetadataDto[];
 	get_next_daily_note: DailyNoteCompatDto | null;
+	get_practice_fit: PracticeFitDto;
+	get_practice_session: PracticeSessionDto;
 	get_previous_daily_note: DailyNoteCompatDto | null;
 	get_recent_documents: RecentDocument[];
 	get_remote_auth_header_status: RemoteAuthStatusDto;
@@ -12900,6 +12930,7 @@ export type CommandResults = {
 	list_loaded_models: LoadedModelDto[];
 	list_message_bookmarks: ListMessageBookmarksResponseDto;
 	list_passage_references: PassageReferenceDto[];
+	list_practice_sessions: PracticeSessionSummaryDto[];
 	list_source_trust_overrides: LearningSiteTrustOverrideDto[];
 	list_space_documents: SpaceDocumentDto[];
 	list_study_decks: StudyDeckSummaryDto[];
@@ -12910,6 +12941,8 @@ export type CommandResults = {
 	match_learning_source_selector: LearningQuoteMatch;
 	move_conversation_to_space: RenameConversationResponseDto;
 	move_custom_collection: null;
+	move_practice_stage: PracticeSessionDto;
+	observe_practice_draft: PracticeSessionDto;
 	open_file: OpenFileResponseDto;
 	open_file_by_id: OpenFileResponseDto;
 	open_learning_practice_source: LearningPracticeWorkspaceDto;
@@ -12933,6 +12966,7 @@ export type CommandResults = {
 	plugin_rotate_recovery_code: ArchiveSetupDto;
 	plugin_set_archive_keep_count: ArchiveStatusDto;
 	plugin_set_archive_passphrase: ArchiveStatusDto;
+	practice_due: PracticeDueDto;
 	prepare_learning_lesson: LearningProgramDto;
 	prepare_learning_module: LearningProgramDto;
 	prepare_learning_quiz_bank: LearningGenerationJob;
@@ -12955,6 +12989,7 @@ export type CommandResults = {
 	reindex_file: null;
 	reject_learning_practice_proposal: LearningPracticeWorkspaceDto;
 	release_message_images: null;
+	remove_coding_example: PracticeSessionDto;
 	remove_conversation_from_journal: RenameConversationResponseDto;
 	remove_conversation_linked_document: RenameConversationResponseDto;
 	remove_conversation_space_member: RenameConversationResponseDto;
@@ -12981,6 +13016,7 @@ export type CommandResults = {
 	resolve_learning_claim: ResolveLearningClaimResultDto;
 	resolve_learning_claims: ResolveLearningClaimResultDto;
 	resolve_wikilink: ResolveLinkResponse;
+	respond_practice_session: PracticeSessionDto;
 	restage_message_image: ChatImageDto;
 	restore_learning_canvas_snapshot: LearningCanvasWorkspaceDto;
 	resume_download: null;
@@ -12992,14 +13028,17 @@ export type CommandResults = {
 	retry_journal_synthesis: JournalSynthesisDto;
 	retry_learning_generation_job: LearningGenerationJob;
 	reveal_learning_practice_solution: LearningPracticeWorkspaceDto;
+	reveal_practice_solution: PracticeSessionDto;
 	review_learning_recall_card: LearningRecallWorkspaceDto;
 	review_study_card: StudyCardDto;
+	run_coding_input: PracticeSessionDto;
 	save_learning_assessment_response: LearningAssessmentFormDto;
 	save_learning_canvas: LearningCanvasWorkspaceDto;
 	save_learning_card_draft: LearningMemoryDto;
 	save_learning_pack_as: SaveLearningPackAsResultDto;
 	save_learning_practical_draft: LearningPracticalDraftDto;
 	save_learning_practice_artifact: LearningPracticeWorkspaceDto;
+	save_learning_practice_profile: LearningPracticeProfileDto;
 	save_learning_recall_card: LearningRecallWorkspaceDto;
 	save_learning_runtime_profile: LearningPracticalWorkspaceDto;
 	save_remote_auth_header_value: null;
@@ -13014,6 +13053,7 @@ export type CommandResults = {
 	search_with_recency: SearchResultDto[];
 	semantic_search: SearchResponseDto;
 	send_learning_simulation_turn: LearningSimulationSessionDto;
+	send_practice_turn: PracticeSessionDto;
 	set_active_chat_model: null;
 	set_active_embedding_model: null;
 	set_active_utility_model: null;
@@ -13030,6 +13070,8 @@ export type CommandResults = {
 	set_huggingface_token: null;
 	set_journal_entry_pinned: null;
 	set_learning_program_verifier_audit: LearningVerifierAuditDto;
+	set_practice_clock: ClockDto;
+	set_practice_setting: PracticeSessionDto;
 	set_source_trust_override: LearningTrustChangeResultDto;
 	set_study_deck_target: StudyDeckDto;
 	settle_learning_teaching_findings: null;
@@ -13043,6 +13085,8 @@ export type CommandResults = {
 	start_learning_quiz: LearningAssessmentFormDto;
 	start_learning_simulation: LearningSimulationSessionDto;
 	start_model_download: string;
+	start_practice_build: StartPracticeBuildResultDto;
+	start_practice_session: PracticeSessionDto;
 	start_vision_projector_download: VisionProjectorDownloadDto;
 	submit_code_review: CodeReviewResultDto;
 	submit_learning_assessment_form: LearningAssessmentFormDto;

@@ -17,7 +17,7 @@ async function invokeCommand<C extends CommandName>(
 export const drillsApi = {
   /** The language the course's practice profile names; none when it names none. */
   practiceLanguage: async (programId: string): Promise<string | null> => {
-    const profile = await invokeCommand<Wire.LearningPracticeProfileDto>('get_learning_practice_profile', {
+    const profile = await invokeCommand('get_learning_practice_profile', {
       request: { programId },
     });
     return profile.language;
