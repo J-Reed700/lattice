@@ -128,6 +128,21 @@ fn clean(sections: usize) -> String {
     review_reply(&[], checks, &[])
 }
 
+/// A clean review of `sections` sections that finds the reviewer's first finding resolved.
+fn resolved(sections: usize) -> String {
+    let checks = (0..sections)
+        .map(|index| crate::lessons::course_generation_tests::section_check(index, None))
+        .collect();
+    review_reply(
+        &[],
+        checks,
+        &[crate::lessons::course_generation_tests::verdict(
+            "reviewer/1",
+            "resolved",
+        )],
+    )
+}
+
 fn gate_answer(left_to: &str) -> String {
     json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"leftTo":left_to,"reason":"The explanation contradicts the sum it states."}]}).to_string()
 }
@@ -444,7 +459,7 @@ async fn a_report_the_plan_check_says_is_of_another_kind_stands_on_the_gates_ver
             reporting(REVIEWER_ONLY, 1),
             gate_answer("check-1"),
             repair_edit(),
-            clean(1),
+            resolved(1),
         ],
         vec![
             CONTRACT_NOTHING.to_owned(),
@@ -504,7 +519,7 @@ async fn a_finding_left_to_the_question_review_is_repaired_when_the_gate_establi
             reporting(REVIEWER_ONLY, 1),
             gate_answer("check-0"),
             repair_edit(),
-            clean(1),
+            resolved(1),
         ],
         Vec::new(),
     );
@@ -537,7 +552,7 @@ async fn a_finding_left_to_the_rules_is_repaired_when_the_gate_established_it() 
             reporting(REVIEWER_ONLY, 1),
             gate_answer("check-2"),
             repair_edit(),
-            clean(1),
+            resolved(1),
         ],
         Vec::new(),
     );
