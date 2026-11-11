@@ -20,7 +20,7 @@ pub(crate) struct KindVerdict {
 
 /// What a fit answer rests on, read in one transaction.
 pub(crate) struct FitState {
-    pub profile: Option<LearningPracticeProfileDto>,
+    pub profile: LearningPracticeProfileDto,
     pub outline: CourseOutline,
     pub stored: Vec<StoredFit>,
 }
@@ -56,7 +56,7 @@ impl LearningPracticeRepository {
         .fetch_all(&mut *tx)
         .await
         .map_err(db)?;
-        let profile = profile_in(&mut tx, program_id).await?;
+        let profile = course_profile(&mut tx, program_id).await?;
         tx.commit().await.map_err(db)?;
         let modules = modules
             .into_iter()

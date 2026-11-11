@@ -14,7 +14,7 @@ mod assistance;
 mod fits;
 pub(crate) use fits::{FitState, KindVerdict, StoredFit};
 mod profiles;
-pub(crate) use profiles::profile_in;
+pub(crate) use profiles::{course_profile, profile_in};
 mod reads;
 mod sessions;
 mod submissions;

@@ -22,17 +22,9 @@ impl LearningPracticeRepository {
         uuid(program_id, "program")?;
         let mut tx = self.pool.begin_read().await.map_err(db)?;
         require_program(&mut tx, program_id).await?;
-        let saved = profile_in(&mut tx, program_id).await?;
+        let profile = course_profile(&mut tx, program_id).await?;
         tx.commit().await.map_err(db)?;
-        Ok(saved.unwrap_or_else(|| LearningPracticeProfileDto {
-            program_id: program_id.to_owned(),
-            details: String::new(),
-            language: None,
-            interview_at: None,
-            company: None,
-            role: None,
-            revision: 0,
-        }))
+        Ok(profile)
     }
 
     /// Saves a course's practice profile when `expected_revision` is its current revision. A changed interview date
@@ -90,6 +82,23 @@ impl LearningPracticeRepository {
             revision,
         })
     }
+}
+
+/// A course's practice profile; the empty profile at revision 0 when none was saved.
+pub(crate) async fn course_profile(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+) -> Result<LearningPracticeProfileDto> {
+    let saved = profile_in(connection, program_id).await?;
+    Ok(saved.unwrap_or_else(|| LearningPracticeProfileDto {
+        program_id: program_id.to_owned(),
+        details: String::new(),
+        language: None,
+        interview_at: None,
+        company: None,
+        role: None,
+        revision: 0,
+    }))
 }
 
 /// The saved profile of a course, if any.
