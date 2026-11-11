@@ -149,16 +149,16 @@ fn wrong_secrets_all_report_wrong_secret() {
 #[test]
 fn kcv_matches_only_the_wrapped_key() {
     let (master, _recovery, envelope) = envelope_with(None);
-    assert!(kcv_matches(&envelope, &master));
+    assert!(kcv_matches(&envelope, &master).unwrap());
     assert!(!kcv_matches(&envelope, &MasterKey::generate()));
 
     let mut broken = envelope.clone();
     broken.kcv = "!!!not base64!!!".to_string();
-    assert!(!kcv_matches(&broken, &master));
+    assert!(!kcv_matches(&broken, &master).unwrap());
 
     let mut empty = envelope;
     empty.kcv = String::new();
-    assert!(!kcv_matches(&empty, &master));
+    assert!(!kcv_matches(&empty, &master).unwrap());
 }
 
 #[test]
@@ -286,7 +286,7 @@ fn passphrase_slot_records_its_cost_parameters() {
         }
         _ => panic!("expected a passphrase slot"),
     }
-    assert!(kcv_matches(&envelope, &master));
+    assert!(kcv_matches(&envelope, &master).unwrap());
 }
 
 #[test]
@@ -294,14 +294,14 @@ fn derive_file_key_differs_per_salt_and_per_master() {
     let master = MasterKey::generate();
     let salt_a = random_bytes::<16>();
     let salt_b = random_bytes::<16>();
-    let a = derive_file_key(&master, &salt_a);
-    let b = derive_file_key(&master, &salt_b);
-    let a_again = derive_file_key(&master, &salt_a);
+    let a = derive_file_key(&master, &salt_a).unwrap();
+    let b = derive_file_key(&master, &salt_b).unwrap();
+    let a_again = derive_file_key(&master, &salt_a).unwrap();
     assert_ne!(a.as_ref(), b.as_ref());
     assert_eq!(a.as_ref(), a_again.as_ref());
     assert_ne!(a.as_ref(), &[0u8; 32]);
 
-    let other = derive_file_key(&MasterKey::generate(), &salt_a);
+    let other = derive_file_key(&MasterKey::generate(), &salt_a).unwrap();
     assert_ne!(a.as_ref(), other.as_ref());
 }
 
@@ -630,13 +630,13 @@ fn end_to_end_envelope_and_stream() {
     let aad = b"LATTBKP\x01....header".as_slice();
     let plain = sample(CHUNK * 3 + 17);
 
-    let file_key = derive_file_key(&master, &file_salt);
+    let file_key = derive_file_key(&master, &file_salt).unwrap();
     let ciphertext = encrypt_all(&plain, &file_key, &stream_nonce, aad);
 
     // A fresh process only has the envelope and the user's secret.
     let recovered =
         unwrap_master_key(&envelope, &recovery.phrase()).unwrap_or_else(|e| panic!("unwrap: {e}"));
-    let recovered_key = derive_file_key(&recovered, &file_salt);
+    let recovered_key = derive_file_key(&recovered, &file_salt).unwrap();
     assert_eq!(recovered_key.as_ref(), file_key.as_ref());
 
     let decrypted = decrypt_all(&ciphertext, &recovered_key, &stream_nonce, aad)
