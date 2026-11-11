@@ -12,6 +12,7 @@ use crate::features::web::WebArchiveServiceTrait;
 use lattice_core::application::contracts::web::CleanArticle;
 use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::path_safety::reject_parent_components;
 
 /// In-memory web archive for tests, keyed by file path.
 pub struct MockWebArchiveService {
@@ -88,13 +89,7 @@ impl ArticleArchive for MockWebArchiveService {
     }
 
     fn owns(&self, path: &Path) -> bool {
-        if path
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
-            return false;
-        }
-        path.starts_with(&self.base_dir)
+        reject_parent_components(path).is_ok() && path.starts_with(&self.base_dir)
     }
 }
 
