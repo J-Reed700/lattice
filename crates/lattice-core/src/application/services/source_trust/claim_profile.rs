@@ -66,7 +66,7 @@ pub fn claim_profile_key(statement: &str, known_classes: &[String], model: &str)
     JudgementKey {
         policy: CLAIM_PROFILE_POLICY.to_owned(),
         model: model.to_owned(),
-        input_sha256: sha256_hex(&canonical_json(
+        input_sha256: sha256_hex(canonical_json(
             &json!({ "statement": statement, "known_classes": classes }),
         )),
     }

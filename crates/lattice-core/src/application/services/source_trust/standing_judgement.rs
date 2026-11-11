@@ -86,7 +86,7 @@ pub fn standing_key(
     JudgementKey {
         policy: STANDING_POLICY.to_owned(),
         model: model.to_owned(),
-        input_sha256: sha256_hex(&canonical_json(&keyed)),
+        input_sha256: sha256_hex(canonical_json(&keyed)),
     }
 }
 

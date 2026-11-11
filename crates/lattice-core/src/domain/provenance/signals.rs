@@ -304,7 +304,7 @@ impl ProvenanceSignals {
 
     /// sha256 of the canonical judged form: the standing judgement's key.
     pub fn signals_sha256(&self) -> String {
-        sha256_hex(&canonical_json(&self.judged_form()))
+        sha256_hex(canonical_json(&self.judged_form()))
     }
 
     /// The metadata fields whose text addresses a reader or a model, by

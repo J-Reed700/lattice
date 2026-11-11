@@ -81,7 +81,7 @@ pub fn ownership_key(request: &OwnershipRequest<'_>, model: &str) -> JudgementKe
     JudgementKey {
         policy: OWNERSHIP_POLICY.to_owned(),
         model: model.to_owned(),
-        input_sha256: sha256_hex(&canonical_json(&identity)),
+        input_sha256: sha256_hex(canonical_json(&identity)),
     }
 }
 
