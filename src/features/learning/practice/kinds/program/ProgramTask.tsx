@@ -1,3 +1,5 @@
+import { useState } from 'react';
+
 import { newId } from '@/lib/api';
 
 import { ExamplesTable } from './ExamplesTable';
@@ -7,13 +9,20 @@ import { programWork } from './work';
 
 import type { KindTaskProps } from '../../session/kind';
 
-export function ProgramTask({ programId, session, checking, own, touch, solutionControl }: KindTaskProps) {
+export function ProgramTask({ programId, session, own, touch, solutionControl }: KindTaskProps) {
   const work = programWork(session);
   const { sessionId } = session;
+  const [checkingExample, setCheckingExample] = useState(false);
 
   const checkExample = async (example: { ordinal: number | null; args: string[]; expected: string }) => {
     touch();
-    const ok = await own(() => programApi.checkExample({ operationId: newId(), programId, sessionId, ...example }));
+    setCheckingExample(true);
+    let ok: boolean;
+    try {
+      ok = await own(() => programApi.checkExample({ operationId: newId(), programId, sessionId, ...example }));
+    } finally {
+      setCheckingExample(false);
+    }
     if (!ok) throw new Error('The example could not be checked.');
   };
 
@@ -29,7 +38,7 @@ export function ProgramTask({ programId, session, checking, own, touch, solution
         signature={work.problem.signature}
         examples={work.examples}
         coverage={session.coverage}
-        busy={checking}
+        busy={checkingExample}
         onCheck={checkExample}
         onRemove={removeExample}
       />

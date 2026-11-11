@@ -205,6 +205,17 @@ describe('PracticeSession', () => {
     await waitFor(() => expect(screen.queryByText('The kind could not do that.')).not.toBeInTheDocument());
   });
 
+  it('does not count a pending own command of the kind as a check by the engine', async () => {
+    ownCommand.mockImplementation(() => new Promise(() => undefined));
+    const user = userEvent.setup();
+    renderSession(practiceSession());
+
+    await user.click(await screen.findByRole('button', { name: /own thing/ }));
+    await waitFor(() => expect(ownCommand).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('button', { name: 'Check shown' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Check all' })).toBeEnabled();
+  });
+
   it('applies the session a kind\'s own command answers with', async () => {
     ownCommand.mockResolvedValue(practiceSession({ checks: [practiceCheck({ checkId: 'own-1', scope: 'shown', passed: 2, total: 2 })] }));
     const user = userEvent.setup();

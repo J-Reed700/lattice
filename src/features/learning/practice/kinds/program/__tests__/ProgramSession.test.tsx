@@ -342,6 +342,41 @@ describe('PracticeSession with the program kind', () => {
     );
   });
 
+  it('leaves the run buttons enabled and says nothing is running while an example is being checked', async () => {
+    program.checkExample.mockImplementation(() => new Promise(() => undefined));
+    const user = userEvent.setup();
+    renderSession(programSession({ stage: 'examples' }));
+    await editor();
+
+    await user.type(screen.getByLabelText('numbers'), '[[3, 3]');
+    await user.type(screen.getByLabelText('target'), '6');
+    await user.type(screen.getByLabelText('expected'), '[[0, 1]');
+    await user.click(screen.getByRole('button', { name: 'Check' }));
+
+    await waitFor(() => expect(program.checkExample).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('button', { name: /Run examples/ })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /Submit/ })).toBeEnabled();
+    expect(screen.queryByText(/Running your code/)).not.toBeInTheDocument();
+  });
+
+  it('disables the run buttons and says it is running while an input run is pending', async () => {
+    program.runInput.mockImplementation(() => new Promise(() => undefined));
+    const user = userEvent.setup();
+    renderSession(programSession({ stage: 'make' }));
+    await editor();
+
+    await user.click(screen.getByRole('button', { name: 'Try an input' }));
+    const form = screen.getByRole('form', { name: 'Try an input' });
+    await user.type(within(form).getByLabelText('numbers'), '[[1, 2]');
+    await user.type(within(form).getByLabelText('target'), '3');
+    await user.click(within(form).getByRole('button', { name: 'Run input' }));
+
+    await waitFor(() => expect(program.runInput).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('button', { name: /Run examples/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Submit/ })).toBeDisabled();
+    expect(screen.getByText(/Running your code/)).toBeInTheDocument();
+  });
+
   it('puts the worked solution between the problem and the examples once it is open', async () => {
     renderSession(programSession({ solutionAvailable: true, solutionShown: true }, { workedSolution: 'def find_pair(): ...' }));
     const solution = await screen.findByText('def find_pair(): ...');

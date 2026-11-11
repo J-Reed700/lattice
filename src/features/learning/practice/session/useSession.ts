@@ -27,7 +27,7 @@ export function useSession({ programId, initial, draft }: UseSessionArgs) {
   const movingRef = useRef(false);
   const checkingRef = useRef(false);
   const [activityAt, setActivityAt] = useState(0);
-  const [running, setRunning] = useState(0);
+  const [checking, setChecking] = useState(false);
   const [asking, setAsking] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [moving, setMoving] = useState(false);
@@ -108,7 +108,7 @@ export function useSession({ programId, initial, draft }: UseSessionArgs) {
       if (checkingRef.current) return;
       checkingRef.current = true;
       touch();
-      setRunning((count) => count + 1);
+      setChecking(true);
       try {
         await guarded(
           () => sessionApi.check({ ...ids, programId, sessionId, scope, piece: draftRef.current.piece() }),
@@ -116,23 +116,13 @@ export function useSession({ programId, initial, draft }: UseSessionArgs) {
         );
       } finally {
         checkingRef.current = false;
-        setRunning((count) => count - 1);
+        setChecking(false);
       }
     },
     [guarded, programId, sessionId, touch],
   );
 
-  const own = useCallback(
-    async (call: () => Promise<Wire.PracticeSessionDto>, retry?: () => void) => {
-      setRunning((count) => count + 1);
-      try {
-        return await guarded(call, retry);
-      } finally {
-        setRunning((count) => count - 1);
-      }
-    },
-    [guarded],
-  );
+  const own = guarded;
 
   const ask = async (operationId = newId()) => {
     setAsking(true);
@@ -226,7 +216,7 @@ export function useSession({ programId, initial, draft }: UseSessionArgs) {
     clock,
     elapsedMs,
     status,
-    checking: running > 0,
+    checking,
     asking,
     finishing,
     moving,

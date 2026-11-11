@@ -22,7 +22,7 @@ export interface KindPartProps {
   programId: string;
   session: Wire.PracticeSessionDto;
   draft: KindDraft;
-  /** A check, or one of the kind's own commands, is running. */
+  /** The engine's check of the piece is running. */
   checking: boolean;
   /** The engine's check of the piece as it stands. */
   check(scope: 'shown' | 'all'): Promise<void>;

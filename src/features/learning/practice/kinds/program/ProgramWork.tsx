@@ -14,24 +14,38 @@ import type { KindPartProps } from '../../session/kind';
 export function ProgramWork({ programId, session, draft, checking, check, own, touch }: KindPartProps) {
   const { files, setFileContent, currentFiles } = programDraftState(draft);
   const [activePath, setActivePath] = useState<string | null>(null);
+  const [runningInput, setRunningInput] = useState(false);
   const current = files.find((file) => file.path === activePath) ?? files[0];
 
+  const running = checking || runningInput;
+
+  const run = (scope: 'shown' | 'all') => {
+    if (runningInput) return;
+    void check(scope);
+  };
+
   const runInput = (input: string[]) => {
-    if (checking) return;
+    if (running) return;
     touch();
     const ids = { operationId: newId(), runId: newId() };
-    const attempt = (): Promise<boolean> =>
-      own(
-        () =>
-          programApi.runInput({
-            ...ids,
-            programId,
-            sessionId: session.sessionId,
-            files: currentFiles(),
-            input,
-          }),
-        () => void attempt(),
-      );
+    const attempt = async (): Promise<boolean> => {
+      setRunningInput(true);
+      try {
+        return await own(
+          () =>
+            programApi.runInput({
+              ...ids,
+              programId,
+              sessionId: session.sessionId,
+              files: currentFiles(),
+              input,
+            }),
+          () => void attempt(),
+        );
+      } finally {
+        setRunningInput(false);
+      }
+    };
     void attempt();
   };
 
@@ -39,7 +53,7 @@ export function ProgramWork({ programId, session, draft, checking, check, own, t
     if (event.key === 'Enter' && event.shiftKey && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       event.stopPropagation();
-      void check('all');
+      run('all');
     }
   };
 
@@ -65,16 +79,16 @@ export function ProgramWork({ programId, session, draft, checking, check, own, t
             ariaLabel="Code"
             minHeight={280}
             showPath={files.length <= 1}
-            onRunShortcut={() => void check('shown')}
+            onRunShortcut={() => run('shown')}
           />
         ) : null}
       </div>
 
       <RunBar
         signature={programWork(session).problem.signature}
-        running={checking}
-        onRunExamples={() => void check('shown')}
-        onSubmit={() => void check('all')}
+        running={running}
+        onRunExamples={() => run('shown')}
+        onSubmit={() => run('all')}
         onTryInput={runInput}
       />
     </>
