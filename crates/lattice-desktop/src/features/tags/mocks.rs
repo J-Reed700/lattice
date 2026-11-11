@@ -426,14 +426,6 @@ impl TagRepositoryTrait for MockTagRepository {
         Ok(self.tags.read().unwrap().get(id).cloned())
     }
 
-    async fn find_by_filter(
-        &self,
-        _filter: &dyn lattice_core::application::ports::Filter,
-    ) -> Result<Vec<lattice_core::domain::entities::Tag>> {
-        // For mock, just return all tags
-        self.find_all().await
-    }
-
     async fn find_all(&self) -> Result<Vec<lattice_core::domain::entities::Tag>> {
         let mut tags: Vec<_> = self.tags.read().unwrap().values().cloned().collect();
         tags.sort_by(|a, b| a.name().as_str().cmp(b.name().as_str()));

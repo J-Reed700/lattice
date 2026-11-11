@@ -12,7 +12,6 @@ pub mod implementation;
 pub mod ops;
 
 pub use implementation::SqliteDocumentRepository;
-pub use lattice_core::application::ports::DocumentFilter;
 
 #[cfg(test)]
 mod tests;

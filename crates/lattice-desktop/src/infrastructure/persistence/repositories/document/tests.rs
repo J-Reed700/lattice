@@ -201,14 +201,6 @@ async fn assert_contract(
     assert_eq!(loaded.tags(), document.tags());
     assert_eq!(loaded.source_context(), document.source_context());
     repository.save(&loaded).await.unwrap();
-    let filter = lattice_core::application::ports::DocumentFilter {
-        path_pattern: None,
-        status: None,
-        limit: Some(10),
-    };
-    let filtered = repository.find_by_filter(&filter).await.unwrap();
-    assert_eq!(filtered[0].chunks().len(), 1);
-    assert_eq!(filtered[0].source_context(), document.source_context());
     repository
         .rename(document.id().as_str(), "Renamed")
         .await
@@ -402,14 +394,6 @@ async fn aggregate_lists_batch_children_and_preserve_each_documents_parts() {
         assert_eq!(document.tags(), original.tags());
         assert_eq!(document.source_context(), original.source_context());
     }
-    let filter = lattice_core::application::ports::DocumentFilter {
-        path_pattern: Some("%batch-%".into()),
-        status: None,
-        limit: Some(20),
-    };
-    let (filtered, reads) = count_reads(repo.find_by_filter(&filter)).await;
-    assert_eq!(filtered.unwrap().len(), 20);
-    assert_eq!(reads, 3);
     // Aggregate reads retain the domain rule requiring chunks; metadata
     // lookups remain available for a pending document.
     insert(&repo, "empty", "/empty.txt", &"b".repeat(64)).await;
