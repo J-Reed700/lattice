@@ -6,8 +6,8 @@
 
 use crate::lab_runtime::{LearningLabExecutionResult, LearningLabRunStatus};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::hash::sha256_hex;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -142,8 +142,7 @@ fn verify_runtime_bundle(root: &Path) -> std::result::Result<(), String> {
 
 fn verify_digest(path: &Path, expected: &str, label: &str) -> std::result::Result<(), String> {
     let bytes = fs::read(path).map_err(|error| format!("Python {label} is missing: {error}"))?;
-    let digest = Sha256::digest(bytes);
-    if hex::encode(digest) != expected {
+    if sha256_hex(bytes) != expected {
         return Err(format!(
             "The bundled Python {label} failed its SHA-256 check."
         ));

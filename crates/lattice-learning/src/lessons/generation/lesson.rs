@@ -401,10 +401,8 @@ pub async fn prepare_lesson_with_references<'a>(
         "revision":crate::lesson_drafts::authoring_revision(program.summary.revision), "model":llm.model_name(),
         "sources":references.sources,
     }))?;
-    let input_hash = reuse_hash.unwrap_or_else(|| {
-        use sha2::Digest;
-        format!("{:x}", sha2::Sha256::digest(draft_input.as_bytes()))
-    });
+    let input_hash =
+        reuse_hash.unwrap_or_else(|| lattice_core::shared::hash::sha256_hex(&draft_input));
     let raw = if let Some(draft) = crate::lesson_drafts::resume(input_hash).await? {
         crate::lesson_progress::phase(
             crate::lesson_progress::Phase::Writing,

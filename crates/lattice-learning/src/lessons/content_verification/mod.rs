@@ -16,7 +16,6 @@ use lattice_core::domain::provenance::Label;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
 mod apparatus;
@@ -140,9 +139,7 @@ pub(crate) async fn normalize_example_fences(llm: &dyn LLMPort, raw: String) -> 
     execution::label_unlabeled(llm, raw).await
 }
 
-pub(crate) fn digest(text: &str) -> String {
-    format!("{:x}", Sha256::digest(text.as_bytes()))
-}
+pub(crate) use lattice_core::shared::hash::sha256_hex as digest;
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
 }

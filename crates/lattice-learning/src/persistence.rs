@@ -1,8 +1,8 @@
 //! Small persistence helpers every Learning repository shares.
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::{PersistenceError, PersistenceErrorKind};
 use serde::{de::DeserializeOwned, Serialize};
-use sha2::{Digest, Sha256};
 
 /// Map a SQLite error. A pool timeout means the database is busy rather than
 /// broken, so it is reported as a retryable condition.
@@ -25,13 +25,10 @@ pub fn now() -> i64 {
 pub(crate) fn hash<T: Serialize + ?Sized>(value: &T) -> Result<String> {
     let bytes =
         serde_json::to_vec(value).map_err(|error| AppError::Serialization(error.to_string()))?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+    Ok(sha256_hex(bytes))
 }
 
-/// SHA-256 of text, as lowercase hex.
-pub(crate) fn hash_text(text: &str) -> String {
-    format!("{:x}", Sha256::digest(text.as_bytes()))
-}
+pub(crate) use lattice_core::shared::hash::sha256_hex as hash_text;
 
 pub(crate) fn encode<T: Serialize + ?Sized>(value: &T) -> Result<String> {
     serde_json::to_string(value).map_err(|error| AppError::Serialization(error.to_string()))
