@@ -35,7 +35,7 @@ export function ActivityShelf({
           </span>
         </div>
         {lesson?.preparation !== "ready" ? (
-          <div className="mt-4 rounded-xl bg-amber-500/10 p-3 text-xs leading-5 text-text-secondary">
+          <div className="mt-4 rounded-xl bg-warning-muted p-3 text-xs leading-5 text-text-secondary">
             Prepare the selected lesson before creating a practical
             activity.
           </div>

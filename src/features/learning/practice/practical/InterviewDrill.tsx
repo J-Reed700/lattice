@@ -1,17 +1,17 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
+import { useQuery } from "@tanstack/react-query";
 import { Layers, LoaderCircle } from "lucide-react";
-import { useInRouterContext } from "react-router";
 
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { practiceHomeApi } from "@/features/learning/practice/home/practiceHomeApi";
+import { FlashcardSession } from "@/features/learning/recall/flashcards/FlashcardSession";
 import { useCreateInterviewDeck } from "@/features/learning/recall/flashcards/useFlashcards";
-import type { LearningPracticalActivityDto } from "@/lib/bindings";
+import type { LearningPracticalActivityDto, StudyDeckDto } from "@/lib/bindings";
 
-/** Tomorrow at 9:00 local time, as a datetime-local value: a likely interview slot to start from. */
-function tomorrowMorning() {
-  const date = new Date();
-  date.setDate(date.getDate() + 1);
-  date.setHours(9, 0, 0, 0);
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+/** An instant as a datetime-local value. */
+function toLocalInput(ms: number) {
+  return new Date(ms - new Date(ms).getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 }
 
 /**
@@ -20,14 +20,15 @@ function tomorrowMorning() {
  * answer gets retrieved from memory again and again, spaced to fit the
  * interview date, with the guide shown only after each attempt.
  */
-export function InterviewDrill(props: { programId: string; activity: LearningPracticalActivityDto }) {
-  // The drill opens its deck in Studio, so it needs the app's router.
-  return useInRouterContext() ? <DrillForm {...props} /> : null;
-}
-
-function DrillForm({ programId, activity }: { programId: string; activity: LearningPracticalActivityDto }) {
+export function InterviewDrill({ programId, activity }: { programId: string; activity: LearningPracticalActivityDto }) {
+  const [deck, setDeck] = useState<StudyDeckDto | null>(null);
   const create = useCreateInterviewDeck();
-  const [when, setWhen] = useState(tomorrowMorning);
+  const profile = useQuery({ queryKey: ["learning-practice-profile", programId], queryFn: () => practiceHomeApi.getProfile(programId), retry: false });
+  const [when, setWhen] = useState("");
+  const profileDate = profile.data?.interviewAt ?? null;
+  useEffect(() => {
+    if (profileDate !== null) setWhen((current) => current || toLocalInput(profileDate));
+  }, [profileDate]);
   const questions = activity.interviewPlan?.questions?.length ?? 0;
   const targetAt = when ? new Date(when).getTime() : NaN;
   const validTarget = Number.isFinite(targetAt) && targetAt > Date.now();
@@ -53,7 +54,7 @@ function DrillForm({ programId, activity }: { programId: string; activity: Learn
         onSubmit={(event) => {
           event.preventDefault();
           if (create.isPending) return;
-          create.mutate({ programId, activityId: activity.id, targetAt: validTarget ? targetAt : null });
+          create.mutate({ programId, activityId: activity.id, targetAt: validTarget ? targetAt : null }, { onSuccess: setDeck });
         }}
       >
         <label className="text-xs font-medium text-text-secondary">
@@ -73,13 +74,21 @@ function DrillForm({ programId, activity }: { programId: string; activity: Learn
           {create.isPending ? <LoaderCircle size={13} className="animate-spin" /> : <Layers size={13} />}
           {create.isPending ? "Making the drill…" : "Make drill deck"}
         </button>
+        {!when && <span className="text-xs text-text-muted">Add your interview date to space the reviews before it.</span>}
         {when && !validTarget && <span className="text-xs text-text-muted">That time has passed; the deck will use its normal schedule.</span>}
       </form>
       {create.isError && (
-        <p role="alert" className="mt-3 rounded-lg bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300">
+        <p role="alert" className="mt-3 rounded-lg bg-danger-muted p-3 text-xs text-danger-fg">
           {create.error.message}
         </p>
       )}
+      <Dialog open={deck !== null} onOpenChange={(open) => { if (!open) setDeck(null); }}>
+        <DialogContent className="max-h-[92dvh] max-w-3xl overflow-y-auto rounded-2xl border border-border-default bg-surface p-5 sm:p-6">
+          <DialogTitle className="pr-6 font-serif text-xl text-text-primary">{deck?.title}</DialogTitle>
+          <DialogDescription className="sr-only">Review the cards made from this interview.</DialogDescription>
+          {deck && <FlashcardSession cards={deck.cards} mode="flashcard" title={deck.title} targetAt={deck.targetAt} onClose={() => setDeck(null)} />}
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

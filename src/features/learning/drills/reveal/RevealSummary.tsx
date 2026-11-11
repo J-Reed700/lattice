@@ -78,8 +78,8 @@ export function RevealSummary({ result, reveal }: { result: CodeReviewResultDto;
               {score.precision !== null && (
                 <Stat label="Precision" value={percentText(score.precision)} hint="Comments that matched an issue or were a valid extra." />
               )}
-              <Stat label="Valid extras" value={score.validExtras} hint="Real problems beyond the planted ones." />
-              <Stat label="False positives" value={score.falsePositives} />
+              <Stat label="Also valid" value={score.validExtras} hint="Real problems beyond the planted ones." />
+              <Stat label="Not an issue" value={score.falsePositives} />
             </dl>
           </div>
         </div>

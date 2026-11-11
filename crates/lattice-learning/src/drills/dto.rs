@@ -189,6 +189,8 @@ pub struct CodeReviewDrillDto {
     /// The lesson the drill was built from, while it exists; none for a drill from before drills were built from
     /// lessons.
     pub lesson: Option<DrillLessonRefDto>,
+    /// How many issues were planted: the number the learner is asked to find, and the one the score counts against.
+    pub issues: usize,
 }
 
 /// A course's review drills, as its Practice view reads them.

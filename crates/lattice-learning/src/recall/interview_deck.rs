@@ -13,7 +13,7 @@ use crate::practice::{
     practical_generation::INTERVIEW_PLAN_FILE_PATH,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::{Database, ReadTx, Transactions};
 use std::collections::HashMap;
 
 fn decode<T: serde::de::DeserializeOwned>(content: &str, what: &str) -> Result<T> {
@@ -38,7 +38,17 @@ pub(crate) async fn load(
     activity_id: &str,
 ) -> Result<InterviewMaterial> {
     let mut read = database.begin_read().await.map_err(db)?;
-    let activity = interview::activity(&mut read, program_id, activity_id)
+    let material = load_in(&mut read, program_id, activity_id).await?;
+    read.commit().await.map_err(db)?;
+    Ok(material)
+}
+
+async fn load_in(
+    read: &mut ReadTx,
+    program_id: &str,
+    activity_id: &str,
+) -> Result<InterviewMaterial> {
+    let activity = interview::activity(read, program_id, activity_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Interview activity not found".into()))?;
     if activity.kind != "interview" {
@@ -52,7 +62,7 @@ pub(crate) async fn load(
         ));
     }
     let files = interview::files(
-        &mut read,
+        read,
         activity_id,
         [INTERVIEW_PLAN_FILE_PATH, INTERVIEW_ANSWERS_FILE_PATH],
     )
@@ -81,13 +91,12 @@ pub(crate) async fn load(
                 continue;
             }
             if let Some(source) =
-                interview::source_title_and_link(&mut read, program_id, version).await?
+                interview::source_title_and_link(read, program_id, version).await?
             {
                 sources.insert(version.to_owned(), source);
             }
         }
     }
-    read.commit().await.map_err(db)?;
     Ok(InterviewMaterial {
         activity_id: activity_id.to_owned(),
         title: activity.title,
@@ -253,6 +262,23 @@ fn deck_id(material: &InterviewMaterial) -> String {
         .collect();
     let name = serde_json::json!(["interview-drill", material.activity_id, questions]).to_string();
     uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, name.as_bytes()).to_string()
+}
+
+/// The IDs of the decks the course's ready interviews make, whether or not the drill was made yet. An interview that
+/// cannot become a drill makes none.
+pub(crate) async fn deck_ids(database: &Database, program_id: &str) -> Result<Vec<String>> {
+    let mut read = database.begin_read().await.map_err(db)?;
+    let activity_ids = interview::ready_activity_ids(&mut read, program_id).await?;
+    let mut ids = Vec::new();
+    for activity_id in activity_ids {
+        match load_in(&mut read, program_id, &activity_id).await {
+            Ok(material) => ids.push(deck_id(&material)),
+            Err(error @ AppError::Database(_)) => return Err(error),
+            Err(_) => {}
+        }
+    }
+    read.commit().await.map_err(db)?;
+    Ok(ids)
 }
 
 /// The deck for `material`, every card due now.

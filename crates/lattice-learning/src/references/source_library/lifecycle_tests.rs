@@ -220,7 +220,7 @@ async fn policy_changes_are_receipted_revision_guarded_and_kind_checked() -> Res
         .await?;
     assert_eq!(item(&library, &program_id, &web).await?.revision, 1);
 
-    assert_invalid(
+    tests::assert_conflict(
         library
             .update_policy(&policy_request(
                 &program_id,
@@ -392,7 +392,7 @@ async fn refresh_guards_its_inputs_and_records_unusable_pages_as_failed_checks()
             .refresh(&refresh_request(&program_id, &pasted, 0), fresh(), None)
             .await,
     );
-    assert_invalid(
+    tests::assert_conflict(
         library
             .refresh(&refresh_request(&program_id, &web, 3), fresh(), None)
             .await,
@@ -487,7 +487,7 @@ async fn refreshing_to_known_text_reuses_its_version_and_adoption_needs_the_pend
         expected_revision,
     };
     assert_invalid(library.adopt(&adopt(&first_version, 1)).await);
-    assert_invalid(library.adopt(&adopt(&pending, 0)).await);
+    tests::assert_conflict(library.adopt(&adopt(&pending, 0)).await);
     let mut missing = adopt(&pending, 1);
     missing.source_id = "no-such-source".into();
     assert_not_found(library.adopt(&missing).await);
@@ -532,7 +532,7 @@ async fn deleting_a_source_needs_a_reason_and_happens_once() -> Result<()> {
 
     assert_invalid(library.delete_source(&request("   ", 0)).await);
     assert_invalid(library.delete_source(&request(&"r".repeat(501), 0)).await);
-    assert_invalid(library.delete_source(&request("Outdated survey", 4)).await);
+    tests::assert_conflict(library.delete_source(&request("Outdated survey", 4)).await);
     let mut missing = request("Outdated survey", 0);
     missing.source_id = "no-such-source".into();
     assert_not_found(library.delete_source(&missing).await);
@@ -546,6 +546,18 @@ async fn deleting_a_source_needs_a_reason_and_happens_once() -> Result<()> {
     assert_eq!(deleted.revision, 1);
 
     assert_invalid(library.delete_source(&request("Second removal", 1)).await);
+    tests::assert_conflict(
+        library
+            .reimport_source(&ReimportLearningSourceRequestDto {
+                operation_id: id(),
+                program_id: program_id.clone(),
+                source_id: source_id.clone(),
+                version_id: id(),
+                expected_revision: 0,
+                replacement_text: Some("Replacement text".into()),
+            })
+            .await,
+    );
     let mut reused = delete.clone();
     reused.reason = "A different reason".into();
     assert_invalid(library.delete_source(&reused).await);

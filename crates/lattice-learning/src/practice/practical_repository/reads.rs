@@ -240,11 +240,25 @@ impl LearningPracticalRepository {
         .map_err(db)?
         .into_iter()
         .map(|check| {
+            let detail_json: Option<String> = check.get("detail_json");
+            let detail = match detail_json {
+                Some(text) if !text.trim().is_empty() => Some(
+                    serde_json::from_str::<CaseCheckDetailDto>(&text)
+                        .map_err(|error| {
+                            AppError::Database(format!(
+                                "Saved case check detail is invalid: {error}"
+                            ))
+                        })?
+                        .without_hidden_content(),
+                ),
+                _ => None,
+            };
             Ok(LearningPracticalCheckResultDto {
                 name: check.get("name"),
                 status: parse_check_status(check.get("status"))?,
                 message: check.get("message"),
                 duration_ms: check.get("duration_ms"),
+                detail,
             })
         })
         .collect::<Result<Vec<_>>>()?;

@@ -17,7 +17,8 @@ const mocks = vi.hoisted(() => ({
   prepare: vi.fn(),
   workspace: vi.fn(),
 }));
-vi.mock("@/lib/api", () => ({
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
   default: {
     getLearningRuntimeCatalog: mocks.catalog,
     prepareLearningRuntimePreset: mocks.prepare,

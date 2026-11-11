@@ -32,7 +32,7 @@ impl LearningPracticeRepository {
             return Err(invalid("Practice attempt has already been submitted."));
         }
         if s.revision != req.expected_revision {
-            return Err(invalid("Practice session changed; reload and retry."));
+            return Err(conflict("Practice session changed; reload and retry."));
         }
         let artifact=sqlx::query("SELECT text FROM learning_practice_artifact_revisions WHERE session_id=? AND revision=?").bind(&req.session_id).bind(ar).fetch_one(&mut *tx).await.map_err(db)?;
         let artifact_text: String = artifact.get("text");
@@ -67,7 +67,7 @@ impl LearningPracticeRepository {
         }
         let upd=sqlx::query("UPDATE learning_practice_sessions SET status='submitted',revision=revision+1,submitted_at=?,updated_at=? WHERE program_id=? AND id=? AND revision=? AND status='active'").bind(t).bind(t).bind(&req.program_id).bind(&req.session_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
         if upd.rows_affected() != 1 {
-            return Err(invalid("Practice session changed; reload and retry."));
+            return Err(conflict("Practice session changed; reload and retry."));
         }
         practice_operation(
             &req.operation_id,
@@ -117,7 +117,7 @@ impl LearningPracticeRepository {
             return Err(invalid("Submitted practice attempts are immutable."));
         }
         if s.revision != req.expected_revision {
-            return Err(invalid("Practice session changed; reload and retry."));
+            return Err(conflict("Practice session changed; reload and retry."));
         }
         let t = now();
         let status = if accept { "accepted" } else { "rejected" };
@@ -127,7 +127,7 @@ impl LearningPracticeRepository {
         }
         let upd=sqlx::query("UPDATE learning_practice_sessions SET revision=revision+1,updated_at=? WHERE id=? AND program_id=? AND revision=? AND status='active'").bind(t).bind(&req.session_id).bind(&req.program_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
         if upd.rows_affected() != 1 {
-            return Err(invalid("Practice session changed; reload and retry."));
+            return Err(conflict("Practice session changed; reload and retry."));
         }
         practice_operation(
             &req.operation_id,
