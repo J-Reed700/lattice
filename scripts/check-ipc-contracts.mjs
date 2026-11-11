@@ -46,7 +46,7 @@ const srcProbes = [
     { why: 'a valid call with no arguments', needle: null, code: "void apiCall('list_study_decks');" },
     { why: 'a valid call with a channel', needle: null, code: "void apiCall('generate_learning_program', { request: outlineRequest, requestId: null, onProgress: new Channel<LearningOutlineProgressDto>() });" },
     { why: 'an unknown command', needle: 'command_without_a_generated_contract', code: "void apiCall('command_without_a_generated_contract', {});" },
-    { why: 'a nested request field the command does not have', needle: 'document_id', code: "void apiCall('remove_tag_from_document', { request: { document_id: 'doc', tag_id: 'tag' } });" },
+    { why: 'a nested request field the command does not have', needle: 'documentId', code: "void apiCall('remove_tag_from_document', { request: { documentId: 'doc', tag_id: 'tag' } });" },
     { why: 'a missing required argument', needle: 'deleteFile', code: "void apiCall('delete_model', { modelId: 'model' });" },
     { why: 'a channel carrying the wrong payload', needle: 'Channel<string>', code: "void apiCall('generate_learning_program', { request: outlineRequest, requestId: null, onProgress: new Channel<string>() });" },
     { why: 'a plain object where a channel is required', needle: 'Channel', code: "void apiCall('generate_learning_program', { request: outlineRequest, requestId: null, onProgress: {} });" },
