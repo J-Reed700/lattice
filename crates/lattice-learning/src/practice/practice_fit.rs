@@ -179,7 +179,11 @@ fn known(state: &FitState, kinds: &Kinds) -> Result<PracticeFitDto> {
     let entries = kinds
         .iter()
         .map(|kind| {
-            if kind.fit.wanted_by(&state.profile) {
+            if state
+                .profile
+                .as_ref()
+                .is_some_and(|profile| kind.fit.wanted_by(profile))
+            {
                 return PracticeKindFitDto {
                     kind: kind.id.as_str().to_owned(),
                     fit: KindFit::Fits,
