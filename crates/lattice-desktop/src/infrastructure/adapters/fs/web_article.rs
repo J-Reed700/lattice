@@ -28,18 +28,6 @@ use tokio::fs;
 struct ArticleMetadata {
     /// Article title
     title: String,
-
-    /// Original URL
-    // reason: required key of the browser extension's metadata.json; keeping it
-    // preserves the parse-time check that the file actually carries a URL.
-    #[allow(dead_code)]
-    url: String,
-
-    /// Optional site name (e.g., "Wikipedia", "Medium")
-    // reason: part of the same metadata.json schema, kept alongside `url`.
-    #[allow(dead_code)]
-    #[serde(default)]
-    site_name: Option<String>,
 }
 
 /// Detector for web articles archived by browser extension
