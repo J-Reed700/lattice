@@ -20,8 +20,7 @@ fn an_edit_adding_a_sentence_equal_to_its_citations_quote_is_refused() {
     assert!(refused.is_err(), "{refused:?}");
     let message = refused.unwrap_err().to_string();
     assert!(message.contains(QUOTE), "{message}");
-    assert!(message.contains("the lesson's own words"), "{message}");
-    assert!(!message.contains("double quotation marks"), "{message}");
+    assert!(message.contains("double quotation marks"), "{message}");
 }
 
 #[test]

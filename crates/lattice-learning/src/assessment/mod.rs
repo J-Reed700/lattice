@@ -6,6 +6,9 @@ pub mod assessment_repository;
 #[cfg(test)]
 pub(crate) mod assessment_tests;
 pub(crate) mod batched;
+pub(crate) mod form_review;
+#[cfg(test)]
+mod form_review_tests;
 pub mod grade_rationale;
 pub(crate) mod item_review;
 pub(crate) mod key_review;

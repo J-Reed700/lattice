@@ -128,7 +128,7 @@ pub(crate) async fn check(
         .iter()
         .map(|(_, question)| {
             format!(
-                "question-review-v4:{}",
+                "question-review-v3:{}",
                 crate::content_verification::digest(
                     &json!({
                         "model": llm.model_name(),

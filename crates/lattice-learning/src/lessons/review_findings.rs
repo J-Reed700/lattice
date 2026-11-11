@@ -127,9 +127,9 @@ pub enum Rule {
     ExplanationMissing,
     /// A question lacks four distinct answer choices.
     Choices,
-    /// Carried by rows stored earlier; no longer raised.
+    /// Carried by rows stored before the form read; no longer raised.
     KeyLongest,
-    /// Carried by rows stored earlier; no longer raised.
+    /// Carried by rows stored before the form read; no longer raised.
     KeyGivenAway,
     /// A question's rationales do not match its choices.
     RationaleCount,
@@ -615,19 +615,6 @@ pub(crate) fn sentences_of(candidate: &Value, finding: &ReviewFinding) -> Vec<St
         }
     }
     found
-}
-
-/// Whether `quote` stands in the text of the part `site` names, the whole
-/// candidate for the lesson.
-pub(crate) fn part_holds(candidate: &Value, site: FindingSite, quote: &str) -> bool {
-    let Some(part) = part_at(candidate, site) else {
-        return false;
-    };
-    let mut leaves = Vec::new();
-    string_leaves(part, &mut leaves);
-    leaves
-        .into_iter()
-        .any(|leaf| same_text::find(leaf, quote).is_some())
 }
 
 /// The sentences of every string of `value` that are not blank once folded.

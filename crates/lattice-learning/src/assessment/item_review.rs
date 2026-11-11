@@ -3,6 +3,7 @@
 //! with its key, explanation, reasons, criteria, passage and the blind
 //! solution, and says what is wrong with it and which other questions it
 //! repeats (docs/design/2026-10-23-quizzes-and-tests.md, section 5.2).
+use super::form_review;
 use crate::assessment_engine::{
     LearningAssessmentCandidate as Item, LearningAssessmentKey as Key, LearningTextKey,
 };
@@ -330,7 +331,11 @@ pub(crate) async fn review(
         return Ok(vec![]);
     }
     let pairs: Vec<(&Item, &str)> = entries.iter().map(|e| (e.item, e.quote)).collect();
-    let solutions = key_review::solve_items(llm, &pairs).await?;
+    let refs: Vec<&Item> = entries.iter().map(|e| e.item).collect();
+    let (solutions, forms) = futures::try_join!(
+        key_review::solve_items(llm, &pairs),
+        form_review::stands_apart(llm, &refs)
+    )?;
     let mut findings: Vec<Findings> = vec![Findings::default(); entries.len()];
     let mut items = Vec::new();
     for (position, (entry, solution)) in entries.iter().zip(&solutions).enumerate() {
@@ -339,6 +344,18 @@ pub(crate) async fn review(
             findings.get_mut(position),
         ) {
             slot.dispute = Some(reason);
+        }
+        if let (Some(apart), Key::Choice(right), Some(slot)) = (
+            forms.get(position).and_then(Option::as_ref),
+            &entry.item.key,
+            findings.get_mut(position),
+        ) {
+            if apart.index == *right {
+                slot.defects.push(format!(
+                    "The right answer can be picked by its form alone, without knowing the material: {} Rewrite the options, and the question where it lends its words to one of them, so that all options are alike in form (length, detail, grammatical shape, opening words, whether they hedge or give a reason, and how much of the question's wording they repeat) without changing which one is right.",
+                    apart.why
+                ));
+            }
         }
         items.push(item_json(position, entry, solution));
     }

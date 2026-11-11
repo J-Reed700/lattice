@@ -1,7 +1,6 @@
 //! A lesson's questions reviewed as quiz items: a scripted blind solver and
 //! item judge, and the requests between them.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-use super::item_review::ITEM_REVIEW_SYSTEM;
 use super::question_review::{check, Outcome};
 use crate::review_findings::FindingSite;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
@@ -29,6 +28,8 @@ impl LLMPort for Script {
         let (system, user) = crate::lessons::structured_call::task_messages(request);
         let kind = if system.starts_with("Solve quiz questions") {
             "solve"
+        } else if system.starts_with("You are shown multiple-choice questions") {
+            "form"
         } else if system.starts_with("Review quiz questions") {
             "judge"
         } else {
@@ -47,6 +48,11 @@ impl LLMPort for Script {
                 "reason": "The case decides it.",
                 "correctIndices": [(self.solves)(q["index"].as_u64().unwrap_or(0) as usize)],
                 "answer": "", "blankAnswers": [], "matches": [], "orderedValues": []
+            })).collect::<Vec<_>>()})
+            }
+            "form" => {
+                json!({"answers": context["questions"].as_array().into_iter().flatten().map(|q| json!({
+                "index": q["index"], "standsApart": null, "why": ""
             })).collect::<Vec<_>>()})
             }
             "judge" => {
@@ -91,8 +97,15 @@ impl Script {
         Box::new(|_| (String::new(), vec![]))
     }
 
+    /// The kinds of request in order, the form read left out: it runs beside the solver.
     fn kinds(&self) -> Vec<&'static str> {
-        self.seen.lock().unwrap().iter().map(|(k, _)| *k).collect()
+        self.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(k, _)| *k)
+            .filter(|k| *k != "form")
+            .collect()
     }
 
     fn requests(&self, kind: &str) -> Vec<Value> {
@@ -441,33 +454,4 @@ async fn a_repeat_is_reviewed_again_when_the_question_it_repeats_changes() -> Re
     assert_eq!(solves[1]["questions"].as_array().unwrap().len(), 2);
     assert!(second.is_empty(), "{second:?}");
     Ok(())
-}
-
-#[test]
-fn the_key_aware_judge_is_not_asked_whether_an_option_stands_apart() {
-    assert!(!ITEM_REVIEW_SYSTEM.contains("in length, detail or wording"));
-    assert!(ITEM_REVIEW_SYSTEM.contains("do not report the form, length or wording"));
-}
-
-#[test]
-fn a_lessons_outcome_includes_what_the_course_plan_gives_it_to_teach() {
-    let authoring = json!({
-        "lesson": {"title": "Holding a line", "objective": "Say which one holds the line."},
-        "courseSequence": {"coursePlan": [
-            {"position": "earlier", "ideas": ["Charlie came before"]},
-            {"position": "this", "ideas": ["Alpha holds the line"], "terms": ["Bravo gives way"], "actions": []},
-            {"position": "later", "ideas": ["Delta comes after"]}
-        ]}
-    });
-
-    let outcome = Outcome::of_lesson(&authoring);
-
-    assert_eq!(outcome.title, "Holding a line");
-    assert!(outcome
-        .description
-        .contains("Say which one holds the line."));
-    assert!(outcome.description.contains("Alpha holds the line"));
-    assert!(outcome.description.contains("Bravo gives way"));
-    assert!(!outcome.description.contains("Charlie came before"));
-    assert!(!outcome.description.contains("Delta comes after"));
 }

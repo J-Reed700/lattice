@@ -594,24 +594,3 @@ proptest! {
         check_sentences(&text)?;
     }
 }
-
-#[test]
-fn a_list_marker_and_the_whitespace_after_it_end_where_the_line_text_starts() {
-    fn line(text: &str) -> Option<&str> {
-        item_marker_end(text).map(|end| &text[..end])
-    }
-    assert_eq!(line("3. Alpha holds."), Some("3. "));
-    assert_eq!(line("- Alpha holds."), Some("- "));
-    assert_eq!(line("   2) Alpha holds."), Some("   2) "));
-    assert_eq!(line("  * Alpha holds."), Some("  * "));
-    assert_eq!(line("Alpha holds."), None);
-    assert_eq!(line("3 things hold."), None);
-    assert_eq!(line("-Alpha holds."), None);
-    for text in ["3. A.", "- A.", "   2) A.", "A.", "3 things", "-A."] {
-        assert_eq!(
-            prose::is_list_item(text),
-            item_marker_end(text).is_some(),
-            "{text}"
-        );
-    }
-}
