@@ -1587,6 +1587,14 @@ async checkPracticePiece(request: CheckPracticePieceRequestDto) : Promise<Result
     else return { status: "error", error: e  as any };
 }
 },
+async runCodingInput(request: RunCodingInputRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|run_coding_input", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async askPracticeHint(request: AskPracticeHintRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|ask_practice_hint", { request }) };
@@ -4768,7 +4776,7 @@ dataDirCloudProvider: string | null;
  * Newest first.
  */
 archives: ArchiveFileDto[] }
-export type AskPracticeHintRequestDto = { operationId: string; programId: string; sessionId: string; files: LearningLabFile[]; expectedRevision: number }
+export type AskPracticeHintRequestDto = { operationId: string; programId: string; sessionId: string; piece: JsonValue; expectedRevision: number }
 export type AttachEvidenceDto = { kind: "attach_saved_source"; sourceVersionId: string; startByte: number; endByte: number } | { kind: "attach_link"; url: string } | { kind: "attach_document"; documentId: string } | { kind: "attach_text"; title: string; text: string }
 export type AttachFailureDto = { kind: AttachFailureKindDto; message: string; nextSteps: AttachNextStepDto[] }
 export type AttachFailureKindDto =
@@ -5203,17 +5211,28 @@ export type CheckCodingExampleRequestDto = { operationId: string; programId: str
  */
 ordinal: number | null; args: string[]; expected: string }
 export type CheckDto = { checker: CheckerDto; result: CheckResultDto; reason: string; fingerprint: string; evidence: EvidenceSeenDto[]; windowTokens: number }
-export type CheckPracticePieceRequestDto = { operationId: string; runId: string; programId: string; sessionId: string; scope: CodingRunScope; files: LearningLabFile[];
 /**
- * Scope Input: one literal per parameter.
+ * The engine's check runs the scopes `shown` and `all`; a kind's own commands run anything else.
  */
-input: string[] | null }
+export type CheckPracticePieceRequestDto = { operationId: string; checkId: string; programId: string; sessionId: string; scope: CheckScope; piece: JsonValue }
 export type CheckResultDto = { verdict: "supported"; sourceVersionId: string; supportingQuote: string } |
 /**
  * Supported by a passage of another course source than the ones its
  * section cites; the lesson's citation is repaired to it.
  */
 { verdict: "supported_elsewhere"; cited: string[]; sourceVersionId: string; supportingQuote: string } | { verdict: "consistent" } | { verdict: "known_common" } | { verdict: "not_false" } | { verdict: "failed"; kind: VerdictKindDto }
+/**
+ * Which cases a check runs.
+ */
+export type CheckScope = "shown" | "all" |
+/**
+ * One case the learner supplied; it asks for no verdict.
+ */
+"own"
+/**
+ * How a check as a whole stands.
+ */
+export type CheckStatus = "pending" | "running" | "passed" | "failed" | "timed_out" | "cancelled" | "interrupted" | "unavailable"
 /**
  * The checker's accuracy for one Learning model (§15 "Visible to the user").
  */
@@ -6188,7 +6207,7 @@ defaultMaxResults: number }
 export type DailyNoteCompatDto = { id: string; date: string; content: string; createdAt: string; updatedAt: string }
 export type DailyNoteCursorRequestDto = { currentDate: string }
 export type DailyNotesRangeRequestDto = { startDate: string; endDate: string }
-export type DebriefFactsDto = { stageMs: StageTimeDto[]; runs: number; submits: number; hints: RungCountDto[]; settings: Setting[] }
+export type DebriefFactsDto = { stageMs: StageTimeDto[]; checks: number; submits: number; hints: RungCountDto[]; settings: Setting[] }
 export type DecideLearningFollowUpRequestDto = { operationId: string; programId: string; followUpId: string }
 export type DecideLearningPracticeProposalRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; proposalId: string }
 export type DecideLearningRecallDuplicateRequestDto = { operationId: string; programId: string; suggestionId: string; accept: boolean }
@@ -6265,6 +6284,7 @@ export type DiffKind =
  * One line of a diff, without its line break.
  */
 export type DiffLine = { kind: DiffKind; text: string }
+export type Difficulty = "easy" | "medium" | "hard"
 export type DiscardLearningCurriculumRevisionRequestDto = { operationId: string; programId: string; revisionId: string; expectedRevision: number }
 /**
  * Document metadata DTO for display in UI
@@ -6748,19 +6768,6 @@ export type ErrorCode =
  */
 export type EvidenceDto = { kind: "measured"; suites: string[] } | { kind: "untested" }
 export type EvidenceSeenDto = { sourceVersionId: string; startByte: number; endByte: number; textSha256: string }
-export type ExampleCoverageDto = {
-/**
- * Misreadings caught by right examples.
- */
-caught: number;
-/**
- * Misreadings in the problem.
- */
-total: number;
-/**
- * Coached: the description of one misreading not caught yet.
- */
-uncaught: string | null }
 /**
  * What the reference said about a learner's example.
  */
@@ -7053,7 +7060,7 @@ export type FindingResultKind =
  */
 "valid_extra" | "false_positive"
 export type FinishLearningSimulationRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
-export type FinishPracticeSessionRequestDto = { operationId: string; programId: string; sessionId: string; files: LearningLabFile[] }
+export type FinishPracticeSessionRequestDto = { operationId: string; programId: string; sessionId: string; piece: JsonValue }
 /**
  * The device a verdict was judged against.
  */
@@ -9341,6 +9348,14 @@ metadata: string | null;
  * Message status (pending/completed/failed)
  */
 status: string }
+/**
+ * How many of the exercise's misreadings the learner's right cases catch.
+ */
+export type MisreadingCoverageDto = { caught: number; total: number;
+/**
+ * Coached: the description of one misreading not caught yet.
+ */
+uncaught: string | null }
 export type MisreadingViewDto = { description: string; caught: boolean }
 /**
  * Cache statistics.
@@ -9629,7 +9644,7 @@ export type NextDrillStatus =
  */
 "to_build"
 export type NoteHighlightDto = { id: string; text: string; createdAt: string }
-export type ObservePracticeDraftRequestDto = { programId: string; sessionId: string; files: LearningLabFile[]; reason: DraftObservation }
+export type ObservePracticeDraftRequestDto = { programId: string; sessionId: string; piece: JsonValue; reason: DraftObservation }
 /**
  * Onboarding state — what the user has already been through.
  *
@@ -9706,7 +9721,6 @@ locator: string | null; text: string; title: string | null; note: string | null;
  * How well a pattern was recognised, in the words recall's schedule takes.
  */
 export type PatternRating = "again" | "hard" | "good" | "easy"
-export type PatternRatingDto = { patternId: string; name: string; family: string; cue: string; rating: PatternRating; dueAt: number }
 /**
  * Performance tier DTO for frontend.
  */
@@ -9723,24 +9737,19 @@ export type PerformanceTierDto =
  * Accurate models (> 5s/response)
  */
 "Accurate"
-export type PracticeCheckDto = { runId: string; scope: CodingRunScope; status: LearningPracticalRunStatus;
 /**
- * In case order; the screen lists failures first.
+ * One check as every kind has it. What it found is in the kind's `work`, under the same id.
  */
-cases: CaseViewDto[];
+export type PracticeCheckDto = { checkId: string; scope: CheckScope; status: CheckStatus; passed: number; total: number; at: number }
+export type PracticeDebriefDto = { scorecard: Scorecard; facts: DebriefFactsDto;
 /**
- * What the program printed outside any case.
+ * Empty when the kind has no cases the learner writes.
  */
-stdout: string; stderr: string; durationMs: number | null;
+misreadings: MisreadingViewDto[]; techniques: TechniqueRatingDto[]; model: string;
 /**
- * An input run in Coached: what the reference returns.
+ * What the kind's screen draws of the debrief.
  */
-referenceActual: string | null; createdAt: number }
-export type PracticeDebriefDto = { scorecard: Scorecard; facts: DebriefFactsDto; strongAnswer: StrongAnswerDto; patterns: PatternRatingDto[];
-/**
- * The last submit, nothing kept back.
- */
-cases: CaseViewDto[]; misreadings: MisreadingViewDto[]; model: string }
+work: JsonValue }
 /**
  * Most overdue first.
  */
@@ -9748,29 +9757,41 @@ export type PracticeDueDto = { items: DueItemDto[] }
 export type PracticeDueRequestDto = { programId: string }
 export type PracticeFitDto = { code: CodeFit; reason: string | null }
 export type PracticeFitRequestDto = { programId: string }
-export type PracticeHintDto = { ordinal: number; rung: Rung; text: string; reason: string;
+export type PracticeHintDto = { ordinal: number; rung: Rung; text: string; reason: string; stage: Stage;
 /**
- * Rung Point: 1-based lines of `path` in the draft the hint was written for.
+ * The last check made when the hint was given.
  */
-lines: number[]; path: string | null; stage: Stage; runId: string | null;
+checkId: string | null;
 /**
  * Watched: given by the interviewer, in the thread.
  */
 inRole: boolean; at: number }
-export type PracticeSessionDto = { sessionId: string; programId: string; activityId: string; lessonId: string | null; form: Form; setting: Setting; settingsUsed: Setting[]; stage: Stage; stages: Stage[]; problem: PublicProblemDto; clock: ClockDto; examples: CodingExampleDto[]; coverage: ExampleCoverageDto;
+export type PracticeSessionDto = { sessionId: string; programId: string; activityId: string; lessonId: string | null; kind: string; title: string; difficulty: Difficulty; form: Form; setting: Setting; settingsUsed: Setting[]; stage: Stage;
+/**
+ * The stages of the form, in order.
+ */
+stages: StageLabelDto[]; clock: ClockDto;
 /**
  * Oldest first.
  */
-runs: PracticeCheckDto[]; hints: PracticeHintDto[]; nextRung: Rung; turns: LearningSimulationTurnDto[]; cuePending: boolean; draft: LearningLabFile[]; submitted: boolean; solutionAvailable: boolean;
+checks: PracticeCheckDto[]; hints: PracticeHintDto[]; nextRung: Rung; turns: LearningSimulationTurnDto[]; cuePending: boolean;
 /**
- * Some once revealed, or in the debrief.
+ * Some exactly when the kind has cases the learner writes.
  */
-workedSolution: string | null; debrief: PracticeDebriefDto | null; finished: boolean; revision: number }
+coverage: MisreadingCoverageDto | null; submitted: boolean; solutionAvailable: boolean;
+/**
+ * The learner has the reference open.
+ */
+solutionShown: boolean; finished: boolean; revision: number;
+/**
+ * What the kind's screen draws of the work.
+ */
+work: JsonValue; debrief: PracticeDebriefDto | null }
 /**
  * Names a session: get and respond.
  */
 export type PracticeSessionRequestDto = { programId: string; sessionId: string }
-export type PracticeSessionSummaryDto = { sessionId: string; activityId: string; title: string; form: Form; setting: Setting; stage: Stage; finished: boolean;
+export type PracticeSessionSummaryDto = { sessionId: string; activityId: string; kind: string; title: string; form: Form; setting: Setting; stage: Stage; finished: boolean;
 /**
  * Cases passed on the last submit.
  */
@@ -9814,6 +9835,58 @@ export type ProblemSignature = { function: string; params: SignatureParam[];
  * The Python return annotation.
  */
 returns: string }
+/**
+ * What a finished session's `work` holds for the program kind.
+ */
+export type ProgramDebriefWorkDto = { strongAnswer: StrongAnswerDto;
+/**
+ * The last submit, nothing kept back.
+ */
+cases: CaseViewDto[] }
+/**
+ * Where a hint points in the draft it was written for.
+ */
+export type ProgramHintMarkDto = { ordinal: number;
+/**
+ * The file of the first line.
+ */
+path: string | null;
+/**
+ * 1-based lines.
+ */
+lines: number[] }
+/**
+ * What one run of the learner's code found.
+ */
+export type ProgramRunDto = { runId: string; scope: CodingRunScope; status: LearningPracticalRunStatus;
+/**
+ * In case order; the screen lists failures first.
+ */
+cases: CaseViewDto[];
+/**
+ * What the program printed outside any case.
+ */
+stdout: string; stderr: string; durationMs: number | null;
+/**
+ * An input run in Coached: what the reference returns.
+ */
+referenceActual: string | null; createdAt: number }
+/**
+ * What a session's `work` holds for the program kind.
+ */
+export type ProgramWorkDto = { problem: PublicProblemDto; draft: LearningLabFile[]; examples: CodingExampleDto[];
+/**
+ * Oldest first; each `run_id` is the `check_id` of the engine's summary of the check.
+ */
+runs: ProgramRunDto[];
+/**
+ * One for each hint that points at lines.
+ */
+hintMarks: ProgramHintMarkDto[];
+/**
+ * Some once revealed, or in the debrief.
+ */
+workedSolution: string | null }
 export type ProvenanceDto = { input: "saved_passage"; startByte: number; endByte: number } | { input: "link"; url: string } | { input: "document"; documentId: string } | { input: "pasted_text" }
 export type PublicProblemDto = { title: string; statement: string; signature: ProblemSignature; constraints: string[]; difficulty: ProblemDifficulty; language: string;
 /**
@@ -10361,6 +10434,11 @@ promptTemplate: string;
  * Clarification prompt template shown to users.
  */
 clarifyPromptTemplate: string }
+export type RunCodingInputRequestDto = { operationId: string; runId: string; programId: string; sessionId: string; files: LearningLabFile[];
+/**
+ * One literal per parameter.
+ */
+input: string[] }
 /**
  * How much of the answer a hint gives, in the order they are offered.
  */
@@ -10606,7 +10684,7 @@ vectorIndexCompression: VectorIndexCompressionSettingsDto;
  */
 summaryIndexEnabled: boolean }
 export type SendLearningSimulationTurnRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; content: string }
-export type SendPracticeTurnRequestDto = { operationId: string; programId: string; sessionId: string; content: string; spoken: boolean; files: LearningLabFile[]; expectedRevision: number }
+export type SendPracticeTurnRequestDto = { operationId: string; programId: string; sessionId: string; content: string; spoken: boolean; piece: JsonValue; expectedRevision: number }
 export type SetArchiveKeepCountRequestDto = { keepCount: number }
 export type SetArchivePassphraseRequestDto = {
 /**
@@ -10980,6 +11058,10 @@ export type SpeedClassDto = "fast" | "balanced" | "thorough"
  * Where a session is in its form.
  */
 export type Stage = "understand" | "examples" | "plan" | "make" | "check" | "review" | "reproduce" | "locate" | "fix" | "verify"
+/**
+ * A stage of the session's form, under the label the counterpart also says.
+ */
+export type StageLabelDto = { stage: Stage; label: string }
 export type StageTimeDto = { stage: Stage; activeMs: number }
 /**
  * A `StandingAssessed` event's payload: the claim's kind, whether its
@@ -11370,6 +11452,7 @@ export type TeachingSettleDto =
  * A source was added for the sentence: waiting becomes resolved.
  */
 "source_added"
+export type TechniqueRatingDto = { techniqueId: string; name: string; family: string; cue: string; rating: PatternRating; dueAt: number }
 export type TestCustomToolRequest = { endpoint: string; queryParam: string; maxResultsParam: string | null; defaultMaxResults: number; query: string; maxResults: number | null }
 export type TestCustomToolResponse = { finalUrl: string; status: number; contentType: string | null; bodyPreview: string }
 export type TestOllamaConnectionRequest = { ollamaUrl: string; authHeaderName?: string; authHeaderValue?: string }

@@ -377,6 +377,7 @@ export const COMMAND_PLUGINS = {
   reveal_practice_solution: 'learning',
   review_learning_recall_card: 'learning',
   review_study_card: 'learning',
+  run_coding_input: 'learning',
   save_learning_assessment_response: 'learning',
   save_learning_canvas: 'learning',
   save_learning_card_draft: 'learning',
