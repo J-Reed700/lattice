@@ -6,7 +6,6 @@ use crate::model_call;
 use crate::practice::session::kind::Kind;
 use crate::practice::session::observation::Observation;
 use crate::practice::session::policy::{Cue, Policy};
-use crate::practice::simulation_policy::TurnPolicy;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::practice::work::{Exercise, PartRef};
 use lattice_core::shared::error::{AppError, Result};

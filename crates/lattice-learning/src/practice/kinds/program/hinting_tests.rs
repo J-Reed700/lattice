@@ -28,7 +28,7 @@ const RUNGS: [(Rung, &str); 4] = [
     (Rung::Point, "Line"),
 ];
 
-const NUDGE_WITH_A_BLOCK: &str = "{\"text\":\"Remember them:\n```python\nx\n```\",\"reason\":\"It shows the step.\",\"lines\":[],\"path\":null}";
+const NUDGE_WITH_A_BLOCK: &str = r#"{"text":"Remember them:\n```python\nx\n```","reason":"It shows the step.","lines":[],"path":null}"#;
 
 fn written(rung: Rung) -> String {
     if rung == Rung::Point {
