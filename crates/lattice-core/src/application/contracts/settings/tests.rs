@@ -292,16 +292,16 @@ fn the_utility_model_reference_loads_with_or_without_the_field() {
 }
 
 fn legacy_llm_json() -> serde_json::Value {
-    serde_json::json!({
-        "ollamaAuthHeaderName": "Authorization",
-        "ollamaAuthHeaderValue": "Bearer ollama-secret",
-        "llamaCpp": {
-            "url": "http://localhost:8080",
-            "model": "",
-            "authHeaderName": "Authorization",
-            "authHeaderValue": "Bearer llama-secret"
-        }
-    })
+    let mut llm = serde_json::to_value(LLMSettingsDto::default()).unwrap();
+    llm["ollamaAuthHeaderName"] = "Authorization".into();
+    llm["ollamaAuthHeaderValue"] = "Bearer ollama-secret".into();
+    llm["llamaCpp"] = serde_json::json!({
+        "url": "http://localhost:8080",
+        "model": "",
+        "authHeaderName": "Authorization",
+        "authHeaderValue": "Bearer llama-secret"
+    });
+    llm
 }
 
 #[test]

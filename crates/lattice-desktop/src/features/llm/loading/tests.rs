@@ -68,6 +68,10 @@ async fn loader_with(rows: &[lattice_core::domain::DownloadedModel]) -> ModelLoa
 
 /// A loader whose database must never be asked anything.
 fn loader_without_database() -> ModelLoader {
+    loader_with_credentials(Arc::new(InMemoryCredentials::default()))
+}
+
+fn loader_with_credentials(credentials: Arc<InMemoryCredentials>) -> ModelLoader {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .connect_lazy("sqlite::memory:")
         .unwrap();
@@ -77,7 +81,7 @@ fn loader_without_database() -> ModelLoader {
         models,
         None,
         LlmRuntime::default(),
-        Arc::new(InMemoryCredentials::default()),
+        credentials,
     )
 }
 
@@ -280,7 +284,9 @@ fn unusable_sidecar_is_not_reported_as_a_model_failure() {
 async fn a_llama_cpp_model_uses_the_llama_cpp_connection_whatever_else_settings_name() {
     use lattice_core::application::{
         contracts::settings::{LLMProvider, LlamaCppSettingsDto},
+        ports::credentials_port::CredentialsPort,
         ports::llm_port::{CompletionInput, CompletionRequest},
+        services::credentials::CredentialKey,
     };
     use wiremock::{
         matchers::{header, method, path},
@@ -319,8 +325,16 @@ async fn a_llama_cpp_model_uses_the_llama_cpp_connection_whatever_else_settings_
             .expect(1)
             .mount(&server)
             .await;
+        let credentials = Arc::new(InMemoryCredentials::default());
+        credentials
+            .set_api_key(
+                CredentialKey::LlamaCppAuthHeader.as_str(),
+                "Basic test-credential",
+            )
+            .await
+            .unwrap();
         // An uninitialized DB must never be queried for a remote model.
-        let loader = loader_without_database();
+        let loader = loader_with_credentials(credentials);
         let settings = LLMSettingsDto {
             provider,
             ollama_url: server.uri(),
