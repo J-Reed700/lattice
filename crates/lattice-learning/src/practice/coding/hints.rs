@@ -74,12 +74,41 @@ pub async fn write_hint(
     in_role: bool,
     cancel: CancellationToken,
 ) -> Result<CodeHint> {
+    write_hint_from(
+        llm,
+        runner,
+        harness,
+        problem,
+        &observation.render(),
+        observation.setting,
+        &observation.files,
+        rung,
+        in_role,
+        cancel,
+    )
+    .await
+}
+
+/// [`write_hint`] for what it reads of the observation: its text, the setting and the draft's files.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn write_hint_from(
+    llm: &dyn LLMPort,
+    runner: &dyn CodeRunner,
+    harness: &dyn CaseHarness,
+    problem: &Problem,
+    observed: &str,
+    setting: CodingSetting,
+    draft: &[LearningLabFile],
+    rung: CodeHintRung,
+    in_role: bool,
+    cancel: CancellationToken,
+) -> Result<CodeHint> {
     let hinting = Hinting {
         reference: &problem.reference,
         starter: &problem.spec.starter,
         patterns: &problem.spec.patterns,
-        setting: observation.setting,
-        draft: &observation.files,
+        setting,
+        draft,
     };
     let proof = Sandbox {
         runner,
@@ -87,11 +116,12 @@ pub async fn write_hint(
         problem,
         cancel: &cancel,
     };
-    let request = request_for(problem, observation, rung, in_role);
+    let request = ask(&problem.reference, observed, rung, in_role, setting);
     write_checked(llm, &hinting, &proof, request, rung).await
 }
 
 /// The request for a hint of `rung` on what `observation` shows.
+#[cfg(test)]
 fn request_for(
     problem: &Problem,
     observation: &WorkspaceObservation,

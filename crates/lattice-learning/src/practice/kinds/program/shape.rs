@@ -1,10 +1,13 @@
 //! How a Program's values are written in the core vocabulary, and back.
 
 use crate::lab_runtime::LearningLabFile;
-use crate::practice::coding::problem::{self as coding, Problem, ProblemCase, ProblemSpec};
+use crate::practice::coding::dto::CodeHintRung;
+use crate::practice::coding::problem::{
+    self as coding, CodingSetting, Problem, ProblemCase, ProblemSpec,
+};
 use crate::practice::kinds::program::KIND;
 use lattice_core::domain::learning::practice::work::{
-    self, Brief, Case, Exercise, Form, KindId, Misreading, Piece,
+    self, Brief, Case, Exercise, Form, KindId, Misreading, Piece, Rung, Setting,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
@@ -345,4 +348,32 @@ pub fn problem_of(exercise: &Exercise) -> Result<Problem> {
         reference_ms: proof.reference_ms,
         bug: exercise.planted.clone(),
     })
+}
+
+/// The setting a program's coding code calls `setting`.
+pub fn coding_setting_of(setting: Setting) -> CodingSetting {
+    match setting {
+        Setting::Coached => CodingSetting::Coached,
+        Setting::Mock => CodingSetting::Mock,
+        Setting::Watched => CodingSetting::Watched,
+    }
+}
+
+/// The rung a program's coding code calls `rung`: pointing is a hint at lines.
+pub fn coding_rung_of(rung: Rung) -> CodeHintRung {
+    match rung {
+        Rung::Nudge => CodeHintRung::Nudge,
+        Rung::Idea => CodeHintRung::Idea,
+        Rung::Plan => CodeHintRung::Plan,
+        Rung::Point => CodeHintRung::Line,
+    }
+}
+
+pub fn rung_of(rung: CodeHintRung) -> Rung {
+    match rung {
+        CodeHintRung::Nudge => Rung::Nudge,
+        CodeHintRung::Idea => Rung::Idea,
+        CodeHintRung::Plan => Rung::Plan,
+        CodeHintRung::Line => Rung::Point,
+    }
 }
