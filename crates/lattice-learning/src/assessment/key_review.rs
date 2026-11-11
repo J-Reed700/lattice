@@ -349,7 +349,6 @@ pub(crate) async fn review_bank_items(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
     use crate::lessons::course_generation_tests::ScriptedModel;
     use std::sync::Mutex;

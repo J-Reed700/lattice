@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 //! Where a sentence the machine cut goes back, from the places the cuts
 //! recorded: each cut was made against the text the earlier cuts left, so a
 //! neighbour it names may itself have been cut.

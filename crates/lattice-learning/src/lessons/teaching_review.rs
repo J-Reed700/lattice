@@ -379,7 +379,6 @@ mod section_list_tests;
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::test_support::candidate;
     use super::*;
     use crate::lessons::course_generation_tests::{ScriptedModel, Windowed};

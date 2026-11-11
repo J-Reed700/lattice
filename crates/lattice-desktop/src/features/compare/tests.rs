@@ -2,12 +2,6 @@
 //! in-memory container. No LLM.
 
 #![cfg(test)]
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic
-)]
 
 use super::di::CompareDeps;
 use super::parser::parse_compare_response;

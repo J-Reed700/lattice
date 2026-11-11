@@ -2,7 +2,6 @@
 //! the old preparation pipeline filled: unfinished preparation ends with its
 //! checkpoints, the old pipeline's unpublished state is gone, and every
 //! program, outline, source version and ready lesson is as it was.
-#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use sqlx::migrate::{Migrate, Migrator};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;

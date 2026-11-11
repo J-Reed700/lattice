@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
 use crate::application::ports::llm_port::CompletionResponse;
 use crate::shared::error::AppError;

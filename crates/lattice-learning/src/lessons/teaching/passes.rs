@@ -171,7 +171,6 @@ impl Passes {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::panic, clippy::indexing_slicing)]
     use super::*;
     use crate::review_findings::{FindingKind, FindingSite};
 

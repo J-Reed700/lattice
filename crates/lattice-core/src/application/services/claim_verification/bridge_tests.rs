@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::classes_tests::{checker, messages, Reply, Scripted};
 use super::*;
 use crate::domain::learning::claim_review::text_sha256;

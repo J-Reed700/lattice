@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 use super::*;
 use crate::lessons::course_generation_tests::ScriptedModel;
 use lattice_core::domain::learning::claim_review::{

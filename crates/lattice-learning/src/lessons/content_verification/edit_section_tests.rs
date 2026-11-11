@@ -1,9 +1,3 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic
-)]
 //! The user rewrites a section of a published lesson: the section's title and
 //! text are written, the statements that stood on what changed end, the rest
 //! keep their state, and the review's record stays honest.

@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 use super::*;
 use lattice_core::domain::learning::acceptance::{
     walk_from, End, Graph, Next, Node, Outcome, StandardPolicy, Step, Taken, CLASSES,

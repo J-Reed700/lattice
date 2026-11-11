@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
 use crate::lessons::course_generation_tests::length_bounds;
 use serde_json::{json, Value};

@@ -98,7 +98,6 @@ impl Module for Conv {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use candle_core::{Device, Module, Tensor};
 

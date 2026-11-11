@@ -151,7 +151,6 @@ pub fn validate_bare_filename(name: &str) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
     use super::*;
     use crate::shared::testing::links::{self, LinkKind};

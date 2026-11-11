@@ -398,7 +398,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
     async fn tag_suggestions_queue_as_upkeep_with_their_instructions_as_system() {
         let llm = Recorder::default();
         assert_eq!(

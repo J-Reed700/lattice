@@ -268,12 +268,6 @@ pub fn decode_to_mono_16k(path: &Path, max_secs: u64) -> Result<DecodedAudio, Ap
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic
-)]
 mod tests {
     use super::*;
     use std::f32::consts::PI;

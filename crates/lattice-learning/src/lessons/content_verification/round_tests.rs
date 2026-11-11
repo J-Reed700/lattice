@@ -2,7 +2,6 @@
 //! walk the standard policy's graphs as their scripts say, and a draft that is
 //! a string, so the round's end, its stop and its order are tested without a
 //! model.
-#![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 use super::*;
 use async_trait::async_trait;
 use lattice_core::domain::learning::acceptance::{

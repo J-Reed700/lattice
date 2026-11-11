@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 //! The snapshot: who holds behind whom in the turn order, what each waiting
 //! item is queued behind, what each holds, and the order of the list.
 

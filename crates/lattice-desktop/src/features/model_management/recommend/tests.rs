@@ -1,5 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
 use super::*;
 use crate::interfaces::dto::{
     DeviceKindDto, EvidenceDto, FitDeviceDto, FitKindDto, RecommendationLabelDto, SpeedClassDto,

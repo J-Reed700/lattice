@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! A published lesson is held for review in one write unit: a write that
 //! lands while the hold waits for the write lock is neither undone nor
 //! decided over.

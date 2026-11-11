@@ -1,6 +1,5 @@
 //! The two-step call against a recording model: what each step sends, when a
 //! call stays in one step, and how a saved draft resumes.
-#![allow(clippy::indexing_slicing)]
 use super::*;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
