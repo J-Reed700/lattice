@@ -823,3 +823,127 @@ fn a_finding_refused_for_overlap_and_for_another_reason_is_not_deferred() -> Res
     assert!(!done.named["f2"].deferred);
     Ok(())
 }
+
+fn misplaced(edit: Value) -> Result<AppliedFor> {
+    apply_named(&two_sections(), json!({ "edits": [edit] }), &anything)
+}
+
+/// Fails before the fix: the edit is refused as not found in block 0.
+#[test]
+fn an_edit_that_names_the_wrong_block_is_applied_to_the_block_that_holds_its_text() -> Result<()> {
+    let done = misplaced(
+        json!({"path":"/blocks/0/body","before":"Delta ends it.","after":"Delta closes it."}),
+    )?;
+    assert_eq!(
+        done.value["blocks"][1]["body"],
+        "Gamma stands here. Delta closes it."
+    );
+    assert_eq!(done.value["blocks"][0], two_sections()["blocks"][0]);
+    Ok(())
+}
+
+fn with_options() -> Value {
+    json!({"blocks":[],"questions":[
+        {"kind":"quiz","prompt":"Which one?","options":["Alpha","Beta","Gamma"],"explanation":"Alpha takes the first case."},
+        {"kind":"quiz","prompt":"Which other?","options":["Delta","Epsilon","Zeta"],"explanation":"Delta takes the second case."}
+    ]})
+}
+
+/// Fails before the fix: the edit is refused as not found in the named option.
+#[test]
+fn an_edit_with_a_wrong_question_number_is_applied_to_the_question_that_holds_its_text(
+) -> Result<()> {
+    let done = apply_named(
+        &with_options(),
+        json!({"edits":[{"path":"/questions/0/options/2","before":"Epsilon","after":"Eta"}]}),
+        &anything,
+    )?;
+    let mut expected = with_options();
+    expected["questions"][1]["options"][1] = json!("Eta");
+    assert_eq!(done.value, expected);
+    Ok(())
+}
+
+/// Fails before the fix: the path names no field, so the edit is refused.
+#[test]
+fn an_edit_whose_path_runs_past_the_end_is_applied_where_its_text_stands() -> Result<()> {
+    let done = apply_named(
+        &with_options(),
+        json!({"edits":[{"path":"/questions/9/explanation","before":"Delta takes the second case.","after":"Delta takes the later case."}]}),
+        &anything,
+    )?;
+    let mut expected = with_options();
+    expected["questions"][1]["explanation"] = json!("Delta takes the later case.");
+    assert_eq!(done.value, expected);
+    Ok(())
+}
+
+/// Passes before the fix as well: two other fields hold the text, so nothing moves.
+#[test]
+fn an_edit_whose_text_stands_in_two_other_parts_is_refused() {
+    let original = json!({"blocks":[
+        {"kind":"explanation","body":"Alpha stands alone."},
+        {"kind":"explanation","body":"Beta repeats the twin phrase."},
+        {"kind":"explanation","body":"Gamma repeats the twin phrase."}
+    ],"questions":[]});
+    let refused = apply_named(
+        &original,
+        json!({"edits":[{"path":"/blocks/0/body","before":"the twin phrase","after":"one phrase"}]}),
+        &anything,
+    );
+    assert!(refused.is_err());
+}
+
+/// Passes before the fix as well: the text stands only in a field of another kind.
+#[test]
+fn an_edit_whose_text_stands_only_in_another_kind_of_field_is_refused() {
+    let original = json!({"blocks":[
+        {"kind":"explanation","title":"Alpha title","body":"Alpha takes the first case."},
+        {"kind":"explanation","title":"Beta heading","body":"Beta takes the second case."}
+    ],"questions":[]});
+    let refused = apply_named(
+        &original,
+        json!({"edits":[{"path":"/blocks/0/body","before":"Beta heading","after":"Beta name"}]}),
+        &anything,
+    );
+    assert!(refused.is_err());
+}
+
+/// Fails before the fix: the edit stays in block 0's group, which the rule allows,
+/// and the whole group is refused as not found, so nothing applies.
+#[test]
+fn an_edit_moved_to_its_text_is_held_to_what_its_finding_may_change() -> Result<()> {
+    let done = apply_named(
+        &two_sections(),
+        json!({"edits":[
+            {"finding":"f1","path":"/blocks/0/body","before":"Delta ends it.","after":"Delta closes it."},
+            {"finding":"f1","path":"/blocks/0/body","before":"Beta is second.","after":"Beta comes second."}
+        ]}),
+        &only_f1_in_block_0,
+    )?;
+    assert_eq!(done.value["blocks"][1], two_sections()["blocks"][1]);
+    assert_eq!(
+        done.value["blocks"][0]["body"],
+        "Alpha is the first of them all. Beta comes second."
+    );
+    assert_eq!(
+        done.named["f1"].problems,
+        ["edit 0 is outside its finding's part."]
+    );
+    Ok(())
+}
+
+/// Fails before the fix: the edit is refused, so the finding applied nothing.
+#[test]
+fn a_finding_reports_the_field_its_moved_edit_wrote() -> Result<()> {
+    let done = apply_named(
+        &two_sections(),
+        json!({"edits":[{"finding":"f1","path":"/blocks/0/body","before":"Delta ends it.","after":"Delta closes it."}]}),
+        &anything,
+    )?;
+    assert_eq!(
+        done.named["f1"].applied,
+        BTreeSet::from(["/blocks/1/body".to_owned()])
+    );
+    Ok(())
+}
