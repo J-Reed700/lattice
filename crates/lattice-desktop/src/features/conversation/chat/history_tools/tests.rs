@@ -964,16 +964,6 @@ async fn nothing_above_the_floor_does_not_page_through_the_conversation() {
         ) -> lattice_core::shared::error::Result<SourcePage> {
             Ok(SourcePage::default())
         }
-        async fn search_memory_labels(
-            &self,
-            _: &str,
-            _: &str,
-            _: usize,
-        ) -> lattice_core::shared::error::Result<
-            Vec<lattice_core::domain::conversation::memory::MemoryId>,
-        > {
-            Ok(Vec::new())
-        }
     }
     let port = Common {
         searches: AtomicUsize::new(0),

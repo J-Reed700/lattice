@@ -10,9 +10,9 @@ use super::ConversationRepository;
 use lattice_core::application::ports::conversation_memory::{
     RecallCandidate, RecallCandidates, TermHolders,
 };
-use lattice_core::domain::conversation::memory::{MemoryId, SourceRole};
+use lattice_core::domain::conversation::memory::SourceRole;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Page, Transactions};
+use lattice_core::shared::persistence::Transactions;
 use std::str::FromStr;
 
 /// Cap on terms in one `MATCH` expression (§9.1 rule 1).
@@ -253,41 +253,6 @@ impl ConversationRepository {
             messages: messages as usize,
             holders,
         })
-    }
-
-    /// Generated item labels matching free text, for the details view.
-    ///
-    /// Labels help someone find a memory they half-remember. They are never a
-    /// substitute for evidence, and no mandatory item depends on this search
-    /// reaching it — mandatory items are loaded wholesale (§9.4). `limit` is
-    /// at least 1.
-    pub async fn search_memory_item_labels(
-        &self,
-        conversation_id: &str,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<MemoryId>> {
-        let needle = query.trim();
-        if needle.is_empty() {
-            return Ok(Vec::new());
-        }
-        let page = Page::first(limit)?;
-        let ids: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM conversation_memory_items \
-             WHERE conversation_id = ? AND instr(lower(label), lower(?)) > 0 \
-             ORDER BY state = 'active' DESC, changed_at_sequence DESC LIMIT ?",
-        )
-        .bind(conversation_id)
-        .bind(needle)
-        .bind(page.sql_limit())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to search memory labels: {}", e)))?;
-
-        Ok(ids
-            .into_iter()
-            .filter_map(|id| MemoryId::from_string(id).ok())
-            .collect())
     }
 }
 

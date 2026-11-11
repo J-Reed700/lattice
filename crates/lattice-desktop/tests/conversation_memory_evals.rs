@@ -126,9 +126,8 @@ use lattice_core::application::ports::llm_port::{
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::conversation::memory::{
-    parse_patch, EvidencePurpose, MemoryId, MemoryItem, MemoryKind, MemoryState, SourceMessage,
-    SourceRole, MAX_ACTIVE_ITEMS, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE,
-    MAX_QUOTE_BYTES,
+    parse_patch, EvidencePurpose, MemoryItem, MemoryKind, MemoryState, SourceMessage, SourceRole,
+    MAX_ACTIVE_ITEMS, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE, MAX_QUOTE_BYTES,
 };
 use lattice_core::domain::conversation::MessageRole;
 use lattice_core::shared::error::{AppError, Result};
@@ -1194,15 +1193,6 @@ impl ConversationMemoryReadPort for SilentRecall {
         _limits: SourceReadLimits,
     ) -> Result<SourcePage> {
         Ok(SourcePage::default())
-    }
-
-    async fn search_memory_labels(
-        &self,
-        _conversation_id: &str,
-        _query: &str,
-        _limit: usize,
-    ) -> Result<Vec<MemoryId>> {
-        Ok(Vec::new())
     }
 }
 
