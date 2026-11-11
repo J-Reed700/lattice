@@ -92,10 +92,10 @@ struct Answer {
 }
 
 /// One thing the course plan gives the lesson.
-struct Item {
+pub(crate) struct Item {
     id: String,
     kind: &'static str,
-    text: String,
+    pub(crate) text: String,
 }
 
 /// A section or question of the lesson, as the check names it.
@@ -106,7 +106,7 @@ struct Part {
     shown: Value,
 }
 
-fn items_of(entry: &Value) -> Vec<Item> {
+pub(crate) fn items_of(entry: &Value) -> Vec<Item> {
     let mut items = Vec::new();
     for (name, kind) in [("ideas", "idea"), ("terms", "term"), ("actions", "action")] {
         let listed = entry
@@ -221,7 +221,10 @@ fn locate(part: &Part, quote: &str) -> Option<Located> {
     })
 }
 
-fn at_position<'a>(plan: Option<&'a Vec<Value>>, name: &'a str) -> impl Iterator<Item = &'a Value> {
+pub(crate) fn at_position<'a>(
+    plan: Option<&'a Vec<Value>>,
+    name: &'a str,
+) -> impl Iterator<Item = &'a Value> {
     plan.into_iter()
         .flatten()
         .filter(move |entry| entry.get("position").and_then(Value::as_str) == Some(name))

@@ -843,15 +843,11 @@ fn the_writer_teaches_how_a_deliverable_is_recorded() {
 }
 
 #[test]
-fn the_writer_keeps_the_four_choices_close_in_length_and_in_their_own_words() {
+fn the_writer_is_asked_for_choices_alike_in_form() {
     let text = writer_requirements();
     assert!(
-        text.contains("The four choices are close in length, so the right one never stands out as the longest"),
-        "{text}"
-    );
-    assert!(
         text.contains(
-            "the right choice is worded in its own words rather than repeating the prompt's"
+            "Write all the choices of a question alike in form: close in length and detail, the same grammatical shape and opening, none alone hedged or absolute, none alone carrying a reason or an example, and none repeating the question's distinctive words, so that the right one cannot be told from the others without knowing the material."
         ),
         "{text}"
     );
