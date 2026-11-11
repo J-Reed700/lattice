@@ -4,6 +4,7 @@
 //! comparison is all a request holds; each judgment finished into a finding
 //! and its receipt.
 use super::*;
+use lattice_core::shared::hash::sha256_hex;
 
 /// Finish `pending` with the judge's `judgment`. `shown` holds the positions
 /// in the page of the passages the judge was shown when it was not shown them
@@ -240,7 +241,7 @@ pub(in crate::lessons::content_verification) async fn group(
         // comparisons so restarting cannot repeat a group known to fail.
         let split_key = format!(
             "claim-batch-split-v1:{}",
-            digest(&serde_json::to_string(
+            sha256_hex(&serde_json::to_string(
                 &pending
                     .iter()
                     .map(|item| &item.receipt_key)

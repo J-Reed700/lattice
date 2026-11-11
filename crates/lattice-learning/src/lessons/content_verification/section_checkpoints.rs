@@ -13,8 +13,8 @@ struct SectionCheckpoint {
 fn key(llm: &dyn LLMPort, content: &Value, index: usize) -> String {
     format!(
         "inventory-section-v1:{}",
-        digest(
-            &json!({
+        sha256_hex(
+            json!({
                 "inventoryPolicy": INVENTORY_POLICY,
                 "coveragePolicy": coverage::POLICY,
                 "model": llm.model_name(), "context": llm.max_context_tokens(),

@@ -11,12 +11,13 @@ use crate::reference_collection::{ReferenceCollection, ReferencePassage};
 use crate::references::web_research;
 use crate::{
     dto::*, generation, outline_draft::*, outline_progress::OutlineProgress,
-    outline_progress::OutlineStage, persistence::hash_text, repository::LearningRepository,
+    outline_progress::OutlineStage, repository::LearningRepository,
 };
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::application::services::claim_verification::{
     ClaimJudgment, ClaimVerdict, JudgeOutcome,
 };
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -80,9 +81,9 @@ fn short(text: &str) -> String {
 }
 
 fn claim_key(model: &str, claim: &str, passages: &[ReferencePassage]) -> String {
-    hash_text(
-        &json!({"policy":CLAIM_POLICY,"model":model,"claim":claim.trim(),
-            "passages":passages.iter().map(|p| json!({"source":p.source_id,"sha256":hash_text(&p.text)})).collect::<Vec<_>>()})
+    sha256_hex(
+        json!({"policy":CLAIM_POLICY,"model":model,"claim":claim.trim(),
+            "passages":passages.iter().map(|p| json!({"source":p.source_id,"sha256":sha256_hex(&p.text)})).collect::<Vec<_>>()})
         .to_string(),
     )
 }

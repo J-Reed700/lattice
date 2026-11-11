@@ -4,6 +4,7 @@
 //! Design: docs/design/2026-10-16-lesson-claim-review.md §5.4.
 use super::repository::evidence as stored;
 use super::*;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::http::url_identity::identity;
 
 /// What the standing judgement's key is computed from for one live source's
@@ -33,7 +34,7 @@ pub struct SavedSource {
 impl LearningSourceLibraryRepository {
     /// The digest a captured text is stored under (`content_sha256`).
     pub fn text_digest(text: &str) -> String {
-        hash_text(&normalized(text))
+        sha256_hex(normalized(text))
     }
 
     async fn live_sources(&self, program_id: &str) -> Result<Vec<stored::LiveSource>> {

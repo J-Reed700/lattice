@@ -9,7 +9,6 @@
 //! one topic, and a topic an unusable judgement leaves out is uncovered.
 
 use super::{complete_json, parse_json};
-use crate::content_verification::digest;
 use crate::content_verification::research::research_topics;
 use crate::dto::{LearningLessonDto, LearningProgramDto, LearningSourceDto};
 use crate::lesson_drafts::{checkpoint, record_checkpoint};
@@ -19,6 +18,7 @@ use crate::reference_collection::{ReferenceCollection, ReferencePassage, PASSAGE
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::hash::sha256_hex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -85,8 +85,8 @@ pub(super) async fn plan(
         json!({"lesson":{"title":lesson.title,"objective":lesson.objective},"module":module});
     let key = format!(
         "{POLICY}:plan:{}",
-        digest(
-            &json!({"model":llm.model_name(),"system":PLAN_SYSTEM,"request":request}).to_string()
+        sha256_hex(
+            json!({"model":llm.model_name(),"system":PLAN_SYSTEM,"request":request}).to_string()
         )
     );
     if let Some(topics) = checkpoint(&key)
@@ -583,8 +583,8 @@ async fn judge(
         }
         let key = format!(
             "{POLICY}:coverage:{}",
-            digest(
-                &json!({"model":llm.model_name(),"system":COVERAGE_SYSTEM,"prompt":call.prompt})
+            sha256_hex(
+                json!({"model":llm.model_name(),"system":COVERAGE_SYSTEM,"prompt":call.prompt})
                     .to_string()
             )
         );

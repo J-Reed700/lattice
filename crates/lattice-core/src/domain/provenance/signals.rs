@@ -6,8 +6,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::judgement::{canonical_json, sha256_hex};
+use super::judgement::canonical_json;
 use super::origin::{Origin, OriginKey};
+use crate::shared::hash::sha256_hex;
 
 /// The extraction version stamped on page signals. Bump it when the reader
 /// would record different signals for the same HTML.
@@ -303,7 +304,7 @@ impl ProvenanceSignals {
 
     /// sha256 of the canonical judged form: the standing judgement's key.
     pub fn signals_sha256(&self) -> String {
-        sha256_hex(&canonical_json(&self.judged_form()))
+        sha256_hex(canonical_json(&self.judged_form()))
     }
 
     /// The metadata fields whose text addresses a reader or a model, by
