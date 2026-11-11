@@ -164,3 +164,6 @@ impl EmbeddingLoader {
         Ok(Arc::new(MockEmbeddingPort::new_degraded()) as Arc<dyn EmbeddingPort>)
     }
 }
+
+#[cfg(test)]
+mod tests;
