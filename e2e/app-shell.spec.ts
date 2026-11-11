@@ -26,11 +26,11 @@ test('inline citations support keyboard passage navigation and clean reading', a
     return {
       get_settings: () => settings,
       list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
-      list_conversations_explorer: () => ({ conversations: [conversation], total: 1 }),
-      list_conversations: () => ({ conversations: [conversation], total: 1 }),
+      list_conversations_explorer: () => ({ conversations: [conversation] }),
+      list_conversations: () => ({ conversations: [conversation] }),
       get_conversation: () => ({ conversation }),
       get_conversation_messages: () => ({ messages: [message], total: 1 }),
-      list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
+      list_message_bookmarks: () => ({ bookmarks: [] }),
       list_journals: () => [],
       list_conversation_tangents: () => [],
       list_conversation_linked_documents: () => [],
@@ -94,8 +94,8 @@ for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'
       return {
         get_settings: () => settings,
         list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
-        list_conversations_explorer: () => ({ conversations: state.promoted ? [conversation(), parent] : [parent], total: state.promoted ? 2 : 1 }),
-        list_conversations: () => ({ conversations: state.promoted ? [conversation(), parent] : [parent], total: state.promoted ? 2 : 1 }),
+        list_conversations_explorer: () => ({ conversations: state.promoted ? [conversation(), parent] : [parent] }),
+        list_conversations: () => ({ conversations: state.promoted ? [conversation(), parent] : [parent] }),
         get_conversation: (args) => {
           const request = (args as { request?: { conversationId?: string; messageId?: string; selectedText?: string } })?.request;
           return { conversation: request?.conversationId === parent.id ? parent : conversation() };
@@ -104,7 +104,7 @@ for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'
           const request = (args as { request?: { conversationId?: string; messageId?: string; selectedText?: string } })?.request;
           return { messages: request?.conversationId === parent.id ? sourceMessages : state.messages, total: request?.conversationId === parent.id ? 2 : state.messages.length };
         },
-        list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
+        list_message_bookmarks: () => ({ bookmarks: [] }),
         list_conversation_tangents: () => state.tangents,
         create_conversation_tangent: (args) => {
           const request = (args as { request?: { conversationId?: string; messageId?: string; selectedText?: string } })?.request;
@@ -241,12 +241,12 @@ for (const width of [1440, 620]) {
       return {
         get_settings: () => settings,
         list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
-        list_conversations_explorer: () => ({ conversations: [conversation], total: 1 }),
-        list_conversations: () => ({ conversations: [conversation], total: 1 }),
-        list_journal_conversations: () => ({ conversations: [conversation], total: 1 }),
+        list_conversations_explorer: () => ({ conversations: [conversation] }),
+        list_conversations: () => ({ conversations: [conversation] }),
+        list_journal_conversations: () => ({ conversations: [conversation] }),
         get_conversation: () => ({ conversation }),
         get_conversation_messages: () => ({ messages, total: 2 }),
-        list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
+        list_message_bookmarks: () => ({ bookmarks: [] }),
         list_journals: () => [{ id: 'research-journal', name: 'Research', isArchived: false, createdAt: stamp, updatedAt: stamp, sortOrder: 0 }],
         list_journal_entry_pins: () => [],
         list_workspace_notes: () => ({ notes: [note] }),
@@ -761,11 +761,11 @@ test('conversation outline navigates long virtualized replies and tracks the rea
     return {
       get_settings: () => settings,
       list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
-      list_conversations_explorer: () => ({ conversations: [conversation], total: 1 }),
-      list_conversations: () => ({ conversations: [conversation], total: 1 }),
+      list_conversations_explorer: () => ({ conversations: [conversation] }),
+      list_conversations: () => ({ conversations: [conversation] }),
       get_conversation: () => ({ conversation }),
       get_conversation_messages: () => ({ messages, total: messages.length }),
-      list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
+      list_message_bookmarks: () => ({ bookmarks: [] }),
       list_journals: () => [],
       list_conversation_tangents: () => [],
       list_conversation_linked_documents: () => [],
@@ -862,11 +862,11 @@ test('conversation outline stays where the reader scrolls it right after it open
       // Unanswered, the chat adds "Import status is unavailable" about 8 s after load, which shrinks the outline.
       get_batch_history: () => ({ jobs: [] }),
       list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
-      list_conversations_explorer: () => ({ conversations: [conversation], total: 1 }),
-      list_conversations: () => ({ conversations: [conversation], total: 1 }),
+      list_conversations_explorer: () => ({ conversations: [conversation] }),
+      list_conversations: () => ({ conversations: [conversation] }),
       get_conversation: () => ({ conversation }),
       get_conversation_messages: () => ({ messages, total: messages.length }),
-      list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
+      list_message_bookmarks: () => ({ bookmarks: [] }),
       list_journals: () => [],
       list_conversation_tangents: () => [],
       list_conversation_linked_documents: () => [],
@@ -921,11 +921,11 @@ test('chat sidebar renames a conversation and opens the spaces editor', async ({
       get_settings: () => settings,
       list_conversation_spaces: () => [space],
       list_journals: () => [],
-      list_conversations_explorer: () => ({ conversations: [conversation], total: 1 }),
-      list_conversations: () => ({ conversations: [conversation], total: 1 }),
+      list_conversations_explorer: () => ({ conversations: [conversation] }),
+      list_conversations: () => ({ conversations: [conversation] }),
       get_conversation: () => ({ conversation }),
       get_conversation_messages: () => ({ messages: [], total: 0 }),
-      list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
+      list_message_bookmarks: () => ({ bookmarks: [] }),
       rename_conversation: (args) => {
         conversation.title = (args as { request: { newTitle: string } }).request.newTitle;
         return { status: 'success' };
@@ -977,9 +977,9 @@ test('creates a space in Settings and opens it in Chat', async ({ page }) => {
         spaces = [...spaces, space];
         return space;
       },
-      list_conversations_explorer: () => ({ conversations: [], total: 0 }),
-      list_conversations: () => ({ conversations: [], total: 0 }),
-      list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
+      list_conversations_explorer: () => ({ conversations: [] }),
+      list_conversations: () => ({ conversations: [] }),
+      list_message_bookmarks: () => ({ bookmarks: [] }),
       list_journals: () => [],
       list_downloaded_models: () => [],
       list_downloads: () => [],
@@ -1659,11 +1659,11 @@ test('chat exposes provider errors and persisted PDF import failures', async ({ 
     return {
       get_settings: () => settings,
       list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
-      list_conversations_explorer: () => ({ conversations: [conversation], total: 1 }),
-      list_conversations: () => ({ conversations: [conversation], total: 1 }),
+      list_conversations_explorer: () => ({ conversations: [conversation] }),
+      list_conversations: () => ({ conversations: [conversation] }),
       get_conversation: () => ({ conversation }),
       get_conversation_messages: () => ({ messages: [], total: 0 }),
-      list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
+      list_message_bookmarks: () => ({ bookmarks: [] }),
       get_batch_history: () => ({ jobs: [job, earlier] }),
       get_batch_status: (args) => (args as { request: { jobId: string } }).request.jobId === earlier.jobId
         ? { ...earlier, completedAt: stamp, items: [{ itemId: 'earlier-item', target: '/Downloads/mpep-9035-appx-p.pdf', status: 'completed' }] }
@@ -1754,11 +1754,11 @@ test('chat replaces an initial retrieval failure with tool results and keeps it 
     return {
       get_settings: () => settings,
       list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
-      list_conversations_explorer: () => ({ conversations: [conversation], total: 1 }),
-      list_conversations: () => ({ conversations: [conversation], total: 1 }),
+      list_conversations_explorer: () => ({ conversations: [conversation] }),
+      list_conversations: () => ({ conversations: [conversation] }),
       get_conversation: () => ({ conversation }),
       get_conversation_messages: () => ({ messages, total: messages.length }),
-      list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
+      list_message_bookmarks: () => ({ bookmarks: [] }),
       get_batch_history: () => ({ jobs: [] }),
       chat_with_conversation: async (args) => {
         const request = args as { requestId: string; message: string };

@@ -61,7 +61,6 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
       isContentSearchLoading: false,
       savedSearches: [],
       activeSavedSearchId: null,
-      sourceConnections: [],
       scope: { kind: 'all' },
       contextMenuPosition: null,
       contextMenuDocument: null,
@@ -127,41 +126,6 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
     const { result } = renderHook(() => useFileBrowserStore());
     act(() => result.current.selectAll(['2']));
     expect([...result.current.selectedDocumentIds]).toEqual(['2']);
-  });
-
-  it('should keep backend-owned local folders out of client source state', () => {
-    renderHook(() => useFileBrowserStore());
-
-    let cloudId = '';
-    act(() => {
-      cloudId = useFileBrowserStore.getState().createSourceConnection({
-        name: 'Cloud Docs',
-        provider: 'dropbox',
-        mode: 'managed',
-        health: 'attention',
-        enabled: false,
-        lastSyncedAt: null,
-      });
-    });
-
-    expect(useFileBrowserStore.getState().sourceConnections.some(connection => connection.id === cloudId)).toBe(true);
-    expect(() => useFileBrowserStore.getState().createSourceConnection({
-      name: 'Documents',
-      provider: 'local_folder',
-      mode: 'referenced',
-      health: 'healthy',
-      enabled: true,
-      path: '/Users/me/Documents',
-      lastSyncedAt: '2026-02-07T00:00:00.000Z',
-    })).toThrow('Local folders are backend-owned');
-    expect(useFileBrowserStore.getState().sourceConnections).toHaveLength(1);
-
-    act(() => {
-      useFileBrowserStore.getState().updateSourceConnection(cloudId, { enabled: true, health: 'healthy' });
-    });
-    const cloud = useFileBrowserStore.getState().sourceConnections.find(connection => connection.id === cloudId);
-    expect(cloud?.enabled).toBe(true);
-    expect(cloud?.health).toBe('healthy');
   });
 
   it('should clear stale content matches when search query changes', () => {

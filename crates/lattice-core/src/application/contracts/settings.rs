@@ -17,6 +17,7 @@ mod preferences;
 mod retrieval;
 mod sourcing;
 mod sourcing_status;
+mod validation;
 
 pub use generation::{
     presence_penalty_problem, LocalModelConfigDto, SamplingProfileDto, SpeculativeDecodingDto,
@@ -292,3 +293,6 @@ mod tests;
 
 #[cfg(test)]
 mod memory_defaults_tests;
+
+#[cfg(test)]
+mod validation_tests;

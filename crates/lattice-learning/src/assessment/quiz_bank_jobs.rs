@@ -24,8 +24,8 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::{Database, Transactions};
 use lattice_core::shared::runtime::jobs::{
-    Backoff, JobContext, JobFailure, JobHandler, JobKindConfig, JobOutcome, JobRecord,
-    RecoveryPolicy,
+    Backoff, JobContext, JobFailure, JobHandler, JobKindConfig, JobOutcome, JobRecord, JobStatus,
+    JobStore, RecoveryPolicy,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -127,6 +127,36 @@ pub async fn prepare_bank_now(
     Ok(report)
 }
 
+fn written_message(written: usize, dropped: usize) -> String {
+    if dropped == 0 {
+        format!("{written} questions written.")
+    } else {
+        format!("{written} questions written; {dropped} failed the checks and were left out.")
+    }
+}
+
+/// A completed lesson quiz job's numbers: what it stored, from its result,
+/// and what its checks or the blinded key review left out, from its saved
+/// stage output. `None` until the job has completed.
+pub async fn lesson_stage_report(database: &Database, job_id: &str) -> Result<Option<BankReport>> {
+    let store = JobStore::new(database.clone());
+    let job = store.get(job_id).await?;
+    if job.status != JobStatus::Completed {
+        return Ok(None);
+    }
+    let written = job
+        .result_ref
+        .as_deref()
+        .and_then(|result| result.strip_prefix("quiz_bank:"))
+        .and_then(|count| count.parse().ok())
+        .unwrap_or(0);
+    let dropped = match store.checkpoint(job_id, LESSON_BANK_CHECKPOINT).await? {
+        Some(saved) => serde_json::from_value::<LessonBank>(saved)?.dropped,
+        None => Vec::new(),
+    };
+    Ok(Some(BankReport { written, dropped }))
+}
+
 fn requested_str<'a>(job: &'a JobRecord, field: &str) -> Result<&'a str> {
     job.requested
         .get(field)
@@ -218,13 +248,7 @@ impl JobHandler for QuizBankWorker {
         }
         Ok(JobOutcome::Completed {
             result_ref: format!("quiz_bank:{written}"),
-            message: if dropped == 0 {
-                format!("{written} questions written.")
-            } else {
-                format!(
-                    "{written} questions written; {dropped} failed the checks and were left out."
-                )
-            },
+            message: written_message(written, dropped),
         })
     }
 
@@ -284,6 +308,7 @@ impl QuizBankWorker {
                 bank
             }
         };
+        let dropped = bank.dropped.len();
         let items: Vec<BankItem> = bank
             .items
             .into_iter()
@@ -308,7 +333,7 @@ impl QuizBankWorker {
         .await?;
         Ok(JobOutcome::Completed {
             result_ref: format!("quiz_bank:{written}"),
-            message: format!("{written} questions written."),
+            message: written_message(written, dropped),
         })
     }
 }

@@ -120,7 +120,6 @@ pub async fn list_conversations_impl(
 
     Ok(ListConversationsResponseDto {
         conversations: items,
-        total: conversations.len(),
     })
 }
 

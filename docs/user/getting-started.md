@@ -38,20 +38,20 @@ memory lets you run larger models.
 
 ## Installation
 
-Lattice is pre-release. Get the installer for your platform from whoever
-distributes your build.
+Lattice is pre-release. Download the installer for your platform from the
+[latest release](https://github.com/J-Reed700/lattice/releases/latest).
 
 ### Windows
 
-Run the installer (`.msi` or setup `.exe`) and follow the prompts, then start
+Run the setup `.exe` (`Lattice_<version>_x64-setup.exe`) and follow the prompts, then start
 Lattice from the Start menu. Pre-release builds are not code-signed, so Windows
 SmartScreen may warn you; choose **More info > Run anyway** if you trust the
 source.
 
 ### macOS
 
-1. Open the `.dmg` and drag **Lattice** to **Applications**. Apple Silicon and
-   Intel Macs use different builds; pick the one for your Mac.
+1. Open the Apple Silicon `.dmg` and drag **Lattice** to **Applications**.
+   There is no Intel Mac download yet.
 2. Open Lattice from Applications.
 3. Pre-release builds are not notarized. If macOS says it can't verify the app,
    open **System Settings > Privacy & Security** and choose **Open Anyway**.
@@ -62,13 +62,6 @@ Install the `.deb` package:
 
 ```bash
 sudo apt install ./Lattice_*_amd64.deb
-```
-
-Or use the AppImage:
-
-```bash
-chmod +x Lattice_*.AppImage
-./Lattice_*.AppImage
 ```
 
 ---
@@ -89,12 +82,14 @@ The dialog shows each model's size and the total. Choose:
   while they download.
 - **Choose models** to pick your own in Settings. Model downloads are under
   **Settings > AI > Models**.
+- **Use an API key instead** to use a cloud provider: pick the provider, save your key
+  and choose a model. Chats and courses then use it.
 - **Not now** to skip. The dialog won't come back, but you can install models
   any time from **Settings > AI > Models**.
 
 Importing and indexing need the embedding model, so install at least that one
-before you import. Chat needs a chat model, or a provider you configure under
-**Settings > AI > Chat**.
+before you import. Chat needs a chat model, or a provider you set up with **Use an API key instead** (or later under
+**Settings > AI > Chat**).
 
 After the models download, Lattice runs offline. It uses the network only when
 you import a web page, turn on web or Wikipedia search in a chat, browse or

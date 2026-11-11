@@ -160,7 +160,9 @@ fn git(args: &[&str]) -> Option<String> {
 /// slot count changes the turn budget and the cache behaviour under test.
 async fn probe_server(server: &recipe::Server) -> Res<Value> {
     let url = server.url.trim_end_matches('/');
-    let mut probe = reqwest::Client::new().get(format!("{url}/props"));
+    let mut probe = lattice_core::shared::http::reqwest_client_builder()
+        .build()?
+        .get(format!("{url}/props"));
     if let Some((name, value)) = proxy::server_auth() {
         probe = probe.header(name, value);
     }

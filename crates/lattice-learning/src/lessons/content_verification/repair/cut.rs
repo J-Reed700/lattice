@@ -14,7 +14,7 @@ use super::goal_words;
 use crate::lessons::shape::ShapePolicy;
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal, Outcome};
 use lattice_core::domain::learning::claim_review::{ClaimId, CutPlace};
-use lattice_core::shared::text::sentences;
+use lattice_core::shared::text::{item_marker_end, sentences};
 
 /// What taking a claim's text out of its field comes to.
 enum Cut {
@@ -47,8 +47,19 @@ fn stronger<'t>(first: &'t str, second: &'t str) -> &'t str {
     }
 }
 
+/// The list marker and the whitespace after it that open the sentence at
+/// `span`, when that sentence opens its line.
+fn marker_of(text: &str, span: (usize, usize)) -> Option<&str> {
+    let lead = text.get(..span.0)?.rsplit('\n').next()?;
+    let sentence = text.get(span.0..span.1)?;
+    sentence
+        .get(..item_marker_end(sentence)?)
+        .filter(|_| lead.trim().is_empty())
+}
+
 /// `text` without every sentence `quote` touches, wherever it occurs; the
-/// sentences left keep the separators a paragraph break needs.
+/// sentences left keep the separators a paragraph break needs, and the first
+/// sentence kept on the line of a cut list item takes the item's marker.
 fn sentence(text: &str, quote: &str) -> Cut {
     let found: Vec<(usize, usize)> = text
         .match_indices(quote)
@@ -77,14 +88,20 @@ fn sentence(text: &str, quote: &str) -> Cut {
     // The separator before the next sentence kept: the strongest of those
     // from the last one kept up to it.
     let mut between: Option<&str> = None;
+    let mut marker: Option<&str> = None;
     for (index, &(start, end)) in spans.iter().enumerate() {
         let next = spans.get(index + 1).map_or(text.len(), |span| span.0);
         let separator = text.get(end..next).unwrap_or_default();
         if gone.get(index) == Some(&true) {
             between = between.map(|kept| stronger(kept, separator));
+            marker = marker_of(text, (start, end)).or(marker);
+            if separator.contains('\n') {
+                marker = None;
+            }
             continue;
         }
         out.push_str(between.unwrap_or_default());
+        out.push_str(marker.take().unwrap_or_default());
         out.push_str(text.get(start..end).unwrap_or_default());
         between = Some(separator);
     }
@@ -109,9 +126,18 @@ pub(super) fn cut_place(text: &str, quote: &str) -> Option<CutPlace> {
         let &(start, stop) = spans.get(index?)?;
         text.get(start..stop).map(str::to_owned)
     };
+    let opening = spans.get(first)?;
+    let kept_marker = marker_of(text, *opening).filter(|_| {
+        kept(last.checked_add(1)).is_some()
+            && (first..=last).all(|index| {
+                let next = spans.get(index + 1).map_or(text.len(), |span| span.0);
+                let end = spans.get(index).map_or(0, |span| span.1);
+                !text.get(end..next).unwrap_or_default().contains('\n')
+            })
+    });
     Some(CutPlace {
         sentence: text
-            .get(spans.get(first)?.0..spans.get(last)?.1)?
+            .get(opening.0 + kept_marker.map_or(0, str::len)..spans.get(last)?.1)?
             .to_owned(),
         before: kept(first.checked_sub(1)),
         after: kept(last.checked_add(1)),
