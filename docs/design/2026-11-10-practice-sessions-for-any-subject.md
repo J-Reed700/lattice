@@ -460,7 +460,21 @@ Tests come first in every step. Nothing is built locally; each step is pushed to
      carries the outcome. Program's store records it; its technique spacing stays in `coding/patterns.rs`.
      Nothing branches on `Kind.spacing` until item spacing in step 9.
    Nothing is left to move in step 4.
-5. The renames of §7: migration, DTOs, commands, bindings.
+5. The renames of §7: migration, DTOs, commands, bindings. Built so far:
+   - 5a Storage. The migration is edited in place and renamed `20261109100000_learning_exercise_sessions.sql`.
+     The tables are `learning_exercise_sessions` (`kind`, `form`), `learning_exercise_session_events` and
+     `learning_exercise_debriefs`; `learning_practical_runs.coding_session_id` is `exercise_session_id`. The prefix is
+     `exercise_` and not `practice_` because `learning_practice_sessions` and
+     `learning_practical_runs.practice_session_id` already belong to the older workbench. Stored values: stage
+     `make` and `check`, rung `point`, form `build`/`repair`/`complete`/`arrange`, run scope `shown`, event kind
+     `check`, activity kind `exercise`, job kind `learning.practice_build`. Program's duplicate enums
+     (`CodingStage`, `CodingSetting`, `CodingTask`, `CodeHintRung`, `CodingCue` and their helpers) are gone: the
+     session, the store and the DTOs hold the engine's `Stage`, `Setting`, `Form`, `Rung` and `Cue`, and their serde
+     names are the stored values. The adapters between them are removed; `scope_of`/`coding_scope_of` stay because
+     Program's run scope has `Input`, `check_status_of` because the run status is the workbench's, and
+     `program_form` replaces `task_of` as the one place that refuses Complete and Arrange. The fits table and
+     `run_coding_input` are not part of this step.
+5b follows with commands, DTOs, bindings and the screen's API names.
 6. The screen: `session/` and the kind registry, with Program's editor and results views under `kinds/program/`;
    the dependency rule in the architecture check; the fake-kind tests.
 7. Fit per kind.

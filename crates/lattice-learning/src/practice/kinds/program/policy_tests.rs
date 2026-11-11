@@ -3,21 +3,15 @@
 #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 
 use crate::practice::coding::golden_support::{assert_golden, rich_session, Golden};
-use crate::practice::coding::problem::{CodingSetting, CodingTask};
-use crate::practice::kinds::program::observation_tests::{
-    engine_observation, form_of, program_kind, setting_of,
-};
+use crate::practice::kinds::program::observation_tests::{engine_observation, program_kind};
 use crate::practice::session::kind::Wording;
 use crate::practice::session::policy::{policy_for, Cue};
+use lattice_core::domain::learning::practice::work::Setting;
 use lattice_core::domain::learning::practice::work::{Brief, CheckScope, Difficulty, Form, Stage};
 
-const SETTINGS: [CodingSetting; 3] = [
-    CodingSetting::Coached,
-    CodingSetting::Mock,
-    CodingSetting::Watched,
-];
+const SETTINGS: [Setting; 3] = [Setting::Coached, Setting::Mock, Setting::Watched];
 
-const TASKS: [CodingTask; 2] = [CodingTask::Problem, CodingTask::BugFix];
+const TASKS: [Form; 2] = [Form::Build, Form::Repair];
 
 const STAGES: [Stage; 10] = [
     Stage::Understand,
@@ -64,18 +58,18 @@ fn the_engine_policy_with_a_programs_roles_reproduces_the_coding_policy() {
         );
     }
     for task in TASKS {
-        let form = form_of(task);
+        let form = task;
         for setting in SETTINGS {
             let (problem, session, seen) = rich_session(task, setting);
             let mut observation = engine_observation(&problem, &session, Some(&seen), false);
             observation.stage = form.stages(true).first().copied().unwrap();
-            let policy = policy_for(setting_of(setting), &kind, form);
+            let policy = policy_for(setting, &kind, form);
             for cue in cues() {
                 golden.add(
                     &format!(
                         "system {} {} {}",
                         wording.form_label(form),
-                        setting_of(setting).label(),
+                        setting.label(),
                         cue_name(wording.as_ref(), &observation.brief, form, &cue)
                     ),
                     &policy.system(&cue, &observation),

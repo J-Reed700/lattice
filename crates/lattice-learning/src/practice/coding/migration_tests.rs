@@ -98,7 +98,7 @@ async fn database_before_the_migration() -> SqlitePool {
 }
 
 #[tokio::test]
-async fn the_migration_keeps_every_existing_practical_kind_and_accepts_coding_problem() {
+async fn the_migration_keeps_every_existing_practical_kind_and_accepts_exercise() {
     let pool = database_before_the_migration().await;
     exec(&pool, &course()).await;
     let kinds = EXISTING_KINDS
@@ -108,7 +108,7 @@ async fn the_migration_keeps_every_existing_practical_kind_and_accepts_coding_pr
         .collect::<Vec<_>>();
     exec(&pool, &kinds).await;
     assert!(
-        sqlx::query(&activity("early", "coding_problem"))
+        sqlx::query(&activity("early", "exercise"))
             .execute(&pool)
             .await
             .is_err(),
@@ -128,7 +128,7 @@ async fn the_migration_keeps_every_existing_practical_kind_and_accepts_coding_pr
     for kind in EXISTING_KINDS {
         assert!(kept.iter().any(|each| each == kind), "{kind} kept");
     }
-    exec(&pool, &[activity("coding", "coding_problem")]).await;
+    exec(&pool, &[activity("coding", "exercise")]).await;
     assert!(
         sqlx::query(&activity("bogus", "not_a_kind"))
             .execute(&pool)
@@ -148,11 +148,11 @@ async fn the_migration_adds_the_coding_tables_and_run_columns() {
     let pool = memory_pool().await;
     migrator().run(&pool).await.unwrap();
     for table in [
-        "learning_coding_sessions",
-        "learning_coding_events",
+        "learning_exercise_sessions",
+        "learning_exercise_session_events",
         "learning_coding_examples",
         "learning_scorecards",
-        "learning_coding_debriefs",
+        "learning_exercise_debriefs",
         "learning_practice_profiles",
         "learning_practice_fits",
     ] {
@@ -163,7 +163,7 @@ async fn the_migration_adds_the_coding_tables_and_run_columns() {
             .fetch_all(&pool)
             .await
             .unwrap();
-    for column in ["coding_session_id", "scope"] {
+    for column in ["exercise_session_id", "scope"] {
         assert!(run_columns.iter().any(|each| each == column), "{column}");
     }
     let check_columns: Vec<String> =
@@ -214,26 +214,26 @@ async fn deleting_a_session_removes_its_events_and_examples_and_keeps_its_runs()
     let pool = memory_pool().await;
     migrator().run(&pool).await.unwrap();
     exec(&pool, &course()).await;
-    exec(&pool, &[activity("coding", "coding_problem")]).await;
+    exec(&pool, &[activity("coding", "exercise")]).await;
     exec(
         &pool,
         &[
             "INSERT INTO learning_simulation_sessions (id, program_id, activity_id, activity_revision, activity_snapshot_json, practice_session_id, operation_id, payload_hash, learner_role, counterpart_role, status, revision, created_at, updated_at, submitted_at) \
              VALUES ('s1', 'p1', 'coding', 0, '{}', NULL, 'op1', 'hash', 'Candidate', 'Coach', 'active', 0, 1000, 1000, NULL)".into(),
-            "INSERT INTO learning_coding_sessions (id, program_id, activity_id, task, setting, stage, draft_json, created_at) \
+            "INSERT INTO learning_exercise_sessions (id, program_id, activity_id, task, setting, stage, draft_json, created_at) \
              VALUES ('s1', 'p1', 'coding', 'problem', 'coached', 'understand', '[]', 1000)".into(),
-            "INSERT INTO learning_coding_events (session_id, ordinal, kind, payload_json, at) VALUES ('s1', 0, 'stage', '{}', 1000)".into(),
+            "INSERT INTO learning_exercise_session_events (session_id, ordinal, kind, payload_json, at) VALUES ('s1', 0, 'stage', '{}', 1000)".into(),
             "INSERT INTO learning_coding_examples (session_id, ordinal, args_json, expected, verdict, catches_json, created_at) \
              VALUES ('s1', 1, '[]', '1', 'right', '[]', 1000)".into(),
-            "INSERT INTO learning_practical_runs (id, program_id, activity_id, activity_revision, activity_snapshot_json, operation_id, payload_hash, status, learner_files_json, created_at, coding_session_id, scope) \
+            "INSERT INTO learning_practical_runs (id, program_id, activity_id, activity_revision, activity_snapshot_json, operation_id, payload_hash, status, learner_files_json, created_at, exercise_session_id, scope) \
              VALUES ('r1', 'p1', 'coding', 0, '{}', 'op2', 'hash', 'running', '[]', 1000, 's1', 'all')".into(),
         ],
     )
     .await;
     for refused in [
-        "INSERT INTO learning_coding_events (session_id, ordinal, kind, payload_json, at) VALUES ('s1', 1, 'unknown', '{}', 1)",
+        "INSERT INTO learning_exercise_session_events (session_id, ordinal, kind, payload_json, at) VALUES ('s1', 1, 'unknown', '{}', 1)",
         "INSERT INTO learning_coding_examples (session_id, ordinal, args_json, expected, verdict, catches_json, created_at) VALUES ('s1', 2, '[]', '1', 'maybe', '[]', 1)",
-        "UPDATE learning_coding_sessions SET stage = 'sleep'",
+        "UPDATE learning_exercise_sessions SET stage = 'sleep'",
         "UPDATE learning_practical_runs SET scope = 'some'",
     ] {
         assert!(sqlx::query(refused).execute(&pool).await.is_err(), "{refused}");
@@ -241,17 +241,18 @@ async fn deleting_a_session_removes_its_events_and_examples_and_keeps_its_runs()
 
     exec(
         &pool,
-        &["DELETE FROM learning_coding_sessions WHERE id = 's1'".into()],
+        &["DELETE FROM learning_exercise_sessions WHERE id = 's1'".into()],
     )
     .await;
 
-    assert_eq!(count(&pool, "learning_coding_events").await, 0);
+    assert_eq!(count(&pool, "learning_exercise_session_events").await, 0);
     assert_eq!(count(&pool, "learning_coding_examples").await, 0);
-    let session: Option<String> =
-        sqlx::query_scalar("SELECT coding_session_id FROM learning_practical_runs WHERE id = 'r1'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let session: Option<String> = sqlx::query_scalar(
+        "SELECT exercise_session_id FROM learning_practical_runs WHERE id = 'r1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert_eq!(session, None, "the run stays, unlinked");
 }
 
@@ -272,9 +273,9 @@ async fn the_session_tables_are_named_for_exercise_sessions_and_the_old_names_ar
             .await
             .unwrap();
     for gone in [
-        "learning_coding_sessions",
-        "learning_coding_events",
-        "learning_coding_debriefs",
+        "learning_exercise_sessions",
+        "learning_exercise_session_events",
+        "learning_exercise_debriefs",
     ] {
         assert!(!tables.iter().any(|each| each == gone), "{gone}");
     }

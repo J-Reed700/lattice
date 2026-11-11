@@ -2,9 +2,7 @@
 
 use crate::practice::coding::hints::write_hint_from;
 use crate::practice::kinds::program::parts::part_of;
-use crate::practice::kinds::program::shape::{
-    coding_rung_of, coding_setting_of, files_of, problem_of, rung_of,
-};
+use crate::practice::kinds::program::shape::{files_of, problem_of};
 use crate::practice::kinds::program::toolchain::Toolchains;
 use crate::practice::session::kind::{Hint, HintAsk, Hinting};
 use async_trait::async_trait;
@@ -28,9 +26,9 @@ impl Hinting for ProgramHinting {
             harness.as_ref(),
             &problem,
             ask.observed,
-            coding_setting_of(ask.observation.setting),
+            ask.observation.setting,
             &draft,
-            coding_rung_of(ask.rung),
+            ask.rung,
             ask.in_role,
             ask.cancel,
         )
@@ -40,7 +38,7 @@ impl Hinting for ProgramHinting {
             None => Vec::new(),
         };
         Ok(Some(Hint {
-            rung: rung_of(hint.rung),
+            rung: hint.rung,
             text: hint.text,
             reason: hint.reason,
             parts,

@@ -1,14 +1,15 @@
 //! What the coding tables hold, as the session reads and writes it. The repository fills these in; the session turns
 //! them into what the screen sees.
 
-use super::dto::{CodeHintRung, CodingRunScope, CodingStage, ExampleVerdict, PatternRatingDto};
-use super::policy::CodingCue;
-use super::problem::{CodingSetting, CodingTask, Problem};
+use super::dto::{CodingRunScope, ExampleVerdict, PatternRatingDto};
+use super::problem::Problem;
 use crate::lab_runtime::LearningLabFile;
 use crate::practical_dto::{
     CaseCheckDetailDto, LearningPracticalRunStatus, LearningSimulationTurnDto,
 };
+use crate::practice::session::policy::Cue;
 use lattice_core::domain::learning::drills::PatternRating;
+use lattice_core::domain::learning::practice::work::{Form, KindId, Rung, Setting, Stage};
 use lattice_core::domain::learning::practice::Scorecard;
 use lattice_core::shared::error::Result;
 
@@ -29,20 +30,21 @@ pub enum Applied<T> {
     Replayed,
 }
 
-/// One row of `learning_coding_sessions`.
+/// One row of `learning_exercise_sessions`.
 #[derive(Debug, Clone)]
 pub struct CodingRow {
     pub id: String,
     pub program_id: String,
     pub activity_id: String,
-    pub task: CodingTask,
-    pub setting: CodingSetting,
-    pub stage: CodingStage,
+    pub kind: KindId,
+    pub task: Form,
+    pub setting: Setting,
+    pub stage: Stage,
     pub budget_seconds: Option<u32>,
     pub active_ms: u64,
     pub opened_at: Option<i64>,
     pub draft: Vec<LearningLabFile>,
-    pub pending_cue: Option<CodingCue>,
+    pub pending_cue: Option<Cue>,
     pub submitted_at: Option<i64>,
     pub solution_seen_at: Option<i64>,
     pub finished_at: Option<i64>,
@@ -50,7 +52,7 @@ pub struct CodingRow {
     pub created_at: i64,
 }
 
-/// One row of `learning_coding_events`.
+/// One row of `learning_exercise_session_events`.
 #[derive(Debug, Clone)]
 pub struct StoredEvent {
     pub ordinal: u32,
@@ -116,7 +118,7 @@ pub struct SessionBundle {
 pub struct NewCodingSession<'a> {
     pub program_id: &'a str,
     pub activity_id: &'a str,
-    pub setting: CodingSetting,
+    pub setting: Setting,
     /// The learner's choice. Ignored in Coached, which has no budget.
     pub budget_seconds: Option<u32>,
     /// The budget Mock and Watched take when the learner chose none, of the problem the activity holds.
@@ -126,16 +128,16 @@ pub struct NewCodingSession<'a> {
 /// A stage move that was written.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StageMove {
-    pub from: CodingStage,
-    pub to: CodingStage,
+    pub from: Stage,
+    pub to: Stage,
     /// The stages strictly between the two, when moving forward.
-    pub skipped: Vec<CodingStage>,
+    pub skipped: Vec<Stage>,
 }
 
 /// A hint the writer produced, to be stored.
 #[derive(Debug, Clone)]
 pub struct NewHint<'a> {
-    pub rung: CodeHintRung,
+    pub rung: Rung,
     pub text: &'a str,
     pub reason: &'a str,
     pub lines: &'a [u32],

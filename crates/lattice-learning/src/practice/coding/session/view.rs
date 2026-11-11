@@ -4,22 +4,20 @@ use crate::lab_runtime::LearningLabFile;
 use crate::practical_dto::CaseCheckDetailDto;
 use crate::practice::coding::debrief::facts;
 use crate::practice::coding::dto::{
-    stages_of, CaseViewDto, ClockDto, CodingDebriefDto, CodingExampleDto, CodingRunDto,
-    CodingSessionDto, ExampleCoverageDto, ExampleVerdict, PublicProblemDto, StrongAnswerDto,
+    CaseViewDto, ClockDto, CodingDebriefDto, CodingExampleDto, CodingRunDto, CodingSessionDto,
+    ExampleCoverageDto, ExampleVerdict, PublicProblemDto, StrongAnswerDto,
 };
-use crate::practice::coding::problem::{
-    CaseStatus, CaseVisibility, CodingSetting, Hidden, Problem, ProblemCase,
-};
+use crate::practice::coding::problem::{CaseStatus, CaseVisibility, Problem, ProblemCase};
 use crate::practice::coding::records::{SessionBundle, StoredExample, StoredRun};
-use crate::practice::kinds::program::shape::{coding_rung_of, rung_of};
 use crate::practice::session::hints::next_rung;
+use lattice_core::domain::learning::practice::work::{Hidden, Setting};
 use lattice_core::shared::error::{AppError, Result};
 
 /// The settings a session has used, in order, from the one it started in.
-pub fn settings_used(bundle: &SessionBundle) -> Result<Vec<CodingSetting>> {
+pub fn settings_used(bundle: &SessionBundle) -> Result<Vec<Setting>> {
     let mut changes = Vec::new();
     for event in bundle.events.iter().filter(|event| event.kind == "setting") {
-        let setting = |key: &str| -> Result<CodingSetting> {
+        let setting = |key: &str| -> Result<Setting> {
             let value = event
                 .payload
                 .get(key)
@@ -171,7 +169,7 @@ fn reference_actual_of(bundle: &SessionBundle, run_id: &str) -> Option<String> {
     bundle
         .events
         .iter()
-        .filter(|event| event.kind == "run")
+        .filter(|event| event.kind == "check")
         .find(|event| event.payload.get("runId").and_then(|id| id.as_str()) == Some(run_id))
         .and_then(|event| event.payload.get("referenceActual"))
         .and_then(|actual| actual.as_str())
@@ -239,7 +237,7 @@ pub fn session_view(bundle: &SessionBundle) -> Result<CodingSessionDto> {
         setting: row.setting,
         settings_used: settings_used(bundle)?,
         stage: row.stage,
-        stages: stages_of(row.task).to_vec(),
+        stages: row.task.stages(true).to_vec(),
         problem: public_problem(&bundle.problem),
         clock: ClockDto {
             active_ms: row.active_ms,
@@ -263,7 +261,7 @@ pub fn session_view(bundle: &SessionBundle) -> Result<CodingSessionDto> {
                 )
             })
             .collect(),
-        next_rung: coding_rung_of(next_rung(hints.iter().map(|hint| rung_of(hint.rung)))),
+        next_rung: next_rung(hints.iter().map(|hint| hint.rung)),
         hints,
         turns: bundle.turns.clone(),
         cue_pending: row.pending_cue.is_some(),

@@ -3,15 +3,16 @@
 use super::*;
 use crate::lab_runtime::LearningLabFile;
 use crate::practical_dto::{CaseCheckDetailDto, LearningPracticalRunStatus};
-use crate::practice::coding::dto::{CodingRunScope, CodingStage, ExampleVerdict};
+use crate::practice::coding::dto::{CodingRunScope, ExampleVerdict};
 use crate::practice::coding::observation::test_support::problem;
-use crate::practice::coding::problem::{CaseStatus, CaseVisibility, CodingSetting, CodingTask};
+use crate::practice::coding::problem::{CaseStatus, CaseVisibility};
 use crate::practice::coding::records::{
     CodingRow, SessionBundle, StoredEvent, StoredExample, StoredRun,
 };
 use lattice_core::domain::learning::practice::work::{
     CaseVisibility as Visibility, CheckScope, CheckStatus, LearnerCaseVerdict, Setting,
 };
+use lattice_core::domain::learning::practice::work::{Form, KindId, Stage};
 
 fn file(path: &str, content: &str) -> LearningLabFile {
     LearningLabFile {
@@ -49,9 +50,10 @@ fn bundle() -> SessionBundle {
             id: "s1".into(),
             program_id: "p1".into(),
             activity_id: "a1".into(),
-            task: CodingTask::Problem,
-            setting: CodingSetting::Mock,
-            stage: CodingStage::Code,
+            kind: KindId::new("program"),
+            task: Form::Build,
+            setting: Setting::Mock,
+            stage: Stage::Make,
             budget_seconds: Some(600),
             active_ms: 5_000,
             opened_at: Some(10),

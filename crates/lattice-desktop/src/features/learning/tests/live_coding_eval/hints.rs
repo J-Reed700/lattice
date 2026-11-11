@@ -4,6 +4,7 @@
 //! cases: a block that passes is a release blocker. Whether a hint is on its rung, and whether a Line hint points at
 //! the line that is wrong, is read by hand from the Markdown.
 
+use lattice_core::domain::learning::practice::work::{Rung, Setting, Stage};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::Path;
@@ -13,14 +14,12 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::Result;
 use lattice_learning::lab_runtime::LearningLabFile;
 use lattice_learning::practice::coding::dto::{
-    AskCodingHintRequestDto, CaseViewDto, CodeHintDto, CodeHintRung, CodingRunScope,
-    CodingSessionDto, CodingStage, DraftObservation, MoveCodingStageRequestDto,
-    ObserveCodingDraftRequestDto, RunCodingSessionRequestDto, StartCodingSessionRequestDto,
+    AskCodingHintRequestDto, CaseViewDto, CodeHintDto, CodingRunScope, CodingSessionDto,
+    DraftObservation, MoveCodingStageRequestDto, ObserveCodingDraftRequestDto,
+    RunCodingSessionRequestDto, StartCodingSessionRequestDto,
 };
 use lattice_learning::practice::coding::observation::{diff_lines, LineChange, LineChangeKind};
-use lattice_learning::practice::coding::problem::{
-    CaseStatus, CodingSetting, Problem, SOLUTION_PATH,
-};
+use lattice_learning::practice::coding::problem::{CaseStatus, Problem, SOLUTION_PATH};
 use lattice_learning::practice::coding::solution_check::{code_blocks, passes_every_case};
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
@@ -30,12 +29,7 @@ use super::{
     Percentiles,
 };
 
-const RUNGS: [CodeHintRung; 4] = [
-    CodeHintRung::Nudge,
-    CodeHintRung::Idea,
-    CodeHintRung::Plan,
-    CodeHintRung::Line,
-];
+const RUNGS: [Rung; 4] = [Rung::Nudge, Rung::Idea, Rung::Plan, Rung::Point];
 
 /// A code block of a stored hint and whether it solves the problem.
 #[derive(Debug, Clone, Serialize)]
@@ -51,7 +45,7 @@ struct BlockCheck {
 /// One rung's hint, or the error that stopped it.
 #[derive(Debug, Clone, Serialize)]
 struct HintRecord {
-    rung: CodeHintRung,
+    rung: Rung,
     ms: u64,
     hint: Option<CodeHintDto>,
     error: Option<String>,
@@ -88,7 +82,7 @@ struct DraftRecord {
 /// What the hints of one rung came to.
 #[derive(Debug, Serialize)]
 struct RungSummary {
-    rung: CodeHintRung,
+    rung: Rung,
     given: usize,
     errors: usize,
     ms: Percentiles,
@@ -98,7 +92,7 @@ struct RungSummary {
 #[derive(Debug, Serialize)]
 struct Blocker {
     draft: String,
-    rung: CodeHintRung,
+    rung: Rung,
     part: &'static str,
     code: String,
 }
@@ -116,12 +110,12 @@ struct Summary {
     blockers: Vec<Blocker>,
 }
 
-fn rung_name(rung: CodeHintRung) -> &'static str {
+fn rung_name(rung: Rung) -> &'static str {
     match rung {
-        CodeHintRung::Nudge => "Nudge",
-        CodeHintRung::Idea => "Idea",
-        CodeHintRung::Plan => "Plan",
-        CodeHintRung::Line => "Line",
+        Rung::Nudge => "Nudge",
+        Rung::Idea => "Idea",
+        Rung::Plan => "Plan",
+        Rung::Point => "Line",
     }
 }
 
@@ -290,7 +284,7 @@ fn markdown_of(index: usize, record: &DraftRecord) -> String {
             };
             let _ = writeln!(out, "Code block in {}: {verdict}\n", block.part);
         }
-        if hint.rung == CodeHintRung::Line {
+        if hint.rung == Rung::Point {
             let path = hint.path.as_deref().unwrap_or("(no path)");
             let _ = writeln!(
                 out,
@@ -401,7 +395,7 @@ async fn hint_ladder(
             operation_id: id(),
             program_id: lab.program_id.clone(),
             activity_id: activity_id.to_owned(),
-            setting: CodingSetting::Coached,
+            setting: Setting::Coached,
             budget_seconds: None,
         })
         .await?;
@@ -411,7 +405,7 @@ async fn hint_ladder(
             operation_id: id(),
             program_id: lab.program_id.clone(),
             session_id: session_id.clone(),
-            stage: CodingStage::Code,
+            stage: Stage::Make,
             expected_revision: started.revision,
         })
         .await?;

@@ -3,14 +3,12 @@
 #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 
 use crate::lab_runtime::LearningLabFile;
-use crate::practice::coding::dto::{
-    CaseViewDto, CodingRunDto, CodingRunScope, CodingSessionDto, CodingStage,
-};
+use crate::practice::coding::dto::{CaseViewDto, CodingRunDto, CodingRunScope, CodingSessionDto};
 use crate::practice::coding::golden_support::{assert_golden, rich_session, Golden};
 use crate::practice::coding::observation::test_support::{problem, session};
 use crate::practice::coding::problem::{
     CaseCompare, CaseResult as RunResult, CaseStatus as RunStatus, CaseVisibility as RunVisibility,
-    CodingSetting, CodingTask, Problem, ProblemCase,
+    Problem, ProblemCase,
 };
 use crate::practice::coding::proof::fakes::{Behaviour, FakeRunner};
 use crate::practice::coding::session::{case_is_open, cut_case};
@@ -26,12 +24,11 @@ use crate::practice::session::observation::{
     CaseView, CheckView, ClockView, Coverage, HintView, LearnerCaseView, Observation,
 };
 use lattice_core::domain::learning::practice::work::CheckStatus;
+use lattice_core::domain::learning::practice::work::{Form, Setting, Stage};
 use serde_json::json;
 use std::sync::Arc;
 
-pub(super) use crate::practice::kinds::program::shape::{
-    form_of, rung_of, scope_of, setting_of, stage_of, verdict_of,
-};
+pub(super) use crate::practice::kinds::program::shape::{scope_of, verdict_of};
 
 pub(super) fn program_kind() -> Kind {
     kind(Arc::new(FakeToolchains::new(FakeRunner::new(|_, _| {
@@ -91,8 +88,8 @@ pub(super) fn engine_observation(
     disclose: bool,
 ) -> Observation {
     let brief = brief_of(&problem.spec).unwrap();
-    let form = form_of(session.task);
-    let stage = stage_of(session.stage);
+    let form = session.task;
+    let stage = session.stage;
     let mut stages_reached = Vec::new();
     for reached in form.stages(true) {
         stages_reached.push(reached);
@@ -110,7 +107,7 @@ pub(super) fn engine_observation(
     Observation {
         session_id: session.session_id.clone(),
         form,
-        setting: setting_of(session.setting),
+        setting: session.setting,
         stage,
         stages_reached,
         brief,
@@ -156,7 +153,7 @@ pub(super) fn engine_observation(
             .hints
             .iter()
             .map(|hint| HintView {
-                rung: rung_of(hint.rung),
+                rung: hint.rung,
                 text: hint.text.clone(),
                 check_id: hint.run_id.clone(),
             })
@@ -215,17 +212,13 @@ fn run_of(
 fn the_observations_render_what_the_golden_says() {
     let mut golden = Golden::default();
     let problem = problem();
-    let plain = session(&problem, CodingSetting::Mock, CodingStage::Code);
+    let plain = session(&problem, Setting::Mock, Stage::Make);
     golden.add(
         "plain, Mock, Code, nothing run, no baseline",
         &rendered(&problem, &plain, None, false),
     );
-    for task in [CodingTask::Problem, CodingTask::BugFix] {
-        for setting in [
-            CodingSetting::Coached,
-            CodingSetting::Mock,
-            CodingSetting::Watched,
-        ] {
+    for task in [Form::Build, Form::Repair] {
+        for setting in [Setting::Coached, Setting::Mock, Setting::Watched] {
             let (problem, session, seen) = rich_session(task, setting);
             golden.add(
                 &format!("{task:?} {setting:?}"),
@@ -245,13 +238,9 @@ fn the_plain_fixture_holds_no_reference_and_no_misreading() {
     use crate::practice::coding::observation::test_support::{
         HIDDEN_ARGS, MISREADING_DESCRIPTION, MISREADING_ID,
     };
-    for setting in [
-        CodingSetting::Coached,
-        CodingSetting::Mock,
-        CodingSetting::Watched,
-    ] {
+    for setting in [Setting::Coached, Setting::Mock, Setting::Watched] {
         let problem = problem();
-        let session = session(&problem, setting, CodingStage::Code);
+        let session = session(&problem, setting, Stage::Make);
         let text = rendered(&problem, &session, None, false);
         for secret in [
             "REFERENCE_SECRET_BODY",
@@ -268,7 +257,7 @@ fn the_plain_fixture_holds_no_reference_and_no_misreading() {
 #[test]
 fn the_rendering_numbers_every_line_and_lists_the_techniques_without_instructions() {
     let problem = problem();
-    let session = session(&problem, CodingSetting::Coached, CodingStage::Plan);
+    let session = session(&problem, Setting::Coached, Stage::Plan);
     let text = rendered(&problem, &session, None, false);
     assert!(text.contains("solution.py"));
     assert!(text.contains("1 | def total(values):"));
@@ -282,7 +271,7 @@ fn the_rendering_numbers_every_line_and_lists_the_techniques_without_instruction
 fn the_rendering_carries_the_transcript_and_the_clarifications_without_turn_ids() {
     use crate::practice::practical_dto::{LearningSimulationSpeaker, LearningSimulationTurnDto};
     let problem = problem();
-    let mut session = session(&problem, CodingSetting::Coached, CodingStage::Understand);
+    let mut session = session(&problem, Setting::Coached, Stage::Understand);
     session.turns.push(LearningSimulationTurnDto {
         id: "turn-99999999".to_owned(),
         ordinal: 0,
@@ -303,7 +292,7 @@ fn the_rendering_carries_the_transcript_and_the_clarifications_without_turn_ids(
 #[test]
 fn a_run_with_every_case_disclosed_renders_the_got_value() {
     let problem = problem();
-    let mut session = session(&problem, CodingSetting::Coached, CodingStage::Test);
+    let mut session = session(&problem, Setting::Coached, Stage::Check);
     let mut scale = detail("case-scale-1", "a long list", RunStatus::Ran);
     scale.scale = true;
     scale.expected = None;
@@ -322,7 +311,7 @@ fn a_run_with_every_case_disclosed_renders_the_got_value() {
         cut_case(&example, true),
     ];
     for scope in [
-        CodingRunScope::Examples,
+        CodingRunScope::Shown,
         CodingRunScope::All,
         CodingRunScope::Input,
     ] {
@@ -338,7 +327,7 @@ fn a_run_with_every_case_disclosed_renders_the_got_value() {
 #[test]
 fn a_run_that_keeps_hidden_cases_back_but_shows_the_learners_own_renders_by_title_and_in_full() {
     let problem = problem();
-    let mut session = session(&problem, CodingSetting::Mock, CodingStage::Test);
+    let mut session = session(&problem, Setting::Mock, Stage::Check);
     let mut mine = detail("case-mine-1", "my own input", RunStatus::Passed);
     mine.mine = true;
     let mut example = detail("case-example-1", "an ordinary list", RunStatus::Failed);
@@ -349,7 +338,7 @@ fn a_run_that_keeps_hidden_cases_back_but_shows_the_learners_own_renders_by_titl
         .map(|detail| cut_case(detail, case_is_open(detail.visibility, detail.mine, false)))
         .collect::<Vec<_>>();
     session.runs = vec![run_of(
-        CodingRunScope::Examples,
+        CodingRunScope::Shown,
         LearningPracticalRunStatus::Failed,
         cases,
     )];
@@ -361,7 +350,7 @@ fn a_run_that_keeps_hidden_cases_back_but_shows_the_learners_own_renders_by_titl
 #[test]
 fn every_run_status_but_one_renders_without_the_run_id() {
     let problem = problem();
-    let mut session = session(&problem, CodingSetting::Coached, CodingStage::Test);
+    let mut session = session(&problem, Setting::Coached, Stage::Check);
     for status in [
         LearningPracticalRunStatus::Pending,
         LearningPracticalRunStatus::Running,

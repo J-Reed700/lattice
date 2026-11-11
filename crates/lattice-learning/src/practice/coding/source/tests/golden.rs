@@ -21,7 +21,7 @@ async fn drafted(asked: &ProblemRequest, answers: Vec<Value>) -> Recorder {
 #[tokio::test]
 async fn golden_source() {
     let mut golden = Golden::default();
-    for task in [CodingTask::Problem, CodingTask::BugFix] {
+    for task in [Form::Build, Form::Repair] {
         for difficulty in [
             ProblemDifficulty::Easy,
             ProblemDifficulty::Medium,
@@ -40,7 +40,7 @@ async fn golden_source() {
         patterns: Vec::new(),
         focus: Some("The focus text.".into()),
         details: Some("The details text.".into()),
-        ..request(CodingTask::Problem)
+        ..request(Form::Build)
     };
     let model = drafted(&asked, vec![answer()]).await;
     add_requests(
@@ -48,7 +48,7 @@ async fn golden_source() {
         "Problem Easy, no lesson or pattern, with a focus and details",
         &model,
     );
-    for task in [CodingTask::Problem, CodingTask::BugFix] {
+    for task in [Form::Build, Form::Repair] {
         let unproven = with(answer(), "reference", json!("REF BAD"));
         let model = drafted(&request(task), vec![unproven, answer()]).await;
         add_requests(

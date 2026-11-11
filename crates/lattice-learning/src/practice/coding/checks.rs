@@ -33,7 +33,7 @@ impl Checks for CodingChecks<'_> {
                 practice_session_id: None,
                 learner_files: files_of(start.piece)?,
             },
-            coding_session_id: start.at.session_id.to_owned(),
+            exercise_session_id: start.at.session_id.to_owned(),
             scope: coding_scope_of(start.scope),
             cases: start
                 .cases

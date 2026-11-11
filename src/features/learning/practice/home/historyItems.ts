@@ -33,7 +33,7 @@ export interface HistorySources {
 }
 
 const SETTING_LABELS: Record<Wire.CodingSetting, string> = { coached: 'Coached', mock: 'Mock', watched: 'Watched' };
-const TASK_LABELS: Record<Wire.CodingTask, string> = { problem: 'Problem', bug_fix: 'Bug to fix' };
+const TASK_LABELS: Record<Wire.CodingTask, string> = { build: 'Problem', repair: 'Bug to fix' };
 const HELP_LABELS: Record<Wire.LearningPracticeMode, string> = { explore: 'Full help', practice: 'Hints only', demonstrate: 'No help' };
 const DRILL_MODE_LABELS: Record<Wire.AttemptMode, string> = { practice: 'Untimed', interview: 'Timed', rapid: 'Rapid' };
 
@@ -41,8 +41,8 @@ const STAGE_NAMES: Record<Wire.CodingStage, string> = {
   understand: 'Understand',
   examples: 'Examples',
   plan: 'Plan',
-  code: 'Code',
-  test: 'Test',
+  make: 'Code',
+  check: 'Test',
   review: 'Review',
   reproduce: 'Reproduce',
   locate: 'Locate',
@@ -110,7 +110,7 @@ export function buildHistory(sources: HistorySources): HistoryItem[] {
   }
 
   for (const activity of sources.activities) {
-    if (activity.kind === 'coding_problem') {
+    if (activity.kind === 'exercise') {
       if (codingActivityIds.has(activity.id)) continue;
       items.push({
         id: `activity:${activity.id}`,

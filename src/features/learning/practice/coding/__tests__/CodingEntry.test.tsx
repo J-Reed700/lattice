@@ -25,7 +25,7 @@ vi.mock('@/features/jobs/api', () => ({
 }));
 
 const choice: CodingBuildChoice = {
-  task: 'problem',
+  task: 'build',
   setting: 'mock',
   language: 'python',
   difficulty: 'easy',
@@ -35,7 +35,7 @@ const choice: CodingBuildChoice = {
 function job(overrides: Partial<JobDto>): JobDto {
   return {
     id: 'job-1',
-    kind: 'learning.coding_build',
+    kind: 'learning.practice_build',
     subjectId: 'program-1',
     status: 'running',
     progressCurrent: 1,
@@ -73,7 +73,7 @@ describe('CodingEntry', () => {
     render(<CodingEntry programId="program-1" choice={choice} onReady={vi.fn()} onCancel={vi.fn()} />);
     await waitFor(() =>
       expect(codingApi.startBuild).toHaveBeenCalledWith(
-        expect.objectContaining({ programId: 'program-1', task: 'problem', language: 'python', difficulty: 'easy' }),
+        expect.objectContaining({ programId: 'program-1', task: 'build', language: 'python', difficulty: 'easy' }),
       ),
     );
     expect(screen.getByRole('progressbar')).toBeInTheDocument();

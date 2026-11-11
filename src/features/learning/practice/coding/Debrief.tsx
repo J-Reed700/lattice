@@ -25,7 +25,7 @@ const RUNG_NAMES: Record<Wire.CodeHintRung, string> = {
   nudge: 'nudge',
   idea: 'idea',
   plan: 'plan',
-  line: 'line hint',
+  point: 'line hint',
 };
 
 function evidenceView(evidence: Wire.ScorecardEvidence): EvidenceView {

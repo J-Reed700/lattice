@@ -10,9 +10,8 @@ use super::session::view::settings_used;
 use crate::practical_repository::LearningPracticalRepository;
 use crate::practice::kinds::program::parts::line_of;
 use crate::practice::kinds::program::shape::{
-    case_of, check_status_of, coding_cue_of, coding_rung_of, coding_scope_of, coding_setting_of,
-    coding_stage_of, cue_of, exercise_of, files_of, form_of, piece_of, result_of as case_result_of,
-    run_detail_of, scope_of, setting_of, stage_of, verdict_of,
+    case_of, check_status_of, coding_scope_of, exercise_of, files_of, piece_of,
+    result_of as case_result_of, run_detail_of, scope_of, verdict_of,
 };
 use crate::practice::session::policy::Cue;
 use crate::practice::session::ports::{At, CheckFinished, SessionStore};
@@ -101,19 +100,21 @@ fn learner_case_of(example: &stored::StoredExample) -> SessionLearnerCase {
 pub fn session_of(bundle: &SessionBundle) -> Result<Session> {
     let row = &bundle.row;
     let compare = bundle.problem.default_compare();
+    let mut exercise = exercise_of(&bundle.problem)?;
+    exercise.kind = row.kind.clone();
     Ok(Session {
         row: SessionRow {
             id: row.id.clone(),
             program_id: row.program_id.clone(),
             activity_id: row.activity_id.clone(),
-            form: form_of(row.task),
-            setting: setting_of(row.setting),
-            stage: stage_of(row.stage),
+            form: row.task,
+            setting: row.setting,
+            stage: row.stage,
             budget_seconds: row.budget_seconds,
             active_ms: row.active_ms,
             opened_at: row.opened_at,
             draft: piece_of(&row.draft)?,
-            pending_cue: row.pending_cue.as_ref().map(cue_of),
+            pending_cue: row.pending_cue.clone(),
             submitted_at: row.submitted_at,
             solution_seen_at: row.solution_seen_at,
             finished_at: row.finished_at,
@@ -121,8 +122,8 @@ pub fn session_of(bundle: &SessionBundle) -> Result<Session> {
             created_at: row.created_at,
         },
         activity_revision: bundle.activity_revision,
-        exercise: exercise_of(&bundle.problem)?,
-        settings: settings_used(bundle)?.into_iter().map(setting_of).collect(),
+        exercise,
+        settings: settings_used(bundle)?,
         turns: bundle.turns.clone(),
         checks: bundle
             .runs
@@ -179,7 +180,7 @@ impl SessionStore for CodingStore<'_> {
                 &NewCodingSession {
                     program_id: new.program_id,
                     activity_id: new.activity_id,
-                    setting: coding_setting_of(new.setting),
+                    setting: new.setting,
                     budget_seconds: new.budget_seconds,
                     default_budget: &default_budget,
                 },
@@ -202,15 +203,15 @@ impl SessionStore for CodingStore<'_> {
                 at.program_id,
                 at.session_id,
                 &coding_op(op),
-                coding_stage_of(stage),
+                stage,
                 expected_revision,
                 now,
             )
             .await?;
         Ok(applied(moved, |moved| StageMove {
-            from: stage_of(moved.from),
-            to: stage_of(moved.to),
-            skipped: moved.skipped.into_iter().map(stage_of).collect(),
+            from: moved.from,
+            to: moved.to,
+            skipped: moved.skipped,
         }))
     }
 
@@ -240,7 +241,7 @@ impl SessionStore for CodingStore<'_> {
 
     async fn offer_cue(&self, at: &At<'_>, cue: &Cue) -> Result<()> {
         self.repo
-            .offer_coding_cue(at.program_id, at.session_id, &coding_cue_of(cue))
+            .offer_coding_cue(at.program_id, at.session_id, cue)
             .await
             .map(|_| ())
     }
@@ -249,14 +250,12 @@ impl SessionStore for CodingStore<'_> {
         Ok(self
             .repo
             .take_coding_cue(at.program_id, at.session_id)
-            .await?
-            .as_ref()
-            .map(cue_of))
+            .await?)
     }
 
     async fn restore_cue(&self, at: &At<'_>, cue: &Cue) -> Result<()> {
         self.repo
-            .restore_coding_cue(at.program_id, at.session_id, &coding_cue_of(cue))
+            .restore_coding_cue(at.program_id, at.session_id, cue)
             .await
     }
 
@@ -326,7 +325,7 @@ impl SessionStore for CodingStore<'_> {
                 at.session_id,
                 &coding_op(op),
                 &stored::NewHint {
-                    rung: coding_rung_of(hint.rung),
+                    rung: hint.rung,
                     text: hint.text,
                     reason: hint.reason,
                     lines: &lines,
@@ -356,7 +355,7 @@ impl SessionStore for CodingStore<'_> {
                 at.program_id,
                 at.session_id,
                 &coding_op(op),
-                coding_setting_of(setting),
+                setting,
                 default_budget_seconds,
                 expected_revision,
                 now,

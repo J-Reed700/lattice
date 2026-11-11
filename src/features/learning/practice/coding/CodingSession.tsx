@@ -37,7 +37,7 @@ export const IDLE_AFTER_MS = 180_000;
 const BUSY_LABEL = 'Reading your code…';
 const SETTINGS: Wire.CodingSetting[] = ['coached', 'mock', 'watched'];
 const RUN_TITLES: Record<Wire.CodingRunScope, string> = {
-  examples: 'Examples',
+  shown: 'Examples',
   all: 'Every case',
   input: 'Your input',
 };
@@ -552,7 +552,7 @@ function Workspace({ programId, initial, activityRevision, onExit, onTryIntervie
                 ariaLabel="Code"
                 minHeight={280}
                 showPath={files.length <= 1}
-                onRunShortcut={() => void run('examples')}
+                onRunShortcut={() => void run('shown')}
               />
             ) : null}
           </div>
@@ -560,7 +560,7 @@ function Workspace({ programId, initial, activityRevision, onExit, onTryIntervie
           <RunBar
             signature={problem.signature}
             running={running}
-            onRunExamples={() => void run('examples')}
+            onRunExamples={() => void run('shown')}
             onSubmit={() => void run('all')}
             onTryInput={(args) => void run('input', args)}
           />

@@ -12,7 +12,6 @@ use crate::lab_runtime::{
 use crate::persistence::{db, now};
 use crate::practical_dto::*;
 use crate::practical_runs::CodingRunStart;
-use crate::practice::coding::dto::CodingRunScope;
 use crate::practice::coding::harness::{harness_for, new_nonce, RunEnd};
 use crate::practice::coding::problem::CaseStatus;
 use lattice_core::shared::error::{AppError, Result};
@@ -39,14 +38,6 @@ fn coding_harness(coding: &CodingRunStart) -> Result<(PreparedHarness, Vec<Learn
         },
         evaluator,
     ))
-}
-
-fn scope_name(scope: &CodingRunScope) -> &'static str {
-    match scope {
-        CodingRunScope::Examples => "examples",
-        CodingRunScope::All => "all",
-        CodingRunScope::Input => "input",
-    }
 }
 
 fn run_end(status: &LearningLabRunStatus) -> RunEnd {
@@ -278,14 +269,14 @@ impl LearningPracticalRepository {
         let mut run_snapshot = activity.clone();
         run_snapshot.workspace_owner_token = workspace_owner_token.clone();
         let snapshot = json(&run_snapshot)?;
-        sqlx::query("INSERT INTO learning_practical_runs(id,program_id,activity_id,activity_revision,activity_snapshot_json,practice_session_id,operation_id,payload_hash,engine,image_id,status,learner_files_json,created_at,builtin_runtime,builtin_runtime_version,coding_session_id,scope) VALUES(?,?,?,?,?,?,?,?,?,?,'running',?,?,?,?,?,?)")
+        sqlx::query("INSERT INTO learning_practical_runs(id,program_id,activity_id,activity_revision,activity_snapshot_json,practice_session_id,operation_id,payload_hash,engine,image_id,status,learner_files_json,created_at,builtin_runtime,builtin_runtime_version,exercise_session_id,scope) VALUES(?,?,?,?,?,?,?,?,?,?,'running',?,?,?,?,?,?)")
             .bind(&request.run_id).bind(&request.program_id).bind(&request.activity_id)
             .bind(activity.revision).bind(snapshot).bind(&request.practice_session_id)
             .bind(&request.operation_id).bind(payload_hash).bind(activity.runtime_engine.map(engine_name)).bind(&activity.runtime_image_id)
             .bind(json(&request.learner_files)?).bind(timestamp).bind(activity.builtin_runtime.map(LearningBuiltinRuntime::as_str))
             .bind(&activity.builtin_runtime_version)
-            .bind(coding.map(|coding| coding.coding_session_id.as_str()))
-            .bind(coding.map(|coding| scope_name(&coding.scope)))
+            .bind(coding.map(|coding| coding.exercise_session_id.as_str()))
+            .bind(coding.map(|coding| coding.scope.as_str()))
             .execute(&mut *tx).await.map_err(db)?;
         operation.record(&mut tx, &()).await?;
         tx.commit().await.map_err(db)?;

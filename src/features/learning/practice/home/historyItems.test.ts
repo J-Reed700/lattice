@@ -15,9 +15,9 @@ const session = (patch: Partial<Wire.CodingSessionSummaryDto>): Wire.CodingSessi
   sessionId: 's1',
   activityId: 'coding-act',
   title: 'Two sum',
-  task: 'problem',
+  task: 'build',
   setting: 'coached',
-  stage: 'code',
+  stage: 'make',
   finished: false,
   passed: null,
   total: null,
@@ -31,14 +31,14 @@ describe('history', () => {
     const items = buildHistory({
       ...empty,
       coding: [session({ finished: true, passed: 3, total: 4, finishedAt: 300 })],
-      activities: [activity({ id: 'coding-act', kind: 'coding_problem', updatedAt: 40 }), activity({ id: 'inc', kind: 'incident', updatedAt: 200 })],
+      activities: [activity({ id: 'coding-act', kind: 'exercise', updatedAt: 40 }), activity({ id: 'inc', kind: 'incident', updatedAt: 200 })],
     });
     expect(items.map((entry) => entry.id)).toEqual(['coding:s1', 'activity:inc']);
     expect(items[0]).toMatchObject({ card: 'code', result: '3 of 4 passed', target: { kind: 'coding', sessionId: 's1' } });
   });
 
   it('opens a coding problem that has no session as a coding activity', () => {
-    const [entry] = buildHistory({ ...empty, activities: [activity({ id: 'old', kind: 'coding_problem' })] });
+    const [entry] = buildHistory({ ...empty, activities: [activity({ id: 'old', kind: 'exercise' })] });
     expect(entry).toMatchObject({ card: 'code', target: { kind: 'coding-activity', activityId: 'old' } });
   });
 

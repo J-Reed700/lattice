@@ -1,5 +1,5 @@
 use super::*;
-use crate::practice::coding::dto::{CodeHintRung, ExampleVerdict};
+use crate::practice::coding::dto::ExampleVerdict;
 use crate::practice::coding::problem::{
     CaseCompare, CaseStatus, CaseVisibility, Misreading, ProblemCase, ProblemDifficulty,
     ProblemSignature, ProblemSpec, SignatureParam,
@@ -8,6 +8,7 @@ use crate::practice::practical_dto::LearningSimulationSpeaker;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
+use lattice_core::domain::learning::practice::work::Rung;
 use lattice_core::domain::learning::practice::ScoreStatus;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Mutex;
@@ -155,7 +156,7 @@ fn example(ordinal: u32) -> CodingExampleDto {
     }
 }
 
-fn hint(ordinal: u32, rung: CodeHintRung) -> CodeHintDto {
+fn hint(ordinal: u32, rung: Rung) -> CodeHintDto {
     CodeHintDto {
         ordinal,
         rung,
@@ -163,7 +164,7 @@ fn hint(ordinal: u32, rung: CodeHintRung) -> CodeHintDto {
         reason: "The learner re-scans the list.".into(),
         lines: vec![],
         path: None,
-        stage: CodingStage::Code,
+        stage: Stage::Make,
         run_id: None,
         in_role: false,
         at: 0,
@@ -199,8 +200,8 @@ fn event(ordinal: u32, kind: &str, payload: Value, at: i64) -> CodingEventRow {
 fn evidence() -> SessionEvidence {
     SessionEvidence {
         problem: problem(),
-        task: CodingTask::Problem,
-        settings: vec![CodingSetting::Coached],
+        task: Form::Build,
+        settings: vec![Setting::Coached],
         turns: vec![
             turn(
                 "t1",
@@ -220,7 +221,7 @@ fn evidence() -> SessionEvidence {
         ],
         runs: vec![run("r1", CodingRunScope::All)],
         examples: vec![example(0)],
-        hints: vec![hint(0, CodeHintRung::Nudge)],
+        hints: vec![hint(0, Rung::Nudge)],
         events: vec![],
         draft: file(SOLUTION),
     }
@@ -642,17 +643,17 @@ async fn the_prompt_shows_the_session_and_the_criteria() {
 fn facts_count_runs_submits_hints_and_settings() {
     let mut session = evidence();
     session.runs = vec![
-        run("r1", CodingRunScope::Examples),
+        run("r1", CodingRunScope::Shown),
         run("r2", CodingRunScope::Input),
         run("r3", CodingRunScope::All),
         run("r4", CodingRunScope::All),
     ];
     session.hints = vec![
-        hint(0, CodeHintRung::Nudge),
-        hint(1, CodeHintRung::Nudge),
-        hint(2, CodeHintRung::Plan),
+        hint(0, Rung::Nudge),
+        hint(1, Rung::Nudge),
+        hint(2, Rung::Plan),
     ];
-    session.settings = vec![CodingSetting::Coached, CodingSetting::Mock];
+    session.settings = vec![Setting::Coached, Setting::Mock];
 
     let facts = facts(&session);
 
@@ -664,12 +665,9 @@ fn facts_count_runs_submits_hints_and_settings() {
             .iter()
             .map(|hint| (hint.rung, hint.count))
             .collect::<Vec<_>>(),
-        [(CodeHintRung::Nudge, 2), (CodeHintRung::Plan, 1)]
+        [(Rung::Nudge, 2), (Rung::Plan, 1)]
     );
-    assert_eq!(
-        facts.settings,
-        [CodingSetting::Coached, CodingSetting::Mock]
-    );
+    assert_eq!(facts.settings, [Setting::Coached, Setting::Mock]);
 }
 
 fn timeline() -> Vec<CodingEventRow> {
@@ -696,13 +694,13 @@ fn timeline() -> Vec<CodingEventRow> {
             json!({"from": "plan", "to": "code", "skipped": []}),
             105_000,
         ),
-        event(7, "run", json!({"runId": "r1"}), 106_000),
+        event(7, "check", json!({"runId": "r1"}), 106_000),
         event(8, "opened", json!({}), 200_000),
         event(9, "closed", json!({}), 203_000),
     ]
 }
 
-fn times(session: &SessionEvidence) -> Vec<(CodingStage, u64)> {
+fn times(session: &SessionEvidence) -> Vec<(Stage, u64)> {
     facts(session)
         .stage_ms
         .iter()
@@ -718,10 +716,10 @@ fn stage_time_is_the_open_time_across_stage_moves() {
     assert_eq!(
         times(&session),
         [
-            (CodingStage::Understand, 3_000),
-            (CodingStage::Examples, 3_000),
-            (CodingStage::Plan, 4_000),
-            (CodingStage::Code, 4_000),
+            (Stage::Understand, 3_000),
+            (Stage::Examples, 3_000),
+            (Stage::Plan, 4_000),
+            (Stage::Make, 4_000),
         ]
     );
 }
@@ -732,12 +730,12 @@ fn a_span_the_app_never_closed_ends_at_the_last_event_before_the_next_open() {
     session.events = vec![
         event(0, "stage", json!({"to": "understand"}), 0),
         event(1, "opened", json!({}), 1_000),
-        event(2, "run", json!({}), 9_000),
+        event(2, "check", json!({}), 9_000),
         event(3, "opened", json!({}), 500_000),
         event(4, "closed", json!({}), 502_000),
     ];
 
-    assert_eq!(times(&session), [(CodingStage::Understand, 10_000)]);
+    assert_eq!(times(&session), [(Stage::Understand, 10_000)]);
 }
 
 #[test]
@@ -747,12 +745,12 @@ fn a_span_still_open_at_the_end_ends_at_the_last_event() {
         event(0, "stage", json!({"to": "understand"}), 0),
         event(1, "opened", json!({}), 1_000),
         event(2, "stage", json!({"to": "code"}), 3_000),
-        event(3, "run", json!({}), 8_000),
+        event(3, "check", json!({}), 8_000),
     ];
 
     assert_eq!(
         times(&session),
-        [(CodingStage::Understand, 2_000), (CodingStage::Code, 5_000)]
+        [(Stage::Understand, 2_000), (Stage::Make, 5_000)]
     );
 }
 
@@ -770,7 +768,7 @@ fn time_while_the_clock_is_closed_is_not_counted() {
 
     assert_eq!(
         times(&session),
-        [(CodingStage::Understand, 1_000), (CodingStage::Plan, 1_000)]
+        [(Stage::Understand, 1_000), (Stage::Plan, 1_000)]
     );
 }
 
@@ -784,10 +782,10 @@ fn events_are_read_in_ordinal_order() {
     assert_eq!(
         times(&session),
         [
-            (CodingStage::Understand, 3_000),
-            (CodingStage::Examples, 3_000),
-            (CodingStage::Plan, 4_000),
-            (CodingStage::Code, 4_000),
+            (Stage::Understand, 3_000),
+            (Stage::Examples, 3_000),
+            (Stage::Plan, 4_000),
+            (Stage::Make, 4_000),
         ]
     );
 }
@@ -800,7 +798,7 @@ fn a_session_with_no_events_has_no_stage_time() {
 #[test]
 fn a_bug_fix_lists_its_own_stages() {
     let mut session = evidence();
-    session.task = CodingTask::BugFix;
+    session.task = Form::Repair;
     session.events = vec![
         event(0, "stage", json!({"to": "reproduce"}), 0),
         event(1, "opened", json!({}), 0),
@@ -810,10 +808,7 @@ fn a_bug_fix_lists_its_own_stages() {
 
     assert_eq!(
         times(&session),
-        [
-            (CodingStage::Reproduce, 2_000),
-            (CodingStage::Locate, 3_000)
-        ]
+        [(Stage::Reproduce, 2_000), (Stage::Locate, 3_000)]
     );
 }
 

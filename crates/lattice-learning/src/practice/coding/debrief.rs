@@ -2,18 +2,16 @@
 //! coding code speaks (docs/design/2026-11-08-coding-sessions-and-one-practice-area.md 4.8).
 
 use super::dto::{
-    CodeHintDto, CodingExampleDto, CodingRunScope, CodingStage, DebriefFactsDto, RungCountDto,
-    StageTimeDto,
+    CodeHintDto, CodingExampleDto, CodingRunScope, DebriefFactsDto, RungCountDto, StageTimeDto,
 };
 use super::harness::CaseHarness;
-use super::problem::{CaseResult, CodingSetting, CodingTask, Problem};
+use super::problem::{CaseResult, Problem};
 use crate::drills::runner::CodeRunner;
 use crate::lab_runtime::LearningLabFile;
 use crate::practice::kinds::program::kind;
 use crate::practice::kinds::program::parts::line_of;
 use crate::practice::kinds::program::shape::{
-    coding_rung_of, coding_setting_of, coding_stage_of, exercise_of, form_of, piece_of, result_of,
-    rung_of, scope_of, setting_of, stage_of, verdict_of,
+    exercise_of, piece_of, result_of, scope_of, verdict_of,
 };
 use crate::practice::kinds::program::toolchain::Toolchains;
 use crate::practice::practical_dto::LearningSimulationTurnDto;
@@ -25,6 +23,7 @@ use crate::practice::session::record::{
 use async_trait::async_trait;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::practice::work::{CheckReport, CheckStatus};
+use lattice_core::domain::learning::practice::work::{Form, Setting, Stage};
 use lattice_core::domain::learning::practice::{Scorecard, ScorecardEvidence, ScorecardRow};
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
@@ -34,8 +33,8 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub struct SessionEvidence {
     pub problem: Problem,
-    pub task: CodingTask,
-    pub settings: Vec<CodingSetting>,
+    pub task: Form,
+    pub settings: Vec<Setting>,
     pub turns: Vec<LearningSimulationTurnDto>,
     pub runs: Vec<EvidenceRun>,
     pub examples: Vec<CodingExampleDto>,
@@ -102,7 +101,7 @@ fn program_kind() -> Kind {
     kind(Arc::new(NothingRuns))
 }
 
-fn stage_in(payload: &Value, key: &str) -> Option<CodingStage> {
+fn stage_in(payload: &Value, key: &str) -> Option<Stage> {
     payload
         .get(key)
         .and_then(|value| serde_json::from_value(value.clone()).ok())
@@ -112,7 +111,7 @@ pub(super) fn event_of(row: &CodingEventRow) -> SessionEvent {
     let kind = match row.kind.as_str() {
         "opened" => EventKind::Opened,
         "closed" => EventKind::Closed,
-        "stage" => EventKind::Moved(stage_in(&row.payload, "to").map(stage_of)),
+        "stage" => EventKind::Moved(stage_in(&row.payload, "to")),
         _ => EventKind::Other,
     };
     SessionEvent {
@@ -125,9 +124,9 @@ pub(super) fn event_of(row: &CodingEventRow) -> SessionEvent {
 pub(super) fn hint_of(hint: &CodeHintDto) -> SessionHint {
     SessionHint {
         ordinal: hint.ordinal,
-        rung: rung_of(hint.rung),
+        rung: hint.rung,
         text: hint.text.clone(),
-        stage: stage_of(hint.stage),
+        stage: hint.stage,
         check_id: hint.run_id.clone(),
     }
 }
@@ -160,8 +159,8 @@ fn check_of(run: &EvidenceRun) -> Result<SessionCheck> {
 fn engine_session(evidence: &SessionEvidence) -> Result<DebriefSession> {
     Ok(DebriefSession {
         exercise: exercise_of(&evidence.problem)?,
-        form: form_of(evidence.task),
-        settings: evidence.settings.iter().copied().map(setting_of).collect(),
+        form: evidence.task,
+        settings: evidence.settings.clone(),
         turns: evidence.turns.clone(),
         checks: evidence
             .runs
@@ -186,12 +185,12 @@ fn engine_session(evidence: &SessionEvidence) -> Result<DebriefSession> {
 
 /// What the session shows beside the scores, counted rather than judged.
 pub fn facts(evidence: &SessionEvidence) -> DebriefFactsDto {
-    let settings: Vec<_> = evidence.settings.iter().copied().map(setting_of).collect();
+    let settings = &evidence.settings;
     let hints: Vec<_> = evidence.hints.iter().map(hint_of).collect();
     let events: Vec<_> = evidence.events.iter().map(event_of).collect();
     let counted = Counted {
-        form: form_of(evidence.task),
-        settings: &settings,
+        form: evidence.task,
+        settings,
         scopes: evidence
             .runs
             .iter()
@@ -206,7 +205,7 @@ pub fn facts(evidence: &SessionEvidence) -> DebriefFactsDto {
             .stage_ms
             .into_iter()
             .map(|(stage, active_ms)| StageTimeDto {
-                stage: coding_stage_of(stage),
+                stage: stage,
                 active_ms,
             })
             .collect(),
@@ -215,12 +214,9 @@ pub fn facts(evidence: &SessionEvidence) -> DebriefFactsDto {
         hints: counts
             .hints
             .into_iter()
-            .map(|(rung, count)| RungCountDto {
-                rung: coding_rung_of(rung),
-                count,
-            })
+            .map(|(rung, count)| RungCountDto { rung: rung, count })
             .collect(),
-        settings: counts.settings.into_iter().map(coding_setting_of).collect(),
+        settings: counts.settings,
     }
 }
 
@@ -302,12 +298,12 @@ impl Debriefer for CodingDebriefer<'_> {
 
 #[cfg(test)]
 fn system() -> String {
-    engine::system(&program_kind(), form_of(CodingTask::Problem))
+    engine::system(&program_kind(), Form::Build)
 }
 
 #[cfg(test)]
 fn schema() -> Value {
-    engine::schema(&program_kind(), form_of(CodingTask::Problem))
+    engine::schema(&program_kind(), Form::Build)
 }
 
 #[cfg(test)]

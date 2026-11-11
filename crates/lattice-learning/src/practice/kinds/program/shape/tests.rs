@@ -4,7 +4,6 @@ use super::*;
 use crate::practice::coding::problem::{CaseResult as RunResult, CaseStatus as RunStatus};
 use crate::practice::coding::proof::fakes::{sample_problem, spec};
 use lattice_core::domain::learning::practice::work::{CaseStatus, CaseVisibility};
-use serde_json::json;
 
 fn files() -> Vec<LearningLabFile> {
     vec![
@@ -294,75 +293,17 @@ fn a_built_build_is_saved_as_the_problem_it_came_from() {
 }
 
 #[test]
-fn a_task_is_the_one_of_its_form_and_a_program_has_no_others() {
-    assert_eq!(task_of(Form::Build).unwrap(), CodingTask::Problem);
-    assert_eq!(task_of(Form::Repair).unwrap(), CodingTask::BugFix);
+fn a_program_has_the_forms_build_and_repair_and_no_others() {
+    assert_eq!(program_form(Form::Build).unwrap(), Form::Build);
+    assert_eq!(program_form(Form::Repair).unwrap(), Form::Repair);
     assert!(matches!(
-        task_of(Form::Complete),
+        program_form(Form::Complete),
         Err(AppError::InvalidState(_))
     ));
     assert!(matches!(
-        task_of(Form::Arrange),
+        program_form(Form::Arrange),
         Err(AppError::InvalidState(_))
     ));
-}
-
-#[test]
-fn every_cue_survives_the_coding_cue_and_back() {
-    let cues = [
-        Cue::Opening,
-        Cue::Reply,
-        Cue::StageOpened(Stage::Plan),
-        Cue::StageOpened(Stage::Make),
-        Cue::AskForSkipped(vec![Stage::Examples, Stage::Plan]),
-        Cue::AskForSkipped(Vec::new()),
-        Cue::CheckReview(CheckScope::Shown),
-        Cue::CheckReview(CheckScope::All),
-        Cue::CheckReview(CheckScope::Own),
-        Cue::Submitted,
-        Cue::Checkpoint,
-        Cue::Idle,
-    ];
-    for cue in cues {
-        assert_eq!(cue_of(&coding_cue_of(&cue)), cue, "{cue:?}");
-    }
-}
-
-#[test]
-fn a_cue_is_stored_under_the_name_the_coding_tables_know() {
-    let stored = |cue: Cue| serde_json::to_value(coding_cue_of(&cue)).unwrap();
-    assert_eq!(
-        stored(Cue::CheckReview(CheckScope::All)),
-        json!({"run_review": "all"})
-    );
-    assert_eq!(
-        stored(Cue::StageOpened(Stage::Make)),
-        json!({"stage_opened": "code"})
-    );
-    assert_eq!(stored(Cue::Submitted), json!("submitted"));
-}
-
-#[test]
-fn a_cue_ranks_as_the_coding_cue_it_is_stored_as() {
-    let cues = [
-        Cue::Opening,
-        Cue::Reply,
-        Cue::Submitted,
-        Cue::AskForSkipped(Vec::new()),
-        Cue::StageOpened(Stage::Plan),
-        Cue::CheckReview(CheckScope::All),
-        Cue::Checkpoint,
-        Cue::Idle,
-    ];
-    for first in &cues {
-        for second in &cues {
-            assert_eq!(
-                first.outranks(second),
-                coding_cue_of(first).outranks(&coding_cue_of(second)),
-                "{first:?} over {second:?}"
-            );
-        }
-    }
 }
 
 #[test]

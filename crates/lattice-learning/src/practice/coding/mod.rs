@@ -11,7 +11,6 @@ pub mod hints;
 pub mod jobs;
 pub mod observation;
 pub mod patterns;
-pub mod policy;
 pub mod problem;
 pub mod proof;
 pub mod records;

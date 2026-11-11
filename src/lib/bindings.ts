@@ -5575,7 +5575,7 @@ inRole: boolean; at: number }
 /**
  * How much a hint gives away; each rung gives more than the one before.
  */
-export type CodeHintRung = "nudge" | "idea" | "plan" | "line"
+export type CodeHintRung = "nudge" | "idea" | "plan" | "point"
 /**
  * The drill as the learner may see it.
  */
@@ -5712,7 +5712,7 @@ export type CodingRunScope =
 /**
  * The statement's examples and the learner's right examples.
  */
-"examples" |
+"shown" |
 /**
  * Every case of the problem: a submit.
  */
@@ -5746,11 +5746,11 @@ export type CodingSetting = "coached" | "mock" | "watched"
 /**
  * Where in the task the learner is.
  */
-export type CodingStage = "understand" | "examples" | "plan" | "code" | "test" | "review" | "reproduce" | "locate" | "fix" | "verify"
+export type CodingStage = "understand" | "examples" | "plan" | "make" | "check" | "review" | "reproduce" | "locate" | "fix" | "verify"
 /**
  * What the learner is asked to do.
  */
-export type CodingTask = "problem" | "bug_fix"
+export type CodingTask = "build" | "repair" | "complete" | "arrange"
 /**
  * Request to compact a conversation's oldest messages into an LLM summary.
  *
@@ -8615,7 +8615,7 @@ export type LearningPlanDto = { programId: string;
 programRevision: number; acceptedRevision: LearningCurriculumRevision | null; draftRevision: LearningCurriculumRevision | null; previewChanges: LearningCurriculumChange[]; requiredLessonCountBefore: number; requiredLessonCountAfter: number; resumeLessonId: string | null; jobs: LearningGenerationJob[]; latestDiagnostic: LearningDiagnosticAttemptDto | null }
 export type LearningPortabilityWorkspaceDto = { programId: string; exports: LearningPackExportDto[]; importPreviews: LearningPackImportPreviewDto[]; imports: LearningPackImportResultDto[]; sourceWorkspace: LearningSourceWorkspaceDto; exportNotice: LearningPackExportNoticeDto }
 export type LearningPracticalActivityDto = { id: string; programId: string; lessonId: string; predecessorId: string | null; kind: LearningPracticalActivityKind; title: string; brief: string; status: LearningPracticalActivityStatus; practiceMode: LearningPracticeMode; allowedAids: string[]; outcomeIds: string[]; sourceVersionIds: string[]; rubric: LearningRubricCriterion[]; runtimeKind: LearningPracticalRuntimeKind; builtinRuntime?: LearningBuiltinRuntime | null; runtimeProfileId: string | null; runtimeEngine: LearningContainerEngine | null; runtimeImageId: string | null; runtimeCommand: string[] | null; runtimeLimits: LearningLabLimits | null; runtimeAvailable: boolean; runtimeUnavailableReason: string | null; generatorModel: string; files: LearningPracticalFileDto[]; interviewPlan?: LearningInterviewPlanDto | null; revision: number; createdAt: number; updatedAt: number }
-export type LearningPracticalActivityKind = "code_lab" | "coding_problem" | "debugging" | "code_review" | "incident" | "system_design" | "project" | "interview" | "conversation" | "writing_revision" | "custom"
+export type LearningPracticalActivityKind = "code_lab" | "exercise" | "debugging" | "code_review" | "incident" | "system_design" | "project" | "interview" | "conversation" | "writing_revision" | "custom"
 export type LearningPracticalActivityStatus = "draft" | "ready" | "retired"
 export type LearningPracticalCheckResultDto = { name: string; status: LearningPracticalCheckStatus; message: string; durationMs: number | null; detail?: CaseCheckDetailDto | null }
 export type LearningPracticalCheckStatus = "passed" | "failed" | "error" | "not_run"

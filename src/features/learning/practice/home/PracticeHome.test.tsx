@@ -115,7 +115,7 @@ describe('PracticeHome', () => {
     expect(within(card).getByRole('combobox', { name: 'Difficulty' })).toHaveValue('easy');
     await user.click(within(card).getByRole('button', { name: /^Start/ }));
     expect(props.onStart).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'coding-build', choice: expect.objectContaining({ lessonId: 'lesson-1', setting: 'coached', difficulty: 'easy', task: 'problem' }) }),
+      expect.objectContaining({ kind: 'coding-build', choice: expect.objectContaining({ lessonId: 'lesson-1', setting: 'coached', difficulty: 'easy', task: 'build' }) }),
     );
   });
 

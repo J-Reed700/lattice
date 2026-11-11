@@ -41,11 +41,11 @@ export function codingSession(overrides: Partial<Wire.CodingSessionDto> = {}): W
     programId: 'program-1',
     activityId: 'activity-1',
     lessonId: null,
-    task: 'problem',
+    task: 'build',
     setting: 'coached',
     settingsUsed: ['coached'],
     stage: 'understand',
-    stages: ['understand', 'examples', 'plan', 'code', 'test', 'review'],
+    stages: ['understand', 'examples', 'plan', 'make', 'check', 'review'],
     problem: {
       title: 'Pair with a sum',
       statement: 'Return the positions of two numbers that add up to the target.',
@@ -111,7 +111,7 @@ export function codingDebrief(overrides: Partial<Wire.CodingDebriefDto> = {}): W
     facts: {
       stageMs: [
         { stage: 'understand', activeMs: 90_000 },
-        { stage: 'code', activeMs: 300_000 },
+        { stage: 'make', activeMs: 300_000 },
       ],
       runs: 4,
       submits: 1,

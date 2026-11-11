@@ -1,17 +1,13 @@
 //! How a Program's values are written in the core vocabulary, and back.
 
 use crate::lab_runtime::LearningLabFile;
-use crate::practice::coding::dto::{CodeHintRung, CodingRunScope, CodingStage, ExampleVerdict};
-use crate::practice::coding::policy::CodingCue;
-use crate::practice::coding::problem::{
-    self as coding, CodingSetting, CodingTask, Problem, ProblemCase, ProblemSpec,
-};
+use crate::practice::coding::dto::{CodingRunScope, ExampleVerdict};
+use crate::practice::coding::problem::{self as coding, Problem, ProblemCase, ProblemSpec};
 use crate::practice::kinds::program::KIND;
 use crate::practice::practical_dto::LearningPracticalRunStatus;
-use crate::practice::session::policy::Cue;
 use lattice_core::domain::learning::practice::work::{
     self, Brief, Case, CheckScope, CheckStatus, Exercise, Form, KindId, LearnerCaseVerdict,
-    Misreading, Piece, Rung, Setting, Stage,
+    Misreading, Piece,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
@@ -332,6 +328,17 @@ pub fn exercise_of(problem: &Problem) -> Result<Exercise> {
     })
 }
 
+/// The form itself when a program has it; a program has no other forms.
+pub fn program_form(form: Form) -> Result<Form> {
+    match form {
+        Form::Build | Form::Repair => Ok(form),
+        Form::Complete | Form::Arrange => Err(AppError::InvalidState(format!(
+            "A program has no {} exercises.",
+            form.label()
+        ))),
+    }
+}
+
 pub fn problem_of(exercise: &Exercise) -> Result<Problem> {
     if exercise.kind.as_str() != KIND {
         return Err(AppError::InvalidState(format!(
@@ -339,12 +346,7 @@ pub fn problem_of(exercise: &Exercise) -> Result<Problem> {
             exercise.kind.as_str()
         )));
     }
-    if matches!(exercise.form, Form::Complete | Form::Arrange) {
-        return Err(AppError::InvalidState(format!(
-            "A program has no {} exercises.",
-            exercise.form.label()
-        )));
-    }
+    program_form(exercise.form)?;
     let proof: ExerciseProof = serde_json::from_value(exercise.proof.clone())
         .map_err(|error| invalid("The exercise's proof is not a program's", error))?;
     Ok(Problem {
@@ -365,63 +367,6 @@ pub fn problem_of(exercise: &Exercise) -> Result<Problem> {
     })
 }
 
-/// The setting a program's coding code calls `setting`.
-pub fn coding_setting_of(setting: Setting) -> CodingSetting {
-    match setting {
-        Setting::Coached => CodingSetting::Coached,
-        Setting::Mock => CodingSetting::Mock,
-        Setting::Watched => CodingSetting::Watched,
-    }
-}
-
-/// The rung a program's coding code calls `rung`: pointing is a hint at lines.
-pub fn coding_rung_of(rung: Rung) -> CodeHintRung {
-    match rung {
-        Rung::Nudge => CodeHintRung::Nudge,
-        Rung::Idea => CodeHintRung::Idea,
-        Rung::Plan => CodeHintRung::Plan,
-        Rung::Point => CodeHintRung::Line,
-    }
-}
-
-pub fn rung_of(rung: CodeHintRung) -> Rung {
-    match rung {
-        CodeHintRung::Nudge => Rung::Nudge,
-        CodeHintRung::Idea => Rung::Idea,
-        CodeHintRung::Plan => Rung::Plan,
-        CodeHintRung::Line => Rung::Point,
-    }
-}
-
-/// The setting of the core vocabulary that a program's coding code calls `setting`.
-pub fn setting_of(setting: CodingSetting) -> Setting {
-    match setting {
-        CodingSetting::Coached => Setting::Coached,
-        CodingSetting::Mock => Setting::Mock,
-        CodingSetting::Watched => Setting::Watched,
-    }
-}
-
-/// The form of a task.
-pub fn form_of(task: CodingTask) -> Form {
-    match task {
-        CodingTask::Problem => Form::Build,
-        CodingTask::BugFix => Form::Repair,
-    }
-}
-
-/// The task of a form; a program has no other forms.
-pub fn task_of(form: Form) -> Result<CodingTask> {
-    match form {
-        Form::Build => Ok(CodingTask::Problem),
-        Form::Repair => Ok(CodingTask::BugFix),
-        Form::Complete | Form::Arrange => Err(AppError::InvalidState(format!(
-            "A program has no {} exercises.",
-            form.label()
-        ))),
-    }
-}
-
 /// The problem a proven exercise is saved as: its starter is the piece the learner starts from.
 pub fn built_problem_of(exercise: &Exercise) -> Result<Problem> {
     let mut problem = problem_of(exercise)?;
@@ -429,39 +374,9 @@ pub fn built_problem_of(exercise: &Exercise) -> Result<Problem> {
     Ok(problem)
 }
 
-pub fn stage_of(stage: CodingStage) -> Stage {
-    match stage {
-        CodingStage::Understand => Stage::Understand,
-        CodingStage::Examples => Stage::Examples,
-        CodingStage::Plan => Stage::Plan,
-        CodingStage::Code => Stage::Make,
-        CodingStage::Test => Stage::Check,
-        CodingStage::Review => Stage::Review,
-        CodingStage::Reproduce => Stage::Reproduce,
-        CodingStage::Locate => Stage::Locate,
-        CodingStage::Fix => Stage::Fix,
-        CodingStage::Verify => Stage::Verify,
-    }
-}
-
-pub fn coding_stage_of(stage: Stage) -> CodingStage {
-    match stage {
-        Stage::Understand => CodingStage::Understand,
-        Stage::Examples => CodingStage::Examples,
-        Stage::Plan => CodingStage::Plan,
-        Stage::Make => CodingStage::Code,
-        Stage::Check => CodingStage::Test,
-        Stage::Review => CodingStage::Review,
-        Stage::Reproduce => CodingStage::Reproduce,
-        Stage::Locate => CodingStage::Locate,
-        Stage::Fix => CodingStage::Fix,
-        Stage::Verify => CodingStage::Verify,
-    }
-}
-
 pub fn scope_of(scope: CodingRunScope) -> CheckScope {
     match scope {
-        CodingRunScope::Examples => CheckScope::Shown,
+        CodingRunScope::Shown => CheckScope::Shown,
         CodingRunScope::All => CheckScope::All,
         CodingRunScope::Input => CheckScope::Own,
     }
@@ -469,7 +384,7 @@ pub fn scope_of(scope: CodingRunScope) -> CheckScope {
 
 pub fn coding_scope_of(scope: CheckScope) -> CodingRunScope {
     match scope {
-        CheckScope::Shown => CodingRunScope::Examples,
+        CheckScope::Shown => CodingRunScope::Shown,
         CheckScope::All => CodingRunScope::All,
         CheckScope::Own => CodingRunScope::Input,
     }
@@ -480,38 +395,6 @@ pub fn verdict_of(verdict: ExampleVerdict) -> LearnerCaseVerdict {
         ExampleVerdict::Right => LearnerCaseVerdict::Right,
         ExampleVerdict::Wrong => LearnerCaseVerdict::Wrong,
         ExampleVerdict::Invalid => LearnerCaseVerdict::Invalid,
-    }
-}
-
-/// The engine's cue as the coding code stores it.
-pub fn coding_cue_of(cue: &Cue) -> CodingCue {
-    match cue {
-        Cue::Opening => CodingCue::Opening,
-        Cue::Reply => CodingCue::Reply,
-        Cue::StageOpened(stage) => CodingCue::StageOpened(coding_stage_of(*stage)),
-        Cue::AskForSkipped(stages) => {
-            CodingCue::AskForSkipped(stages.iter().copied().map(coding_stage_of).collect())
-        }
-        Cue::CheckReview(scope) => CodingCue::RunReview(coding_scope_of(*scope)),
-        Cue::Submitted => CodingCue::Submitted,
-        Cue::Checkpoint => CodingCue::Checkpoint,
-        Cue::Idle => CodingCue::Idle,
-    }
-}
-
-/// The cue the coding code stored, in the engine's words.
-pub fn cue_of(cue: &CodingCue) -> Cue {
-    match cue {
-        CodingCue::Opening => Cue::Opening,
-        CodingCue::Reply => Cue::Reply,
-        CodingCue::StageOpened(stage) => Cue::StageOpened(stage_of(*stage)),
-        CodingCue::AskForSkipped(stages) => {
-            Cue::AskForSkipped(stages.iter().copied().map(stage_of).collect())
-        }
-        CodingCue::RunReview(scope) => Cue::CheckReview(scope_of(*scope)),
-        CodingCue::Submitted => Cue::Submitted,
-        CodingCue::Checkpoint => Cue::Checkpoint,
-        CodingCue::Idle => Cue::Idle,
     }
 }
 

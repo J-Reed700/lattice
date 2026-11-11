@@ -8,6 +8,7 @@
 //! What the golden request tests share: the text a request renders to, a model that keeps what it is sent, a
 //! fixture observation, and the comparison.
 
+use lattice_core::domain::learning::practice::work::{Form, Rung, Setting, Stage};
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::sync::Mutex;
@@ -22,11 +23,10 @@ use serde_json::Value;
 
 use crate::lab_runtime::LearningLabFile;
 use crate::practice::coding::dto::{
-    stages_of, CodeHintDto, CodeHintRung, CodingExampleDto, CodingSessionDto, CodingStage,
-    ExampleCoverageDto, ExampleVerdict,
+    CodeHintDto, CodingExampleDto, CodingSessionDto, ExampleCoverageDto, ExampleVerdict,
 };
 use crate::practice::coding::observation::test_support::{failing_run, problem, session};
-use crate::practice::coding::problem::{CodingSetting, CodingTask, Problem};
+use crate::practice::coding::problem::Problem;
 use crate::practice::practical_dto::{LearningSimulationSpeaker, LearningSimulationTurnDto};
 
 /// Compares `actual` with the golden text `expected` (from `include_str!`). A mismatch panics with the whole
@@ -173,12 +173,12 @@ fn turn(
 /// The fixture problem, a session of `task` in `setting` that holds a failing run, changes since the draft was last
 /// seen, learner examples, a hint and a transcript, and the draft last seen. The stage is the third of the task's.
 pub(crate) fn rich_session(
-    task: CodingTask,
-    setting: CodingSetting,
+    task: Form,
+    setting: Setting,
 ) -> (Problem, CodingSessionDto, Vec<LearningLabFile>) {
     let problem = problem();
-    let stages = stages_of(task);
-    let stage: CodingStage = stages.get(2).copied().unwrap_or(CodingStage::Code);
+    let stages = task.stages(true);
+    let stage: Stage = stages.get(2).copied().unwrap_or(Stage::Make);
     let mut session = session(&problem, setting, stage);
     session.task = task;
     session.stages = stages.to_vec();
@@ -208,7 +208,7 @@ pub(crate) fn rich_session(
     };
     session.hints = vec![CodeHintDto {
         ordinal: 0,
-        rung: CodeHintRung::Nudge,
+        rung: Rung::Nudge,
         text: "What should the loop do with each value?".to_owned(),
         reason: "The draft never reads the values.".to_owned(),
         lines: Vec::new(),

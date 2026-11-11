@@ -9,46 +9,6 @@ pub const SOLUTION_PATH: &str = "solution.py";
 /// Where the proven problem is stored: a check file, so no public read returns it.
 pub const PROBLEM_FILE_PATH: &str = "problem/problem.json";
 
-/// What the learner is asked to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "snake_case")]
-pub enum CodingTask {
-    Problem,
-    BugFix,
-}
-
-/// Who the counterpart is, and what the learner may see.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "snake_case")]
-pub enum CodingSetting {
-    Coached,
-    Mock,
-    Watched,
-}
-
-/// Something a setting may keep from the learner until the debrief.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Hidden {
-    /// A failing hidden case's input, expected output and actual output.
-    FailingCase,
-    /// The description of a misreading the learner's examples don't catch yet.
-    UncaughtMisreading,
-    /// The reference solution.
-    WorkedSolution,
-}
-
-impl CodingSetting {
-    /// Whether the learner may see `hidden` during the session, once they have `submitted` or not. The debrief
-    /// shows everything.
-    pub fn discloses(self, hidden: Hidden, submitted: bool) -> bool {
-        match (self, hidden) {
-            (Self::Coached, Hidden::FailingCase | Hidden::UncaughtMisreading) => true,
-            (Self::Coached, Hidden::WorkedSolution) => submitted,
-            (Self::Mock | Self::Watched, _) => false,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ProblemDifficulty {
@@ -139,7 +99,7 @@ pub struct Misreading {
     pub killed_by: Vec<String>,
 }
 
-/// Everything the counterpart may see. The learner's view is narrower and is cut by `CodingSetting::discloses`.
+/// Everything the counterpart may see. The learner's view is narrower and is cut by `Setting::discloses`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ProblemSpec {

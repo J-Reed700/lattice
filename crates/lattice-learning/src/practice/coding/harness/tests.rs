@@ -209,7 +209,7 @@ async fn setup(pool: &SqlitePool) -> Result<Setup> {
     let timestamp = now();
     sqlx::query(
         "INSERT INTO learning_practical_activities(id, program_id, lesson_id, predecessor_id, kind, title, brief, status, practice_mode, allowed_aids_json, outcome_ids_json, source_version_ids_json, rubric_json, runtime_kind, runtime_profile_id, runtime_engine, runtime_image_id, runtime_command_json, runtime_limits_json, generator_model, revision, created_at, updated_at, builtin_runtime, builtin_runtime_version) \
-         VALUES(?, ?, ?, NULL, 'coding_problem', 'Add two numbers', 'Brief', 'ready', 'practice', '[]', '[]', '[]', '[]', 'none', NULL, NULL, NULL, NULL, NULL, 'fixture-model', 0, ?, ?, 'python', ?)",
+         VALUES(?, ?, ?, NULL, 'exercise', 'Add two numbers', 'Brief', 'ready', 'practice', '[]', '[]', '[]', '[]', 'none', NULL, NULL, NULL, NULL, NULL, 'fixture-model', 0, ?, ?, 'python', ?)",
     )
     .bind(&activity_id)
     .bind(&program_id)
@@ -253,7 +253,7 @@ async fn setup(pool: &SqlitePool) -> Result<Setup> {
         .execute(pool)
         .await
         .map_err(db)?;
-    sqlx::query("INSERT INTO learning_coding_sessions(id,program_id,activity_id,task,setting,stage,draft_json,created_at) VALUES(?,?,?,'problem','coached','understand','[]',?)")
+    sqlx::query("INSERT INTO learning_exercise_sessions(id,program_id,activity_id,task,setting,stage,draft_json,created_at) VALUES(?,?,?,'problem','coached','understand','[]',?)")
         .bind(&session_id)
         .bind(&program_id)
         .bind(&activity_id)
@@ -294,7 +294,7 @@ fn coding_start(
 ) -> CodingRunStart {
     CodingRunStart {
         base: request,
-        coding_session_id: setup.session_id.clone(),
+        exercise_session_id: setup.session_id.clone(),
         scope,
         cases: three_cases(),
         mine_ids: vec!["exact".into()],
@@ -562,7 +562,7 @@ async fn each_coding_run_gets_its_own_nonce_and_records_its_session_and_scope() 
     let pool = crate::tests::pool().await?;
     let setup = setup(&pool).await?;
     let mut nonces = Vec::new();
-    for scope in [CodingRunScope::Examples, CodingRunScope::Input] {
+    for scope in [CodingRunScope::Shown, CodingRunScope::Input] {
         let request = run_request(&setup, vec![("solution.py", "x = 1\n")]);
         let start = coding_start(&setup, request.clone(), scope);
         let prepared = setup
@@ -574,7 +574,7 @@ async fn each_coding_run_gets_its_own_nonce_and_records_its_session_and_scope() 
         assert_eq!(harness.nonce.len(), 32);
         nonces.push(harness.nonce.clone());
         let (session, stored_scope): (Option<String>, Option<String>) = sqlx::query_as(
-            "SELECT coding_session_id, scope FROM learning_practical_runs WHERE id=?",
+            "SELECT exercise_session_id, scope FROM learning_practical_runs WHERE id=?",
         )
         .bind(&request.run_id)
         .fetch_one(&pool)
@@ -582,7 +582,7 @@ async fn each_coding_run_gets_its_own_nonce_and_records_its_session_and_scope() 
         .map_err(db)?;
         assert_eq!(session.as_deref(), Some(setup.session_id.as_str()));
         let expected = match start.scope {
-            CodingRunScope::Examples => "examples",
+            CodingRunScope::Shown => "shown",
             CodingRunScope::All => "all",
             CodingRunScope::Input => "input",
         };

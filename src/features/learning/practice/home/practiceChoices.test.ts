@@ -44,17 +44,17 @@ describe('what Start does', () => {
   const context = { lessonId: 'lesson-1', profile: profile({ language: 'Go', company: 'Acme', role: 'Engineer' }) };
 
   it('starts a coached coding build for the Code card with the chosen sentence', () => {
-    const action = startAction('code', { difficulty: 'hard', language: 'go', task: 'bug_fix' }, context);
+    const action = startAction('code', { difficulty: 'hard', language: 'go', task: 'repair' }, context);
     expect(action).toMatchObject({
       kind: 'coding-build',
-      choice: { lessonId: 'lesson-1', task: 'bug_fix', setting: 'coached', language: 'python', difficulty: 'hard' },
+      choice: { lessonId: 'lesson-1', task: 'repair', setting: 'coached', language: 'python', difficulty: 'hard' },
     });
   });
 
   it('builds code in Python whatever the profile or the sentence says', () => {
     const js = { lessonId: 'lesson-1', profile: profile({ language: 'JavaScript' }) };
-    expect(startAction('code', { task: 'problem' }, js)).toMatchObject({ choice: { language: 'python' } });
-    expect(startAction('code', { task: 'bug_fix', language: 'javascript' }, js)).toMatchObject({ choice: { language: 'python' } });
+    expect(startAction('code', { task: 'build' }, js)).toMatchObject({ choice: { language: 'python' } });
+    expect(startAction('code', { task: 'repair', language: 'javascript' }, js)).toMatchObject({ choice: { language: 'python' } });
   });
 
   it('builds a live coding round of the Mock card in Python', () => {
@@ -69,7 +69,7 @@ describe('what Start does', () => {
 
   it('turns a coding round of the Mock card into a timed build in the chosen setting', () => {
     const action = startAction('mock', { round: 'debugging', setting: 'watched', minutes: '30' }, context);
-    expect(action).toMatchObject({ kind: 'coding-build', choice: { task: 'bug_fix', setting: 'watched', budgetSeconds: 1800 } });
+    expect(action).toMatchObject({ kind: 'coding-build', choice: { task: 'repair', setting: 'watched', budgetSeconds: 1800 } });
   });
 
   it('uses one difficulty for coding rounds of the Mock card', () => {

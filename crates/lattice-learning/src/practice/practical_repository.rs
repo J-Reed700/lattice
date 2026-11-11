@@ -60,7 +60,7 @@ fn parse_engine(value: &str) -> Result<LearningContainerEngine> {
 fn kind_name(value: LearningPracticalActivityKind) -> &'static str {
     match value {
         LearningPracticalActivityKind::CodeLab => "code_lab",
-        LearningPracticalActivityKind::CodingProblem => "coding_problem",
+        LearningPracticalActivityKind::Exercise => "exercise",
         LearningPracticalActivityKind::Debugging => "debugging",
         LearningPracticalActivityKind::CodeReview => "code_review",
         LearningPracticalActivityKind::Incident => "incident",
@@ -75,7 +75,7 @@ fn kind_name(value: LearningPracticalActivityKind) -> &'static str {
 fn parse_kind(value: &str) -> Result<LearningPracticalActivityKind> {
     match value {
         "code_lab" => Ok(LearningPracticalActivityKind::CodeLab),
-        "coding_problem" => Ok(LearningPracticalActivityKind::CodingProblem),
+        "exercise" => Ok(LearningPracticalActivityKind::Exercise),
         "debugging" => Ok(LearningPracticalActivityKind::Debugging),
         "code_review" => Ok(LearningPracticalActivityKind::CodeReview),
         "incident" => Ok(LearningPracticalActivityKind::Incident),

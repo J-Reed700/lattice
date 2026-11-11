@@ -159,7 +159,7 @@ describe('CodingSession', () => {
     api.respond.mockImplementation(() => new Promise(() => undefined));
     api.run.mockResolvedValue(codingSession({ runs: [codingRun([passing])] }));
     const user = userEvent.setup();
-    renderSession(codingSession({ stage: 'code' }));
+    renderSession(codingSession({ stage: 'make' }));
 
     await user.click(await screen.findByRole('button', { name: 'Send' }));
     expect(await screen.findByText('Reading your code…')).toBeInTheDocument();
@@ -172,13 +172,13 @@ describe('CodingSession', () => {
     const runButton = screen.getByRole('button', { name: /Run examples/ });
     expect(runButton).toBeEnabled();
     await user.click(runButton);
-    expect(api.run).toHaveBeenCalledWith(expect.objectContaining({ scope: 'examples' }));
+    expect(api.run).toHaveBeenCalledWith(expect.objectContaining({ scope: 'shown' }));
     expect(screen.getByLabelText('numbers')).toBeEnabled();
   });
 
   it('runs the examples on Ctrl+Enter and shows the shortcuts', async () => {
     api.run.mockResolvedValue(codingSession({ runs: [codingRun([passing])] }));
-    renderSession(codingSession({ stage: 'code' }));
+    renderSession(codingSession({ stage: 'make' }));
     const box = await editor();
 
     expect(screen.getByRole('button', { name: /Run examples/ })).toHaveTextContent('Ctrl+Enter');
@@ -190,7 +190,7 @@ describe('CodingSession', () => {
         expect.objectContaining({
           programId: 'program-1',
           sessionId: 'session-1',
-          scope: 'examples',
+          scope: 'shown',
           files: [expect.objectContaining({ path: 'solution.py' })],
         }),
       ),
@@ -200,7 +200,7 @@ describe('CodingSession', () => {
   it('lists failures first and announces the summary', async () => {
     renderSession(
       codingSession({
-        stage: 'test',
+        stage: 'check',
         runs: [codingRun([passing, passingToo, failingHidden])],
       }),
     );
@@ -221,7 +221,7 @@ describe('CodingSession', () => {
       codingSession({
         setting: 'mock',
         settingsUsed: ['mock'],
-        stage: 'test',
+        stage: 'check',
         runs: [codingRun([failingHidden])],
       }),
     );
@@ -232,7 +232,7 @@ describe('CodingSession', () => {
 
     renderSession(
       codingSession({
-        stage: 'test',
+        stage: 'check',
         runs: [
           codingRun([
             { ...failingHidden, args: ['[2, 2]', '4'], expected: '[0, 1]', actual: '[]' },
@@ -251,16 +251,16 @@ describe('CodingSession', () => {
       reason: 'It points at what to look at.',
       lines: [],
       path: null,
-      stage: 'code',
+      stage: 'make',
       runId: null,
       inRole: false,
       at: 1,
     };
     api.askHint.mockResolvedValue(
-      codingSession({ hints: [nudge], nextRung: 'idea', stage: 'code' }),
+      codingSession({ hints: [nudge], nextRung: 'idea', stage: 'make' }),
     );
     const user = userEvent.setup();
-    renderSession(codingSession({ stage: 'code' }));
+    renderSession(codingSession({ stage: 'make' }));
 
     expect(screen.queryByRole('button', { name: /Get the idea/ })).not.toBeInTheDocument();
     await user.click(await screen.findByRole('button', { name: /Get a nudge/ }));
@@ -277,7 +277,7 @@ describe('CodingSession', () => {
   });
 
   it('offers I am stuck instead of the ladder in Watched', async () => {
-    renderSession(codingSession({ setting: 'watched', settingsUsed: ['watched'], stage: 'code' }));
+    renderSession(codingSession({ setting: 'watched', settingsUsed: ['watched'], stage: 'make' }));
     expect(await screen.findByRole('button', { name: /I'm stuck/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Get a nudge/ })).not.toBeInTheDocument();
     expect(screen.getByText(/Talk through your thinking: type or use the mic/)).toBeInTheDocument();
@@ -366,7 +366,7 @@ describe('CodingSession', () => {
 
   it('sends a draft observation after a typing pause in Watched', async () => {
     api.observeDraft.mockResolvedValue(codingSession({ setting: 'watched' }));
-    renderSession(codingSession({ setting: 'watched', settingsUsed: ['watched'], stage: 'code' }));
+    renderSession(codingSession({ setting: 'watched', settingsUsed: ['watched'], stage: 'make' }));
     const box = await editor();
 
     vi.useFakeTimers();
@@ -381,7 +381,7 @@ describe('CodingSession', () => {
 
   it('sends Idle in Coached after three minutes with no activity', async () => {
     api.observeDraft.mockResolvedValue(codingSession());
-    renderSession(codingSession({ stage: 'code' }));
+    renderSession(codingSession({ stage: 'make' }));
     const box = await editor();
 
     vi.useFakeTimers();
@@ -428,9 +428,9 @@ describe('CodingSession', () => {
     }
 
     it('repeats a failed run under the same operation and run ids', async () => {
-      api.run.mockRejectedValueOnce(new Error('timed out')).mockResolvedValue(codingSession({ stage: 'code' }));
+      api.run.mockRejectedValueOnce(new Error('timed out')).mockResolvedValue(codingSession({ stage: 'make' }));
       const user = userEvent.setup();
-      renderSession(codingSession({ stage: 'code' }));
+      renderSession(codingSession({ stage: 'make' }));
 
       await user.click(await screen.findByRole('button', { name: /Run examples/ }));
       await user.click(await screen.findByRole('button', { name: 'Try again' }));
@@ -441,9 +441,9 @@ describe('CodingSession', () => {
     });
 
     it('repeats a failed hint under the same operation id', async () => {
-      api.askHint.mockRejectedValueOnce(new Error('timed out')).mockResolvedValue(codingSession({ stage: 'code' }));
+      api.askHint.mockRejectedValueOnce(new Error('timed out')).mockResolvedValue(codingSession({ stage: 'make' }));
       const user = userEvent.setup();
-      renderSession(codingSession({ stage: 'code' }));
+      renderSession(codingSession({ stage: 'make' }));
 
       await user.click(await screen.findByRole('button', { name: /Get a nudge/ }));
       await user.click(await screen.findByRole('button', { name: 'Try again' }));
@@ -477,9 +477,9 @@ describe('CodingSession', () => {
     });
 
     it('gives each fresh click new ids', async () => {
-      api.run.mockResolvedValue(codingSession({ stage: 'code' }));
+      api.run.mockResolvedValue(codingSession({ stage: 'make' }));
       const user = userEvent.setup();
-      renderSession(codingSession({ stage: 'code' }));
+      renderSession(codingSession({ stage: 'make' }));
 
       const button = await screen.findByRole('button', { name: /Run examples/ });
       await user.click(button);

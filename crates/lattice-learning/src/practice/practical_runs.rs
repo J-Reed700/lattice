@@ -98,7 +98,7 @@ pub async fn start_run(
 #[derive(Clone)]
 pub struct CodingRunStart {
     pub base: StartLearningPracticalRunRequestDto,
-    pub coding_session_id: String,
+    pub exercise_session_id: String,
     pub scope: CodingRunScope,
     pub cases: Vec<ProblemCase>,
     /// The ids of `cases` that are the learner's own examples.

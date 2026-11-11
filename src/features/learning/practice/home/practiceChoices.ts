@@ -54,8 +54,8 @@ export const DIFFICULTY_OPTIONS: ChoiceOption[] = [
 ];
 
 export const TASK_OPTIONS: ChoiceOption[] = [
-  { value: 'problem', label: 'problem' },
-  { value: 'bug_fix', label: 'bug to fix' },
+  { value: 'build', label: 'problem' },
+  { value: 'repair', label: 'bug to fix' },
   { value: 'project', label: 'project' },
 ];
 
@@ -119,7 +119,7 @@ const SCENARIO_KINDS: Record<string, Wire.LearningPracticalActivityKind> = {
 export type CodeCardTask = Wire.CodingTask | 'project';
 
 function asTask(value: string | undefined): CodeCardTask {
-  return value === 'bug_fix' || value === 'project' ? value : 'problem';
+  return value === 'repair' || value === 'project' ? value : 'build';
 }
 
 function asDifficulty(value: string | undefined): Wire.ProblemDifficulty {
@@ -157,7 +157,7 @@ export function startAction(card: CardId, values: Record<string, string>, contex
           kind: 'coding-build',
           choice: {
             lessonId: context.lessonId,
-            task: round === 'debugging' ? 'bug_fix' : 'problem',
+            task: round === 'debugging' ? 'repair' : 'build',
             setting: values.setting === 'watched' ? 'watched' : 'mock',
             language: CODING_LANGUAGE,
             difficulty: MOCK_DIFFICULTY,

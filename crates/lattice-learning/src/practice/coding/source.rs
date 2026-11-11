@@ -5,11 +5,11 @@ use crate::generation::parse_json;
 use crate::lessons::structured_call::reask;
 use crate::model_call;
 use crate::practice::coding::problem::{
-    CaseCompare, CaseVisibility, CodingTask, Misreading, Problem, ProblemCase,
-    ProblemClarification, ProblemDifficulty, ProblemSignature, ProblemSpec, SignatureParam,
+    CaseCompare, CaseVisibility, Misreading, Problem, ProblemCase, ProblemClarification,
+    ProblemDifficulty, ProblemSignature, ProblemSpec, SignatureParam,
 };
 use crate::practice::kinds::program::shape::{
-    brief_of, built_problem_of, case_of, form_of, misreading_of, solution_piece, task_of,
+    brief_of, built_problem_of, case_of, misreading_of, program_form, solution_piece,
 };
 use crate::practice::kinds::program::toolchain::Toolchains;
 use crate::practice::kinds::program::KIND;
@@ -61,7 +61,7 @@ pub struct LessonBrief {
 pub struct ProblemRequest {
     pub program_id: String,
     pub lesson: Option<LessonBrief>,
-    pub task: CodingTask,
+    pub task: Form,
     pub language: String,
     pub difficulty: ProblemDifficulty,
     /// Ids from the pattern catalogue that the problem must call for.
@@ -144,7 +144,7 @@ fn request_of(commission: &Commission<'_>) -> Result<ProblemRequest> {
             title: lesson.title.clone(),
             objective: lesson.objective.clone(),
         }),
-        task: task_of(commission.form)?,
+        task: program_form(commission.form)?,
         language: facts.language,
         difficulty: options.difficulty,
         patterns: facts.patterns,
@@ -235,7 +235,7 @@ pub async fn build_problem(
     let making = Making {
         program_id: &request.program_id,
         lesson: parts.lesson.as_ref(),
-        form: form_of(request.task),
+        form: request.task,
         options: &parts.options,
         facts: &parts.facts,
     };
@@ -360,7 +360,7 @@ fn prompt(request: &ProblemRequest, runtime: &str) -> String {
 - \"clarifications\" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume."
             .to_owned(),
     );
-    if request.task == CodingTask::BugFix {
+    if request.task == Form::Repair {
         parts.push(
             "The learner will be handed one misreading as buggy code to repair, so write each misreading as a small, realistic change to the reference (an off-by-one, a wrong comparison, a missed case) that keeps the function's shape."
                 .to_owned(),

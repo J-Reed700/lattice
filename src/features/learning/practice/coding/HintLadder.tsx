@@ -15,7 +15,7 @@ const RUNGS: Record<Wire.CodeHintRung, { name: string; ask: string }> = {
   nudge: { name: 'Nudge', ask: 'Get a nudge' },
   idea: { name: 'Idea', ask: 'Get the idea' },
   plan: { name: 'Plan', ask: 'Get a plan' },
-  line: { name: 'Point at the line', ask: 'Point at the line' },
+  point: { name: 'Point at the line', ask: 'Point at the line' },
 };
 
 function lineList(hint: Wire.CodeHintDto): string {
@@ -45,7 +45,7 @@ export function HintLadder({ hints, nextRung, asking = false, onAsk }: HintLadde
               </div>
               <p className="m-0 mt-1.5 text-sm font-medium text-text-primary">{hint.text}</p>
               <p className="m-0 mt-1 text-sm text-text-secondary">Why: {hint.reason}</p>
-              {hint.rung === 'line' && hint.lines.length > 0 ? (
+              {hint.rung === 'point' && hint.lines.length > 0 ? (
                 <p className="m-0 mt-1 font-mono text-sm text-danger-fg">{lineList(hint)}</p>
               ) : null}
             </li>

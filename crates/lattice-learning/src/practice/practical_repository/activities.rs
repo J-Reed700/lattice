@@ -170,7 +170,7 @@ impl LearningPracticalRepository {
             .iter()
             .find(|file| file.path == PROBLEM_FILE_PATH);
         match (request.kind, problem_file) {
-            (LearningPracticalActivityKind::CodingProblem, Some(file)) => {
+            (LearningPracticalActivityKind::Exercise, Some(file)) => {
                 if file.role != PracticalFileRole::Check || file.editable {
                     return Err(invalid(
                         "A coding problem must remain private and read-only.",
@@ -178,7 +178,7 @@ impl LearningPracticalRepository {
                 }
                 decode::<Problem>(&file.content)?;
             }
-            (LearningPracticalActivityKind::CodingProblem, None) => {
+            (LearningPracticalActivityKind::Exercise, None) => {
                 return Err(invalid("A coding problem needs its saved problem file."));
             }
             (_, Some(_)) => {
@@ -415,7 +415,7 @@ impl LearningPracticalRepository {
         let activity = Self::internal_activity(&mut tx, program_id, activity_id).await;
         tx.commit().await.map_err(db)?;
         let activity = activity?;
-        if activity.kind != LearningPracticalActivityKind::CodingProblem {
+        if activity.kind != LearningPracticalActivityKind::Exercise {
             return Err(invalid("This activity is not a coding problem."));
         }
         let file = activity

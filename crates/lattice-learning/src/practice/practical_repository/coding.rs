@@ -8,17 +8,16 @@ use crate::lab_runtime::LearningLabFile;
 use crate::operations::Operation;
 use crate::persistence::db;
 use crate::practical_dto::LearningPracticalActivityKind;
-use crate::practice::coding::dto::{
-    stages_of, ClockDto, CodeHintDto, CodingRunScope, CodingStage, ExampleVerdict,
-};
+use crate::practice::coding::dto::{ClockDto, CodeHintDto, CodingRunScope, ExampleVerdict};
 use crate::practice::coding::examples::ExampleCheck;
-use crate::practice::coding::policy::CodingCue;
-use crate::practice::coding::problem::{CodingSetting, CodingTask, Hidden, Problem};
+use crate::practice::coding::problem::Problem;
 use crate::practice::coding::records::{
     Applied, CodingOp, CodingRow, NewCodingSession, NewHint, RunFinished, StageMove,
 };
-use crate::practice::kinds::program::shape::setting_of;
+use crate::practice::kinds::program::KIND;
 use crate::practice::session::budget;
+use crate::practice::session::policy::Cue;
+use lattice_core::domain::learning::practice::work::{Form, Hidden, KindId, Setting, Stage};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::{Transactions, WriteTx};
 use serde::{de::DeserializeOwned, Serialize};
@@ -67,10 +66,10 @@ pub(super) fn parse_row(row: &SqliteRow) -> Result<CodingRow> {
         id: row.get("id"),
         program_id: row.get("program_id"),
         activity_id: row.get("activity_id"),
-        task: from_name(row.get("task"))?,
+        kind: KindId::new(&row.get::<String, _>("kind")),
+        task: from_name(row.get("form"))?,
         setting: from_name(row.get("setting"))?,
-        stage: CodingStage::parse(row.get("stage"))
-            .ok_or_else(|| AppError::Database("Invalid coding stage".into()))?,
+        stage: from_name(row.get("stage"))?,
         budget_seconds: row
             .get::<Option<i64>, _>("budget_seconds")
             .map(to_u32)
@@ -98,7 +97,7 @@ pub(super) async fn row_on(
     program_id: &str,
     session_id: &str,
 ) -> Result<CodingRow> {
-    let row = sqlx::query("SELECT * FROM learning_coding_sessions WHERE id=? AND program_id=?")
+    let row = sqlx::query("SELECT * FROM learning_exercise_sessions WHERE id=? AND program_id=?")
         .bind(session_id)
         .bind(program_id)
         .fetch_optional(&mut *connection)
@@ -140,13 +139,13 @@ pub(super) async fn add_event(
     at: i64,
 ) -> Result<u32> {
     let ordinal: i64 = sqlx::query_scalar(
-        "SELECT coalesce(max(ordinal),-1)+1 FROM learning_coding_events WHERE session_id=?",
+        "SELECT coalesce(max(ordinal),-1)+1 FROM learning_exercise_session_events WHERE session_id=?",
     )
     .bind(session_id)
     .fetch_one(&mut *connection)
     .await
     .map_err(db)?;
-    sqlx::query("INSERT INTO learning_coding_events(session_id,ordinal,kind,payload_json,at) VALUES(?,?,?,?,?)")
+    sqlx::query("INSERT INTO learning_exercise_session_events(session_id,ordinal,kind,payload_json,at) VALUES(?,?,?,?,?)")
         .bind(session_id)
         .bind(ordinal)
         .bind(kind)
@@ -159,7 +158,7 @@ pub(super) async fn add_event(
 }
 
 async fn bump_revision(connection: &mut SqliteConnection, session_id: &str) -> Result<()> {
-    sqlx::query("UPDATE learning_coding_sessions SET revision=revision+1 WHERE id=?")
+    sqlx::query("UPDATE learning_exercise_sessions SET revision=revision+1 WHERE id=?")
         .bind(session_id)
         .execute(&mut *connection)
         .await
@@ -250,16 +249,17 @@ impl LearningPracticalRepository {
         }
         Self::active_program(&mut tx, new.program_id).await?;
         let activity = Self::internal_activity(&mut tx, new.program_id, new.activity_id).await?;
-        if activity.kind != LearningPracticalActivityKind::CodingProblem {
+        if activity.kind != LearningPracticalActivityKind::Exercise {
             return Err(invalid("This activity is not a coding problem."));
         }
         let problem = problem_of(&activity)?;
         let task = if problem.bug.is_some() {
-            CodingTask::BugFix
+            Form::Repair
         } else {
-            CodingTask::Problem
+            Form::Build
         };
-        let first = stages_of(task)
+        let first = task
+            .stages(true)
             .first()
             .copied()
             .ok_or_else(|| invalid("This kind of task has no stages yet."))?;
@@ -276,14 +276,14 @@ impl LearningPracticalRepository {
             return Err(invalid("This coding problem has no starter file."));
         }
         let budget = budget::at_start(
-            setting_of(new.setting),
+            new.setting,
             new.budget_seconds,
             (new.default_budget)(&problem)?,
         );
         let session_id = uuid::Uuid::new_v4().to_string();
         let counterpart = match new.setting {
-            CodingSetting::Coached => "Coach",
-            CodingSetting::Mock | CodingSetting::Watched => "Interviewer",
+            Setting::Coached => "Coach",
+            Setting::Mock | Setting::Watched => "Interviewer",
         };
         sqlx::query("INSERT INTO learning_simulation_sessions(id,program_id,activity_id,activity_revision,activity_snapshot_json,practice_session_id,operation_id,payload_hash,learner_role,counterpart_role,status,revision,created_at,updated_at,submitted_at) VALUES(?,?,?,?,?,NULL,?,?,'Candidate',?,'active',0,?,?,NULL)")
             .bind(&session_id).bind(new.program_id).bind(new.activity_id)
@@ -291,9 +291,9 @@ impl LearningPracticalRepository {
             .bind(op.operation_id).bind(op.payload_hash).bind(counterpart)
             .bind(at).bind(at)
             .execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("INSERT INTO learning_coding_sessions(id,program_id,activity_id,task,setting,stage,budget_seconds,active_ms,opened_at,draft_json,pending_cue_json,submitted_at,solution_seen_at,finished_at,revision,created_at) VALUES(?,?,?,?,?,?,?,0,NULL,?,NULL,NULL,NULL,NULL,0,?)")
+        sqlx::query("INSERT INTO learning_exercise_sessions(id,program_id,activity_id,kind,form,setting,stage,budget_seconds,active_ms,opened_at,draft_json,pending_cue_json,submitted_at,solution_seen_at,finished_at,revision,created_at) VALUES(?,?,?,?,?,?,?,?,0,NULL,?,NULL,NULL,NULL,NULL,0,?)")
             .bind(&session_id).bind(new.program_id).bind(new.activity_id)
-            .bind(name_of(&task)?).bind(name_of(&new.setting)?).bind(first.as_str())
+            .bind(KIND).bind(name_of(&task)?).bind(name_of(&new.setting)?).bind(name_of(&first)?)
             .bind(budget.map(i64::from)).bind(json(&starter)?).bind(at)
             .execute(&mut *tx).await.map_err(db)?;
         add_event(
@@ -315,7 +315,7 @@ impl LearningPracticalRepository {
         program_id: &str,
         session_id: &str,
         op: &CodingOp<'_>,
-        to: CodingStage,
+        to: Stage,
         expected_revision: i64,
         at: i64,
     ) -> Result<Applied<StageMove>> {
@@ -329,8 +329,8 @@ impl LearningPracticalRepository {
         }
         let row = open_row_on(&mut tx, program_id, session_id).await?;
         check_revision(&row, expected_revision)?;
-        let stages = stages_of(row.task);
-        let position = |stage: CodingStage| stages.iter().position(|each| *each == stage);
+        let stages = row.task.stages(true);
+        let position = |stage: Stage| stages.iter().position(|each| *each == stage);
         let target = position(to).ok_or_else(|| invalid("That stage is not part of this task."))?;
         let current = position(row.stage).ok_or_else(|| {
             AppError::Database("The session is in a stage its task lacks.".into())
@@ -351,8 +351,8 @@ impl LearningPracticalRepository {
             skipped,
         };
         if moved.from != moved.to {
-            sqlx::query("UPDATE learning_coding_sessions SET stage=? WHERE id=?")
-                .bind(to.as_str())
+            sqlx::query("UPDATE learning_exercise_sessions SET stage=? WHERE id=?")
+                .bind(name_of(&to)?)
                 .bind(session_id)
                 .execute(&mut *tx)
                 .await
@@ -486,7 +486,7 @@ impl LearningPracticalRepository {
         uuid(session_id, "coding session")?;
         let mut tx = self.begin_coding_write(program_id).await?;
         open_row_on(&mut tx, program_id, session_id).await?;
-        sqlx::query("UPDATE learning_coding_sessions SET draft_json=? WHERE id=?")
+        sqlx::query("UPDATE learning_exercise_sessions SET draft_json=? WHERE id=?")
             .bind(json(files)?)
             .bind(session_id)
             .execute(&mut *tx)
@@ -509,7 +509,7 @@ impl LearningPracticalRepository {
         let mut tx = self.begin_coding_write(program_id).await?;
         open_row_on(&mut tx, program_id, session_id).await?;
         let recorded: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM learning_coding_events WHERE session_id=? AND kind='run' AND json_extract(payload_json,'$.runId')=?",
+            "SELECT 1 FROM learning_exercise_session_events WHERE session_id=? AND kind='check' AND json_extract(payload_json,'$.runId')=?",
         )
         .bind(session_id)
         .bind(finished.run_id)
@@ -528,9 +528,9 @@ impl LearningPracticalRepository {
             {
                 map.insert("referenceActual".into(), actual.into());
             }
-            add_event(&mut tx, session_id, "run", &payload, at).await?;
+            add_event(&mut tx, session_id, "check", &payload, at).await?;
             if finished.submit {
-                sqlx::query("UPDATE learning_coding_sessions SET submitted_at=coalesce(submitted_at,?) WHERE id=?")
+                sqlx::query("UPDATE learning_exercise_sessions SET submitted_at=coalesce(submitted_at,?) WHERE id=?")
                     .bind(at)
                     .bind(session_id)
                     .execute(&mut *tx)
@@ -548,7 +548,7 @@ impl LearningPracticalRepository {
         &self,
         program_id: &str,
         session_id: &str,
-        cue: &CodingCue,
+        cue: &Cue,
     ) -> Result<bool> {
         uuid(session_id, "coding session")?;
         let mut tx = self.begin_coding_write(program_id).await?;
@@ -559,7 +559,7 @@ impl LearningPracticalRepository {
                 .as_ref()
                 .is_none_or(|pending| cue.outranks(pending));
         if replaces {
-            sqlx::query("UPDATE learning_coding_sessions SET pending_cue_json=? WHERE id=?")
+            sqlx::query("UPDATE learning_exercise_sessions SET pending_cue_json=? WHERE id=?")
                 .bind(json(cue)?)
                 .bind(session_id)
                 .execute(&mut *tx)
@@ -572,15 +572,11 @@ impl LearningPracticalRepository {
 
     /// Takes the pending cue: it is cleared in the same statement that returns it, so two callers never answer it
     /// twice.
-    pub async fn take_coding_cue(
-        &self,
-        program_id: &str,
-        session_id: &str,
-    ) -> Result<Option<CodingCue>> {
+    pub async fn take_coding_cue(&self, program_id: &str, session_id: &str) -> Result<Option<Cue>> {
         uuid(session_id, "coding session")?;
         let mut tx = self.begin_coding_write(program_id).await?;
         let taken: Option<String> = sqlx::query_scalar(
-            "SELECT pending_cue_json FROM learning_coding_sessions WHERE id=? AND program_id=?",
+            "SELECT pending_cue_json FROM learning_exercise_sessions WHERE id=? AND program_id=?",
         )
         .bind(session_id)
         .bind(program_id)
@@ -590,7 +586,7 @@ impl LearningPracticalRepository {
         .flatten();
         if taken.is_some() {
             sqlx::query(
-                "UPDATE learning_coding_sessions SET pending_cue_json=NULL WHERE id=? AND program_id=?",
+                "UPDATE learning_exercise_sessions SET pending_cue_json=NULL WHERE id=? AND program_id=?",
             )
             .bind(session_id)
             .bind(program_id)
@@ -607,11 +603,11 @@ impl LearningPracticalRepository {
         &self,
         program_id: &str,
         session_id: &str,
-        cue: &CodingCue,
+        cue: &Cue,
     ) -> Result<()> {
         uuid(session_id, "coding session")?;
         let mut tx = self.begin_coding_write(program_id).await?;
-        sqlx::query("UPDATE learning_coding_sessions SET pending_cue_json=? WHERE id=? AND program_id=? AND pending_cue_json IS NULL AND finished_at IS NULL")
+        sqlx::query("UPDATE learning_exercise_sessions SET pending_cue_json=? WHERE id=? AND program_id=? AND pending_cue_json IS NULL AND finished_at IS NULL")
             .bind(json(cue)?)
             .bind(session_id)
             .bind(program_id)
@@ -638,8 +634,8 @@ impl LearningPracticalRepository {
         let row = open_row_on(&mut tx, program_id, session_id).await?;
         if let Some(content) = reply {
             let speaker = match row.setting {
-                CodingSetting::Coached => "coach",
-                CodingSetting::Mock | CodingSetting::Watched => "counterpart",
+                Setting::Coached => "coach",
+                Setting::Mock | Setting::Watched => "counterpart",
             };
             add_turn(
                 &mut tx,
@@ -689,7 +685,7 @@ impl LearningPracticalRepository {
             &mut tx, program_id, session_id, "learner", content, None, at,
         )
         .await?;
-        sqlx::query("UPDATE learning_coding_sessions SET draft_json=? WHERE id=?")
+        sqlx::query("UPDATE learning_exercise_sessions SET draft_json=? WHERE id=?")
             .bind(json(files)?)
             .bind(session_id)
             .execute(&mut *tx)
@@ -723,14 +719,14 @@ impl LearningPracticalRepository {
         let row = open_row_on(&mut tx, program_id, session_id).await?;
         check_revision(&row, expected_revision)?;
         let given: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM learning_coding_events WHERE session_id=? AND kind='hint'",
+            "SELECT count(*) FROM learning_exercise_session_events WHERE session_id=? AND kind='hint'",
         )
         .bind(session_id)
         .fetch_one(&mut *tx)
         .await
         .map_err(db)?;
         let run_id: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM learning_practical_runs WHERE coding_session_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
+            "SELECT id FROM learning_practical_runs WHERE exercise_session_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
         )
         .bind(session_id)
         .fetch_optional(&mut *tx)
@@ -769,7 +765,7 @@ impl LearningPracticalRepository {
             )
             .await?;
         }
-        sqlx::query("UPDATE learning_coding_sessions SET draft_json=? WHERE id=?")
+        sqlx::query("UPDATE learning_exercise_sessions SET draft_json=? WHERE id=?")
             .bind(json(files)?)
             .bind(session_id)
             .execute(&mut *tx)
@@ -798,7 +794,7 @@ impl LearningPracticalRepository {
         if row.finished_at.is_none() {
             if let Some(opened) = row.opened_at {
                 let last_event: Option<i64> = sqlx::query_scalar(
-                    "SELECT max(at) FROM learning_coding_events WHERE session_id=?",
+                    "SELECT max(at) FROM learning_exercise_session_events WHERE session_id=?",
                 )
                 .bind(session_id)
                 .fetch_one(&mut *tx)
@@ -817,7 +813,7 @@ impl LearningPracticalRepository {
                 add_event(&mut tx, session_id, "opened", &serde_json::json!({}), at).await?;
                 opened_at = Some(at);
             }
-            sqlx::query("UPDATE learning_coding_sessions SET active_ms=?,opened_at=? WHERE id=?")
+            sqlx::query("UPDATE learning_exercise_sessions SET active_ms=?,opened_at=? WHERE id=?")
                 .bind(i64::try_from(active_ms).unwrap_or(i64::MAX))
                 .bind(opened_at)
                 .bind(session_id)
@@ -839,7 +835,7 @@ impl LearningPracticalRepository {
         program_id: &str,
         session_id: &str,
         op: &CodingOp<'_>,
-        setting: CodingSetting,
+        setting: Setting,
         default_budget_seconds: Option<u32>,
         expected_revision: i64,
         at: i64,
@@ -855,13 +851,9 @@ impl LearningPracticalRepository {
         let row = open_row_on(&mut tx, program_id, session_id).await?;
         check_revision(&row, expected_revision)?;
         if row.setting != setting {
-            let budget = budget::after_change(
-                setting_of(setting),
-                row.budget_seconds,
-                default_budget_seconds,
-            );
+            let budget = budget::after_change(setting, row.budget_seconds, default_budget_seconds);
             sqlx::query(
-                "UPDATE learning_coding_sessions SET setting=?,budget_seconds=? WHERE id=?",
+                "UPDATE learning_exercise_sessions SET setting=?,budget_seconds=? WHERE id=?",
             )
             .bind(name_of(&setting)?)
             .bind(budget.map(i64::from))
@@ -870,8 +862,8 @@ impl LearningPracticalRepository {
             .await
             .map_err(db)?;
             let counterpart = match setting {
-                CodingSetting::Coached => "Coach",
-                CodingSetting::Mock | CodingSetting::Watched => "Interviewer",
+                Setting::Coached => "Coach",
+                Setting::Mock | Setting::Watched => "Interviewer",
             };
             sqlx::query("UPDATE learning_simulation_sessions SET counterpart_role=? WHERE id=?")
                 .bind(counterpart)
@@ -920,7 +912,7 @@ impl LearningPracticalRepository {
             ));
         }
         if row.solution_seen_at.is_none() {
-            sqlx::query("UPDATE learning_coding_sessions SET solution_seen_at=? WHERE id=?")
+            sqlx::query("UPDATE learning_exercise_sessions SET solution_seen_at=? WHERE id=?")
                 .bind(at)
                 .bind(session_id)
                 .execute(&mut *tx)

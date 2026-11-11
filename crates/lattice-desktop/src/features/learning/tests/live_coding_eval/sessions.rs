@@ -13,6 +13,8 @@
 //! Reads `LATTICE_CODING_EVAL_PROBLEMS` (the `builds` folder of a run of eval 1), `LATTICE_CODING_EVAL_OUT`, and
 //! `LATTICE_CODING_EVAL_SESSION_PROBLEMS` (the number of problems, 4 without it: 20 sessions per setting).
 
+use crate::practice::session::policy::Cue;
+use lattice_core::domain::learning::practice::work::{Rung, Setting, Stage};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::time::Instant;
@@ -23,21 +25,18 @@ use lattice_core::domain::learning::practice::{
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_learning::coding::dto::{
-    AskCodingHintRequestDto, CheckCodingExampleRequestDto, CodeHintDto, CodeHintRung, CodingRunDto,
-    CodingRunScope, CodingSessionDto, CodingSessionRequestDto, CodingStage, DebriefFactsDto,
-    DraftObservation, FinishCodingSessionRequestDto, MoveCodingStageRequestDto,
-    ObserveCodingDraftRequestDto, RunCodingSessionRequestDto, SendCodingTurnRequestDto,
-    StartCodingSessionRequestDto,
+    AskCodingHintRequestDto, CheckCodingExampleRequestDto, CodeHintDto, CodingRunDto,
+    CodingRunScope, CodingSessionDto, CodingSessionRequestDto, DebriefFactsDto, DraftObservation,
+    FinishCodingSessionRequestDto, MoveCodingStageRequestDto, ObserveCodingDraftRequestDto,
+    RunCodingSessionRequestDto, SendCodingTurnRequestDto, StartCodingSessionRequestDto,
 };
-use lattice_learning::coding::policy::CodingCue;
-use lattice_learning::coding::problem::{CaseStatus, CodingSetting, Problem, SOLUTION_PATH};
+use lattice_learning::coding::problem::{CaseStatus, Problem, SOLUTION_PATH};
 use lattice_learning::coding::records::StoredRun;
 use lattice_learning::coding::session::{session_view, CodingSessions};
 use lattice_learning::coding::solution_check::passes_every_case;
 use lattice_learning::coding::store::session_of;
 use lattice_learning::lab_runtime::LearningLabFile;
 use lattice_learning::practical_dto::{LearningSimulationSpeaker, LearningSimulationTurnDto};
-use lattice_learning::practice::kinds::program::shape::cue_of;
 use lattice_learning::practice::session::observe::observe;
 use lattice_learning::practice::session::policy::policy_for;
 use serde::Serialize;
@@ -58,20 +57,16 @@ const LEVELS: [&str; 5] = [
 ];
 
 /// The settings, in the order they are played.
-const SETTINGS: [CodingSetting; 3] = [
-    CodingSetting::Coached,
-    CodingSetting::Mock,
-    CodingSetting::Watched,
-];
+const SETTINGS: [Setting; 3] = [Setting::Coached, Setting::Mock, Setting::Watched];
 
 /// How many hints the ladder holds: Nudge, Idea, Plan and Line.
 const RUNGS: usize = 4;
 
-fn setting_name(setting: CodingSetting) -> &'static str {
+fn setting_name(setting: Setting) -> &'static str {
     match setting {
-        CodingSetting::Coached => "coached",
-        CodingSetting::Mock => "mock",
-        CodingSetting::Watched => "watched",
+        Setting::Coached => "coached",
+        Setting::Mock => "mock",
+        Setting::Watched => "watched",
     }
 }
 
@@ -166,7 +161,7 @@ fn run_result(problem: &Problem, run: &CodingRunDto) -> RunResult {
 /// question rule held.
 #[derive(Debug, Clone, Serialize)]
 struct Reply {
-    cue: Option<CodingCue>,
+    cue: Option<Cue>,
     ms: u64,
     calls: Vec<ModelCall>,
     text: Option<String>,
@@ -194,7 +189,7 @@ struct Player<'a> {
     lab: &'a EvalLab,
     sessions: &'a CodingSessions<'a>,
     problem: &'a Problem,
-    setting: CodingSetting,
+    setting: Setting,
     session: CodingSessionDto,
     draft: Vec<LearningLabFile>,
     steps: Vec<Step>,
@@ -206,7 +201,7 @@ impl<'a> Player<'a> {
         sessions: &'a CodingSessions<'a>,
         problem: &'a Problem,
         activity_id: &str,
-        setting: CodingSetting,
+        setting: Setting,
     ) -> Result<Self> {
         let request = StartCodingSessionRequestDto {
             operation_id: id(),
@@ -356,7 +351,7 @@ impl<'a> Player<'a> {
                 self.session = next;
                 if let (Some(text), Some(cue)) = (&reply.text, &cue) {
                     reply.rule_failure = policy_for(engine.row.setting, kind, engine.row.form)
-                        .check(text, &cue_of(cue), &observation)
+                        .check(text, cue, &observation)
                         .err()
                         .map(|error| error.to_string());
                 }
@@ -369,7 +364,7 @@ impl<'a> Player<'a> {
         Ok(Some(reply))
     }
 
-    async fn move_to(&mut self, stage: CodingStage) -> Result<()> {
+    async fn move_to(&mut self, stage: Stage) -> Result<()> {
         let request = MoveCodingStageRequestDto {
             operation_id: id(),
             program_id: self.lab.program_id.clone(),
@@ -442,7 +437,7 @@ impl<'a> Player<'a> {
 
     /// In Watched, two pauses with a changed draft: the first half of `code`, then all of it.
     async fn pauses(&mut self, code: &str) -> Result<()> {
-        if self.setting != CodingSetting::Watched {
+        if self.setting != Setting::Watched {
             return Ok(());
         }
         self.pause(&first_half(code), "part way").await?;
@@ -535,7 +530,7 @@ async fn play(player: &mut Player<'_>, level: usize) -> Result<()> {
             for clarification in &problem.spec.clarifications {
                 player.say(&clarification.question).await?;
             }
-            player.move_to(CodingStage::Examples).await?;
+            player.move_to(Stage::Examples).await?;
             let examples: Vec<(Vec<String>, String)> = problem
                 .examples()
                 .filter_map(|case| case.expected.clone().map(|e| (case.args.clone(), e)))
@@ -544,18 +539,18 @@ async fn play(player: &mut Player<'_>, level: usize) -> Result<()> {
             for (args, expected) in examples {
                 player.example(args, expected).await?;
             }
-            player.move_to(CodingStage::Plan).await?;
+            player.move_to(Stage::Plan).await?;
             player.say(&plan_text(problem)).await?;
-            player.move_to(CodingStage::Code).await?;
+            player.move_to(Stage::Make).await?;
             player.pauses(&reference).await?;
-            player.move_to(CodingStage::Test).await?;
+            player.move_to(Stage::Check).await?;
             player
-                .run(CodingRunScope::Examples, &reference, "the reference")
+                .run(CodingRunScope::Shown, &reference, "the reference")
                 .await?;
             player
                 .run(CodingRunScope::All, &reference, "the reference")
                 .await?;
-            player.move_to(CodingStage::Review).await?;
+            player.move_to(Stage::Review).await?;
             player
                 .say(&format!(
                     "The complexity is {}.",
@@ -570,7 +565,7 @@ async fn play(player: &mut Player<'_>, level: usize) -> Result<()> {
             {
                 player.example(args, expected).await?;
             }
-            player.move_to(CodingStage::Code).await?;
+            player.move_to(Stage::Make).await?;
             player.pauses(&wrong).await?;
             player
                 .run(CodingRunScope::All, &wrong, "the first misreading")
@@ -589,7 +584,7 @@ async fn play(player: &mut Player<'_>, level: usize) -> Result<()> {
                 .await?;
         }
         3 => {
-            player.move_to(CodingStage::Code).await?;
+            player.move_to(Stage::Make).await?;
             player.pauses(&wrong).await?;
             player
                 .run(CodingRunScope::All, &wrong, "the first misreading")
@@ -602,7 +597,7 @@ async fn play(player: &mut Player<'_>, level: usize) -> Result<()> {
                 .await?;
         }
         4 => {
-            player.move_to(CodingStage::Code).await?;
+            player.move_to(Stage::Make).await?;
             player.pauses(&wrong).await?;
             player
                 .run(CodingRunScope::All, &wrong, "the first misreading")
@@ -696,7 +691,7 @@ struct DebriefItem {
 struct SessionItem {
     model: String,
     name: String,
-    setting: CodingSetting,
+    setting: Setting,
     level: usize,
     level_name: &'static str,
     problem: String,
@@ -850,7 +845,7 @@ fn markdown(item: &SessionItem) -> String {
             hint.rung,
             hint.reason,
             hint.text,
-            if hint.rung == CodeHintRung::Line {
+            if hint.rung == Rung::Point {
                 format!(" [path {:?}, lines {:?}]", hint.path, hint.lines)
             } else {
                 String::new()
@@ -1010,7 +1005,7 @@ fn summarize(model: &str, problem_names: Vec<String>, items: &[SessionItem]) -> 
                 } else {
                     summary.silences += 1;
                 }
-                if reply.cue == Some(CodingCue::Checkpoint) {
+                if reply.cue == Some(Cue::Checkpoint) {
                     summary.checkpoint_cues += 1;
                     summary.checkpoint_spoken += usize::from(spoke);
                 }

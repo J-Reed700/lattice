@@ -1,106 +1,20 @@
 //! What a coding session sends to the screen and takes from it. Everything here is already cut by the session's
 //! setting: nothing a setting keeps back is in a view.
 
-use super::problem::{
-    CaseStatus, CaseVisibility, CodingSetting, CodingTask, ProblemDifficulty, ProblemSignature,
-};
+use super::problem::{CaseStatus, CaseVisibility, ProblemDifficulty, ProblemSignature};
 use crate::lab_runtime::LearningLabFile;
 use crate::practical_dto::{LearningPracticalRunStatus, LearningSimulationTurnDto};
 use lattice_core::domain::learning::drills::PatternRating;
+use lattice_core::domain::learning::practice::work::{Form, Rung, Setting, Stage};
 use lattice_core::domain::learning::practice::Scorecard;
 use serde::{Deserialize, Serialize};
-
-/// Where in the task the learner is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "snake_case")]
-pub enum CodingStage {
-    Understand,
-    Examples,
-    Plan,
-    Code,
-    Test,
-    Review,
-    Reproduce,
-    Locate,
-    Fix,
-    Verify,
-}
-
-impl CodingStage {
-    /// The name the database stores.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Understand => "understand",
-            Self::Examples => "examples",
-            Self::Plan => "plan",
-            Self::Code => "code",
-            Self::Test => "test",
-            Self::Review => "review",
-            Self::Reproduce => "reproduce",
-            Self::Locate => "locate",
-            Self::Fix => "fix",
-            Self::Verify => "verify",
-        }
-    }
-
-    pub fn parse(name: &str) -> Option<Self> {
-        [
-            Self::Understand,
-            Self::Examples,
-            Self::Plan,
-            Self::Code,
-            Self::Test,
-            Self::Review,
-            Self::Reproduce,
-            Self::Locate,
-            Self::Fix,
-            Self::Verify,
-        ]
-        .into_iter()
-        .find(|stage| stage.as_str() == name)
-    }
-}
-
-const PROBLEM_STAGES: &[CodingStage] = &[
-    CodingStage::Understand,
-    CodingStage::Examples,
-    CodingStage::Plan,
-    CodingStage::Code,
-    CodingStage::Test,
-    CodingStage::Review,
-];
-const BUG_FIX_STAGES: &[CodingStage] = &[
-    CodingStage::Reproduce,
-    CodingStage::Locate,
-    CodingStage::Fix,
-    CodingStage::Verify,
-];
-const PROBLEM_ASKED_FOR: &[CodingStage] = &[CodingStage::Examples, CodingStage::Plan];
-const BUG_FIX_ASKED_FOR: &[CodingStage] = &[CodingStage::Reproduce];
-
-/// The stages of a task, in order: Problem → Understand, Examples, Plan, Code, Test, Review; BugFix → Reproduce,
-/// Locate, Fix, Verify.
-pub fn stages_of(task: CodingTask) -> &'static [CodingStage] {
-    match task {
-        CodingTask::Problem => PROBLEM_STAGES,
-        CodingTask::BugFix => BUG_FIX_STAGES,
-    }
-}
-
-/// The stages an interviewer asks for when they are skipped: Problem → Examples, Plan; BugFix → Reproduce.
-pub fn asked_for(task: CodingTask) -> &'static [CodingStage] {
-    match task {
-        CodingTask::Problem => PROBLEM_ASKED_FOR,
-        CodingTask::BugFix => BUG_FIX_ASKED_FOR,
-    }
-}
 
 /// Which cases a run covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum CodingRunScope {
     /// The statement's examples and the learner's right examples.
-    Examples,
+    Shown,
     /// Every case of the problem: a submit.
     All,
     /// One input of the learner's choosing.
@@ -110,14 +24,14 @@ pub enum CodingRunScope {
 impl CodingRunScope {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Examples => "examples",
+            Self::Shown => "shown",
             Self::All => "all",
             Self::Input => "input",
         }
     }
 
     pub fn parse(name: &str) -> Option<Self> {
-        [Self::Examples, Self::All, Self::Input]
+        [Self::Shown, Self::All, Self::Input]
             .into_iter()
             .find(|scope| scope.as_str() == name)
     }
@@ -146,18 +60,6 @@ impl ExampleVerdict {
             .into_iter()
             .find(|verdict| verdict.as_str() == name)
     }
-}
-
-/// How much a hint gives away; each rung gives more than the one before.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, specta::Type,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum CodeHintRung {
-    Nudge,
-    Idea,
-    Plan,
-    Line,
 }
 
 /// Why the screen reports the draft.
@@ -243,13 +145,13 @@ pub struct ExampleCoverageDto {
 #[serde(rename_all = "camelCase")]
 pub struct CodeHintDto {
     pub ordinal: u32,
-    pub rung: CodeHintRung,
+    pub rung: Rung,
     pub text: String,
     pub reason: String,
-    /// Rung Line: 1-based lines of `path` in the draft the hint was written for.
+    /// Rung Point: 1-based lines of `path` in the draft the hint was written for.
     pub lines: Vec<u32>,
     pub path: Option<String>,
-    pub stage: CodingStage,
+    pub stage: Stage,
     pub run_id: Option<String>,
     /// Watched: given by the interviewer, in the thread.
     pub in_role: bool,
@@ -277,11 +179,11 @@ pub struct CodingSessionDto {
     pub program_id: String,
     pub activity_id: String,
     pub lesson_id: Option<String>,
-    pub task: CodingTask,
-    pub setting: CodingSetting,
-    pub settings_used: Vec<CodingSetting>,
-    pub stage: CodingStage,
-    pub stages: Vec<CodingStage>,
+    pub task: Form,
+    pub setting: Setting,
+    pub settings_used: Vec<Setting>,
+    pub stage: Stage,
+    pub stages: Vec<Stage>,
     pub problem: PublicProblemDto,
     pub clock: ClockDto,
     pub examples: Vec<CodingExampleDto>,
@@ -289,7 +191,7 @@ pub struct CodingSessionDto {
     /// Oldest first.
     pub runs: Vec<CodingRunDto>,
     pub hints: Vec<CodeHintDto>,
-    pub next_rung: CodeHintRung,
+    pub next_rung: Rung,
     pub turns: Vec<LearningSimulationTurnDto>,
     pub cue_pending: bool,
     pub draft: Vec<LearningLabFile>,
@@ -308,9 +210,9 @@ pub struct CodingSessionSummaryDto {
     pub session_id: String,
     pub activity_id: String,
     pub title: String,
-    pub task: CodingTask,
-    pub setting: CodingSetting,
-    pub stage: CodingStage,
+    pub task: Form,
+    pub setting: Setting,
+    pub stage: Stage,
     pub finished: bool,
     /// Cases passed on the last submit.
     pub passed: Option<u32>,
@@ -339,20 +241,20 @@ pub struct DebriefFactsDto {
     pub runs: u32,
     pub submits: u32,
     pub hints: Vec<RungCountDto>,
-    pub settings: Vec<CodingSetting>,
+    pub settings: Vec<Setting>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct StageTimeDto {
-    pub stage: CodingStage,
+    pub stage: Stage,
     pub active_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RungCountDto {
-    pub rung: CodeHintRung,
+    pub rung: Rung,
     pub count: u32,
 }
 
@@ -415,7 +317,7 @@ pub struct StartCodingBuildRequestDto {
     pub operation_id: String,
     pub program_id: String,
     pub lesson_id: Option<String>,
-    pub task: CodingTask,
+    pub task: Form,
     pub language: String,
     pub difficulty: ProblemDifficulty,
     pub focus: Option<String>,
@@ -433,7 +335,7 @@ pub struct StartCodingSessionRequestDto {
     pub operation_id: String,
     pub program_id: String,
     pub activity_id: String,
-    pub setting: CodingSetting,
+    pub setting: Setting,
     pub budget_seconds: Option<u32>,
 }
 
@@ -457,7 +359,7 @@ pub struct MoveCodingStageRequestDto {
     pub operation_id: String,
     pub program_id: String,
     pub session_id: String,
-    pub stage: CodingStage,
+    pub stage: Stage,
     pub expected_revision: i64,
 }
 
@@ -540,7 +442,7 @@ pub struct SetCodingSettingRequestDto {
     pub operation_id: String,
     pub program_id: String,
     pub session_id: String,
-    pub setting: CodingSetting,
+    pub setting: Setting,
     pub expected_revision: i64,
 }
 

@@ -2,9 +2,10 @@
 
 use super::*;
 use crate::practical_dto::LearningPracticalPublicFileRole;
-use crate::practice::coding::problem::{CodingTask, ProblemDifficulty};
+use crate::practice::coding::problem::ProblemDifficulty;
 use crate::practice::coding::proof::fakes::{sample_problem, FakeHarness};
 use crate::practice::test_support::fixture;
+use lattice_core::domain::learning::practice::work::Form;
 use serde_json::json;
 
 fn build_request(operation_id: &str, program_id: &str) -> StartCodingBuildRequestDto {
@@ -12,7 +13,7 @@ fn build_request(operation_id: &str, program_id: &str) -> StartCodingBuildReques
         operation_id: operation_id.to_owned(),
         program_id: program_id.to_owned(),
         lesson_id: None,
-        task: CodingTask::Problem,
+        task: Form::Build,
         language: "python".into(),
         difficulty: ProblemDifficulty::Easy,
         focus: None,
@@ -86,7 +87,7 @@ async fn generate(
 #[test]
 fn a_build_that_is_stopped_midway_is_requeued() {
     let config = practice_job_config();
-    assert_eq!(PRACTICE_BUILD, "learning.coding_build");
+    assert_eq!(PRACTICE_BUILD, "learning.practice_build");
     assert_eq!(PRACTICE_BUILD_STEPS, 3);
     assert!(matches!(config.recovery, RecoveryPolicy::Requeue));
 }
@@ -140,7 +141,7 @@ fn a_programs_build_request_names_its_kind_form_and_options() {
 #[test]
 fn a_bug_fix_is_a_repair_and_keeps_its_focus() {
     let mut asked = build_request("operation", "program-1");
-    asked.task = CodingTask::BugFix;
+    asked.task = Form::Repair;
     asked.focus = Some("arrays".into());
     asked.lesson_id = Some("lesson-1".into());
     let request = practice_build_request(&asked).unwrap();
@@ -217,7 +218,7 @@ async fn the_build_saves_a_coding_problem_activity_with_a_private_problem_file()
         .iter()
         .find(|activity| activity.id == activity_id)
         .unwrap();
-    assert_eq!(activity.kind, LearningPracticalActivityKind::CodingProblem);
+    assert_eq!(activity.kind, LearningPracticalActivityKind::Exercise);
     assert_eq!(activity.title, "Pair with a given sum");
     assert_eq!(activity.generator_model, "scripted-model");
     assert!(activity
@@ -265,7 +266,7 @@ async fn a_build_that_runs_again_after_saving_finds_its_own_activity() {
     let saved = workspace
         .activities
         .iter()
-        .filter(|activity| activity.kind == LearningPracticalActivityKind::CodingProblem)
+        .filter(|activity| activity.kind == LearningPracticalActivityKind::Exercise)
         .count();
     assert_eq!(saved, 1);
 }
@@ -323,7 +324,7 @@ async fn a_problem_file_is_refused_unless_it_is_a_private_read_only_check_of_a_c
             &repository,
             &program_id,
             &lesson_id,
-            LearningPracticalActivityKind::CodingProblem,
+            LearningPracticalActivityKind::Exercise,
             vec![starter.clone(), evaluator.clone(), bad],
         )
         .await;
@@ -350,7 +351,7 @@ async fn a_problem_file_is_refused_unless_it_is_a_private_read_only_check_of_a_c
         &repository,
         &program_id,
         &lesson_id,
-        LearningPracticalActivityKind::CodingProblem,
+        LearningPracticalActivityKind::Exercise,
         vec![starter.clone(), evaluator.clone()],
     )
     .await;
@@ -360,7 +361,7 @@ async fn a_problem_file_is_refused_unless_it_is_a_private_read_only_check_of_a_c
         &repository,
         &program_id,
         &lesson_id,
-        LearningPracticalActivityKind::CodingProblem,
+        LearningPracticalActivityKind::Exercise,
         vec![starter, evaluator, valid],
     )
     .await

@@ -79,7 +79,7 @@ function definitions(fit: ReturnType<typeof fitState>): Record<CardId, CardDefin
       slots: [
         { id: 'difficulty', label: 'Difficulty', options: DIFFICULTY_OPTIONS, defaultValue: 'easy' },
         { id: 'language', label: 'Language', options: LANGUAGE_OPTIONS, defaultValue: CODING_LANGUAGE },
-        { id: 'task', label: 'Task', options: TASK_OPTIONS, defaultValue: 'problem' },
+        { id: 'task', label: 'Task', options: TASK_OPTIONS, defaultValue: 'build' },
         { id: 'setting', label: 'Setting', options: [{ value: 'coached', label: 'coached' }], defaultValue: 'coached' },
       ],
       parts: (values) => [article(values.difficulty ?? 'easy'), { slot: 'difficulty' }, ' ', { slot: 'language' }, ' ', { slot: 'task' }, ', ', { slot: 'setting' }, '.'],

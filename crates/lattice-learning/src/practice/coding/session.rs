@@ -16,14 +16,13 @@ pub use self::view::session_view;
 pub(crate) use self::view::{cut_case, example_view};
 use super::checks::CodingChecks;
 use super::dto::*;
-use super::problem::CodingSetting;
 use super::records::{CodingOp, RunFinished};
 use super::store::{session_of, CodingStore};
 use crate::persistence::hash;
 use crate::practical_dto::LearningPracticalRunDto;
 use crate::practical_repository::LearningPracticalRepository;
 use crate::practical_runs::CodingRunStart;
-use crate::practice::kinds::program::shape::{piece_of, scope_of, setting_of, stage_of};
+use crate::practice::kinds::program::shape::{piece_of, scope_of};
 use crate::practice::session::kind::Kinds;
 pub use crate::practice::session::live::SystemClock;
 use crate::practice::session::policy::Event;
@@ -33,6 +32,7 @@ use crate::practice::session::record::Op;
 pub use crate::practice::session::service::IDLE_AFTER_MS;
 use crate::practice::session::service::{CheckAsk, DraftReason, PracticeSessions, Start};
 use async_trait::async_trait;
+use lattice_core::domain::learning::practice::work::Setting;
 use lattice_core::domain::learning::practice::work::{CaseStatus, CheckScope};
 use lattice_core::shared::error::{AppError, Result};
 
@@ -124,7 +124,7 @@ impl CodingSessions<'_> {
                 &Start {
                     program_id: &request.program_id,
                     activity_id: &request.activity_id,
-                    setting: setting_of(request.setting),
+                    setting: request.setting,
                     budget_seconds: request.budget_seconds,
                 },
             )
@@ -153,7 +153,7 @@ impl CodingSessions<'_> {
             .move_stage(
                 &at(&request.program_id, &request.session_id),
                 &op(&request.operation_id, "stage", &payload_hash),
-                stage_of(request.stage),
+                request.stage,
                 request.expected_revision,
             )
             .await?;
@@ -274,7 +274,7 @@ impl CodingSessions<'_> {
             })
             .await?;
         let reference_actual = match (bundle.row.setting, request.input.as_deref()) {
-            (CodingSetting::Coached, Some(input)) => {
+            (Setting::Coached, Some(input)) => {
                 self.own
                     .reference_answer(&bundle.problem, input)
                     .await?
@@ -399,7 +399,7 @@ impl CodingSessions<'_> {
             .set_setting(
                 &at(&request.program_id, &request.session_id),
                 &op(&request.operation_id, "setting", &payload_hash),
-                setting_of(request.setting),
+                request.setting,
                 request.expected_revision,
             )
             .await?;

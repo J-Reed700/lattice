@@ -3,7 +3,7 @@
 #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 
 use crate::practice::coding::golden_support::{render_completion, rich_session, Recorder};
-use crate::practice::coding::problem::{CodingSetting, CodingTask, SOLUTION_PATH};
+use crate::practice::coding::problem::SOLUTION_PATH;
 use crate::practice::kinds::program::observation_tests::{engine_observation, program_kind};
 use crate::practice::kinds::program::parts::part_of;
 use crate::practice::kinds::program::shape::exercise_of;
@@ -11,14 +11,11 @@ use crate::practice::session::hints::give;
 use crate::practice::session::kind::Hint;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::practice::work::Rung;
+use lattice_core::domain::learning::practice::work::{Form, Setting};
 use lattice_core::shared::error::Result;
 use tokio_util::sync::CancellationToken;
 
-const SETTINGS: [CodingSetting; 3] = [
-    CodingSetting::Coached,
-    CodingSetting::Mock,
-    CodingSetting::Watched,
-];
+const SETTINGS: [Setting; 3] = [Setting::Coached, Setting::Mock, Setting::Watched];
 
 /// The ladder, with the names today's rungs have: the last rung points at lines.
 const RUNGS: [(Rung, &str); 4] = [
@@ -52,8 +49,8 @@ fn written(rung: Rung) -> String {
 
 async fn given(
     llm: &dyn LLMPort,
-    task: CodingTask,
-    setting: CodingSetting,
+    task: Form,
+    setting: Setting,
     rung: Rung,
     in_role: bool,
 ) -> Result<Hint> {
@@ -113,7 +110,7 @@ async fn the_requests_say_what_the_coding_hints_golden_says() {
         for (rung, label) in RUNGS {
             for in_role in [false, true] {
                 let model = Recorder::new([written(rung)]);
-                let hint = given(&model, CodingTask::Problem, setting, rung, in_role)
+                let hint = given(&model, Form::Build, setting, rung, in_role)
                     .await
                     .unwrap();
                 assert_eq!(hint.rung, rung);
@@ -125,7 +122,7 @@ async fn the_requests_say_what_the_coding_hints_golden_says() {
     for setting in SETTINGS {
         for (rung, label) in RUNGS {
             let model = Recorder::new([written(rung)]);
-            given(&model, CodingTask::BugFix, setting, rung, false)
+            given(&model, Form::Repair, setting, rung, false)
                 .await
                 .unwrap();
             names.push(format!("BugFix {setting:?} {label} in_role=false"));
@@ -145,15 +142,9 @@ async fn the_requests_say_what_the_coding_hints_golden_says() {
 #[tokio::test]
 async fn a_refused_hint_is_asked_again_once_with_the_reason() {
     let model = Recorder::new([NUDGE_WITH_A_BLOCK.to_owned(), written(Rung::Nudge)]);
-    let hint = given(
-        &model,
-        CodingTask::Problem,
-        CodingSetting::Mock,
-        Rung::Nudge,
-        false,
-    )
-    .await
-    .unwrap();
+    let hint = given(&model, Form::Build, Setting::Mock, Rung::Nudge, false)
+        .await
+        .unwrap();
     assert_eq!(hint.rung, Rung::Nudge);
     let sent = model.requests();
     assert_eq!(sent.len(), 2);
@@ -174,15 +165,9 @@ async fn a_line_hints_lines_come_back_as_parts() {
         "path": "solution.py",
     })
     .to_string()]);
-    let hint = given(
-        &model,
-        CodingTask::Problem,
-        CodingSetting::Coached,
-        Rung::Point,
-        false,
-    )
-    .await
-    .unwrap();
+    let hint = given(&model, Form::Build, Setting::Coached, Rung::Point, false)
+        .await
+        .unwrap();
     assert_eq!(hint.rung, Rung::Point);
     assert_eq!(
         hint.parts,
@@ -199,15 +184,9 @@ async fn a_hint_of_another_rung_has_no_parts() {
         "path": "solution.py",
     })
     .to_string()]);
-    let hint = given(
-        &model,
-        CodingTask::Problem,
-        CodingSetting::Coached,
-        Rung::Nudge,
-        false,
-    )
-    .await
-    .unwrap();
+    let hint = given(&model, Form::Build, Setting::Coached, Rung::Nudge, false)
+        .await
+        .unwrap();
     assert_eq!(hint.rung, Rung::Nudge);
     assert!(hint.parts.is_empty());
 }

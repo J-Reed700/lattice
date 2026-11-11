@@ -1,10 +1,10 @@
 #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 
 use super::*;
-use crate::practice::coding::dto::{CodeHintRung, CodingRunScope, CodingStage};
-use crate::practice::coding::problem::CodingTask;
+use crate::practice::coding::dto::CodingRunScope;
 use crate::practice::coding::proof::fakes::spec;
 use crate::practice::kinds::program::shape::brief_of;
+use lattice_core::domain::learning::practice::work::{Form, Rung, Stage};
 
 #[test]
 fn the_card_is_code_and_a_check_is_a_run() {
@@ -14,10 +14,7 @@ fn the_card_is_code_and_a_check_is_a_run() {
 
 #[test]
 fn a_form_is_worded_as_the_task_it_was() {
-    for (form, task) in [
-        (Form::Build, CodingTask::Problem),
-        (Form::Repair, CodingTask::BugFix),
-    ] {
+    for (form, task) in [(Form::Build, Form::Build), (Form::Repair, Form::Repair)] {
         assert_eq!(ProgramWording.form_label(form), format!("{task:?}"));
     }
 }
@@ -32,16 +29,16 @@ fn a_form_a_program_lacks_keeps_its_own_name() {
 fn a_stage_is_worded_as_the_stage_it_was() {
     let brief = brief_of(&spec()).unwrap();
     let stages = [
-        (Stage::Understand, CodingStage::Understand),
-        (Stage::Examples, CodingStage::Examples),
-        (Stage::Plan, CodingStage::Plan),
-        (Stage::Make, CodingStage::Code),
-        (Stage::Check, CodingStage::Test),
-        (Stage::Review, CodingStage::Review),
-        (Stage::Reproduce, CodingStage::Reproduce),
-        (Stage::Locate, CodingStage::Locate),
-        (Stage::Fix, CodingStage::Fix),
-        (Stage::Verify, CodingStage::Verify),
+        (Stage::Understand, Stage::Understand),
+        (Stage::Examples, Stage::Examples),
+        (Stage::Plan, Stage::Plan),
+        (Stage::Make, Stage::Make),
+        (Stage::Check, Stage::Check),
+        (Stage::Review, Stage::Review),
+        (Stage::Reproduce, Stage::Reproduce),
+        (Stage::Locate, Stage::Locate),
+        (Stage::Fix, Stage::Fix),
+        (Stage::Verify, Stage::Verify),
     ];
     for (stage, old) in stages {
         for form in [Form::Build, Form::Repair] {
@@ -56,7 +53,7 @@ fn a_stage_is_worded_as_the_stage_it_was() {
 #[test]
 fn a_scope_is_worded_as_the_scope_it_was() {
     for (scope, old) in [
-        (CheckScope::Shown, CodingRunScope::Examples),
+        (CheckScope::Shown, CodingRunScope::Shown),
         (CheckScope::All, CodingRunScope::All),
         (CheckScope::Own, CodingRunScope::Input),
     ] {
@@ -67,10 +64,10 @@ fn a_scope_is_worded_as_the_scope_it_was() {
 #[test]
 fn a_rung_is_worded_as_the_rung_it_was() {
     for (rung, old) in [
-        (Rung::Nudge, CodeHintRung::Nudge),
-        (Rung::Idea, CodeHintRung::Idea),
-        (Rung::Plan, CodeHintRung::Plan),
-        (Rung::Point, CodeHintRung::Line),
+        (Rung::Nudge, Rung::Nudge),
+        (Rung::Idea, Rung::Idea),
+        (Rung::Plan, Rung::Plan),
+        (Rung::Point, Rung::Point),
     ] {
         assert_eq!(ProgramWording.rung_label(rung), format!("{old:?}"));
     }

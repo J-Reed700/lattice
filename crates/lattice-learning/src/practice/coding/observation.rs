@@ -1,5 +1,6 @@
 //! What the counterpart may read of a coding session.
 
+use lattice_core::domain::learning::practice::work::{Form, Rung, Setting, Stage};
 use serde::Serialize;
 
 use crate::lab_runtime::LearningLabFile;
@@ -133,13 +134,11 @@ pub(crate) mod test_support {
 
     use crate::lab_runtime::LearningLabFile;
     use crate::practice::coding::dto::{
-        stages_of, CaseViewDto, ClockDto, CodeHintRung, CodingRunDto, CodingSessionDto,
-        CodingStage, ExampleCoverageDto, PublicProblemDto,
+        CaseViewDto, ClockDto, CodingRunDto, CodingSessionDto, ExampleCoverageDto, PublicProblemDto,
     };
     use crate::practice::coding::problem::{
-        CaseCompare, CaseStatus, CaseVisibility, CodingSetting, CodingTask, Misreading, Problem,
-        ProblemCase, ProblemClarification, ProblemDifficulty, ProblemSignature, ProblemSpec,
-        SignatureParam,
+        CaseCompare, CaseStatus, CaseVisibility, Misreading, Problem, ProblemCase,
+        ProblemClarification, ProblemDifficulty, ProblemSignature, ProblemSpec, SignatureParam,
     };
 
     pub const REFERENCE: &str = "def total(values):\n    return REFERENCE_SECRET_BODY\n";
@@ -213,12 +212,8 @@ pub(crate) mod test_support {
         }
     }
 
-    pub fn session(
-        problem: &Problem,
-        setting: CodingSetting,
-        stage: CodingStage,
-    ) -> CodingSessionDto {
-        let task = CodingTask::Problem;
+    pub fn session(problem: &Problem, setting: Setting, stage: Stage) -> CodingSessionDto {
+        let task = Form::Build;
         CodingSessionDto {
             session_id: SESSION_ID.to_owned(),
             program_id: "program-1".to_owned(),
@@ -228,7 +223,7 @@ pub(crate) mod test_support {
             setting,
             settings_used: vec![setting],
             stage,
-            stages: stages_of(task).to_vec(),
+            stages: task.stages(true).to_vec(),
             problem: PublicProblemDto {
                 title: problem.spec.title.clone(),
                 statement: problem.spec.statement.clone(),
@@ -265,7 +260,7 @@ pub(crate) mod test_support {
             },
             runs: Vec::new(),
             hints: Vec::new(),
-            next_rung: CodeHintRung::Nudge,
+            next_rung: Rung::Nudge,
             turns: Vec::new(),
             cue_pending: false,
             draft: vec![LearningLabFile {
@@ -315,8 +310,6 @@ pub(crate) mod test_support {
 mod tests {
     use super::test_support::*;
     use super::*;
-    use crate::practice::coding::dto::CodingStage;
-    use crate::practice::coding::problem::CodingSetting;
 
     fn file(content: &str) -> LearningLabFile {
         LearningLabFile {
@@ -388,7 +381,7 @@ mod tests {
     #[test]
     fn the_diff_runs_against_the_draft_last_seen() {
         let problem = problem();
-        let session = session(&problem, CodingSetting::Watched, CodingStage::Code);
+        let session = session(&problem, Setting::Watched, Stage::Make);
         let seen = [file("def total(values):\n    pass\n")];
         let changes = changes_since(&session.draft, &seen);
         assert_eq!(
@@ -405,7 +398,7 @@ mod tests {
     fn a_file_new_since_seen_is_all_added_and_a_dropped_file_all_removed() {
         let mut problem = problem();
         problem.spec.starter = String::new();
-        let mut session = session(&problem, CodingSetting::Watched, CodingStage::Code);
+        let mut session = session(&problem, Setting::Watched, Stage::Make);
         session.draft = vec![
             file("a\n"),
             LearningLabFile {

@@ -10,7 +10,6 @@ use crate::practice::coding::dto::StartCodingBuildRequestDto;
 use crate::practice::coding::harness::{new_nonce, CaseHarness};
 use crate::practice::coding::problem::{Problem, PROBLEM_FILE_PATH, SOLUTION_PATH};
 use crate::practice::coding::source::ProgramOptions;
-use crate::practice::kinds::program::shape::form_of;
 use crate::practice::kinds::program::KIND;
 use crate::practice::practical_dto::{
     GenerateLearningPracticalActivityRequestDto, LearningPracticalActivityKind,
@@ -37,9 +36,8 @@ use uuid::Uuid;
 #[cfg(test)]
 mod tests;
 
-/// The job identifier for practice builds. The stored name stays `learning.coding_build` until the renames of the
-/// design note's step 5 migrate the jobs already queued under it.
-pub const PRACTICE_BUILD: &str = "learning.coding_build";
+/// The job identifier for practice builds.
+pub const PRACTICE_BUILD: &str = "learning.practice_build";
 
 /// The steps of a coding problem build, for its progress: writing, proving and saving.
 pub const PRACTICE_BUILD_STEPS: u32 = 3;
@@ -85,7 +83,7 @@ pub fn practice_build_request(
         program_id: request.program_id.clone(),
         lesson_id: request.lesson_id.clone(),
         kind: KindId::new(KIND),
-        form: form_of(request.task),
+        form: request.task,
         options,
     })
 }
@@ -212,7 +210,7 @@ pub async fn save_problem(
         program_id: save.program_id.to_owned(),
         lesson_id: save.lesson_id.to_owned(),
         expected_program_revision: revision,
-        kind: LearningPracticalActivityKind::CodingProblem,
+        kind: LearningPracticalActivityKind::Exercise,
         learner_brief: save.focus.unwrap_or_default().to_owned(),
         practice_mode: crate::dto::LearningPracticeMode::Practice,
         allowed_aids: Vec::new(),

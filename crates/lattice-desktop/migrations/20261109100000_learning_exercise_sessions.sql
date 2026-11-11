@@ -1,4 +1,4 @@
--- Coding sessions, their scorecards, the course's practice profile and fit, and the
+-- Exercise sessions, their scorecards, the course's practice profile and fit, and the
 -- new activity kind they run under.
 --
 -- The kind lives in a CHECK on learning_practical_activities, which SQLite keeps in the
@@ -13,7 +13,7 @@ UPDATE sqlite_schema
 SET sql = replace(
     sql,
     '''project'',''interview'',''conversation'',''writing_revision'',''custom''',
-    '''project'',''interview'',''conversation'',''writing_revision'',''custom'',''coding_problem'''
+    '''project'',''interview'',''conversation'',''writing_revision'',''custom'',''exercise'''
 )
 WHERE type = 'table' AND name = 'learning_practical_activities';
 
@@ -29,12 +29,12 @@ PRAGMA writable_schema = RESET;
 
 -- Fail (and roll back) unless the new kind is in force. Creating and dropping a
 -- main-schema table also bumps the schema cookie, so pooled connections reload.
-CREATE TABLE _lattice_coding_kind_guard (ok INTEGER NOT NULL CHECK (ok = 1));
-INSERT INTO _lattice_coding_kind_guard (ok)
-SELECT instr(sql, '''coding_problem''') > 0
+CREATE TABLE _lattice_exercise_kind_guard (ok INTEGER NOT NULL CHECK (ok = 1));
+INSERT INTO _lattice_exercise_kind_guard (ok)
+SELECT instr(sql, '''exercise''') > 0
 FROM sqlite_schema
 WHERE type = 'table' AND name = 'learning_practical_activities';
-DROP TABLE _lattice_coding_kind_guard;
+DROP TABLE _lattice_exercise_kind_guard;
 
 CREATE TABLE _lattice_problem_material_guard (ok INTEGER NOT NULL CHECK (ok = 1));
 INSERT INTO _lattice_problem_material_guard (ok)
@@ -43,13 +43,14 @@ FROM sqlite_schema
 WHERE type = 'table' AND name = 'learning_drill_pattern_schedules';
 DROP TABLE _lattice_problem_material_guard;
 
-CREATE TABLE learning_coding_sessions (
+CREATE TABLE learning_exercise_sessions (
     id TEXT PRIMARY KEY REFERENCES learning_simulation_sessions(id) ON DELETE CASCADE,
     program_id TEXT NOT NULL REFERENCES learning_programs(id) ON DELETE CASCADE,
     activity_id TEXT NOT NULL REFERENCES learning_practical_activities(id) ON DELETE CASCADE,
-    task TEXT NOT NULL CHECK(task IN ('problem','bug_fix','project')),
+    kind TEXT NOT NULL,
+    form TEXT NOT NULL CHECK(form IN ('build','repair','complete','arrange')),
     setting TEXT NOT NULL CHECK(setting IN ('coached','mock','watched')),
-    stage TEXT NOT NULL CHECK(stage IN ('understand','examples','plan','code','test','review','reproduce','locate','fix','verify','build')),
+    stage TEXT NOT NULL CHECK(stage IN ('understand','examples','plan','make','check','review','reproduce','locate','fix','verify','build')),
     budget_seconds INTEGER CHECK(budget_seconds IS NULL OR budget_seconds > 0),
     active_ms INTEGER NOT NULL DEFAULT 0 CHECK(active_ms >= 0),
     opened_at INTEGER,
@@ -61,19 +62,19 @@ CREATE TABLE learning_coding_sessions (
     revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
     created_at INTEGER NOT NULL
 );
-CREATE INDEX learning_coding_sessions_program ON learning_coding_sessions(program_id, created_at DESC);
+CREATE INDEX learning_exercise_sessions_program ON learning_exercise_sessions(program_id, created_at DESC);
 
-CREATE TABLE learning_coding_events (
-    session_id TEXT NOT NULL REFERENCES learning_coding_sessions(id) ON DELETE CASCADE,
+CREATE TABLE learning_exercise_session_events (
+    session_id TEXT NOT NULL REFERENCES learning_exercise_sessions(id) ON DELETE CASCADE,
     ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
-    kind TEXT NOT NULL CHECK(kind IN ('stage','run','example','hint','setting','opened','closed','draft_seen','solution_seen')),
+    kind TEXT NOT NULL CHECK(kind IN ('stage','check','example','hint','setting','opened','closed','draft_seen','solution_seen')),
     payload_json TEXT NOT NULL,
     at INTEGER NOT NULL,
     PRIMARY KEY(session_id, ordinal)
 );
 
 CREATE TABLE learning_coding_examples (
-    session_id TEXT NOT NULL REFERENCES learning_coding_sessions(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL REFERENCES learning_exercise_sessions(id) ON DELETE CASCADE,
     ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
     args_json TEXT NOT NULL,
     expected TEXT NOT NULL,
@@ -85,9 +86,9 @@ CREATE TABLE learning_coding_examples (
     PRIMARY KEY(session_id, ordinal)
 );
 
-ALTER TABLE learning_practical_runs ADD COLUMN coding_session_id TEXT REFERENCES learning_coding_sessions(id) ON DELETE SET NULL;
-ALTER TABLE learning_practical_runs ADD COLUMN scope TEXT CHECK(scope IS NULL OR scope IN ('examples','all','input'));
-CREATE INDEX learning_practical_runs_coding_session ON learning_practical_runs(coding_session_id, created_at) WHERE coding_session_id IS NOT NULL;
+ALTER TABLE learning_practical_runs ADD COLUMN exercise_session_id TEXT REFERENCES learning_exercise_sessions(id) ON DELETE SET NULL;
+ALTER TABLE learning_practical_runs ADD COLUMN scope TEXT CHECK(scope IS NULL OR scope IN ('shown','all','input'));
+CREATE INDEX learning_practical_runs_exercise_session ON learning_practical_runs(exercise_session_id, created_at) WHERE exercise_session_id IS NOT NULL;
 ALTER TABLE learning_practical_run_checks ADD COLUMN detail_json TEXT;
 
 CREATE TABLE learning_scorecards (
@@ -106,8 +107,8 @@ CREATE TABLE learning_scorecards (
     CHECK(points IS NULL OR points <= max_points)
 );
 
-CREATE TABLE learning_coding_debriefs (
-    session_id TEXT PRIMARY KEY REFERENCES learning_coding_sessions(id) ON DELETE CASCADE,
+CREATE TABLE learning_exercise_debriefs (
+    session_id TEXT PRIMARY KEY REFERENCES learning_exercise_sessions(id) ON DELETE CASCADE,
     approach TEXT NOT NULL,
     complexity TEXT NOT NULL,
     ratings_json TEXT NOT NULL,

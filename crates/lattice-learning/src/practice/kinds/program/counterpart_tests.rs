@@ -6,12 +6,10 @@
 use crate::practice::coding::golden_support::{
     add_requests, assert_golden, rich_session, Golden, Recorder,
 };
-use crate::practice::coding::problem::{CodingSetting, CodingTask, SOLUTION_PATH};
+use crate::practice::coding::problem::SOLUTION_PATH;
 use crate::practice::coding::proof::fakes::{Behaviour, CaseRun, FakeRunner, ScriptedModel};
 use crate::practice::kinds::program::kind;
-use crate::practice::kinds::program::observation_tests::{
-    engine_observation, form_of, program_kind, setting_of,
-};
+use crate::practice::kinds::program::observation_tests::{engine_observation, program_kind};
 use crate::practice::kinds::program::parts::part_of;
 use crate::practice::kinds::program::shape::exercise_of;
 use crate::practice::kinds::program::toolchain::FakeToolchains;
@@ -20,35 +18,36 @@ use crate::practice::session::kind::Kind;
 use crate::practice::session::policy::{policy_for, Cue};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::practice::work::{CheckScope, Stage};
+use lattice_core::domain::learning::practice::work::{Form, Setting};
 use lattice_core::domain::learning::practice::PROBLEM_PATTERNS;
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-fn cases() -> Vec<(&'static str, CodingSetting, Cue)> {
+fn cases() -> Vec<(&'static str, Setting, Cue)> {
     vec![
-        ("Opening", CodingSetting::Coached, Cue::Opening),
-        ("Opening", CodingSetting::Mock, Cue::Opening),
-        ("Reply", CodingSetting::Coached, Cue::Reply),
+        ("Opening", Setting::Coached, Cue::Opening),
+        ("Opening", Setting::Mock, Cue::Opening),
+        ("Reply", Setting::Coached, Cue::Reply),
         (
             "StageOpened(Plan)",
-            CodingSetting::Coached,
+            Setting::Coached,
             Cue::StageOpened(Stage::Plan),
         ),
         (
             "AskForSkipped([Examples, Plan])",
-            CodingSetting::Mock,
+            Setting::Mock,
             Cue::AskForSkipped(vec![Stage::Examples, Stage::Plan]),
         ),
         (
             "RunReview(All)",
-            CodingSetting::Coached,
+            Setting::Coached,
             Cue::CheckReview(CheckScope::All),
         ),
-        ("Submitted", CodingSetting::Coached, Cue::Submitted),
-        ("Submitted", CodingSetting::Mock, Cue::Submitted),
-        ("Checkpoint", CodingSetting::Watched, Cue::Checkpoint),
-        ("Idle", CodingSetting::Coached, Cue::Idle),
+        ("Submitted", Setting::Coached, Cue::Submitted),
+        ("Submitted", Setting::Mock, Cue::Submitted),
+        ("Checkpoint", Setting::Watched, Cue::Checkpoint),
+        ("Idle", Setting::Coached, Cue::Idle),
     ]
 }
 
@@ -68,14 +67,14 @@ fn reply(cue: &Cue, lines: &[u32]) -> String {
 async fn respond_to(
     llm: &dyn LLMPort,
     kind: &Kind,
-    task: CodingTask,
-    setting: CodingSetting,
+    task: Form,
+    setting: Setting,
     cue: &Cue,
 ) -> Result<Option<Reply>> {
     let (problem, session, seen) = rich_session(task, setting);
     let observation = engine_observation(&problem, &session, Some(&seen), false);
     let exercise = exercise_of(&problem).unwrap();
-    let policy = policy_for(setting_of(setting), kind, form_of(task));
+    let policy = policy_for(setting, kind, task);
     respond(
         llm,
         kind,
@@ -88,12 +87,7 @@ async fn respond_to(
     .await
 }
 
-async fn asked(
-    task: CodingTask,
-    setting: CodingSetting,
-    cue: &Cue,
-    answers: Vec<String>,
-) -> Recorder {
+async fn asked(task: Form, setting: Setting, cue: &Cue, answers: Vec<String>) -> Recorder {
     let model = Recorder::new(answers);
     let result = respond_to(&model, &program_kind(), task, setting, cue).await;
     assert!(result.is_ok(), "{result:?}");
@@ -103,7 +97,7 @@ async fn asked(
 #[tokio::test]
 async fn golden_counterpart() {
     let mut golden = Golden::default();
-    for task in [CodingTask::Problem, CodingTask::BugFix] {
+    for task in [Form::Build, Form::Repair] {
         for (name, setting, cue) in cases() {
             let model = asked(task, setting, &cue, vec![reply(&cue, &[])]).await;
             add_requests(&mut golden, &format!("{task:?} {setting:?} {name}"), &model);
@@ -111,7 +105,7 @@ async fn golden_counterpart() {
         let cue = Cue::Reply;
         let model = asked(
             task,
-            CodingSetting::Coached,
+            Setting::Coached,
             &cue,
             vec![reply(&cue, &[99]), reply(&cue, &[])],
         )
@@ -160,14 +154,7 @@ fn raw(fields: serde_json::Value) -> String {
 
 async fn answered(kind: &Kind, answers: &[String]) -> Result<Option<Reply>> {
     let model = ScriptedModel::new(answers.iter().cloned());
-    respond_to(
-        &model,
-        kind,
-        CodingTask::Problem,
-        CodingSetting::Coached,
-        &Cue::Reply,
-    )
-    .await
+    respond_to(&model, kind, Form::Build, Setting::Coached, &Cue::Reply).await
 }
 
 /// The reason a reply is refused for: the model gives it twice, and the second refusal fails the call.

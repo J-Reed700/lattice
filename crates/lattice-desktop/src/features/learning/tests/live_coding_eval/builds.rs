@@ -3,6 +3,7 @@
 //! a person to read. The code checks are the design's: no statement or title names its pattern, and at least
 //! `MIN_KILLED_MISREADINGS` misreadings are killed. Statement clarity, Easy, and the pattern tags are read by hand.
 
+use lattice_core::domain::learning::practice::work::Form;
 use std::collections::BTreeMap;
 use std::time::Instant;
 
@@ -14,9 +15,7 @@ use lattice_core::domain::learning::practice::problem_patterns::{
 use lattice_core::domain::learning::practice::work::KindId;
 use lattice_core::shared::error::Result;
 use lattice_learning::practice::coding::jobs::EASY_PATTERNS;
-use lattice_learning::practice::coding::problem::{
-    CodingTask, Problem, ProblemCase, ProblemDifficulty,
-};
+use lattice_learning::practice::coding::problem::{Problem, ProblemCase, ProblemDifficulty};
 use lattice_learning::practice::coding::proof::MIN_KILLED_MISREADINGS;
 use lattice_learning::practice::coding::source::{build_problem, ProblemRequest};
 use lattice_learning::practice::kinds::program::KIND;
@@ -243,7 +242,7 @@ async fn live_coding_build_eval() -> Result<()> {
         let request = ProblemRequest {
             program_id: lab.program_id.clone(),
             lesson: None,
-            task: CodingTask::Problem,
+            task: Form::Build,
             language: "python".into(),
             difficulty: ProblemDifficulty::Easy,
             patterns: requested.clone(),

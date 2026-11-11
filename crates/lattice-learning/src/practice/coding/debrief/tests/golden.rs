@@ -5,7 +5,7 @@ use crate::practice::coding::golden_support::{add_requests, assert_golden, Golde
 
 fn rich_evidence() -> SessionEvidence {
     let mut evidence = evidence();
-    let mut second = run("r2", CodingRunScope::Examples);
+    let mut second = run("r2", CodingRunScope::Shown);
     second.files = file("def two_sum(numbers, target):\n    return [0, 0]\n");
     if let Some(result) = second.results.first_mut() {
         result.status = CaseStatus::Failed;
@@ -13,7 +13,7 @@ fn rich_evidence() -> SessionEvidence {
     }
     evidence.runs.push(second);
     evidence.examples.push(example(1));
-    evidence.hints.push(hint(1, CodeHintRung::Idea));
+    evidence.hints.push(hint(1, Rung::Idea));
     evidence
 }
 

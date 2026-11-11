@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::domain::learning::practice::named_in;
+use lattice_core::domain::learning::practice::work::{Rung, Setting};
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -15,9 +16,8 @@ use crate::generation::parse_json;
 use crate::lab_runtime::LearningLabFile;
 use crate::lessons::structured_call::{complete_checked_request, reask};
 use crate::model_call;
-use crate::practice::coding::dto::CodeHintRung;
 use crate::practice::coding::harness::CaseHarness;
-use crate::practice::coding::problem::{CodingSetting, Problem};
+use crate::practice::coding::problem::Problem;
 use crate::practice::coding::solution_check::{code_blocks, parses_as_python, passes_every_case};
 
 /// What a hint's answer reserves: a few paragraphs, a short fenced block, and the frame around them. A
@@ -35,7 +35,7 @@ const PYTHON_KEYWORDS: &[&str] = &[
 /// A hint that passed its checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeHint {
-    pub rung: CodeHintRung,
+    pub rung: Rung,
     pub text: String,
     pub reason: String,
     pub lines: Vec<u32>,
@@ -60,9 +60,9 @@ pub(crate) async fn write_hint_from(
     harness: &dyn CaseHarness,
     problem: &Problem,
     observed: &str,
-    setting: CodingSetting,
+    setting: Setting,
     draft: &[LearningLabFile],
-    rung: CodeHintRung,
+    rung: Rung,
     in_role: bool,
     cancel: CancellationToken,
 ) -> Result<CodeHint> {
@@ -88,7 +88,7 @@ struct Hinting<'a> {
     reference: &'a str,
     starter: &'a str,
     patterns: &'a [String],
-    setting: CodingSetting,
+    setting: Setting,
     draft: &'a [LearningLabFile],
 }
 
@@ -124,12 +124,12 @@ impl Proof for Sandbox<'_> {
     }
 }
 
-fn rung_name(rung: CodeHintRung) -> &'static str {
+fn rung_name(rung: Rung) -> &'static str {
     match rung {
-        CodeHintRung::Nudge => "Nudge",
-        CodeHintRung::Idea => "Idea",
-        CodeHintRung::Plan => "Plan",
-        CodeHintRung::Line => "Line",
+        Rung::Nudge => "Nudge",
+        Rung::Idea => "Idea",
+        Rung::Plan => "Plan",
+        Rung::Point => "Line",
     }
 }
 
@@ -180,8 +180,8 @@ fn bad_lines(hinting: &Hinting<'_>, hint: &CodeHint) -> Option<String> {
 }
 
 /// Only a coach's Idea hint may name the technique.
-fn may_name_technique(setting: CodingSetting, rung: CodeHintRung) -> bool {
-    setting == CodingSetting::Coached && rung == CodeHintRung::Idea
+fn may_name_technique(setting: Setting, rung: Rung) -> bool {
+    setting == Setting::Coached && rung == Rung::Idea
 }
 
 /// Why a check refuses `hint`, or None when every check accepts it. Errors are runs that could not be made.
@@ -194,13 +194,13 @@ async fn refusal(
         return Ok(Some("The hint needs both its text and its reason.".into()));
     }
     let blocks = code_blocks(&hint.text);
-    if matches!(hint.rung, CodeHintRung::Nudge | CodeHintRung::Idea) && !blocks.is_empty() {
+    if matches!(hint.rung, Rung::Nudge | Rung::Idea) && !blocks.is_empty() {
         return Ok(Some(format!(
             "A {} hint holds no fenced code block. Say it in words.",
             rung_name(hint.rung)
         )));
     }
-    if hint.rung == CodeHintRung::Line {
+    if hint.rung == Rung::Point {
         if let Some(why) = bad_lines(hinting, hint) {
             return Ok(Some(why));
         }
@@ -223,7 +223,7 @@ async fn refusal(
         }
     }
     for block in &blocks {
-        if hint.rung == CodeHintRung::Plan {
+        if hint.rung == Rung::Plan {
             if proof.parses(block).await? {
                 return Ok(Some(
                     "A block in a Plan hint parses as Python. Write the steps as pseudo-code, or without a block."
@@ -253,21 +253,21 @@ fn schema() -> Value {
     })
 }
 
-fn rung_instruction(rung: CodeHintRung, setting: CodingSetting) -> &'static str {
+fn rung_instruction(rung: Rung, setting: Setting) -> &'static str {
     match rung {
-        CodeHintRung::Nudge => {
+        Rung::Nudge => {
             "Ask one question that points at what to look at. Give no code and no fenced block."
         }
-        CodeHintRung::Idea if setting == CodingSetting::Coached => {
+        Rung::Idea if setting == Setting::Coached => {
             "Give the idea or structure that fits, and why. You may name the technique. Give no fenced block."
         }
-        CodeHintRung::Idea => {
+        Rung::Idea => {
             "Give the idea or structure that fits, and why, without naming the technique. Give no fenced block."
         }
-        CodeHintRung::Plan => {
+        Rung::Plan => {
             "Give numbered steps in plain language, each with its reason. A fenced block, if any, is pseudo-code that is not valid Python."
         }
-        CodeHintRung::Line => {
+        Rung::Point => {
             "Point at the lines of the candidate's code that are wrong, and say why. Set `path` to the file and `lines` to its 1-based line numbers. Never write the corrected line."
         }
     }
@@ -277,13 +277,13 @@ fn rung_instruction(rung: CodeHintRung, setting: CodingSetting) -> &'static str 
 fn ask(
     reference: &str,
     observation: &str,
-    rung: CodeHintRung,
+    rung: Rung,
     in_role: bool,
-    setting: CodingSetting,
+    setting: Setting,
 ) -> GroundedRequest {
     let voice = if in_role {
         "You are the interviewer in a coding interview. Write the hint as the words you say to the candidate, in your own voice, staying in role."
-    } else if setting == CodingSetting::Coached {
+    } else if setting == Setting::Coached {
         "You are a coach helping a learner through a coding problem."
     } else {
         "You give a candidate one hint on a coding problem."
@@ -310,7 +310,7 @@ async fn write_checked(
     hinting: &Hinting<'_>,
     proof: &dyn Proof,
     request: GroundedRequest,
-    rung: CodeHintRung,
+    rung: Rung,
 ) -> Result<CodeHint> {
     let mut request = request;
     let mut again = false;
@@ -319,7 +319,7 @@ async fn write_checked(
             parse_json::<Written>(raw).map(|written| (raw.to_owned(), written))
         })
         .await?;
-        let hint = if rung == CodeHintRung::Line {
+        let hint = if rung == Rung::Point {
             CodeHint {
                 rung,
                 text: written.text,
@@ -405,7 +405,7 @@ mod tests {
             }
         }
 
-        fn hinting(&self, setting: CodingSetting) -> Hinting<'_> {
+        fn hinting(&self, setting: Setting) -> Hinting<'_> {
             Hinting {
                 reference: &self.reference,
                 starter: &self.starter,
@@ -420,7 +420,7 @@ mod tests {
         }
     }
 
-    fn hint(rung: CodeHintRung, text: &str) -> CodeHint {
+    fn hint(rung: Rung, text: &str) -> CodeHint {
         CodeHint {
             rung,
             text: text.into(),
@@ -434,14 +434,11 @@ mod tests {
         CodeHint {
             lines,
             path: path.map(str::to_owned),
-            ..hint(
-                CodeHintRung::Line,
-                "This return ends the loop on the first pass.",
-            )
+            ..hint(Rung::Point, "This return ends the loop on the first pass.")
         }
     }
 
-    async fn refused(fixture: &Fixture, setting: CodingSetting, hint: &CodeHint) -> Option<String> {
+    async fn refused(fixture: &Fixture, setting: Setting, hint: &CodeHint) -> Option<String> {
         refusal(&fixture.hinting(setting), &Fake, hint)
             .await
             .expect("the checks run")
@@ -452,28 +449,28 @@ mod tests {
     #[tokio::test]
     async fn a_clean_hint_of_every_rung_is_accepted() {
         let fixture = Fixture::new();
-        for rung in [CodeHintRung::Nudge, CodeHintRung::Idea, CodeHintRung::Plan] {
+        for rung in [Rung::Nudge, Rung::Idea, Rung::Plan] {
             assert_eq!(
-                refused(&fixture, CodingSetting::Mock, &hint(rung, CLEAN)).await,
+                refused(&fixture, Setting::Mock, &hint(rung, CLEAN)).await,
                 None
             );
         }
         let line = line_hint(vec![3], Some("solution.py"));
-        assert_eq!(refused(&fixture, CodingSetting::Mock, &line).await, None);
+        assert_eq!(refused(&fixture, Setting::Mock, &line).await, None);
     }
 
     #[tokio::test]
     async fn blank_text_or_a_blank_reason_is_refused() {
         let fixture = Fixture::new();
-        let blank_text = hint(CodeHintRung::Nudge, "  \n ");
-        assert!(refused(&fixture, CodingSetting::Mock, &blank_text)
+        let blank_text = hint(Rung::Nudge, "  \n ");
+        assert!(refused(&fixture, Setting::Mock, &blank_text)
             .await
             .is_some());
         let blank_reason = CodeHint {
             reason: " ".into(),
-            ..hint(CodeHintRung::Nudge, CLEAN)
+            ..hint(Rung::Nudge, CLEAN)
         };
-        assert!(refused(&fixture, CodingSetting::Mock, &blank_reason)
+        assert!(refused(&fixture, Setting::Mock, &blank_reason)
             .await
             .is_some());
     }
@@ -482,12 +479,12 @@ mod tests {
     async fn nudge_and_idea_hold_no_fenced_block() {
         let fixture = Fixture::new();
         let fenced = "Remember them:\n```python\nx\n```";
-        for rung in [CodeHintRung::Nudge, CodeHintRung::Idea] {
-            assert!(refused(&fixture, CodingSetting::Mock, &hint(rung, fenced))
+        for rung in [Rung::Nudge, Rung::Idea] {
+            assert!(refused(&fixture, Setting::Mock, &hint(rung, fenced))
                 .await
                 .is_some());
             assert_eq!(
-                refused(&fixture, CodingSetting::Mock, &hint(rung, CLEAN)).await,
+                refused(&fixture, Setting::Mock, &hint(rung, CLEAN)).await,
                 None
             );
         }
@@ -496,15 +493,10 @@ mod tests {
     #[tokio::test]
     async fn a_plan_block_that_parses_as_python_is_refused() {
         let fixture = Fixture::new();
-        let runnable = hint(CodeHintRung::Plan, "Steps:\n```\nPARSES\n```");
-        assert!(refused(&fixture, CodingSetting::Mock, &runnable)
-            .await
-            .is_some());
-        let steps = hint(
-            CodeHintRung::Plan,
-            "Steps:\n```\n1. remember each number\n```",
-        );
-        assert_eq!(refused(&fixture, CodingSetting::Mock, &steps).await, None);
+        let runnable = hint(Rung::Plan, "Steps:\n```\nPARSES\n```");
+        assert!(refused(&fixture, Setting::Mock, &runnable).await.is_some());
+        let steps = hint(Rung::Plan, "Steps:\n```\n1. remember each number\n```");
+        assert_eq!(refused(&fixture, Setting::Mock, &steps).await, None);
     }
 
     #[tokio::test]
@@ -520,14 +512,14 @@ mod tests {
         ];
         for refused_hint in cases {
             assert!(
-                refused(&fixture, CodingSetting::Mock, &refused_hint)
+                refused(&fixture, Setting::Mock, &refused_hint)
                     .await
                     .is_some(),
                 "{refused_hint:?}"
             );
         }
         let last = line_hint(vec![1, 4], Some("solution.py"));
-        assert_eq!(refused(&fixture, CodingSetting::Mock, &last).await, None);
+        assert_eq!(refused(&fixture, Setting::Mock, &last).await, None);
     }
 
     #[tokio::test]
@@ -537,35 +529,25 @@ mod tests {
             text: "Try this:\n```python\nPASSES\n```".into(),
             ..line_hint(vec![2], Some("solution.py"))
         };
-        assert!(refused(&fixture, CodingSetting::Mock, &solving)
-            .await
-            .is_some());
+        assert!(refused(&fixture, Setting::Mock, &solving).await.is_some());
         let fragment = CodeHint {
             text: "Try this:\n```python\nfragment\n```".into(),
             ..line_hint(vec![2], Some("solution.py"))
         };
-        assert_eq!(
-            refused(&fixture, CodingSetting::Mock, &fragment).await,
-            None
-        );
+        assert_eq!(refused(&fixture, Setting::Mock, &fragment).await, None);
     }
 
     #[tokio::test]
     async fn a_line_of_the_reference_is_refused_word_for_word() {
         let fixture = Fixture::new();
-        let verbatim = hint(
-            CodeHintRung::Plan,
-            "Then store it with `seen[n] = i` each time.",
-        );
-        let why = refused(&fixture, CodingSetting::Mock, &verbatim).await;
+        let verbatim = hint(Rung::Plan, "Then store it with `seen[n] = i` each time.");
+        let why = refused(&fixture, Setting::Mock, &verbatim).await;
         assert!(why.is_some_and(|why| !why.contains("seen[n] = i")));
         let in_reason = CodeHint {
             reason: "Because `if target - n in seen:` is the test.".into(),
-            ..hint(CodeHintRung::Nudge, CLEAN)
+            ..hint(Rung::Nudge, CLEAN)
         };
-        assert!(refused(&fixture, CodingSetting::Mock, &in_reason)
-            .await
-            .is_some());
+        assert!(refused(&fixture, Setting::Mock, &in_reason).await.is_some());
     }
 
     #[tokio::test]
@@ -578,12 +560,7 @@ mod tests {
             "Does the loop need an else:?",
         ] {
             assert_eq!(
-                refused(
-                    &fixture,
-                    CodingSetting::Mock,
-                    &hint(CodeHintRung::Plan, text)
-                )
-                .await,
+                refused(&fixture, Setting::Mock, &hint(Rung::Plan, text)).await,
                 None,
                 "{text}"
             );
@@ -594,23 +571,14 @@ mod tests {
     async fn the_pattern_name_is_allowed_only_on_a_coached_idea() {
         let fixture = Fixture::new();
         let text = format!("This is a case for {}.", fixture.pattern_name());
-        for setting in [
-            CodingSetting::Coached,
-            CodingSetting::Mock,
-            CodingSetting::Watched,
-        ] {
-            for rung in [
-                CodeHintRung::Nudge,
-                CodeHintRung::Idea,
-                CodeHintRung::Plan,
-                CodeHintRung::Line,
-            ] {
+        for setting in [Setting::Coached, Setting::Mock, Setting::Watched] {
+            for rung in [Rung::Nudge, Rung::Idea, Rung::Plan, Rung::Point] {
                 let mut named = hint(rung, &text);
-                if rung == CodeHintRung::Line {
+                if rung == Rung::Point {
                     named.lines = vec![2];
                     named.path = Some("solution.py".into());
                 }
-                let allowed = setting == CodingSetting::Coached && rung == CodeHintRung::Idea;
+                let allowed = setting == Setting::Coached && rung == Rung::Idea;
                 assert_eq!(
                     refused(&fixture, setting, &named).await.is_none(),
                     allowed,
@@ -671,9 +639,9 @@ mod tests {
 
     const BAD: &str = "Then store it with `seen[n] = i` each time.";
 
-    async fn written(llm: &Scripted, fixture: &Fixture, rung: CodeHintRung) -> Result<CodeHint> {
-        let hinting = fixture.hinting(CodingSetting::Mock);
-        let request = ask(&fixture.reference, "{}", rung, false, CodingSetting::Mock);
+    async fn written(llm: &Scripted, fixture: &Fixture, rung: Rung) -> Result<CodeHint> {
+        let hinting = fixture.hinting(Setting::Mock);
+        let request = ask(&fixture.reference, "{}", rung, false, Setting::Mock);
         write_checked(llm, &hinting, &Fake, request, rung).await
     }
 
@@ -681,17 +649,13 @@ mod tests {
     async fn a_refused_hint_is_asked_for_again_with_the_reason() {
         let fixture = Fixture::new();
         let llm = Scripted::new(&[&answer(BAD), &answer(CLEAN)]);
-        let hint = written(&llm, &fixture, CodeHintRung::Plan)
+        let hint = written(&llm, &fixture, Rung::Plan)
             .await
             .expect("second answer is clean");
         assert_eq!(hint.text, CLEAN);
-        let why = refused(
-            &fixture,
-            CodingSetting::Mock,
-            &self::hint(CodeHintRung::Plan, BAD),
-        )
-        .await
-        .expect("the first answer is refused");
+        let why = refused(&fixture, Setting::Mock, &self::hint(Rung::Plan, BAD))
+            .await
+            .expect("the first answer is refused");
         let requests = llm.requests();
         assert_eq!(requests.len(), 2);
         assert!(format!("{:?}", requests[1]).contains(&why));
@@ -701,9 +665,7 @@ mod tests {
     async fn two_refused_answers_fail_as_an_unusable_model_answer() {
         let fixture = Fixture::new();
         let llm = Scripted::new(&[&answer(BAD), &answer(BAD), &answer(CLEAN)]);
-        let error = written(&llm, &fixture, CodeHintRung::Plan)
-            .await
-            .unwrap_err();
+        let error = written(&llm, &fixture, Rung::Plan).await.unwrap_err();
         assert!(
             matches!(error, AppError::ModelAnswerUnusable(_)),
             "{error:?}"
@@ -715,9 +677,7 @@ mod tests {
     async fn a_clean_first_answer_is_the_only_call() {
         let fixture = Fixture::new();
         let llm = Scripted::new(&[&answer(CLEAN)]);
-        written(&llm, &fixture, CodeHintRung::Nudge)
-            .await
-            .expect("clean");
+        written(&llm, &fixture, Rung::Nudge).await.expect("clean");
         assert_eq!(llm.requests().len(), 1);
     }
 
@@ -732,13 +692,9 @@ mod tests {
         })
         .to_string();
         let llm = Scripted::new(&[&with_lines, &with_lines]);
-        let nudge = written(&llm, &fixture, CodeHintRung::Nudge)
-            .await
-            .expect("clean");
+        let nudge = written(&llm, &fixture, Rung::Nudge).await.expect("clean");
         assert!(nudge.lines.is_empty() && nudge.path.is_none());
-        let line = written(&llm, &fixture, CodeHintRung::Line)
-            .await
-            .expect("clean");
+        let line = written(&llm, &fixture, Rung::Point).await.expect("clean");
         assert_eq!(line.lines, vec![3]);
         assert_eq!(line.path.as_deref(), Some("solution.py"));
     }
@@ -746,19 +702,10 @@ mod tests {
 
     #[test]
     fn the_naming_rule_is_in_every_request_that_does_not_allow_a_name() {
-        for setting in [
-            CodingSetting::Coached,
-            CodingSetting::Mock,
-            CodingSetting::Watched,
-        ] {
-            for rung in [
-                CodeHintRung::Nudge,
-                CodeHintRung::Idea,
-                CodeHintRung::Plan,
-                CodeHintRung::Line,
-            ] {
+        for setting in [Setting::Coached, Setting::Mock, Setting::Watched] {
+            for rung in [Rung::Nudge, Rung::Idea, Rung::Plan, Rung::Point] {
                 let request = ask("ref", "obs", rung, false, setting);
-                let allowed = setting == CodingSetting::Coached && rung == CodeHintRung::Idea;
+                let allowed = setting == Setting::Coached && rung == Rung::Idea;
                 assert_eq!(
                     request.instructions.contains(NEVER_NAME),
                     !allowed,
