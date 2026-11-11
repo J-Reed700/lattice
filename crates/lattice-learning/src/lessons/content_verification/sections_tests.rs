@@ -1119,12 +1119,13 @@ async fn the_review_after_cuts_with_no_claim_left_asks_for_no_count_the_cuts_spe
     lesson["questions"].as_array_mut().unwrap().pop();
     let without = Going::new([2]).out_of(&lesson);
     let questions = without["questions"].as_array().unwrap().len();
-    let answers = json!({"answers":(0..questions).map(|index| json!({"index":index,"correctIndices":[0],"reason":"The fixture's key."})).collect::<Vec<_>>()});
+    let solved = json!({"answers":(0..questions).map(|index| json!({"index":index,"reason":"The fixture's key.","correctIndices":[0],"answer":"","blankAnswers":[],"matches":[],"orderedValues":[]})).collect::<Vec<_>>()});
+    let judged = json!({"checks":(0..questions).map(|index| json!({"id":format!("new-{index}"),"finding":"","hasDefect":false,"repeats":[]})).collect::<Vec<_>>()});
     let checks = (0..without["blocks"].as_array().unwrap().len())
         .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"Reviewed; no teaching defect was found.","hasDefect":false}))
         .collect();
     let review = json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)});
-    let llm = model(&[answers, review]);
+    let llm = model(&[solved, judged, review]);
     let sources = sources();
     let references = ReferenceCollection::lexical(&sources).unwrap();
 

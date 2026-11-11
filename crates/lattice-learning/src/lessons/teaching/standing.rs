@@ -374,17 +374,6 @@ impl Standing {
             if continues.is_some() {
                 continue;
             }
-            let restated = report.continues.as_ref().filter(|id| {
-                round.known.iter().any(|known| known.id == **id)
-                    && self.open.iter().any(|finding| finding.id() == **id)
-            });
-            if let Some(id) = restated {
-                tracing::info!(
-                    finding = %id.as_str(),
-                    "A report restates a known finding and is not kept apart"
-                );
-                continue;
-            }
             let folded = report.passage_id.as_deref().and_then(|passage| {
                 round.asked.iter().find(|asked| {
                     asked.passage_id.as_deref() == Some(passage)
