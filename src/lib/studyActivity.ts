@@ -1,4 +1,4 @@
-import type { CommandResults } from '@/lib/bindings';
+import type { CommandArgs, CommandResults } from '@/lib/bindings';
 import { apiCall, type CommandArgList, type CommandName } from '@/shared/ipc/transport';
 import type { ApiResult } from '@/types';
 
@@ -120,27 +120,39 @@ export function dismissStudyActivity(id?: string) {
     current.filter(item => item.status === 'pending' || (id !== undefined && item.id !== id)));
 }
 
+type PartialArgs<T> = T extends object ? { [K in keyof T]?: T[K] extends object ? Partial<T[K]> : T[K] } : T;
+/** Any command's arguments, each request allowed to be partial: a receipt reads only what it needs. */
+export type ActivityArgs = PartialArgs<CommandArgs[CommandName]>;
+
+const text = (value: unknown) => (typeof value === 'string' ? value : undefined);
+
 /** UI receipts for slow IPC requests, not a second store of course/job data.
  * No request payload, source text, answer, or result is retained here. */
-export function beginStudyActivity(domain: string, command: string, rawArgs?: unknown) {
-  const args = (rawArgs ?? undefined) as Record<string, unknown> | undefined;
+export function beginStudyActivity(domain: string, command: string, args?: ActivityArgs) {
   if (!['learning', 'study'].includes(domain) || dedicatedProgress.has(command)) return undefined;
-  const request = args?.request as { programId?: unknown; lessonId?: unknown; moduleId?: unknown; formId?: unknown; saveOnly?: boolean } | undefined;
-  const description = command === 'submit_learning_diagnostic' && request?.saveOnly
+  const object = typeof args === 'object' && args !== null ? args : undefined;
+  const request = object && 'request' in object && typeof object.request === 'object' && object.request !== null ? object.request : undefined;
+  const requestProgramId = request && 'programId' in request ? text(request.programId) : undefined;
+  const requestLessonId = request && 'lessonId' in request ? text(request.lessonId) : undefined;
+  const requestModuleId = request && 'moduleId' in request ? text(request.moduleId) : undefined;
+  const requestFormId = request && 'formId' in request ? text(request.formId) : undefined;
+  const saveOnly = request !== undefined && 'saveOnly' in request && request.saveOnly === true;
+  const argsProgramId = object && 'programId' in object ? text(object.programId) : undefined;
+  const argsId = object && 'id' in object ? text(object.id) : undefined;
+  const description = command === 'submit_learning_diagnostic' && saveOnly
     ? { title: 'Saving your starting-point answers', tab: 'starting_point' as const, detail: 'Waiting for your answers to be saved.', involves: ['Save your answers so you can return to them'] }
     : describe(command);
-  const programId = typeof request?.programId === 'string' ? request.programId
-    : typeof args?.programId === 'string' ? args.programId
-      : /^(get_learning_(program|plan|memory|.*workspace)|delete_learning_program)$/.test(command) && typeof args?.id === 'string' ? args.id : undefined;
+  const programId = requestProgramId ?? argsProgramId
+    ?? (/^(get_learning_(program|plan|memory|.*workspace)|delete_learning_program)$/.test(command) ? argsId : undefined);
   const course = programId ? queryClient.getQueryData<{ summary: { title: string } }>(['learning-program', programId]) : undefined;
   const activity: StudyActivity = {
     ...description, id: crypto.randomUUID(), command,
     destination: {
       programId, tab: description.tab,
-      lessonId: typeof request?.lessonId === 'string' ? request.lessonId : undefined,
-      moduleId: typeof request?.moduleId === 'string' ? request.moduleId : undefined,
-      formId: typeof request?.formId === 'string' ? request.formId : undefined,
-      flashcards: domain === 'study', deckId: command === 'get_study_deck' && typeof args?.id === 'string' ? args.id : undefined,
+      lessonId: requestLessonId,
+      moduleId: requestModuleId,
+      formId: requestFormId,
+      flashcards: domain === 'study', deckId: command === 'get_study_deck' ? argsId : undefined,
     },
     courseTitle: course?.summary?.title ? shortCourseTitle(course.summary.title) : undefined,
     status: 'pending', startedAt: Date.now(),
