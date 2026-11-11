@@ -3,6 +3,7 @@
 pub mod assessment_engine;
 pub mod assessment_generation;
 pub mod assessment_repository;
+pub(crate) mod batched;
 pub(crate) mod form_review;
 #[cfg(test)]
 mod form_review_tests;
