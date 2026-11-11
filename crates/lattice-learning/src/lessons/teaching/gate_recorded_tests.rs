@@ -185,12 +185,13 @@ async fn the_gate_is_handed_the_other_checks_findings_and_not_the_reviewers() ->
         .iter()
         .map(|finding| finding["part"].as_str().unwrap())
         .collect();
-    assert_eq!(parts, ["Section 2", "Section 1", "Section 2"]);
+    // The second section's quotation, then the plan check's finding in the first.
+    assert_eq!(parts, ["Section 2", "Section 1"]);
     let ids: Vec<_> = recorded
         .iter()
         .map(|finding| finding["id"].as_str().unwrap())
         .collect();
-    assert_eq!(ids, ["recorded-0", "recorded-1", "recorded-2"]);
+    assert_eq!(ids, ["recorded-0", "recorded-1"]);
     assert!(!gate[0]["recordedFindings"]
         .to_string()
         .contains(REVIEWER_ONLY));
