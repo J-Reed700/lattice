@@ -7,7 +7,7 @@ use crate::content_verification::tests::{fixture_completion, CONTRACT_NOTHING};
 use crate::lessons::content_verification::Protected;
 use crate::lessons::course_generation_tests::{clean_review, verdict, ScriptedModel};
 use crate::reference_collection::ReferenceCollection;
-use crate::review_findings::Held;
+use crate::review_findings::{subject_of, Held, PlanCheck};
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
@@ -208,6 +208,25 @@ fn retitle_again_at(section: usize) -> String {
         "before": format!("{before}, revised"),
         "after": format!("{before}, revised again"),
     }]))
+}
+
+/// A third retitle of `section`, after `retitle_again_at`'s.
+fn retitle_third_at(section: usize) -> String {
+    let before = ["Opening", "Listing", "Reading"][section];
+    edits(json!([{
+        "path": format!("/blocks/{section}/title"),
+        "before": format!("{before}, revised again"),
+        "after": format!("{before}, revised a third time"),
+    }]))
+}
+
+/// A retitle of sections 1 and 2 together, `before` and `after` being what
+/// follows the section names in their titles.
+fn retitle_both(before: &str, after: &str) -> String {
+    edits(json!([
+        {"path":"/blocks/1/title","before":format!("Listing{before}"),"after":format!("Listing{after}")},
+        {"path":"/blocks/2/title","before":format!("Reading{before}"),"after":format!("Reading{after}")},
+    ]))
 }
 
 fn answer(planned: Value, used: Value, contradictions: Value, unseen: Value) -> String {
@@ -762,6 +781,8 @@ async fn one_fixed_defect_does_not_charge_the_other_in_its_section() -> Result<(
         reviewed_of(&[1], &[]),
         retitle_at(1),
         reviewed_of(&[1], &[]),
+        retitle_again_at(1),
+        reviewed_of(&[1], &[]),
     ]);
     let model = Routed::new(
         &scripted,
@@ -770,6 +791,7 @@ async fn one_fixed_defect_does_not_charge_the_other_in_its_section() -> Result<(
                 (FIRST_USE, "the first tool"),
                 (SECOND_USE, "the second tool"),
             ]),
+            uses_of(&[(SECOND_USE, "the second tool")]),
             uses_of(&[(SECOND_USE, "the second tool")]),
             uses_of(&[(SECOND_USE, "the second tool")]),
         ],
@@ -781,7 +803,7 @@ async fn one_fixed_defect_does_not_charge_the_other_in_its_section() -> Result<(
         "Read the names.",
     ]);
     let result = run(&model, &candidate, &context(&[], &[]), &[]).await?;
-    assert_eq!(repairs_asked(&scripted), 2);
+    assert_eq!(repairs_asked(&scripted), 3);
     assert_eq!(result.set_aside.len(), 1, "{:?}", waiting(&result));
     let left = &result.set_aside[0];
     assert_eq!(left.repairs, 2);
@@ -793,51 +815,84 @@ async fn one_fixed_defect_does_not_charge_the_other_in_its_section() -> Result<(
     Ok(())
 }
 
+/// A repair of the second section's body for `finding`.
+fn replace_for(finding: &ReviewFinding, before: &str, after: &str) -> String {
+    edits(json!([{
+        "finding": finding.id().as_str(),
+        "path": "/blocks/1/body",
+        "before": before,
+        "after": after
+    }]))
+}
+
 #[tokio::test]
-async fn a_defect_in_words_a_repair_wrote_continues_that_repair_s_count() -> Result<()> {
-    let written = "Sorting the list with the second tool leaves names unchanged.";
-    let theirs = "Rename a file with the third tool.";
+async fn a_defect_in_words_a_repair_wrote_continues_the_count_of_its_own_kind_of_defect(
+) -> Result<()> {
+    let (one, other) = (
+        "Names never change when listed.",
+        "Listing may change names.",
+    );
+    let first = "Sorting the list with the second tool leaves names unchanged.";
+    let second = "Sorting the list with the third tool leaves names unchanged.";
+    let third = "Sorting the list with the third tool always leaves names unchanged.";
+    let mut digests = [subject_of(one), subject_of(other)];
+    digests.sort();
+    let clash = ReviewFinding::plan(
+        PlanCheck::Contradiction,
+        digests.join("-"),
+        FindingSite::Section(0),
+        "",
+    );
+    let use_of = |tool: &str| {
+        ReviewFinding::plan(
+            PlanCheck::Used,
+            subject_of(tool),
+            FindingSite::Section(1),
+            "",
+        )
+    };
     let scripted = scripted(vec![
         reviewed(3),
-        replace_in_listing("Listing may change names.", written),
+        replace_for(&clash, other, first),
         reviewed_of(&[1], &[]),
-        edits(json!([{"path":"/blocks/2/body","before":theirs,"after":"Read the names again."}])),
-        reviewed_of(&[2], &[]),
-        retitle(),
-        reviewed(3),
+        replace_for(&use_of("the second tool"), first, second),
+        reviewed_of(&[1], &[]),
+        replace_for(&use_of("the third tool"), second, third),
+        reviewed_of(&[1], &[]),
     ]);
-    let clash = answer(
+    let contradiction = answer(
         json!([]),
         json!([]),
-        json!([{
-            "quote":"Names never change when listed.",
-            "otherQuote":"Listing may change names."
-        }]),
+        json!([{"quote": one, "otherQuote": other}]),
         json!([]),
     );
-    let in_written = ("the second tool", "the second tool");
     let model = Routed::new(
         &scripted,
         vec![
-            clash,
-            uses_of(&[in_written, (theirs, "the third tool")]),
-            uses_of(&[in_written]),
-            uses_of(&[in_written]),
+            contradiction,
+            uses_of(&[("the second tool", "the second tool")]),
+            uses_of(&[("the third tool", "the third tool")]),
+            uses_of(&[("the third tool", "the third tool")]),
         ],
     );
-    let third = format!("Read the names. {theirs}");
     let candidate = lesson([
         "A terminal takes typed commands. Names never change when listed.",
         "Listing may change names. The list shows names in order.",
-        third.as_str(),
+        "Read the names.",
     ]);
     let result = run(&model, &candidate, &context(&[], &[]), &[]).await?;
-    assert_eq!(repairs_asked(&scripted), 2);
+    // The use in the words the contradiction's repair wrote has its own
+    // repairs; the use in the words that use's repair wrote continues its count.
+    assert_eq!(repairs_asked(&scripted), 3);
     assert_eq!(result.set_aside.len(), 1, "{:?}", waiting(&result));
     assert_eq!(result.set_aside[0].repairs, 2);
     assert_eq!(
         result.set_aside[0].finding.passage.as_deref(),
-        Some("the second tool")
+        Some("the third tool")
+    );
+    assert_eq!(
+        body(&result, 1),
+        format!("{third} The list shows names in order.")
     );
     Ok(())
 }
@@ -1115,9 +1170,14 @@ async fn finding_note_in(
         reviewed_of(&[1], &[]),
         retitle_again_at(1),
         reviewed_of(&[1], &[]),
+        retitle_third_at(1),
+        reviewed_of(&[1], &[]),
     ]);
     let found = answer(planned, used, json!([]), json!([]));
-    let model = Routed::new(&scripted, vec![found.clone(), found.clone(), found]);
+    let model = Routed::new(
+        &scripted,
+        vec![found.clone(), found.clone(), found.clone(), found],
+    );
     let candidate = lesson([
         "The first step is shown.",
         "Apply the second method\nto the first item.",
@@ -1645,6 +1705,8 @@ async fn every_negative_is_read_again_once_and_a_use_is_shown_only_the_parts_up_
         reviewed_of(&[1], &[]),
         retitle_again_at(1),
         reviewed_of(&[1], &[]),
+        retitle_third_at(1),
+        reviewed_of(&[1], &[]),
     ]);
     let found = answer(
         json!([not_taught("idea-0"), not_taught("idea-1")]),
@@ -1652,7 +1714,10 @@ async fn every_negative_is_read_again_once_and_a_use_is_shown_only_the_parts_up_
         json!([]),
         json!([]),
     );
-    let model = Routed::new(&scripted, vec![found.clone(), found.clone(), found]);
+    let model = Routed::new(
+        &scripted,
+        vec![found.clone(), found.clone(), found.clone(), found],
+    );
     let candidate = lesson([TYPED, "Type ls -l to see sizes.", "Read the names."]);
     let ctx = context(&["A first idea", "A second idea"], &[]);
     run(&model, &candidate, &ctx, &[]).await?;
@@ -1681,10 +1746,10 @@ async fn words_pointing_at_what_is_never_seen_are_a_finding_in_every_part_that_h
 ) -> Result<()> {
     let scripted = scripted(vec![
         reviewed(3),
-        retitle_at(1),
-        reviewed_of(&[1], &[]),
-        retitle_again_at(1),
-        reviewed_of(&[1], &[]),
+        retitle_both("", ", revised"),
+        reviewed_of(&[1, 2], &[]),
+        retitle_both(", revised", ", revised again"),
+        reviewed_of(&[1, 2], &[]),
     ]);
     let pointing = answer(
         json!([]),
