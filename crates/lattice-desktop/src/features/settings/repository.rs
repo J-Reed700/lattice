@@ -221,11 +221,9 @@ impl SettingsRepository {
             return Ok(());
         }
         for (server, _, secret) in &legacy {
-            let key = CredentialKey::for_server(*server).as_str();
-            if credentials.has_api_key(key).await.unwrap_or(false) {
-                continue;
-            }
-            credentials.set_api_key(key, secret).await?;
+            credentials
+                .set_api_key(CredentialKey::for_server(*server).as_str(), secret)
+                .await?;
         }
         let settings_file = self.read_settings_file().await?;
         self.write_settings_file_without_legacy(&settings_file)
