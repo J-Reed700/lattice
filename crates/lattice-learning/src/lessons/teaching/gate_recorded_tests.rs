@@ -198,3 +198,23 @@ async fn the_gate_is_handed_the_other_checks_findings_and_not_the_reviewers() ->
     assert!(gate[0]["proposals"].to_string().contains(REVIEWER_ONLY));
     Ok(())
 }
+
+#[tokio::test]
+async fn the_gate_is_told_the_checks_that_read_the_candidate_beside_the_reviewer() -> Result<()> {
+    let model = routed(
+        vec![reporting(REVIEWER_ONLY, 1), gate_answer("none")],
+        Vec::new(),
+    );
+    let candidate = json!({"blocks":[block("Example", FIRST, EXCERPT)],"questions":[]});
+    // The repairs that follow have no scripted answer; the gate's request is what is read.
+    let _ = run(&model, &candidate).await;
+    let gate = model.gate.lock().unwrap();
+    let ids: Vec<_> = gate[0]["otherChecks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|check| check["id"].clone())
+        .collect();
+    assert_eq!(ids, [json!("check-0"), json!("check-1"), json!("check-2")]);
+    Ok(())
+}
