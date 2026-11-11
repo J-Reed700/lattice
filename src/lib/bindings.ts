@@ -3758,6 +3758,10 @@ async getModelLimits(model: ModelRef) : Promise<Result<ModelWindowDto, ApiError>
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Try an Ollama connection. A blank header value tries the one already
+ * stored under the same header name.
+ */
 async testOllamaConnection(request: TestOllamaConnectionRequest) : Promise<Result<TestOllamaConnectionResponse, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:settings|test_ollama_connection", { request }) };
@@ -3766,6 +3770,11 @@ async testOllamaConnection(request: TestOllamaConnectionRequest) : Promise<Resul
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Save (`Some`) or clear (`None`, or blank) the authentication header value
+ * of a remote model server. The value goes to the keyring and is never
+ * returned.
+ */
 async saveRemoteAuthHeaderValue(server: RemoteServer, value: string | null) : Promise<Result<null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:settings|save_remote_auth_header_value", { server, value }) };
