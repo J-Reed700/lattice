@@ -1,14 +1,14 @@
-import { useEffect, useMemo, useState, type RefObject } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import type * as Wire from '@/lib/bindings';
 
 import { sessionApi } from './sessionApi';
 
-/** The session's clock: open while the page is visible, closed when it hides or the screen leaves. */
+/** The session's clock: open while the page is visible, closed when it hides or the screen leaves an unfinished session. */
 export function useSessionClock(
   programId: string,
   initial: Wire.PracticeSessionDto,
-  sessionRef: RefObject<Wire.PracticeSessionDto>,
+  isFinished: () => boolean,
 ) {
   const { sessionId } = initial;
   const [clock, setClock] = useState(initial.clock);
@@ -26,9 +26,9 @@ export function useSessionClock(
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
       document.removeEventListener('visibilitychange', onVisibility);
-      if (!sessionRef.current.finished) set(false);
+      if (!isFinished()) set(false);
     };
-  }, [initial.finished, programId, sessionId, sessionRef]);
+  }, [initial.finished, isFinished, programId, sessionId]);
 
   const elapsedMs = useMemo(
     () => clock.activeMs + (clock.openSince != null ? Math.max(0, Date.now() - clock.openSince) : 0),

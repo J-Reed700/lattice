@@ -82,7 +82,8 @@ export function useSession({ programId, initial, draft }: UseSessionArgs) {
 
   const touch = useCallback(() => setActivityAt((value) => value + 1), []);
 
-  const { clock, elapsedMs } = useSessionClock(programId, initial, sessionRef);
+  const isFinished = useCallback(() => sessionRef.current.finished, []);
+  const { clock, elapsedMs } = useSessionClock(programId, initial, isFinished);
   useObservation({ programId, session, draft, activityAt, apply });
 
   const guarded = useCallback(
