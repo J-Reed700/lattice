@@ -66,6 +66,16 @@ fn a_refusal_after_an_applied_attempt_is_a_first_refusal() {
 }
 
 #[test]
+fn a_deferral_between_two_refusals_does_not_make_the_second_one_free() {
+    let mut passes = Passes::default();
+    let finding = finding();
+    passes.charge(&finding, refused());
+    passes.charge(&finding, Outcome::Deferred);
+    passes.charge(&finding, refused());
+    assert_eq!(spent(&passes, &finding), 1);
+}
+
+#[test]
 fn two_charged_attempts_still_stop_a_finding() {
     let mut passes = Passes::default();
     let finding = finding();
