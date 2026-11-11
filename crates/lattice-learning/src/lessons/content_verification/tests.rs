@@ -808,6 +808,9 @@ mod rounds_tests;
 #[path = "bridge_tests.rs"]
 mod bridge_tests;
 
+#[path = "knowledge_case_tests.rs"]
+mod knowledge_case_tests;
+
 #[path = "readings_tests.rs"]
 pub(super) mod readings_tests;
 
