@@ -23,7 +23,7 @@ use lattice_core::application::ports::{FileMetadata, FileStoragePort};
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::fs::atomic::AtomicFs;
-use lattice_core::shared::fs::path_safety::{reject_parent_components, PathUnsafe};
+use lattice_core::shared::path_safety::{reject_parent_components, PathUnsafe};
 use std::io::ErrorKind;
 use std::path::Path;
 use tokio::fs;

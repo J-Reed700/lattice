@@ -3,7 +3,7 @@
 //! Resolves the configured home directory and enforces filesystem confinement.
 
 use lattice_core::shared::error::AppError;
-use lattice_core::shared::fs::path_safety::single_file_name;
+use lattice_core::shared::path_safety::single_file_name;
 use std::path::{Path, PathBuf};
 
 /// Infrastructure adapter for model storage paths.

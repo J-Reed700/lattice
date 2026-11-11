@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use lattice_core::application::ports::backup_port::{BackupInfoData, BackupPort};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::fs::path_safety::{single_file_name, PathUnsafe};
+use lattice_core::shared::path_safety::{single_file_name, PathUnsafe};
 use lattice_core::shared::persistence::Database;
 #[cfg(test)]
 use std::fs;

@@ -1,4 +1,4 @@
-use lattice_core::shared::fs::path_safety::{reject_parent_components, PathUnsafe};
+use lattice_core::shared::path_safety::{reject_parent_components, PathUnsafe};
 use std::path::Path;
 use std::time::Duration;
 use thiserror::Error;

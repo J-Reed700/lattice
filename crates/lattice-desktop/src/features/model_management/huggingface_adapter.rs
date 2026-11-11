@@ -26,8 +26,8 @@ use std::time::Duration;
 use lattice_core::application::ports::{ExternalModelMetadata, ModelCatalogPort};
 use lattice_core::domain::models::selection::EmbeddingCompatibility;
 use lattice_core::shared::error::AppError;
-use lattice_core::shared::fs::path_safety::single_file_name;
 use lattice_core::shared::http::reqwest_client_builder;
+use lattice_core::shared::path_safety::single_file_name;
 
 mod hub_client;
 

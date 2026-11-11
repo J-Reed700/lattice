@@ -1,6 +1,6 @@
 //! Catalog model metadata, its download URL and its resource checks.
 use super::*;
-use crate::shared::fs::path_safety::{repo_id_parts, single_file_name};
+use crate::shared::path_safety::{repo_id_parts, single_file_name};
 
 /// Complete metadata for an AI model.
 ///

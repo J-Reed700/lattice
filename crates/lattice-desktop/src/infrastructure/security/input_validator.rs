@@ -1,7 +1,5 @@
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::fs::path_safety::{
-    reject_parent_components, single_file_name, PathUnsafe,
-};
+use lattice_core::shared::path_safety::{reject_parent_components, single_file_name, PathUnsafe};
 use serde_json::Value;
 
 pub use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;

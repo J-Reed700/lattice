@@ -25,7 +25,7 @@ use lattice_core::domain::{
     ModelCatalogService, ModelCategory, ModelSource, SearchFilters, SystemCapabilities,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::fs::path_safety::{repo_id_parts, single_file_name};
+use lattice_core::shared::path_safety::{repo_id_parts, single_file_name};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use tauri::State;

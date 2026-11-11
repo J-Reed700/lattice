@@ -7,7 +7,7 @@ use lattice_core::application::ports::model_storage::ModelStoragePort;
 use lattice_core::domain::models::curated::get_all_curated_models;
 use lattice_core::domain::repositories::downloaded_model_repository::DownloadedModelRepository;
 use lattice_core::shared::error::AppError;
-use lattice_core::shared::fs::path_safety::single_file_name;
+use lattice_core::shared::path_safety::single_file_name;
 use std::sync::Arc;
 use tracing::{info, warn};
 
