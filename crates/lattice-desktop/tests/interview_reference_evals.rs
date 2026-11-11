@@ -129,7 +129,7 @@ async fn client() -> Result<(std::sync::Arc<dyn LLMPort>, EvalConfig, bool)> {
                 model.clone(),
                 Duration::from_secs(30),
                 Duration::from_secs(u64::from(timeout)),
-                (!header_name.is_empty()).then(|| lattice_core::application::ports::llm_port::RemoteHeader {
+                (!header_name.is_empty()).then_some(lattice_core::application::ports::llm_port::RemoteHeader {
                     name: header_name,
                     value: header_value,
                 }),

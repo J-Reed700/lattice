@@ -12,7 +12,6 @@ fn settings(url: String) -> LLMSettingsDto {
             url,
             model: "test-model".into(),
             auth_header_name: "Authorization".into(),
-            ..Default::default()
         },
         ..Default::default()
     }

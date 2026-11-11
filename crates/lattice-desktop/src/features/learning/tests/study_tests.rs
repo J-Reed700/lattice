@@ -39,7 +39,6 @@ async fn generates_biology_cards_from_markdown_with_an_optional_learning_goal() 
                 url: server.uri(),
                 model: "test".into(),
                 auth_header_name: String::new(),
-                ..Default::default()
             },
             ..Default::default()
         },

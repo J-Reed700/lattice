@@ -59,7 +59,6 @@ async fn live_client() -> Result<Arc<dyn LLMPort>> {
                     url: endpoint,
                     model,
                     auth_header_name: name.clone(),
-                    ..Default::default()
                 },
                 ..Default::default()
             },

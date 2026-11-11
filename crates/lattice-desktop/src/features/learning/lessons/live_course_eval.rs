@@ -193,7 +193,6 @@ impl CourseRecipe {
                 url: url.to_owned(),
                 model: self.server.model.clone(),
                 auth_header_name: header.map(|header| header.name.clone()).unwrap_or_default(),
-                ..Default::default()
             },
             ..defaults
         };

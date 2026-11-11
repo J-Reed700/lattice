@@ -329,7 +329,6 @@ async fn a_llama_cpp_model_uses_the_llama_cpp_connection_whatever_else_settings_
                 url: server.uri(),
                 model: "stale-llama-cpp-model".into(),
                 auth_header_name: "Authorization".into(),
-                ..Default::default()
             },
             ..Default::default()
         };

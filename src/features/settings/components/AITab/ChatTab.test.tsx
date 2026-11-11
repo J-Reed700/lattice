@@ -217,10 +217,10 @@ describe('ChatTab', () => {
       render(<ChatTab />);
       fireEvent.click(screen.getByRole('button', { name: 'Save Ollama connection' }));
       expect(screen.getByRole('button', { name: 'Save Ollama connection' })).toHaveTextContent('Saving…');
-      expect(h.llm.saveLlmUpdates).toHaveBeenCalledWith({
+      await waitFor(() => expect(h.llm.saveLlmUpdates).toHaveBeenCalledWith({
         ollamaConfigured: true, ollamaUrl: 'http://garden.local:11434', model: 'mistral',
         ollamaUtilityModel: '', ollamaAuthHeaderName: '',
-      });
+      }));
       await act(async () => { pending.resolve(true); await pending.promise; });
       expect(h.toast.success).toHaveBeenCalledWith('Ollama settings saved');
     });
