@@ -33,7 +33,7 @@ fn not_confirmed(user: &str) -> String {
     if user.contains(contract::confirm::PLANNED_TASK) {
         json!({"taught":false,"quote":"","belongs":"section-1"}).to_string()
     } else {
-        json!({"taught":false,"where":"thisLesson","quote":""}).to_string()
+        json!({"asked":true,"taught":false,"where":"thisLesson","quote":""}).to_string()
     }
 }
 
@@ -1235,7 +1235,7 @@ async fn check_two_counts_teaching_where_a_step_asks_for_it() -> Result<()> {
     let end = system.find("3. contradictions:").unwrap();
     let check = &system[start..end];
     let criterion = format!(
-        "or that it treats as known, which the lesson has not taught by the words that ask for it and which priorKnowledge and the actions and terms of earlierLessons do not cover. The lesson has taught it when an earlier part, or this part before or in those words, says {SHOWN}: words that ask for it and say all of this teach it where it is used."
+        "or that it treats as known, which the lesson has not taught by the words that ask for it and which priorKnowledge and the actions and terms of earlierLessons do not cover. The lesson has taught something the learner does or uses when an earlier part, or this part before or in those words, says {SHOWN}: words that ask for it and say all of this teach it where it is used."
     );
     assert!(check.contains(&criterion), "{check}");
     assert!(
@@ -1277,8 +1277,48 @@ async fn the_check_and_the_note_define_shown_how_in_the_same_words() -> Result<(
     .await?;
     let (_, rest) = note.split_once("where it is first used (").unwrap();
     let (phrase, _) = rest.split_once(')').unwrap();
-    assert_eq!(phrase, SHOWN, "{note}");
-    assert!(contract::SYSTEM.contains(phrase), "{}", contract::SYSTEM);
+    assert_eq!(phrase, EACH_SHOWN, "{note}");
+    assert!(contract::SYSTEM.contains(SHOWN), "{}", contract::SYSTEM);
+    Ok(())
+}
+
+const EACH_SHOWN: &str = "for something the learner does or uses, what it is for, exactly how to do it, and the result the learner should get; for a term, what it means";
+
+#[test]
+fn the_check_says_when_a_term_has_been_taught() {
+    let system = contract::SYSTEM;
+    assert!(
+        system.contains("It has taught a term when an earlier part, or this part before or in those words, says what it means."),
+        "{system}"
+    );
+    assert!(
+        system.contains(&format!(
+            "says {SHOWN}: words that ask for it and say all of this teach it where it is used."
+        )),
+        "{system}"
+    );
+}
+
+#[test]
+fn the_confirming_read_says_what_a_part_only_mentions_is_not_used() {
+    let system = contract::confirm::SYSTEM;
+    assert!(
+        system.contains("A part uses something when its words ask the learner to do or use it, when its practice deliverable needs it, or when it treats it as known. What a part only mentions, and does not ask of the learner, it does not use; then asked is false and quote is empty."),
+        "{system}"
+    );
+    assert!(system.contains("It has taught a term when"), "{system}");
+}
+
+#[tokio::test]
+async fn the_used_note_names_what_teaches_an_action_and_what_teaches_a_term() -> Result<()> {
+    let note = finding_note(
+        json!([]),
+        json!([used("Apply the second method", "the second method")]),
+        "Teach it in this step",
+    )
+    .await?;
+    assert!(note.contains(EACH_SHOWN), "{note}");
+    assert_no_software_words("the used-before-taught note", &note);
     Ok(())
 }
 
@@ -1349,7 +1389,7 @@ async fn a_use_the_confirming_read_finds_taught_raises_nothing_and_asks_for_no_r
     );
     let model = Routed::new(&scripted, vec![found.clone(), found]).confirming(
         "the terminal application",
-        json!({"taught":true,"where":"thisLesson","quote":"Click the terminal icon in the dock"}),
+        json!({"asked":true,"taught":true,"where":"thisLesson","quote":"Click the terminal icon in the dock"}),
     );
     let candidate = lesson([
         TYPED,
@@ -1501,7 +1541,7 @@ async fn waiting_after_confirming(reply: Value) -> Result<Vec<(String, Option<St
 }
 
 fn confirmed_by(place: &str, quote: &str) -> Value {
-    json!({"taught":true,"where":place,"quote":quote})
+    json!({"asked":true,"taught":true,"where":place,"quote":quote})
 }
 
 #[tokio::test]
@@ -1535,6 +1575,64 @@ async fn a_confirming_read_that_does_not_check_out_leaves_the_finding_standing()
         let left = waiting_after_confirming(confirmed_by(place, quote)).await?;
         assert_eq!(left, standing, "{place} {quote}");
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_use_the_part_never_asked_for_raises_no_finding() -> Result<()> {
+    let left = waiting_after_confirming(
+        json!({"asked":false,"taught":false,"where":"thisLesson","quote":""}),
+    )
+    .await?;
+    assert!(left.is_empty(), "{left:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_use_the_part_asked_for_and_nothing_taught_stands() -> Result<()> {
+    let left = waiting_after_confirming(
+        json!({"asked":true,"taught":false,"where":"thisLesson","quote":""}),
+    )
+    .await?;
+    assert_eq!(
+        left,
+        [(
+            "teaching:section-1".to_owned(),
+            Some("Type ls -l to see sizes".to_owned())
+        )]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_question_put_for_a_use_asks_whether_the_part_asks_it_and_names_both_standards(
+) -> Result<()> {
+    let scripted = scripted(vec![
+        reviewed(3),
+        retitle_at(1),
+        reviewed_of(&[1], &[]),
+        retitle_again_at(1),
+        reviewed_of(&[1], &[]),
+    ]);
+    let found = answer(
+        json!([]),
+        json!([used("Type ls -l to see sizes", "the -l option of ls")]),
+        json!([]),
+        json!([]),
+    );
+    let model = Routed::new(&scripted, vec![found.clone(), found.clone(), found]);
+    let candidate = lesson([TYPED, USED_IN, "Read the names."]);
+    run(&model, &candidate, &context(&[], &[]), &[]).await?;
+    let confirmed = model.confirmed();
+    let prompt = confirmed.first().unwrap();
+    assert!(
+        prompt.contains("ask the learner to do or use the -l option of ls, need it for its practice deliverable, or treat it as known? If it does, has the lesson"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains(&format!("taught it: {EACH_SHOWN}?")),
+        "{prompt}"
+    );
     Ok(())
 }
 
