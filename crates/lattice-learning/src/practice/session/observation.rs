@@ -121,9 +121,9 @@ impl Observation {
         push_line(
             &mut out,
             &format!(
-                "Task: {}. Setting: {:?}. Stage: {}. Stages reached: {reached}.",
+                "Task: {}. Setting: {}. Stage: {}. Stages reached: {reached}.",
                 wording.form_label(self.form),
-                self.setting,
+                self.setting.label(),
                 wording.stage_label(brief, self.form, self.stage)
             ),
         );
@@ -141,10 +141,10 @@ impl Observation {
                 push_line(
                     &mut out,
                     &format!(
-                        "Learner's example {}: {} - {:?}",
+                        "Learner's example {}: {} - {}",
                         case.ordinal,
                         learner_cases.show(brief, &case.body)?,
-                        case.verdict
+                        case.verdict.label()
                     ),
                 );
             }
@@ -214,9 +214,9 @@ impl Observation {
         push_line(
             out,
             &format!(
-                "Last {noun}: {}, {:?}.",
+                "Last {noun}: {}, {}.",
                 kind.wording.scope_label(check.scope),
-                check.status
+                check.status.label()
             ),
         );
         for view in &check.cases {
@@ -227,7 +227,7 @@ impl Observation {
             let case =
                 kind.showing
                     .case(&self.brief, &view.case, view.result.as_ref(), view.open)?;
-            push_line(out, &format!("- {status:?}: {case}"));
+            push_line(out, &format!("- {}: {case}", status.label()));
         }
         for note in kind.showing.check_notes(&self.brief, &check.detail)? {
             push_line(out, &note);

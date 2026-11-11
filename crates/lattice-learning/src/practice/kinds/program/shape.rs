@@ -323,8 +323,8 @@ pub fn problem_of(exercise: &Exercise) -> Result<Problem> {
     }
     if matches!(exercise.form, Form::Complete | Form::Arrange) {
         return Err(AppError::InvalidState(format!(
-            "A program has no {:?} exercises.",
-            exercise.form
+            "A program has no {} exercises.",
+            exercise.form.label()
         )));
     }
     let proof: ExerciseProof = serde_json::from_value(exercise.proof.clone())

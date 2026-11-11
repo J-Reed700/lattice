@@ -60,11 +60,11 @@ pub trait Wording: Send + Sync {
     fn card(&self) -> String;
 
     fn form_label(&self, form: Form) -> String {
-        format!("{form:?}")
+        form.label().to_owned()
     }
 
     fn stage_label(&self, _brief: &Brief, _form: Form, stage: Stage) -> String {
-        format!("{stage:?}")
+        stage.label().to_owned()
     }
 
     fn check_noun(&self) -> String {
@@ -72,39 +72,39 @@ pub trait Wording: Send + Sync {
     }
 
     fn scope_label(&self, scope: CheckScope) -> String {
-        format!("{scope:?}")
+        scope.label().to_owned()
     }
 
     fn rung_label(&self, rung: Rung) -> String {
-        format!("{rung:?}")
+        rung.label().to_owned()
     }
 
     fn practice_scene(&self) -> String {
-        String::new()
+        "a practice session".to_owned()
     }
 
     fn interview_scene(&self) -> String {
-        String::new()
+        "a mock interview".to_owned()
     }
 
     fn task_noun(&self) -> String {
-        String::new()
+        "task".to_owned()
     }
 
     fn piece_noun(&self) -> String {
-        String::new()
+        "work".to_owned()
     }
 
     fn evidence(&self) -> String {
-        String::new()
+        "the learner's work and checks".to_owned()
     }
 
     fn refer_rule(&self) -> String {
-        String::new()
+        "Refer to a part by its name.".to_owned()
     }
 
     fn unsolved_rule(&self) -> String {
-        String::new()
+        "anything of the work you write must leave the task unsolved".to_owned()
     }
 
     /// What the kind calls the part of its pieces a reply may quote, when it has one.
@@ -113,15 +113,15 @@ pub trait Wording: Send + Sync {
     }
 
     fn checked_verb(&self) -> String {
-        String::new()
+        "checked".to_owned()
     }
 
     fn submit_probes(&self) -> String {
-        String::new()
+        "why they chose something".to_owned()
     }
 
     fn checkpoint_probes(&self) -> String {
-        String::new()
+        "why they chose something".to_owned()
     }
 
     /// The instruction a stage opens with.

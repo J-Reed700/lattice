@@ -184,7 +184,7 @@ impl Showing for Letters {
             text.push_str(&format!(" (slot {index})"));
         }
         if let Some(result) = result {
-            text.push_str(&format!(" -> {:?}", result.status));
+            text.push_str(&format!(" -> {}", result.status.label()));
         }
         Ok(text)
     }

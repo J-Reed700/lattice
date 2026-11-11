@@ -32,9 +32,9 @@ pub async fn prove(kind: &Kind, draft: Draft, cancel: CancellationToken) -> Resu
     }
     if !kind.supports(draft.form) {
         return Err(AppError::InvalidState(format!(
-            "The kind {} does not support the form {:?}.",
+            "The kind {} does not support the form {}.",
             kind.id.as_str(),
-            draft.form
+            draft.form.label()
         )));
     }
 

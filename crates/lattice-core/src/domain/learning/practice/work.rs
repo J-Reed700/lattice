@@ -374,24 +374,107 @@ pub struct Exercise {
     pub proof: serde_json::Value,
 }
 
-macro_rules! labels {
-    ($($ty:ident),* $(,)?) => {
-        $(impl $ty {
-            /// The name text uses for this value.
-            pub fn label(self) -> &'static str {
-                ""
-            }
-        })*
-    };
+impl Setting {
+    /// The name text uses for this value.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Coached => "Coached",
+            Self::Mock => "Mock",
+            Self::Watched => "Watched",
+        }
+    }
 }
 
-labels!(
-    Setting,
-    Form,
-    Stage,
-    CheckScope,
-    Rung,
-    CheckStatus,
-    CaseStatus,
-    LearnerCaseVerdict
-);
+impl Form {
+    /// The name text uses for this value.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Build => "Build",
+            Self::Repair => "Repair",
+            Self::Complete => "Complete",
+            Self::Arrange => "Arrange",
+        }
+    }
+}
+
+impl Stage {
+    /// The name text uses for this value.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Understand => "Understand",
+            Self::Examples => "Examples",
+            Self::Plan => "Plan",
+            Self::Make => "Make",
+            Self::Check => "Check",
+            Self::Review => "Review",
+            Self::Reproduce => "Reproduce",
+            Self::Locate => "Locate",
+            Self::Fix => "Fix",
+            Self::Verify => "Verify",
+        }
+    }
+}
+
+impl CheckScope {
+    /// The name text uses for this value.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Shown => "Shown",
+            Self::All => "All",
+            Self::Own => "Own",
+        }
+    }
+}
+
+impl Rung {
+    /// The name text uses for this value.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Nudge => "Nudge",
+            Self::Idea => "Idea",
+            Self::Plan => "Plan",
+            Self::Point => "Point",
+        }
+    }
+}
+
+impl CheckStatus {
+    /// The name text uses for this value.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Pending => "Pending",
+            Self::Running => "Running",
+            Self::Passed => "Passed",
+            Self::Failed => "Failed",
+            Self::TimedOut => "TimedOut",
+            Self::Cancelled => "Cancelled",
+            Self::Interrupted => "Interrupted",
+            Self::Unavailable => "Unavailable",
+        }
+    }
+}
+
+impl CaseStatus {
+    /// The name text uses for this value.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Passed => "Passed",
+            Self::Failed => "Failed",
+            Self::Error => "Error",
+            Self::Ran => "Ran",
+            Self::TimedOut => "TimedOut",
+            Self::NotRun => "NotRun",
+        }
+    }
+}
+
+impl LearnerCaseVerdict {
+    /// The name text uses for this value.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Right => "Right",
+            Self::Wrong => "Wrong",
+            Self::Invalid => "Invalid",
+        }
+    }
+}
