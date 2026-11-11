@@ -168,10 +168,10 @@ impl KnowledgeOutcome {
         !self.samples.is_empty() && self.count(KnowledgeVerdict::TrueCommon) == self.samples.len()
     }
 
-    /// Most samples called it false: the falsity veto. A lone dissent is not
-    /// a majority, so it never vetoes a true statement (§4.5).
+    /// Every sample called it false: the falsity veto. A single dissent
+    /// forfeits it (§4.5).
     pub fn is_false(&self) -> bool {
-        self.count(KnowledgeVerdict::False) * 2 > self.samples.len()
+        !self.samples.is_empty() && self.count(KnowledgeVerdict::False) == self.samples.len()
     }
 
     /// Some sample said it needs a source.
@@ -180,8 +180,8 @@ impl KnowledgeOutcome {
     }
 
     /// The samples read as a Common statement's check: unanimous
-    /// `true_common` stands, most `false` refutes, anything else (a
-    /// `needs_source`, a lone `false`) needs a source.
+    /// `true_common` stands, all `false` refutes, anything else (a
+    /// `needs_source`, a split) needs a source.
     pub fn knowledge_outcome(&self) -> Outcome {
         if self.is_common() {
             Outcome::Stands
@@ -192,7 +192,7 @@ impl KnowledgeOutcome {
         }
     }
 
-    /// The samples read as the falsity veto: most `false` refutes, anything
+    /// The samples read as the falsity veto: all `false` refutes, anything
     /// else stands (a `needs_source` never fails a statement here).
     pub fn veto_outcome(&self) -> Outcome {
         if self.is_false() {
