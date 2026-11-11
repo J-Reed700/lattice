@@ -30,6 +30,18 @@ pub fn start(policy: &dyn AcceptancePolicy, class: Class) -> Position {
     }
 }
 
+/// Where a statement a repair wrote beside its target's successor begins: the
+/// post-rewrite node of its `class`, with the `rewrites_left` the successor has.
+pub fn born(policy: &dyn AcceptancePolicy, class: Class, rewrites_left: u8) -> Position {
+    Position {
+        class,
+        changed_class: false,
+        reasked: false,
+        node: policy.graph(class).after_rewrite(),
+        rewrites_left,
+    }
+}
+
 /// The rewrites a statement that entered `class` is given: the most `Rewrite`
 /// steps any path from the class's entry takes, class changes included. Re-asks
 /// and successors are not paths. A position met again on its own path counts

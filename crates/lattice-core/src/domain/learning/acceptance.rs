@@ -18,8 +18,8 @@ pub use graph::{Graph, Node};
 pub use invariants::{violations, Violation};
 pub use standard::{StandardPolicy, STANDARD_POLICY};
 pub use walk::{
-    check_record, decide, next_rewrite, rewrite_ahead, rewrites_given, start, stepped, successor,
-    walk, walk_from, RecordFault,
+    born, check_record, decide, next_rewrite, rewrite_ahead, rewrites_given, start, stepped,
+    successor, walk, walk_from, RecordFault,
 };
 
 use serde::{Deserialize, Serialize};

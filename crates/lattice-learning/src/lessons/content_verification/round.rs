@@ -98,11 +98,6 @@ pub(super) trait Review: Send {
     fn draft(&self) -> &str;
     /// The draft's statements and its examples' runs, before anything is read.
     async fn extract(&mut self) -> Result<()>;
-    /// The draft with a repair that wrote a new statement taken back, before
-    /// the statement is identified: one the fresh extraction holds that
-    /// continues neither the repair's target nor a statement on its sentence
-    /// (acceptance design §2.6).
-    async fn take_back(&mut self, policy: &dyn AcceptancePolicy) -> Result<Option<String>>;
     /// Which claim of the ledger each extracted statement is.
     async fn identify(&mut self, policy: &dyn AcceptancePolicy) -> Result<()>;
     /// Why the policy cannot walk a statement, which stops the lesson.
@@ -165,14 +160,13 @@ pub(super) trait Review: Send {
 
 /// Takes `review`'s lesson round by round until it publishes, waits for the
 /// user or stops (acceptance design §2.7, §2.10). A round syncs what the user
-/// did, resumes a saved repair the first time, extracts, takes back a repair
-/// that wrote a statement and identifies, and stops on a fault; then it reads,
-/// takes back a flow repair that wrote a statement, researches and reads what
-/// research saved, recites or uncites, and repairs the statements at rewrite
-/// and cut nodes. A round that records no step and leaves the draft as it was
-/// stops the lesson with what was pending. Once nothing is left for the
-/// machine, the sections are settled and the lesson publishes or waits for the
-/// user.
+/// did, resumes a saved repair the first time, extracts and identifies, and
+/// stops on a fault; then it reads, takes back a flow repair that wrote a
+/// statement, researches and reads what research saved, recites or uncites,
+/// and repairs the statements at rewrite and cut nodes. A round that records
+/// no step and leaves the draft as it was stops the lesson with what was
+/// pending. Once nothing is left for the machine, the sections are settled
+/// and the lesson publishes or waits for the user.
 pub(super) async fn run<F>(
     review: &mut dyn Review<Finished = F>,
     policy: &dyn AcceptancePolicy,
@@ -188,10 +182,6 @@ pub(super) async fn run<F>(
         // What this iteration starts from, to know whether it moved anything.
         let (stepped, draft) = (review.stepped(), review.draft().to_owned());
         review.extract().await?;
-        if let Some(restored) = review.take_back(policy).await? {
-            review.restore(restored).await?;
-            continue;
-        }
         review.identify(policy).await?;
         if let Some(reason) = review.fault(policy) {
             return review.finish(Verdict::Stop(reason)).await;

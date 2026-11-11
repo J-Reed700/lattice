@@ -1129,3 +1129,22 @@ fn a_successor_of_a_statement_with_none_left_is_still_made() {
     let last = position(Common, false, false, "c.final", 0);
     assert_eq!(successor(&policy, last), last);
 }
+
+#[test]
+fn a_statement_born_of_a_repair_begins_after_the_rewrite_of_its_class_with_the_rewrites_given() {
+    let policy = StandardPolicy::new();
+    for (class, node) in [
+        (Sourced, "s.final"),
+        (Reasoning, "r.final"),
+        (Common, "c.final"),
+        (Internal, "i.final"),
+    ] {
+        for left in [0, 1, 2] {
+            assert_eq!(
+                born(&policy, class, left),
+                position(class, false, false, node, left),
+                "{class:?} with {left} left"
+            );
+        }
+    }
+}

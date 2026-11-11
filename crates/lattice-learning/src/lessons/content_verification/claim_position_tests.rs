@@ -5,7 +5,8 @@ use super::claim_ledger_tests::{identify_findings, pass_report, passage_finding,
 use super::*;
 use crate::lessons::call_plan::{Planned, PlannedAt};
 use lattice_core::domain::learning::acceptance::{
-    decide, AcceptancePolicy, End, Goal, Outcome, Position, Reading, Step, Taken, Then, Walked,
+    born, decide, AcceptancePolicy, End, Goal, Outcome, Position, Reading, Step, Taken, Then,
+    Walked,
 };
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimId, ClaimLocation, UnitKind,
@@ -628,4 +629,85 @@ fn statements_standing_on_one_sentence_share_a_group_and_the_rest_have_none() {
     assert_eq!(groups[6], None);
     assert_eq!(groups[7], None);
     assert!(claim_ledger::sentences(&[]).is_empty());
+}
+
+#[tokio::test]
+async fn a_claim_born_of_a_repair_starts_at_the_post_rewrite_node_of_its_class_with_the_rewrites_it_was_given(
+) -> Result<()> {
+    let policy = StandardPolicy::new();
+    let mut ledger = open().await?;
+    let parent = claim(
+        &mut ledger,
+        "parent",
+        "Parent.",
+        &[(Class::Reasoning, ClassifiedBy::Model)],
+    )
+    .await?;
+    let common = claim(
+        &mut ledger,
+        "common",
+        "Common.",
+        &[(Class::Common, ClassifiedBy::Rule)],
+    )
+    .await?;
+    let cited = claim(
+        &mut ledger,
+        "cited",
+        "Cited.",
+        &[(Class::Sourced, ClassifiedBy::Writer)],
+    )
+    .await?;
+    for (id, attempts_left) in [(&common, 1), (&cited, 0)] {
+        let event = ClaimEvent::BornOfRepair {
+            parent: parent.clone(),
+            attempts_left,
+        };
+        ledger.append(id, event).await?;
+    }
+
+    assert_eq!(
+        ledger.position(&policy, &common),
+        Some(Walked::At(born(&policy, Class::Common, 1)))
+    );
+    assert_eq!(
+        ledger.position(&policy, &common),
+        Some(Walked::At(at(
+            &policy,
+            Class::Common,
+            (false, false),
+            "c.final",
+            1
+        )))
+    );
+    assert_eq!(
+        ledger.position(&policy, &cited),
+        Some(Walked::At(at(
+            &policy,
+            Class::Sourced,
+            (false, false),
+            "s.final",
+            0
+        )))
+    );
+    // Its own steps go on from there.
+    let from = born(&policy, Class::Sourced, 0);
+    step(
+        &mut ledger,
+        &policy,
+        &cited,
+        from,
+        &[taken(Reading::Parts, Outcome::Refuted)],
+    )
+    .await?;
+    assert_eq!(
+        ledger.position(&policy, &cited),
+        Some(Walked::At(at(
+            &policy,
+            Class::Sourced,
+            (false, false),
+            "s.cut",
+            0
+        )))
+    );
+    Ok(())
 }

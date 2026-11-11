@@ -37,7 +37,7 @@ fn a_report_gives_its_part_its_defect_and_its_words() {
     let asked = with_reported(prompt(), &[&first]);
     assert_eq!(
         asked["reported"],
-        json!([{"part":"Section 2","defect":"The beads are counted twice.","words":"counted twice"}])
+        json!([{"id":"report-0","part":"Section 2","defect":"The beads are counted twice.","words":"counted twice"}])
     );
 }
 
@@ -50,8 +50,8 @@ fn a_report_without_a_site_or_about_the_whole_lesson_names_no_part_and_one_witho
     assert_eq!(
         asked["reported"],
         json!([
-            {"defect":"The rope is cut twice."},
-            {"defect":"The shelf is full.","words":"full"}
+            {"id":"report-0","defect":"The rope is cut twice."},
+            {"id":"report-1","defect":"The shelf is full.","words":"full"}
         ])
     );
 }
