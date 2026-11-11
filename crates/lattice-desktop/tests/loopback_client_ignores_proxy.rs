@@ -26,7 +26,7 @@ async fn a_loopback_request_does_not_go_through_the_environment_proxy() {
     ] {
         std::env::set_var(variable, &unreachable_proxy);
     }
-    for variable in ["NO_PROXY", "no_proxy"] {
+    for variable in ["NO_PROXY", "no_proxy", "LATTICE_DISABLE_SYSTEM_PROXY"] {
         std::env::remove_var(variable);
     }
 
@@ -37,9 +37,19 @@ async fn a_loopback_request_does_not_go_through_the_environment_proxy() {
         .mount(&server)
         .await;
 
+    let url = format!("{}/health", server.uri());
+
+    let ordinary = lattice_core::shared::http::reqwest_client_builder()
+        .build()
+        .unwrap();
+    assert!(
+        ordinary.get(&url).send().await.is_err(),
+        "control: an ordinary client must be captured by the environment proxy, or this test proves nothing"
+    );
+
     let client = loopback_client_builder().build().unwrap();
     let response = client
-        .get(format!("{}/health", server.uri()))
+        .get(&url)
         .send()
         .await
         .expect("a loopback request must not use the proxy");
