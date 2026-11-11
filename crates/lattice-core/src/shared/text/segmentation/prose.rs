@@ -116,15 +116,20 @@ fn is_heading(line: &str) -> bool {
 
 /// Whether `line` opens a list item: a bullet or an ordered marker, and whitespace after it.
 pub(super) fn is_list_item(line: &str) -> bool {
-    let line = line.trim_start();
-    let bullet = line.strip_prefix(['-', '*', '+', '•', '◦', '▪', '‣', '–']);
-    bullet.is_some_and(|rest| rest.starts_with([' ', '\t'])) || list_marker_end(line).is_some()
+    item_marker_end(line).is_some()
 }
 
 /// Where the list marker opening `line`, a bullet or an ordered one, and the
 /// whitespace after it end, if one does.
-pub fn item_marker_end(_line: &str) -> Option<usize> {
-    None
+pub fn item_marker_end(line: &str) -> Option<usize> {
+    let rest = line.trim_start();
+    let indent = line.len() - rest.len();
+    let bullet = rest.strip_prefix(['-', '*', '+', '•', '◦', '▪', '‣', '–']);
+    if let Some(after) = bullet.filter(|after| after.starts_with([' ', '\t'])) {
+        let space = after.len() - after.trim_start_matches([' ', '\t']).len();
+        return Some(indent + (rest.len() - after.len()) + space);
+    }
+    list_marker_end(rest).map(|end| indent + end)
 }
 
 /// Whether `line` is a rule: three or more of one of `-`, `*`, `_` or `=`, with spaces between them.
