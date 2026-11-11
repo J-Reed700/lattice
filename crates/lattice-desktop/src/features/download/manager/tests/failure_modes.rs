@@ -52,6 +52,41 @@ async fn test_download_invalid_path_rejected() -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
+async fn refused_destination_message(destination: std::path::PathBuf) -> String {
+    let manager = DownloadManagerService::new(
+        Arc::new(MockDownloadRepository::new()),
+        Arc::new(MockDownloadEngine::new()),
+        temp_root(),
+        Arc::default(),
+    );
+    let request = DownloadRequest {
+        url: "https://example.com/file.bin".to_string(),
+        destination,
+        checksum: None,
+        auth_token: None,
+        model_name: None,
+        model_id: None,
+        model_file_name: None,
+    };
+    match manager.start_download(request).await {
+        Err(DownloadError::InvalidDestination(msg)) => msg,
+        other => panic!("Expected InvalidDestination, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn a_backslash_separated_parent_in_a_destination_is_refused_on_every_platform() {
+    let message = refused_destination_message(temp_root().join("a\\..\\..\\x.bin")).await;
+    assert!(message.contains("parent-directory component"), "{message}");
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn a_dots_only_segment_in_a_destination_is_refused_on_windows() {
+    let message = refused_destination_message(temp_root().join("...").join("x.bin")).await;
+    assert!(message.contains("parent-directory component"), "{message}");
+}
+
 /// Model files reach the manager canonicalized (on Windows with the `\\?\`
 /// prefix) while its root is a plain path; the destination is still inside.
 #[tokio::test]

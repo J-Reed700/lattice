@@ -1,12 +1,13 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { deferred } from '@/tests/deferred';
+import { render } from '@/tests/renderWithQueryClient';
 
 import { ChatTab } from './ChatTab';
 
 const h = vi.hoisted(() => ({
-  llm: { llmSettings: null as null | Record<string, any>, isLoading: false, saveLlmUpdates: vi.fn(), reload: vi.fn() },
+  llm: { llmSettings: null as null | Record<string, any>, isLoading: false, authValueSet: { ollama: false, llamaCpp: false }, saveLlmUpdates: vi.fn(), saveAuthHeaderValue: vi.fn(), reload: vi.fn() },
   models: { activeModel: null as null | Record<string, string>, activeEmbeddingModel: null as null | Record<string, string> },
   probe: vi.fn(),
   setCloudApiKey: vi.fn(),
@@ -26,7 +27,6 @@ const settings = (overrides: Record<string, unknown> = {}) => ({
   model: 'mistral',
   ollamaUtilityModel: '',
   ollamaAuthHeaderName: '',
-  ollamaAuthHeaderValue: '',
   boundedConversationMemory: true,
   llamaCpp: { url: '', model: '' },
   router: { model: '  tiny-router  ' },
@@ -43,8 +43,10 @@ describe('ChatTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     h.llm.isLoading = false;
+    h.llm.authValueSet = { ollama: false, llamaCpp: false };
     h.llm.llmSettings = settings();
     h.llm.saveLlmUpdates.mockResolvedValue(true);
+    h.llm.saveAuthHeaderValue.mockResolvedValue(true);
     h.models = { activeModel: null, activeEmbeddingModel: null };
   });
 
@@ -55,6 +57,7 @@ describe('ChatTab', () => {
     expect(screen.getByText('Loading…')).toBeInTheDocument();
     first.unmount();
     h.llm.isLoading = false;
+    h.llm.authValueSet = { ollama: false, llamaCpp: false };
     render(<ChatTab />);
     expect(screen.getByText("Couldn't read chat settings.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -215,10 +218,10 @@ describe('ChatTab', () => {
       render(<ChatTab />);
       fireEvent.click(screen.getByRole('button', { name: 'Save Ollama connection' }));
       expect(screen.getByRole('button', { name: 'Save Ollama connection' })).toHaveTextContent('Saving…');
-      expect(h.llm.saveLlmUpdates).toHaveBeenCalledWith({
+      await waitFor(() => expect(h.llm.saveLlmUpdates).toHaveBeenCalledWith({
         ollamaConfigured: true, ollamaUrl: 'http://garden.local:11434', model: 'mistral',
-        ollamaUtilityModel: '', ollamaAuthHeaderName: '', ollamaAuthHeaderValue: '',
-      });
+        ollamaUtilityModel: '', ollamaAuthHeaderName: '',
+      }));
       await act(async () => { pending.resolve(true); await pending.promise; });
       expect(h.toast.success).toHaveBeenCalledWith('Ollama settings saved');
     });
@@ -234,14 +237,15 @@ describe('ChatTab', () => {
 
   describe('auth', () => {
     it('opens by itself when a header is saved, and toggles', () => {
-      h.llm.llmSettings = settings({ ollamaAuthHeaderName: 'X-Key', ollamaAuthHeaderValue: 'abc' });
+      h.llm.llmSettings = settings({ ollamaAuthHeaderName: 'X-Key' });
+      h.llm.authValueSet = { ollama: true, llamaCpp: false };
       render(<ChatTab />);
       expect(screen.getByLabelText('Auth header name')).toHaveValue('X-Key');
       fireEvent.click(screen.getByRole('button', { name: 'Hide auth' }));
       expect(screen.queryByLabelText('Auth header name')).not.toBeInTheDocument();
     });
 
-    it('saves a complete changed header pair on blur', () => {
+    it('stores a typed header value, then saves the name, on blur', async () => {
       render(<ChatTab />);
       fireEvent.click(screen.getByRole('button', { name: 'Auth' }));
       fireEvent.change(screen.getByLabelText('Auth header name'), { target: { value: ' X-Key ' } });
@@ -250,11 +254,13 @@ describe('ChatTab', () => {
       expect(h.llm.saveLlmUpdates).not.toHaveBeenCalled();
       fireEvent.change(screen.getByLabelText('Auth header value'), { target: { value: 'secret' } });
       fireEvent.blur(screen.getByLabelText('Auth header value'));
-      expect(h.llm.saveLlmUpdates).toHaveBeenCalledWith({ ollamaAuthHeaderName: 'X-Key', ollamaAuthHeaderValue: 'secret' });
+      await waitFor(() => expect(h.llm.saveLlmUpdates).toHaveBeenCalledWith({ ollamaAuthHeaderName: 'X-Key' }));
+      expect(h.llm.saveAuthHeaderValue).toHaveBeenCalledWith('ollama', 'secret');
     });
 
     it('does not resave an unchanged header', () => {
-      h.llm.llmSettings = settings({ ollamaAuthHeaderName: 'X-Key', ollamaAuthHeaderValue: 'abc' });
+      h.llm.llmSettings = settings({ ollamaAuthHeaderName: 'X-Key' });
+      h.llm.authValueSet = { ollama: true, llamaCpp: false };
       render(<ChatTab />);
       fireEvent.blur(screen.getByLabelText('Auth header value'));
       expect(h.llm.saveLlmUpdates).not.toHaveBeenCalled();
@@ -287,7 +293,7 @@ describe('ChatTab', () => {
       expect(screen.getByRole('button', { name: 'Save Ollama connection' })).toBeDisabled();
     });
 
-    it('builds a basic auth header from a username and password', () => {
+    it('builds a basic auth header from a username and password', async () => {
       render(<ChatTab />);
       fireEvent.click(screen.getByRole('button', { name: 'Auth' }));
       fireEvent.click(screen.getByRole('button', { name: 'Set header' }));
@@ -295,10 +301,8 @@ describe('ChatTab', () => {
       fireEvent.change(screen.getByLabelText('Basic auth username'), { target: { value: 'ada' } });
       fireEvent.change(screen.getByLabelText('Basic auth password'), { target: { value: 'lovelace' } });
       fireEvent.click(screen.getByRole('button', { name: 'Set header' }));
-      expect(h.llm.saveLlmUpdates).toHaveBeenCalledWith({
-        ollamaAuthHeaderName: 'Authorization',
-        ollamaAuthHeaderValue: `Basic ${btoa('ada:lovelace')}`,
-      });
+      await waitFor(() => expect(h.llm.saveLlmUpdates).toHaveBeenCalledWith({ ollamaAuthHeaderName: 'Authorization' }));
+      expect(h.llm.saveAuthHeaderValue).toHaveBeenCalledWith('ollama', `Basic ${btoa('ada:lovelace')}`);
     });
   });
 

@@ -7,7 +7,6 @@
 //! model is the thing whose misbehaviour is being simulated. The fake port is
 //! not a stub: it enforces the revision compare-and-swap, because one of these
 //! tests is about what happens when that check fires.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;

@@ -264,7 +264,7 @@ impl lattice_core::application::ports::TextSearchPort for EmptyTextSearch {
 pub fn empty_hybrid_search() -> Arc<crate::features::search::use_cases::HybridSearchUseCase> {
     Arc::new(
         crate::features::search::use_cases::HybridSearchUseCase::new(
-            Arc::new(lattice_core::application::ports::MockEmbeddingPort::new_degraded()),
+            Arc::new(lattice_core::application::ports::UnavailableEmbedding::not_installed()),
             Arc::new(
                 crate::infrastructure::vector_index::USearchVectorIndex::new(4, None)
                     .expect("an in-memory vector index"),

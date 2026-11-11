@@ -1,22 +1,21 @@
 //! Credentials Adapter Implementation
 //!
-//! Implements CredentialsPort using OS keyring for secure storage.
+//! Implements CredentialsPort over the OS keyring (`SecureStorage`).
 //!
 //! # Security
 //! - API keys stored in OS-level keyring (Windows Credential Manager, macOS Keychain, Linux Secret Service)
 //! - Custom endpoints stored in config file (not sensitive)
 //! - Never stores credentials in plaintext
 
+use crate::infrastructure::security::keyring_storage::SecureStorage;
 use async_trait::async_trait;
-use keyring::Entry;
 use lattice_core::application::ports::credentials_port::CredentialsPort;
+use lattice_core::application::services::credentials::CredentialKey;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use tracing::{error, info, warn};
-
-const SERVICE_NAME: &str = "com.lattice.lattice";
+use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct EndpointConfig {
@@ -25,21 +24,21 @@ struct EndpointConfig {
 
 /// Credentials adapter using OS keyring
 pub struct CredentialsAdapter {
-    service: String,
+    storage: SecureStorage,
     config_path: PathBuf,
 }
 
 impl CredentialsAdapter {
     pub fn new(config_path: PathBuf) -> Self {
         Self {
-            service: SERVICE_NAME.to_string(),
+            storage: SecureStorage::new(),
             config_path,
         }
     }
 
     pub fn with_service(service: String, config_path: PathBuf) -> Self {
         Self {
-            service,
+            storage: SecureStorage::with_service(service),
             config_path,
         }
     }
@@ -75,76 +74,25 @@ impl CredentialsAdapter {
 #[async_trait]
 impl CredentialsPort for CredentialsAdapter {
     async fn set_api_key(&self, service: &str, key: &str) -> Result<(), AppError> {
-        if key.is_empty() {
-            return Err(AppError::InvalidInput(
-                "API key cannot be empty".to_string(),
-            ));
-        }
-
-        let entry = Entry::new(&self.service, service)
-            .map_err(|e| AppError::Security(format!("Failed to create keyring entry: {}", e)))?;
-
-        entry
-            .set_password(key)
-            .map_err(|e| AppError::Security(format!("Failed to store API key: {}", e)))?;
-
-        info!("API key '{}' stored securely", service);
-        Ok(())
+        self.storage.store_api_key(service, key)
     }
 
     async fn get_api_key(&self, service: &str) -> Result<Option<String>, AppError> {
-        let entry = Entry::new(&self.service, service)
-            .map_err(|e| AppError::Security(format!("Failed to create keyring entry: {}", e)))?;
-
-        match entry.get_password() {
-            Ok(password) => {
-                info!("API key '{}' retrieved successfully", service);
-                Ok(Some(password))
-            }
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(keyring::Error::Ambiguous(_)) => {
-                warn!("Multiple entries found for key '{}'", service);
-                Err(AppError::Security("Ambiguous keyring entry".to_string()))
-            }
-            Err(e) => {
-                error!("Failed to retrieve API key '{}': {}", service, e);
-                Err(AppError::Security(format!(
-                    "Failed to retrieve API key: {}",
-                    e
-                )))
-            }
-        }
+        self.storage.get_api_key(service)
     }
 
     async fn delete_api_key(&self, service: &str) -> Result<(), AppError> {
-        let entry = Entry::new(&self.service, service)
-            .map_err(|e| AppError::Security(format!("Failed to create keyring entry: {}", e)))?;
-
-        match entry.delete_credential() {
-            Ok(()) => {
-                info!("API key '{}' deleted", service);
-                Ok(())
-            }
-            Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => {
-                error!("Failed to delete API key '{}': {}", service, e);
-                Err(AppError::Security(format!(
-                    "Failed to delete API key: {}",
-                    e
-                )))
-            }
-        }
+        self.storage.delete_api_key(service)
     }
 
     async fn has_api_key(&self, service: &str) -> Result<bool, AppError> {
-        Ok(self.get_api_key(service).await?.is_some())
+        self.storage.has_api_key(service)
     }
 
     async fn clear_all_credentials(&self) -> Result<(), AppError> {
-        // Hardcoded list — keep in sync when a new credential service is added.
-        // The OS keyring API doesn't support enumeration, so we can't discover
-        // entries dynamically.
-        let known_services = vec![
+        // The OS keyring API doesn't support enumeration, so the names are
+        // listed: the legacy cloud names and every `CredentialKey`.
+        let legacy_services = [
             "anthropic_api_key",
             "openai_api_key",
             "google_api_key",
@@ -153,8 +101,11 @@ impl CredentialsPort for CredentialsAdapter {
             "google",
         ];
 
-        for service in known_services {
-            let _ = self.delete_api_key(service).await;
+        for service in legacy_services
+            .into_iter()
+            .chain(CredentialKey::ALL.into_iter().map(CredentialKey::as_str))
+        {
+            let _ = self.storage.delete_api_key(service);
         }
 
         info!("All credentials cleared");

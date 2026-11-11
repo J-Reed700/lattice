@@ -452,7 +452,6 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         download_manager.clone(),
         download_repository,
         event_rx_arc,
-        Some(downloaded_model_repository),
         Some(event_bus),
     );
     // NOT supervised. The bridge's `start(self)` consumes self and

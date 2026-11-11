@@ -8,15 +8,13 @@ use crate::features::settings::dto::{
 };
 use crate::features::settings::text_files::{self, FileFilterDto, NativeDialogs};
 use crate::interfaces::di::Container;
-use lattice_core::application::ports::llm_port::InvalidationCause;
+use lattice_core::application::ports::llm_port::{InvalidationCause, RemoteHeader, RemoteServer};
+use lattice_core::application::services::credentials::remote_auth;
 use lattice_core::domain::models::model_ref::CloudProvider;
 use lattice_core::shared::error::AppError;
-use lattice_core::shared::http::reqwest_client_builder;
+use lattice_core::shared::http::{auth_header_map, reqwest_client_builder};
 use lattice_core::shared::ipc::ApiError;
-use reqwest::{
-    header::{HeaderMap, HeaderName, HeaderValue},
-    Client,
-};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -120,24 +118,10 @@ fn validate_and_normalize_ollama_url(raw_url: &str) -> Result<String, AppError> 
     Ok(trimmed.trim_end_matches('/').to_string())
 }
 
-fn build_http_client(request: &TestOllamaConnectionRequest) -> Result<Client, AppError> {
-    let auth_name = request.auth_header_name.trim();
-    let auth_value = request.auth_header_value.trim();
-    if auth_name.is_empty() ^ auth_value.is_empty() {
-        return Err(AppError::InvalidInput(
-            "authHeaderName and authHeaderValue must both be set".to_string(),
-        ));
-    }
-
+fn build_http_client(header: Option<&RemoteHeader>) -> Result<Client, AppError> {
     let mut builder = reqwest_client_builder().timeout(std::time::Duration::from_secs(15));
-    if !auth_name.is_empty() {
-        let header_name = HeaderName::from_bytes(auth_name.as_bytes())
-            .map_err(|e| AppError::InvalidInput(format!("Invalid auth header name: {}", e)))?;
-        let header_value = HeaderValue::from_str(auth_value)
-            .map_err(|e| AppError::InvalidInput(format!("Invalid auth header value: {}", e)))?;
-        let mut headers = HeaderMap::new();
-        headers.insert(header_name, header_value);
-        builder = builder.default_headers(headers);
+    if let Some(header) = header {
+        builder = builder.default_headers(auth_header_map(&header.name, &header.value)?);
     }
 
     builder
@@ -188,14 +172,33 @@ async fn fetch_models_from_tags(client: &Client, base_url: &str) -> Result<Vec<S
     Ok(models)
 }
 
+/// Try an Ollama connection. A blank header value tries the one already
+/// stored for the saved server URL.
 #[tauri::command]
 #[specta::specta]
 pub async fn test_ollama_connection(
+    container: State<'_, Container>,
     request: TestOllamaConnectionRequest,
 ) -> Result<TestOllamaConnectionResponse, ApiError> {
-    let base_url =
-        validate_and_normalize_ollama_url(&request.ollama_url).map_err(ApiError::from)?;
-    let client = build_http_client(&request).map_err(ApiError::from)?;
+    let saved = container.get_settings_use_case().execute().await?;
+    let header = remote_auth::header_for_test(
+        container.credentials().as_ref(),
+        RemoteServer::Ollama,
+        &request.ollama_url,
+        &request.auth_header_name,
+        &request.auth_header_value,
+        &saved.llm.ollama_url,
+    )
+    .await?;
+    probe_ollama_connection(&request.ollama_url, header).await
+}
+
+pub(crate) async fn probe_ollama_connection(
+    ollama_url: &str,
+    header: Option<RemoteHeader>,
+) -> Result<TestOllamaConnectionResponse, ApiError> {
+    let base_url = validate_and_normalize_ollama_url(ollama_url).map_err(ApiError::from)?;
+    let client = build_http_client(header.as_ref()).map_err(ApiError::from)?;
 
     let models = fetch_models_from_tags(&client, &base_url).await.map_err(|_| {
         ApiError::from(AppError::Network(
@@ -320,6 +323,45 @@ pub async fn get_settings(container: State<'_, Container>) -> Result<SettingsDto
         .map_err(ApiError::from)?;
 
     Ok(settings)
+}
+
+/// Whether each remote server has an authentication header value stored.
+/// The values themselves never leave the keyring.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteAuthStatusDto {
+    pub ollama: bool,
+    pub llama_cpp: bool,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_remote_auth_header_status(
+    container: State<'_, Container>,
+) -> Result<RemoteAuthStatusDto, ApiError> {
+    let credentials = container.credentials();
+    Ok(RemoteAuthStatusDto {
+        ollama: remote_auth::is_set(credentials.as_ref(), RemoteServer::Ollama).await?,
+        llama_cpp: remote_auth::is_set(credentials.as_ref(), RemoteServer::LlamaCpp).await?,
+    })
+}
+
+/// Save (`Some`) or clear (`None`, or blank) the authentication header value
+/// of a remote model server. The value goes to the keyring and is never
+/// returned.
+#[tauri::command]
+#[specta::specta]
+pub async fn save_remote_auth_header_value(
+    container: State<'_, Container>,
+    server: RemoteServer,
+    value: Option<String>,
+) -> Result<(), ApiError> {
+    container
+        .settings_repository()
+        .store_header_value(server, value.as_deref())
+        .await?;
+    container.invalidate_llm_instances(InvalidationCause::RemoteAuthChanged { server });
+    Ok(())
 }
 
 #[tauri::command]
@@ -656,6 +698,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             get_system_theme,
             validate_folder_path,
             test_ollama_connection,
+            save_remote_auth_header_value,
+            get_remote_auth_header_status,
             crate::interfaces::commands::model_setup::test_llama_cpp_connection,
             test_custom_tool,
             add_watch_folder,

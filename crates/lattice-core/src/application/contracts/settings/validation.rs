@@ -214,16 +214,6 @@ impl SettingsDto {
         if let Err(error) = settings.llm.llama_cpp.validated_base_url() {
             result.add_error("llm", error.to_string());
         }
-        let auth_name = settings.llm.ollama_auth_header_name.trim();
-        let auth_value = settings.llm.ollama_auth_header_value.trim();
-        if (!auth_name.is_empty() && auth_value.is_empty())
-            || (auth_name.is_empty() && !auth_value.is_empty())
-        {
-            result.add_error(
-                "llm",
-                "ollama_auth_header_name and ollama_auth_header_value must both be set".to_string(),
-            );
-        }
         if !(MIN_LLM_STALL_TIMEOUT_SECONDS..=MAX_LLM_STALL_TIMEOUT_SECONDS)
             .contains(&settings.llm.timeout_seconds)
         {

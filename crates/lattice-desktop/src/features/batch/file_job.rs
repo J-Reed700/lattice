@@ -100,17 +100,7 @@ impl FileImporter {
 #[async_trait]
 impl ItemImporter for FileImporter {
     async fn prepare(&self, _context: &JobContext) -> Result<()> {
-        let embedding = (self.load_embedding)().await.map_err(|error| {
-            AppError::ServiceNotAvailable(format!(
-                "Could not load the active embedding model: {error}"
-            ))
-        })?;
-        if !embedding.is_ready().await? {
-            return Err(AppError::ServiceNotAvailable(
-                "The embedding model is not ready yet.".into(),
-            ));
-        }
-        Ok(())
+        lattice_core::application::ports::require_loaded_ready((self.load_embedding)().await).await
     }
 
     async fn import(&self, context: &JobContext, item: &BatchItem) -> Result<ItemResult> {

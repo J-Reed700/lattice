@@ -247,6 +247,12 @@ fn test_validate_domain_rejects_traversal() {
     assert!(validate_domain("...").is_err()); // Just dots
 }
 
+#[cfg(windows)]
+#[test]
+fn a_domain_of_dots_and_spaces_is_refused_on_windows() {
+    assert!(validate_domain(". .").is_err());
+}
+
 #[test]
 fn test_validate_domain_rejects_special_chars() {
     assert!(validate_domain("example.com/path").is_err());

@@ -45,7 +45,7 @@ export async function installSearchFixture(page: Page) {
     open_file_by_id: (args) => {
       if (args.fileId === 'doc-history') throw new Error('History of botany.pdf is no longer in your library folder.');
       // A local note opens in the system viewer; nothing renders in the app.
-      return { action: 'opened_external', fileType: 'text', contentPath: PLANT_NOTES, title: null };
+      return { action: 'opened_external', contentPath: PLANT_NOTES, title: null };
     },
     // Search has no conversation, so no frozen copy of a web page exists for it.
     get_web_page_snapshot: () => null,

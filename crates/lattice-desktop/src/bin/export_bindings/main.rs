@@ -387,7 +387,6 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             // HuggingFace Plugin (4 commands)
             lattice::features::huggingface::plugin::set_huggingface_token,
             lattice::features::huggingface::plugin::get_huggingface_token_status,
-            lattice::features::huggingface::plugin::get_huggingface_token,
             lattice::features::huggingface::plugin::delete_huggingface_token,
             // Extraction Plugin (4 commands)
             lattice::features::extraction::plugin::parse_wikilinks,
@@ -508,6 +507,8 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::interfaces::commands::cloud_models::list_cloud_models,
             lattice::interfaces::commands::cloud_models::get_model_limits,
             lattice::features::settings::plugin::test_ollama_connection,
+            lattice::features::settings::plugin::save_remote_auth_header_value,
+            lattice::features::settings::plugin::get_remote_auth_header_status,
             lattice::interfaces::commands::model_setup::test_llama_cpp_connection,
             lattice::features::settings::plugin::test_custom_tool,
             lattice::features::settings::plugin::get_settings,
@@ -555,6 +556,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::speech::plugin::get_speech_status,
             lattice::features::speech::plugin::synthesize_speech,
         ])
+        .constant("FILE_TYPES", lattice_core::domain::value_objects::FileFormat::all().to_vec())
         .typ::<lattice::features::conversation::chat::ChatResponse>()
         .typ::<lattice::features::conversation::chat::ChatStreamEventDto>()
         .typ::<lattice::features::conversation::chat::RetrievalTraceDto>()

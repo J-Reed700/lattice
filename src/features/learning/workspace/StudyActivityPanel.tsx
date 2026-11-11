@@ -32,7 +32,7 @@ function useClaimsWaitingIn(destination: StudyDestination, finished: boolean): n
     },
     enabled: finished && Boolean(programId && lessonId),
     retry: false,
-  }, queryClient);
+  });
   if (!data || (data.state !== 'needs_review' && data.state !== 'stopped')) return 0;
   return data.claims.filter(isWaitingForYou).length;
 }

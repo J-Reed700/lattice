@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 //! The status read: ready, indexing (queued and running), no model and
 //! unavailable, and that it queues a build for a course whose index is behind
 //! while never opening or building the index itself.

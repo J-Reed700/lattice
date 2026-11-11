@@ -176,7 +176,6 @@ pub fn write_manifest(index_path: &Path, manifest: &IndexManifest) -> Result<()>
 }
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
     use super::super::repository::read_source_stamp;
     use super::*;

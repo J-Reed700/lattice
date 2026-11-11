@@ -61,7 +61,6 @@ pub fn directory_prefix_pattern(dir: &str) -> String {
 }
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;

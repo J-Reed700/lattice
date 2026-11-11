@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 use super::*;
 use crate::{
     curriculum::LearningGenerationJobStatus as Status,
