@@ -24,9 +24,7 @@ mod sources;
 mod spaces;
 mod state;
 
-use listing::{
-    build_fts_query, listing_response, ConversationExplorerRow, ConversationListing,
-};
+use listing::{build_fts_query, listing_response, ConversationExplorerRow, ConversationListing};
 use spaces::ensure_standard_space;
 
 #[cfg(test)]
