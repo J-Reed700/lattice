@@ -473,3 +473,71 @@ fn a_kind_with_no_reply_fields_gets_a_format_line_that_ends_after_the_content() 
         );
     }
 }
+
+fn relay(kind: &Kind, observation: &Observation, stage: Stage) -> String {
+    let line = kind
+        .wording
+        .stage_instruction(&observation.brief, observation.form, stage);
+    format!(
+        "The stage asks the learner: \"{line}\" That is the learner's work: do none of it for them."
+    )
+}
+
+#[test]
+fn the_coach_relays_a_stage_as_the_learners_work_and_does_none_of_it() {
+    let kind = kind();
+    for stage in [Stage::Understand, Stage::Plan] {
+        let observation = observation(Setting::Coached, Form::Build, stage);
+        let policy = policy_for(Setting::Coached, &kind, Form::Build);
+        let line = kind
+            .wording
+            .stage_instruction(&observation.brief, Form::Build, stage);
+        let relay = relay(&kind, &observation, stage);
+        let opening = policy.system(&Cue::Opening, &observation);
+        assert!(opening.contains(&relay), "{stage:?}: {opening}");
+        assert!(
+            opening.contains("then tell them in your own words what the"),
+            "{stage:?}: {opening}"
+        );
+        let opened = policy.system(&Cue::StageOpened(stage), &observation);
+        assert!(opened.contains(&relay), "{stage:?}: {opened}");
+        assert!(
+            opened.contains("Tell them in your own words what it asks of them."),
+            "{stage:?}: {opened}"
+        );
+        for system in [&opening, &opened] {
+            assert!(
+                !system.contains(&format!("in your own words: {line}")),
+                "{stage:?}: {system}"
+            );
+        }
+    }
+}
+
+#[test]
+fn every_setting_leaves_the_cause_of_a_failing_check_to_the_learner() {
+    let kind = kind();
+    let sentence = "When a check fails, say what it shows and leave the cause to the learner: never say or hint which part of their work causes it, or why; that is what hints are for, when they ask.";
+    for setting in SETTINGS {
+        let observation = observation(setting, Form::Build, Stage::Make);
+        let policy = policy_for(setting, &kind, Form::Build);
+        let system = policy.system(&Cue::Reply, &observation);
+        assert!(system.contains(sentence), "{setting:?}: {system}");
+    }
+}
+
+#[test]
+fn the_coached_check_review_reads_the_run_and_asks_without_pointing() {
+    let kind = kind();
+    let observation = observation(Setting::Coached, Form::Build, Stage::Check);
+    let policy = policy_for(Setting::Coached, &kind, Form::Build);
+    for scope in SCOPES {
+        let system = policy.system(&Cue::CheckReview(scope), &observation);
+        assert!(!system.contains("point at what to look at"), "{system}");
+        assert!(
+            system
+                .contains("Read the last check. Say what it shows, and ask what they make of it."),
+            "{system}"
+        );
+    }
+}
