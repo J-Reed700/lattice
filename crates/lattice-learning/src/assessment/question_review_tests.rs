@@ -443,6 +443,31 @@ async fn a_repeat_is_reviewed_again_when_the_question_it_repeats_changes() -> Re
     Ok(())
 }
 
+#[tokio::test]
+async fn the_review_and_the_solve_show_the_lesson_passage_as_quote() -> Result<()> {
+    let llm = Script::new(Script::agreeing(), Script::sound());
+
+    check(&llm, &lesson(), outcome()).await?;
+
+    let judged = llm.request("judge").unwrap();
+    let item = &judged["items"][0];
+    assert_eq!(item["quote"], "A passage the question rests on.");
+    assert!(item.get("referenceQuote").is_none(), "{item}");
+    let solved = llm.request("solve").unwrap();
+    let question = &solved["questions"][0];
+    assert_eq!(question["quote"], "A passage the question rests on.");
+    assert!(question.get("referenceQuote").is_none(), "{question}");
+    Ok(())
+}
+
+#[test]
+fn the_item_review_system_names_the_passage_quote() {
+    assert!(!ITEM_REVIEW_SYSTEM.contains("referenceQuote"));
+    assert!(ITEM_REVIEW_SYSTEM.contains("the lesson passage it rests on (quote)"));
+    assert!(ITEM_REVIEW_SYSTEM.contains("never its quote and never independentSolution"));
+    assert!(ITEM_REVIEW_SYSTEM.contains("quote is one passage of what the learner was taught, not all of it: a statement is not untrue or unsupported because quote does not contain it."));
+}
+
 #[test]
 fn the_key_aware_judge_is_not_asked_whether_an_option_stands_apart() {
     assert!(!ITEM_REVIEW_SYSTEM.contains("in length, detail or wording"));
