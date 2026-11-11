@@ -400,6 +400,15 @@ pub(super) fn unsettled_questions(
     chosen
 }
 
+#[cfg(test)]
+pub(super) async fn send_out_unsettled(
+    _lesson: &Value,
+    _cuts: &mut Cuts,
+    _shape: &dyn ShapePolicy,
+) -> Result<bool> {
+    Ok(false)
+}
+
 /// Whether a cut took the answer of a check: the first teaching sentence under
 /// its reveal line.
 pub(super) fn answer_lost(before: &str, after: &str) -> bool {
