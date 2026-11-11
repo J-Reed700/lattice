@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useEffectEvent, useLayoutEffect, useRef } from 'react';
 
 import { indentWithTab, redo, undo } from '@codemirror/commands';
 import { bracketMatching, indentUnit } from '@codemirror/language';
@@ -132,10 +132,9 @@ export function LearningCodeEditor({
 
   latestPropsRef.current = { onChange, onRunShortcut, ariaLabel };
 
-  useLayoutEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
-
+  // A view owns its editing state. Changes synchronize through the next
+  // layout effect rather than recreating the view on each render.
+  const createView = useEffectEvent((host: HTMLDivElement) => {
     const state = EditorState.create({
       doc: value,
       extensions: buildExtensions(
@@ -155,14 +154,17 @@ export function LearningCodeEditor({
     languageRef.current = activeLanguage;
     readOnlyRef.current = readOnly;
     fillLanguageSlot(view, activeLanguage, () => viewRef.current === view && languageRef.current === activeLanguage);
+    return view;
+  });
 
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const view = createView(host);
     return () => {
       view.destroy();
       viewRef.current = null;
     };
-    // A view owns its editing state. Changes synchronize through the next
-    // layout effect rather than recreating the view on each render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useLayoutEffect(() => {

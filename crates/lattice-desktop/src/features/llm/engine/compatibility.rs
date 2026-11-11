@@ -314,7 +314,7 @@ fn inspect_prefix(bytes: &[u8]) -> PrefixVerdict {
 /// Read a bounded prefix, including when a server ignores Range. Never buffer a
 /// whole GGUF to decide whether downloading it is worthwhile.
 pub(crate) async fn check_download(url: &str, token: Option<&str>) -> Result<()> {
-    let client = reqwest::Client::builder()
+    let client = lattice_core::shared::http::reqwest_client_builder()
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|_| AppError::Network("Could not start the model compatibility check".into()))?;

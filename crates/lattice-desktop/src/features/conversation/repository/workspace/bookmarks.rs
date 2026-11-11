@@ -258,40 +258,11 @@ impl ConversationRepository {
         }
 
         if let Some(fts) = &fts_query {
-            qb.push(
-                " AND EXISTS (
-                SELECT 1
-                FROM conversation_search_fts fts
-                WHERE fts.conversation_id = b.conversation_id
-                  AND fts.content MATCH ",
-            )
-            .push_bind(fts.clone())
-            .push(
-                "
-                  AND (
-                    (fts.source = 'bookmark' AND fts.message_id = b.message_id)
-                    OR (fts.source = 'message' AND fts.message_id = b.message_id)
-                    OR fts.source = 'title'
-                  )
-            )",
-            );
-        }
-
-        if let Some(fts) = &fts_query {
-            qb.push(
-                " ORDER BY
-                COALESCE((
-                    SELECT MIN(bm25(conversation_search_fts))
-                    FROM conversation_search_fts
-                    WHERE conversation_id = b.conversation_id
-                      AND content MATCH ",
-            )
-            .push_bind(fts.clone())
-            .push(
-                "
-                ), 999999.0),
-                b.created_at DESC",
-            );
+            qb.push(" AND EXISTS (SELECT 1");
+            push_bookmark_matches(&mut qb, fts);
+            qb.push(") ORDER BY (SELECT MIN(fts.rank)");
+            push_bookmark_matches(&mut qb, fts);
+            qb.push("), b.created_at DESC");
         } else {
             qb.push(" ORDER BY b.created_at DESC");
         }
@@ -323,9 +294,23 @@ impl ConversationRepository {
             })
             .collect::<Vec<_>>();
 
-        Ok(ListMessageBookmarksResponseDto {
-            total: bookmarks.len(),
-            bookmarks,
-        })
+        Ok(ListMessageBookmarksResponseDto { bookmarks })
     }
+}
+
+/// The search rows that belong to a bookmark: its own text, its message, and
+/// its conversation's title.
+fn push_bookmark_matches(qb: &mut QueryBuilder<'_, Sqlite>, fts: &str) {
+    qb.push(
+        " FROM conversation_search_fts fts
+        WHERE fts.conversation_id = b.conversation_id
+          AND fts.content MATCH ",
+    )
+    .push_bind(fts.to_string())
+    .push(
+        " AND (
+            (fts.source IN ('bookmark', 'message') AND fts.message_id = b.message_id)
+            OR fts.source = 'title'
+        )",
+    );
 }

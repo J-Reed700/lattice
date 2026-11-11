@@ -1,4 +1,5 @@
 use super::*;
+use lattice_core::shared::persistence::bind_limit::rows_per_statement;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::SqliteConnection;
 
@@ -390,9 +391,8 @@ impl ConversationRepository {
         query: &str,
         limit: usize,
     ) -> Result<Vec<SpaceDocumentDto>, AppError> {
-        /// Ids bound per statement. SQLite's oldest variable ceiling is 999 and
-        /// a General space in a real vault is far larger than that.
-        const ID_BIND_BATCH: usize = 900;
+        /// Ids bound per statement, beside the needle and the limit.
+        const ID_BIND_BATCH: usize = rows_per_statement(1, 2);
         const MAX_RESULTS: usize = 50;
 
         let space_id = space_id
@@ -471,7 +471,7 @@ impl ConversationRepository {
     ) -> Result<std::collections::HashMap<String, (Option<String>, Option<u32>, bool)>, AppError>
     {
         let mut locations = std::collections::HashMap::new();
-        for batch in chunk_ids.chunks(100) {
+        for batch in chunk_ids.chunks(rows_per_statement(1, 0)) {
             if batch.is_empty() {
                 continue;
             }

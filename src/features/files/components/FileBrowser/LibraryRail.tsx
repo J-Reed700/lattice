@@ -11,7 +11,6 @@ import {
   type CustomCollection,
   type LibraryScope,
   type SavedSearchPreset,
-  type SourceConnection,
 } from '@/types/fileBrowser';
 
 interface LibraryRailProps {
@@ -27,7 +26,6 @@ interface LibraryRailProps {
   onApplySavedSearch: (_searchId: string) => void;
   onRenameSavedSearch: (_searchId: string, _name: string) => void;
   onCreateSavedSearch: (_name: string) => void;
-  sources: SourceConnection[];
   /** The automatic themes from the most recent clustering run. */
   themes: ClusterDto[];
   /** False below `THEMES_MIN_DOCUMENTS` — a flat list beats themes on a small vault. */
@@ -80,7 +78,6 @@ export function LibraryRail({
   onApplySavedSearch,
   onRenameSavedSearch,
   onCreateSavedSearch,
-  sources,
   themes,
   themesEnabled,
   hasRunThemes,
@@ -180,12 +177,6 @@ export function LibraryRail({
             onClick={() => onApplySavedSearch(search.id)}
             onDoubleClick={() => onRenameSavedSearch(search.id, search.name)}
           />
-        ))}
-      </RailSection>
-
-      <RailSection heading="Sources" empty="No sources." isEmpty={sources.length === 0}>
-        {sources.map((source) => (
-          <RailRow key={source.id} label={source.name} />
         ))}
       </RailSection>
     </aside>

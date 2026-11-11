@@ -57,11 +57,9 @@ impl IndexingModule {
         vector_search: Arc<dyn VectorSearchPort>,
         shared: crate::features::indexing::di::IndexingShared,
     ) -> lattice_core::shared::error::Result<Self> {
-        let model_dir = core.data_dir().join("models");
         // Web first: deletion routes archived articles back through the very
         // archive service that wrote them, so indexing needs that instance.
         let web = crate::features::web::di::build(
-            &model_dir,
             Arc::new(DynamicEmbedding::new(Arc::clone(&model_provider))),
             Arc::new(IndexStorage::new(database.clone())),
             Arc::clone(&vector_search),

@@ -23,7 +23,7 @@ impl ValidateSettingsUseCase {
 
     /// Execute the use case to validate settings.
     pub fn execute(&self, settings: &SettingsDto) -> ValidationResult {
-        self.repository.validate(settings)
+        settings.validate()
     }
 
     /// Validate current settings from repository.
@@ -38,7 +38,9 @@ impl ValidateSettingsUseCase {
 
     /// Validate a folder path.
     pub fn validate_folder_path(&self, path: &str) -> bool {
-        self.repository.validate_folder_path(path)
+        let path = std::path::Path::new(path);
+        // repository-barrier-allow: settings validation checks a user-selected folder resource.
+        path.exists() && path.is_dir()
     }
 }
 
@@ -177,6 +179,10 @@ mod tests {
         let existing = tempfile::tempdir().unwrap();
         let is_valid = use_case.validate_folder_path(existing.path().to_str().unwrap());
         assert!(is_valid);
+
+        let file = existing.path().join("notes.md");
+        std::fs::write(&file, "a file, not a folder").unwrap();
+        assert!(!use_case.validate_folder_path(file.to_str().unwrap()));
 
         // Nonexistent path, spelled absolutely for this host.
         let is_valid =
