@@ -228,6 +228,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_metadata_file_without_a_url_still_gives_its_title() {
+        let temp_dir = TempDir::new().unwrap();
+        let article_path = temp_dir.path().join("article.md");
+        fs::write(&article_path, "content").unwrap();
+        fs::write(
+            temp_dir.path().join("metadata.json"),
+            r#"{"title": "No Url Article"}"#,
+        )
+        .unwrap();
+
+        let title = WebArticleDetector::get_title(&article_path).await.unwrap();
+        assert_eq!(title, "No Url Article");
+    }
+
+    #[tokio::test]
     async fn test_get_title_with_site_name() {
         let temp_dir = TempDir::new().unwrap();
         let article_path = temp_dir.path().join("article.md");
