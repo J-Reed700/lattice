@@ -1,3 +1,189 @@
+//! Typed contracts for the generated commands: each command's named arguments
+//! and resolved value, keyed by its snake_case name, appended to `bindings.ts`.
+
+use std::collections::BTreeMap;
+
+const METHOD: &str = "async ";
+const INVOKE: &str = "TAURI_INVOKE(\"plugin:";
+
+struct Param<'a> {
+    name: &'a str,
+    optional: bool,
+    ty: &'a str,
+}
+
+fn slice(text: &str, from: usize, to: usize) -> &str {
+    text.get(from..to).unwrap_or_default()
+}
+
+/// Splits `text` at each `sep` outside every `<>`, `{}`, `()` and `[]`.
+fn split_top(text: &str, sep: char) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    for (at, c) in text.char_indices() {
+        match c {
+            '<' | '{' | '(' | '[' => depth += 1,
+            '>' | '}' | ')' | ']' => depth -= 1,
+            c if c == sep && depth == 0 => {
+                parts.push(slice(text, start, at));
+                start = at + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    parts.push(slice(text, start, text.len()));
+    parts
+}
+
+/// The index of the `)` closing the `(` that opens `text`.
+fn closing_paren(text: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    for (at, c) in text.char_indices() {
+        match c {
+            '<' | '{' | '(' | '[' => depth += 1,
+            '>' | '}' | ')' | ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return (c == ')').then_some(at);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn parse_params(params: &str) -> Result<Vec<Param<'_>>, String> {
+    if params.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    split_top(params, ',')
+        .into_iter()
+        .map(|param| {
+            let param = param.trim();
+            let (name, ty) = param
+                .split_once(": ")
+                .ok_or_else(|| format!("parameter `{param}` is not `name: type`"))?;
+            let optional = split_top(ty, '|').iter().any(|part| part.trim() == "null");
+            Ok(Param {
+                name: name.trim(),
+                optional,
+                ty: ty.trim(),
+            })
+        })
+        .collect()
+}
+
+fn render_args(params: &[Param<'_>]) -> String {
+    if params.is_empty() {
+        return "void".to_string();
+    }
+    let fields = params
+        .iter()
+        .map(|param| {
+            let mark = if param.optional { "?" } else { "" };
+            format!("{}{mark}: {}", param.name, param.ty)
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    let prefix = if params.iter().all(|param| param.optional) {
+        "void | "
+    } else {
+        ""
+    };
+    format!("{prefix}{{ {fields} }}")
+}
+
+/// `X` for `Result<X, Y>`; any other return type unchanged.
+fn render_result(ret: &str) -> String {
+    let inner = ret
+        .strip_prefix("Result<")
+        .and_then(|rest| rest.strip_suffix('>'));
+    let Some(inner) = inner else {
+        return ret.to_string();
+    };
+    let mut depth = 0i32;
+    for c in inner.chars() {
+        match c {
+            '<' | '{' | '(' | '[' => depth += 1,
+            '>' | '}' | ')' | ']' => depth -= 1,
+            _ => {}
+        }
+        if depth < 0 {
+            return ret.to_string();
+        }
+    }
+    split_top(inner, ',')
+        .first()
+        .map_or_else(|| ret.to_string(), |ok| ok.trim().to_string())
+}
+
+/// The args and result of one method header line.
+fn parse_header(line: &str) -> Result<(String, String), String> {
+    let header = line.trim_end();
+    if header.contains("=>") {
+        return Err(format!(
+            "`{header}` has an arrow type, which the contract generator cannot read"
+        ));
+    }
+    let unreadable = || format!("`{header}` is not `async name(params) : Promise<ret> {{`");
+    let rest = header.strip_prefix(METHOD).ok_or_else(unreadable)?;
+    let open = rest.find('(').ok_or_else(unreadable)?;
+    let (_, from_open) = rest.split_at(open);
+    let close = closing_paren(from_open).ok_or_else(unreadable)?;
+    let (params_with_open, after) = from_open.split_at(close);
+    let params = params_with_open.get(1..).ok_or_else(unreadable)?;
+    let ret = after
+        .strip_prefix(") : Promise<")
+        .and_then(|rest| rest.strip_suffix("> {"))
+        .ok_or_else(unreadable)?;
+    Ok((render_args(&parse_params(params)?), render_result(ret)))
+}
+
+/// The snake_case command named by the first route invoked in `region`.
+fn invoked_command(region: &str) -> Option<&str> {
+    let (_, after) = region.split_once(INVOKE)?;
+    let (route, _) = after.split_once('"')?;
+    route.split_once('|').map(|(_, command)| command)
+}
+
+/// The `CommandArgs` and `CommandResults` maps for the qualified bindings.
+pub fn render_contracts(bindings: &str) -> Result<String, String> {
+    let mut headers: Vec<(usize, &str)> = Vec::new();
+    let mut offset = 0usize;
+    for line in bindings.split_inclusive('\n') {
+        if line.starts_with(METHOD) {
+            headers.push((offset, line));
+        }
+        offset += line.len();
+    }
+    let mut entries: BTreeMap<&str, (String, String)> = BTreeMap::new();
+    for (index, (start, line)) in headers.iter().enumerate() {
+        let end = headers.get(index + 1).map_or(bindings.len(), |next| next.0);
+        let region = slice(bindings, start + line.len(), end);
+        let command = invoked_command(region).ok_or_else(|| {
+            format!(
+                "`{}` has no TAURI_INVOKE route before the next method",
+                line.trim_end()
+            )
+        })?;
+        let contract = parse_header(line)?;
+        if entries.insert(command, contract).is_some() {
+            return Err(format!("command `{command}` is generated more than once"));
+        }
+    }
+    let mut args = String::new();
+    let mut results = String::new();
+    for (command, (command_args, command_result)) in &entries {
+        args.push_str(&format!("\t{command}: {command_args};\n"));
+        results.push_str(&format!("\t{command}: {command_result};\n"));
+    }
+    Ok(format!(
+        "/** Each command's named arguments, keyed by command. `void` when none is required. */\nexport type CommandArgs = {{\n{args}}};\n\n/** What each command resolves with, keyed by command. */\nexport type CommandResults = {{\n{results}}};\n"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::render_contracts;
