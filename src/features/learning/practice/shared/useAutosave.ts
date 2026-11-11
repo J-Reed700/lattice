@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
 
 import { isConflict } from '@/lib/api';
 import { getErrorMessage } from '@/lib/errorUtils';
@@ -107,10 +107,12 @@ export function useAutosave<T>({
     report('idle', null);
   }, [enabled, report]);
 
+  const saveOverConflict = useEffectEvent(() => {
+    if (enabled && stateRef.current === 'conflict') void flush();
+  });
   useEffect(() => {
     revisionRef.current = revision;
-    if (enabled && stateRef.current === 'conflict') void flush();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    saveOverConflict();
   }, [revision]);
 
   useEffect(() => {

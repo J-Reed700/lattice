@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useEffectEvent, useId, useMemo, useState } from 'react';
 
 import { ChevronDown } from 'lucide-react';
 
@@ -71,10 +71,12 @@ export function StartSentence({ programId, cardId, legend, slots, parts, describ
   }, [slots, chosen]);
 
   const signature = JSON.stringify(values);
+  // The parent hears of a change by its value, not by the callback's identity.
+  const announce = useEffectEvent((next: string) => {
+    onChange?.(JSON.parse(next) as Record<string, string>);
+  });
   useEffect(() => {
-    onChange?.(JSON.parse(signature) as Record<string, string>);
-    // The parent hears of a change by its value, not by the callback's identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    announce(signature);
   }, [signature]);
 
   const pick = (slotId: string, value: string) => {

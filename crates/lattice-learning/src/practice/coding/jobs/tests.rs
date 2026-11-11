@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::practical_dto::LearningPracticalPublicFileRole;
-use crate::practice::coding::problem::CodingTask;
+use crate::practice::coding::problem::{CodingTask, ProblemDifficulty};
 use crate::practice::coding::proof::fakes::{sample_problem, FakeHarness};
 use crate::practice::test_support::fixture;
 use serde_json::json;

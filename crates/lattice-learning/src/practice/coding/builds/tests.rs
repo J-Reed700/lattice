@@ -11,7 +11,6 @@ use crate::practice::kinds::program::KIND;
 use crate::practice::practical_repository::LearningPracticalRepository;
 use crate::practice::test_support::fixture;
 use lattice_core::domain::learning::practice::problem_patterns::problem_pattern;
-use serde_json::json;
 use uuid::Uuid;
 
 fn builds(database: Database) -> CodingBuilds {

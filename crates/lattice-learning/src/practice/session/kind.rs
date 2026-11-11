@@ -338,7 +338,7 @@ pub trait Truth: Send + Sync {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MisreadingNeed {
     pub count: usize,
-    /// What the number is for, as a phrase that finishes "They are needed because ...".
+    /// What the number is for.
     pub reason: &'static str,
 }
 
