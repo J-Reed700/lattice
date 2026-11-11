@@ -688,7 +688,7 @@ async fn moving_forward_records_the_stages_passed_over_and_a_stale_revision_conf
         .find(|event| event.kind == "stage")
         .unwrap();
     assert_eq!(event.payload["from"], "understand");
-    assert_eq!(event.payload["to"], "code");
+    assert_eq!(event.payload["to"], "make");
     assert_eq!(
         event.payload["skipped"],
         serde_json::json!(["examples", "plan"])

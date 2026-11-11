@@ -273,9 +273,9 @@ async fn the_session_tables_are_named_for_exercise_sessions_and_the_old_names_ar
             .await
             .unwrap();
     for gone in [
-        "learning_exercise_sessions",
-        "learning_exercise_session_events",
-        "learning_exercise_debriefs",
+        "learning_coding_sessions",
+        "learning_coding_events",
+        "learning_coding_debriefs",
     ] {
         assert!(!tables.iter().any(|each| each == gone), "{gone}");
     }

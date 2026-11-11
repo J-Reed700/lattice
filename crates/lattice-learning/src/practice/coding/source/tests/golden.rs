@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::practice::coding::golden_support::{add_requests, assert_golden, Golden, Recorder};
+use crate::practice::kinds::program::wording::ProgramWording;
+use crate::practice::session::kind::Wording;
 
 async fn drafted(asked: &ProblemRequest, answers: Vec<Value>) -> Recorder {
     let model = Recorder::new(answers.iter().map(Value::to_string));
@@ -32,7 +34,11 @@ async fn golden_source() {
                 ..request(task)
             };
             let model = drafted(&asked, vec![answer()]).await;
-            add_requests(&mut golden, &format!("{task:?} {difficulty:?}"), &model);
+            add_requests(
+                &mut golden,
+                &format!("{} {difficulty:?}", ProgramWording.form_label(task)),
+                &model,
+            );
         }
     }
     let asked = ProblemRequest {
@@ -53,7 +59,10 @@ async fn golden_source() {
         let model = drafted(&request(task), vec![unproven, answer()]).await;
         add_requests(
             &mut golden,
-            &format!("{task:?} Easy, after an unproven draft"),
+            &format!(
+                "{} Easy, after an unproven draft",
+                ProgramWording.form_label(task)
+            ),
             &model,
         );
     }

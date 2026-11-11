@@ -20,8 +20,9 @@ use crate::practice::kinds::program::shape::{
     brief_of, case_of, piece_of, result_of, run_detail_of,
 };
 use crate::practice::kinds::program::toolchain::FakeToolchains;
+use crate::practice::kinds::program::wording::ProgramWording;
 use crate::practice::practical_dto::{CaseCheckDetailDto, LearningPracticalRunStatus};
-use crate::practice::session::kind::{Diff, Kind};
+use crate::practice::session::kind::{Diff, Kind, Wording};
 use crate::practice::session::observation::{
     CaseView, CheckView, ClockView, Coverage, HintView, LearnerCaseView, Observation,
 };
@@ -223,7 +224,7 @@ fn the_observations_render_what_the_golden_says() {
         for setting in [Setting::Coached, Setting::Mock, Setting::Watched] {
             let (problem, session, seen) = rich_session(task, setting);
             golden.add(
-                &format!("{task:?} {setting:?}"),
+                &format!("{} {setting:?}", ProgramWording.form_label(task)),
                 &rendered(&problem, &session, Some(&seen), false),
             );
         }

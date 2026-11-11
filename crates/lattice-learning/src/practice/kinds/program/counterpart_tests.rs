@@ -13,8 +13,9 @@ use crate::practice::kinds::program::observation_tests::{engine_observation, pro
 use crate::practice::kinds::program::parts::part_of;
 use crate::practice::kinds::program::shape::exercise_of;
 use crate::practice::kinds::program::toolchain::FakeToolchains;
+use crate::practice::kinds::program::wording::ProgramWording;
 use crate::practice::session::counterpart::{respond, Reply};
-use crate::practice::session::kind::Kind;
+use crate::practice::session::kind::{Kind, Wording};
 use crate::practice::session::policy::{policy_for, Cue};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::practice::work::{CheckScope, Stage};
@@ -100,7 +101,11 @@ async fn golden_counterpart() {
     for task in [Form::Build, Form::Repair] {
         for (name, setting, cue) in cases() {
             let model = asked(task, setting, &cue, vec![reply(&cue, &[])]).await;
-            add_requests(&mut golden, &format!("{task:?} {setting:?} {name}"), &model);
+            add_requests(
+                &mut golden,
+                &format!("{} {setting:?} {name}", ProgramWording.form_label(task)),
+                &model,
+            );
         }
         let cue = Cue::Reply;
         let model = asked(
@@ -112,7 +117,10 @@ async fn golden_counterpart() {
         .await;
         add_requests(
             &mut golden,
-            &format!("{task:?} Coached Reply, after a refused reply"),
+            &format!(
+                "{} Coached Reply, after a refused reply",
+                ProgramWording.form_label(task)
+            ),
             &model,
         );
     }

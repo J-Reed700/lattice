@@ -691,7 +691,7 @@ fn timeline() -> Vec<CodingEventRow> {
         event(
             6,
             "stage",
-            json!({"from": "plan", "to": "code", "skipped": []}),
+            json!({"from": "plan", "to": "make", "skipped": []}),
             105_000,
         ),
         event(7, "check", json!({"runId": "r1"}), 106_000),
@@ -744,7 +744,7 @@ fn a_span_still_open_at_the_end_ends_at_the_last_event() {
     session.events = vec![
         event(0, "stage", json!({"to": "understand"}), 0),
         event(1, "opened", json!({}), 1_000),
-        event(2, "stage", json!({"to": "code"}), 3_000),
+        event(2, "stage", json!({"to": "make"}), 3_000),
         event(3, "check", json!({}), 8_000),
     ];
 
