@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 
-import type { CodingBuildChoice } from '@/features/learning/practice/coding/CodingEntry';
 import type { ComposerRequest } from '@/features/learning/practice/practical/PracticalWorkbenchPanel';
+import type { CodingBuildChoice } from '@/features/learning/practice/session/kind';
 
 export type AttemptMode = 'practice' | 'feynman';
 

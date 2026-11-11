@@ -2,48 +2,24 @@ import { ArrowRight, Check } from 'lucide-react';
 
 import type * as Wire from '@/lib/bindings';
 
-export const STAGE_NAMES: Record<Wire.Stage, string> = {
-  understand: 'Understand',
-  examples: 'Examples',
-  plan: 'Plan',
-  make: 'Code',
-  check: 'Test',
-  review: 'Review',
-  reproduce: 'Reproduce',
-  locate: 'Locate',
-  fix: 'Fix',
-  verify: 'Verify',
-};
-
-const INSTRUCTIONS: Record<Wire.Stage, string> = {
-  understand: 'Read the statement and ask about anything it leaves open.',
-  examples: 'Write examples with the answers you expect, before any code.',
-  plan: 'Say how you will solve it and what that costs.',
-  make: 'Write the function.',
-  check: 'Run your examples, then submit to run every case.',
-  review: 'Explain the cost and what you would change.',
-  reproduce: 'Make the bug happen with an input you choose.',
-  locate: 'Find the line where the result goes wrong.',
-  fix: 'Change the code until the failing inputs pass.',
-  verify: 'Submit to run every case and confirm nothing else broke.',
-};
-
 export interface StageRailProps {
-  stages: Wire.Stage[];
+  stages: Wire.StageLabelDto[];
   current: Wire.Stage;
+  /** What the kind says to do at the current stage. */
+  instruction: string;
   busy?: boolean;
   onSelect: (stage: Wire.Stage) => void;
 }
 
-export function StageRail({ stages, current, busy = false, onSelect }: StageRailProps) {
-  const index = stages.indexOf(current);
+export function StageRail({ stages, current, instruction, busy = false, onSelect }: StageRailProps) {
+  const index = stages.findIndex((item) => item.stage === current);
   const next = stages[index + 1];
 
   return (
     <nav aria-label="Stages" className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
         <ol className="m-0 flex list-none flex-wrap items-center gap-1.5 p-0">
-          {stages.map((stage, at) => {
+          {stages.map(({ stage, label }, at) => {
             const isCurrent = stage === current;
             const done = at < index;
             return (
@@ -71,7 +47,7 @@ export function StageRail({ stages, current, busy = false, onSelect }: StageRail
                       {at + 1}
                     </span>
                   )}
-                  <span>{STAGE_NAMES[stage]}</span>
+                  <span>{label}</span>
                   {done ? <span className="sr-only">(done)</span> : null}
                 </button>
               </li>
@@ -82,17 +58,17 @@ export function StageRail({ stages, current, busy = false, onSelect }: StageRail
           <button
             type="button"
             disabled={busy}
-            onClick={() => onSelect(next)}
+            onClick={() => onSelect(next.stage)}
             className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-lg border border-border-default bg-surface px-3 text-sm font-semibold text-text-primary hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <span>Next: {STAGE_NAMES[next]}</span>
+            <span>Next: {next.label}</span>
             <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </button>
         ) : (
           <span className="text-sm text-text-secondary">This is the last stage. Finish when you are done.</span>
         )}
       </div>
-      <p className="m-0 text-sm text-text-secondary">{INSTRUCTIONS[current]} Any stage can be skipped.</p>
+      <p className="m-0 text-sm text-text-secondary">{instruction} Any stage can be skipped.</p>
     </nav>
   );
 }

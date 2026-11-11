@@ -7,31 +7,16 @@ import { newId } from '@/lib/api';
 import type * as Wire from '@/lib/bindings';
 import { getErrorMessage } from '@/lib/errorUtils';
 
-import { SETTING_NAMES } from './caseViews';
-import { codingApi } from './codingApi';
-
-export interface CodingBuildChoice {
-  lessonId?: string | null;
-  form: Wire.Form;
-  setting: Wire.Setting;
-  language: string;
-  difficulty: Wire.ProblemDifficulty;
-  focus?: string | null;
-  budgetSeconds?: number | null;
-}
-
-export interface CodingEntryProps {
-  programId: string;
-  choice: CodingBuildChoice;
-  onReady: (sessionId: string) => void;
-  onCancel: () => void;
-}
+import { programApi } from './programApi';
+import type { KindEntryProps } from '../../session/kind';
+import { SETTING_NAMES } from '../../session/practiceNames';
+import { sessionApi } from '../../session/sessionApi';
 
 const STEPS = ['Writing the problem', 'Proving it', 'Saving'] as const;
 
 type Phase = { kind: 'building' } | { kind: 'starting' } | { kind: 'failed'; message: string; stage: 'build' | 'start' };
 
-export function CodingEntry({ programId, choice, onReady, onCancel }: CodingEntryProps) {
+export function CodingEntry({ programId, choice, onReady, onCancel }: KindEntryProps) {
   const [phase, setPhase] = useState<Phase>({ kind: 'building' });
   const [step, setStep] = useState(0);
   const [attempt, setAttempt] = useState(0);
@@ -49,7 +34,7 @@ export function CodingEntry({ programId, choice, onReady, onCancel }: CodingEntr
       setPhase({ kind: 'starting' });
       try {
         const { choice: picked, onReady: ready } = latest.current;
-        const session = await codingApi.startSession({
+        const session = await sessionApi.startSession({
           operationId: startOperationId.current,
           programId,
           activityId: activity,
@@ -87,7 +72,7 @@ export function CodingEntry({ programId, choice, onReady, onCancel }: CodingEntr
   useEffect(() => {
     let cancelled = false;
     const { choice: picked } = latest.current;
-    codingApi
+    programApi
       .startBuild({
         operationId: operationId.current,
         programId,

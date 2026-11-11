@@ -7,7 +7,7 @@ import type * as Wire from '@/lib/bindings';
 export interface ExamplesTableProps {
   signature: Wire.ProblemSignature;
   examples: Wire.CodingExampleDto[];
-  coverage: Wire.ExampleCoverageDto;
+  coverage: Wire.MisreadingCoverageDto | null;
   busy?: boolean;
   onCheck: (example: { ordinal: number | null; args: string[]; expected: string }) => Promise<void>;
   onRemove: (ordinal: number) => Promise<void>;
@@ -78,11 +78,15 @@ export function ExamplesTable({ signature, examples, coverage, busy = false, onC
       <h2 id="coding-examples-heading" className="m-0 mb-2 font-serif text-lg font-semibold text-text-primary">
         Your examples
       </h2>
-      <p role="status" className="m-0 text-sm font-medium text-text-primary">
-        Your examples catch {coverage.caught} of {coverage.total} common mistakes
-      </p>
-      {coverage.uncaught ? (
-        <p className="m-0 mt-1 text-sm text-text-secondary">Not caught yet: {coverage.uncaught}</p>
+      {coverage ? (
+        <>
+          <p role="status" className="m-0 text-sm font-medium text-text-primary">
+            Your examples catch {coverage.caught} of {coverage.total} common mistakes
+          </p>
+          {coverage.uncaught ? (
+            <p className="m-0 mt-1 text-sm text-text-secondary">Not caught yet: {coverage.uncaught}</p>
+          ) : null}
+        </>
       ) : null}
 
       {examples.length > 0 ? (
