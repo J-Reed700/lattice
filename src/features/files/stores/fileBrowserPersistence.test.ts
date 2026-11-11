@@ -26,7 +26,6 @@ const search = (overrides: Partial<SavedSearchPreset> = {}): SavedSearchPreset =
 describe('fileBrowserPersistence', () => {
   afterEach(() => {
     localStorage.removeItem(SEARCHES);
-    localStorage.removeItem(SOURCES);
     vi.restoreAllMocks();
   });
 

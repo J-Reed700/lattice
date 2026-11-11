@@ -78,7 +78,6 @@ export function LibraryRail({
   onApplySavedSearch,
   onRenameSavedSearch,
   onCreateSavedSearch,
-  sources,
   themes,
   themesEnabled,
   hasRunThemes,
