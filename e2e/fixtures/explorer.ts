@@ -61,8 +61,8 @@ export async function installExplorerFixture(page: Page) {
     list_conversation_linked_documents: () => [],
     list_conversation_web_sources: () => [],
     list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
-    list_conversations_explorer: () => ({ conversations: threads, total: threads.length }),
-    list_conversations: () => ({ conversations: threads, total: threads.length }),
+    list_conversations_explorer: () => ({ conversations: threads }),
+    list_conversations: () => ({ conversations: threads }),
     get_conversation: (args) => ({ conversation: thread(args) }),
     // A chat's own model: saved on that thread alone, never on Settings.
     set_conversation_model_choice: (args) => {

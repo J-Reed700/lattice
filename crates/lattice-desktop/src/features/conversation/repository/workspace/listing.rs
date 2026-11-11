@@ -226,7 +226,6 @@ pub(super) fn listing_response(
         .map(ConversationExplorerRow::into_dto)
         .collect::<Result<Vec<_>, AppError>>()?;
     Ok(ListConversationsResponseDto {
-        total: conversations.len(),
         conversations,
     })
 }

@@ -54,7 +54,7 @@ describe('useConversationsController optimistic cleanup', () => {
     api.listConversationSpaces = vi.fn().mockResolvedValue({ ok: true, data: [] });
     api.listConversationsExplorer = vi.fn().mockResolvedValue({
       ok: true,
-      data: { conversations: [conversation], total: 1 },
+      data: { conversations: [conversation] },
     });
     api.getConversationMessages = vi.fn().mockResolvedValue({
       ok: true,
@@ -647,7 +647,7 @@ describe('useConversationsController optimistic cleanup', () => {
     let deleted = false;
     api.listConversationsExplorer = vi.fn().mockImplementation(async () => ({
       ok: true,
-      data: { conversations: deleted ? [] : [conversation], total: deleted ? 0 : 1 },
+      data: { conversations: deleted ? [] : [conversation] },
     }));
     let resolveChat: ((value: unknown) => void) | undefined;
     const unlisten = vi.fn();
@@ -693,7 +693,7 @@ describe('useConversationsController optimistic cleanup', () => {
       }
       return Promise.resolve({
         ok: true,
-        data: { conversations: deleted ? [] : [conversation], total: deleted ? 0 : 1 },
+        data: { conversations: deleted ? [] : [conversation] },
       });
     });
     api.deleteConversation = vi.fn().mockImplementation(async () => {
@@ -706,7 +706,7 @@ describe('useConversationsController optimistic cleanup', () => {
     const oldRead = queryClient.refetchQueries({ queryKey: conversationKeys.lists, type: 'active' });
     await waitFor(() => expect(listCalls).toBe(2));
     await act(async () => { await result.current.deleteConversation(conversation.id); });
-    resolveOldList?.({ ok: true, data: { conversations: [conversation], total: 1 } });
+    resolveOldList?.({ ok: true, data: { conversations: [conversation] } });
     await oldRead;
 
     await waitFor(() => expect(result.current.conversations).toEqual([]));
@@ -721,7 +721,7 @@ describe('useConversationsController optimistic cleanup', () => {
     let resolveFirstDelete: ((value: unknown) => void) | undefined;
     api.listConversationsExplorer = vi.fn().mockImplementation(async () => {
       const conversations = [conversation, other].filter(item => !deleted.has(item.id));
-      return { ok: true, data: { conversations, total: conversations.length } };
+      return { ok: true, data: { conversations } };
     });
     api.deleteConversation = vi.fn().mockImplementation((id: string) => {
       if (id === conversation.id) return new Promise(resolve => { resolveFirstDelete = resolve; });

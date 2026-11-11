@@ -8909,11 +8909,7 @@ export type ListConversationsResponseDto = {
 /**
  * List of conversations
  */
-conversations: ConversationDto[];
-/**
- * Total count
- */
-total: number }
+conversations: ConversationDto[] }
 export type ListJournalConversationsQueryDto = { journalSpaceId: string; query: string | null; includeArchived: boolean | null; limit: number | null; offset: number | null }
 export type ListLearningTangentsRequestDto = { programId?: string | null }
 export type ListMessageBookmarksQueryDto = { conversationId: string | null; query: string | null; limit: number | null; offset: number | null }
