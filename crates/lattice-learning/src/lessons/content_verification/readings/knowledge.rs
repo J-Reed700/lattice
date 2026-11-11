@@ -46,7 +46,7 @@ impl Reader for Knowledge {
         let mut made = Made::new(statements.len());
         let mut asks = Vec::new();
         for (ordinal, statement) in statements.iter().enumerate() {
-            let case = case_text(at.candidate, statement.unit);
+            let case = case_text(at.candidate, statement.unit, &statement.claim.quote);
             let key = knowledge_key(at.llm, &statement.claim.statement, case.as_deref());
             match saved_knowledge(&key).await? {
                 Some(saved) => {

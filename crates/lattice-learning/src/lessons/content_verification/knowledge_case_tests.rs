@@ -11,6 +11,7 @@ use lattice_core::application::services::claim_verification::KNOWLEDGE_SYSTEM;
 
 const ROPE: &str = "A rope is cut into a piece of 3 units and a piece of 4 units.";
 const ROPE_TOTAL: &str = "Together the two pieces make 7 units.";
+const ROPE_TOTAL_RESTATED: &str = "The two pieces of rope have a combined length of 7 units.";
 const BEADS_PROMPT: &str =
     "A string holds 2 beads of one colour and 5 of another. How many beads does it hold?";
 const BEADS_EXPLANATION: &str = "The 2 and the 5 make 7.";
@@ -74,13 +75,16 @@ fn explanation(body: &str) -> Value {
     json!({"blocks":[{"kind":"explanation","title":"Rope","body":body,"rubric":[]}],"questions":[]})
 }
 
-/// What the knowledge reader asks the model about `statement` in `lesson`.
-async fn asked(lesson: Value, statement: &str) -> Result<Vec<(String, String)>> {
+/// What the knowledge reader asks the model about a claim in `lesson` whose
+/// sentence is `quote` and whose checked statement is `statement`.
+async fn asked(lesson: Value, quote: &str, statement: &str) -> Result<Vec<(String, String)>> {
     let references = ReferenceCollection::lexical(&sources())?;
     let mut world = world_of(&references, Citations::default());
     world.lesson = lesson;
     let model = Recording::new(Classes::new(&[]));
-    read_all(Reading::Knowledge, &model, &world, &[(0, claim(statement))]).await?;
+    let mut claimed = claim(quote);
+    claimed.statement = statement.into();
+    read_all(Reading::Knowledge, &model, &world, &[(0, claimed)]).await?;
     Ok(model.messages())
 }
 
@@ -88,15 +92,14 @@ async fn asked(lesson: Value, statement: &str) -> Result<Vec<(String, String)>> 
 async fn the_knowledge_judge_is_sent_the_worked_example_a_statement_comes_from() -> Result<()> {
     let body = format!("{ROPE} {ROPE_TOTAL}");
 
-    let sent = asked(worked_example(&body), ROPE_TOTAL).await?;
+    let sent = asked(worked_example(&body), ROPE_TOTAL, ROPE_TOTAL_RESTATED).await?;
 
     assert_eq!(sent.len(), 3);
     for (_, user) in &sent {
-        assert!(user.contains(&body), "{user}");
-        assert!(
-            user.ends_with(&format!("Statement: {ROPE_TOTAL}")),
-            "{user}"
-        );
+        let (case, statement) = user.split_once("\n\nStatement: ").unwrap();
+        assert!(case.contains(ROPE), "{user}");
+        assert!(!case.contains(ROPE_TOTAL), "{user}");
+        assert_eq!(statement, ROPE_TOTAL_RESTATED);
     }
     Ok(())
 }
@@ -106,7 +109,7 @@ async fn a_statement_of_an_explanation_is_sent_alone_under_the_judge_s_own_instr
 ) -> Result<()> {
     let body = format!("{CUT} {CUT_TOTAL}");
 
-    let sent = asked(explanation(&body), CUT_TOTAL).await?;
+    let sent = asked(explanation(&body), CUT_TOTAL, CUT_TOTAL).await?;
 
     assert_eq!(sent.len(), 3);
     for (system, user) in &sent {
@@ -131,13 +134,46 @@ fn the_case_of_a_part_is_its_hypothetical_text_or_its_question_without_the_answe
         }],
     });
 
-    assert_eq!(case_text(&candidate, 0), Some(format!("{ROPE}\n\nRope")));
-    assert_eq!(case_text(&candidate, 1), None);
     assert_eq!(
-        case_text(&candidate, 2),
+        case_text(&candidate, 0, "Absent."),
+        Some(format!("{ROPE}\n\nRope"))
+    );
+    assert_eq!(case_text(&candidate, 1, CUT), None);
+    assert_eq!(
+        case_text(&candidate, 2, BEADS_EXPLANATION),
         Some(format!("{BEADS_PROMPT}\n\n6\n\n7\n\n8"))
     );
-    assert_eq!(case_text(&candidate, 3), None);
+    assert_eq!(
+        case_text(&candidate, 2, ""),
+        Some(format!("{BEADS_PROMPT}\n\n6\n\n7\n\n8"))
+    );
+    assert_eq!(case_text(&candidate, 3, ""), None);
+}
+
+#[test]
+fn the_case_of_a_worked_example_leaves_out_the_statement_s_own_sentence_only() {
+    let body = format!("{ROPE} {ROPE_TOTAL}");
+    let candidate = worked_example(&body);
+
+    assert_eq!(
+        case_text(&candidate, 0, ROPE_TOTAL),
+        Some(format!("{ROPE} \n\nRope"))
+    );
+    assert_eq!(
+        case_text(&candidate, 0, CUT),
+        Some(format!("{body}\n\nRope"))
+    );
+    assert_eq!(
+        case_text(&candidate, 0, ""),
+        Some(format!("{body}\n\nRope"))
+    );
+}
+
+#[test]
+fn a_worked_example_whose_only_text_is_the_statement_s_sentence_has_no_case() {
+    let candidate = json!({"blocks":[{"kind":"worked_example","title":" ","body":ROPE_TOTAL,"rubric":[]}],"questions":[]});
+
+    assert_eq!(case_text(&candidate, 0, ROPE_TOTAL), None);
 }
 
 #[test]

@@ -131,29 +131,43 @@ impl Case {
 }
 
 /// The case the part at `unit` works, as the learner reads it: a hypothetical
-/// block's own text, or a question's prompt and options. `None` for a section
-/// that states what is so.
-pub(super) fn case_text(candidate: &Value, unit: usize) -> Option<String> {
+/// block's own text without the sentence `own` the statement was taken from
+/// (its first occurrence in the first field that holds it), or a question's
+/// prompt and options as they are. `None` for a section that states what is
+/// so.
+pub(super) fn case_text(candidate: &Value, unit: usize, own: &str) -> Option<String> {
     let blocks = candidate
         .get("blocks")
         .and_then(Value::as_array)
         .map_or(&[][..], Vec::as_slice);
-    let paragraphs: Vec<&str> = match blocks.get(unit) {
-        Some(block) if Case::of(candidate, unit) == Case::Hypothetical => unit_fields(block, true)
-            .iter()
-            .filter_map(|field| block.pointer(&format!("/{field}")).and_then(Value::as_str))
-            .collect(),
+    let paragraphs: Vec<String> = match blocks.get(unit) {
+        Some(block) if Case::of(candidate, unit) == Case::Hypothetical => {
+            let mut taken = own.is_empty();
+            unit_fields(block, true)
+                .iter()
+                .filter_map(|field| block.pointer(&format!("/{field}")).and_then(Value::as_str))
+                .map(|text| {
+                    if !taken && text.contains(own) {
+                        taken = true;
+                        text.replacen(own, "", 1)
+                    } else {
+                        text.to_owned()
+                    }
+                })
+                .collect()
+        }
         Some(_) => return None,
         None => candidate
             .get("questions")
             .and_then(Value::as_array)
             .and_then(|questions| questions.get(unit.checked_sub(blocks.len())?))
             .map(question_texts)?
+            .map(str::to_owned)
             .collect(),
     };
-    let paragraphs: Vec<&str> = paragraphs
+    let paragraphs: Vec<String> = paragraphs
         .into_iter()
-        .filter(|text| !text.is_empty())
+        .filter(|text| !text.trim().is_empty())
         .collect();
     (!paragraphs.is_empty()).then(|| paragraphs.join("\n\n"))
 }
