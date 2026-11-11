@@ -25,7 +25,7 @@
 //!
 //! - `mappers/` - Domain ↔ DTO conversion logic
 //! - `ports/` - Interface definitions for infrastructure (Hexagonal Architecture)
-//! - `services/` - Application services (FileType, ContextWindowBuilder, …)
+//! - `services/` - Application services (ContextWindowBuilder, …)
 
 pub mod contracts;
 pub mod error;
@@ -36,7 +36,6 @@ pub mod services;
 
 pub use error::ApplicationError;
 pub use factories::{ChecksumFactory, FileMetadataFactory};
-pub use services::FileType;
 
 pub use ports::{
     EmbeddingPort, FavoritesRepositoryPort, FileStoragePort, LLMPort,

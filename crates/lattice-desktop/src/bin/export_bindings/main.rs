@@ -533,6 +533,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::speech::plugin::get_speech_status,
             lattice::features::speech::plugin::synthesize_speech,
         ])
+        .constant("FILE_TYPES", lattice_core::domain::value_objects::FileFormat::all().to_vec())
         .typ::<lattice::features::conversation::chat::ChatResponse>()
         .typ::<lattice::features::conversation::chat::ChatStreamEventDto>()
         .typ::<lattice::features::conversation::chat::RetrievalTraceDto>()
