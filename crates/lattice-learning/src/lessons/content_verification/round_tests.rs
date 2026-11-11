@@ -245,11 +245,6 @@ impl Review for ScriptedReview {
         Ok(())
     }
 
-    async fn take_back(&mut self, _policy: &dyn AcceptancePolicy) -> Result<Option<String>> {
-        self.log("take_back", Vec::new());
-        Ok(None)
-    }
-
     async fn identify(&mut self, _policy: &dyn AcceptancePolicy) -> Result<()> {
         self.log("identify", Vec::new());
         Ok(())
@@ -759,7 +754,6 @@ async fn a_round_reads_then_researches_then_recites_then_repairs_and_settles_onc
             ("sync", vec![]),
             ("resume", vec![]),
             ("extract", vec![]),
-            ("take_back", vec![]),
             ("identify", vec![]),
             ("read", vec![step("rewritten", "s.read")]),
             ("unmend", vec![]),

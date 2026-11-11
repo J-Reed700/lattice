@@ -23,7 +23,6 @@ mod stops;
 mod successor;
 mod teaching;
 mod unverified;
-mod written;
 
 pub(super) use audit::Audited;
 pub(super) use cotenancy::{sentences, CutOf};

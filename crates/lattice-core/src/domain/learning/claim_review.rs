@@ -796,9 +796,10 @@ pub enum ClaimEvent {
         by: Actor,
     },
     /// The claim was born of a repair of `parent` (claim sources design
-    /// §9.1): a sentence the rewrite added beside the parent's successor. It
-    /// starts with the parent's remaining attempts, so a split sentence adds
-    /// no budget.
+    /// §9.1, acceptance design §2.6): a statement the rewrite or narrowing
+    /// wrote beside the parent's successor. It begins at the post-rewrite node
+    /// of its class with the parent's successor's rewrites (`attempts_left`),
+    /// so a split sentence adds no budget.
     BornOfRepair {
         parent: ClaimId,
         attempts_left: u8,

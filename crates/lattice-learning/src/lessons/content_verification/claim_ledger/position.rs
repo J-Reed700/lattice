@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use super::ClaimLedger;
 use crate::lessons::call_plan::{Joining, Planned, PlannedAt};
 use lattice_core::domain::learning::acceptance::{
-    decide, start, stepped, successor, walk_from, AcceptancePolicy, End, Position, Step, Taken,
-    Walked,
+    born, decide, start, stepped, successor, walk_from, AcceptancePolicy, End, Position, Step,
+    Taken, Walked,
 };
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, Class, ClassifiedBy,
@@ -355,15 +355,23 @@ impl ClaimLedger {
             .map(|course| course.last)
     }
 
-    /// Where `entry` begins: after the rewrite of the claim it succeeds, with
-    /// that claim's class and what it had spent, one rewrite more; otherwise
-    /// at the start of the class it was sorted into.
+    /// Where `entry` begins: after the rewrite of a repair it was born of, with
+    /// the rewrites it was given; after the rewrite of the claim it succeeds,
+    /// with that claim's class and what it had spent, one rewrite more;
+    /// otherwise at the start of the class it was sorted into.
     fn begins(
         &self,
         policy: &dyn AcceptancePolicy,
         entry: &ClaimLedgerEntry,
         hops: usize,
     ) -> Option<Position> {
+        let born_of = entry.events().iter().find_map(|record| match record.event {
+            ClaimEvent::BornOfRepair { attempts_left, .. } => Some(attempts_left),
+            _ => None,
+        });
+        if let Some(attempts_left) = born_of {
+            return Some(born(policy, sorted_class(entry)?, attempts_left));
+        }
         let before = hops.checked_sub(1).and_then(|hops| {
             let before = self.predecessor(entry.claim_id())?;
             self.course(policy, before.claim_id(), hops)

@@ -5,7 +5,7 @@
 use super::super::*;
 use super::fields::{field_text, locate};
 use super::{is_example, is_gone, successor, ClaimLedger, RepairRecord};
-use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal, Outcome, Step};
+use lattice_core::domain::learning::acceptance::{self, AcceptancePolicy, Goal, Outcome, Step};
 use lattice_core::domain::learning::claim_review::{
     identities, Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ExtractedClaim, RepairOutcome,
 };
@@ -39,6 +39,9 @@ pub(in super::super) struct Matched {
     /// Per statement, in order: the claim it continues, a repair's heir
     /// included; `None` for a statement new to the ledger.
     continues: Vec<Option<ClaimId>>,
+    /// Per statement, in order: the claim whose repair wrote it beside its
+    /// successor; `None` for any other.
+    parents: Vec<Option<ClaimId>>,
     /// The claims no statement continues.
     orphaned: Vec<ClaimId>,
     /// A repaired claim with no successor → the text its repair wrote in its
@@ -56,14 +59,17 @@ impl Matched {
     /// taken out of it. A statement beyond `keep` is kept.
     pub(in super::super) fn keep(self, keep: &[bool]) -> Self {
         let kept = |index: &usize| keep.get(*index).copied().unwrap_or(true);
-        Self {
-            continues: self
-                .continues
+        let held = |claims: Vec<Option<ClaimId>>| -> Vec<Option<ClaimId>> {
+            claims
                 .into_iter()
                 .enumerate()
                 .filter(|(index, _)| kept(index))
                 .map(|(_, claim)| claim)
-                .collect(),
+                .collect()
+        };
+        Self {
+            continues: held(self.continues),
+            parents: held(self.parents),
             orphaned: self.orphaned,
             rewritten: self.rewritten,
         }
@@ -224,8 +230,8 @@ impl ClaimLedger {
         // its statement where no single span can be named) continues as the
         // new text its repair wrote in the same field, never as a sentence
         // that was there before, and keeps the claim's place in its graph
-        // (claim sources design §9). Nothing else a repair wrote is a claim
-        // of it (acceptance design §2.6).
+        // (claim sources design §9). Each other unowned statement it wrote is
+        // born of it (acceptance design §2.6).
         let owned: Vec<bool> = assigned.assigned.iter().map(Option::is_some).collect();
         let heirs = successor::heirs(
             &self.pending.repairs,
@@ -242,8 +248,36 @@ impl ClaimLedger {
                 }
             }
         }
+        let open: Vec<bool> = assigned
+            .assigned
+            .iter()
+            .zip(extracted)
+            .map(|(owner, statement)| owner.is_none() && statement.example.is_none())
+            .collect();
+        let parents = successor::born_of(
+            &self.pending.repairs,
+            (&claims, &open),
+            (self.pending.previous.as_ref(), candidate),
+            |record| {
+                let target = self
+                    .entry(&record.claim_id)
+                    .filter(|entry| !is_example(entry))?;
+                let at = target.location();
+                let edited = self
+                    .edited_now
+                    .iter()
+                    .filter_map(|id| self.entry(id))
+                    .any(|entry| {
+                        let there = entry.location();
+                        there.unit_index == at.unit_index && there.field == at.field
+                    });
+                (!edited).then(|| at.field.clone())
+            },
+            field_text,
+        );
         Matched {
             continues: assigned.assigned,
+            parents,
             orphaned: assigned.orphaned,
             rewritten: heirs.rewritten,
         }
@@ -265,6 +299,7 @@ impl ClaimLedger {
     ) -> Result<Vec<ClaimId>> {
         let Matched {
             continues,
+            parents,
             orphaned,
             rewritten,
         } = matched;
@@ -272,12 +307,22 @@ impl ClaimLedger {
             .into_iter()
             .map(|record| (record.claim_id.clone(), record))
             .collect();
+        let budgets: HashMap<ClaimId, u8> = parents
+            .iter()
+            .flatten()
+            .map(|parent| {
+                let left = self
+                    .stood_last(policy, parent)
+                    .map(|left| acceptance::successor(policy, left).rewrites_left);
+                (parent.clone(), left.unwrap_or(0))
+            })
+            .collect();
         self.carried.clear();
         self.unplaced.clear();
         let mut claim_ids = Vec::with_capacity(extracted.len());
         let mut findings = Vec::new();
         let mut examples = HashMap::new();
-        for (statement, prior) in extracted.into_iter().zip(continues) {
+        for ((statement, prior), parent) in extracted.into_iter().zip(continues).zip(parents) {
             let Extracted {
                 claim,
                 class,
@@ -338,6 +383,14 @@ impl ClaimLedger {
                 None => {
                     let id = ClaimId::generate();
                     self.start(&id, claim, class).await?;
+                    if let Some(parent) = parent {
+                        let attempts_left = budgets.get(&parent).copied().unwrap_or(0);
+                        let born = ClaimEvent::BornOfRepair {
+                            parent,
+                            attempts_left,
+                        };
+                        self.append(&id, born).await?;
+                    }
                     id
                 }
             };
@@ -457,8 +510,7 @@ impl ClaimLedger {
         })
     }
 
-    /// A claim seen for the first time: extracted, then classified. None is
-    /// born of a repair (acceptance design §2.6).
+    /// A claim seen for the first time: extracted, then classified.
     async fn start(
         &mut self,
         id: &ClaimId,

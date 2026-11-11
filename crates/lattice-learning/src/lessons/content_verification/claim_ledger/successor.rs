@@ -1,9 +1,8 @@
 //! Which claim continues a repaired one (claim sources design §9). A
 //! repaired claim's id continues only in new text over the part of its
 //! field the repair changed, never in a sentence that was there before, and a
-//! narrowed claim's in nothing the narrowing wrote. No claim is born of a
-//! repair: what else it wrote is put back before the pass records anything
-//! (acceptance design §2.6).
+//! narrowed claim's in nothing the narrowing wrote. What else a repair wrote
+//! in that text is born of the repair (acceptance design §2.6).
 
 use super::fields::field_text;
 use super::RepairRecord;
@@ -211,6 +210,60 @@ pub(super) fn heirs(
         }
     }
     heirs
+}
+
+/// A pending repair's field before and after it, and the sentences of the
+/// field it changed.
+struct Changed<'a> {
+    record: &'a RepairRecord,
+    field: String,
+    before: String,
+    region: (usize, usize),
+}
+
+/// For each extracted claim, the repair it was born of: a claim that is `open`
+/// (no claim owns it once the heirs are assigned, and it is not a code
+/// example's run) and whose quote is new text in the changed region of the
+/// field of a repair that rides on no other and for which `field_of` names a
+/// field. Of several repairs the one whose replaced sentence shares most words
+/// with the statement, then the earlier record.
+pub(super) fn born_of(
+    repairs: &[RepairRecord],
+    (extracted, open): (&[ExtractedClaim], &[bool]),
+    (previous, current): (Option<&Value>, &Value),
+    field_of: impl Fn(&RepairRecord) -> Option<String>,
+    field_text: impl Fn(&Value, usize, &str) -> Option<String>,
+) -> Vec<Option<ClaimId>> {
+    let changed: Vec<Changed<'_>> = repairs
+        .iter()
+        .filter(|record| record.rides_on.is_none())
+        .filter_map(|record| {
+            let field = field_of(record)?;
+            let before = field_text(previous?, record.unit, &field)?;
+            let after = field_text(current, record.unit, &field)?;
+            let region = sentence_region(&after, changed_region(&before, &after));
+            Some(Changed {
+                record,
+                field,
+                before,
+                region,
+            })
+        })
+        .collect();
+    extracted
+        .iter()
+        .zip(open)
+        .map(|(claim, open)| {
+            changed
+                .iter()
+                .filter(|_| *open)
+                .filter(|at| written(claim, at.record.unit, &at.field, &at.before, at.region))
+                .min_by_key(|at| {
+                    std::cmp::Reverse(shared_terms(&claim.statement, &at.record.before))
+                })
+                .map(|at| at.record.claim_id.clone())
+        })
+        .collect()
 }
 
 #[cfg(test)]
