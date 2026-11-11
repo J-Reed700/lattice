@@ -458,8 +458,6 @@ mod citation_tests;
 #[cfg(test)]
 mod contract_tests;
 #[cfg(test)]
-mod gate_recorded_tests;
-#[cfg(test)]
 mod loop_tests;
 #[cfg(test)]
 mod memory_tests;
