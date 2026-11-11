@@ -18,6 +18,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use lattice_core::application::ports::backup_port::{BackupInfoData, BackupPort};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::fs::path_safety::{single_file_name, PathUnsafe};
 use lattice_core::shared::persistence::Database;
 #[cfg(test)]
 use std::fs;
@@ -35,42 +36,20 @@ impl Drop for TemporarySnapshot {
     }
 }
 
-/// Validate that a filename is safe (no directory traversal patterns).
+/// Validate that a backup file name is one plain name.
 ///
-/// This function checks for directory traversal patterns including:
-/// - Literal `..` sequences
-/// - URL-encoded patterns like `%2e%2e`, `%2f`
-/// - Absolute paths (starts with `/` or `\`)
+/// The name is the last component of the caller's path and is never URL-decoded,
+/// so a literal `%2e%2e` is just characters on disk.
 fn validate_safe_filename(filename: &str) -> Result<()> {
-    if filename.contains("..") {
-        return Err(AppError::Security(
-            "Filename contains directory traversal (..)".to_string(),
-        ));
-    }
-
-    let filename_lower = filename.to_lowercase();
-    if filename_lower.contains("%2e")
-        || filename_lower.contains("%2f")
-        || filename_lower.contains("%5c")
-    {
-        return Err(AppError::Security(
-            "Filename contains URL-encoded directory traversal".to_string(),
-        ));
-    }
-
-    if filename.starts_with('/') || filename.starts_with('\\') {
-        return Err(AppError::Security(
-            "Filename cannot be an absolute path".to_string(),
-        ));
-    }
-
-    if filename.contains('\0') {
-        return Err(AppError::Security(
-            "Filename contains null byte".to_string(),
-        ));
-    }
-
-    Ok(())
+    single_file_name(filename).map_err(|reason| match reason {
+        PathUnsafe::ParentDir => {
+            AppError::Security("Filename contains directory traversal (..)".to_string())
+        }
+        PathUnsafe::NulByte => AppError::Security("Filename contains null byte".to_string()),
+        PathUnsafe::NotSingleName | PathUnsafe::NotRepoId => {
+            AppError::Security("Filename cannot be a path".to_string())
+        }
+    })
 }
 
 /// Validate that a path is safe for use in SQL queries.

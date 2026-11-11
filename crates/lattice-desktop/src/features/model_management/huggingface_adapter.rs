@@ -26,6 +26,7 @@ use std::time::Duration;
 use lattice_core::application::ports::{ExternalModelMetadata, ModelCatalogPort};
 use lattice_core::domain::models::selection::EmbeddingCompatibility;
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::fs::path_safety::single_file_name;
 use lattice_core::shared::http::reqwest_client_builder;
 
 mod hub_client;
@@ -123,8 +124,7 @@ impl HuggingFaceModel {
     fn is_standalone_gguf(filename: &str) -> bool {
         let lower = filename.to_ascii_lowercase();
         lower.ends_with(".gguf")
-            && !filename.contains(['/', '\\'])
-            && !filename.contains("..")
+            && single_file_name(filename).is_ok()
             && !lower.contains("mmproj")
             && !lower.contains("-of-")
             && !lower.contains("imatrix")

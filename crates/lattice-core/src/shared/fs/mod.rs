@@ -3,6 +3,7 @@
 pub mod atomic;
 pub mod confinement;
 pub mod path;
+pub mod path_safety;
 pub mod removal;
 pub mod roots;
 pub mod sweep_gate;

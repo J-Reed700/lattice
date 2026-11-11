@@ -1,4 +1,7 @@
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::fs::path_safety::{
+    reject_parent_components, single_file_name, PathUnsafe,
+};
 use serde_json::Value;
 
 pub use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
@@ -268,23 +271,17 @@ impl InputValidator {
             ));
         }
 
-        if name.contains("..") {
-            return Err(AppError::InvalidInput(
-                "Model name cannot contain '..' (path traversal)".to_string(),
-            ));
-        }
-
-        if name.contains('/') || name.contains('\\') {
-            return Err(AppError::InvalidInput(
-                "Model name cannot contain path separators".to_string(),
-            ));
-        }
-
-        if name.contains('\0') {
-            return Err(AppError::InvalidInput(
-                "Model name contains null bytes".to_string(),
-            ));
-        }
+        single_file_name(name.trim()).map_err(|reason| match reason {
+            PathUnsafe::ParentDir => {
+                AppError::InvalidInput("Model name cannot be '..' (path traversal)".to_string())
+            }
+            PathUnsafe::NulByte => {
+                AppError::InvalidInput("Model name contains null bytes".to_string())
+            }
+            PathUnsafe::NotSingleName | PathUnsafe::NotRepoId => {
+                AppError::InvalidInput("Model name cannot contain path separators".to_string())
+            }
+        })?;
 
         Ok(name.trim().to_string())
     }
@@ -312,20 +309,16 @@ impl InputValidator {
             ));
         }
 
-        // Check 2: Path must not contain null bytes (CWE-158)
-        if path.contains('\0') {
-            return Err(AppError::Security(
-                "Path contains null bytes (CWE-158)".to_string(),
-            ));
-        }
-
-        // Check 3: Path must not contain .. (path traversal CWE-22)
-        if path.contains("..") {
-            return Err(AppError::Security(format!(
+        // Checks 2 and 3: no null bytes (CWE-158) and no parent component (CWE-22)
+        reject_parent_components(std::path::Path::new(path)).map_err(|reason| match reason {
+            PathUnsafe::NulByte => {
+                AppError::Security("Path contains null bytes (CWE-158)".to_string())
+            }
+            _ => AppError::Security(format!(
                 "Path traversal detected (CWE-22): path contains '..' - {}",
                 path
-            )));
-        }
+            )),
+        })?;
 
         // Check 4: Must be an absolute path
         let path_obj = std::path::Path::new(path);
@@ -372,30 +365,24 @@ impl InputValidator {
     /// 2. Must have .onnx extension (embedding models)
     /// 3. Must not contain null bytes
     /// 4. Must not contain .. (path traversal)
-    /// 5. Canonical path must be under models_dir (no symlink escapes)
-    pub fn validate_model_path(
-        &self,
-        path: &std::path::Path,
-        models_dir: &std::path::Path,
-    ) -> Result<std::path::PathBuf> {
-        // Check 1: Path string must not contain null bytes
-        let path_str = path
-            .to_str()
-            .ok_or_else(|| AppError::Security("Path contains invalid UTF-8".to_string()))?;
-
-        if path_str.contains('\0') {
+    /// 5. The canonical path is returned
+    pub fn validate_model_artifact(&self, path: &std::path::Path) -> Result<std::path::PathBuf> {
+        // Checks 1 and 2: valid UTF-8, no null bytes (CWE-158), no parent component (CWE-22)
+        if path.to_str().is_none() {
             return Err(AppError::Security(
-                "Path contains null bytes (CWE-158)".to_string(),
+                "Path contains invalid UTF-8".to_string(),
             ));
         }
 
-        // Check 2: Path must not contain .. (basic traversal check)
-        if path_str.contains("..") {
-            return Err(AppError::Security(format!(
+        reject_parent_components(path).map_err(|reason| match reason {
+            PathUnsafe::NulByte => {
+                AppError::Security("Path contains null bytes (CWE-158)".to_string())
+            }
+            _ => AppError::Security(format!(
                 "Path traversal detected (CWE-22): path contains '..' - {}",
                 path.display()
-            )));
-        }
+            )),
+        })?;
 
         // Check 3: File must exist
         if !path.exists() {
@@ -451,19 +438,6 @@ impl InputValidator {
                 e
             ))
         })?;
-
-        let canonical_models_dir = models_dir.canonicalize().map_err(|e| {
-            AppError::InvalidState(format!("Models directory doesn't exist: {}", e))
-        })?;
-
-        // Check 7: Canonical path must be under models directory (no escape via symlinks)
-        if !canonical_path.starts_with(&canonical_models_dir) {
-            return Err(AppError::Security(format!(
-                "Path traversal detected (CWE-22): model file '{}' is outside allowed directory '{}'",
-                canonical_path.display(),
-                canonical_models_dir.display()
-            )));
-        }
 
         // ALL CHECKS PASSED: Path is safe
         Ok(canonical_path)
@@ -599,7 +573,7 @@ mod tests {
         let file = folder.join("model..Q4_K_M.gguf");
         std::fs::write(&file, b"gguf").unwrap();
 
-        assert!(validator.validate_model_path(&file, temp.path()).is_ok());
+        assert!(validator.validate_model_artifact(&file).is_ok());
     }
 
     #[test]
@@ -610,7 +584,7 @@ mod tests {
         std::fs::write(&file, b"gguf").unwrap();
         let sneaky = temp.path().join("sub").join("..").join("model.gguf");
 
-        assert!(validator.validate_model_path(&sneaky, temp.path()).is_err());
+        assert!(validator.validate_model_artifact(&sneaky).is_err());
     }
 
     #[test]

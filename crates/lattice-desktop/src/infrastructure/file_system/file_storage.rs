@@ -23,6 +23,7 @@ use lattice_core::application::ports::{FileMetadata, FileStoragePort};
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::fs::atomic::AtomicFs;
+use lattice_core::shared::fs::path_safety::{reject_parent_components, PathUnsafe};
 use std::io::ErrorKind;
 use std::path::Path;
 use tokio::fs;
@@ -77,18 +78,10 @@ impl SecureFileStorage {
     /// - Check for null bytes
     fn validate_path(&self, path: &Path) -> Result<()> {
         let path_str = path.to_string_lossy();
-        if path_str.contains("..") {
-            return Err(AppError::InvalidInput(format!(
-                "Path contains directory traversal: {}",
-                path_str
-            )));
-        }
-
-        if path_str.contains('\0') {
-            return Err(AppError::InvalidInput(
-                "Path contains null bytes".to_string(),
-            ));
-        }
+        reject_parent_components(path).map_err(|reason| match reason {
+            PathUnsafe::NulByte => AppError::InvalidInput("Path contains null bytes".to_string()),
+            _ => AppError::InvalidInput(format!("Path contains directory traversal: {}", path_str)),
+        })?;
 
         match std::fs::symlink_metadata(path) {
             Ok(metadata) if metadata.file_type().is_symlink() => {

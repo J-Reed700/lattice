@@ -3,6 +3,7 @@
 //! Resolves the configured home directory and enforces filesystem confinement.
 
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::fs::path_safety::single_file_name;
 use std::path::{Path, PathBuf};
 
 /// Infrastructure adapter for model storage paths.
@@ -114,7 +115,7 @@ impl ModelPaths {
             ));
         }
 
-        if model_id.contains("..") || model_id.contains('/') || model_id.contains('\\') {
+        if single_file_name(model_id).is_err() {
             return Err(AppError::InvalidInput(
                 "Invalid model ID: contains path separators or traversal".to_string(),
             ));

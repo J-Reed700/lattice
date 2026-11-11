@@ -1,3 +1,4 @@
+use lattice_core::shared::fs::path_safety::{reject_parent_components, PathUnsafe};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -70,28 +71,10 @@ impl ValidatedFilePath {
     }
 
     fn validate_path_components(path: &Path) -> Result<(), PathValidationError> {
-        let path_str = path.to_string_lossy();
-
-        if path_str.contains("..") {
-            return Err(PathValidationError::PathTraversal(path_str.to_string()));
-        }
-
-        for component in path.components() {
-            match component {
-                std::path::Component::ParentDir => {
-                    return Err(PathValidationError::PathTraversal(path_str.to_string()));
-                }
-                std::path::Component::Normal(os_str) => {
-                    let component_str = os_str.to_string_lossy();
-                    if component_str.contains('\0') || component_str.contains("..") {
-                        return Err(PathValidationError::InvalidPath);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        Ok(())
+        reject_parent_components(path).map_err(|reason| match reason {
+            PathUnsafe::NulByte => PathValidationError::InvalidPath,
+            _ => PathValidationError::PathTraversal(path.to_string_lossy().to_string()),
+        })
     }
 
     fn normalize_path(path: &Path) -> PathBuf {

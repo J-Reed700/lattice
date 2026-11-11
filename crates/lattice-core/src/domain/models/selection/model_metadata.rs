@@ -1,5 +1,6 @@
 //! Catalog model metadata, its download URL and its resource checks.
 use super::*;
+use crate::shared::fs::path_safety::{repo_id_parts, single_file_name};
 
 /// Complete metadata for an AI model.
 ///
@@ -87,39 +88,20 @@ impl ModelMetadata {
     /// - URL-encodes components to prevent injection attacks
     pub fn build_download_url(&self) -> Result<String> {
         if let (Some(model_id), Some(filename)) = (&self.model_id, &self.default_filename) {
-            if !model_id.contains('/') || model_id.contains("..") {
-                return Err(AppError::InvalidInput(format!(
-                    "Invalid model_id format: {}",
-                    model_id
-                )));
-            }
+            let (org, repo) = repo_id_parts(model_id).map_err(|_| {
+                AppError::InvalidInput(format!("Invalid model_id format: {}", model_id))
+            })?;
 
-            if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
+            if single_file_name(filename).is_err() {
                 return Err(AppError::InvalidInput(format!(
                     "Invalid filename contains path separators: {}",
                     filename
                 )));
             }
 
-            // URL-encode both model_id and filename to handle special characters
-            // Need to encode each path segment separately to preserve the /
-            let parts: Vec<&str> = model_id.split('/').collect();
-            let encoded_org = parts
-                .first()
-                .map(|s| urlencoding::encode(s))
-                .ok_or_else(|| {
-                    AppError::InvalidInput(
-                        "Invalid model ID format: missing organization".to_string(),
-                    )
-                })?;
-            let encoded_repo = parts
-                .get(1)
-                .map(|s| urlencoding::encode(s))
-                .ok_or_else(|| {
-                    AppError::InvalidInput(
-                        "Invalid model ID format: missing repository".to_string(),
-                    )
-                })?;
+            // Each segment is encoded on its own so the / between them survives.
+            let encoded_org = urlencoding::encode(org);
+            let encoded_repo = urlencoding::encode(repo);
 
             Ok(format!(
                 "https://huggingface.co/{}/{}/resolve/main/{}",

@@ -56,15 +56,10 @@ impl EmbeddingLoader {
             return Ok(None);
         }
 
-        let models_dir = model_path
-            .parent()
-            .ok_or_else(|| AppError::Security("Model path has no parent directory".into()))?
-            .to_path_buf();
-
         let _validated_path = match self
             .security
             .input_validator()
-            .validate_model_path(&model_path, &models_dir)
+            .validate_model_artifact(&model_path)
         {
             Ok(path) => path,
             Err(e) => {
