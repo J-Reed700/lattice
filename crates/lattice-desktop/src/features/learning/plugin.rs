@@ -393,6 +393,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             move_practice_stage,
             check_coding_example,
             check_practice_piece,
+            run_coding_input,
             ask_practice_hint,
             send_practice_turn,
             observe_practice_draft,

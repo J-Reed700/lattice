@@ -475,6 +475,7 @@
     "learning:allow-move-practice-stage",
     "learning:allow-check-coding-example",
     "learning:allow-check-practice-piece",
+    "learning:allow-run-coding-input",
     "learning:allow-ask-practice-hint",
     "learning:allow-send-practice-turn",
     "learning:allow-observe-practice-draft",

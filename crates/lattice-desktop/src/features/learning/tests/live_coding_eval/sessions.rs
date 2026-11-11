@@ -24,20 +24,24 @@ use lattice_core::domain::learning::practice::{
     problem_pattern, ScoreStatus, Scorecard, ScorecardEvidence,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_learning::coding::dto::{
-    AskPracticeHintRequestDto, CheckCodingExampleRequestDto, CheckPracticePieceRequestDto,
-    CodingRunScope, DebriefFactsDto, DraftObservation, FinishPracticeSessionRequestDto,
-    MovePracticeStageRequestDto, ObservePracticeDraftRequestDto, PracticeCheckDto, PracticeHintDto,
-    PracticeSessionDto, PracticeSessionRequestDto, SendPracticeTurnRequestDto,
-    StartPracticeSessionRequestDto,
-};
 use lattice_learning::coding::problem::{CaseStatus, Problem, SOLUTION_PATH};
 use lattice_learning::coding::records::StoredRun;
-use lattice_learning::coding::session::{session_view, CodingSessions};
+use lattice_learning::coding::session::CodingSessions;
 use lattice_learning::coding::solution_check::passes_every_case;
 use lattice_learning::coding::store::session_of;
 use lattice_learning::lab_runtime::LearningLabFile;
 use lattice_learning::practical_dto::{LearningSimulationSpeaker, LearningSimulationTurnDto};
+use lattice_learning::practice::kinds::program::dto::{
+    CheckCodingExampleRequestDto, CodingRunScope, ProgramDebriefWorkDto, ProgramHintMarkDto,
+    ProgramRunDto, ProgramWorkDto,
+};
+use lattice_learning::practice::kinds::program::shape::{piece_of, scope_of};
+use lattice_learning::practice::session::dto::{
+    AskPracticeHintRequestDto, CheckPracticePieceRequestDto, DebriefFactsDto, DraftObservation,
+    FinishPracticeSessionRequestDto, MovePracticeStageRequestDto, ObservePracticeDraftRequestDto,
+    PracticeHintDto, PracticeSessionDto, PracticeSessionRequestDto, SendPracticeTurnRequestDto,
+    StartPracticeSessionRequestDto,
+};
 use lattice_learning::practice::session::observe::observe;
 use lattice_learning::practice::session::policy::policy_for;
 use serde::Serialize;
@@ -69,6 +73,10 @@ fn setting_name(setting: Setting) -> &'static str {
         Setting::Mock => "mock",
         Setting::Watched => "watched",
     }
+}
+
+fn work_of(session: &PracticeSessionDto) -> ProgramWorkDto {
+    serde_json::from_value(session.work.clone()).expect("a program session's work is a program's")
 }
 
 fn id() -> String {
@@ -122,7 +130,7 @@ struct RunResult {
     stderr: String,
 }
 
-fn run_result(problem: &Problem, run: &PracticeCheckDto) -> RunResult {
+fn run_result(problem: &Problem, run: &ProgramRunDto) -> RunResult {
     let failing = run
         .cases
         .iter()
@@ -218,7 +226,7 @@ impl<'a> Player<'a> {
             sessions,
             problem,
             setting,
-            draft: session.draft.clone(),
+            draft: work_of(&session).draft,
             session: session.clone(),
             steps: Vec::new(),
         };
@@ -268,15 +276,13 @@ impl<'a> Player<'a> {
         if ok {
             match kind {
                 "run" => {
-                    step.run = self
-                        .session
+                    step.run = work_of(&self.session)
                         .runs
                         .last()
                         .map(|run| run_result(self.problem, run));
                 }
                 "example" => {
-                    step.result = self
-                        .session
+                    step.result = work_of(&self.session)
                         .examples
                         .iter()
                         .max_by_key(|example| example.ordinal)
@@ -323,11 +329,10 @@ impl<'a> Player<'a> {
             .coding_session(&request.program_id, &request.session_id)
             .await?;
         let cue = bundle.row.pending_cue.clone();
-        let view = session_view(&bundle)?;
         let engine = session_of(&bundle)?;
         let kind = self.lab.kinds.get(&engine.exercise.kind)?;
         let observation = observe(kind, &engine, &engine.row.draft, engine.draft_seen.as_ref())?;
-        let known = view.turns.len();
+        let known = engine.turns.len();
         let started = Instant::now();
         let result = self.sessions.respond(&request).await;
         let ms = elapsed_ms(started);
@@ -386,7 +391,7 @@ impl<'a> Player<'a> {
             session_id: self.session.session_id.clone(),
             content: content.to_owned(),
             spoken: false,
-            files: self.draft.clone(),
+            piece: piece_of(&self.draft)?,
             expected_revision: self.session.revision,
         };
         let started = Instant::now();
@@ -421,7 +426,7 @@ impl<'a> Player<'a> {
         let request = ObservePracticeDraftRequestDto {
             program_id: self.lab.program_id.clone(),
             session_id: self.session.session_id.clone(),
-            files: self.draft.clone(),
+            piece: piece_of(&self.draft)?,
             reason: DraftObservation::Pause,
         };
         let started = Instant::now();
@@ -449,12 +454,11 @@ impl<'a> Player<'a> {
         self.draft = files(code);
         let request = CheckPracticePieceRequestDto {
             operation_id: id(),
-            run_id: id(),
+            check_id: id(),
             program_id: self.lab.program_id.clone(),
             session_id: self.session.session_id.clone(),
-            scope,
-            files: self.draft.clone(),
-            input: None,
+            scope: scope_of(scope),
+            piece: piece_of(&self.draft)?,
         };
         let started = Instant::now();
         let result = self.sessions.run(&request).await;
@@ -474,7 +478,7 @@ impl<'a> Player<'a> {
             operation_id: id(),
             program_id: self.lab.program_id.clone(),
             session_id: self.session.session_id.clone(),
-            files: self.draft.clone(),
+            piece: piece_of(&self.draft)?,
             expected_revision: self.session.revision,
         };
         let started = Instant::now();
@@ -494,7 +498,7 @@ impl<'a> Player<'a> {
             operation_id: id(),
             program_id: self.lab.program_id.clone(),
             session_id: self.session.session_id.clone(),
-            files: self.draft.clone(),
+            piece: piece_of(&self.draft)?,
         };
         let started = Instant::now();
         let result = self.sessions.finish(&request).await;
@@ -701,6 +705,7 @@ struct SessionItem {
     final_draft: String,
     steps: Vec<Step>,
     hints: Vec<PracticeHintDto>,
+    hint_marks: Vec<ProgramHintMarkDto>,
     question_rule_failures: usize,
     debrief: Option<DebriefItem>,
 }
@@ -712,6 +717,9 @@ fn debrief_item(
     examples: &[u32],
 ) -> Option<DebriefItem> {
     let debrief = session.debrief.as_ref()?;
+    let strong_answer = serde_json::from_value::<ProgramDebriefWorkDto>(debrief.work.clone())
+        .expect("a program debrief's work is a program's")
+        .strong_answer;
     let hints: Vec<u32> = session.hints.iter().map(|hint| hint.ordinal).collect();
     let mut evidence_checks = Vec::new();
     let mut row_issues = Vec::new();
@@ -739,8 +747,8 @@ fn debrief_item(
         scorecard: debrief.scorecard.clone(),
         evidence_checks,
         row_issues,
-        approach: debrief.strong_answer.approach.clone(),
-        complexity: debrief.strong_answer.complexity.clone(),
+        approach: strong_answer.approach,
+        complexity: strong_answer.complexity,
         facts: debrief.facts.clone(),
     })
 }
@@ -847,7 +855,15 @@ fn markdown(item: &SessionItem) -> String {
             hint.reason,
             hint.text,
             if hint.rung == Rung::Point {
-                format!(" [path {:?}, lines {:?}]", hint.path, hint.lines)
+                let mark = item
+                    .hint_marks
+                    .iter()
+                    .find(|mark| mark.ordinal == hint.ordinal);
+                format!(
+                    " [path {:?}, lines {:?}]",
+                    mark.and_then(|mark| mark.path.as_ref()),
+                    mark.map(|mark| &mark.lines)
+                )
             } else {
                 String::new()
             }
@@ -1185,6 +1201,7 @@ async fn live_coding_session_eval() -> Result<()> {
                         .join("\n"),
                     steps: player.steps,
                     hints: player.session.hints.clone(),
+                    hint_marks: work_of(&player.session).hint_marks,
                     question_rule_failures,
                     debrief,
                 };

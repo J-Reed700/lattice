@@ -4,7 +4,7 @@
 //! cases: a block that passes is a release blocker. Whether a hint is on its rung, and whether a Line hint points at
 //! the line that is wrong, is read by hand from the Markdown.
 
-use lattice_core::domain::learning::practice::work::{Rung, Setting, Stage};
+use lattice_core::domain::learning::practice::work::{CheckScope, Piece, Rung, Setting, Stage};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::Path;
@@ -13,14 +13,18 @@ use std::time::Instant;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::Result;
 use lattice_learning::lab_runtime::LearningLabFile;
-use lattice_learning::practice::coding::dto::{
-    AskPracticeHintRequestDto, CaseViewDto, CheckPracticePieceRequestDto, CodingRunScope,
-    DraftObservation, MovePracticeStageRequestDto, ObservePracticeDraftRequestDto, PracticeHintDto,
-    PracticeSessionDto, StartPracticeSessionRequestDto,
-};
 use lattice_learning::practice::coding::observation::{diff_lines, LineChange, LineChangeKind};
 use lattice_learning::practice::coding::problem::{CaseStatus, Problem, SOLUTION_PATH};
 use lattice_learning::practice::coding::solution_check::{code_blocks, passes_every_case};
+use lattice_learning::practice::kinds::program::dto::{
+    CaseViewDto, ProgramHintMarkDto, ProgramWorkDto,
+};
+use lattice_learning::practice::kinds::program::shape::piece_of;
+use lattice_learning::practice::session::dto::{
+    AskPracticeHintRequestDto, CheckPracticePieceRequestDto, DraftObservation,
+    MovePracticeStageRequestDto, ObservePracticeDraftRequestDto, PracticeHintDto,
+    PracticeSessionDto, StartPracticeSessionRequestDto,
+};
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
@@ -48,6 +52,8 @@ struct HintRecord {
     rung: Rung,
     ms: u64,
     hint: Option<PracticeHintDto>,
+    /// Where a Point hint points in the draft.
+    mark: Option<ProgramHintMarkDto>,
     error: Option<String>,
     blocks: Vec<BlockCheck>,
 }
@@ -126,12 +132,21 @@ fn file(code: &str) -> Vec<LearningLabFile> {
     }]
 }
 
+fn piece(code: &str) -> Piece {
+    piece_of(&file(code)).expect("a program's files make a piece")
+}
+
+fn work_of(session: &PracticeSessionDto) -> ProgramWorkDto {
+    serde_json::from_value(session.work.clone()).expect("a program session's work is a program's")
+}
+
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
 fn failing_of(session: &PracticeSessionDto) -> Vec<FailingCase> {
-    let Some(run) = session.runs.last() else {
+    let work = work_of(session);
+    let Some(run) = work.runs.last() else {
         return Vec::new();
     };
     run.cases
@@ -285,12 +300,17 @@ fn markdown_of(index: usize, record: &DraftRecord) -> String {
             let _ = writeln!(out, "Code block in {}: {verdict}\n", block.part);
         }
         if hint.rung == Rung::Point {
-            let path = hint.path.as_deref().unwrap_or("(no path)");
+            let mark = record_hint.mark.clone().unwrap_or(ProgramHintMarkDto {
+                ordinal: hint.ordinal,
+                path: None,
+                lines: Vec::new(),
+            });
+            let path = mark.path.as_deref().unwrap_or("(no path)");
             let _ = writeln!(
                 out,
                 "Points at {path}, lines {:?}. Marked `>>` in the draft:\n\n{}",
-                hint.lines,
-                fenced("python", &marked(&record.draft, &hint.lines))
+                mark.lines,
+                fenced("python", &marked(&record.draft, &mark.lines))
             );
             let _ = writeln!(out, "Line diff, draft against reference:\n");
             if record.diff.is_empty() {
@@ -413,19 +433,18 @@ async fn hint_ladder(
         .observe_draft(&ObservePracticeDraftRequestDto {
             program_id: lab.program_id.clone(),
             session_id: session_id.clone(),
-            files: file(code),
+            piece: piece(code),
             reason: DraftObservation::Pause,
         })
         .await?;
     let mut view = sessions
         .run(&CheckPracticePieceRequestDto {
             operation_id: id(),
-            run_id: id(),
+            check_id: id(),
             program_id: lab.program_id.clone(),
             session_id: session_id.clone(),
-            scope: CodingRunScope::All,
-            files: file(code),
-            input: None,
+            scope: CheckScope::All,
+            piece: piece(code),
         })
         .await?;
     let failing = failing_of(&view);
@@ -439,7 +458,7 @@ async fn hint_ladder(
                 operation_id: id(),
                 program_id: lab.program_id.clone(),
                 session_id: session_id.clone(),
-                files: file(code),
+                piece: piece(code),
                 expected_revision: view.revision,
             })
             .await;
@@ -447,6 +466,12 @@ async fn hint_ladder(
         match asked {
             Ok(after) => {
                 let hint = after.hints.get(before).cloned();
+                let mark = hint.as_ref().and_then(|hint| {
+                    work_of(&after)
+                        .hint_marks
+                        .into_iter()
+                        .find(|mark| mark.ordinal == hint.ordinal)
+                });
                 let blocks = match &hint {
                     Some(hint) => check_blocks(lab, problem, hint).await,
                     None => Vec::new(),
@@ -455,6 +480,7 @@ async fn hint_ladder(
                     rung: hint.as_ref().map_or(rung, |hint| hint.rung),
                     ms,
                     hint,
+                    mark,
                     error: None,
                     blocks,
                 });
@@ -465,6 +491,7 @@ async fn hint_ladder(
                     rung,
                     ms,
                     hint: None,
+                    mark: None,
                     error: Some(error.to_string()),
                     blocks: Vec::new(),
                 });

@@ -5,24 +5,30 @@
 mod aids;
 mod cases;
 pub(super) mod evidence;
-pub(super) mod view;
 
 pub use self::aids::{CodingAids, LiveCodingAids};
 use self::cases::input_case;
 pub use self::evidence::last_draft_seen;
-#[cfg(test)]
-pub(crate) use self::view::case_is_open;
-pub use self::view::session_view;
-pub(crate) use self::view::{cut_case, example_view};
 use super::checks::CodingChecks;
-use super::dto::*;
 use super::records::{CodingOp, RunFinished};
 use super::store::{session_of, CodingStore};
 use crate::persistence::hash;
 use crate::practical_dto::LearningPracticalRunDto;
 use crate::practical_repository::LearningPracticalRepository;
 use crate::practical_runs::CodingRunStart;
-use crate::practice::kinds::program::shape::{piece_of, scope_of};
+use crate::practice::kinds::program::dto::{
+    CheckCodingExampleRequestDto, CodingRunScope, RemoveCodingExampleRequestDto,
+    RunCodingInputRequestDto,
+};
+use crate::practice::kinds::program::shape::piece_of;
+use crate::practice::session::dto::{
+    AskPracticeHintRequestDto, CheckPracticePieceRequestDto, ClockDto, DraftObservation,
+    FinishPracticeSessionRequestDto, ListPracticeSessionsRequestDto, MovePracticeStageRequestDto,
+    ObservePracticeDraftRequestDto, PracticeDueDto, PracticeDueRequestDto, PracticeSessionDto,
+    PracticeSessionRequestDto, PracticeSessionSummaryDto, RevealPracticeSolutionRequestDto,
+    SendPracticeTurnRequestDto, SetPracticeClockRequestDto, SetPracticeSettingRequestDto,
+    StartPracticeSessionRequestDto,
+};
 use crate::practice::session::kind::Kinds;
 pub use crate::practice::session::live::SystemClock;
 use crate::practice::session::policy::Event;
@@ -31,6 +37,7 @@ use crate::practice::session::ports::{Aids, At, CheckStart, Checks, Debriefer};
 use crate::practice::session::record::Op;
 pub use crate::practice::session::service::IDLE_AFTER_MS;
 use crate::practice::session::service::{CheckAsk, DraftReason, PracticeSessions, Start};
+use crate::practice::session::view::session_view;
 use async_trait::async_trait;
 use lattice_core::domain::learning::practice::work::Setting;
 use lattice_core::domain::learning::practice::work::{CaseStatus, CheckScope};
@@ -111,7 +118,8 @@ impl CodingSessions<'_> {
     }
 
     async fn view(&self, program_id: &str, session_id: &str) -> Result<PracticeSessionDto> {
-        session_view(&self.repo.coding_session(program_id, session_id).await?)
+        let session = session_of(&self.repo.coding_session(program_id, session_id).await?)?;
+        session_view(self.kinds.get(&session.exercise.kind)?, &session)
     }
 
     pub async fn start(
@@ -221,30 +229,34 @@ impl CodingSessions<'_> {
     }
 
     pub async fn run(&self, request: &CheckPracticePieceRequestDto) -> Result<PracticeSessionDto> {
-        if request.scope == CodingRunScope::Input {
-            self.run_input(request).await?;
-        } else {
-            let payload_hash = hash(request)?;
-            let piece = piece_of(&request.files)?;
-            let engine = self.engine();
-            self.service(&engine)
-                .check(
-                    &at(&request.program_id, &request.session_id),
-                    &op(&request.operation_id, "run", &payload_hash),
-                    &CheckAsk {
-                        check_id: &request.run_id,
-                        scope: scope_of(request.scope),
-                        piece: &piece,
-                    },
-                )
-                .await?;
+        if request.scope == CheckScope::Own {
+            return Err(AppError::InvalidInput(
+                "The engine checks the shown cases or all of them; use the kind's own command for your input."
+                    .into(),
+            ));
         }
+        let payload_hash = hash(request)?;
+        let engine = self.engine();
+        self.service(&engine)
+            .check(
+                &at(&request.program_id, &request.session_id),
+                &op(&request.operation_id, "run", &payload_hash),
+                &CheckAsk {
+                    check_id: &request.check_id,
+                    scope: request.scope,
+                    piece: &request.piece,
+                },
+            )
+            .await?;
         self.view(&request.program_id, &request.session_id).await
     }
 
     /// Program's own check: the learner's code on one input, with no verdict. In Coached it also records what the
     /// reference returns for that input.
-    async fn run_input(&self, request: &CheckPracticePieceRequestDto) -> Result<()> {
+    pub async fn run_input(
+        &self,
+        request: &RunCodingInputRequestDto,
+    ) -> Result<PracticeSessionDto> {
         let bundle = self
             .repo
             .coding_session(&request.program_id, &request.session_id)
@@ -255,7 +267,7 @@ impl CodingSessions<'_> {
             ));
         }
         let session = session_of(&bundle)?;
-        let case = input_case(&session.exercise, request.input.as_deref())?;
+        let case = input_case(&session.exercise, &request.input)?;
         self.repo
             .save_coding_draft(&request.program_id, &request.session_id, &request.files)
             .await?;
@@ -276,10 +288,10 @@ impl CodingSessions<'_> {
                 payload_hash: &payload_hash,
             })
             .await?;
-        let reference_actual = match (bundle.row.setting, request.input.as_deref()) {
-            (Setting::Coached, Some(input)) => {
+        let reference_actual = match bundle.row.setting {
+            Setting::Coached => {
                 self.own
-                    .reference_answer(&bundle.problem, input)
+                    .reference_answer(&bundle.problem, &request.input)
                     .await?
                     .actual
             }
@@ -317,7 +329,7 @@ impl CodingSessions<'_> {
                 )
                 .await?;
         }
-        Ok(())
+        self.view(&request.program_id, &request.session_id).await
     }
 
     pub async fn ask_hint(
@@ -325,13 +337,12 @@ impl CodingSessions<'_> {
         request: &AskPracticeHintRequestDto,
     ) -> Result<PracticeSessionDto> {
         let payload_hash = hash(request)?;
-        let piece = piece_of(&request.files)?;
         let engine = self.engine();
         self.service(&engine)
             .ask_hint(
                 &at(&request.program_id, &request.session_id),
                 &op(&request.operation_id, "hint", &payload_hash),
-                &piece,
+                &request.piece,
                 request.expected_revision,
             )
             .await?;
@@ -343,14 +354,13 @@ impl CodingSessions<'_> {
         request: &SendPracticeTurnRequestDto,
     ) -> Result<PracticeSessionDto> {
         let payload_hash = hash(request)?;
-        let piece = piece_of(&request.files)?;
         let engine = self.engine();
         self.service(&engine)
             .send_turn(
                 &at(&request.program_id, &request.session_id),
                 &op(&request.operation_id, "turn", &payload_hash),
                 &request.content,
-                &piece,
+                &request.piece,
                 request.spoken,
                 request.expected_revision,
             )
@@ -371,7 +381,6 @@ impl CodingSessions<'_> {
         &self,
         request: &ObservePracticeDraftRequestDto,
     ) -> Result<PracticeSessionDto> {
-        let piece = piece_of(&request.files)?;
         let reason = match request.reason {
             DraftObservation::Pause => DraftReason::Pause,
             DraftObservation::Idle => DraftReason::Idle,
@@ -380,7 +389,7 @@ impl CodingSessions<'_> {
         self.service(&engine)
             .observe_draft(
                 &at(&request.program_id, &request.session_id),
-                &piece,
+                &request.piece,
                 reason,
             )
             .await?;
@@ -437,13 +446,12 @@ impl CodingSessions<'_> {
         request: &FinishPracticeSessionRequestDto,
     ) -> Result<PracticeSessionDto> {
         let payload_hash = hash(request)?;
-        let piece = piece_of(&request.files)?;
         let engine = self.engine();
         self.service(&engine)
             .finish(
                 &at(&request.program_id, &request.session_id),
                 &op(&request.operation_id, "finish", &payload_hash),
-                &piece,
+                &request.piece,
             )
             .await?;
         self.view(&request.program_id, &request.session_id).await

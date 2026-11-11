@@ -15,7 +15,9 @@ use lattice_learning::drills::runner::{runner_for, CodeRunner};
 use lattice_learning::embedded_runtime::BuiltinRuntimes;
 use lattice_learning::practical_dto::LearningPracticalRunDto;
 use lattice_learning::practical_runs::CodingRunStart;
-use lattice_learning::practice::coding::dto::*;
+use lattice_learning::practice::coding::dto::{
+    StartPracticeBuildRequestDto, StartPracticeBuildResultDto,
+};
 use lattice_learning::practice::coding::examples::ExampleCheck;
 use lattice_learning::practice::coding::jobs::{
     practice_build_request, PRACTICE_BUILD, PRACTICE_BUILD_STEPS,
@@ -24,9 +26,20 @@ use lattice_learning::practice::coding::problem::{CaseResult, Problem};
 use lattice_learning::practice::coding::session::{
     CodingAids, CodingRuns, CodingSessions, LiveCodingAids, SystemClock,
 };
+use lattice_learning::practice::kinds::program::dto::{
+    CheckCodingExampleRequestDto, RemoveCodingExampleRequestDto, RunCodingInputRequestDto,
+};
 use lattice_learning::practice::kinds::program::toolchain::BuiltinToolchains;
 use lattice_learning::practice::session::counterpart::Reply;
 use lattice_learning::practice::session::debrief::Debrief;
+use lattice_learning::practice::session::dto::{
+    AskPracticeHintRequestDto, CheckPracticePieceRequestDto, ClockDto,
+    FinishPracticeSessionRequestDto, ListPracticeSessionsRequestDto, MovePracticeStageRequestDto,
+    ObservePracticeDraftRequestDto, PracticeDueDto, PracticeDueRequestDto, PracticeSessionDto,
+    PracticeSessionRequestDto, PracticeSessionSummaryDto, RevealPracticeSolutionRequestDto,
+    SendPracticeTurnRequestDto, SetPracticeClockRequestDto, SetPracticeSettingRequestDto,
+    StartPracticeSessionRequestDto,
+};
 use lattice_learning::practice::session::kind::{Hint, Kind, Kinds};
 use lattice_learning::practice::session::live::{LiveAids, LiveDebriefer};
 use lattice_learning::practice::session::observation::Observation;
@@ -326,6 +339,20 @@ pub async fn check_practice_piece(
     let repo = repo_of(&container);
     live_sessions!(sessions, request, container, runtimes, kinds, repo, &NoDebrief);
     sessions.run(&request).await.map_err(ApiError::from)
+}
+
+/// The learner's code on one input of their choosing, with no verdict.
+#[tauri::command]
+#[specta::specta]
+pub async fn run_coding_input(
+    request: RunCodingInputRequestDto,
+    container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
+    kinds: State<'_, Kinds>,
+) -> Result<PracticeSessionDto, ApiError> {
+    let repo = repo_of(&container);
+    live_sessions!(sessions, request, container, runtimes, kinds, repo, &NoDebrief);
+    sessions.run_input(&request).await.map_err(ApiError::from)
 }
 
 #[tauri::command]

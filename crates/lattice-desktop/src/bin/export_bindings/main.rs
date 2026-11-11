@@ -247,6 +247,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::learning::plugin::check_coding_example,
             lattice::features::learning::plugin::remove_coding_example,
             lattice::features::learning::plugin::check_practice_piece,
+            lattice::features::learning::plugin::run_coding_input,
             lattice::features::learning::plugin::ask_practice_hint,
             lattice::features::learning::plugin::send_practice_turn,
             lattice::features::learning::plugin::respond_practice_session,
@@ -563,7 +564,13 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
         // Persisted in `metadata.turn` rather than returned by a command, so it
         // reaches no signature on its own and has to be named here.
         .typ::<lattice::features::conversation::chat::TurnRecordDto>()
-        .typ::<lattice::features::conversation::chat::ToolPreferences>();
+        .typ::<lattice::features::conversation::chat::ToolPreferences>()
+        // What `PracticeSessionDto.work` and `PracticeDebriefDto.work` hold for the program kind: the session's
+        // wire carries them as JSON, so no command signature reaches them.
+        .typ::<lattice_learning::practice::kinds::program::dto::ProgramWorkDto>()
+        .typ::<lattice_learning::practice::kinds::program::dto::ProgramRunDto>()
+        .typ::<lattice_learning::practice::kinds::program::dto::ProgramHintMarkDto>()
+        .typ::<lattice_learning::practice::kinds::program::dto::ProgramDebriefWorkDto>();
 
     let bindings = builder
         .export_str(

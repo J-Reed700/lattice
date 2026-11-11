@@ -1,6 +1,5 @@
 //! The session's commands on an in-memory database, with a fake model, a fake runner and a fake clock.
 
-use super::dto::*;
 use super::examples::ExampleCheck;
 use super::problem::*;
 use super::records::CodingOp;
@@ -17,11 +16,13 @@ use crate::practical_repository::LearningPracticalRepository;
 use crate::practical_runs::CodingRunStart;
 use crate::practice::coding::harness::CaseHarness;
 use crate::practice::kinds::program::budget::ProgramBudget;
+use crate::practice::kinds::program::dto::*;
 use crate::practice::kinds::program::parts::part_of;
-use crate::practice::kinds::program::shape::difficulty_of;
+use crate::practice::kinds::program::shape::{difficulty_of, piece_of};
 use crate::practice::kinds::program::toolchain::Toolchains;
 use crate::practice::session::counterpart::Reply;
 use crate::practice::session::debrief::{Debrief, DebriefRow, Evidence};
+use crate::practice::session::dto::*;
 use crate::practice::session::kind::{Budget, Hint, Kind, Kinds};
 use crate::practice::session::observation::Observation;
 use crate::practice::session::policy::{Cue, Policy};
@@ -30,7 +31,9 @@ use crate::practice::session::record::DebriefSession;
 use crate::practice::test_support::fixture;
 use crate::repository::LearningRepository;
 use async_trait::async_trait;
-use lattice_core::domain::learning::practice::work::{Brief, Exercise, Form, Rung, Setting, Stage};
+use lattice_core::domain::learning::practice::work::{
+    Brief, CheckScope, Exercise, Form, Piece, Rung, Setting, Stage,
+};
 use lattice_core::domain::learning::practice::{ScoreStatus, PROBLEM_PATTERNS};
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
@@ -172,6 +175,8 @@ impl Clock for FakeClock {
 struct FakeAids {
     replies: Mutex<VecDeque<Result<Option<CounterpartReply>>>>,
     reply_calls: AtomicUsize,
+    /// The lines the next hints point at, as file and line.
+    pointing: Mutex<Vec<(String, u32)>>,
 }
 
 impl FakeAids {
@@ -240,7 +245,13 @@ impl Aids for FakeAids {
             rung,
             text: "Look at what the function returns.".into(),
             reason: "The body is still empty.".into(),
-            parts: vec![],
+            parts: self
+                .pointing
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(path, line)| part_of(path, *line))
+                .collect(),
         })
     }
 
@@ -518,16 +529,31 @@ impl Ctx {
     async fn run(
         &self,
         session: &PracticeSessionDto,
-        scope: CodingRunScope,
-        input: Option<Vec<String>>,
+        scope: CheckScope,
     ) -> Result<PracticeSessionDto> {
         self.sessions()
             .run(&CheckPracticePieceRequestDto {
                 operation_id: id(),
-                run_id: id(),
+                check_id: id(),
                 program_id: self.program_id.clone(),
                 session_id: session.session_id.clone(),
                 scope,
+                piece: piece("def double(n):\n    return n * 2\n"),
+            })
+            .await
+    }
+
+    async fn run_input(
+        &self,
+        session: &PracticeSessionDto,
+        input: Vec<String>,
+    ) -> Result<PracticeSessionDto> {
+        self.sessions()
+            .run_input(&RunCodingInputRequestDto {
+                operation_id: id(),
+                run_id: id(),
+                program_id: self.program_id.clone(),
+                session_id: session.session_id.clone(),
                 files: starter_files("def double(n):\n    return n * 2\n"),
                 input,
             })
@@ -569,6 +595,18 @@ impl Ctx {
             .await
     }
 
+    async fn ask(&self, session: &PracticeSessionDto) -> Result<PracticeSessionDto> {
+        self.sessions()
+            .ask_hint(&AskPracticeHintRequestDto {
+                operation_id: id(),
+                program_id: self.program_id.clone(),
+                session_id: session.session_id.clone(),
+                piece: piece("def double(n):\n    pass\n"),
+                expected_revision: session.revision,
+            })
+            .await
+    }
+
     async fn finish(
         &self,
         session: &PracticeSessionDto,
@@ -579,10 +617,22 @@ impl Ctx {
                 operation_id: operation_id.into(),
                 program_id: self.program_id.clone(),
                 session_id: session.session_id.clone(),
-                files: starter_files("def double(n):\n    return n * 2\n"),
+                piece: piece("def double(n):\n    return n * 2\n"),
             })
             .await
     }
+}
+
+fn piece(content: &str) -> Piece {
+    piece_of(&starter_files(content)).unwrap()
+}
+
+fn work(session: &PracticeSessionDto) -> ProgramWorkDto {
+    serde_json::from_value(session.work.clone()).unwrap()
+}
+
+fn debrief_work(session: &PracticeSessionDto) -> ProgramDebriefWorkDto {
+    serde_json::from_value(session.debrief.as_ref().unwrap().work.clone()).unwrap()
 }
 
 fn starter_files(content: &str) -> Vec<LearningLabFile> {
@@ -601,11 +651,21 @@ async fn a_session_starts_at_the_first_stage_with_a_budget_only_outside_coached(
     let ctx = Ctx::new().await;
     let coached = ctx.start(Setting::Coached).await;
     assert_eq!(coached.stage, Stage::Understand);
-    assert_eq!(coached.stages, Form::Build.stages(true));
+    assert_eq!(
+        coached
+            .stages
+            .iter()
+            .map(|each| each.stage)
+            .collect::<Vec<_>>(),
+        Form::Build.stages(true)
+    );
+    assert!(coached.stages.iter().all(|each| !each.label.is_empty()));
+    assert_eq!(coached.kind, "program");
+    assert!(!coached.solution_shown);
     assert_eq!(coached.clock.budget_seconds, None);
-    assert_eq!(coached.draft, starter_files(&problem().spec.starter));
+    assert_eq!(work(&coached).draft, starter_files(&problem().spec.starter));
     assert!(coached.cue_pending, "the counterpart opens");
-    assert_eq!(coached.problem.starter, problem().spec.starter);
+    assert_eq!(work(&coached).problem.starter, problem().spec.starter);
 
     let mock = ctx.start(Setting::Mock).await;
     assert_eq!(
@@ -647,7 +707,7 @@ async fn the_list_is_newest_first_and_reports_the_last_submit() {
     let older = ctx.start(Setting::Coached).await;
     ctx.clock.advance(1_000);
     let newer = ctx.start(Setting::Mock).await;
-    ctx.run(&older, CodingRunScope::All, None).await.unwrap();
+    ctx.run(&older, CheckScope::All).await.unwrap();
     let listed = ctx
         .sessions()
         .list(&ListPracticeSessionsRequestDto {
@@ -732,15 +792,18 @@ async fn an_example_is_checked_edited_and_removed() {
     let ctx = Ctx::new().await;
     let session = ctx.start(Setting::Coached).await;
     let after = ctx.example(&session, None, "4").await.unwrap();
-    assert_eq!(after.examples.len(), 1);
-    assert_eq!(after.examples[0].verdict, ExampleVerdict::Right);
-    assert_eq!(after.coverage.caught, 1);
-    assert_eq!(after.coverage.total, 2);
+    let examples = work(&after).examples;
+    assert_eq!(examples.len(), 1);
+    assert_eq!(examples[0].verdict, ExampleVerdict::Right);
+    let coverage = after.coverage.as_ref().unwrap();
+    assert_eq!(coverage.caught, 1);
+    assert_eq!(coverage.total, 2);
 
     let edited = ctx.example(&after, Some(1), "5").await.unwrap();
-    assert_eq!(edited.examples.len(), 1);
-    assert_eq!(edited.examples[0].verdict, ExampleVerdict::Wrong);
-    assert_eq!(edited.coverage.caught, 0);
+    let examples = work(&edited).examples;
+    assert_eq!(examples.len(), 1);
+    assert_eq!(examples[0].verdict, ExampleVerdict::Wrong);
+    assert_eq!(edited.coverage.as_ref().unwrap().caught, 0);
 
     let removed = ctx
         .sessions()
@@ -752,7 +815,7 @@ async fn an_example_is_checked_edited_and_removed() {
         })
         .await
         .unwrap();
-    assert!(removed.examples.is_empty());
+    assert!(work(&removed).examples.is_empty());
 
     let wrong_arity = ctx
         .sessions()
@@ -781,9 +844,14 @@ async fn what_a_wrong_example_expects_and_the_uncaught_misreading_show_only_in_c
     ] {
         let session = ctx.start(setting).await;
         let after = ctx.example(&session, None, "5").await.unwrap();
-        assert_eq!(after.examples[0].expects.is_some(), shown, "{setting:?}");
-        assert_eq!(after.coverage.uncaught.is_some(), shown, "{setting:?}");
-        assert_eq!(after.coverage.total, 2);
+        let coverage = after.coverage.as_ref().unwrap();
+        assert_eq!(
+            work(&after).examples[0].expects.is_some(),
+            shown,
+            "{setting:?}"
+        );
+        assert_eq!(coverage.uncaught.is_some(), shown, "{setting:?}");
+        assert_eq!(coverage.total, 2);
     }
 }
 
@@ -792,7 +860,8 @@ async fn mock_never_shows_a_failing_hidden_case_and_coached_does() {
     let ctx = Ctx::new().await;
     ctx.runs.failing.lock().unwrap().push("h1".into());
     let mock = ctx.start(Setting::Mock).await;
-    let after = ctx.run(&mock, CodingRunScope::All, None).await.unwrap();
+    let after = ctx.run(&mock, CheckScope::All).await.unwrap();
+    let after = work(&after);
     let hidden = after.runs[0]
         .cases
         .iter()
@@ -819,7 +888,8 @@ async fn mock_never_shows_a_failing_hidden_case_and_coached_does() {
     assert_eq!(example.expected.as_deref(), Some("4"));
 
     let coached = ctx.start(Setting::Coached).await;
-    let after = ctx.run(&coached, CodingRunScope::All, None).await.unwrap();
+    let after = ctx.run(&coached, CheckScope::All).await.unwrap();
+    let after = work(&after);
     let hidden = after.runs[0]
         .cases
         .iter()
@@ -834,16 +904,20 @@ async fn mock_never_shows_a_failing_hidden_case_and_coached_does() {
 async fn the_first_run_of_every_case_is_the_submit() {
     let ctx = Ctx::new().await;
     let session = ctx.start(Setting::Mock).await;
-    let examples = ctx
-        .run(&session, CodingRunScope::Shown, None)
-        .await
-        .unwrap();
+    let examples = ctx.run(&session, CheckScope::Shown).await.unwrap();
     assert!(!examples.submitted);
-    assert_eq!(examples.runs[0].cases.len(), 1);
-    let all = ctx.run(&examples, CodingRunScope::All, None).await.unwrap();
+    assert_eq!(work(&examples).runs[0].cases.len(), 1);
+    assert_eq!(
+        (examples.checks[0].passed, examples.checks[0].total),
+        (1, 1)
+    );
+    let all = ctx.run(&examples, CheckScope::All).await.unwrap();
     assert!(all.submitted);
-    assert_eq!(all.runs.len(), 2);
-    assert_eq!(all.runs[1].cases.len(), 3);
+    let runs = work(&all).runs;
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[1].cases.len(), 3);
+    assert_eq!(all.checks.len(), 2);
+    assert_eq!((all.checks[1].passed, all.checks[1].total), (3, 3));
 }
 
 #[tokio::test]
@@ -853,8 +927,15 @@ async fn runs_made_in_one_millisecond_keep_the_order_they_were_made_in() {
     ctx.insert_run(&session, "run-b").await;
     ctx.insert_run(&session, "run-a").await;
     let read = ctx.get(&session).await;
-    let order: Vec<&str> = read.runs.iter().map(|run| run.run_id.as_str()).collect();
+    let order: Vec<&str> = read
+        .checks
+        .iter()
+        .map(|check| check.check_id.as_str())
+        .collect();
     assert_eq!(order, ["run-b", "run-a"]);
+    let results = work(&read);
+    let ran: Vec<&str> = results.runs.iter().map(|run| run.run_id.as_str()).collect();
+    assert_eq!(ran, order);
 }
 
 #[tokio::test]
@@ -870,12 +951,12 @@ async fn a_hint_points_at_the_last_run_made_even_when_two_share_a_millisecond() 
             operation_id: id(),
             program_id: ctx.program_id.clone(),
             session_id: session.session_id.clone(),
-            files: starter_files("def double(n):\n    pass\n"),
+            piece: piece("def double(n):\n    pass\n"),
             expected_revision: session.revision,
         })
         .await
         .unwrap();
-    assert_eq!(after.hints[0].run_id.as_deref(), Some("run-a"));
+    assert_eq!(after.hints[0].check_id.as_deref(), Some("run-a"));
 }
 
 #[tokio::test]
@@ -884,11 +965,9 @@ async fn an_examples_run_adds_the_learners_right_examples_as_their_own_cases() {
     let session = ctx.start(Setting::Coached).await;
     let with_example = ctx.example(&session, None, "4").await.unwrap();
     ctx.example(&with_example, None, "5").await.unwrap();
-    let after = ctx
-        .run(&session, CodingRunScope::Shown, None)
-        .await
-        .unwrap();
-    let cases = &after.runs[0].cases;
+    let after = ctx.run(&session, CheckScope::Shown).await.unwrap();
+    let results = work(&after);
+    let cases = &results.runs[0].cases;
     assert_eq!(
         cases.len(),
         2,
@@ -903,25 +982,61 @@ async fn an_examples_run_adds_the_learners_right_examples_as_their_own_cases() {
 async fn an_input_run_shows_what_the_reference_returns_only_in_coached() {
     let ctx = Ctx::new().await;
     let coached = ctx.start(Setting::Coached).await;
-    let after = ctx
-        .run(&coached, CodingRunScope::Input, Some(vec!["2".into()]))
-        .await
-        .unwrap();
-    assert_eq!(after.runs[0].reference_actual.as_deref(), Some("4"));
-    assert_eq!(after.runs[0].cases[0].case_id, "input");
+    let after = ctx.run_input(&coached, vec!["2".into()]).await.unwrap();
+    let results = work(&after);
+    assert_eq!(results.runs[0].reference_actual.as_deref(), Some("4"));
+    assert_eq!(results.runs[0].cases[0].case_id, "input");
+    assert_eq!(results.runs[0].scope, CodingRunScope::Input);
+    assert_eq!(after.checks[0].scope, CheckScope::Own);
 
     let mock = ctx.start(Setting::Mock).await;
-    let after = ctx
-        .run(&mock, CodingRunScope::Input, Some(vec!["2".into()]))
-        .await
-        .unwrap();
-    assert_eq!(after.runs[0].reference_actual, None);
+    let after = ctx.run_input(&mock, vec!["2".into()]).await.unwrap();
+    assert_eq!(work(&after).runs[0].reference_actual, None);
 
-    let missing = ctx.run(&mock, CodingRunScope::Input, None).await;
+    let missing = ctx.run_input(&mock, vec![]).await;
     assert!(
         matches!(missing, Err(AppError::InvalidInput(_))),
         "{missing:?}"
     );
+}
+
+#[tokio::test]
+async fn an_input_runs_reference_answer_is_withheld_after_a_move_to_mock_until_the_session_is_finished(
+) {
+    let ctx = Ctx::new().await;
+    let coached = ctx.start(Setting::Coached).await;
+    let ran = ctx.run_input(&coached, vec!["2".into()]).await.unwrap();
+    assert_eq!(work(&ran).runs[0].reference_actual.as_deref(), Some("4"));
+    let mock = ctx
+        .sessions()
+        .set_setting(&SetPracticeSettingRequestDto {
+            operation_id: id(),
+            program_id: ctx.program_id.clone(),
+            session_id: ran.session_id.clone(),
+            setting: Setting::Mock,
+            expected_revision: ran.revision,
+        })
+        .await
+        .unwrap();
+    assert_eq!(work(&mock).runs[0].reference_actual, None);
+    let finished = ctx.finish(&mock, &id()).await.unwrap();
+    assert_eq!(
+        work(&finished).runs[0].reference_actual.as_deref(),
+        Some("4"),
+        "a finished session keeps nothing back"
+    );
+}
+
+#[tokio::test]
+async fn the_engines_check_refuses_the_scope_of_the_learners_own_input() {
+    let ctx = Ctx::new().await;
+    let session = ctx.start(Setting::Coached).await;
+    let refused = ctx.run(&session, CheckScope::Own).await;
+    assert!(
+        matches!(refused, Err(AppError::InvalidInput(_))),
+        "{refused:?}"
+    );
+    assert!(ctx.get(&session).await.checks.is_empty(), "nothing ran");
 }
 
 #[tokio::test]
@@ -938,21 +1053,29 @@ async fn the_worked_solution_is_never_available_in_mock_and_only_after_a_submit_
     };
 
     let mock = ctx.start(Setting::Mock).await;
-    let mock = ctx.run(&mock, CodingRunScope::All, None).await.unwrap();
+    let mock = ctx.run(&mock, CheckScope::All).await.unwrap();
     assert!(mock.submitted);
     assert!(!mock.solution_available);
     assert!(reveal(&mock).await.is_err());
-    assert_eq!(ctx.get(&mock).await.worked_solution, None);
+    let read = ctx.get(&mock).await;
+    assert_eq!(work(&read).worked_solution, None);
+    assert!(!read.solution_shown);
 
     let coached = ctx.start(Setting::Coached).await;
     assert!(!coached.solution_available);
     assert!(reveal(&coached).await.is_err(), "before the first submit");
-    let submitted = ctx.run(&coached, CodingRunScope::All, None).await.unwrap();
+    let submitted = ctx.run(&coached, CheckScope::All).await.unwrap();
     assert!(submitted.solution_available);
-    assert_eq!(submitted.worked_solution, None, "available is not shown");
-    let revealed = reveal(&submitted).await.unwrap();
     assert_eq!(
-        revealed.worked_solution.as_deref(),
+        work(&submitted).worked_solution,
+        None,
+        "available is not shown"
+    );
+    assert!(!submitted.solution_shown);
+    let revealed = reveal(&submitted).await.unwrap();
+    assert!(revealed.solution_shown);
+    assert_eq!(
+        work(&revealed).worked_solution.as_deref(),
         Some(problem().reference.as_str())
     );
 }
@@ -1174,7 +1297,7 @@ async fn a_hint_is_stored_by_rung_and_a_stale_revision_conflicts() {
             operation_id: id(),
             program_id: ctx.program_id.clone(),
             session_id: session.session_id.clone(),
-            files: starter_files("def double(n):\n    pass\n"),
+            piece: piece("def double(n):\n    pass\n"),
             expected_revision: revision,
         };
         async move { ctx.sessions().ask_hint(&request).await }
@@ -1205,7 +1328,7 @@ async fn in_watched_a_hint_is_also_the_interviewers_turn() {
             operation_id: id(),
             program_id: ctx.program_id.clone(),
             session_id: session.session_id.clone(),
-            files: starter_files("def double(n):\n    pass\n"),
+            piece: piece("def double(n):\n    pass\n"),
             expected_revision: session.revision,
         })
         .await
@@ -1231,7 +1354,7 @@ async fn a_learner_turn_is_stored_with_the_draft_and_cues_the_counterpart() {
             session_id: session.session_id.clone(),
             content: "  I will double the input.  ".into(),
             spoken: false,
-            files: starter_files("def double(n):\n    return 0\n"),
+            piece: piece("def double(n):\n    return 0\n"),
             expected_revision: revision,
         };
         async move { ctx.sessions().send_turn(&request).await }
@@ -1240,7 +1363,10 @@ async fn a_learner_turn_is_stored_with_the_draft_and_cues_the_counterpart() {
     assert_eq!(after.turns.len(), 1);
     assert_eq!(after.turns[0].speaker, LearningSimulationSpeaker::Learner);
     assert_eq!(after.turns[0].content, "I will double the input.");
-    assert_eq!(after.draft, starter_files("def double(n):\n    return 0\n"));
+    assert_eq!(
+        work(&after).draft,
+        starter_files("def double(n):\n    return 0\n")
+    );
     assert!(after.cue_pending);
     assert!(is_conflict(&send(session.revision).await));
 
@@ -1252,7 +1378,7 @@ async fn a_learner_turn_is_stored_with_the_draft_and_cues_the_counterpart() {
             session_id: session.session_id.clone(),
             content: "   ".into(),
             spoken: false,
-            files: vec![],
+            piece: piece_of(&[]).unwrap(),
             expected_revision: after.revision,
         })
         .await;
@@ -1269,14 +1395,17 @@ async fn an_observed_draft_is_saved_and_idle_waits_for_a_quiet_spell() {
         let request = ObservePracticeDraftRequestDto {
             program_id: ctx.program_id.clone(),
             session_id: session.session_id.clone(),
-            files: starter_files(content),
+            piece: piece(content),
             reason,
         };
         async move { ctx.sessions().observe_draft(&request).await.unwrap() }
     };
 
     let saved = observe(DraftObservation::Pause, "def double(n):\n    return n\n").await;
-    assert_eq!(saved.draft, starter_files("def double(n):\n    return n\n"));
+    assert_eq!(
+        work(&saved).draft,
+        starter_files("def double(n):\n    return n\n")
+    );
 
     ctx.clock.advance(super::session::IDLE_AFTER_MS - 1);
     assert!(
@@ -1303,7 +1432,7 @@ async fn a_pause_over_an_unchanged_draft_cues_nothing_and_a_changed_one_cues_a_c
         let request = ObservePracticeDraftRequestDto {
             program_id: ctx.program_id.clone(),
             session_id: session.session_id.clone(),
-            files: starter_files(content),
+            piece: piece(content),
             reason: DraftObservation::Pause,
         };
         async move { ctx.sessions().observe_draft(&request).await.unwrap() }
@@ -1350,7 +1479,7 @@ async fn finishing_twice_writes_once_and_shows_everything_in_the_debrief() {
     let ctx = Ctx::new().await;
     ctx.runs.failing.lock().unwrap().push("h1".into());
     let session = ctx.start(Setting::Mock).await;
-    let submitted = ctx.run(&session, CodingRunScope::All, None).await.unwrap();
+    let submitted = ctx.run(&session, CheckScope::All).await.unwrap();
     assert!(submitted.debrief.is_none());
 
     let first = ctx.finish(&submitted, &id()).await.unwrap();
@@ -1359,9 +1488,19 @@ async fn finishing_twice_writes_once_and_shows_everything_in_the_debrief() {
     let debrief = first.debrief.as_ref().unwrap();
     assert_eq!(debrief.scorecard.rows.len(), 2);
     assert_eq!(debrief.model, "fake-model");
-    assert_eq!(debrief.strong_answer.approach, "Multiply by two.");
-    assert_eq!(debrief.strong_answer.reference, problem().reference);
-    let hidden = debrief
+    let shown = debrief_work(&first);
+    assert_eq!(shown.strong_answer.approach, "Multiply by two.");
+    assert_eq!(shown.strong_answer.complexity, "O(1) time");
+    assert_eq!(shown.strong_answer.reference, problem().reference);
+    assert_eq!(debrief.facts.checks, 1);
+    assert_eq!(debrief.facts.submits, 1);
+    assert_eq!(debrief.facts.settings, [Setting::Mock]);
+    assert_eq!(
+        debrief.techniques.len(),
+        problem().spec.patterns.len(),
+        "one rating for each pattern the problem teaches"
+    );
+    let hidden = shown
         .cases
         .iter()
         .find(|each| each.case_id == "h1")
@@ -1372,8 +1511,9 @@ async fn finishing_twice_writes_once_and_shows_everything_in_the_debrief() {
         "the debrief keeps nothing back"
     );
     assert_eq!(debrief.misreadings.len(), 2);
+    assert!(first.solution_shown);
     assert_eq!(
-        first.worked_solution.as_deref(),
+        work(&first).worked_solution.as_deref(),
         Some(problem().reference.as_str())
     );
     assert!(first.clock.open_since.is_none());
@@ -1430,7 +1570,7 @@ async fn schedules_after_finishing(failing: &[&str]) -> Vec<(String, i64, i64)> 
         .unwrap()
         .extend(failing.iter().map(|case| (*case).to_owned()));
     let session = ctx.start(Setting::Mock).await;
-    let submitted = ctx.run(&session, CodingRunScope::All, None).await.unwrap();
+    let submitted = ctx.run(&session, CheckScope::All).await.unwrap();
     ctx.finish(&submitted, &id()).await.unwrap();
     sqlx::query_as(
         "SELECT pattern_id,interval_days,due_at FROM learning_drill_pattern_schedules WHERE material='problem:python' ORDER BY pattern_id",
@@ -1492,7 +1632,7 @@ async fn the_same_finish_operation_replays_and_a_finished_session_takes_no_chang
 
     let moved = ctx.move_to(&finished, Stage::Plan, finished.revision).await;
     assert!(moved.is_err(), "{moved:?}");
-    let ran = ctx.run(&finished, CodingRunScope::All, None).await;
+    let ran = ctx.run(&finished, CheckScope::All).await;
     assert!(ran.is_err(), "{ran:?}");
 }
 
@@ -1619,4 +1759,108 @@ async fn due_lists_problem_patterns_for_a_course_with_a_profile_language() {
         .items
         .iter()
         .any(|item| item.kind == DueKind::CodingPatterns));
+}
+
+#[tokio::test]
+async fn a_hint_that_points_at_lines_keeps_its_file_and_lines_in_the_work_by_ordinal() {
+    let ctx = Ctx::new().await;
+    let session = ctx.start(Setting::Coached).await;
+    let plain = ctx.ask(&session).await.unwrap();
+    assert!(work(&plain).hint_marks.is_empty(), "a hint with no lines");
+
+    ctx.aids
+        .pointing
+        .lock()
+        .unwrap()
+        .extend([(SOLUTION_PATH.to_owned(), 1), (SOLUTION_PATH.to_owned(), 2)]);
+    let pointing = ctx.ask(&plain).await.unwrap();
+    assert_eq!(pointing.hints.len(), 2);
+    assert_eq!(
+        work(&pointing).hint_marks,
+        [ProgramHintMarkDto {
+            ordinal: pointing.hints[1].ordinal,
+            path: Some(SOLUTION_PATH.to_owned()),
+            lines: vec![1, 2],
+        }]
+    );
+    let read = ctx.get(&pointing).await;
+    assert_eq!(work(&read).hint_marks, work(&pointing).hint_marks);
+}
+
+#[tokio::test]
+async fn a_piece_that_is_not_a_program_is_refused_by_every_command_that_takes_one_and_nothing_is_stored(
+) {
+    let ctx = Ctx::new().await;
+    let session = ctx.start(Setting::Coached).await;
+    let events = || async {
+        ctx.repo
+            .coding_session(&ctx.program_id, &session.session_id)
+            .await
+            .unwrap()
+            .events
+            .len()
+    };
+    let before = events().await;
+    let text = Piece::new(serde_json::json!("just some words"));
+    let sessions = ctx.sessions();
+    let checked = sessions
+        .run(&CheckPracticePieceRequestDto {
+            operation_id: id(),
+            check_id: id(),
+            program_id: ctx.program_id.clone(),
+            session_id: session.session_id.clone(),
+            scope: CheckScope::All,
+            piece: text.clone(),
+        })
+        .await;
+    let hinted = sessions
+        .ask_hint(&AskPracticeHintRequestDto {
+            operation_id: id(),
+            program_id: ctx.program_id.clone(),
+            session_id: session.session_id.clone(),
+            piece: text.clone(),
+            expected_revision: session.revision,
+        })
+        .await;
+    let sent = sessions
+        .send_turn(&SendPracticeTurnRequestDto {
+            operation_id: id(),
+            program_id: ctx.program_id.clone(),
+            session_id: session.session_id.clone(),
+            content: "I will double it.".into(),
+            spoken: false,
+            piece: text.clone(),
+            expected_revision: session.revision,
+        })
+        .await;
+    let observed = sessions
+        .observe_draft(&ObservePracticeDraftRequestDto {
+            program_id: ctx.program_id.clone(),
+            session_id: session.session_id.clone(),
+            piece: text.clone(),
+            reason: DraftObservation::Pause,
+        })
+        .await;
+    let finished = sessions
+        .finish(&FinishPracticeSessionRequestDto {
+            operation_id: id(),
+            program_id: ctx.program_id.clone(),
+            session_id: session.session_id.clone(),
+            piece: text,
+        })
+        .await;
+    assert!(checked.is_err(), "{checked:?}");
+    assert!(hinted.is_err(), "{hinted:?}");
+    assert!(sent.is_err(), "{sent:?}");
+    assert!(observed.is_err(), "{observed:?}");
+    assert!(finished.is_err(), "{finished:?}");
+
+    let after = ctx.get(&session).await;
+    assert_eq!(after.revision, session.revision);
+    assert!(after.checks.is_empty());
+    assert!(after.hints.is_empty());
+    assert!(after.turns.is_empty());
+    assert!(!after.finished);
+    assert_eq!(work(&after).draft, work(&session).draft);
+    assert_eq!(events().await, before);
 }
