@@ -15,6 +15,7 @@ use async_trait::async_trait;
 use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::shared::persistence::Page;
 use lattice_core::shared::runtime::jobs::{
     JobContext, JobDto, JobHandler, JobKindConfig, JobOutcome, JobRecord, JobRuntime, JobStatus,
     NewJob, RecoveryPolicy,
@@ -638,7 +639,7 @@ pub async fn synthesize_journal_entries_impl(
 /// Every synthesis not yet saved or dismissed, newest first.
 pub async fn list_journal_syntheses_impl(jobs: &JobRuntime) -> Result<Vec<JournalSynthesisDto>> {
     jobs.store()
-        .list_latest(&[JOURNAL_SYNTHESIS], 50, 0)
+        .list_latest(&[JOURNAL_SYNTHESIS], Page::new(Some(50), None)?)
         .await?
         .iter()
         .map(synthesis_dto)

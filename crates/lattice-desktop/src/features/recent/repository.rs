@@ -14,7 +14,7 @@ use lattice_core::application::contracts::recent_documents::RecentDocumentRecord
 use lattice_core::application::ports::RecentDocumentsRepositoryPort;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Page, Transactions};
 use sqlx::{Row, SqlitePool};
 
 /// SQLite implementation of recent documents repository.
@@ -80,7 +80,7 @@ impl RecentDocumentsRepositoryPort for RecentDocumentsRepository {
 
     async fn get_recent_documents(&self, limit: usize) -> Result<Vec<RecentDocumentDto>> {
         let pool = self.pool.clone();
-        let limit = limit.min(100) as i64;
+        let page = Page::first(limit)?;
 
         query_with_timeout(|| async {
             let results = sqlx::query(
@@ -99,7 +99,7 @@ impl RecentDocumentsRepositoryPort for RecentDocumentsRepository {
                 LIMIT ?
                 "#,
             )
-            .bind(limit)
+            .bind(page.sql_limit())
             .fetch_all(&pool)
             .await?;
 

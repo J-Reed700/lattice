@@ -9,6 +9,7 @@ use sqlx::{Row, SqlitePool};
 
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Page;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CitingConversation {
@@ -20,10 +21,11 @@ pub struct CitingConversation {
 
 #[async_trait]
 pub trait CitingConversationsRepositoryPort: Send + Sync {
+    /// Newest first; an unlimited `page` returns every citing conversation.
     async fn find_citing_conversations(
         &self,
         document_id: &str,
-        limit: i64,
+        page: Page,
     ) -> Result<Vec<CitingConversation>>;
 }
 
@@ -43,7 +45,7 @@ impl CitingConversationsRepositoryPort for SqliteCitingConversationsRepository {
     async fn find_citing_conversations(
         &self,
         document_id: &str,
-        limit: i64,
+        page: Page,
     ) -> Result<Vec<CitingConversation>> {
         let rows = sqlx::query(
             r#"
@@ -56,11 +58,12 @@ impl CitingConversationsRepositoryPort for SqliteCitingConversationsRepository {
             WHERE cd.document_id = ?
             GROUP BY c.id, c.title, c.updated_at
             ORDER BY c.updated_at DESC
-            LIMIT ?
+            LIMIT ? OFFSET ?
             "#,
         )
         .bind(document_id)
-        .bind(limit)
+        .bind(page.sql_limit())
+        .bind(page.offset())
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AppError::Database(format!("citing conversations: {}", e)))?;
@@ -151,7 +154,10 @@ mod tests {
         cite(&pool, "conv-other", "doc-b", "chunk-4").await;
 
         let repo = SqliteCitingConversationsRepository::new(pool);
-        let rows = repo.find_citing_conversations("doc-a", 10).await.unwrap();
+        let rows = repo
+            .find_citing_conversations("doc-a", Page::new(Some(10), None).unwrap())
+            .await
+            .unwrap();
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].conversation_id, "conv-new");
@@ -166,7 +172,7 @@ mod tests {
         insert_document(&pool, "doc-a").await;
         let repo = SqliteCitingConversationsRepository::new(pool);
         assert!(repo
-            .find_citing_conversations("doc-a", 10)
+            .find_citing_conversations("doc-a", Page::new(Some(10), None).unwrap())
             .await
             .unwrap()
             .is_empty());
@@ -182,7 +188,10 @@ mod tests {
             cite(&pool, &id, "doc-a", &format!("chunk-{i}")).await;
         }
         let repo = SqliteCitingConversationsRepository::new(pool);
-        let rows = repo.find_citing_conversations("doc-a", 2).await.unwrap();
+        let rows = repo
+            .find_citing_conversations("doc-a", Page::new(Some(2), None).unwrap())
+            .await
+            .unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].conversation_id, "conv-4");
     }

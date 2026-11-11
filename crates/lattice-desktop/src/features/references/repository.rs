@@ -3,10 +3,10 @@
 //! Runtime-checked `sqlx` only — no `query!` macros, so the offline `.sqlx`
 //! cache stays valid.
 
-use crate::infrastructure::persistence::Page;
 use lattice_core::application::contracts::references::PassageReferenceRecord;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Page;
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqlitePool};
 

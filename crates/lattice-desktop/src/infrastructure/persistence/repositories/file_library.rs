@@ -3,7 +3,7 @@ use lattice_core::application::contracts::file_library::{IndexedFolder, Indexing
 use lattice_core::application::ports::file_library::FileLibraryPort;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Page, Transactions};
 use sqlx::SqlitePool;
 
 const FOLDER_COUNTS: &str = "SELECT json_extract(folder.value,'$[0]'), (
@@ -102,7 +102,7 @@ impl FileLibraryPort for SqliteFileLibrary {
     }
     async fn indexing_activities(&self, limit: usize) -> Result<Vec<IndexingActivity>> {
         let rows = sqlx::query_as::<_, ActivityRow>("SELECT d.id, d.file_path as file_path, d.status, d.indexed_at as timestamp FROM documents d ORDER BY d.indexed_at DESC LIMIT ?")
-            .bind(limit.min(10000) as i64).fetch_all(&self.pool).await?;
+            .bind(Page::first(limit)?.sql_limit()).fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
             .map(|row| IndexingActivity {
@@ -120,6 +120,7 @@ impl FileLibraryPort for SqliteFileLibrary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lattice_core::shared::error::AppError;
     // Stored paths and prefix bounds use the host's separator.
     use lattice_core::shared::testing::paths::abs_str;
 
@@ -288,7 +289,10 @@ mod tests {
     #[tokio::test]
     async fn activities_use_document_paths_and_handle_pending_documents() {
         let (_, repo) = fixture().await;
-        assert!(repo.indexing_activities(0).await.unwrap().is_empty());
+        assert!(matches!(
+            repo.indexing_activities(0).await,
+            Err(AppError::InvalidInput(_))
+        ));
         let activities = repo.indexing_activities(usize::MAX).await.unwrap();
         assert_eq!(activities.len(), 3);
         assert_eq!(activities[0].file_path, inside_document());

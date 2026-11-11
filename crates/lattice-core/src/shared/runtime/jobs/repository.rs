@@ -8,7 +8,9 @@ use super::attempt::Attempt;
 use super::{Admitted, Backoff, Deferral, JobRecord, JobStatus, NewJob, RecoveryPolicy};
 use crate::shared::error::{AppError, Result};
 use crate::shared::persistence::driver::DriverPool;
-use crate::shared::persistence::{PersistenceError, PersistenceErrorKind, Transactions, WriteTx};
+use crate::shared::persistence::{
+    Page, PersistenceError, PersistenceErrorKind, Transactions, WriteTx,
+};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
 
 const SUSPENDED: &str = "Saved; resumes when the app opens";
@@ -183,19 +185,14 @@ impl JobStore {
     }
 
     /// Jobs of the given kinds, newest first, leaving out attempts that a
-    /// later retry superseded.
-    pub async fn list_latest(
-        &self,
-        kinds: &[&str],
-        limit: u32,
-        offset: u32,
-    ) -> Result<Vec<JobRecord>> {
+    /// later retry superseded. An unlimited `page` returns every such job.
+    pub async fn list_latest(&self, kinds: &[&str], page: Page) -> Result<Vec<JobRecord>> {
         let kinds =
             serde_json::to_string(kinds).map_err(|e| AppError::Serialization(e.to_string()))?;
         sqlx::query("SELECT * FROM jobs WHERE kind IN (SELECT value FROM json_each(?)) AND NOT EXISTS (SELECT 1 FROM jobs retry WHERE retry.retry_of_job_id=jobs.id) ORDER BY created_at DESC,rowid DESC LIMIT ? OFFSET ?")
             .bind(kinds)
-            .bind(i64::from(limit))
-            .bind(i64::from(offset))
+            .bind(page.sql_limit())
+            .bind(page.offset())
             .fetch_all(&self.pool)
             .await
             .map_err(db)?

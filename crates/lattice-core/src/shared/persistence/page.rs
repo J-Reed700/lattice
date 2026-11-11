@@ -1,7 +1,7 @@
 //! The one rule for every listing: no `limit` returns every matching row,
 //! and a `limit` returns at most that many.
 
-use lattice_core::shared::error::AppError;
+use crate::shared::error::AppError;
 
 /// A caller's page of a listing. Nothing is defaulted or clamped.
 #[derive(Debug, Clone, Copy, Default)]
@@ -25,6 +25,16 @@ impl Page {
             ));
         }
         Ok(Self { limit, offset })
+    }
+
+    /// The first `limit` rows, for a caller whose count is required.
+    pub fn first(limit: usize) -> Result<Self, AppError> {
+        Self::new(Some(i64::try_from(limit).unwrap_or(i64::MAX)), None)
+    }
+
+    /// The most rows to return, or `None` for every row.
+    pub fn limit(self) -> Option<i64> {
+        self.limit
     }
 
     /// The value for SQLite's `LIMIT`, where -1 means no limit.

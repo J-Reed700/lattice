@@ -7,13 +7,13 @@ use crate::features::conversation::repository::mapper::{
     ConversationModel, ConversationRowMapper, ConversationSummaryMapper, ConversationSummaryModel,
     ModelChoiceColumn,
 };
-use crate::infrastructure::persistence::Page;
 use crate::infrastructure::storage::file_intents::{record_releases_sql, run_id, FileStore};
 use chrono::Utc;
 use lattice_core::domain::conversation::{
     ChatModelChoice, CompactionRecord, Conversation, ConversationAggregate,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Page;
 use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::types::ConversationId;
 use sqlx::{Row, SqliteConnection};

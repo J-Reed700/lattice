@@ -2776,8 +2776,8 @@ async initializeDatabase() : Promise<Result<string, ApiError>> {
 }
 },
 /**
- * The newest lines of the backend's log file, oldest first. `limit` defaults
- * to 300 and is capped at 1000; no log file yet gives an empty list.
+ * The newest lines of the backend's log file, oldest first. No `limit`
+ * returns every line the log files hold; no log file yet gives an empty list.
  */
 async getBackendLogs(limit: number | null) : Promise<Result<BackendLogEntry[], ApiError>> {
     try {
@@ -9206,7 +9206,7 @@ export type ListBackupsResultDto = { backups: BackupInfoDto[] }
  */
 export type ListBatchJobsRequestDto = {
 /**
- * Maximum number of jobs to return (default: 50, max: 100)
+ * Maximum number of jobs to return; omitted returns every job
  */
 limit?: number | null;
 /**

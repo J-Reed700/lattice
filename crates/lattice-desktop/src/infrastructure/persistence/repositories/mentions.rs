@@ -14,7 +14,7 @@ use lattice_core::application::ports::mention_repository_port::{
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Page, Transactions};
 use lazy_regex::regex;
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::collections::HashMap;
@@ -276,7 +276,7 @@ impl MentionRepositoryPort for MentionRepository {
         }
     }
 
-    async fn search_mentions(&self, query: &str, limit: i64) -> Result<Vec<MentionData>, AppError> {
+    async fn search_mentions(&self, query: &str, page: Page) -> Result<Vec<MentionData>, AppError> {
         let search_pattern = lattice_core::shared::persistence::sql_like::contains_pattern(query);
 
         let rows = sqlx::query(
@@ -285,11 +285,12 @@ impl MentionRepositoryPort for MentionRepository {
             FROM mentions
             WHERE name LIKE ? ESCAPE '\'
             ORDER BY name
-            LIMIT ?
+            LIMIT ? OFFSET ?
             "#,
         )
         .bind(search_pattern)
-        .bind(limit)
+        .bind(page.sql_limit())
+        .bind(page.offset())
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AppError::Database(format!("Failed to search mentions: {}", e)))?;
@@ -574,7 +575,10 @@ mod tests {
         repo.create_mention("Albert", "person", None).await.unwrap();
         repo.create_mention("Bob", "person", None).await.unwrap();
 
-        let results = repo.search_mentions("Al", 10).await.unwrap();
+        let results = repo
+            .search_mentions("Al", Page::new(Some(10), None).unwrap())
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
     }
 

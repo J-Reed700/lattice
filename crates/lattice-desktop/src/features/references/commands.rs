@@ -8,11 +8,11 @@ use super::dto::{
     CreatePassageReferenceRequestDto, PassageReferenceDto, UpdatePassageReferenceRequestDto,
 };
 use super::repository::PassageReferenceRepository;
-use crate::infrastructure::persistence::Page;
 use crate::interfaces::di::Container;
 use lattice_core::application::contracts::references::PassageReferenceRecord;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::timestamps::now_db_timestamp;
+use lattice_core::shared::persistence::Page;
 use uuid::Uuid;
 
 /// Chunk ids are uuid-shaped; a longer one is not an id, and is refused

@@ -179,7 +179,7 @@ impl lattice_core::application::ports::mention_repository_port::MentionRepositor
     async fn search_mentions(
         &self,
         query: &str,
-        limit: i64,
+        page: lattice_core::shared::persistence::Page,
     ) -> Result<Vec<lattice_core::application::ports::mention_repository_port::MentionData>> {
         let query_lower = query.to_lowercase();
         let mentions: Vec<_> = self
@@ -188,7 +188,10 @@ impl lattice_core::application::ports::mention_repository_port::MentionRepositor
             .unwrap()
             .values()
             .filter(|m| m.name.to_lowercase().contains(&query_lower))
-            .take(limit as usize)
+            .take(
+                page.limit()
+                    .map_or(usize::MAX, |n| usize::try_from(n).unwrap_or(0)),
+            )
             .cloned()
             .collect();
 

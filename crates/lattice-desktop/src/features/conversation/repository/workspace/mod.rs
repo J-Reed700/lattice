@@ -24,7 +24,7 @@ mod sources;
 mod spaces;
 mod state;
 
-use crate::infrastructure::persistence::Page;
+use lattice_core::shared::persistence::Page;
 use listing::{build_fts_query, listing_response, ConversationListRow, ConversationListing};
 use spaces::ensure_standard_space;
 

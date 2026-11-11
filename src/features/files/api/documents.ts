@@ -432,7 +432,7 @@ export const documentApi = {
    * Conversations that have this document among their linked documents.
    *
    * @param documentId - The document to look up
-   * @param limit - Maximum conversations to return (default 10, max 50)
+   * @param limit - Maximum conversations to return; omitted returns every one
    */
   listConversationsCitingDocument: async (
     documentId: string,

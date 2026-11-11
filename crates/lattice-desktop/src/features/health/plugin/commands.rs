@@ -69,8 +69,8 @@ pub async fn initialize_database(container: State<'_, Container>) -> Result<Stri
     Ok(message)
 }
 
-/// The newest lines of the backend's log file, oldest first. `limit` defaults
-/// to 300 and is capped at 1000; no log file yet gives an empty list.
+/// The newest lines of the backend's log file, oldest first. No `limit`
+/// returns every line the log files hold; no log file yet gives an empty list.
 #[tauri::command]
 #[specta::specta]
 pub async fn get_backend_logs(limit: Option<u32>) -> Result<Vec<BackendLogEntry>, ApiError> {
@@ -80,5 +80,6 @@ pub async fn get_backend_logs(limit: Option<u32>) -> Result<Vec<BackendLogEntry>
             code: ErrorCode::InternalError,
             message: format!("Failed to read backend logs: {}", e),
             details: None,
-        })
+        })?
+        .map_err(ApiError::from)
 }
