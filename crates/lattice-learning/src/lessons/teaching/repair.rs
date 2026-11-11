@@ -22,9 +22,14 @@ impl Issue<'_> {
     fn entry(&self) -> Value {
         let finding = self.finding;
         let id = finding.id();
+        let part = if finding.mends_anywhere() {
+            None
+        } else {
+            finding.site.and_then(FindingSite::pointer)
+        };
         json!({
             "id": id.as_str(),
-            "part": finding.site.and_then(FindingSite::pointer),
+            "part": part,
             "also": finding.also.and_then(FindingSite::pointer),
             "passage": finding.passage.as_deref().or(finding.sentence.as_deref()),
             "note": finding.note,
@@ -75,7 +80,8 @@ impl Request<'_> {
 }
 
 /// Which parts a change naming one of `findings` may touch: its own part or
-/// its second part; any part when it is about the whole material.
+/// its second part; any part when it is about the whole material or
+/// something the lesson lacks.
 pub(super) fn reach<'a>(
     findings: impl IntoIterator<Item = &'a ReviewFinding>,
 ) -> impl Fn(Option<&str>, &str) -> std::result::Result<(), String> + 'a {
@@ -89,6 +95,9 @@ pub(super) fn reach<'a>(
             .iter()
             .filter(|finding| finding.id().as_str() == id)
         {
+            if finding.mends_anywhere() {
+                return Ok(());
+            }
             let Some(own) = finding.site.and_then(FindingSite::pointer) else {
                 return Ok(());
             };

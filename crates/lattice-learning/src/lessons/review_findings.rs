@@ -452,7 +452,14 @@ impl ReviewFinding {
 
     /// Whether a repair may change any part to mend this finding: it is about the whole material, or about something the lesson lacks.
     pub fn mends_anywhere(&self) -> bool {
-        false
+        matches!(self.site, None | Some(FindingSite::Lesson))
+            || matches!(
+                self.origin,
+                Origin::Plan {
+                    check: PlanCheck::Planned,
+                    ..
+                }
+            )
     }
 
     /// This finding's identity: the same across passes while the same defect
