@@ -463,6 +463,82 @@ async fn an_invariant_breach_in_one_statement_holds_only_that_statement() -> Res
     Ok(())
 }
 
+/// A reader that answers as `Says` does, but quotes for `header` words no
+/// passage holds.
+struct Misquotes(Says);
+
+impl ReaderSet for Misquotes {
+    fn get(&self, _: Reading) -> &dyn Reader {
+        self
+    }
+}
+
+#[async_trait::async_trait]
+impl Reader for Misquotes {
+    fn reading(&self) -> Reading {
+        Reading::Parts
+    }
+
+    async fn read(&self, at: &ReadContext<'_>, statements: &[Statement<'_>]) -> Result<Vec<Read>> {
+        let reads = self.0.read(at, statements).await?;
+        Ok(statements
+            .iter()
+            .zip(reads)
+            .map(|(statement, read)| {
+                if statement.claim.statement != HEADER {
+                    return read;
+                }
+                let (outcome, mut finding, reused) = read.into_parts();
+                finding.supporting_quote = Some("Words no passage holds.".into());
+                Read::new(outcome, finding, reused)
+            })
+            .collect())
+    }
+}
+
+#[tokio::test]
+async fn a_breach_while_recording_one_statement_holds_only_that_statement() -> Result<()> {
+    let mut ledger = open().await?;
+    let body = format!("{SENTENCE} {HEADER}");
+    let sound = claim(&mut ledger, "sound", (SENTENCE, SENTENCE), &body, SOURCED).await?;
+    let broken = claim(&mut ledger, "broken", (HEADER, HEADER), &body, SOURCED).await?;
+    let lesson = lesson_of(&body);
+    let claims = [(SENTENCE, SENTENCE), (HEADER, HEADER)];
+    let pass = identified(&mut ledger, &Model::new(), &lesson, &claims, &[]).await?;
+    let reader = Misquotes(Says::new(&[Outcome::Stands]));
+    let policy = StandardPolicy::new();
+    let model = Model::new();
+    let references = ReferenceCollection::lexical(&[])?;
+    let mut checks = ClaimChecks::default();
+    let due = ledger.due(&policy);
+    let readings = passes::read_steps(
+        &model,
+        &policy,
+        &reader,
+        &ledger,
+        &checks,
+        (&lesson, &references),
+        (&pass, &due),
+    )
+    .await?;
+
+    let recorded = passes::record_readings(&policy, &mut ledger, &mut checks, readings).await;
+
+    assert!(recorded.is_ok(), "{recorded:?}");
+    assert!(matches!(
+        ledger.entry(&sound).unwrap().state(),
+        ClaimState::ResolvedByEvidence { .. }
+    ));
+    let faults = ledger.faults();
+    assert_eq!(faults.len(), 1, "{faults:?}");
+    assert_eq!(faults[0].claim, broken);
+    assert_eq!(
+        faults[0].stage,
+        lattice_core::domain::learning::claim_review::FaultStage::Record
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_sentence_written_over_outside_the_pipeline_is_a_new_statement_with_its_classes_whole_check(
 ) -> Result<()> {
