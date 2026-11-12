@@ -1511,7 +1511,7 @@ async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_repo
     assert!(linking.iter().any(|p| p.contains(quote)));
     assert!(!linking.iter().any(|p| p.contains("does not isolate")));
     // The reviewer sees no citation fields on items and no quote findings.
-    let review_context: serde_json::Value = fixture_task(&prompts[1]).expect("a JSON task");
+    let review_context: serde_json::Value = fixture_task(prompts[1]).expect("a JSON task");
     assert!(review_context["candidate"]["modules"][0]["summary"]
         .get("sourceIndex")
         .is_none());
