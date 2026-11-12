@@ -958,7 +958,7 @@ async fn a_learner_turn_larger_than_the_room_is_refused_not_left_out() -> Result
         .await
         .expect_err("the learner's newest turn does not fit the window");
     assert!(
-        matches!(&error, AppError::InvalidConfig(message) if message.contains("-token context window")),
+        matches!(&error, AppError::WindowTooSmall(message) if message.contains("-token context window")),
         "{error}"
     );
     let requests = llm.requests.lock().map_err(|_| invalid("lock poisoned"))?;
