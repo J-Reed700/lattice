@@ -1,5 +1,6 @@
 //! The repair call: the model's answer to a review's findings.
 use super::answers;
+use super::quotes::QuoteCheck;
 use crate::lessons::copied_wording::Wording;
 use crate::lessons::text_edits;
 use crate::lessons::writer_excerpts::{self, WriterExcerpts};
@@ -49,7 +50,7 @@ pub(super) struct Request<'a> {
     pub schema: &'a Value,
     pub authoring: &'a Value,
     pub candidate: &'a Value,
-    pub quote_checks: &'a [Value],
+    pub quote_checks: &'a [QuoteCheck],
     /// The findings the repair is asked to correct.
     pub issues: Vec<Issue<'a>>,
     /// The repair may give edits; otherwise it rewrites the material whole.

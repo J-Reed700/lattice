@@ -234,9 +234,6 @@ impl Subject for OutlineSubject<'_> {
 
     fn quote_checks(&self, candidate: &Value, _authoring: &Value) -> Vec<QuoteCheck> {
         crate::outline_evidence::quote_checks(candidate, self.context.sources)
-            .into_iter()
-            .filter_map(|check| serde_json::from_value(check).ok())
-            .collect()
     }
 
     fn given(&mut self, llm: &dyn LLMPort, authoring: &Value) {

@@ -1,5 +1,6 @@
 //! Select outline evidence from whole captured sources, not library previews.
 use crate::reference_collection::ReferenceCollection;
+use crate::teaching::quotes::QuoteCheck;
 use lattice_core::{application::ports::LLMPort, shared::error::Result};
 use serde_json::{json, Value};
 
@@ -50,7 +51,10 @@ pub(crate) fn citable_fields(candidate: &Value) -> Vec<(String, &Value)> {
 
 /// Exact provenance is checked by code, even when the model approves a quote.
 /// Citations are optional; only a present citation can fail. The evidence linking strips whatever does not match.
-pub fn quote_checks(candidate: &Value, sources: &[crate::dto::LearningSourceDto]) -> Vec<Value> {
+pub fn quote_checks(
+    candidate: &Value,
+    sources: &[crate::dto::LearningSourceDto],
+) -> Vec<QuoteCheck> {
     let mut failures = Vec::new();
     for (path, field) in citable_fields(candidate) {
         let index = field["sourceIndex"]
@@ -58,9 +62,12 @@ pub fn quote_checks(candidate: &Value, sources: &[crate::dto::LearningSourceDto]
             .and_then(|i| usize::try_from(i).ok());
         let quote = field["quote"].as_str().unwrap_or_default();
         if let Err(error) = crate::generation::optional_citation(sources, index, quote) {
-            failures.push(
-                json!({"path":path,"sourceIndex":index,"quote":quote,"error":error.to_string()}),
-            );
+            failures.push(QuoteCheck {
+                path,
+                source_index: index.and_then(|i| u64::try_from(i).ok()),
+                quote: quote.to_owned(),
+                error: error.to_string(),
+            });
         }
     }
     failures

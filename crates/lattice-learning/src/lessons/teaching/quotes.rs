@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 /// cites it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct QuoteCheck {
+pub struct QuoteCheck {
     pub path: String,
     pub source_index: Option<u64>,
     pub quote: String,
