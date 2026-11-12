@@ -2,11 +2,13 @@
 //! call stays in one step, and how a saved draft resumes.
 #![allow(clippy::indexing_slicing)]
 use super::*;
+use crate::lesson_drafts::tests::lesson_job;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
 use lattice_core::application::services::grounded_generation;
 use lattice_core::shared::persistence::Database;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 const SYSTEM: &str = "Teach one idea to a beginner.";
@@ -346,52 +348,6 @@ async fn an_empty_draft_falls_back_to_the_one_step_request() -> Result<()> {
     Ok(())
 }
 
-/// A claimed lesson preparation job: its database, repository, id and lesson.
-async fn lesson_job() -> Result<(
-    Database,
-    crate::curriculum_repository::LearningCurriculumRepository,
-    String,
-    String,
-)> {
-    use crate::{
-        curriculum::LearningGenerationJobKind, curriculum_repository::LearningCurriculumRepository,
-        dto::AcceptLearningProgramRequestDto, plan_dto::StartLearningGenerationJobRequestDto,
-        repository::LearningRepository,
-    };
-    use lattice_core::shared::runtime::jobs::JobStore;
-    let pool = crate::tests::pool().await?;
-    let programs = LearningRepository::new(pool.clone());
-    let program = crate::tests::fixture();
-    programs.create(&program).await?;
-    programs
-        .accept(&AcceptLearningProgramRequestDto {
-            program_id: program.summary.id.clone(),
-            expected_revision: 0,
-            title: program.summary.title.clone(),
-        })
-        .await?;
-    let program = programs.get(&program.summary.id).await?;
-    let lesson = program
-        .modules
-        .first()
-        .and_then(|module| module.lessons.first())
-        .map(|lesson| lesson.id.clone())
-        .ok_or_else(|| AppError::InternalError("fixture has no lesson".into()))?;
-    let jobs = LearningCurriculumRepository::new(pool.clone());
-    let job = jobs
-        .start_job(&StartLearningGenerationJobRequestDto {
-            operation_id: uuid::Uuid::new_v4().to_string(),
-            program_id: program.summary.id.clone(),
-            expected_revision: program.summary.revision,
-            kind: LearningGenerationJobKind::LessonPreparation,
-            request_json: json!({ "lessonIds": [lesson] }).to_string(),
-            progress_total: 1,
-        })
-        .await?;
-    JobStore::new(pool.clone()).claim(&job.id).await?;
-    Ok((Database::from(pool), jobs, job.id, lesson))
-}
-
 #[tokio::test]
 async fn a_lesson_job_interrupted_before_the_answer_resumes_from_its_saved_draft() -> Result<()> {
     let (database, jobs, job_id, lesson) = lesson_job().await?;
@@ -718,6 +674,39 @@ async fn errors_that_say_nothing_about_the_answer_are_not_asked_again() {
     .unwrap_err();
     assert!(matches!(error, AppError::InvalidState(_)), "{error:?}");
     assert_eq!(llm.sent().len(), 1);
+}
+
+#[tokio::test]
+async fn an_accept_that_answers_unusable_still_gets_one_correction() -> Result<()> {
+    let llm = Recorder::new(32_000);
+    let attempts = AtomicUsize::new(0);
+    let value = complete_checked(
+        &llm,
+        SYSTEM,
+        PROMPT.into(),
+        schema(),
+        1000,
+        None,
+        None,
+        |raw| {
+            if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Err(AppError::ModelAnswerUnusable("x".into()));
+            }
+            Ok(raw.to_owned())
+        },
+    )
+    .await;
+    assert!(value.is_ok(), "{value:?}");
+    let sent = llm.sent();
+    assert_eq!(sent.len(), 2, "the first answer and one correction");
+    let last = messages(&sent[1])
+        .last()
+        .map_or("", |(_, content)| *content);
+    assert!(
+        last.starts_with(REASK) && last.contains('x'),
+        "the correction quotes the reason: {last}"
+    );
+    Ok(())
 }
 
 #[tokio::test]

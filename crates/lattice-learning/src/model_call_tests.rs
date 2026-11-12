@@ -125,6 +125,16 @@ async fn material_the_window_cannot_hold_names_the_learning_model_and_the_fix() 
     assert!(llm.sent.lock().map(|sent| sent.is_empty()).unwrap_or(false));
 }
 
+#[tokio::test]
+async fn a_window_error_is_typed_apart_from_a_missing_model() {
+    let llm = recorder(4096);
+    let error = window_too_small(&llm, "x");
+    assert!(
+        !matches!(error, AppError::InvalidConfig(_)),
+        "a window error is not a missing-model configuration error: {error:?}"
+    );
+}
+
 /// A backend whose own window check refuses every request with the
 /// numbers, as the scheduler and the llama.cpp client do.
 struct Refusing;
