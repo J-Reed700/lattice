@@ -1,9 +1,7 @@
 //! Questions put to a model in as many requests as its window needs, shared
 //! by the blind solver.
 use crate::model_call;
-use lattice_core::application::services::model_contract::{
-    Contract, ContractCall, ContractId, PromptInput,
-};
+use lattice_core::application::services::model_contract::ContractCall;
 use lattice_core::{
     application::ports::{llm_port::Finish, LLMPort},
     application::services::grounded_generation::GroundedRequest,
@@ -11,12 +9,6 @@ use lattice_core::{
 };
 use serde_json::Value;
 use std::collections::BTreeMap;
-
-struct BlindBatch;
-impl Contract for BlindBatch {
-    const ID: ContractId = ContractId::new("blind-batch");
-    type Input = PromptInput;
-}
 
 /// One answer per item, in item order. Items go in as many requests as the
 /// window needs: `request_for` builds the request for a slice of item
@@ -26,6 +18,7 @@ impl Contract for BlindBatch {
 /// then the call fails with `unusable` rather than approve anything.
 pub(crate) async fn answers<T>(
     llm: &dyn LLMPort,
+    call: &ContractCall,
     count: usize,
     request_for: impl Fn(&[usize]) -> GroundedRequest,
     read: impl Fn(&Value, &[usize]) -> BTreeMap<usize, T>,
@@ -48,13 +41,9 @@ pub(crate) async fn answers<T>(
         let mut read_so_far: BTreeMap<usize, T> = BTreeMap::new();
         for attempt in 0..2 {
             let request = request_for(indices.as_slice());
-            let call = ContractCall::of::<BlindBatch>(&PromptInput {
-                system: request.instructions.clone(),
-                prompt: request.task.clone(),
-            })?;
             let response = model_call::send(
                 llm,
-                &call,
+                call,
                 request,
                 None,
                 model_call::TooLarge::Window(window),

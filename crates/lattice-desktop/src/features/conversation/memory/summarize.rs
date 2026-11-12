@@ -17,7 +17,7 @@ use lattice_core::shared::text::split_into_parts;
 use super::prompts::{
     render_summary_prompt, render_summary_shrink_prompt, SummaryPassage, SUMMARIZER_SYSTEM,
 };
-use super::{complete_json_within, CompactionError, Deadline};
+use super::{complete_json, CompactionError, Deadline, EXTRACTOR_OUTPUT_TOKENS};
 
 /// Smallest fold step, in tokens, so a window too small to plan for still
 /// makes progress; a request it cannot hold fails visibly at the provider.
@@ -120,14 +120,14 @@ pub async fn fold_summary(
             system: SUMMARIZER_SYSTEM.to_owned(),
             prompt: prompt.clone(),
         })?;
-        let text = complete_json_within(
+        let text = complete_json(
             llm,
             &call,
             deadline,
             SUMMARIZER_SYSTEM,
             prompt,
             None,
-            output_tokens,
+            EXTRACTOR_OUTPUT_TOKENS.max(output_tokens),
         )
         .await?;
         let text = text.trim().to_string();
@@ -181,14 +181,14 @@ pub async fn fold_summary(
             system: SUMMARIZER_SYSTEM.to_owned(),
             prompt: prompt.clone(),
         })?;
-        let text = complete_json_within(
+        let text = complete_json(
             llm,
             &call,
             deadline,
             SUMMARIZER_SYSTEM,
             prompt,
             None,
-            output_tokens,
+            EXTRACTOR_OUTPUT_TOKENS.max(output_tokens),
         )
         .await?
         .trim()

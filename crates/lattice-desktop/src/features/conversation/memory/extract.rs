@@ -23,7 +23,9 @@ use super::prompts::{
     patch_schema, render_extractor_prompt, render_repair_prompt, ContextPassage, EXTRACTOR_SYSTEM,
 };
 use super::segment::SourceSegment;
-use super::{complete_json, CompactionError, Deadline, MAX_EXTRACTION_ATTEMPTS};
+use super::{
+    complete_json, CompactionError, Deadline, EXTRACTOR_OUTPUT_TOKENS, MAX_EXTRACTION_ATTEMPTS,
+};
 
 /// One accepted patch, with what it cost to get it.
 #[derive(Debug, Clone)]
@@ -83,6 +85,7 @@ pub async fn extract_segments(
             EXTRACTOR_SYSTEM,
             request,
             Some(patch_schema()),
+            EXTRACTOR_OUTPUT_TOKENS,
         )
         .await?;
 

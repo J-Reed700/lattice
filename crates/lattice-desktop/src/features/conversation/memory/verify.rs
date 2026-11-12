@@ -295,6 +295,7 @@ async fn ask_for_reviews<'r>(
         VERIFIER_SYSTEM,
         prompt,
         Some(verdict_schema()),
+        super::VERIFIER_OUTPUT_TOKENS,
     )
     .await
     {
