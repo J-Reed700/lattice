@@ -86,7 +86,6 @@ impl DrillBuild<'_> {
             wording.prompt,
             schema(&rules),
             budget::mutations(targets.len()),
-            "low",
         );
         let asked = ask_request(self.llm, request, |raw| read(raw, &rules)).await?;
         let mut trail = Trail::default();

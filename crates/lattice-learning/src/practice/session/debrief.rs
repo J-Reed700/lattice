@@ -98,13 +98,7 @@ pub fn prompt(kind: &Kind, session: &DebriefSession) -> Result<String> {
 /// wrong after that is dropped, and a row left without any becomes insufficient evidence.
 pub async fn debrief(llm: &dyn LLMPort, kind: &Kind, session: &DebriefSession) -> Result<Debrief> {
     let plan = Plan::new(kind, session.form);
-    let request = model_call::structured(
-        &plan.system(),
-        told(&plan, session)?,
-        plan.schema(),
-        0,
-        "low",
-    );
+    let request = model_call::structured(&plan.system(), told(&plan, session)?, plan.schema(), 0);
     let (raw, answer) = ask(llm, &plan, request.clone()).await?;
     let examined = examine(&plan, session, &answer)?;
     if examined.faults.is_empty() {

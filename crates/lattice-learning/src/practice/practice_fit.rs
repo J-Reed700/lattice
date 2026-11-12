@@ -10,11 +10,21 @@ use crate::practice::session::kind::{Kind, Kinds};
 use crate::practice_repository::LearningPracticeRepository;
 use crate::practice_repository::{FitState, KindVerdict, StoredFit};
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::domain::learning::practice::work::KindId;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::BTreeSet;
+
+struct PracticeFit;
+
+impl Contract for PracticeFit {
+    const ID: ContractId = ContractId::new("practice-fit");
+    type Input = PromptInput;
+}
 
 /// The answer's reservation for each kind: a reason and a verdict.
 const FIT_ANSWER_TOKENS: usize = 800;
@@ -148,9 +158,12 @@ async fn ask(llm: &dyn LLMPort, kinds: &Kinds, outline: &CourseOutline) -> Resul
         prompt(outline, kinds),
         schema(kinds),
         FIT_ANSWER_TOKENS * kinds.iter().count(),
-        "low",
     );
-    complete_checked_request(llm, request, None, None, |raw| checked(raw, kinds)).await
+    let call = ContractCall::of::<PracticeFit>(&PromptInput {
+        system: request.instructions.clone(),
+        prompt: request.task.clone(),
+    })?;
+    complete_checked_request(llm, &call, request, None, None, |raw| checked(raw, kinds)).await
 }
 
 fn entry(kind: &Kind, stored: Option<&StoredFit>) -> PracticeKindFitDto {
