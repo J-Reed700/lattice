@@ -379,6 +379,48 @@ mod tests {
         Ok(())
     }
 
+    /// Counts its requests and answers none of the questions.
+    struct Empty(std::sync::atomic::AtomicUsize);
+
+    #[async_trait::async_trait]
+    impl lattice_core::application::ports::LLMPort for Empty {
+        async fn complete(
+            &self,
+            _: &lattice_core::application::ports::llm_port::CompletionRequest,
+        ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(
+                lattice_core::application::ports::llm_port::CompletionResponse::from_text(
+                    "{\"answers\":[]}",
+                ),
+            )
+        }
+        fn model_name(&self) -> &str {
+            "empty"
+        }
+        fn max_context_tokens(&self) -> usize {
+            131_072
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn two_items_whose_solve_is_unusable_twice_fail_the_review_without_splitting() {
+        let (first, second) = (rubric_item(), rubric_item());
+        let llm = Empty(std::sync::atomic::AtomicUsize::new(0));
+        let error = solve_items(&llm, &[(&first, "One."), (&second, "Two.")])
+            .await
+            .unwrap_err();
+        assert!(matches!(&error, AppError::ModelAnswerUnusable(text) if text == UNSOLVED));
+        assert_eq!(
+            llm.0.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "the batch and its correction, then no split"
+        );
+    }
+
     #[test]
     fn a_blinded_item_carries_its_passage_as_quote() {
         let blind = blinded(0, &rubric_item(), "A passage.");

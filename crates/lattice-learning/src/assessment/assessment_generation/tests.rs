@@ -279,6 +279,63 @@ async fn an_item_whose_reply_is_cut_off_alone_stays_pending_and_the_rest_are_gra
     assert_eq!(ids, ["a", "c"], "[b] stays pending");
 }
 
+/// Declines every request that holds the item `b`; grades any other.
+struct Decliner(Mutex<Vec<usize>>);
+
+#[async_trait::async_trait]
+impl LLMPort for Decliner {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let (_, user) = crate::lessons::structured_call::task_messages(request);
+        let prompt: Value = serde_json::from_str(user)?;
+        let ids: Vec<String> = prompt["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item["itemId"].as_str().map(str::to_owned))
+            .collect();
+        self.0.lock().unwrap().push(ids.len());
+        if ids.iter().any(|id| id == "b") {
+            return Ok(CompletionResponse {
+                finish_reason: "refusal".into(),
+                ..CompletionResponse::from_text("")
+            });
+        }
+        let items: Vec<Value> = ids
+            .iter()
+            .map(
+                |id| serde_json::json!({"itemId": id, "verdict": "equivalent", "summary": "Same."}),
+            )
+            .collect();
+        Ok(CompletionResponse::from_text(
+            serde_json::json!({ "items": items }).to_string(),
+        ))
+    }
+    fn model_name(&self) -> &str {
+        "decliner"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn an_item_the_model_declines_stays_pending_and_the_rest_are_graded() {
+    let llm = Decliner(Mutex::new(Vec::new()));
+    let answers: Vec<ShortAnswer> = ["a", "b", "c"].map(short).to_vec();
+    let graded = judge_short_answers(&llm, &answers).await.unwrap();
+    let mut ids: Vec<_> = graded.iter().map(|grade| grade.item_id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["a", "c"], "[b] stays pending");
+    assert_eq!(
+        llm.0.lock().unwrap().clone(),
+        [3, 1, 1, 1],
+        "the batch is declined and split; a and c are graded; b is declined alone"
+    );
+}
+
 /// Every reply cut off at the output limit.
 struct CutOff;
 

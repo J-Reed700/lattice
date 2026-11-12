@@ -12,10 +12,26 @@ use lattice_core::{
 
 /// What a batch does with an item whose request fails even when it goes alone.
 pub(crate) enum Alone<'a> {
-    /// The whole call fails as unusable, with this text.
+    /// Every item must be answered: an unusable answer, or a request that
+    /// fails alone, fails the whole call with this text.
     Fails(&'a str),
-    /// The item is left without an answer and the rest go on.
+    /// Items stand apart: a request whose answer is unusable is split too,
+    /// until the item that fails stands alone; it is left without an answer
+    /// and the rest go on.
     Pending,
+}
+
+impl Alone<'_> {
+    /// Whether a request that failed with `error` goes again in halves: when
+    /// smaller parts may succeed and, for items that stand apart, when the
+    /// answer was unusable, until the item that fails stands alone.
+    fn splits(&self, error: &AppError) -> bool {
+        smaller_parts_may_succeed(error)
+            || matches!(
+                (self, error),
+                (Self::Pending, AppError::ModelAnswerUnusable(_))
+            )
+    }
 }
 
 /// One answer per item, in item order, `None` for an item left pending.
@@ -23,9 +39,10 @@ pub(crate) enum Alone<'a> {
 /// request for a slice of item indices and `read` takes the answers it can
 /// read for those indices out of a reply, or refuses the reply. The
 /// transport asks a single item cut off at its output reservation again with
-/// twice the room, and a refused reply once more, saying why. A request that
-/// still fails, or is cut off while holding several items, is asked for again
-/// with half the items; an item that fails alone is settled by `alone`.
+/// twice the room, and a refused reply once more, saying why. A request cut
+/// off or too large for the window while holding several items goes again
+/// with half the items, and so does an unusable one when `alone` is
+/// `Pending`; an item that fails alone is settled by `alone`.
 pub(crate) async fn answers<C: Contract<Input = PromptInput>, T: Send>(
     llm: &dyn LLMPort,
     count: usize,
@@ -65,14 +82,10 @@ pub(crate) async fn answers<C: Contract<Input = PromptInput>, T: Send>(
                 }
                 start += size;
             }
+            Err(error) if size > 1 && alone.splits(&error) => most = size / 2,
             Err(error)
-                if smaller_parts_may_succeed(&error)
-                    || matches!(error, AppError::ModelAnswerUnusable(_)) =>
+                if alone.splits(&error) || matches!(error, AppError::ModelAnswerUnusable(_)) =>
             {
-                if size > 1 {
-                    most = size / 2;
-                    continue;
-                }
                 match alone {
                     Alone::Fails(unusable) => {
                         return Err(AppError::ModelAnswerUnusable(unusable.into()))
