@@ -495,7 +495,7 @@ fn two_reports_that_continue_a_present_finding_leave_it_as_it_was_and_spend_no_n
 }
 
 #[test]
-fn a_report_that_continues_a_finding_with_no_verdict_is_a_new_finding_and_the_open_one_stays() {
+fn a_finding_left_without_a_verdict_stays_open_as_it_stood_and_a_report_continuing_it_is_dropped() {
     let candidate = lesson(&[FIRST, SECOND]);
     let (mut standing, fresh) = reviewed(
         &candidate,
@@ -509,11 +509,11 @@ fn a_report_that_continues_a_finding_with_no_verdict_is_a_new_finding_and_the_op
         vec![continuing(&fresh[0], "Wrong, in new words.", None)],
     );
     assert_eq!(round.asked.len(), 1);
-    assert_eq!(new.len(), 1);
-    assert_eq!(new[0].id().as_str(), "reviewer/2");
+    assert!(new.is_empty());
     assert_eq!(standing.open().len(), 1);
     assert_eq!(standing.open()[0].id(), fresh[0].id());
     assert_eq!(standing.open()[0].note, "Wrong.");
+    assert_eq!(standing.open()[0].passage.as_deref(), Some(FIRST));
     standing.admit(&changed, new);
     assert_eq!(standing.open().len(), 1);
 }
