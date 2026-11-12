@@ -11,10 +11,10 @@ use super::super::sections::{
 };
 use super::super::*;
 use super::goal_words;
-use lattice_core::shared::text::same_text::{overlaps, stands};
 use crate::lessons::shape::ShapePolicy;
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal, Outcome};
 use lattice_core::domain::learning::claim_review::{ClaimId, CutPlace};
+use lattice_core::shared::text::same_text::{overlaps, stands};
 use lattice_core::shared::text::segmentation::{code_fences, in_code_fence};
 use lattice_core::shared::text::{item_marker_end, sentences};
 

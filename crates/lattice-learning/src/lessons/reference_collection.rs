@@ -5,11 +5,11 @@
 //! is ranked by an in-memory FTS5 store. Every hit is widened to sentence
 //! edges of the snapshot's own bytes, so evidence is always an exact substring.
 use crate::dto::LearningSourceDto;
-use lattice_core::shared::text::same_text;
 use crate::references::course_index::{
     CourseProgress, CourseSearch, IndexMode, IndexView, CHUNK_CHARS,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::text::same_text;
 use lattice_core::shared::text::segmentation::{widen, Prose, Span, Strength};
 use lattice_index::passage_index::PassageStore;
 use serde::{Deserialize, Serialize};

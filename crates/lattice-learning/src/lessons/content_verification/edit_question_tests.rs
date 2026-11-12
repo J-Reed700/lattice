@@ -10,10 +10,10 @@
 //! stays honest.
 use super::claim_ledger_tests::{figure, lesson, section, unreadable, Course};
 use super::GOOD;
+use crate::assessment::assessment_engine::checks::answer_in_prompt_message;
 use crate::assessment_engine::{
     LearningAssessmentCandidate, LearningAssessmentKey, LearningItemFormat,
 };
-use crate::assessment::assessment_engine::checks::answer_in_prompt_message;
 use crate::assessment_repository::{insert_bank_items_in, BankItem};
 use crate::lessons::claim_reviews::dto::ClaimActionRequestDto;
 use crate::lessons::claim_reviews::repository::ClaimReviewRepository;

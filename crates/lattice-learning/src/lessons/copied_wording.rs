@@ -2,11 +2,11 @@
 //! fact in its own sentence; the words of the source are the citation's
 //! quote. A teaching sentence that holds a source's wording outside
 //! quotation marks, or sits inside one, has copied the source.
-use lattice_core::shared::text::same_text::{find, fold};
 use super::text_edits::citable_texts;
 use crate::generation::{long_enough_quote, teaching_sentences};
 use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::{FindingKind, FindingSite, ReviewFinding, Rule};
+use lattice_core::shared::text::same_text::{find, fold};
 use lattice_core::shared::text::{code_spans, sentences};
 use serde_json::Value;
 

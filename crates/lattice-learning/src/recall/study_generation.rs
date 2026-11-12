@@ -2,12 +2,12 @@
 use super::study_dto::*;
 use crate::assessment_generation::text_call;
 use crate::generation::validate_excerpt_quote;
-use lattice_core::shared::text::same_text::fold;
 use crate::model_call;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::application::services::model_contract::{Contract, ContractId, PromptInput};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::text::same_text::fold;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;

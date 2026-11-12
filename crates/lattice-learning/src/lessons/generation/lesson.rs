@@ -7,13 +7,13 @@ use super::{
     fits, generated_source_ids, grounding_instructions, invalid, parse_json, source_index_schema,
     validate_source_snapshot_ids, validate_text, CITATION_DRAFT_BRIEF, LESSON_OUTPUT_RESERVE,
 };
+use crate::assessment::assessment_engine::checks::CHOICES_PER_QUESTION;
 use crate::dto::{
     LearningBlockDto, LearningBlockKind, LearningLessonDto, LearningProgramDto, LearningSourceDto,
     LessonAnswerKey, LessonQuestion, LessonQuestionKind, PreparedLearningLesson,
 };
 use crate::embedded_runtime::BuiltinRuntimes;
 use crate::lessons::course_plan::CoursePlan;
-use crate::assessment::assessment_engine::checks::CHOICES_PER_QUESTION;
 use crate::lessons::shape::{self, LessonShape, ShapePolicy};
 use crate::lessons::structured_call::{complete_checked, CallKind, ReasonFirst};
 use crate::model_call;

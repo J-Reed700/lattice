@@ -4,9 +4,9 @@
 use super::copied_wording::{self, Wording, SAY_IT_YOURSELF};
 use super::repeats::{self, Counts};
 use super::review_findings::{index_segment, leaves, FindingSite};
-use lattice_core::shared::text::same_text;
 use lattice_core::domain::learning::claim_review::span_of;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::text::same_text;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};

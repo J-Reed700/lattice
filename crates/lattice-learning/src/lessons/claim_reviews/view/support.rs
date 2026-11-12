@@ -18,10 +18,10 @@ use super::super::repository::ShownPassage;
 use super::super::service::ClaimReviewService;
 use super::{evidence_passage, latest_check, PassageKey, PassageText, SourceFacts};
 use crate::dto::LearningTrustLevel;
-use lattice_core::shared::text::same_text;
 use crate::references::trust::dto_map;
 use crate::references::trust::repository::SqliteSourceTrustStore;
 use crate::references::trust::source_view::latest_standing;
+use lattice_core::shared::text::same_text;
 
 /// What the review knows of a version beyond the library: the site it was
 /// served from and its publisher's judged standing.

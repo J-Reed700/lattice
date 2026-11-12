@@ -9,8 +9,8 @@
 use super::super::claim_ledger::ClaimLedger;
 use super::super::*;
 use crate::lessons::repeats;
-use lattice_core::shared::text::same_text::overlaps;
 use lattice_core::domain::learning::claim_review::{ClaimId, ClaimState};
+use lattice_core::shared::text::same_text::overlaps;
 use lattice_core::shared::text::segmentation::common_subsequence;
 use lattice_core::shared::text::sentences;
 use std::collections::HashSet;

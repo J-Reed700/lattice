@@ -6,7 +6,6 @@ use crate::dto::{
     LearningLessonDto, LearningPreparation, LearningProgramDto, LearningProgramStatus,
     LearningSourceDto,
 };
-use lattice_core::shared::text::same_text::fold;
 use crate::lessons::structured_call::complete_checked_request;
 use crate::model_call;
 use crate::reference_collection::{ReferenceCollection, ReferencePassage};
@@ -16,6 +15,7 @@ use lattice_core::application::services::model_contract::{
     Contract, ContractCall, ContractId, PromptInput,
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::text::same_text::fold;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;

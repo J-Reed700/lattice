@@ -1,8 +1,8 @@
 //! A sentence written into or out of a field's text, the way a put back and
 //! its undo do it.
 
-use lattice_core::shared::text::same_text::holds_sentence;
 use lattice_core::domain::learning::claim_review::{span_of, Anchor, ClaimLedgerEntry, CutPlace};
+use lattice_core::shared::text::same_text::holds_sentence;
 
 /// `text` with `sentence` written in at `anchor`: one space between sentences
 /// of a paragraph, paragraph breaks kept. `None` when the anchor's sentence is

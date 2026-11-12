@@ -223,7 +223,11 @@ fn material_that_cannot_be_read_is_named_in_plain_words() {
 #[test]
 fn a_quotation_that_matches_no_saved_reference_shows_the_quote_that_failed() {
     let found = quotation_findings(&[
-        check("blocks[2]", "A span the source does not hold.", "it was not found."),
+        check(
+            "blocks[2]",
+            "A span the source does not hold.",
+            "it was not found.",
+        ),
         check("questions[0]", "", "it was not found."),
     ]);
     let passages: Vec<_> = found

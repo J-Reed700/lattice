@@ -38,10 +38,10 @@ mod settle;
 use crate::content_verification::located_quote;
 use crate::curriculum::{LearningGenerationJob, LearningGenerationJobStatus};
 use crate::curriculum_repository::LearningCurriculumRepository;
-use lattice_core::shared::text::same_text::whole_sentences;
 use crate::persistence::{db, now};
 use crate::plan_dto::LearningGenerationJobActionRequestDto;
 use lattice_core::shared::text::plain_text;
+use lattice_core::shared::text::same_text::whole_sentences;
 pub use question_edit::{QuestionEdit, QuestionEditOutcome, QuestionText};
 pub use section_edit::{SectionEdit, SectionEditOutcome};
 

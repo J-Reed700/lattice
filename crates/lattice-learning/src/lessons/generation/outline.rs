@@ -10,7 +10,6 @@ use crate::dto::{
     GenerateLearningProgramRequestDto, LearningCourseDepth, LearningLessonDto, LearningModuleDto,
     LearningPreparation, LearningSourceDto,
 };
-use lattice_core::shared::text::same_text::fold;
 use crate::lessons::structured_call::{complete_checked_request, CallKind, ReasonFirst};
 use crate::model_call;
 use lattice_core::application::ports::LLMPort;
@@ -18,6 +17,7 @@ use lattice_core::application::services::model_contract::{
     Contract, ContractCall, ContractId, PromptInput,
 };
 use lattice_core::shared::error::{AppError, ErrorClass, Result};
+use lattice_core::shared::text::same_text::fold;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};

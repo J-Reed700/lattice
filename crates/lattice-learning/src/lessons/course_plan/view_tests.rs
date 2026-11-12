@@ -117,7 +117,11 @@ async fn a_queued_lesson_job_locks_its_lesson_and_so_does_a_running_one() {
         .await
         .unwrap();
     let queued: Vec<_> = pending.entries.iter().map(|entry| entry.editable).collect();
-    assert_eq!(queued, vec![true, false, true, true], "a queued job locks its lesson");
+    assert_eq!(
+        queued,
+        vec![true, false, true, true],
+        "a queued job locks its lesson"
+    );
 
     assert!(JobStore::new(pool.clone())
         .claim(&job)

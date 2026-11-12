@@ -1,7 +1,7 @@
 //! Short performance tasks with private keys and evidence-bound placement advice.
-use lattice_core::shared::text::same_text;
 use crate::reference_collection::{item_tokens, ReferenceCollection};
 use crate::{dto::*, plan_dto::*};
+use lattice_core::shared::text::same_text;
 use lattice_core::{
     application::ports::LLMPort,
     application::services::model_contract::{Contract, ContractCall, ContractId, PromptInput},
