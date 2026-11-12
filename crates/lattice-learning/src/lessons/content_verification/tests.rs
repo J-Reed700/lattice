@@ -690,9 +690,11 @@ impl Model {
             return Ok(answer.to_string());
         }
         if prompt.starts_with("Source passages:") {
-            *self.judge_calls.lock().unwrap() += 1;
+            if !prompt.contains(CORRECTION_LEAD) {
+                *self.judge_calls.lock().unwrap() += 1;
+            }
             if self.failing_judge {
-                return Err(invalid("fixture offline"));
+                return Ok("No verdict.".into());
             }
             let bad = prompt.split("\n\nClaim: ").nth(1).unwrap().starts_with(BAD);
             if bad && self.hold_bad_claim {
@@ -702,6 +704,9 @@ impl Model {
         }
         if let Some(declined) = declined_teaching_edits(prompt) {
             return Ok(declined);
+        }
+        if prompt.starts_with("Plan focused reference searches") {
+            return Ok("No plan.".into());
         }
         Err(invalid(format!(
             "Unexpected fixture prompt: {} ... {}",
