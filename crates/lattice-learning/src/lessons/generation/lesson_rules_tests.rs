@@ -1043,3 +1043,75 @@ fn a_blank_choice_is_named() {
         "Question 3 has a blank answer choice."
     );
 }
+
+#[test]
+fn a_missing_prompt_is_noted_with_its_candidate_id() {
+    let mut candidate = lesson();
+    candidate["questions"][0]["prompt"] = json!("");
+    let notes: Vec<String> = lesson_rules(&candidate)
+        .into_iter()
+        .filter(|finding| finding.place().site == FindingSite::Question(0))
+        .map(|finding| finding.note)
+        .collect();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].starts_with("Question 1 (candidate questions-0)"),
+        "{notes:?}"
+    );
+}
+
+#[test]
+fn teaching_sentences_leave_out_tilde_fences() {
+    let sentences = teaching_sentences("Intro sentence here.\n\n~~~\nInside the fence.\n~~~\n");
+    assert!(
+        !sentences
+            .iter()
+            .any(|sentence| sentence.contains("Inside the fence.")),
+        "{sentences:?}"
+    );
+}
+
+#[test]
+fn a_check_whose_case_is_empty_does_not_split() {
+    assert_eq!(split_check(&format!("\n{CHECK_REVEAL}\n{REVEAL}")), None);
+    assert_eq!(split_check(&format!("{CASE}\n{CHECK_REVEAL}\n  ")), None);
+}
+
+fn rule_ids(findings: &[ReviewFinding]) -> Vec<String> {
+    findings
+        .iter()
+        .map(|finding| finding.id().as_str().to_owned())
+        .collect()
+}
+
+#[test]
+fn a_lesson_question_whose_right_choice_is_much_the_longest_is_a_finding() {
+    let candidate = question_case(
+        "Which one is named first?",
+        [
+            "Bravo",
+            "Alpha, which keeps every entry in place, including the ones that sit beyond the marked edge",
+            "Charlie",
+            "Delta",
+        ],
+        1,
+    );
+    let ids = rule_ids(&lesson_rules(&candidate));
+    assert_eq!(ids, ["rule/key-longest/question-0"], "{ids:?}");
+}
+
+#[test]
+fn a_lesson_question_whose_key_is_in_its_prompt_is_a_finding() {
+    let candidate = question_case(
+        "Which rule says the Alpha limit stays inside the marked line?",
+        [
+            "the Alpha limit stays inside the marked line",
+            "Bravo lets the limit move past the marked line",
+            "Charlie ignores the marked line in every case",
+            "Delta stops the limit before the marked line",
+        ],
+        0,
+    );
+    let ids = rule_ids(&lesson_rules(&candidate));
+    assert_eq!(ids, ["rule/answer-in-prompt/question-0"], "{ids:?}");
+}
