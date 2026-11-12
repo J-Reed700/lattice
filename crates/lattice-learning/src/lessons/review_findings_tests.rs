@@ -277,3 +277,13 @@ fn a_finding_that_is_not_a_broken_rule_is_corrected_by_edits() {
         assert_eq!(finding.remedy(), Remedy::Edits);
     }
 }
+
+#[test]
+fn a_non_canonical_index_names_no_section() {
+    assert_eq!(
+        FindingSite::of_pointer("/blocks/+0/body"),
+        FindingSite::Lesson
+    );
+    assert_eq!(FindingSite::of_pointer("/blocks/00"), FindingSite::Lesson);
+    assert_eq!(FindingSite::of_part("blocks-03"), None);
+}

@@ -255,3 +255,7 @@ pub(crate) fn fields_of(value: &Value) -> Vec<(String, Vec<String>)> {
     walk(value, "", &mut out);
     out
 }
+
+#[cfg(test)]
+#[path = "repeats_tests.rs"]
+mod tests;
