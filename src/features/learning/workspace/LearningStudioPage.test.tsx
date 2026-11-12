@@ -78,8 +78,8 @@ vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeo
   listStudyDecks: (...args: unknown[]) => mocks.decks(...args) ?? Promise.resolve({ ok: true, data: [] }),
   getStudyDeck: mocks.deck,
   exportAllLearningPacks: mocks.exportAll,
-  courseIndexOpen: async () => ({ ok: true, data: undefined }),
-  courseIndexClose: async () => ({ ok: true, data: undefined }),
+  courseIndexOpen: async () => ({ ok: true, data: null }),
+  courseIndexClose: async () => ({ ok: true, data: null }),
   // A Learning model is set, so the course builder shows no model notice.
   getSettings: async () => ({ ok: true, data: settingsWithLearningModel() }),
   getDownloadedModels: async () => ({ ok: true, data: [] }),

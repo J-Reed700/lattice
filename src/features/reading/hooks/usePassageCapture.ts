@@ -47,8 +47,10 @@ export function usePassageCapture({
         chunkId: initialLocator?.chunkId ?? source.chunkId,
         filePath: source.filePath,
         fileName: source.fileName,
-        locator: resolvedLabel ?? formatSourceLocation(source) ?? undefined,
+        locator: resolvedLabel ?? formatSourceLocation(source) ?? null,
         text: trimmed,
+        title: null,
+        note: null,
       });
       if (!result.ok) {
         // Say what actually went wrong. "Not available yet" was true while the

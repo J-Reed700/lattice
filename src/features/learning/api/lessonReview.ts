@@ -58,7 +58,7 @@ export const lessonReviewApi = {
   /** "Keep as written" on teaching findings the repairs did not settle, or taking that back. */
   settleLearningTeachingFindings: (
     request: Wire.SettleLearningTeachingFindingsRequestDto,
-  ): Promise<ApiResult<void>> =>
+  ): Promise<ApiResult<null>> =>
     learningCall('settle_learning_teaching_findings', { request }),
 
   /** Rewrites a section of a published lesson; with `dryRun` it only answers what saving would do. */

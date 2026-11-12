@@ -15,20 +15,9 @@ export type ResolvedLink = import('../../lib/bindings').ResolvedLinkDto;
 
 export type ExtractAndResolveLinksResponse = import('../../lib/bindings').ExtractAndResolveResponseDto;
 
-export interface DocumentMetadata {
-  title?: string;
-  file_type?: string;
-  author?: string;
-}
-
 export interface GenerateTagsResponse {
   tags: string[];
   count: number;
-}
-
-export interface DocumentInput {
-  content: string;
-  metadata?: DocumentMetadata;
 }
 
 export interface TagBatchResult {

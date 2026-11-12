@@ -19,7 +19,7 @@ export const extractionApi = {
     text: string,
     sourcePath?: string,
   ): Promise<ApiResult<ParsedLinksResponse>> =>
-    apiCall<Wire.ParsedLinksResponse>('parse_wikilinks', { text, sourcePath }),
+    apiCall('parse_wikilinks', { text, sourcePath }),
 
   /**
    * Extracts the document title from content.
@@ -31,7 +31,7 @@ export const extractionApi = {
   extractDocumentTitle: async (
     content: string,
   ): Promise<ApiResult<string | null>> =>
-    apiCall<string | null>('extract_document_title', { content }),
+    apiCall('extract_document_title', { content }),
 
   /**
    * Resolves a wikilink target to an absolute file path.
@@ -47,7 +47,7 @@ export const extractionApi = {
     sourcePath: string,
     availableDocuments: Wire.DocumentRefDto[],
   ): Promise<ApiResult<Wire.ResolveLinkResponse>> =>
-    apiCall<Wire.ResolveLinkResponse>('resolve_wikilink', {
+    apiCall('resolve_wikilink', {
       target,
       sourcePath,
       availableDocuments,
@@ -65,7 +65,7 @@ export const extractionApi = {
     content: string,
     documentId: string,
   ): Promise<ApiResult<ExtractAndResolveLinksResponse>> =>
-    apiCall<Wire.ExtractAndResolveResponseDto>('extract_and_resolve_links', {
+    apiCall('extract_and_resolve_links', {
       content,
       documentId,
     }),

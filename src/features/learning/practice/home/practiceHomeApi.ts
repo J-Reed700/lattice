@@ -1,11 +1,11 @@
 import { newId } from '@/lib/api';
 import type * as Wire from '@/lib/bindings';
 import { studyActivityCall } from '@/lib/studyActivity';
-import type { CommandName } from '@/shared/ipc/transport';
+import type { CommandArgList, CommandName } from '@/shared/ipc/transport';
 import { unwrapApiResult } from '@/types/api/result';
 
-async function call<T>(command: CommandName, args: Record<string, unknown>): Promise<T> {
-  return unwrapApiResult(await studyActivityCall<T>('learning', command, args));
+async function call<C extends CommandName>(command: C, ...args: CommandArgList<C>): Promise<Wire.CommandResults[C]> {
+  return unwrapApiResult(await studyActivityCall('learning', command, ...args));
 }
 
 /** The Practice page's commands: the course's profile, practice fit, what is due, and its coding sessions. */
@@ -28,7 +28,7 @@ export const practiceHomeApi = {
   /** A Coached session on a coding activity that has none yet; returns its id. */
   startPracticeSession: async (programId: string, activityId: string): Promise<string> => {
     const request: Wire.StartPracticeSessionRequestDto = { operationId: newId(), programId, activityId, setting: 'coached', budgetSeconds: null };
-    const session = await call<Wire.PracticeSessionDto>('start_practice_session', { request });
+    const session = await call('start_practice_session', { request });
     return session.sessionId;
   },
 };

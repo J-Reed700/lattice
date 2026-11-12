@@ -45,7 +45,7 @@ beforeEach(() => {
     ok: true,
     data: { conversations: [thread('older', '2026-10-01T10:00:00Z'), thread('newer', '2026-10-08T10:00:00Z')] },
   });
-  mocks.api.explorerFolderSetLastThread.mockResolvedValue({ ok: true, data: undefined });
+  mocks.api.explorerFolderSetLastThread.mockResolvedValue({ ok: true, data: null });
 });
 
 describe('the thread a folder opens on', () => {

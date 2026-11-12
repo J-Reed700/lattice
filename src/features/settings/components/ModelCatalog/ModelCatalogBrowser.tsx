@@ -162,9 +162,9 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
     if (searchQuery.trim()) {
       const mapped = searchResults.map((result) => ({
         model: result.model,
+        fit: result.model.fit ?? null,
         popularity_downloads: result.popularity_downloads ?? null,
         popularity_likes: result.popularity_likes ?? null,
-        fit: result.fit,
       }));
       return sortModels(applyFilters(mapped));
     }

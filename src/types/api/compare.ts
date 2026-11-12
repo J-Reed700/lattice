@@ -7,7 +7,4 @@ export type CompareRowDto = import('../../lib/bindings').CompareRowDto;
 
 export type CompareTableDto = import('../../lib/bindings').CompareTableDto;
 
-export interface CompareDocumentsRequest {
-  documentIds: string[];
-  columns: string[];
-}
+export type CompareDocumentsRequest = import('../../lib/bindings').CompareDocumentsRequestDto;
