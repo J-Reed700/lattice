@@ -35,7 +35,6 @@ async fn reviewed(replies: Vec<Value>) -> (Result<Vec<Reported>>, Vec<String>) {
         &candidate(),
         Scope::default(),
         None,
-        LengthRule::Fail,
     )
     .await
     .map(|judged| judged.reported);
@@ -73,7 +72,7 @@ fn the_schema_accepts_one_check_per_section_and_only_known_ids() {
 #[tokio::test]
 async fn a_section_checked_twice_is_named_when_the_review_is_asked_again() {
     let first = reply(vec![check(0), check(1), check(1), check(2)]);
-    let (result, prompts) = reviewed(vec![first, reply(vec![check(1)])]).await;
+    let (result, prompts) = reviewed(vec![first, reply(vec![check(0), check(1), check(2)])]).await;
     assert!(result.unwrap().is_empty());
     assert_eq!(prompts.len(), 2);
     assert!(prompts[1].contains("section-1 was checked more than once"));
@@ -82,10 +81,10 @@ async fn a_section_checked_twice_is_named_when_the_review_is_asked_again() {
 #[tokio::test]
 async fn a_section_left_out_is_named_when_the_review_is_asked_again() {
     let first = reply(vec![check(0), check(2)]);
-    let (result, prompts) = reviewed(vec![first, reply(vec![check(1)])]).await;
+    let (result, prompts) = reviewed(vec![first, reply(vec![check(0), check(1), check(2)])]).await;
     assert!(result.unwrap().is_empty());
     assert_eq!(prompts.len(), 2);
-    assert!(prompts[1].contains("Section 1 still needs a valid check."));
+    assert!(prompts[1].contains("section-1 still needs a valid check."));
 }
 
 #[tokio::test]
@@ -93,10 +92,10 @@ async fn a_passage_of_another_section_is_named_with_its_section() {
     let mut crossed = check(0);
     crossed["passageId"] = json!("section-1-passage-0");
     let first = reply(vec![crossed, check(1), check(2)]);
-    let (result, prompts) = reviewed(vec![first, reply(vec![check(0)])]).await;
+    let (result, prompts) = reviewed(vec![first, reply(vec![check(0), check(1), check(2)])]).await;
     assert!(result.unwrap().is_empty());
     assert_eq!(prompts.len(), 2);
-    assert!(prompts[1].contains("Section 0: passageId must be one of"));
+    assert!(prompts[1].contains("section-0: passageId must be one of"));
 }
 
 #[tokio::test]
@@ -104,8 +103,18 @@ async fn a_check_without_its_section_is_asked_for_again() {
     let mut nameless = reply(vec![check(0), check(1), check(2)]);
     let third = nameless["blockChecks"][2].as_object_mut().unwrap();
     third.remove("sectionId");
-    let (result, prompts) = reviewed(vec![nameless, reply(vec![check(2)])]).await;
+    let (result, prompts) =
+        reviewed(vec![nameless, reply(vec![check(0), check(1), check(2)])]).await;
     assert!(result.unwrap().is_empty());
     assert_eq!(prompts.len(), 2);
     assert!(prompts[1].contains("needs the sectionId"));
+}
+
+#[tokio::test]
+async fn a_missing_check_is_named_by_its_section_id() {
+    let first = reply(vec![check(1), check(2)]);
+    let (result, prompts) = reviewed(vec![first, reply(vec![check(0), check(1), check(2)])]).await;
+    assert!(result.unwrap().is_empty());
+    assert_eq!(prompts.len(), 2);
+    assert!(prompts[1].contains("section-0 still needs a valid check."));
 }

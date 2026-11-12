@@ -1,13 +1,27 @@
 //! Lesson quotation provenance: check the author's quotations against the
 //! supplied excerpts, restore their typography, and re-anchor a quotation the
 //! author could not match to the nearest real passage.
+use crate::review_findings::FindingSite;
+use lattice_core::shared::text::sentences;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+/// A source quotation that matches no saved reference, at the part that
+/// cites it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct QuoteCheck {
+    pub path: String,
+    pub source_index: Option<u64>,
+    pub quote: String,
+    pub error: String,
+}
+
 /// The sources a citation may name, each with the index that names it and its text.
-pub(super) type Table<'a> = Vec<(u64, &'a str)>;
+pub(crate) type Table<'a> = Vec<(u64, &'a str)>;
 
 /// The table of the excerpts an authoring context supplies; `None` when it has no sources.
-pub(super) fn authored(authoring: &Value) -> Option<Table<'_>> {
+pub(crate) fn authored(authoring: &Value) -> Option<Table<'_>> {
     let sources = authoring.get("sources").and_then(Value::as_array)?;
     Some(
         sources
@@ -23,7 +37,7 @@ pub(super) fn authored(authoring: &Value) -> Option<Table<'_>> {
 }
 
 /// The table of a lesson's numbered sources: `sourceIndex` i names the i-th.
-pub(super) fn numbered(sources: &[crate::dto::LearningSourceDto]) -> Table<'_> {
+pub(crate) fn numbered(sources: &[crate::dto::LearningSourceDto]) -> Table<'_> {
     sources
         .iter()
         .enumerate()
@@ -55,13 +69,17 @@ fn quote_error(sources: &Table, index: Option<u64>, quote: &str) -> Option<Strin
 }
 
 /// The failures of a candidate cited against what `authoring` supplies.
-pub(super) fn lesson_quote_checks(candidate: &Value, authoring: &Value) -> Vec<Value> {
+pub(super) fn lesson_quote_checks(candidate: &Value, authoring: &Value) -> Vec<QuoteCheck> {
     authored(authoring).map_or_else(Vec::new, |table| quote_checks_in(candidate, &table))
 }
 
-pub(super) fn quote_checks_in(candidate: &Value, sources: &Table) -> Vec<Value> {
+pub(crate) fn quote_checks_in(candidate: &Value, sources: &Table) -> Vec<QuoteCheck> {
     let mut failures = Vec::new();
-    for field in ["blocks", "questions"] {
+    let fields: [(&str, fn(usize) -> FindingSite); 2] = [
+        ("blocks", FindingSite::Section),
+        ("questions", FindingSite::Question),
+    ];
+    for (field, site) in fields {
         for (ordinal, item) in candidate
             .get(field)
             .and_then(Value::as_array)
@@ -69,14 +87,19 @@ pub(super) fn quote_checks_in(candidate: &Value, sources: &Table) -> Vec<Value> 
             .flatten()
             .enumerate()
         {
-            let path = format!("{field}[{ordinal}]");
+            let path = site(ordinal).path().unwrap_or_default();
             let index = item.get("sourceIndex").and_then(Value::as_u64);
             let quote = item
                 .get("quote")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             if let Some(error) = quote_error(sources, index, quote) {
-                failures.push(json!({"path":path,"sourceIndex":index,"quote":quote,"error":error}));
+                failures.push(QuoteCheck {
+                    path: path.clone(),
+                    source_index: index,
+                    quote: quote.to_owned(),
+                    error,
+                });
             }
             // A sentence the writer cited carries its own source and quote.
             for (position, cited) in item
@@ -92,7 +115,12 @@ pub(super) fn quote_checks_in(candidate: &Value, sources: &Table) -> Vec<Value> 
                     .and_then(Value::as_str)
                     .unwrap_or_default();
                 if let Some(error) = quote_error(sources, index, quote) {
-                    failures.push(json!({"path":path,"sourceIndex":index,"quote":quote,"error":format!("Citation {} of this part: {error}", position + 1)}));
+                    failures.push(QuoteCheck {
+                        path: path.clone(),
+                        source_index: index,
+                        quote: quote.to_owned(),
+                        error: format!("Citation {} of this part: {error}", position + 1),
+                    });
                 }
             }
         }
@@ -153,33 +181,6 @@ fn content_terms(text: &str) -> std::collections::HashSet<String> {
         .collect()
 }
 
-/// Whole-sentence byte ranges of `text`; a line break also ends a sentence.
-fn sentence_spans(text: &str) -> Vec<(usize, usize)> {
-    let characters: Vec<(usize, char)> = text.char_indices().collect();
-    let mut spans = Vec::new();
-    let mut start = 0;
-    for (position, (offset, character)) in characters.iter().enumerate() {
-        let ends = match character {
-            '\n' => true,
-            '.' | '!' | '?' => characters
-                .get(position + 1)
-                .is_none_or(|(_, next)| next.is_whitespace()),
-            _ => false,
-        };
-        if ends {
-            let end = offset + character.len_utf8();
-            if !text[start..end].trim().is_empty() {
-                spans.push((start, end));
-            }
-            start = end;
-        }
-    }
-    if !text[start..].trim().is_empty() {
-        spans.push((start, text.len()));
-    }
-    spans
-}
-
 /// The run of one to four whole sentences of `excerpt` that shares the largest
 /// share of `target`'s terms and passes the quote rules. This chooses
 /// provenance text for a citation, never evidence: every factual claim is
@@ -190,7 +191,7 @@ fn nearest_passage_span(excerpt: &str, target: &str) -> Option<(f64, usize, Stri
     if wanted.is_empty() {
         return None;
     }
-    let spans = sentence_spans(excerpt);
+    let spans = sentences(excerpt);
     let mut best: Option<(f64, usize, String)> = None;
     for first in 0..spans.len() {
         for last in first..spans.len().min(first + 4) {

@@ -143,10 +143,7 @@ fn lesson_citations_match_the_published_source_index_and_quote_rules() {
     let checks = lesson_quote_checks(&candidate, &context());
     assert_eq!(checks.len(), 1);
     assert_eq!(
-        checks
-            .first()
-            .and_then(|v| v.get("path"))
-            .and_then(Value::as_str),
+        checks.first().map(|check| check.path.as_str()),
         Some("questions[0]")
     );
 }
@@ -230,10 +227,23 @@ fn reanchoring_prefers_the_quote_then_the_item_and_never_invents_a_relation() {
 }
 
 #[tokio::test]
-async fn an_invalid_repaired_quotation_stops_before_more_model_review() {
-    let invalid = lesson("An invented quotation that does not appear in the selected source.");
+async fn a_repaired_quotation_that_is_still_invalid_is_repaired_again() {
+    const FIRST: &str = "An invented quotation that does not appear in the selected source.";
+    const SECOND: &str = "A different invented quotation that is absent from the selected source.";
+    let edit = |before: &str, after: &str| {
+        json!({"edits":[{"path":"/blocks/0/quote","before":before,"after":after}]}).to_string()
+    };
     let model = ScriptedModel {
-        outputs: Mutex::new(vec![approval().to_string(), json!({"edits":[{"path":"/blocks/0/quote","before":"An invented quotation that does not appear in the selected source.","after":"A different invented quotation that is absent from the selected source."}]}).to_string()].into()),
+        outputs: Mutex::new(
+            vec![
+                approval().to_string(),
+                edit(FIRST, SECOND),
+                approval().to_string(),
+                edit(SECOND, EXCERPT),
+                approval().to_string(),
+            ]
+            .into(),
+        ),
         prompts: Mutex::new(Vec::new()),
     };
     let result = review_and_repair(
@@ -241,13 +251,11 @@ async fn an_invalid_repaired_quotation_stops_before_more_model_review() {
         LESSON_REPAIR_SYSTEM,
         &context().to_string(),
         &json!({"type":"object"}),
-        invalid.to_string(),
+        lesson(FIRST).to_string(),
         4000,
     )
     .await;
-    assert!(result.is_err_and(|error| error
-        .to_string()
-        .contains("revised lesson contains 1 source quotation")));
+    assert!(result.is_ok(), "{result:?}");
 }
 
 const REPLICATION: &str =
@@ -263,11 +271,8 @@ fn a_cited_sentences_quote_is_checked_like_the_sections() {
         json!("An invented quotation that does not appear in the selected source.");
     let checks = lesson_quote_checks(&candidate, &context());
     assert_eq!(checks.len(), 1);
-    assert_eq!(checks[0]["path"], "blocks[0]");
-    assert!(checks[0]["error"]
-        .as_str()
-        .unwrap()
-        .starts_with("Citation 1 of this part:"));
+    assert_eq!(checks[0].path, "blocks[0]");
+    assert!(checks[0].error.starts_with("Citation 1 of this part:"));
 
     // A citation of a source the lesson was not given is refused too.
     candidate["blocks"][0]["citations"][0] =
@@ -329,11 +334,8 @@ fn a_citation_the_repair_appends_is_checked_against_its_source_like_any_other() 
         &context(),
     );
     assert_eq!(refused.len(), 1);
-    assert_eq!(refused[0]["path"], "blocks[0]");
-    assert!(refused[0]["error"]
-        .as_str()
-        .unwrap()
-        .starts_with("Citation 1 of this part:"));
+    assert_eq!(refused[0].path, "blocks[0]");
+    assert!(refused[0].error.starts_with("Citation 1 of this part:"));
 }
 
 #[tokio::test]
@@ -389,4 +391,16 @@ async fn a_repair_that_goes_wrong_in_one_block_still_applies_the_edits_of_the_ot
         "the repair is asked for once"
     );
     Ok(())
+}
+
+#[test]
+fn reanchoring_keeps_a_sentence_whole_across_an_abbreviation() {
+    let authoring = json!({"sources":[{"sourceIndex":0,
+        "excerpt":"Most teams pick Rust for their services vs. Go and Python. Both compile fast."}]});
+    let mut candidate = json!({"blocks":[{"body":"Unrelated.","sourceIndex":0,"quote":"Teams choose Rust for their services"}],"questions":[]});
+    assert_eq!(reanchor_lesson_quotes(&mut candidate, &authoring), 1);
+    assert_eq!(
+        candidate["blocks"][0]["quote"],
+        "Most teams pick Rust for their services vs. Go and Python."
+    );
 }

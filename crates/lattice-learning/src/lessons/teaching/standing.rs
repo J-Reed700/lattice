@@ -8,11 +8,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::dto::LearningSourceDto;
 use crate::review_findings::{
     sentences_in, sentences_of, site_sha256, subject_of, FindingId, FindingSite, Held,
     ReviewFinding,
 };
-use crate::teaching_review::{label, passages_of, Asked, Judged, Scope};
+use crate::teaching_review::{passages_of, Asked, Judged, Scope};
+use lattice_core::shared::hash::sha256_hex;
 
 /// What the reviewer is asked in one pass.
 pub(super) struct Round {
@@ -37,12 +39,22 @@ impl Round {
 }
 
 /// Each reference's id and the digest of its excerpt.
-pub(super) type Versions = Vec<(String, String)>;
+pub(crate) type Versions = Vec<(String, String)>;
+
+/// Each source's id and the digest of its excerpt, sorted.
+pub(crate) fn versions(sources: &[LearningSourceDto]) -> Versions {
+    let mut versions: Versions = sources
+        .iter()
+        .map(|source| (source.id.clone(), sha256_hex(&source.excerpt)))
+        .collect();
+    versions.sort();
+    versions
+}
 
 /// Whether a review reached under the references `recorded` still stands
 /// with `current` ones: a reference added does not unsettle it, one changed or
 /// removed does. The one rule for it, for every review kept across references.
-pub(super) fn references_hold(recorded: &[(String, String)], current: &[(String, String)]) -> bool {
+pub(crate) fn references_hold(recorded: &[(String, String)], current: &[(String, String)]) -> bool {
     recorded.iter().all(|version| current.contains(version))
 }
 
@@ -332,7 +344,7 @@ impl Standing {
                     .is_some_and(|also| self.changed(candidate, also));
             if !changed {
                 tracing::info!(
-                    part = %label(site_of(&finding)),
+                    part = %site_of(&finding).label(),
                     "A new finding is about text the reviewer had already judged and is not kept"
                 );
                 continue;

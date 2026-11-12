@@ -1,6 +1,8 @@
 //! Split a section body along its own structure: paragraphs, list items,
 //! fenced code and tables. Separators belong to the passage before them.
 
+use lattice_core::shared::text::segmentation::{code_fences, CodeFence};
+
 /// The indent of a Markdown list item line, or `None` for any other line.
 fn list_indent(line: &str) -> Option<usize> {
     let text = line.trim_start_matches([' ', '\t']);
@@ -23,14 +25,17 @@ fn list_indent(line: &str) -> Option<usize> {
 }
 
 pub(super) fn split(body: &str) -> Vec<&str> {
+    let wholes: Vec<_> = code_fences(body).iter().map(CodeFence::whole).collect();
     let mut passages = Vec::new();
     let (mut start, mut position) = (0, 0);
-    let mut fence: Option<char> = None;
     let (mut has_text, mut after_blank, mut in_table) = (false, false, false);
     let mut item_indent: Option<usize> = None;
     for line in body.split_inclusive('\n') {
         let text = line.trim();
-        if fence.is_none() {
+        let inside = wholes
+            .iter()
+            .any(|whole| whole.start < position && position < whole.end);
+        if !inside {
             if text.is_empty() {
                 after_blank = true;
             } else {
@@ -52,18 +57,6 @@ pub(super) fn split(body: &str) -> Vec<&str> {
                 after_blank = false;
                 in_table = table;
             }
-        }
-        let marker = if text.starts_with("```") {
-            Some('`')
-        } else if text.starts_with("~~~") {
-            Some('~')
-        } else {
-            None
-        };
-        match (fence, marker) {
-            (None, Some(m)) => fence = Some(m),
-            (Some(open), Some(m)) if open == m => fence = None,
-            _ => {}
         }
         position += line.len();
     }

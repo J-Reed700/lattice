@@ -9,9 +9,21 @@ use super::{
 };
 use crate::lessons::structured_call::{self, CallKind, ReasonFirst};
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::{application::ports::LLMPort, shared::error::Result};
+use lattice_core::{
+    application::ports::LLMPort,
+    application::services::model_contract::{Contract, ContractCall, ContractId, PromptInput},
+    shared::error::Result,
+};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
+
+/// The confirming read of one finding of the check.
+pub(crate) struct LessonContractConfirm;
+
+impl Contract for LessonContractConfirm {
+    const ID: ContractId = ContractId::new("lesson-contract-confirm");
+    type Input = PromptInput;
+}
 
 pub(crate) const PLANNED_TASK: &str = "Confirm that the lesson teaches a planned item";
 pub(crate) const USE_TASK: &str = "Confirm that the lesson teaches what a part uses";
@@ -352,8 +364,13 @@ async fn ask<T: DeserializeOwned + Serialize>(
     {
         return Ok(saved);
     }
+    let call = ContractCall::of::<LessonContractConfirm>(&PromptInput {
+        system: SYSTEM.to_owned(),
+        prompt: prompt.clone(),
+    })?;
     let answer = structured_call::complete_checked(
         llm,
+        &call,
         SYSTEM,
         prompt,
         schema,

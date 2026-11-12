@@ -8,7 +8,10 @@ use crate::review_findings::{FindingSite, ReviewFinding};
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
     application::ports::LLMPort,
+    application::services::model_contract::{Contract, ContractCall, ContractId, PromptInput},
+    protocol,
     shared::error::{AppError, Result},
+    shared::protocol::Protocol,
 };
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
@@ -149,7 +152,15 @@ pub(super) fn apply(
     }
 }
 
-const REPAIR_POLICY: &str = "teaching-repair-v3";
+const REPAIR_POLICY: Protocol = protocol!("teaching-repair", 3);
+
+/// The repair of a lesson's findings.
+pub(crate) struct TeachingRepair;
+
+impl Contract for TeachingRepair {
+    const ID: ContractId = ContractId::new("teaching-repair");
+    type Input = PromptInput;
+}
 
 /// What text a repair adds or changes is held to, beyond the finding it is for.
 const KEPT_TO_THE_CONTRACT: &str =
@@ -290,10 +301,15 @@ pub(super) async fn ask(
         schema,
         output_tokens: request.output_tokens,
     };
-    let result = writer_excerpts::complete(llm, &wr, excerpts.as_ref(), progress, None, |raw| {
-        form.accept(request, raw).map(|()| raw.to_owned())
-    })
-    .await;
+    let call = ContractCall::of::<TeachingRepair>(&PromptInput {
+        system: system.clone(),
+        prompt: Value::Object(prompt.clone()).to_string(),
+    })?;
+    let result =
+        writer_excerpts::complete(llm, &call, &wr, excerpts.as_ref(), progress, None, |raw| {
+            form.accept(request, raw).map(|()| raw.to_owned())
+        })
+        .await;
     match &result {
         Ok(raw) => crate::lesson_drafts::record_checkpoint(&key, json!({"answer": raw})).await?,
         Err(AppError::ModelAnswerUnusable(reason)) => {
