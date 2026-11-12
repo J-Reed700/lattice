@@ -5,7 +5,7 @@
 
 use super::fields::field_text;
 use super::located::located_quote;
-use super::{stand_together, ClaimLedger, Place};
+use super::{is_example, stand_together, ClaimLedger, Place};
 use lattice_core::domain::learning::acceptance::Goal;
 use lattice_core::domain::learning::claim_review::{
     span_of, ClaimEvent, ClaimId, ClaimLedgerEntry, RepairOutcome,
@@ -24,9 +24,10 @@ pub(in crate::lessons::content_verification) enum CutOf<'t> {
     /// One narrowing rewrite by the model takes the statement out of its
     /// sentence and keeps the others; nothing is cut this round.
     Narrow,
-    /// Everything the statement's quote touches: its narrowing was not
-    /// applied.
-    Whole,
+    /// No cut is made: the statement is unknown, or its narrowing was asked and
+    /// not applied. The statement ends Unverified; when it stands in a question
+    /// the lesson can lose, its question goes instead.
+    Refused,
 }
 
 /// Whether a narrowing rewrite of the statement of `entry` was asked and not
@@ -112,11 +113,7 @@ impl ClaimLedger {
             .iter()
             .filter(|other| other.claim_id() != claim_id)
             .filter(|other| {
-                !other.state().is_gone()
-                    && !self
-                        .examples
-                        .values()
-                        .any(|example| example == other.claim_id())
+                !other.state().is_gone() && !is_example(other)
             })
             .filter(|other| other.location().unit_index == unit && other.location().field == field)
             .any(|other| {
@@ -137,7 +134,7 @@ impl ClaimLedger {
     /// it, which `claim_sentence` names in the quote's place in the field,
     /// when no other live statement stands on it. Otherwise, while its
     /// narrowing is unspent, one narrowing rewrite; and once a narrowing was
-    /// asked and not applied, everything its quote touches. The one decision
+    /// asked and not applied, no cut at all. The one decision
     /// the repair's records and request and the last attempt all read.
     pub(in crate::lessons::content_verification) fn cut_of<'t>(
         &self,
@@ -145,7 +142,7 @@ impl ClaimLedger {
         text: &'t str,
     ) -> CutOf<'t> {
         let Some(entry) = self.entry(claim_id) else {
-            return CutOf::Whole;
+            return CutOf::Refused;
         };
         let place = entry.location();
         let alone = span_of(text, &place.quote)
@@ -155,7 +152,7 @@ impl ClaimLedger {
             .filter(|sentence| !self.shares_sentence(claim_id, text, sentence));
         match alone {
             Some(sentence) => CutOf::Sentence(sentence),
-            None if narrowing_spent(entry) => CutOf::Whole,
+            None if narrowing_spent(entry) => CutOf::Refused,
             None => CutOf::Narrow,
         }
     }

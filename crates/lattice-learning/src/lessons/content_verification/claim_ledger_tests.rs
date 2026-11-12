@@ -5,7 +5,7 @@
 //! verdicts are never re-litigated and are labelled examples of the checker's
 //! accuracy (§15).
 use super::acceptance_switch_tests::{
-    claim, local_check, open, stood, walk, CUTTING, REWRITING, SOURCED,
+    claim, local_check, open, stood, walk, REWRITING, SOURCED,
 };
 use super::class_checks_tests::Classes;
 use super::*;
@@ -1669,86 +1669,6 @@ async fn a_failed_claim_sharing_its_sentence_with_a_verified_one_tells_its_rewri
         .find(|record| record.claim_id == verified)
         .unwrap();
     assert_eq!(rider.rides_on.as_ref(), Some(&shared));
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_claim_that_passed_on_a_sentence_cut_for_another_is_removed_by_the_machine() -> Result<()>
-{
-    let model = Model::new();
-    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
-    let overstated = "Mitochondria produce all of a cell's ATP.";
-    let before = cell_lesson(CELL);
-    let report = pass_report(sourced(vec![
-        passage_finding(CELL, ATP, true, CELL_SOURCE),
-        passage_finding(CELL, overstated, false, CELL_SOURCE),
-    ]));
-    let ids = identify_findings(&mut ledger, &before, &report).await?;
-    check_findings(&mut ledger, &ids, &report.findings).await?;
-    let (verified, shared) = (ids[0].clone(), ids[1].clone());
-    // The failed claim has had its rewrite and stands at its cut.
-    walk(&mut ledger, &shared, Class::Sourced, &CUTTING).await?;
-    ledger
-        .append(
-            &shared,
-            ClaimEvent::RepairAttempted {
-                attempt: 1,
-                escalated: false,
-                before: ATP_SENTENCE.into(),
-                after: None,
-                outcome: RepairOutcome::Rejected {
-                    reason: "unusable".into(),
-                },
-                goal: None,
-            },
-        )
-        .await?;
-    let claim_ledger::Decision::Repair(targets) = ledger.decide(&StandardPolicy::new(), &[]) else {
-        panic!("the failed claim is repaired");
-    };
-    assert_eq!(targets, std::slice::from_ref(&shared));
-    assert!(ledger
-        .entry(&shared)
-        .unwrap()
-        .next_machine_repair()
-        .is_some_and(|repair| repair.last));
-
-    // Its last attempt cuts the sentence: no repair record rides on it, and
-    // the claim that passed goes with the sentence.
-    ledger
-        .begin_repairs(&StandardPolicy::new(), &before, &targets)
-        .await?;
-    assert_eq!(ledger.pending.repairs.len(), 1);
-    let cut = CELL.replace(&format!("{ATP_SENTENCE} "), "");
-    identify_findings(&mut ledger, &cell_lesson(&cut), &pass_report(vec![])).await?;
-
-    for id in [&shared, &verified] {
-        assert!(
-            matches!(
-                ledger.entry(id).unwrap().state(),
-                ClaimState::Removed {
-                    by: Actor::Machine,
-                    ..
-                }
-            ),
-            "{:?}",
-            ledger.entry(id).unwrap().state()
-        );
-    }
-    assert_eq!(
-        repairs(ledger.entry(&shared).unwrap()),
-        vec![
-            (
-                1,
-                false,
-                RepairOutcome::Rejected {
-                    reason: "unusable".into()
-                }
-            ),
-            (2, true, RepairOutcome::Removed)
-        ]
-    );
-    assert!(repairs(ledger.entry(&verified).unwrap()).is_empty());
     Ok(())
 }
 

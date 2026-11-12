@@ -281,7 +281,7 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
                 narrowed.push(id);
                 continue;
             }
-            if matches!(decision, Some(CutOf::Whole)) && ledger.is_statement(&id) {
+            if matches!(decision, Some(CutOf::Refused)) {
                 if let (true, Some(label)) = (in_question, label) {
                     if !ledger.cuts.going.contains_key(&place.unit_index) {
                         asked_to_go.push(place.unit_index);
