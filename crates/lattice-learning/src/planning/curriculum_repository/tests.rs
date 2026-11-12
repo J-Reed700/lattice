@@ -1474,3 +1474,25 @@ async fn ahead_refuses_a_lesson_of_another_course_and_a_draft_course() -> Result
     assert!(repo.jobs(&draft.summary.id).await?.is_empty());
     Ok(())
 }
+
+#[tokio::test]
+async fn an_oversized_job_request_is_refused_before_it_is_read() -> Result<()> {
+    let pool = pool().await?;
+    let program = active_program(&pool).await?;
+    let error = LearningCurriculumRepository::new(pool.clone())
+        .start_lesson_job(&StartLearningGenerationJobRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            expected_revision: program.summary.revision,
+            kind: LearningGenerationJobKind::LessonPreparation,
+            request_json: "x".repeat(70 * 1024),
+            progress_total: 1,
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, AppError::InvalidInput(message) if message == "Generation job input is too large."),
+        "{error}"
+    );
+    Ok(())
+}
