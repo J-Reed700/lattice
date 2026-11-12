@@ -166,7 +166,7 @@ pub(crate) struct AnswerClaim {
 #[serde(deny_unknown_fields)]
 #[cfg_attr(
     any(test, feature = "test-support"),
-    derive(serde::Serialize, Debug, PartialEq)
+    derive(serde::Serialize, Debug, PartialEq, Clone)
 )]
 pub(crate) struct AnswerSubject {
     pub(crate) name: String,
