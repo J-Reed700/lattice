@@ -1858,6 +1858,45 @@ async fn a_cut_that_would_leave_a_section_fewer_than_two_teaching_sentences_is_n
     Ok(())
 }
 
+/// A statement whose cut was withdrawn ended by the policy's cut step, with its
+/// repair closed as refused.
+fn assert_cut_withdrawn(ledger: &claim_ledger::ClaimLedger, id: &ClaimId) {
+    let entry = ledger.entry(id).unwrap();
+    let steps = entry.steps();
+    assert!(
+        matches!(
+            steps.last(),
+            Some((
+                Taken {
+                    step: Step::Cut,
+                    outcome: Outcome::CannotCut
+                },
+                Then::End(End::Unverified)
+            ))
+        ),
+        "{steps:?}"
+    );
+    let closed = entry
+        .events()
+        .iter()
+        .rev()
+        .find_map(|record| match &record.event {
+            ClaimEvent::RepairAttempted {
+                escalated, outcome, ..
+            } => Some((*escalated, outcome.clone())),
+            _ => None,
+        });
+    assert_eq!(
+        closed,
+        Some((
+            true,
+            RepairOutcome::Rejected {
+                reason: "The sentence could not be cut out.".into()
+            }
+        ))
+    );
+}
+
 const WIDE_A: &str = "A table lists its rows in order.";
 const WIDE_B: &str = "A table names each column once.";
 const WIDE_C: &str = "A table keeps one value in each cell.";
@@ -1920,6 +1959,7 @@ async fn a_cut_that_thins_one_section_is_held_back_while_a_cut_in_another_is_mad
     assert_eq!(context["candidate"]["blocks"][1]["body"], thin);
     let state = ledger.entry(&held).unwrap().state();
     assert!(matches!(state, ClaimState::Unverified { .. }), "{state:?}");
+    assert_cut_withdrawn(&ledger, &held);
     assert_eq!(
         context["candidate"]["blocks"][2]["body"],
         format!("{WIDE_D} {MORE}")
@@ -1984,6 +2024,7 @@ async fn statements_whose_cuts_leave_no_claim_are_published_not_verified_and_the
     assert_eq!(context["candidate"]["blocks"][1]["body"], body);
     let state = ledger.entry(&id).unwrap().state();
     assert!(matches!(state, ClaimState::Unverified { .. }), "{state:?}");
+    assert_cut_withdrawn(&ledger, &id);
     assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
     Ok(())
 }
