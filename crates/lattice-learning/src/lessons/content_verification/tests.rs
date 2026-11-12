@@ -1957,8 +1957,7 @@ async fn publication_requires_current_report_and_source_and_rolls_back_on_reject
     sqlx::query("UPDATE learning_source_library SET deleted_at=1 WHERE program_id=?")
         .bind(&program.summary.id)
         .execute(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     assert!(repo
         .prepare(
             &program.summary.id,
@@ -1971,8 +1970,7 @@ async fn publication_requires_current_report_and_source_and_rolls_back_on_reject
     sqlx::query("UPDATE learning_source_library SET deleted_at=NULL WHERE program_id=?")
         .bind(&program.summary.id)
         .execute(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     repo.prepare(
         &program.summary.id,
         lesson_id,
@@ -1990,8 +1988,7 @@ async fn publication_requires_current_report_and_source_and_rolls_back_on_reject
     )
     .bind(lesson_id)
     .fetch_one(&pool)
-    .await
-    .map_err(|e| AppError::Database(e.to_string()))?;
+    .await?;
     assert!(report_json.contains("\"lexical\""));
     assert!(!serde_json::to_string(&saved)?.contains("checker_model"));
     Ok(())
@@ -2533,7 +2530,7 @@ async fn evidence_view_hides_assessment_claims_and_marks_source_changes() -> Res
     let source = &program.sources[0];
     let saved = repo.verification_sources(&program.summary.id).await?;
     let report = json!({"policy":POLICY,"lesson_id":lesson.id,"content_sha256":"fixture","checked_at":1,"checker_model":"fixture","sources":[{"id":source.id,"sha256":sha256_hex(&saved[0].excerpt)}],"findings":[{"unit":0,"quote":"PRIVATE QUOTE","statement":"PRIVATE ANSWER KEY","verdict":"supported","reason":"PRIVATE RATIONALE","evidence":[],"supporting_quote":null}],"coverage":[],"coverage_audit":[],"executions":[],"issues":[],"retrieval_mode":"hybrid","embedding_model":null,"unexecuted_languages":[]});
-    sqlx::query("INSERT INTO learning_lesson_verifications(lesson_id,program_id,policy,content_sha256,report_json,checked_at) VALUES(?,?,?,?,?,?)").bind(&lesson.id).bind(&program.summary.id).bind(POLICY.as_str()).bind("fixture").bind(report.to_string()).bind(1_i64).execute(&pool).await.map_err(|e|AppError::Database(e.to_string()))?;
+    sqlx::query("INSERT INTO learning_lesson_verifications(lesson_id,program_id,policy,content_sha256,report_json,checked_at) VALUES(?,?,?,?,?,?)").bind(&lesson.id).bind(&program.summary.id).bind(POLICY.as_str()).bind("fixture").bind(report.to_string()).bind(1_i64).execute(&pool).await?;
     let view = crate::lesson_evidence::get(&db, &program.summary.id, &lesson.id)
         .await?
         .unwrap();
@@ -2543,8 +2540,7 @@ async fn evidence_view_hides_assessment_claims_and_marks_source_changes() -> Res
     sqlx::query("UPDATE learning_source_library SET deleted_at=1 WHERE program_id=?")
         .bind(&program.summary.id)
         .execute(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let view = crate::lesson_evidence::get(&db, &program.summary.id, &lesson.id)
         .await?
         .unwrap();

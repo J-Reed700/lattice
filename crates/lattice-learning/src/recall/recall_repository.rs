@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{
     operations::Operation,
-    persistence::{db, encode as json, hash as payload_hash, now},
+    persistence::{encode as json, hash as payload_hash, now},
     portability_dto::*,
     references::course_index::CourseIndexes,
     source_library::LearningSourceLibraryRepository,
@@ -77,23 +77,21 @@ impl LearningRecallRepository {
     /// Give cards accepted into the program deck their recall profile and
     /// first content version.
     async fn bootstrap_deck_cards(&self, program_id: &str) -> Result<()> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let deck_id: Option<String> =
             sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
                 .bind(program_id)
                 .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?
+                .await?
                 .flatten();
         let Some(deck_id) = deck_id else {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(());
         };
         let rows = sqlx::query("SELECT c.* FROM study_cards c LEFT JOIN learning_recall_card_profiles p ON p.card_id=c.id WHERE c.deck_id=? AND p.card_id IS NULL ORDER BY c.id")
             .bind(&deck_id)
             .fetch_all(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         for row in rows {
             let card_id: String = row.get("id");
             let study_format = super::study_repository::parse_card_format(row.get("format"))?;
@@ -130,8 +128,7 @@ impl LearningRecallRepository {
                 .bind(timestamp)
                 .bind(timestamp)
                 .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
             sqlx::query("INSERT INTO learning_recall_card_versions(card_id,revision,format,prompt_json,answer_json,source_version_ids_json,change_reason,created_at) VALUES(?,1,?,?,?,?,?,?)")
                 .bind(&card_id)
                 .bind(format_name(format))
@@ -141,10 +138,9 @@ impl LearningRecallRepository {
                 .bind("Accepted into the program's recall deck")
                 .bind(timestamp)
                 .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         }
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     async fn card_source_versions(
@@ -159,8 +155,7 @@ impl LearningRecallRepository {
         .bind(program_id)
         .bind(card_id)
         .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
         let ids: Vec<String> = if let Some(value) = origin {
             serde_json::from_str(&value).map_err(|error| {
                 AppError::InvalidState(format!("Invalid card source links: {error}"))
@@ -176,8 +171,7 @@ impl LearningRecallRepository {
             .bind(program_id)
             .bind(&id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
             if version_exists.is_some() {
                 result.push(id);
             }
@@ -191,8 +185,7 @@ async fn lock_active_program(tx: &mut WriteTx, program_id: &str) -> Result<()> {
         sqlx::query("UPDATE learning_programs SET status=status WHERE id=? AND status='active'")
             .bind(program_id)
             .execute(&mut **tx)
-            .await
-            .map_err(db)?;
+            .await?;
     if result.rows_affected() != 1 {
         return Err(AppError::NotFound(
             "Active learning program not found.".into(),

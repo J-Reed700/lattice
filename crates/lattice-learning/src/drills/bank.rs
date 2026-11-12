@@ -4,7 +4,7 @@
 use super::repository::StoredDrill;
 use super::schedules;
 use super::spec::DrillSpec;
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use lattice_core::domain::learning::drills::Material;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Database;
@@ -48,9 +48,9 @@ impl<'a> Shelf<'a> {
 /// asking again with the same seed finds the same job, and the same seed with another spec is refused. The caller
 /// tells the job runtime once the job is committed.
 pub async fn queue_build(database: &Database, spec: &DrillSpec, seed: &str) -> Result<String> {
-    let mut transaction = database.begin_write().await.map_err(db)?;
+    let mut transaction = database.begin_write().await?;
     let id = queue_build_in(&mut transaction, spec, seed).await?;
-    transaction.commit().await.map_err(db)?;
+    transaction.commit().await?;
     Ok(id)
 }
 
@@ -66,9 +66,9 @@ pub async fn ensure_build(
     lines: u32,
     count: usize,
 ) -> Result<String> {
-    let mut transaction = database.begin_write().await.map_err(db)?;
+    let mut transaction = database.begin_write().await?;
     if let Some(found) = under_way_in(&mut transaction, shelf, lesson).await? {
-        transaction.commit().await.map_err(db)?;
+        transaction.commit().await?;
         return Ok(found.job_id);
     }
     let at = now();
@@ -91,7 +91,7 @@ pub async fn ensure_build(
     let spec = spec_in(&mut transaction, shelf, lesson_id, lines, count, &[], at).await?;
     let seed = format!("start:{}", uuid::Uuid::new_v4());
     let id = queue_build_in(&mut transaction, &spec, &seed).await?;
-    transaction.commit().await.map_err(db)?;
+    transaction.commit().await?;
     Ok(id)
 }
 
@@ -133,8 +133,8 @@ pub async fn take(
     shelf: Shelf<'_>,
     lesson: Option<&str>,
 ) -> Result<Option<Taken>> {
-    let mut transaction = database.begin_write().await.map_err(db)?;
+    let mut transaction = database.begin_write().await?;
     let taken = take_in(&mut transaction, shelf, lesson).await?;
-    transaction.commit().await.map_err(db)?;
+    transaction.commit().await?;
     Ok(taken)
 }

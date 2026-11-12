@@ -2,7 +2,6 @@
 //! last checked what the learner took in.
 
 use super::repository::assistant_replies;
-use crate::persistence::db;
 use futures::TryStreamExt;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::Database;
@@ -20,7 +19,7 @@ fn asks_the_learner(reply: &str) -> bool {
 /// Tutor replies since the last one that asked the learner something, newest
 /// first, read only as far back as that one.
 pub(super) async fn replies_since_check(database: &Database, conversation_id: &str) -> Result<i64> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let mut replies = assistant_replies(&mut read, conversation_id);
     let mut since = 0;
     while let Some(reply) = replies.try_next().await? {
@@ -30,7 +29,7 @@ pub(super) async fn replies_since_check(database: &Database, conversation_id: &s
         since += 1;
     }
     drop(replies);
-    read.commit().await.map_err(db)?;
+    read.commit().await?;
     Ok(since)
 }
 

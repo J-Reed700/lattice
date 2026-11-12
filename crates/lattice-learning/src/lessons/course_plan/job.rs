@@ -5,7 +5,6 @@
 use super::repository::{self, content_revision, latest_attempt, outline_lessons, saved_entries};
 use super::{ensure, outline_revision};
 use crate::lessons::course_setup::CourseSetups;
-use crate::persistence::db;
 use crate::quiz_bank_jobs::ModelLoader;
 use crate::repository::LearningRepository;
 use lattice_core::shared::error::{AppError, Result};
@@ -45,7 +44,7 @@ fn digest(text: &str) -> String {
 /// `None` when every lesson already has its topics. The caller tells the
 /// runtime once the job commits.
 pub async fn queue(database: &Database, program_id: &str) -> Result<Option<String>> {
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     let (status, revision) = repository::program_state(&mut tx, program_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
@@ -114,7 +113,7 @@ pub async fn queue(database: &Database, program_id: &str) -> Result<Option<Strin
     if let (true, Some(old)) = (created, copy_from) {
         repository::copy_job_row(&mut tx, &id, &old).await?;
     }
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(Some(id))
 }
 

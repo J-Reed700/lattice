@@ -2,7 +2,7 @@
 use crate::dto::*;
 use crate::{
     operations::Operation,
-    persistence::{db, hash, now},
+    persistence::{hash, now},
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::{Database, WriteTx};
@@ -141,12 +141,11 @@ impl LearningCanvasRepository {
 
     pub async fn workspace(&self, program_id: &str) -> Result<LearningCanvasWorkspaceDto> {
         validate_uuid(program_id, "program")?;
-        let mut tx = self.db.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await?;
         let exists: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_one(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         if exists == 0 {
             return Err(AppError::NotFound("Learning program not found.".into()));
         }
@@ -155,18 +154,17 @@ impl LearningCanvasRepository {
         )
         .bind(program_id)
         .fetch_all(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
         if rows.is_empty() {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(LearningCanvasWorkspaceDto {
                 program_id: program_id.into(),
                 canvases: Vec::new(),
             });
         }
         let snapshot_rows = sqlx::query("SELECT * FROM learning_canvas_snapshots WHERE program_id=? ORDER BY canvas_id,created_at,id")
-            .bind(program_id).fetch_all(&mut *tx).await.map_err(db)?;
-        tx.commit().await.map_err(db)?;
+            .bind(program_id).fetch_all(&mut *tx).await?;
+        tx.commit().await?;
         let mut snapshots_by_canvas: HashMap<String, Vec<LearningCanvasSnapshotDto>> =
             HashMap::new();
         for row in snapshot_rows {
@@ -201,7 +199,7 @@ impl LearningCanvasRepository {
         validate_text(&request.title, "Canvas title", 120, true)?;
         validate_text(&request.description, "Canvas description", 2000, false)?;
         let payload_hash = hash(&(request, &scene.json))?;
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         lock_active_program(&mut tx, &request.program_id).await?;
         if operation(
             &request.operation_id,
@@ -213,7 +211,7 @@ impl LearningCanvasRepository {
         .seen(&mut tx)
         .await?
         {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(());
         }
         validate_active_program(&mut tx, &request.program_id, request.lesson_id.as_deref()).await?;
@@ -221,8 +219,7 @@ impl LearningCanvasRepository {
             sqlx::query_scalar("SELECT count(*) FROM learning_canvases WHERE id=?")
                 .bind(&request.canvas_id)
                 .fetch_one(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         if canvas_exists != 0 {
             return Err(AppError::InvalidInput(
                 "Canvas ID is already in use.".into(),
@@ -231,7 +228,7 @@ impl LearningCanvasRepository {
         let created_at = now();
         sqlx::query("INSERT INTO learning_canvases(id,program_id,lesson_id,title,description,scene_json,element_count,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,0,?,?)")
             .bind(&request.canvas_id).bind(&request.program_id).bind(&request.lesson_id).bind(request.title.trim()).bind(request.description.trim()).bind(&scene.json).bind(scene.element_count as i64).bind(created_at).bind(created_at)
-            .execute(&mut *tx).await.map_err(db)?;
+            .execute(&mut *tx).await?;
         operation(
             &request.operation_id,
             &request.program_id,
@@ -247,7 +244,7 @@ impl LearningCanvasRepository {
             },
         )
         .await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     pub async fn save(
@@ -266,7 +263,7 @@ impl LearningCanvasRepository {
             ));
         }
         let payload_hash = hash(&(request, &scene.json))?;
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         lock_active_program(&mut tx, &request.program_id).await?;
         if operation(
             &request.operation_id,
@@ -278,7 +275,7 @@ impl LearningCanvasRepository {
         .seen(&mut tx)
         .await?
         {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(());
         }
         validate_active_program(&mut tx, &request.program_id, None).await?;
@@ -288,7 +285,7 @@ impl LearningCanvasRepository {
             .ok_or_else(|| AppError::InvalidInput("Canvas revision is out of range.".into()))?;
         let result = sqlx::query("UPDATE learning_canvases SET title=?,description=?,scene_json=?,element_count=?,revision=?,updated_at=? WHERE program_id=? AND id=? AND revision=?")
             .bind(request.title.trim()).bind(request.description.trim()).bind(&scene.json).bind(scene.element_count as i64).bind(next).bind(now()).bind(&request.program_id).bind(&request.canvas_id).bind(request.expected_revision)
-            .execute(&mut *tx).await.map_err(db)?;
+            .execute(&mut *tx).await?;
         if result.rows_affected() != 1 {
             return Err(AppError::Conflict(
                 "Canvas changed; reload and retry.".into(),
@@ -309,7 +306,7 @@ impl LearningCanvasRepository {
             },
         )
         .await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     pub async fn create_snapshot(
@@ -327,7 +324,7 @@ impl LearningCanvasRepository {
         }
         validate_text(&request.name, "Snapshot name", 120, true)?;
         let payload_hash = hash(request)?;
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         lock_active_program(&mut tx, &request.program_id).await?;
         if operation(
             &request.operation_id,
@@ -339,7 +336,7 @@ impl LearningCanvasRepository {
         .seen(&mut tx)
         .await?
         {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(());
         }
         validate_active_program(&mut tx, &request.program_id, None).await?;
@@ -354,8 +351,7 @@ impl LearningCanvasRepository {
             sqlx::query_scalar("SELECT count(*) FROM learning_canvas_snapshots WHERE id=?")
                 .bind(&request.snapshot_id)
                 .fetch_one(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         if snapshot_exists != 0 {
             return Err(AppError::InvalidInput(
                 "Snapshot ID is already in use.".into(),
@@ -385,7 +381,7 @@ impl LearningCanvasRepository {
             },
         )
         .await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     pub async fn restore(&self, request: &RestoreLearningCanvasSnapshotRequestDto) -> Result<()> {
@@ -405,7 +401,7 @@ impl LearningCanvasRepository {
             ));
         }
         let payload_hash = hash(request)?;
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         lock_active_program(&mut tx, &request.program_id).await?;
         if operation(
             &request.operation_id,
@@ -417,7 +413,7 @@ impl LearningCanvasRepository {
         .seen(&mut tx)
         .await?
         {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(());
         }
         validate_active_program(&mut tx, &request.program_id, None).await?;
@@ -435,15 +431,13 @@ impl LearningCanvasRepository {
         .bind(&request.canvas_id)
         .bind(&request.snapshot_id)
         .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?
+        .await?
         .ok_or_else(|| AppError::NotFound("Canvas snapshot not found.".into()))?;
         let pre_snapshot_exists: i64 =
             sqlx::query_scalar("SELECT count(*) FROM learning_canvas_snapshots WHERE id=?")
                 .bind(&request.pre_restore_snapshot_id)
                 .fetch_one(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         if pre_snapshot_exists != 0 {
             return Err(AppError::InvalidInput(
                 "Pre-restore snapshot ID is already in use.".into(),
@@ -464,7 +458,7 @@ impl LearningCanvasRepository {
             .ok_or_else(|| AppError::InvalidInput("Canvas revision is out of range.".into()))?;
         let updated = sqlx::query("UPDATE learning_canvases SET title=?,description=?,scene_json=?,element_count=?,revision=?,updated_at=? WHERE program_id=? AND id=? AND revision=?")
             .bind(snapshot.get::<String,_>("title")).bind(snapshot.get::<String,_>("description")).bind(snapshot.get::<String,_>("scene_json")).bind(snapshot.get::<i64,_>("element_count")).bind(next).bind(now()).bind(&request.program_id).bind(&request.canvas_id).bind(revision)
-            .execute(&mut *tx).await.map_err(db)?;
+            .execute(&mut *tx).await?;
         if updated.rows_affected() != 1 {
             return Err(AppError::Conflict(
                 "Canvas changed; reload and retry.".into(),
@@ -485,7 +479,7 @@ impl LearningCanvasRepository {
             },
         )
         .await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 }
 
@@ -498,8 +492,7 @@ async fn validate_active_program(
         sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
     match status.as_deref() {
         None => return Err(AppError::NotFound("Learning program not found.".into())),
         Some("active") => {}
@@ -515,8 +508,7 @@ async fn validate_active_program(
                 .bind(program_id)
                 .bind(lesson_id)
                 .fetch_one(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         if exists == 0 {
             return Err(AppError::NotFound(
                 "Lesson does not belong to this learning program.".into(),
@@ -533,8 +525,7 @@ async fn lock_active_program(tx: &mut WriteTx, program_id: &str) -> Result<()> {
         sqlx::query("UPDATE learning_programs SET status=status WHERE id=? AND status='active'")
             .bind(program_id)
             .execute(&mut **tx)
-            .await
-            .map_err(db)?;
+            .await?;
     if result.rows_affected() == 1 {
         return Ok(());
     }
@@ -542,8 +533,7 @@ async fn lock_active_program(tx: &mut WriteTx, program_id: &str) -> Result<()> {
         sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut **tx)
-            .await
-            .map_err(db)?;
+            .await?;
     match status.as_deref() {
         None => Err(AppError::NotFound("Learning program not found.".into())),
         Some(_) => Err(AppError::InvalidInput(
@@ -588,8 +578,7 @@ async fn canvas_for_update(
         .bind(program_id)
         .bind(canvas_id)
         .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?
+        .await?
         .ok_or_else(|| AppError::NotFound("Canvas not found in this program.".into()))
 }
 
@@ -602,7 +591,7 @@ async fn insert_snapshot(
     canvas: &sqlx::sqlite::SqliteRow,
 ) -> Result<()> {
     sqlx::query("INSERT INTO learning_canvas_snapshots(id,program_id,canvas_id,name,title,description,scene_json,element_count,canvas_revision,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
-        .bind(snapshot_id).bind(program_id).bind(canvas_id).bind(name).bind(canvas.get::<String,_>("title")).bind(canvas.get::<String,_>("description")).bind(canvas.get::<String,_>("scene_json")).bind(canvas.get::<i64,_>("element_count")).bind(canvas.get::<i64,_>("revision")).bind(now()).execute(&mut **tx).await.map_err(db)?;
+        .bind(snapshot_id).bind(program_id).bind(canvas_id).bind(name).bind(canvas.get::<String,_>("title")).bind(canvas.get::<String,_>("description")).bind(canvas.get::<String,_>("scene_json")).bind(canvas.get::<i64,_>("element_count")).bind(canvas.get::<i64,_>("revision")).bind(now()).execute(&mut **tx).await?;
     Ok(())
 }
 

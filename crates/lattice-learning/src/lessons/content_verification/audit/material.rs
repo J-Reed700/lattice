@@ -15,7 +15,6 @@ use super::{AuditPassage, AuditUnit};
 use crate::content_verification::unit_texts;
 use crate::curriculum_repository::LearningCurriculumRepository;
 use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
-use crate::persistence::db;
 use crate::repository::LearningRepository;
 use crate::source_library::workspace_in;
 use lattice_core::shared::persistence::Database;
@@ -106,9 +105,9 @@ async fn passages(
 ) -> Result<HashMap<ClaimId, Vec<AuditPassage>>> {
     let claims = ClaimReviewRepository::new(database.clone());
     let shown = claims.shown_passages(lesson_id).await?;
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let workspace = workspace_in(&mut read, program_id, true).await?;
-    read.commit().await.map_err(db)?;
+    read.commit().await?;
     let titles: HashMap<String, String> = workspace
         .sources
         .into_iter()

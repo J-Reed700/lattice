@@ -732,8 +732,7 @@ async fn a_unit_profiled_before_another_unit_fails_keeps_its_profiles() -> Resul
     assert!(result.is_err(), "the second unit's call failed");
     let saved: Vec<String> = sqlx::query_scalar("SELECT input_sha256 FROM claim_profiles")
         .fetch_all(&pool)
-        .await
-        .map_err(|error| AppError::Database(error.to_string()))?;
+        .await?;
     let first = lattice_core::application::services::source_trust::claim_profile_key(
         claims[0].1,
         &[],
@@ -876,14 +875,13 @@ async fn seed_version(
     id: &str,
     url: &str,
 ) -> Result<()> {
-    let failed = |error: sqlx::Error| AppError::Database(error.to_string());
     let text = format!("{id} states the fact.");
     sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at,added_by) VALUES(?,?,'pasted','seed',NULL,'fixed',?,NULL,0,1,1,'user')")
         .bind(id).bind(program_id).bind(id)
-        .execute(pool).await.map_err(failed)?;
+        .execute(pool).await?;
     sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES(?,?,?,1,'Seed',?,'',?,4,0,'test',1)")
         .bind(id).bind(program_id).bind(id).bind(&text).bind(id)
-        .execute(pool).await.map_err(failed)?;
+        .execute(pool).await?;
     let origin = lattice_core::domain::provenance::Origin::of_url(url)
         .map_err(|error| AppError::InternalError(format!("{error:?}")))?;
     let signals = serde_json::from_value(serde_json::json!({

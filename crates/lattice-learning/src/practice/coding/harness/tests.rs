@@ -2,7 +2,7 @@ use super::fake::{case, sample_spec};
 use super::*;
 use crate::embedded_runtime::LearningBuiltinRuntime;
 use crate::lab_runtime::{LearningLabExecutionResult, LearningLabRunStatus};
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use crate::practical_dto::{LearningPracticalCheckStatus, StartLearningPracticalRunRequestDto};
 use crate::practice::coding::problem::{CaseCompare, CaseStatus, CaseVisibility, ProblemCase};
 use crate::practice::kinds::program::dto::CodingRunScope;
@@ -220,8 +220,7 @@ async fn setup(pool: &SqlitePool, database: &Database) -> Result<Setup> {
     .bind(timestamp)
     .bind(LearningBuiltinRuntime::Python.version())
     .execute(pool)
-    .await
-    .map_err(db)?;
+    .await?;
     let files = [
         ("solution.py", "starter", "def add(a, b):\n    pass\n", 1),
         ("problem/problem.json", "check", "{\"hidden\": true}", 0),
@@ -242,8 +241,7 @@ async fn setup(pool: &SqlitePool, database: &Database) -> Result<Setup> {
             .bind(sha256_hex(content))
             .bind(editable)
             .execute(pool)
-            .await
-            .map_err(db)?;
+            .await?;
     }
     sqlx::query("INSERT INTO learning_simulation_sessions(id,program_id,activity_id,activity_revision,activity_snapshot_json,practice_session_id,operation_id,payload_hash,learner_role,counterpart_role,status,revision,created_at,updated_at) VALUES(?,?,?,0,'{}',NULL,?,'hash','Candidate','Coach','active',0,?,?)")
         .bind(&session_id)
@@ -253,16 +251,14 @@ async fn setup(pool: &SqlitePool, database: &Database) -> Result<Setup> {
         .bind(timestamp)
         .bind(timestamp)
         .execute(pool)
-        .await
-        .map_err(db)?;
+        .await?;
     sqlx::query("INSERT INTO learning_exercise_sessions(id,program_id,activity_id,kind,form,setting,stage,draft_json,created_at) VALUES(?,?,?,'program','build','coached','understand','[]',?)")
         .bind(&session_id)
         .bind(&program_id)
         .bind(&activity_id)
         .bind(timestamp)
         .execute(pool)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(Setup {
         repo,
         program_id,
@@ -323,8 +319,7 @@ async fn running(
     .bind(now())
     .bind(LearningBuiltinRuntime::Python.version())
     .execute(pool)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(PreparedRun {
         dto: setup.repo.run(&run_id).await?,
         execution: PreparedExecution::Builtin {
@@ -494,8 +489,7 @@ async fn a_coding_run_writes_no_evidence_events() -> Result<()> {
         sqlx::query_scalar("SELECT COUNT(*) FROM learning_evidence_events WHERE source_id=?")
             .bind(&prepared.dto.id)
             .fetch_one(&pool)
-            .await
-            .map_err(db)?;
+            .await?;
     assert_eq!(events, 0);
     Ok(())
 }
@@ -587,8 +581,7 @@ async fn each_coding_run_gets_its_own_nonce_and_records_its_session_and_scope() 
         )
         .bind(&request.run_id)
         .fetch_one(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
         assert_eq!(session.as_deref(), Some(setup.session_id.as_str()));
         let expected = match start.scope {
             CodingRunScope::Shown => "shown",

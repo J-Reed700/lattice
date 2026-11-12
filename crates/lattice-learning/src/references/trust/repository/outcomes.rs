@@ -5,7 +5,6 @@ use sqlx::SqliteConnection;
 
 use super::rows::{provenance_from_row, PROVENANCE_COLUMNS};
 use super::{insert_outcome, outcome_from_row};
-use crate::persistence::db;
 
 /// Deletes a claim's outcomes under each of `labels`, on the caller's unit of work.
 pub(in crate::references::trust) async fn delete_for_labels_in(
@@ -18,8 +17,7 @@ pub(in crate::references::trust) async fn delete_for_labels_in(
             .bind(claim_id)
             .bind(label.as_str())
             .execute(&mut **tx)
-            .await
-            .map_err(db)?;
+            .await?;
     }
     Ok(())
 }
@@ -30,8 +28,7 @@ pub(in crate::references::trust) async fn list_in(
 ) -> Result<Vec<OutcomeRecord>> {
     sqlx::query("SELECT id,program_id,lesson_id,claim_id,source_version_id,origin_key,level,claim_kind,decision_sufficient,decision_right,label_source,policy,at FROM source_trust_outcomes ORDER BY at,rowid")
         .fetch_all(&mut *conn)
-        .await
-        .map_err(db)?
+        .await?
         .iter()
         .map(outcome_from_row)
         .collect()
@@ -47,8 +44,7 @@ pub(in crate::references::trust) async fn provenance_in(
     sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(source_version_id)
         .fetch_optional(&mut *conn)
-        .await
-        .map_err(db)?
+        .await?
         .as_ref()
         .map(provenance_from_row)
         .transpose()

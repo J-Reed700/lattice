@@ -7,15 +7,13 @@ use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::{Database, WriteTx};
 use sqlx::{Row, SqliteConnection};
 
-use crate::persistence::db;
-
 /// The course's lessons held for review: waiting for the user, or being
 /// verified.
 pub(in crate::lessons::claim_reviews) async fn held_lessons(
     database: &Database,
     program_id: &str,
 ) -> Result<Vec<String>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let lessons = sqlx::query_scalar(
         "SELECT lesson_id FROM learning_lesson_reviews WHERE program_id=? AND state IN (?,?) ORDER BY opened_at,lesson_id",
     )
@@ -23,9 +21,8 @@ pub(in crate::lessons::claim_reviews) async fn held_lessons(
     .bind(LessonReviewState::NeedsReview.as_str())
     .bind(LessonReviewState::Verifying.as_str())
     .fetch_all(&mut *read)
-    .await
-    .map_err(db)?;
-    read.commit().await.map_err(db)?;
+    .await?;
+    read.commit().await?;
     Ok(lessons)
 }
 
@@ -40,7 +37,7 @@ pub(in crate::lessons::claim_reviews) async fn reviewed_lessons(
     .bind(program_id)
     .fetch_all(&mut *connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The ids of every version of the source.
@@ -55,8 +52,7 @@ pub(in crate::lessons::claim_reviews) async fn source_versions(
     .bind(program_id)
     .bind(source_id)
     .fetch_all(&mut *connection)
-    .await
-    .map_err(db)?
+    .await?
     .into_iter()
     .collect())
 }
@@ -66,9 +62,9 @@ pub(in crate::lessons::claim_reviews) async fn deleted_versions(
     database: &Database,
     program_id: &str,
 ) -> Result<HashSet<String>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let versions = deleted_versions_in(&mut read, program_id).await?;
-    read.commit().await.map_err(db)?;
+    read.commit().await?;
     Ok(versions)
 }
 
@@ -84,8 +80,7 @@ pub(in crate::lessons::claim_reviews) async fn deleted_versions_in(
     )
     .bind(program_id)
     .fetch_all(&mut *connection)
-    .await
-    .map_err(db)?
+    .await?
     .into_iter()
     .collect())
 }
@@ -100,8 +95,7 @@ pub(in crate::lessons::claim_reviews) async fn mark_needs_review(
         .bind(at)
         .bind(lesson_id)
         .execute(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(())
 }
 
@@ -110,20 +104,19 @@ pub(in crate::lessons::claim_reviews) async fn mark_needs_review(
 pub(in crate::lessons::claim_reviews) async fn weighed_lessons(
     database: &Database,
 ) -> Result<Vec<String>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let rows = sqlx::query(
         "SELECT DISTINCT c.lesson_id FROM learning_lesson_claim_events e \
          JOIN learning_lesson_claims c ON c.claim_id = e.claim_id \
          WHERE e.kind = 'standing_assessed' ORDER BY c.lesson_id",
     )
     .fetch_all(&mut *read)
-    .await
-    .map_err(|error| AppError::Database(error.to_string()))?;
-    read.commit().await.map_err(db)?;
+    .await?;
+    read.commit().await?;
     rows.iter()
         .map(|row| {
             row.try_get::<String, _>("lesson_id")
-                .map_err(|error| AppError::Database(error.to_string()))
+                .map_err(AppError::from)
         })
         .collect()
 }

@@ -14,7 +14,6 @@ use super::{
 use crate::dto::LearningProgramDto;
 use crate::lessons::structured_call::complete_checked_request;
 use crate::model_call;
-use crate::persistence::db;
 use crate::repository::LearningRepository;
 use lattice_core::application::ports::llm_port::InferencePriority;
 use lattice_core::application::ports::LLMPort;
@@ -89,7 +88,7 @@ pub async fn edit_entry(
 }
 
 async fn write_edit(database: &Database, request: &EditCoursePlanEntryRequestDto) -> Result<()> {
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     check_in(
         &mut tx,
         &request.program_id,
@@ -107,7 +106,7 @@ async fn write_edit(database: &Database, request: &EditCoursePlanEntryRequestDto
         &request.topics,
     )
     .await?;
-    tx.commit().await.map_err(db)
+    tx.commit().await.map_err(AppError::from)
 }
 
 /// Put back the entry the newest change replaced.
@@ -120,7 +119,7 @@ pub async fn undo_entry(
 }
 
 async fn write_undo(database: &Database, request: &UndoCoursePlanEntryRequestDto) -> Result<()> {
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     check_in(
         &mut tx,
         &request.program_id,
@@ -140,7 +139,7 @@ async fn write_undo(database: &Database, request: &UndoCoursePlanEntryRequestDto
             "There is nothing to undo here.".into(),
         ));
     }
-    tx.commit().await.map_err(db)
+    tx.commit().await.map_err(AppError::from)
 }
 
 fn check_request(request: &ChangeCoursePlanEntriesRequestDto) -> Result<()> {
@@ -179,7 +178,7 @@ pub async fn check_change(
     request: &ChangeCoursePlanEntriesRequestDto,
 ) -> Result<()> {
     check_request(request)?;
-    let mut tx = database.begin_read().await.map_err(db)?;
+    let mut tx = database.begin_read().await?;
     check_in(
         &mut tx,
         &request.program_id,
@@ -263,7 +262,7 @@ async fn saved_plan(
     program: &LearningProgramDto,
     request: &ChangeCoursePlanEntriesRequestDto,
 ) -> Result<Vec<PlannedLesson>> {
-    let mut tx = database.begin_read().await.map_err(db)?;
+    let mut tx = database.begin_read().await?;
     let mut saved = saved_entries(&mut tx, &request.program_id, request.outline_revision).await?;
     Ok(program
         .modules
@@ -278,7 +277,7 @@ async fn write_changes(
     request: &ChangeCoursePlanEntriesRequestDto,
     changed: &[PlannedLesson],
 ) -> Result<()> {
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     check_in(
         &mut tx,
         &request.program_id,
@@ -295,5 +294,5 @@ async fn write_changes(
         )
         .await?;
     }
-    tx.commit().await.map_err(db)
+    tx.commit().await.map_err(AppError::from)
 }

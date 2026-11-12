@@ -23,7 +23,7 @@ use serde_json::Value;
 use super::repository::blocks;
 use super::repository::teaching_findings::{self as table, FindingWrite, Settle, StoredFinding};
 use super::teaching_summary::{derive, passage_shown, sentence_of, Stored};
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use crate::review_findings::{
     site_sha256, unit, FindingId, FindingKey, FindingKind, FindingSite, Held, ReviewFinding,
     SetAside,
@@ -232,7 +232,7 @@ impl TeachingFindingsRepository {
         findings: &[SetAside],
         replace: bool,
     ) -> Result<()> {
-        let mut tx = self.database.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await?;
         let at = now();
         let places = table::place_rows(&mut tx, lesson_id).await?;
         let mut stay: Vec<String> = Vec::new();
@@ -274,7 +274,7 @@ impl TeachingFindingsRepository {
         } else if !lapsed.is_empty() {
             table::delete_keys(&mut tx, lesson_id, &serde_json::to_string(&lapsed)?).await?;
         }
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     /// The lesson's findings: by place, then kind.
@@ -393,7 +393,7 @@ impl TeachingFindingsRepository {
             ),
             TeachingSettleDto::Reopen => (&["kept", "resolved"][..], "waiting", None, None, None),
         };
-        let mut tx = self.database.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await?;
         let change = Settle {
             from,
             to,
@@ -407,7 +407,7 @@ impl TeachingFindingsRepository {
                 "Some of these notes changed since you opened them. Reload the lesson.".into(),
             ));
         }
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 }
 

@@ -293,9 +293,7 @@ fn a_web_status_converts_to_its_own_code_with_its_message_as_the_message() {
 fn a_busy_database_converts_to_its_own_code() {
     let code = |error: AppError| serde_json::to_value(ApiError::from(error).code).unwrap();
     assert_eq!(
-        code(AppError::DatabaseBusy(
-            "The database is temporarily busy. Saved work is retained.".into()
-        )),
+        code(AppError::from(sqlx::Error::PoolTimedOut)),
         "DATABASE_BUSY"
     );
     assert_eq!(

@@ -47,7 +47,7 @@ use crate::features::learning::drills::review::course_drills;
 use crate::features::learning::drills::runner::{runner_for, RunOutcome};
 use crate::features::learning::drills::spec::DrillSpec;
 use crate::features::learning::embedded_runtime::BuiltinRuntimes;
-use crate::features::learning::persistence::{db, now};
+use crate::features::learning::persistence::now;
 use crate::features::learning::tests::grading::live_grading_eval::model;
 use crate::infrastructure::persistence::database::migrate::reconcile_line_endings;
 
@@ -551,7 +551,7 @@ async fn build(
                 .result_ref
                 .and_then(|reference| reference.strip_prefix("drill:").map(str::to_owned))
                 .ok_or_else(|| AppError::InternalError("The build names no drill.".into()))?;
-            let mut read = database.begin_read().await.map_err(db)?;
+            let mut read = database.begin_read().await?;
             let stored = repository::find_in(&mut read, &id)
                 .await?
                 .ok_or_else(|| AppError::InternalError("The stored drill is not there.".into()))?;
@@ -635,13 +635,12 @@ async fn eval_courses(
     let mut courses = Vec::with_capacity(ids.len());
     for id in ids {
         let offered = course_drills(database, id, language).await?;
-        let mut read = database.begin_read().await.map_err(db)?;
+        let mut read = database.begin_read().await?;
         let title: String = sqlx::query_scalar("SELECT title FROM learning_programs WHERE id=?")
             .bind(id)
             .fetch_one(&mut *read)
-            .await
-            .map_err(db)?;
-        read.commit().await.map_err(db)?;
+            .await?;
+        read.commit().await?;
         let lessons = offered
             .modules
             .iter()
@@ -1021,8 +1020,7 @@ async fn copied_database(path: &str) -> Result<Database> {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
-        .await
-        .map_err(db)?;
+        .await?;
     let database = Database::new(pool);
     let mut migrator = sqlx::migrate!("./migrations");
     migrator.set_ignore_missing(true);
@@ -1049,8 +1047,7 @@ async fn a_copy_migrated_with_the_other_line_endings_still_opens() -> Result<()>
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
-        .await
-        .map_err(db)?;
+        .await?;
     let database = Database::new(pool);
     crate::infrastructure::persistence::database::run_migrations(&database).await?;
     database.close().await;
@@ -1074,14 +1071,12 @@ async fn a_copy_migrated_with_the_other_line_endings_still_opens() -> Result<()>
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
-        .await
-        .map_err(db)?;
+        .await?;
     let changed = sqlx::query("UPDATE _sqlx_migrations SET checksum = ? WHERE version = ?")
         .bind(other)
         .bind(migration.version)
         .execute(&pool)
-        .await
-        .map_err(db)?
+        .await?
         .rows_affected();
     assert_eq!(changed, 1);
     pool.close().await;
@@ -1092,8 +1087,7 @@ async fn a_copy_migrated_with_the_other_line_endings_still_opens() -> Result<()>
         sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = ?")
             .bind(migration.version)
             .fetch_one(&mut *read)
-            .await
-            .map_err(db)?;
+            .await?;
     read.commit().await?;
     assert_eq!(stored.as_slice(), &*migration.checksum);
     Ok(())
@@ -1103,7 +1097,7 @@ async fn stored() -> Result<StoredDrill> {
     let pool = crate::features::learning::tests::pool().await?;
     let database = Database::new(pool);
     stock(&database, "drill").await?;
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     repository::find_in(&mut read, "drill")
         .await?
         .ok_or_else(|| AppError::InternalError("The drill is not there.".into()))

@@ -124,15 +124,9 @@ async fn a_source_added_after_the_lesson_was_verified_does_not_stop_it_publishin
     // Research, or the user, saves another page.
     install_source(&course.db, &course.program_id, "A page on another subject.").await?;
 
-    let mut tx = course
-        .db
-        .begin_write()
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+    let mut tx = course.db.begin_write().await?;
     persist_report(&mut tx, &course.program_id, &course.lesson_id, &prepared).await?;
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -146,11 +140,7 @@ async fn a_source_the_report_is_bound_to_changing_still_stops_publication() -> R
         report.sources[0].sha256.push('x');
     }
 
-    let mut tx = course
-        .db
-        .begin_write()
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+    let mut tx = course.db.begin_write().await?;
     let error = persist_report(&mut tx, &course.program_id, &course.lesson_id, &prepared)
         .await
         .unwrap_err();

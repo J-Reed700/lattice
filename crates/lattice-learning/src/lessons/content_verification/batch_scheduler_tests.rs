@@ -134,8 +134,7 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
@@ -162,8 +161,7 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     let repo = LearningCurriculumRepository::new(db.clone());
     JobStore::new(db.clone())
@@ -366,8 +364,7 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
@@ -433,8 +430,7 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     let repo = LearningCurriculumRepository::new(db.clone());
     JobStore::new(db.clone())
@@ -465,8 +461,7 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
@@ -510,8 +505,7 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     let repo = LearningCurriculumRepository::new(db.clone());
     JobStore::new(db.clone())

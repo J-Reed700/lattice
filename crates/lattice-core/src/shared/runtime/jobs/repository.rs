@@ -7,7 +7,7 @@
 use super::attempt::Attempt;
 use super::{Admitted, Backoff, Deferral, JobRecord, JobStatus, NewJob, RecoveryPolicy};
 use crate::shared::error::{AppError, Result};
-use crate::shared::persistence::{Database, PersistenceError, PersistenceErrorKind, WriteTx};
+use crate::shared::persistence::{Database, WriteTx};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 
 const SUSPENDED: &str = "Saved; resumes when the app opens";
@@ -19,16 +19,6 @@ const ERROR_LIMIT: usize = 2000;
 pub const STOPPED_THE_APP: &str = "stopped_the_app";
 const STOPPED_THE_APP_MESSAGE: &str =
     "Lattice closed unexpectedly twice while this was running, so it was not resumed. Retry it to try again.";
-
-fn db(error: impl Into<PersistenceError>) -> AppError {
-    let error = error.into();
-    match error.kind() {
-        PersistenceErrorKind::Busy => AppError::DatabaseBusy(
-            "The database is temporarily busy. Saved work is retained.".into(),
-        ),
-        _ => AppError::Database(error.to_string()),
-    }
-}
 
 fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -105,8 +95,7 @@ async fn record_event(
         .bind(stamp)
         .bind(id)
         .execute(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(())
 }
 
@@ -121,9 +110,9 @@ impl JobStore {
     }
 
     pub async fn get(&self, id: &str) -> Result<JobRecord> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let job = Self::find_in(&mut read, id).await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         job.ok_or_else(not_found)
     }
 
@@ -131,8 +120,7 @@ impl JobStore {
         sqlx::query("SELECT * FROM jobs WHERE id=?")
             .bind(id)
             .fetch_optional(connection)
-            .await
-            .map_err(db)?
+            .await?
             .as_ref()
             .map(parse)
             .transpose()
@@ -140,9 +128,9 @@ impl JobStore {
 
     /// A subject's jobs of one kind, newest first.
     pub async fn list_for_subject(&self, kind: &str, subject_id: &str) -> Result<Vec<JobRecord>> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let jobs = Self::list_for_subject_in(&mut read, kind, subject_id).await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         Ok(jobs)
     }
 
@@ -157,8 +145,7 @@ impl JobStore {
         .bind(kind)
         .bind(subject_id)
         .fetch_all(connection)
-        .await
-        .map_err(db)?
+        .await?
         .iter()
         .map(parse)
         .collect()
@@ -166,13 +153,12 @@ impl JobStore {
 
     /// Pending and running jobs of a kind, oldest first.
     pub async fn live(&self, kind: &str) -> Result<Vec<JobRecord>> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let rows = sqlx::query("SELECT * FROM jobs WHERE kind=? AND status IN ('pending','running') ORDER BY created_at,rowid")
             .bind(kind)
             .fetch_all(&mut *read)
-            .await
-            .map_err(db)?;
-        read.commit().await.map_err(db)?;
+            .await?;
+        read.commit().await?;
         rows.iter().map(parse).collect()
     }
 
@@ -186,22 +172,21 @@ impl JobStore {
     ) -> Result<Vec<JobRecord>> {
         let kinds =
             serde_json::to_string(kinds).map_err(|e| AppError::Serialization(e.to_string()))?;
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let rows = sqlx::query("SELECT * FROM jobs WHERE kind IN (SELECT value FROM json_each(?)) AND NOT EXISTS (SELECT 1 FROM jobs retry WHERE retry.retry_of_job_id=jobs.id) ORDER BY created_at DESC,rowid DESC LIMIT ? OFFSET ?")
             .bind(kinds)
             .bind(i64::from(limit))
             .bind(i64::from(offset))
             .fetch_all(&mut *read)
-            .await
-            .map_err(db)?;
-        read.commit().await.map_err(db)?;
+            .await?;
+        read.commit().await?;
         rows.iter().map(parse).collect()
     }
 
     pub async fn delete(&self, id: &str) -> Result<()> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         Self::delete_in(&mut tx, id).await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     /// Deletes a finished job with every earlier attempt it retried, and their
@@ -210,8 +195,7 @@ impl JobStore {
         let statuses: Vec<String> = sqlx::query_scalar("WITH RECURSIVE chain(id) AS (SELECT id FROM jobs WHERE id=? UNION SELECT jobs.retry_of_job_id FROM jobs JOIN chain ON jobs.id=chain.id WHERE jobs.retry_of_job_id IS NOT NULL) SELECT status FROM jobs WHERE id IN (SELECT id FROM chain)")
         .bind(id)
         .fetch_all(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
         if statuses.is_empty() {
             return Err(not_found());
         }
@@ -224,8 +208,7 @@ impl JobStore {
         sqlx::query("WITH RECURSIVE chain(id) AS (SELECT id FROM jobs WHERE id=? UNION SELECT jobs.retry_of_job_id FROM jobs JOIN chain ON jobs.id=chain.id WHERE jobs.retry_of_job_id IS NOT NULL) DELETE FROM jobs WHERE id IN (SELECT id FROM chain)")
         .bind(id)
         .execute(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
         Ok(())
     }
 
@@ -233,21 +216,20 @@ impl JobStore {
     /// saved before their worker starts, so this also finds work whose process
     /// exited between those steps.
     pub async fn due(&self, kind: &str) -> Result<Vec<JobRecord>> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let rows = sqlx::query("SELECT * FROM jobs WHERE kind=? AND status='pending' AND (retry_not_before IS NULL OR retry_not_before<=?) ORDER BY created_at,rowid")
             .bind(kind)
             .bind(now())
             .fetch_all(&mut *read)
-            .await
-            .map_err(db)?;
-        read.commit().await.map_err(db)?;
+            .await?;
+        read.commit().await?;
         rows.iter().map(parse).collect()
     }
 
     pub async fn submit(&self, job: &NewJob) -> Result<Admitted> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let admitted = Self::submit_in(&mut tx, job).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(admitted)
     }
 
@@ -258,9 +240,9 @@ impl JobStore {
     /// Like [`Self::submit`], for a job of a ranked kind: its model calls are
     /// served in `rank` order, lowest first.
     pub async fn submit_ranked(&self, job: &NewJob, rank: i64) -> Result<Admitted> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let admitted = Self::submit_with_rank_in(&mut tx, job, Some(rank)).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(admitted)
     }
 
@@ -277,8 +259,7 @@ impl JobStore {
         if let Some(row) = sqlx::query("SELECT id,kind,payload_hash FROM jobs WHERE operation_id=?")
             .bind(&job.operation_id)
             .fetch_optional(&mut **tx)
-            .await
-            .map_err(db)?
+            .await?
         {
             if row.get::<String, _>("kind") != job.kind
                 || row.get::<String, _>("payload_hash") != job.payload_hash
@@ -305,16 +286,15 @@ impl JobStore {
             .bind(stamp)
             .bind(rank)
             .execute(&mut **tx)
-            .await
-            .map_err(db)?;
+            .await?;
         record_event(tx, &id, JobStatus::Pending, &job.message, stamp).await?;
         Ok(Admitted { id, created: true })
     }
 
     pub async fn cancel(&self, id: &str) -> Result<()> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         Self::cancel_in(&mut tx, id).await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     /// Pending, running and interrupted jobs can be cancelled. The status is
@@ -334,15 +314,14 @@ impl JobStore {
             .bind(stamp)
             .bind(id)
             .execute(&mut **tx)
-            .await
-            .map_err(db)?;
+            .await?;
         record_event(tx, id, JobStatus::Cancelled, "Cancelled", stamp).await
     }
 
     pub async fn retry(&self, id: &str, operation_id: &str, message: &str) -> Result<Admitted> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let admitted = Self::retry_in(&mut tx, id, operation_id, message).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(admitted)
     }
 
@@ -394,8 +373,7 @@ impl JobStore {
         if let Some(row) = sqlx::query("SELECT id,retry_of_job_id FROM jobs WHERE operation_id=?")
             .bind(operation_id)
             .fetch_optional(&mut **tx)
-            .await
-            .map_err(db)?
+            .await?
         {
             if row.get::<Option<String>, _>("retry_of_job_id").as_deref() != Some(id) {
                 return Err(reused_operation());
@@ -410,8 +388,7 @@ impl JobStore {
         if let Some(child) = sqlx::query("SELECT id,status FROM jobs WHERE retry_of_job_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1")
             .bind(id)
             .fetch_optional(&mut **tx)
-            .await
-            .map_err(db)?
+            .await?
         {
             if !matches!(
                 child.get::<String, _>("status").as_str(),
@@ -443,14 +420,12 @@ impl JobStore {
             .bind(stamp)
             .bind(id)
             .execute(&mut **tx)
-            .await
-            .map_err(db)?;
+            .await?;
         sqlx::query("INSERT INTO job_checkpoints(job_id,key,data_json,updated_at) SELECT ?,key,data_json,updated_at FROM job_checkpoints WHERE job_id=?")
             .bind(&retry)
             .bind(id)
             .execute(&mut **tx)
-            .await
-            .map_err(db)?;
+            .await?;
         record_event(tx, &retry, JobStatus::Pending, message, stamp).await?;
         Ok(Admitted {
             id: retry,
@@ -460,7 +435,7 @@ impl JobStore {
 
     /// Moves a due pending job to running. At most one caller wins.
     pub async fn claim(&self, id: &str) -> Result<Option<JobRecord>> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let stamp = now();
         let claimed = sqlx::query("UPDATE jobs SET status='running',started_at=?,finished_at=NULL,error_code=NULL,cause_code=NULL,error_message=NULL,retry_not_before=NULL,progress_message='Starting',heartbeat_at=? WHERE id=? AND status='pending' AND (retry_not_before IS NULL OR retry_not_before<=?)")
             .bind(stamp)
@@ -468,15 +443,14 @@ impl JobStore {
             .bind(id)
             .bind(stamp)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?
+            .await?
             .rows_affected()
             == 1;
         if claimed {
             record_event(&mut tx, id, JobStatus::Running, "Starting", stamp).await?;
         }
         let job = Self::find_in(&mut tx, id).await?.ok_or_else(not_found)?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(claimed.then_some(job))
     }
 
@@ -489,17 +463,17 @@ impl JobStore {
         message: &str,
         activity: Option<&serde_json::Value>,
     ) -> Result<bool> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let job = Self::find_in(&mut tx, id).await?.ok_or_else(not_found)?;
         if job.status != JobStatus::Running {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(false);
         }
         if activity.is_some() && current < job.progress_current {
             // A heartbeat can wait for the write lock while the worker records
             // a later step. Discard that older snapshot without stopping the
             // worker or moving its durable progress backwards.
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(true);
         }
         if current < job.progress_current || current > job.progress_total {
@@ -516,26 +490,24 @@ impl JobStore {
             .bind(i64::from(current))
             .bind(id)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         if current != job.progress_current || message != job.progress_message {
             record_event(&mut tx, id, JobStatus::Running, message, stamp).await?;
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(true)
     }
 
     pub async fn heartbeat(&self, id: &str) -> Result<bool> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let beat = sqlx::query("UPDATE jobs SET heartbeat_at=? WHERE id=? AND status='running'")
             .bind(now())
             .bind(id)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?
+            .await?
             .rows_affected()
             == 1;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(beat)
     }
 
@@ -549,10 +521,10 @@ impl JobStore {
     where
         F: FnOnce(Option<serde_json::Value>) -> Result<serde_json::Value> + Send,
     {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let job = Self::find_in(&mut tx, id).await?.ok_or_else(not_found)?;
         if job.status != JobStatus::Running {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(false);
         }
         let staged = update(job.staged_result)?;
@@ -560,22 +532,20 @@ impl JobStore {
             .bind(encode(&staged)?)
             .bind(id)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        tx.commit().await.map_err(db)?;
+            .await?;
+        tx.commit().await?;
         Ok(true)
     }
 
     pub async fn checkpoint(&self, id: &str, key: &str) -> Result<Option<serde_json::Value>> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let saved: Option<String> =
             sqlx::query_scalar("SELECT data_json FROM job_checkpoints WHERE job_id=? AND key=?")
                 .bind(id)
                 .bind(key)
                 .fetch_optional(&mut *read)
-                .await
-                .map_err(db)?;
-        read.commit().await.map_err(db)?;
+                .await?;
+        read.commit().await?;
         saved.as_deref().map(decode).transpose()
     }
 
@@ -585,15 +555,14 @@ impl JobStore {
         id: &str,
         prefix: &str,
     ) -> Result<Vec<serde_json::Value>> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let saved: Vec<String> = sqlx::query_scalar("SELECT data_json FROM job_checkpoints WHERE job_id=? AND substr(key,1,length(?))=? ORDER BY updated_at DESC,key")
             .bind(id)
             .bind(prefix)
             .bind(prefix)
             .fetch_all(&mut *read)
-            .await
-            .map_err(db)?;
-        read.commit().await.map_err(db)?;
+            .await?;
+        read.commit().await?;
         saved.iter().map(|value| decode(value)).collect()
     }
 
@@ -603,9 +572,9 @@ impl JobStore {
         key: &str,
         data: &serde_json::Value,
     ) -> Result<bool> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let saved = Self::put_checkpoint_in(&mut tx, id, key, data).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(saved)
     }
 
@@ -622,24 +591,22 @@ impl JobStore {
             .bind(key)
             .bind(&data)
             .execute(&mut **tx)
-            .await
-            .map_err(db)?;
+            .await?;
         Ok(sqlx::query("INSERT INTO job_checkpoints(job_id,key,data_json,updated_at) SELECT id,?,?,? FROM jobs WHERE id=? AND status='running' ON CONFLICT(job_id,key) DO UPDATE SET data_json=excluded.data_json,updated_at=excluded.updated_at")
             .bind(key)
             .bind(data)
             .bind(now())
             .bind(id)
             .execute(&mut **tx)
-            .await
-            .map_err(db)?
+            .await?
             .rows_affected()
             == 1)
     }
 
     pub async fn complete(&self, id: &str, result_ref: &str, message: &str) -> Result<bool> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let completed = Self::complete_in(&mut tx, id, result_ref, message).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(completed)
     }
 
@@ -658,8 +625,7 @@ impl JobStore {
             .bind(stamp)
             .bind(id)
             .execute(&mut **tx)
-            .await
-            .map_err(db)?
+            .await?
             .rows_affected()
             == 1;
         if completed {
@@ -680,9 +646,9 @@ impl JobStore {
         message: &str,
         cause_code: Option<&str>,
     ) -> Result<bool> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let failed = Self::fail_in(&mut tx, id, code, message, cause_code).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(failed)
     }
 
@@ -702,8 +668,7 @@ impl JobStore {
             .bind(message.chars().take(ERROR_LIMIT).collect::<String>())
             .bind(id)
             .execute(&mut **tx)
-            .await
-            .map_err(db)?
+            .await?
             .rows_affected()
             == 1;
         if failed {
@@ -726,10 +691,10 @@ impl JobStore {
         backoff: Backoff,
         cause_code: Option<&str>,
     ) -> Result<bool> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let job = Self::find_in(&mut tx, id).await?.ok_or_else(not_found)?;
         if job.status != JobStatus::Running {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(false);
         }
         let stamp = now();
@@ -744,8 +709,7 @@ impl JobStore {
             .bind(stamp.saturating_add(delay))
             .bind(id)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         record_event(
             &mut tx,
             id,
@@ -754,24 +718,24 @@ impl JobStore {
             stamp,
         )
         .await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(true)
     }
 
     /// Returns a running job to pending, recording why, so it runs again at
     /// its next delivery.
     pub(super) async fn requeue(&self, id: &str, message: &str) -> Result<bool> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let requeued = Self::suspend_in(&mut tx, id, message).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(requeued)
     }
 
     /// Returns a running job to pending so it resumes at the next start.
     pub async fn suspend(&self, id: &str) -> Result<bool> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let suspended = Self::suspend_in(&mut tx, id, SUSPENDED).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(suspended)
     }
 
@@ -782,8 +746,7 @@ impl JobStore {
             .bind(stamp)
             .bind(id)
             .execute(&mut **tx)
-            .await
-            .map_err(db)?
+            .await?
             .rows_affected()
             == 1;
         if suspended {
@@ -794,9 +757,9 @@ impl JobStore {
 
     /// Ends a running job whose work cannot resume. It can be retried.
     pub async fn interrupt(&self, id: &str) -> Result<bool> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let interrupted = Self::interrupt_in(&mut tx, id).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(interrupted)
     }
 
@@ -808,8 +771,7 @@ impl JobStore {
             .bind(STOPPED_BY_RESTART)
             .bind(id)
             .execute(&mut **tx)
-            .await
-            .map_err(db)?
+            .await?
             .rows_affected()
             == 1;
         if interrupted {
@@ -831,15 +793,14 @@ impl JobStore {
         kind: &str,
         policy: RecoveryPolicy,
     ) -> Result<Recovered> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let mut stopped = Vec::new();
         let running: Vec<(String, i64, i64, i64)> = sqlx::query_as(
             "SELECT id,saved_work,recovery_mark,unsaved_starts FROM jobs WHERE kind=? AND status='running' ORDER BY created_at,rowid",
         )
         .bind(kind)
         .fetch_all(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
         for (id, saved_work, mark, unsaved_starts) in &running {
             match policy {
                 RecoveryPolicy::Requeue if saved_work == mark && *unsaved_starts > 0 => {
@@ -858,15 +819,14 @@ impl JobStore {
                     )
                     .bind(id)
                     .execute(&mut *tx)
-                    .await
-                    .map_err(db)?;
+                    .await?;
                     resumed
                 }
                 RecoveryPolicy::Interrupt => Self::interrupt_in(&mut tx, id).await?,
             };
         }
         let settled = running.into_iter().map(|(id, ..)| id).collect();
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(Recovered { settled, stopped })
     }
 
@@ -879,16 +839,15 @@ impl JobStore {
         let stamp = now();
         let resumable =
             serde_json::to_string(resumable).map_err(|e| AppError::Serialization(e.to_string()))?;
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let suspended = sqlx::query("UPDATE jobs SET status=CASE WHEN kind IN (SELECT value FROM json_each(?1)) THEN 'pending' ELSE status END,progress_message=CASE WHEN kind IN (SELECT value FROM json_each(?1)) THEN ?2 ELSE progress_message END,heartbeat_at=?3,unsaved_starts=0 WHERE status='running'")
             .bind(resumable)
             .bind(SUSPENDED)
             .bind(stamp)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?
+            .await?
             .rows_affected();
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(usize::try_from(suspended).unwrap_or(usize::MAX))
     }
 
@@ -896,14 +855,13 @@ impl JobStore {
     /// stopped the app. Automatic resubmission must leave such work waiting
     /// for the learner's retry, which makes a newer job.
     pub async fn last_run_stopped_the_app(&self, kind: &str, subject_id: &str) -> Result<bool> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let code: Option<Option<String>> = sqlx::query_scalar("SELECT CASE WHEN status='failed' THEN error_code END FROM jobs WHERE kind=? AND subject_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1")
             .bind(kind)
             .bind(subject_id)
             .fetch_optional(&mut *read)
-            .await
-            .map_err(db)?;
-        read.commit().await.map_err(db)?;
+            .await?;
+        read.commit().await?;
         Ok(code.flatten().as_deref() == Some(STOPPED_THE_APP))
     }
 }

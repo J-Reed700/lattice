@@ -238,13 +238,9 @@ async fn live_small_lesson_reaches_ready() -> Result<()> {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(5)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool);
+    crate::infrastructure::persistence::database::run_migrations(&db).await?;
     let model = Arc::new(ObservedModel::new(&config, directory.clone(), 0).await?);
     let fixture: serde_json::Value = serde_json::from_slice(&std::fs::read(
         std::env::var("LATTICE_LESSON_FIXTURE").unwrap(),
@@ -357,8 +353,7 @@ pub(super) async fn run_and_confirm(
         sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(options)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?,
+            .await?,
     );
     let published = LearningRepository::new(reopened.clone())
         .get(&job.program_id)
@@ -480,8 +475,7 @@ async fn live_small_lesson_resumes_to_ready() -> Result<()> {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(5)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool);
     let repo = LearningCurriculumRepository::new(db.clone());
     let job = repo.job(&job_id).await?;

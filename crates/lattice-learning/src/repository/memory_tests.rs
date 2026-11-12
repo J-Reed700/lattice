@@ -6,10 +6,7 @@ use sqlx::SqlitePool;
 
 async fn fk_pool() -> Result<SqlitePool> {
     let pool = pool().await?;
-    sqlx::query("PRAGMA foreign_keys=ON")
-        .execute(&pool)
-        .await
-        .map_err(db)?;
+    sqlx::query("PRAGMA foreign_keys=ON").execute(&pool).await?;
     Ok(pool)
 }
 
@@ -55,8 +52,7 @@ async fn cite_in_first_block(pool: &SqlitePool, lesson_id: &str, source_id: &str
         .bind(json(&vec![source_id.to_owned()])?)
         .bind(lesson_id)
         .execute(pool)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(())
 }
 
@@ -73,8 +69,7 @@ async fn add_source(
         .bind(url)
         .bind("Bread rises because yeast releases carbon dioxide.")
         .execute(pool)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(())
 }
 
@@ -128,8 +123,7 @@ async fn discarding_a_draft_is_idempotent_and_blocks_later_acceptance() -> Resul
     let status: String = sqlx::query_scalar("SELECT status FROM learning_card_drafts WHERE id=?")
         .bind(&accepted_id)
         .fetch_one(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(status, "accepted");
     Ok(())
 }
@@ -154,8 +148,7 @@ async fn replaying_an_accepted_draft_reports_a_deleted_card() -> Result<()> {
     sqlx::query("DELETE FROM study_cards WHERE id=?")
         .bind(&card_id)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let replay = repo.accept_card_draft(&program_id, &draft_id).await;
     assert!(matches!(replay, Err(AppError::NotFound(_))), "{replay:?}");
     let state = repo.memory_state(&program_id).await?;
@@ -191,8 +184,7 @@ async fn memory_tools_require_an_accepted_program_and_a_prepared_lesson() -> Res
     let roots: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_memory WHERE program_id=?")
         .bind(&draft.summary.id)
         .fetch_one(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(roots, 0, "a rejected ensure must roll back its root row");
 
     let active = accepted_unprepared_program(&repo).await?;
@@ -209,8 +201,7 @@ async fn memory_tools_require_an_accepted_program_and_a_prepared_lesson() -> Res
     let title: String = sqlx::query_scalar("SELECT title FROM daily_notes_workspace WHERE id=?")
         .bind(&note_id)
         .fetch_one(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(title, "Fermentation notes");
     let state = repo.memory_state(&active.summary.id).await?;
     assert!(state.journal_id.is_some() && state.deck_id.is_some());
@@ -308,8 +299,7 @@ async fn draft_sources_must_be_unique_owned_and_cited_by_the_lesson() -> Result<
     )
     .bind(&program_id)
     .fetch_one(&pool)
-    .await
-    .map_err(db)?;
+    .await?;
     assert_eq!(generated_rows, 0);
 
     repo.save_generated_drafts(&program_id, &lesson_id, &[generated(&[&cited])])
@@ -374,8 +364,7 @@ async fn accepting_drafts_records_citations_or_an_honest_fallback() -> Result<()
     )
     .bind(&program_id)
     .fetch_one(&pool)
-    .await
-    .map_err(db)?;
+    .await?;
     let generated_card = repo.accept_card_draft(&program_id, &generated_id).await?;
 
     let state = repo.memory_state(&program_id).await?;
@@ -440,8 +429,7 @@ async fn accepting_drafts_records_citations_or_an_honest_fallback() -> Result<()
     sqlx::query("DELETE FROM learning_sources WHERE program_id=? AND id='web-bread'")
         .bind(&program_id)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let orphan = repo.accept_card_draft(&program_id, &orphan_id).await;
     assert!(
         matches!(orphan, Err(AppError::InvalidInput(_))),
@@ -469,8 +457,7 @@ async fn a_course_notebook_gets_an_emoji_for_its_icon() -> Result<()> {
     let icon: Option<String> = sqlx::query_scalar("SELECT icon FROM journals WHERE id=?")
         .bind(&journal_id)
         .fetch_one(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let icon = icon.unwrap_or_default();
     assert!(
         !icon.is_empty() && !icon.chars().any(|c| c.is_ascii_alphanumeric()),
@@ -489,8 +476,7 @@ async fn the_course_notebooks_made_before_get_the_emoji_too() -> Result<()> {
         .idle_timeout(None)
         .max_lifetime(None)
         .connect(":memory:")
-        .await
-        .map_err(db)?;
+        .await?;
     let earlier = tempfile::tempdir().unwrap();
     for entry in std::fs::read_dir(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -517,7 +503,7 @@ async fn the_course_notebooks_made_before_get_the_emoji_too() -> Result<()> {
         "INSERT INTO journals (id, name, icon) VALUES ('mine', 'Mine', 'book-open')",
         "INSERT INTO learning_memory (program_id, journal_id, deck_id, created_at) VALUES ('p1', 'journal_learning_p1', NULL, 1000)",
     ] {
-        sqlx::query(statement).execute(&pool).await.map_err(db)?;
+        sqlx::query(statement).execute(&pool).await?;
     }
 
     sqlx::migrate!("../lattice-desktop/migrations")
@@ -536,14 +522,13 @@ async fn the_course_notebooks_made_before_get_the_emoji_too() -> Result<()> {
     )
     .bind(&active.summary.id)
     .fetch_one(&pool)
-    .await
-    .map_err(db)?;
+    .await?;
     let icon_of = |id: &'static str| {
         sqlx::query_scalar::<_, Option<String>>("SELECT icon FROM journals WHERE id=?")
             .bind(id)
             .fetch_one(&pool)
     };
-    let old_icon = icon_of("journal_learning_p1").await.map_err(db)?;
+    let old_icon = icon_of("journal_learning_p1").await?;
     assert!(
         old_icon.as_deref().is_some_and(
             |icon| !icon.is_empty() && !icon.chars().any(|c| c.is_ascii_alphanumeric())
@@ -551,9 +536,6 @@ async fn the_course_notebooks_made_before_get_the_emoji_too() -> Result<()> {
         "{old_icon:?}"
     );
     assert_eq!(old_icon, new_icon);
-    assert_eq!(
-        icon_of("mine").await.map_err(db)?.as_deref(),
-        Some("book-open")
-    );
+    assert_eq!(icon_of("mine").await?.as_deref(), Some("book-open"));
     Ok(())
 }

@@ -59,7 +59,7 @@ impl LearningRepository {
             ));
         }
 
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
 
         #[derive(sqlx::FromRow)]
         struct ProgramRow {
@@ -72,8 +72,7 @@ impl LearningRepository {
         )
         .bind(&request.program_id)
         .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?
+        .await?
         .ok_or_else(|| {
             AppError::NotFound(format!("Learning program {} not found", request.program_id))
         })?;
@@ -90,8 +89,7 @@ impl LearningRepository {
         .bind(&request.module_id)
         .bind(&request.program_id)
         .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?
+        .await?
         .ok_or_else(|| {
             AppError::NotFound(format!("Learning module {} not found", request.module_id))
         })?;
@@ -109,8 +107,7 @@ impl LearningRepository {
         .bind(&request.program_id)
         .bind(&request.module_id)
         .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?
+        .await?
         .ok_or_else(|| {
             AppError::NotFound(format!("Learning lesson {} not found", request.lesson_id))
         })?;
@@ -129,8 +126,7 @@ impl LearningRepository {
             .bind(&request.lesson_id)
             .bind(idx)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
             block_title
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
@@ -147,8 +143,7 @@ impl LearningRepository {
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
                 .bind(&space_id)
                 .fetch_one(&mut *tx)
-                .await
-                .map_err(db)?
+                .await?
                 > 0;
 
         if !space_exists {
@@ -158,8 +153,7 @@ impl LearningRepository {
             )
             .bind(&base_name)
             .fetch_one(&mut *tx)
-            .await
-            .map_err(db)?
+            .await?
                 > 0;
 
             let space_name = if name_taken {
@@ -190,8 +184,7 @@ impl LearningRepository {
             .bind(&now_iso)
             .bind(&now_iso)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         }
 
         sqlx::query(
@@ -204,8 +197,7 @@ impl LearningRepository {
         .bind(&now_iso)
         .bind(&now_iso)
         .execute(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
 
         sqlx::query(
             r#"
@@ -218,8 +210,7 @@ impl LearningRepository {
         .bind(&now_iso)
         .bind(&now_iso)
         .execute(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
 
         let conversation_id = uuid::Uuid::new_v4().to_string();
 
@@ -262,8 +253,7 @@ impl LearningRepository {
         .bind(&now_iso)
         .bind(trimmed)
         .execute(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
 
         let message_id = uuid::Uuid::new_v4().to_string();
         let quoted_selection = trimmed
@@ -297,8 +287,7 @@ impl LearningRepository {
         .bind(&now_iso)
         .bind(&content_digest)
         .execute(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
 
         let mut candidate_doc_ids = Vec::new();
         let library_doc_ids: Vec<String> = sqlx::query_scalar(
@@ -306,8 +295,7 @@ impl LearningRepository {
         )
         .bind(&request.program_id)
         .fetch_all(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
         candidate_doc_ids.extend(library_doc_ids);
 
         let source_doc_ids: Vec<String> = sqlx::query_scalar(
@@ -315,8 +303,7 @@ impl LearningRepository {
         )
         .bind(&request.program_id)
         .fetch_all(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
         candidate_doc_ids.extend(source_doc_ids);
 
         candidate_doc_ids.sort();
@@ -327,8 +314,7 @@ impl LearningRepository {
                 sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM documents WHERE id = ?")
                     .bind(&doc_id)
                     .fetch_one(&mut *tx)
-                    .await
-                    .map_err(db)?
+                    .await?
                     > 0;
 
             if exists {
@@ -339,8 +325,7 @@ impl LearningRepository {
                 .bind(&doc_id)
                 .bind(&now_iso)
                 .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
 
                 sqlx::query(
                     "INSERT OR IGNORE INTO document_space_memberships (document_id, space_id, created_at) VALUES (?, ?, ?)",
@@ -349,8 +334,7 @@ impl LearningRepository {
                 .bind(&space_id)
                 .bind(&now_iso)
                 .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
             }
         }
 
@@ -366,8 +350,7 @@ impl LearningRepository {
         )
         .bind(&request.program_id)
         .fetch_all(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
 
         for ws in web_sources {
             if let Some(url) = ws.url {
@@ -388,8 +371,7 @@ impl LearningRepository {
                 .bind(&ws.excerpt)
                 .bind(&now_iso)
                 .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
             }
         }
 
@@ -411,10 +393,9 @@ impl LearningRepository {
         .bind(trimmed)
         .bind(now_epoch)
         .execute(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
 
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
 
         Ok(LearningTangentDto {
             conversation_id,
@@ -438,7 +419,7 @@ impl LearningRepository {
 
     pub async fn list_tangents(&self, program_id: Option<&str>) -> Result<Vec<LearningTangentDto>> {
         let pid = program_id.map(str::trim).filter(|s| !s.is_empty());
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let rows = sqlx::query_as::<_, TangentRow>(
             r#"
             SELECT
@@ -470,9 +451,8 @@ impl LearningRepository {
         .bind(pid)
         .bind(pid)
         .fetch_all(&mut *read)
-        .await
-        .map_err(db)?;
-        read.commit().await.map_err(db)?;
+        .await?;
+        read.commit().await?;
         Ok(rows.into_iter().map(LearningTangentDto::from).collect())
     }
 }

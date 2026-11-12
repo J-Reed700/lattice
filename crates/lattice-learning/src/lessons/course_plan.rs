@@ -11,7 +11,7 @@ use super::generation::parse_json;
 use super::structured_call::complete_checked_request;
 use crate::dto::{LearningBlockKind, LearningLessonDto, LearningProgramDto};
 use crate::model_call;
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use lattice_core::application::ports::llm_port::InferencePriority;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::model_contract::{
@@ -98,7 +98,7 @@ fn lesson_ids(program: &LearningProgramDto) -> Vec<&str> {
 
 /// The outline revision a course's plan is keyed on.
 pub(crate) async fn outline_revision(database: &Database, program_id: &str) -> Result<i64> {
-    let mut tx = database.begin_read().await.map_err(db)?;
+    let mut tx = database.begin_read().await?;
     repository::content_revision(&mut tx, program_id).await
 }
 
@@ -141,7 +141,7 @@ pub(crate) async fn stored(
     outline_revision: i64,
 ) -> Result<Option<CoursePlan>> {
     let rows = {
-        let mut tx = database.begin_read().await.map_err(db)?;
+        let mut tx = database.begin_read().await?;
         repository::entry_rows(&mut tx, &program.summary.id, outline_revision).await?
     };
     let order = lesson_ids(program);
@@ -173,7 +173,7 @@ async fn save(
     outline_revision: i64,
     plan: &CoursePlan,
 ) -> Result<()> {
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     let created = now();
     for entry in &plan.lessons {
         repository::insert_entry(
@@ -186,7 +186,7 @@ async fn save(
         )
         .await?;
     }
-    tx.commit().await.map_err(db)
+    tx.commit().await.map_err(AppError::from)
 }
 
 struct PlanCourse;

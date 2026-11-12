@@ -4,7 +4,6 @@ use super::super::{
     LearningPracticalRepository,
 };
 use super::{from_name, parse_row, problem_of, row_on, scope_of, to_u32, verdict_of};
-use crate::persistence::db;
 use crate::practical_dto::{CaseCheckDetailDto, LearningSimulationTurnDto};
 use crate::practice::coding::patterns;
 use crate::practice::coding::records::{
@@ -22,8 +21,7 @@ async fn events_on(
     sqlx::query("SELECT ordinal,kind,payload_json,at FROM learning_exercise_session_events WHERE session_id=? ORDER BY ordinal")
         .bind(session_id)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?
+        .await?
         .iter()
         .map(|row| {
             Ok(StoredEvent {
@@ -43,8 +41,7 @@ async fn examples_on(
     sqlx::query("SELECT * FROM learning_coding_examples WHERE session_id=? ORDER BY ordinal")
         .bind(session_id)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?
+        .await?
         .iter()
         .map(|row| {
             Ok(StoredExample {
@@ -69,8 +66,7 @@ async fn runs_on(
         .bind(session_id)
         .bind(only)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
     let mut runs = Vec::new();
     for row in rows {
         let run_id: String = row.get("id");
@@ -79,8 +75,7 @@ async fn runs_on(
         )
         .bind(&run_id)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
         let cases = details
             .iter()
             .flatten()
@@ -113,8 +108,7 @@ async fn turns_on(
     sqlx::query("SELECT * FROM learning_simulation_turns WHERE session_id=? ORDER BY ordinal")
         .bind(session_id)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?
+        .await?
         .iter()
         .map(|turn| {
             Ok(LearningSimulationTurnDto {
@@ -141,8 +135,7 @@ async fn scorecard_on(
     let rows = sqlx::query("SELECT * FROM learning_scorecards WHERE session_id=? ORDER BY ordinal")
         .bind(session_id)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
     if rows.is_empty() {
         return Ok(None);
     }
@@ -174,8 +167,7 @@ async fn debrief_on(
     sqlx::query("SELECT approach,complexity,ratings_json,model FROM learning_exercise_debriefs WHERE session_id=?")
         .bind(session_id)
         .fetch_optional(&mut *connection)
-        .await
-        .map_err(db)?
+        .await?
         .map(|row| {
             Ok(StoredDebrief {
                 approach: row.get("approach"),
@@ -195,15 +187,14 @@ impl LearningPracticalRepository {
         session_id: &str,
     ) -> Result<SessionBundle> {
         uuid(session_id, "coding session")?;
-        let mut tx = self.db.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await?;
         let row = row_on(&mut tx, program_id, session_id).await?;
         let snapshot: String = sqlx::query_scalar(
             "SELECT activity_snapshot_json FROM learning_simulation_sessions WHERE id=?",
         )
         .bind(session_id)
         .fetch_one(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
         let activity: InternalActivitySnapshot = decode(&snapshot)?;
         let bundle = SessionBundle {
             problem: problem_of(&activity)?,
@@ -218,7 +209,7 @@ impl LearningPracticalRepository {
             debrief: debrief_on(&mut tx, session_id).await?,
             row,
         };
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(bundle)
     }
 
@@ -230,14 +221,14 @@ impl LearningPracticalRepository {
         run_id: &str,
     ) -> Result<StoredRun> {
         uuid(session_id, "coding session")?;
-        let mut tx = self.db.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await?;
         row_on(&mut tx, program_id, session_id).await?;
         let run = runs_on(&mut tx, session_id, Some(run_id))
             .await?
             .into_iter()
             .next()
             .ok_or_else(|| AppError::NotFound("Run not found".into()))?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(run)
     }
 
@@ -247,12 +238,11 @@ impl LearningPracticalRepository {
         program_id: &str,
     ) -> Result<Vec<PracticeSessionSummaryDto>> {
         uuid(program_id, "program")?;
-        let mut tx = self.db.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await?;
         let rows = sqlx::query("SELECT s.*,a.title AS title FROM learning_exercise_sessions s JOIN learning_practical_activities a ON a.id=s.activity_id WHERE s.program_id=? ORDER BY s.created_at DESC,s.id DESC")
             .bind(program_id)
             .fetch_all(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         let mut summaries = Vec::new();
         for row in rows {
             let session = parse_row(&row)?;
@@ -261,8 +251,7 @@ impl LearningPracticalRepository {
             )
             .bind(&session.id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
             let counts = last_submit
                 .as_deref()
                 .map(decode::<serde_json::Value>)
@@ -289,23 +278,22 @@ impl LearningPracticalRepository {
                 finished_at: session.finished_at,
             });
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(summaries)
     }
 
     /// Whether anything but the draft changed after `since`: a run, a stage move or a learner turn.
     pub async fn coding_worked_since(&self, session_id: &str, since: i64) -> Result<bool> {
         uuid(session_id, "coding session")?;
-        let mut tx = self.db.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await?;
         let worked: i64 = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM learning_exercise_session_events WHERE session_id=?1 AND kind IN ('check','stage') AND at>?2) OR EXISTS(SELECT 1 FROM learning_simulation_turns WHERE session_id=?1 AND speaker='learner' AND created_at>?2)",
         )
         .bind(session_id)
         .bind(since)
         .fetch_one(&mut *tx)
-        .await
-        .map_err(db)?;
-        tx.commit().await.map_err(db)?;
+        .await?;
+        tx.commit().await?;
         Ok(worked == 1)
     }
 
@@ -318,9 +306,9 @@ impl LearningPracticalRepository {
         code_fits: bool,
     ) -> Result<PracticeDueDto> {
         uuid(program_id, "program")?;
-        let mut tx = self.db.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await?;
         let due = patterns::practice_due_in(&mut tx, program_id, now, code_fits).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(due)
     }
 }

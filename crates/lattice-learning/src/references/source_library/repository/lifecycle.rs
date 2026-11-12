@@ -12,7 +12,7 @@ pub(in super::super) async fn adoption_state(
     source_id: &str,
 ) -> Result<Option<AdoptionState>> {
     let row = sqlx::query("SELECT revision,pending_version_id,active_version_id FROM learning_source_library WHERE program_id=? AND id=?")
-        .bind(program_id).bind(source_id).fetch_optional(connection).await.map_err(db)?;
+        .bind(program_id).bind(source_id).fetch_optional(connection).await?;
     Ok(row.map(|r| AdoptionState {
         revision: r.get("revision"),
         pending_version_id: r.get("pending_version_id"),
@@ -30,7 +30,7 @@ pub(in super::super) async fn adopt_version(
     updated_at: i64,
 ) -> Result<bool> {
     let result=sqlx::query("UPDATE learning_source_library SET active_version_id=?,pending_version_id=NULL,revision=?,updated_at=? WHERE program_id=? AND id=? AND revision=?")
-        .bind(version_id).bind(revision).bind(updated_at).bind(program_id).bind(source_id).bind(expected_revision).execute(&mut **tx).await.map_err(db)?;
+        .bind(version_id).bind(revision).bind(updated_at).bind(program_id).bind(source_id).bind(expected_revision).execute(&mut **tx).await?;
     Ok(result.rows_affected() == 1)
 }
 
@@ -46,7 +46,7 @@ pub(in super::super) async fn policy_state(
     source_id: &str,
 ) -> Result<Option<PolicyState>> {
     let row = sqlx::query("SELECT revision,kind,freshness_policy FROM learning_source_library WHERE program_id=? AND id=?")
-        .bind(program_id).bind(source_id).fetch_optional(connection).await.map_err(db)?;
+        .bind(program_id).bind(source_id).fetch_optional(connection).await?;
     Ok(row.map(|r| PolicyState {
         revision: r.get("revision"),
         kind: r.get("kind"),
@@ -64,7 +64,7 @@ pub(in super::super) async fn set_policy(
     updated_at: i64,
 ) -> Result<bool> {
     let result=sqlx::query("UPDATE learning_source_library SET freshness_policy=?,revision=?,updated_at=? WHERE program_id=? AND id=? AND revision=?")
-        .bind(freshness_policy).bind(revision).bind(updated_at).bind(program_id).bind(source_id).bind(expected_revision).execute(&mut **tx).await.map_err(db)?;
+        .bind(freshness_policy).bind(revision).bind(updated_at).bind(program_id).bind(source_id).bind(expected_revision).execute(&mut **tx).await?;
     Ok(result.rows_affected() == 1)
 }
 
@@ -84,8 +84,7 @@ pub(in super::super) async fn deletion_state(
     .bind(program_id)
     .bind(source_id)
     .fetch_optional(connection)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(row.map(|r| DeletionState {
         revision: r.get("revision"),
         deleted_at: r.get("deleted_at"),
@@ -109,8 +108,7 @@ pub(in super::super) async fn mark_deleted(
         .bind(source_id)
         .bind(expected_revision)
         .execute(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(updated.rows_affected() == 1)
 }
 
@@ -126,7 +124,7 @@ pub(in super::super) async fn active_text_in(
     .bind(source_id)
     .fetch_optional(&mut *conn)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// A source as a re-import finds it.
@@ -147,8 +145,7 @@ pub(in super::super) async fn source_row(
         .bind(program_id)
         .bind(source_id)
         .fetch_optional(connection)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(row.map(|r| SourceRow {
         revision: r.get("revision"),
         deleted_at: r.get("deleted_at"),
@@ -182,8 +179,7 @@ pub(in super::super) async fn stored_version(
     .bind(source_id)
     .bind(version_id)
     .fetch_optional(connection)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(row.map(|r| StoredVersion {
         id: r.get("id"),
         title: r.get("title"),
@@ -205,8 +201,7 @@ pub(in super::super) async fn version_id_in_use(
             .bind(program_id)
             .bind(version_id)
             .fetch_optional(connection)
-            .await
-            .map_err(db)?;
+            .await?;
     Ok(collision.is_some())
 }
 
@@ -226,7 +221,6 @@ pub(in super::super) async fn restore_source(
         .bind(source_id)
         .bind(expected_revision)
         .execute(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(updated.rows_affected() == 1)
 }

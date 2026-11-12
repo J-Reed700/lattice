@@ -17,6 +17,7 @@ use crate::{
     repository::LearningRepository,
     tests::{fixture, pool, prepared, prepared_with_questions},
 };
+use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::Database;
 use sqlx::SqlitePool;
@@ -28,7 +29,7 @@ async fn bank_counts(pool: &SqlitePool, program_id: &str) -> Result<(i64, i64, i
             .bind(program_id)
             .fetch_one(pool)
             .await
-            .map_err(crate::persistence::db)
+            .map_err(AppError::from)
     };
     Ok((
         count("SELECT count(*) FROM learning_assessment_candidates WHERE program_id=?").await?,
@@ -135,8 +136,7 @@ async fn a_course_exported_without_evidence_keeps_its_quiz_banks() -> Result<()>
     sqlx::query("INSERT INTO learning_quiz_settings(program_id,quiz_pass,test_pass,exam_pass,written_answers,updated_at) VALUES(?,0.8,0.75,0.75,1,1)")
         .bind(&program_id)
         .execute(&pool)
-        .await
-        .map_err(crate::persistence::db)?;
+        .await?;
     let before = bank_counts(&pool, &program_id).await?;
     assert!(before.0 > 0 && before.0 == before.1 && before.2 > 0 && before.3 == 1);
 
@@ -214,8 +214,7 @@ async fn a_pack_round_trip_keeps_a_lessons_questions_in_their_order() -> Result<
     .bind(&lesson_id)
     .bind(prompts[2])
     .execute(&pool)
-    .await
-    .map_err(crate::persistence::db)?;
+    .await?;
     let order = |program: String| {
         let pool = pool.clone();
         async move {
@@ -225,7 +224,7 @@ async fn a_pack_round_trip_keeps_a_lessons_questions_in_their_order() -> Result<
             .bind(program)
             .fetch_all(&pool)
             .await
-            .map_err(crate::persistence::db)
+            .map_err(AppError::from)
         }
     };
     assert_eq!(order(program_id.clone()).await?, prompts);

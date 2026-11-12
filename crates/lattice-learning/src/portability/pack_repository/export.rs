@@ -2,7 +2,6 @@
 //! runtime services. Each section's row decides whether it is exported; the
 //! encoders below read the sections whose rows live in `entries`.
 use super::{
-    db,
     entries::{ExportScope, PracticalPackSnapshot, SECTION_ROWS},
     guards, invalid, json, now,
     source_entries::SourceHistorySnapshot,
@@ -128,7 +127,7 @@ pub(super) async fn lesson_states(
     program_id: &str,
 ) -> Result<Vec<LearningPackEntry>> {
     let state_rows=sqlx::query("SELECT id,curriculum_state,replacement_lesson_id FROM learning_lessons WHERE program_id=? ORDER BY id")
-            .bind(program_id).fetch_all(&mut *tx).await.map_err(db)?;
+            .bind(program_id).fetch_all(&mut *tx).await?;
     let lesson_states:Vec<serde_json::Value>=state_rows.into_iter().map(|r|serde_json::json!({"lessonId":r.get::<String,_>("id"),"state":r.get::<String,_>("curriculum_state"),"replacementLessonId":r.get::<Option<String>,_>("replacement_lesson_id")})).collect();
     Ok(vec![entry(
         LESSON_STATE_ENTRY,
@@ -142,7 +141,7 @@ pub(super) async fn outcomes(
     tx: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<Vec<LearningPackEntry>> {
-    let outcome_rows=sqlx::query("SELECT id,module_id,lesson_id,title,description,ordinal,created_at FROM learning_outcome_definitions WHERE program_id=? ORDER BY ordinal,id").bind(program_id).fetch_all(&mut *tx).await.map_err(db)?;
+    let outcome_rows=sqlx::query("SELECT id,module_id,lesson_id,title,description,ordinal,created_at FROM learning_outcome_definitions WHERE program_id=? ORDER BY ordinal,id").bind(program_id).fetch_all(&mut *tx).await?;
     let outcomes:Vec<serde_json::Value>=outcome_rows.into_iter().map(|r|serde_json::json!({"id":r.get::<String,_>("id"),"moduleId":r.get::<Option<String>,_>("module_id"),"lessonId":r.get::<Option<String>,_>("lesson_id"),"title":r.get::<String,_>("title"),"description":r.get::<String,_>("description"),"ordinal":r.get::<i64,_>("ordinal"),"createdAt":r.get::<i64,_>("created_at")})).collect();
     Ok(vec![entry(
         OUTCOMES_ENTRY,
@@ -156,7 +155,7 @@ pub(super) async fn events(
     tx: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<Vec<LearningPackEntry>> {
-    let evidence=sqlx::query("SELECT id,outcome_id,source_kind,source_id,dimension,result,score,observation,evidence_quote,assistance_json,observed_at FROM learning_evidence_events WHERE program_id=? ORDER BY observed_at,id").bind(program_id).fetch_all(&mut *tx).await.map_err(db)?;
+    let evidence=sqlx::query("SELECT id,outcome_id,source_kind,source_id,dimension,result,score,observation,evidence_quote,assistance_json,observed_at FROM learning_evidence_events WHERE program_id=? ORDER BY observed_at,id").bind(program_id).fetch_all(&mut *tx).await?;
     let rows:Vec<serde_json::Value>=evidence.into_iter().map(|r|serde_json::json!({"id":r.get::<String,_>("id"),"outcomeId":r.get::<Option<String>,_>("outcome_id"),"sourceKind":r.get::<String,_>("source_kind"),"sourceId":r.get::<String,_>("source_id"),"dimension":r.get::<String,_>("dimension"),"result":r.get::<String,_>("result"),"score":r.get::<Option<f64>,_>("score"),"observation":r.get::<String,_>("observation"),"evidenceQuote":r.get::<Option<String>,_>("evidence_quote"),"assistance":r.get::<String,_>("assistance_json"),"observedAt":r.get::<i64,_>("observed_at")})).collect();
     Ok(vec![entry(
         EVIDENCE_ENTRY,
@@ -170,7 +169,7 @@ pub(super) async fn follow_ups(
     tx: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<Vec<LearningPackEntry>> {
-    let followups=sqlx::query("SELECT id,outcome_id,reason_code,explanation,action_kind,action_ref,status,evidence_event_ids_json,created_at,decided_at FROM learning_follow_up_recommendations WHERE program_id=? ORDER BY created_at,id").bind(program_id).fetch_all(&mut *tx).await.map_err(db)?;
+    let followups=sqlx::query("SELECT id,outcome_id,reason_code,explanation,action_kind,action_ref,status,evidence_event_ids_json,created_at,decided_at FROM learning_follow_up_recommendations WHERE program_id=? ORDER BY created_at,id").bind(program_id).fetch_all(&mut *tx).await?;
     let rows:Vec<serde_json::Value>=followups.into_iter().map(|r|serde_json::json!({"id":r.get::<String,_>("id"),"outcomeId":r.get::<Option<String>,_>("outcome_id"),"reasonCode":r.get::<String,_>("reason_code"),"explanation":r.get::<String,_>("explanation"),"actionKind":r.get::<String,_>("action_kind"),"actionRef":r.get::<Option<String>,_>("action_ref"),"status":r.get::<String,_>("status"),"evidenceEventIds":r.get::<String,_>("evidence_event_ids_json"),"createdAt":r.get::<i64,_>("created_at"),"decidedAt":r.get::<Option<i64>,_>("decided_at")})).collect();
     Ok(vec![entry(
         FOLLOW_UP_ENTRY,
@@ -186,16 +185,16 @@ pub(super) async fn practical(
 ) -> Result<Vec<LearningPackEntry>> {
     let practical = LearningPracticalRepository::workspace_on(tx, program_id).await?;
     let sessions=sqlx::query("SELECT id,activity_id,activity_revision,activity_snapshot_json,practice_session_id,operation_id,payload_hash,learner_role,counterpart_role,status,revision,created_at,updated_at,submitted_at FROM learning_simulation_sessions WHERE program_id=? ORDER BY created_at,id")
-                .bind(program_id).fetch_all(&mut *tx).await.map_err(db)?;
+                .bind(program_id).fetch_all(&mut *tx).await?;
     let simulations:Vec<serde_json::Value>=sessions.into_iter().map(|r| {
         let activity = super::interview_privacy::public_snapshot(r.get("activity_snapshot_json"))?;
         Ok(serde_json::json!({"id":r.get::<String,_>("id"),"activityId":r.get::<String,_>("activity_id"),"activityRevision":r.get::<i64,_>("activity_revision"),"activitySnapshot":activity,"practiceSessionId":r.get::<Option<String>,_>("practice_session_id"),"operationId":r.get::<String,_>("operation_id"),"payloadHash":r.get::<String,_>("payload_hash"),"learnerRole":r.get::<String,_>("learner_role"),"counterpartRole":r.get::<String,_>("counterpart_role"),"status":r.get::<String,_>("status"),"revision":r.get::<i64,_>("revision"),"createdAt":r.get::<i64,_>("created_at"),"updatedAt":r.get::<i64,_>("updated_at"),"submittedAt":r.get::<Option<i64>,_>("submitted_at")}))
     }).collect::<Result<_>>()?;
     let turns=sqlx::query("SELECT id,session_id,operation_id,payload_hash,ordinal,speaker,content,citations_json,model_name,created_at FROM learning_simulation_turns WHERE program_id=? ORDER BY session_id,ordinal")
-                .bind(program_id).fetch_all(&mut *tx).await.map_err(db)?;
+                .bind(program_id).fetch_all(&mut *tx).await?;
     let simulation_turns:Vec<serde_json::Value>=turns.into_iter().map(|r|serde_json::json!({"id":r.get::<String,_>("id"),"sessionId":r.get::<String,_>("session_id"),"operationId":r.get::<String,_>("operation_id"),"payloadHash":r.get::<String,_>("payload_hash"),"ordinal":r.get::<i64,_>("ordinal"),"speaker":r.get::<String,_>("speaker"),"content":r.get::<String,_>("content"),"citations":r.get::<String,_>("citations_json"),"modelName":r.get::<Option<String>,_>("model_name"),"createdAt":r.get::<i64,_>("created_at")})).collect();
     let raw_runs=sqlx::query("SELECT id,operation_id,payload_hash,activity_snapshot_json FROM learning_practical_runs WHERE program_id=? ORDER BY created_at,id")
-                .bind(program_id).fetch_all(&mut *tx).await.map_err(db)?;
+                .bind(program_id).fetch_all(&mut *tx).await?;
     let run_snapshots:Vec<serde_json::Value>=raw_runs.into_iter().map(|r| {
         let activity = super::interview_privacy::public_snapshot(r.get("activity_snapshot_json"))?;
         Ok(serde_json::json!({"runId":r.get::<String,_>("id"),"operationId":r.get::<String,_>("operation_id"),"payloadHash":r.get::<String,_>("payload_hash"),"activitySnapshot":activity}))
@@ -225,8 +224,7 @@ pub(super) async fn source_library(
         sqlx::query("SELECT id,full_text FROM learning_source_versions WHERE program_id=?")
             .bind(program_id)
             .fetch_all(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
     let source_bodies: HashMap<String, String> = source_rows
         .into_iter()
         .map(|row| (row.get("id"), row.get("full_text")))
@@ -259,7 +257,7 @@ pub(super) async fn source_history(
     tx: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<Vec<LearningPackEntry>> {
-    let check_rows=sqlx::query("SELECT operation_id,source_id,status,checked_at,active_digest,pending_version_id,message FROM learning_source_refresh_checks WHERE program_id=? ORDER BY checked_at,rowid").bind(program_id).fetch_all(&mut *tx).await.map_err(db)?;
+    let check_rows=sqlx::query("SELECT operation_id,source_id,status,checked_at,active_digest,pending_version_id,message FROM learning_source_refresh_checks WHERE program_id=? ORDER BY checked_at,rowid").bind(program_id).fetch_all(&mut *tx).await?;
     let checks:Vec<serde_json::Value>=check_rows.into_iter().map(|r|serde_json::json!({"operationId":r.get::<String,_>("operation_id"),"sourceId":r.get::<String,_>("source_id"),"status":r.get::<String,_>("status"),"checkedAt":r.get::<i64,_>("checked_at"),"activeDigest":r.get::<Option<String>,_>("active_digest"),"pendingVersionId":r.get::<Option<String>,_>("pending_version_id"),"message":r.get::<Option<String>,_>("message")})).collect();
     Ok(vec![entry(
         SOURCE_HISTORY_ENTRY,
@@ -288,7 +286,7 @@ pub(super) async fn selectors(
     program_id: &str,
 ) -> Result<Vec<LearningPackEntry>> {
     let selector_rows = sqlx::query("SELECT id,source_id,source_version_id,exact_text,prefix_text,suffix_text,start_byte,end_byte,candidate_count,status,created_at FROM learning_source_selectors WHERE program_id=? ORDER BY created_at,id")
-            .bind(program_id).fetch_all(&mut *tx).await.map_err(db)?;
+            .bind(program_id).fetch_all(&mut *tx).await?;
     let selectors: Vec<serde_json::Value> = selector_rows.into_iter().map(|r| serde_json::json!({
             "id":r.get::<String,_>("id"), "sourceId":r.get::<String,_>("source_id"), "sourceVersionId":r.get::<String,_>("source_version_id"),
             "exactText":r.get::<String,_>("exact_text"), "prefixText":r.get::<String,_>("prefix_text"), "suffixText":r.get::<String,_>("suffix_text"),
@@ -312,8 +310,7 @@ pub(super) async fn source_bodies(
         sqlx::query("SELECT id,full_text FROM learning_source_versions WHERE program_id=?")
             .bind(program_id)
             .fetch_all(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
     let source_bodies: HashMap<String, String> = source_rows
         .into_iter()
         .map(|row| (row.get("id"), row.get("full_text")))

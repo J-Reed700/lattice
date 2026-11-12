@@ -8,7 +8,7 @@ use crate::course_plan::COURSE_PLAN;
 use crate::curriculum::{
     self, LearningGenerationJob, LearningGenerationJobKind, LearningGenerationJobStatus,
 };
-use crate::persistence::{db, hash};
+use crate::persistence::hash;
 use crate::plan_dto::{
     LearningGenerationJobActionRequestDto, StartLearningGenerationJobRequestDto,
     StartLearningModuleJobsRequestDto,
@@ -23,9 +23,9 @@ use std::collections::HashSet;
 
 impl LearningCurriculumRepository {
     pub async fn jobs(&self, program_id: &str) -> Result<Vec<LearningGenerationJob>> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let jobs = Self::jobs_on(&mut read, program_id).await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         Ok(jobs)
     }
 
@@ -56,7 +56,7 @@ impl LearningCurriculumRepository {
         &self,
         request: &StartLearningGenerationJobRequestDto,
     ) -> Result<LearningGenerationJob> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let id = Self::admit_job(&mut tx, request).await?;
         let job = Self::job_on(&mut tx, &id).await?;
         let job = Self::retry_replayed_job_if_stopped(
@@ -66,7 +66,7 @@ impl LearningCurriculumRepository {
             job,
         )
         .await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(job)
     }
 
@@ -134,12 +134,11 @@ impl LearningCurriculumRepository {
         program_id: &str,
         lesson_id: &str,
     ) -> Result<Vec<LearningGenerationJob>> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let revision: i64 = sqlx::query_scalar("SELECT revision FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
+            .await?
             .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
         let content_revision = check_program_open(&mut tx, program_id, revision).await?;
         let module_ordinal: i64 = sqlx::query_scalar(
@@ -148,8 +147,7 @@ impl LearningCurriculumRepository {
         .bind(lesson_id)
         .bind(program_id)
         .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?
+        .await?
         .ok_or_else(|| AppError::InvalidInput("That lesson is not in this course.".into()))?;
         let next_ordinal: Option<i64> = sqlx::query_scalar(
             "SELECT MIN(m.ordinal) FROM learning_modules m WHERE m.program_id=? AND m.ordinal>?",
@@ -157,8 +155,7 @@ impl LearningCurriculumRepository {
         .bind(program_id)
         .bind(module_ordinal)
         .fetch_one(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
         let candidates: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND m.ordinal IN (?,?) AND {PREPARABLE_LESSON} AND {NOT_HELD_FOR_REVIEW} ORDER BY m.ordinal,l.ordinal"
         )))
@@ -166,8 +163,7 @@ impl LearningCurriculumRepository {
         .bind(module_ordinal)
         .bind(next_ordinal)
         .fetch_all(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
         let scopes = job_scopes(&mut tx, program_id).await?;
         let covered = JobStore::list_for_subject_in(&mut tx, LESSON_PREPARATION, program_id)
             .await?
@@ -194,7 +190,7 @@ impl LearningCurriculumRepository {
         for id in &ids {
             jobs.push(Self::job_on(&mut tx, id).await?);
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(jobs)
     }
 
@@ -206,15 +202,14 @@ impl LearningCurriculumRepository {
         expected_revision: i64,
     ) -> Result<Vec<LearningGenerationJob>> {
         validate_operation_id(operation_id)?;
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let lessons: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND l.module_id=? AND {PREPARABLE_LESSON} AND {NOT_HELD_FOR_REVIEW} ORDER BY m.ordinal,l.ordinal"
         )))
         .bind(program_id)
         .bind(module_id)
         .fetch_all(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
         if lessons.is_empty() {
             check_program_open(&mut tx, program_id, expected_revision).await?;
         }
@@ -230,7 +225,7 @@ impl LearningCurriculumRepository {
                     .await?;
             jobs.push(job);
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(jobs)
     }
 
@@ -270,10 +265,10 @@ impl LearningCurriculumRepository {
         &self,
         request: &StartLearningGenerationJobRequestDto,
     ) -> Result<LearningGenerationJob> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let id = Self::admit_job(&mut tx, request).await?;
         let job = Self::job_on(&mut tx, &id).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(job)
     }
 
@@ -373,7 +368,7 @@ impl LearningCurriculumRepository {
         if admitted.created {
             sqlx::query("INSERT INTO learning_jobs(job_id,program_id,base_revision_number,content_revision) VALUES(?,?,?,?)")
                 .bind(&admitted.id).bind(&request.program_id).bind(request.expected_revision).bind(content_revision)
-                .execute(&mut **tx).await.map_err(db)?;
+                .execute(&mut **tx).await?;
         }
         operation.record(tx, &admitted.id).await?;
         Ok(admitted.id)
@@ -409,9 +404,9 @@ impl LearningCurriculumRepository {
         program_id: &str,
         lesson_ids: &[String],
     ) -> Result<HashSet<String>> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let preparable = preparable_in(&mut read, program_id, lesson_ids).await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         Ok(preparable)
     }
 
@@ -449,10 +444,10 @@ impl LearningCurriculumRepository {
         request: &LearningGenerationJobActionRequestDto,
         action: JobAction,
     ) -> Result<LearningGenerationJob> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let id = Self::job_action_on(&mut tx, request, action).await?;
         let job = Self::job_on(&mut tx, &id).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(job)
     }
 
@@ -477,8 +472,7 @@ impl LearningCurriculumRepository {
             sqlx::query("SELECT revision,content_revision FROM learning_programs WHERE id=?")
                 .bind(&request.program_id)
                 .fetch_optional(&mut **tx)
-                .await
-                .map_err(db)?
+                .await?
                 .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
         if program.get::<i64, _>("revision") != request.expected_revision {
             return Err(AppError::Conflict(
@@ -542,7 +536,7 @@ impl LearningCurriculumRepository {
                 };
                 if admitted.created {
                     sqlx::query("INSERT INTO learning_jobs(job_id,program_id,base_revision_number,content_revision) SELECT ?,program_id,base_revision_number,content_revision FROM learning_jobs WHERE job_id=?")
-                        .bind(&admitted.id).bind(&request.job_id).execute(&mut **tx).await.map_err(db)?;
+                        .bind(&admitted.id).bind(&request.job_id).execute(&mut **tx).await?;
                 }
                 admitted.id
             }
@@ -552,9 +546,9 @@ impl LearningCurriculumRepository {
     }
 
     pub async fn job(&self, id: &str) -> Result<LearningGenerationJob> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let job = Self::job_on(&mut read, id).await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         Ok(job)
     }
 
@@ -573,10 +567,10 @@ impl LearningCurriculumRepository {
     }
 
     pub(crate) async fn job_content_is_current(&self, id: &str) -> Result<bool> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let current = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_jobs j JOIN learning_programs p ON p.id=j.program_id WHERE j.job_id=? AND j.content_revision=p.content_revision)")
-            .bind(id).fetch_one(&mut *read).await.map_err(db)?;
-        read.commit().await.map_err(db)?;
+            .bind(id).fetch_one(&mut *read).await?;
+        read.commit().await?;
         Ok(current)
     }
 
@@ -606,12 +600,7 @@ pub(super) async fn preparable_in(
     for id in lesson_ids {
         query = query.bind(id);
     }
-    Ok(query
-        .fetch_all(connection)
-        .await
-        .map_err(db)?
-        .into_iter()
-        .collect())
+    Ok(query.fetch_all(connection).await?.into_iter().collect())
 }
 
 /// A lesson's place in its course, counting from 0 through every lesson in
@@ -627,7 +616,7 @@ pub(crate) async fn lesson_rank_in(
     .bind(lesson_id)
     .fetch_optional(connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The outline revision of a program that is active at `expected_revision`.
@@ -640,8 +629,7 @@ async fn check_program_open(
         sqlx::query("SELECT revision,status,content_revision FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
+            .await?
             .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
     if program.get::<i64, _>("revision") != expected_revision
         || program.get::<String, _>("status") != "active"
@@ -716,8 +704,7 @@ pub(super) async fn job_scope(
     )
     .bind(job_id)
     .fetch_optional(connection)
-    .await
-    .map_err(db)?
+    .await?
     .as_ref()
     .map(job_scope_row))
 }
@@ -729,8 +716,7 @@ async fn job_scopes(
     Ok(sqlx::query("SELECT job_id,program_id,base_revision_number,content_revision FROM learning_jobs WHERE program_id=?")
         .bind(program_id)
         .fetch_all(connection)
-        .await
-        .map_err(db)?
+        .await?
         .iter()
         .map(|row| (row.get("job_id"), job_scope_row(row)))
         .collect())

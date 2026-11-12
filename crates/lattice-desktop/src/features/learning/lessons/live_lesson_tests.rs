@@ -504,8 +504,7 @@ async fn live_source_passage_judgments() -> Result<()> {
                     .foreign_keys(true)
                     .create_if_missing(false),
             )
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .await?;
         Some((Database::new(pool), program))
     } else {
         None
@@ -845,8 +844,7 @@ async fn live_review_findings_require_evidence() -> Result<()> {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(5)
         .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let program = std::env::var("LATTICE_REVIEW_PROGRAM").unwrap();
     let sources = LearningRepository::new(Database::new(pool))
         .verification_sources(&program)
@@ -926,8 +924,7 @@ async fn live_enqueue_saved_lesson_for_native_resume() -> Result<()> {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     sqlx::migrate!("./migrations")
         .run(&pool)
         .await
@@ -991,8 +988,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(5)
         .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     sqlx::migrate!("./migrations")
         .run(&pool)
         .await
@@ -1152,8 +1148,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
             sqlx::query_scalar("SELECT retry_not_before FROM jobs WHERE id=?")
                 .bind(&job.id)
                 .fetch_one(&pool)
-                .await
-                .map_err(|error| AppError::Database(error.to_string()))?;
+                .await?;
         let wait = not_before
             .map(|at| at - chrono::Utc::now().timestamp_millis())
             .unwrap_or(0)
@@ -1174,8 +1169,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
     )
     .bind(&job.id)
     .fetch_all(&pool)
-    .await
-    .map_err(|error| AppError::Database(error.to_string()))?;
+    .await?;
     for lesson in &held {
         let review =
             crate::features::learning::lessons::claim_reviews::service::ClaimReviewService::new(

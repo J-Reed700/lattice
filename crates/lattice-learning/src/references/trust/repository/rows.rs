@@ -3,7 +3,6 @@
 //! pack import (inside the import's transaction), so every writer stores
 //! the same columns the same way.
 
-use crate::persistence::db;
 use lattice_core::domain::provenance::{
     ExtractedFrom, Origin, OutboundLink, OverrideScope, ProvenanceRecord, ProvenanceSignals,
     RelationEvidence, RelationKind, RelationTarget, SiteStanding, Sketch, SourceRelation,
@@ -74,8 +73,7 @@ pub(in crate::references::trust) async fn write_provenance(
     .bind(&record.extraction_version)
     .bind(record.extracted_at)
     .execute(&mut **tx)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(())
 }
 
@@ -124,8 +122,7 @@ pub(in crate::references::trust) async fn write_relations(
         .bind(to_json(&relation.evidence)?)
         .bind(detected_at)
         .execute(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
     }
     Ok(())
 }
@@ -184,7 +181,7 @@ pub(in crate::references::trust) async fn delete_override(
     for bind in &binds {
         query = query.bind(bind);
     }
-    let done = query.execute(&mut **tx).await.map_err(db)?;
+    let done = query.execute(&mut **tx).await?;
     Ok(done.rows_affected() > 0)
 }
 
@@ -247,7 +244,7 @@ pub(in crate::references::trust) async fn write_override(
             .bind(note)
             .bind(set_at),
     };
-    query.execute(&mut **tx).await.map_err(db)?;
+    query.execute(&mut **tx).await?;
     Ok(())
 }
 

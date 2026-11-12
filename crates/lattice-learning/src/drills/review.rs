@@ -15,7 +15,7 @@ use super::repository::StoredDrill;
 use super::reveal::{learner_drill, lesson_of, result_of};
 use super::schedules;
 use super::spec::{check_language, check_request};
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use crate::source_library::LearningSourceLibraryRepository;
 use lattice_core::domain::learning::drills::{
     language_of_code, LessonStanding, Material, LANGUAGES,
@@ -100,7 +100,7 @@ pub async fn start(
 
 /// Refuses a course that is not there and a lesson the course does not drill.
 async fn check_asked(database: &Database, asked: &CourseDrill) -> Result<()> {
-    let mut tx = database.begin_read().await.map_err(db)?;
+    let mut tx = database.begin_read().await?;
     if !repository::course_exists_in(&mut tx, &asked.program_id).await? {
         return Err(not_found());
     }
@@ -111,7 +111,7 @@ async fn check_asked(database: &Database, asked: &CourseDrill) -> Result<()> {
             ));
         }
     }
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -133,7 +133,7 @@ async fn read_course(
     language: Option<&str>,
     at: i64,
 ) -> Result<CourseRead> {
-    let mut tx = database.begin_read().await.map_err(db)?;
+    let mut tx = database.begin_read().await?;
     if !repository::course_exists_in(&mut tx, program_id).await? {
         return Err(not_found());
     }
@@ -181,7 +181,7 @@ async fn read_course(
     )
     .await?;
     let recent = attempts::recent_in(&mut tx, program_id, RECENT_ATTEMPTS).await?;
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(CourseRead {
         language,
         standings,

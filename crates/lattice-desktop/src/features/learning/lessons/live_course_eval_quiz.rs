@@ -61,7 +61,7 @@ pub(super) async fn quiz_stage(
     };
     let first_call = run.calls();
     let started = std::time::Instant::now();
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let job_id: Option<String> = sqlx::query_scalar(
         "SELECT id FROM jobs WHERE kind=? AND subject_id=? AND json_extract(requested_json,'$.lessonStage')=1 AND json_extract(requested_json,'$.scope.id')=? ORDER BY created_at DESC, id DESC LIMIT 1",
     )
@@ -69,9 +69,8 @@ pub(super) async fn quiz_stage(
     .bind(program_id)
     .bind(&lesson_id)
     .fetch_optional(&mut *read)
-    .await
-    .map_err(db)?;
-    read.commit().await.map_err(db)?;
+    .await?;
+    read.commit().await?;
     let mut staged = None;
     if let Some(job_id) = job_id {
         let id = run_lesson_quiz_job(run, database, &job_id).await?;
@@ -224,15 +223,14 @@ async fn read_bank(
     lesson_id: &str,
     sources: &BTreeMap<String, String>,
 ) -> Result<(BTreeMap<String, usize>, Vec<Value>)> {
-    let mut tx = database.begin_read().await.map_err(db)?;
+    let mut tx = database.begin_read().await?;
     let rows: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT id,origin,review_status FROM learning_assessment_candidates WHERE program_id=? AND lesson_id=? ORDER BY id",
     )
     .bind(program_id)
     .bind(lesson_id)
     .fetch_all(&mut *tx)
-    .await
-    .map_err(db)?;
+    .await?;
     let mut review = BTreeMap::<String, usize>::new();
     let mut items = Vec::new();
     for (id, origin, status) in &rows {
@@ -243,7 +241,7 @@ async fn read_bank(
             items.push(eval_item(&stored, origin, lesson_id, sources));
         }
     }
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok((review, items))
 }
 
@@ -252,13 +250,13 @@ async fn blueprint_mix(
     program_id: &str,
     scope: &LearningQuizScopeDto,
 ) -> Result<(usize, BTreeMap<String, usize>)> {
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     let requirements =
         match quiz_blueprints::ensure_blueprint_in(&mut tx, program_id, scope).await? {
             Some((blueprint, _)) => quiz_blueprints::requirements_in(&mut tx, &blueprint).await?,
             None => vec![],
         };
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     let mut mix = BTreeMap::<String, usize>::new();
     for requirement in &requirements {
         *mix.entry(format_name(requirement.format)).or_default() += requirement.count;

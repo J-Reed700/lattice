@@ -8,19 +8,18 @@ use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Database;
 
 use super::runs::{AuditRun, BatchRecord, CourseAuditUsage, RunKey, RunState};
-use crate::persistence::{db, decode, encode};
+use crate::persistence::{decode, encode};
 
 pub(super) async fn latest_run(database: &Database, lesson_id: &str) -> Result<Option<AuditRun>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let row = sqlx::query(
         "SELECT * FROM learning_lesson_audits WHERE lesson_id=? \
          ORDER BY started_at DESC, rowid DESC LIMIT 1",
     )
     .bind(lesson_id)
     .fetch_optional(&mut *read)
-    .await
-    .map_err(db)?;
-    read.commit().await.map_err(db)?;
+    .await?;
+    read.commit().await?;
     row.map(|row| run_from_row(&row)).transpose()
 }
 
@@ -28,7 +27,7 @@ pub(super) async fn course_usage(
     database: &Database,
     program_id: &str,
 ) -> Result<CourseAuditUsage> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let row = sqlx::query(
         "SELECT count(*) AS audits, coalesce(sum(a.input_tokens),0) AS input_tokens, \
          coalesce(sum(a.output_tokens),0) AS output_tokens \
@@ -37,9 +36,8 @@ pub(super) async fn course_usage(
     )
     .bind(program_id)
     .fetch_one(&mut *read)
-    .await
-    .map_err(db)?;
-    read.commit().await.map_err(db)?;
+    .await?;
+    read.commit().await?;
     let count = |column: &str| u64::try_from(row.get::<i64, _>(column)).unwrap_or_default();
     Ok(CourseAuditUsage {
         audits: count("audits"),
@@ -78,7 +76,7 @@ pub(super) async fn open_run(
     policy: &str,
     at: i64,
 ) -> Result<AuditRun> {
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     sqlx::query(
         "INSERT INTO learning_lesson_audits \
          (lesson_id, draft_sha256, verifier_model, policy, state, batches_json, started_at) \
@@ -92,8 +90,7 @@ pub(super) async fn open_run(
     .bind(policy)
     .bind(at)
     .execute(&mut *tx)
-    .await
-    .map_err(db)?;
+    .await?;
     let row = sqlx::query(
         "SELECT * FROM learning_lesson_audits \
          WHERE lesson_id=? AND draft_sha256=? AND verifier_model=?",
@@ -102,11 +99,10 @@ pub(super) async fn open_run(
     .bind(&key.draft_sha256)
     .bind(&key.verifier_model)
     .fetch_optional(&mut *tx)
-    .await
-    .map_err(db)?
+    .await?
     .ok_or_else(|| AppError::Database("the audit row was not written".into()))?;
     let run = run_from_row(&row)?;
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(run)
 }
 
@@ -115,7 +111,7 @@ pub(super) async fn append_batch(
     key: &RunKey,
     batch: &BatchRecord,
 ) -> Result<()> {
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     let written = sqlx::query(
         "UPDATE learning_lesson_audits \
          SET batches_json=json_insert(batches_json, '$[#]', json(?)), \
@@ -129,12 +125,11 @@ pub(super) async fn append_batch(
     .bind(&key.draft_sha256)
     .bind(&key.verifier_model)
     .execute(&mut *tx)
-    .await
-    .map_err(db)?;
+    .await?;
     if written.rows_affected() == 0 {
         return Err(AppError::NotFound("The lesson's audit is gone".into()));
     }
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -144,7 +139,7 @@ pub(super) async fn finish_run(
     state: RunState,
     at: i64,
 ) -> Result<()> {
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     sqlx::query(
         "UPDATE learning_lesson_audits SET state=?, finished_at=? \
          WHERE lesson_id=? AND draft_sha256=? AND verifier_model=?",
@@ -155,9 +150,8 @@ pub(super) async fn finish_run(
     .bind(&key.draft_sha256)
     .bind(&key.verifier_model)
     .execute(&mut *tx)
-    .await
-    .map_err(db)?;
-    tx.commit().await.map_err(db)?;
+    .await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -168,14 +162,13 @@ pub(super) async fn lesson_questions(
     program_id: &str,
     lesson_id: &str,
 ) -> Result<Vec<Value>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let rows = sqlx::query("SELECT c.prompt,c.options_json,k.explanation,k.distractor_rationales_json FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.program_id=? AND c.lesson_id=? AND c.origin IN ('lesson','migrated') ORDER BY c.rowid")
         .bind(program_id)
         .bind(lesson_id)
         .fetch_all(&mut *read)
-        .await
-        .map_err(db)?;
-    read.commit().await.map_err(db)?;
+        .await?;
+    read.commit().await?;
     Ok(rows
         .into_iter()
         .map(|row| {

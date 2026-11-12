@@ -1,6 +1,6 @@
 //! The passage check's verdicts: one for each passage of a lesson, kept with the basis it was made on.
 
-use crate::persistence::db;
+use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::Database;
 
@@ -25,7 +25,7 @@ pub(super) async fn verdicts_on(
     lesson_id: &str,
     basis: &str,
 ) -> Result<Vec<(String, i64, i64, i64)>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let verdicts = sqlx::query_as(
         "SELECT version_id,start_byte,end_byte,teaches FROM learning_drill_passage_checks WHERE program_id=? AND lesson_id=? AND basis=?",
     )
@@ -33,16 +33,15 @@ pub(super) async fn verdicts_on(
     .bind(lesson_id)
     .bind(basis)
     .fetch_all(&mut *read)
-    .await
-    .map_err(db)?;
-    read.commit().await.map_err(db)?;
+    .await?;
+    read.commit().await?;
     Ok(verdicts)
 }
 
 /// Stores the verdict for its passage, replacing the passage's earlier one; nothing, when the lesson is no longer one
 /// of the course's.
 pub(super) async fn record(database: &Database, verdict: &Verdict<'_>) -> Result<()> {
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     sqlx::query(
         "INSERT INTO learning_drill_passage_checks(program_id,lesson_id,version_id,start_byte,end_byte,basis,teaches,reason,model,checked_at) SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10 WHERE EXISTS(SELECT 1 FROM learning_lessons WHERE program_id=?1 AND id=?2) ON CONFLICT(program_id,lesson_id,version_id,start_byte,end_byte) DO UPDATE SET basis=excluded.basis,teaches=excluded.teaches,reason=excluded.reason,model=excluded.model,checked_at=excluded.checked_at",
     )
@@ -58,7 +57,6 @@ pub(super) async fn record(database: &Database, verdict: &Verdict<'_>) -> Result
     .bind(verdict.checked_at)
     .execute(&mut *tx)
     .await
-    .map(drop)
-    .map_err(db)?;
-    tx.commit().await.map_err(db)
+    .map(drop)?;
+    tx.commit().await.map_err(AppError::from)
 }

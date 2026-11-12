@@ -7,7 +7,6 @@ use super::bank::{self, Shelf};
 use super::build::ask::normalise;
 use super::jobs::DRILL_GRADING;
 use super::repository::{self as drill_repository, StoredDrill};
-use crate::persistence::db;
 use lattice_core::domain::learning::drills::{
     Assessment, DrillFile, Finding, IssueFix, IssueRating, Score,
 };
@@ -144,13 +143,13 @@ pub async fn start(
     lesson: Option<&str>,
     mode: AttemptMode,
 ) -> Result<Option<Begun>> {
-    let mut transaction = database.begin_write().await.map_err(db)?;
+    let mut transaction = database.begin_write().await?;
     let Some(taken) = bank::take_in(&mut transaction, shelf, lesson).await? else {
-        transaction.commit().await.map_err(db)?;
+        transaction.commit().await?;
         return Ok(None);
     };
     let attempt = repository::open_in(&mut transaction, &taken.drill.drill.id, mode).await?;
-    transaction.commit().await.map_err(db)?;
+    transaction.commit().await?;
     Ok(Some(Begun {
         attempt,
         drill: taken.drill,
@@ -163,7 +162,7 @@ pub async fn start(
 /// A finding is refused only when it has no text or its lines are none of the drill's, and a fix that leaves every
 /// file of the drill as it was is no fix.
 pub async fn submit(database: &Database, id: &str, submission: Submission) -> Result<Queued> {
-    let mut transaction = database.begin_write().await.map_err(db)?;
+    let mut transaction = database.begin_write().await?;
     let attempt = repository::find_in(&mut transaction, id)
         .await?
         .ok_or_else(not_found)?;
@@ -200,14 +199,14 @@ pub async fn submit(database: &Database, id: &str, submission: Submission) -> Re
             ))
         }
     };
-    transaction.commit().await.map_err(db)?;
+    transaction.commit().await?;
     Ok(queued)
 }
 
 /// Asks for the grade of an attempt that could not be graded again: it waits for a new grading job, and the error of
 /// the last try is cleared. Asking while it already waits finds that job. An attempt that is open or graded is refused.
 pub async fn regrade(database: &Database, id: &str) -> Result<Queued> {
-    let mut transaction = database.begin_write().await.map_err(db)?;
+    let mut transaction = database.begin_write().await?;
     let attempt = repository::find_in(&mut transaction, id)
         .await?
         .ok_or_else(not_found)?;
@@ -226,7 +225,7 @@ pub async fn regrade(database: &Database, id: &str) -> Result<Queued> {
         }
     };
     let job = repository::queue_grading_in(&mut transaction, &attempt).await?;
-    transaction.commit().await.map_err(db)?;
+    transaction.commit().await?;
     Ok(Queued {
         attempt,
         job: Some(job),
@@ -235,14 +234,14 @@ pub async fn regrade(database: &Database, id: &str) -> Result<Queued> {
 
 /// The attempt, and the drill it is on.
 pub async fn get(database: &Database, id: &str) -> Result<(Attempt, StoredDrill)> {
-    let mut tx = database.begin_read().await.map_err(db)?;
+    let mut tx = database.begin_read().await?;
     let attempt = repository::find_in(&mut tx, id)
         .await?
         .ok_or_else(not_found)?;
     let drill = drill_repository::find_in(&mut tx, &attempt.drill_id)
         .await?
         .ok_or_else(|| AppError::InternalError("The attempt's drill is not there.".into()))?;
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok((attempt, drill))
 }
 
