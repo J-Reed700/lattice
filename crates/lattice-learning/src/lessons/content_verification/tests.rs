@@ -99,10 +99,30 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
             })
             .collect();
     }
+    let correction = fixture_correction(request);
     if is_claim_check(user) || system.is_empty() {
-        return vec![user.to_owned()];
+        return vec![format!("{user}{correction}")];
     }
-    vec![format!("{system}\n\n{user}")]
+    vec![format!("{system}\n\n{user}{correction}")]
+}
+
+/// The correction a request asks again with, as the text that follows its task
+/// prompt: nothing for a first ask.
+fn fixture_correction(request: &CompletionRequest) -> String {
+    request
+        .input
+        .iter()
+        .rev()
+        .find_map(|item| match item {
+            lattice_core::application::ports::llm_port::CompletionInput::Message {
+                role,
+                content,
+            } if role == "user" && content.starts_with(CORRECTION_LEAD) => {
+                Some(format!("\n\n{content}"))
+            }
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 /// What a fixture model answers a lesson's check against its course plan
@@ -2364,7 +2384,7 @@ async fn malformed_verdict_gets_one_format_correction_without_approving_missing_
         let prompts = model.prompts.lock().unwrap();
         assert_eq!(prompts.len(), 2);
         assert!(prompts[1].contains(SOURCE));
-        assert!(prompts[1].contains("Correct the response format"));
+        assert!(prompts[1].contains(CORRECTION_LEAD));
     }
     use lattice_core::application::services::claim_verification::parse_verdict_word;
     assert_eq!(
