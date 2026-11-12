@@ -715,6 +715,119 @@ mod repository_tests {
         assert!(store.claim(&job.id).await.unwrap().is_none());
         assert!(cancelled.result_id.is_none());
     }
+
+    fn worker_loading(pool: &SqlitePool, load_llm: ModelLoader) -> LessonGenerationWorker {
+        LessonGenerationWorker {
+            course_setups: Default::default(),
+            runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
+            database: pool.clone().into(),
+            load_llm,
+            courses: None,
+            refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
+            research_web: None,
+            verifier: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_lesson_moved_out_of_the_outline_is_not_prepared() {
+        let pool = crate::tests::pool().await.unwrap();
+        let (repo, job) = queued_job(&pool).await;
+        let lesson = job.lesson_ids[0].clone();
+        sqlx::query("UPDATE learning_lessons SET curriculum_state='skipped' WHERE id=?")
+            .bind(&lesson)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE learning_jobs SET content_revision=(SELECT content_revision FROM learning_programs WHERE id=?) WHERE job_id=?")
+            .bind(&job.program_id)
+            .bind(&job.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let loads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = loads.clone();
+        let worker = worker_loading(
+            &pool,
+            Arc::new(move || {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Box::pin(async {
+                    Err::<PinnedModel, _>(AppError::InvalidState("the model is not wanted".into()))
+                })
+            }),
+        );
+        run_attempt(worker, &job.id).await.unwrap();
+        assert_eq!(
+            loads.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "a lesson that left the outline is refused before the model is loaded"
+        );
+        assert_eq!(
+            repo.job(&job.id).await.unwrap().status,
+            LearningGenerationJobStatus::Failed
+        );
+    }
+
+    /// Plans the course when asked and refuses every other request.
+    struct PlansThenFails;
+
+    #[async_trait::async_trait]
+    impl lattice_core::application::ports::LLMPort for PlansThenFails {
+        async fn complete(
+            &self,
+            request: &lattice_core::application::ports::llm_port::CompletionRequest,
+        ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+            let (_, user) = crate::lessons::structured_call::task_messages(request);
+            match crate::lessons::course_plan::fixture_response(user) {
+                Some(plan) => Ok(
+                    lattice_core::application::ports::llm_port::CompletionResponse::from_text(plan),
+                ),
+                None => Err(AppError::InvalidState(
+                    "the lesson could not be written".into(),
+                )),
+            }
+        }
+        fn model_name(&self) -> &str {
+            "plan-fixture"
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            text.len() / 4
+        }
+        fn max_context_tokens(&self) -> usize {
+            128_000
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failure_after_a_review_row_fails_the_job() {
+        let pool = crate::tests::pool().await.unwrap();
+        let (repo, job) = queued_job(&pool).await;
+        sqlx::query("INSERT INTO learning_lesson_reviews(lesson_id,program_id,job_id,state,revision,draft_sha256,checker_model,opened_at,updated_at) VALUES(?,?,?,'needs_review',0,'sha','fixture',1,1)")
+            .bind(&job.lesson_ids[0])
+            .bind(&job.program_id)
+            .bind(&job.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let llm: Arc<dyn lattice_core::application::ports::LLMPort> = Arc::new(PlansThenFails);
+        let worker = worker_loading(
+            &pool,
+            Arc::new(move || {
+                let llm = llm.clone();
+                Box::pin(async move { Ok(pinned_for_test(llm)) })
+            }),
+        );
+        run_attempt(worker, &job.id).await.unwrap();
+        let ended = repo.job(&job.id).await.unwrap();
+        assert_eq!(
+            ended.status,
+            LearningGenerationJobStatus::Failed,
+            "{ended:?}"
+        );
+    }
 }
 
 #[cfg(test)]
