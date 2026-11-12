@@ -2069,16 +2069,25 @@ async fn statements_their_citations_support_cost_one_call_each_and_no_page_is_re
 async fn a_cited_statement_its_passages_do_not_state_reads_a_page_once_and_the_run_stays_within_the_plan(
 ) -> Result<()> {
     let unstated = figure(0);
+    // A page on how DictReader reads rows, which gives no buffer size.
+    let on_buffering = LearningSourceDto {
+        id: uuid::Uuid::new_v4().to_string(),
+        title: "DictReader row reading".into(),
+        url: Some("https://docs.python.org/3.14/library/csv.html#reader-objects".into()),
+        excerpt: "DictReader buffers rows from the file object it is given before parsing each into a dictionary; how many rows it buffers is up to that file object.".into(),
+        acquired_at: 0,
+    };
     let (model, trace) = prepared_counting(
         &[GOOD, GOOD, &unstated],
         &[],
-        &[source(), beside_the_citation()],
+        &[source(), beside_the_citation(), on_buffering],
     )
     .await?;
 
     within_the_plan(&model, &trace);
     // The unstated statement's page is its re-check against what research
-    // found: once, and not for the two its citations support.
+    // found: once, and not for the two its citations support. A page with no
+    // passage on the statement is decided without a call.
     assert_eq!(
         model.strict.load(Ordering::Relaxed),
         1,
