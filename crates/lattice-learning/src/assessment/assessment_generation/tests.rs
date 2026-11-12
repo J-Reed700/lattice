@@ -861,18 +861,22 @@ fn the_grading_contracts_read_what_they_render() {
         json!({"criterionId":"c1","yourWords":["a phrase"],"whatWasMissing":"","fullCreditIncludes":"",
             "sourceQuote":"","verdict":verdict,"points":1.0})
     };
+    let graded: Vec<grading::RawGradeItem> = serde_json::from_value(json!([
+        {"itemId":"i1","criteria":[criterion("met"),criterion("partly_met"),criterion("missed")],"summary":"Fair.","responseToNote":"Noted."}
+    ]))
+    .unwrap();
     lattice_core::application::services::model_contract::test_support::assert_round_trip::<
         grading::GradeWritten,
-    >(&json!({"items":[
-        {"itemId":"i1","criteria":[criterion("met"),criterion("partly_met"),criterion("missed")],"summary":"Fair."}
-    ]}));
-    for verdict in ["equivalent", "different"] {
-        lattice_core::application::services::model_contract::test_support::assert_round_trip::<
-            grading::JudgeShort,
-        >(&json!({"items":[{
+    >(&graded);
+    for verdict in ["equivalent", "not_equivalent"] {
+        let judged: Vec<grading::RawJudgeItem> = serde_json::from_value(json!([{
             "itemId":"i1","yourWords":[],"whatWasMissing":"","fullCreditIncludes":"",
             "verdict":verdict,"summary":"Judged."
-        }]}));
+        }]))
+        .unwrap();
+        lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+            grading::JudgeShort,
+        >(&judged);
     }
 }
 
