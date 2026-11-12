@@ -12,7 +12,8 @@ use lattice_core::domain::learning::claim_review::{
     span_of, Actor, ClaimLedgerEntry, ClaimState, Ledger,
 };
 
-use super::actions::{in_section_body, whole_sentence};
+use super::actions::in_section_body;
+use crate::lessons::same_text::whole_sentences;
 use super::published_edit::placed;
 use super::published_restore::undoable_in_published;
 use super::teaching_findings::{
@@ -29,9 +30,8 @@ pub(super) fn removable_span(finding: &TeachingFindingDto, body: &str) -> Option
     {
         return None;
     }
-    let sentence = finding.sentence.as_deref()?.trim();
-    let span = span_of(body, sentence)?;
-    whole_sentence(body, sentence).then_some(span)
+    let span = span_of(body, finding.sentence.as_deref()?.trim())?;
+    whole_sentences(body, span).then_some(span)
 }
 
 /// Fills in the claim ids of each section note that is about a sentence, says

@@ -8,6 +8,7 @@ use super::dto_map;
 use super::repository::judgements::{active_version_id, claim_context, ClaimContext};
 use super::repository::{unix_seconds, SqliteSourceTrustStore};
 use crate::dto::LearningClaimProfileDto;
+use crate::lessons::review_findings::FindingSite;
 use crate::source_library::LearningSourceLibraryRepository;
 use lattice_core::application::ports::{LLMPort, SourceTrustStore, StoredJudgement};
 use lattice_core::application::services::source_trust::{
@@ -113,13 +114,18 @@ pub async fn reprofile_claim(
     let ClaimContext {
         statement,
         unit_index,
+        sections,
         lesson_title,
         goal,
     } = context;
     let classes = known_classes(&store.site_overrides().await?);
     // The same unit title and course topic the preparation job gives the
     // profile call (`provenance_gate::context`, `generation_jobs`).
-    let unit_title = format!("Section {}", unit_index.saturating_add(1));
+    let unit_title = FindingSite::of_unit(
+        usize::try_from(unit_index).map_err(|_| AppError::InternalError("A statement's unit is out of range.".into()))?,
+        usize::try_from(sections).map_err(|_| AppError::InternalError("A lesson's section count is out of range.".into()))?,
+    )
+    .label();
     let topic = format!("{goal}: {lesson_title}");
     let claims = [ClaimToProfile {
         id: "claim-0".into(),

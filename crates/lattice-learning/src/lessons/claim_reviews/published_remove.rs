@@ -18,6 +18,7 @@ use super::actions::{in_section_body, ONLY_SECTION};
 use super::published_edit::{placed, section_body, update_report, user_sentence_in, CHANGED};
 use super::repository::{append_in, blocks, load_in};
 use crate::content_verification::TakenOut;
+use crate::lessons::same_text::common_prefix;
 
 /// `body` with the sentence at `range` taken out, and the whitespace around
 /// it: no double space, no empty list item, no extra blank line is left.
@@ -68,12 +69,7 @@ pub(super) type Removal = (String, Option<String>, Option<String>);
 /// sentence each way until the two together occur once. `None` when the two do
 /// not differ by one deletion.
 pub(super) fn removal_text(old: &str, new: &str) -> Option<Removal> {
-    let at = old
-        .chars()
-        .zip(new.chars())
-        .take_while(|(a, b)| a == b)
-        .map(|(c, _)| c.len_utf8())
-        .sum::<usize>();
+    let at = common_prefix(old, new);
     let kept = new.len().checked_sub(at)?;
     let end = old.len().checked_sub(kept)?;
     let text = old.get(at..end.max(at))?;

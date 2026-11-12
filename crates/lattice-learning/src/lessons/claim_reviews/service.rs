@@ -11,16 +11,17 @@ use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimActionKind, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry, EventProvenance,
     HumanBinding, Ledger, LessonReview, LessonReviewState, Revision, TrustVerdict, UserAction,
+    span_of,
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::{Database, Transactions};
 use serde_json::Value;
 
-use super::actions::{in_section_body, refusal, whole_sentence, ONLY_SECTION};
+use super::actions::{in_section_body, refusal, ONLY_SECTION};
 use super::checker_examples::LabelSource;
 use super::dto::ClaimActionRequestDto;
-use super::published_edit::{self, PublishedEdit};
+use super::published_edit::{self, placed, PublishedEdit};
 use super::published_remove;
 use super::published_restore;
 use super::put_back;
@@ -37,6 +38,7 @@ mod settle;
 use crate::content_verification::located_quote;
 use crate::curriculum::{LearningGenerationJob, LearningGenerationJobStatus};
 use crate::curriculum_repository::LearningCurriculumRepository;
+use crate::lessons::same_text::whole_sentences;
 use crate::persistence::{db, now};
 use crate::plan_dto::LearningGenerationJobActionRequestDto;
 use lattice_core::shared::text::plain_text;
@@ -657,7 +659,7 @@ impl ClaimReviewService {
                 let sentence = located_quote(entry.location(), entry.statement(), &text);
                 let before = if before == sentence || before == plain_text(&sentence) {
                     sentence
-                } else if text.matches(before.as_str()).count() == 1 {
+                } else if span_of(&text, &before).is_some() {
                     before
                 } else {
                     return Err(AppError::InvalidInput(
@@ -678,8 +680,7 @@ impl ClaimReviewService {
             }
             ClaimActionRequestDto::Remove => {
                 let text = self.field_text(review, lesson_id, entry).await?;
-                let sentence = located_quote(entry.location(), entry.statement(), &text);
-                if !whole_sentence(&text, &sentence) {
+                if !placed(entry, &text).is_some_and(|span| whole_sentences(&text, span)) {
                     return Err(AppError::InvalidInput(
                         "This statement is part of a sentence. Edit the sentence to say what goes."
                             .into(),
