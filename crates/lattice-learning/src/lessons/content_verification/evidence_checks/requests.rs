@@ -375,3 +375,7 @@ pub(in crate::lessons::content_verification) fn pack(
     }
     requests
 }
+
+#[cfg(test)]
+#[path = "requests_tests.rs"]
+mod tests;
