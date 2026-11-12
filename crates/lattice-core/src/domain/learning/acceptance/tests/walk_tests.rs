@@ -116,22 +116,38 @@ fn a_statement_that_lost_its_citation_and_is_refuted_has_its_passages_read() {
 
 #[test]
 fn a_statement_nothing_states_is_researched_and_read_on_its_page() {
-    for first in [Unproven, Refuted] {
-        let unproven = [parts(first)];
-        assert_eq!(
-            walked(Sourced, &unproven),
-            placed(Sourced, false, false, "s.research", 2)
-        );
-        let researched = then(&unproven, &[research(Saved)]);
-        assert_eq!(
-            walked(Sourced, &researched),
-            placed(Sourced, false, false, "s.reread", 2)
-        );
-        assert_eq!(
-            walked(Sourced, &then(&researched, &[page(Stands)])),
-            Walked::Ended(End::Resolved)
-        );
-    }
+    let unproven = [parts(Unproven)];
+    assert_eq!(
+        walked(Sourced, &unproven),
+        placed(Sourced, false, false, "s.research", 2)
+    );
+    let researched = then(&unproven, &[research(Saved)]);
+    assert_eq!(
+        walked(Sourced, &researched),
+        placed(Sourced, false, false, "s.reread", 2)
+    );
+    assert_eq!(
+        walked(Sourced, &then(&researched, &[page(Stands)])),
+        Walked::Ended(End::Resolved)
+    );
+}
+
+#[test]
+fn a_statement_its_own_citation_contradicts_is_rewritten_without_research() {
+    let refuted = [parts(Refuted)];
+    assert_eq!(
+        walked(Sourced, &refuted),
+        placed(Sourced, false, false, "s.rewrite", 2)
+    );
+    let rewritten = then(&refuted, &[sourced_rewrite(Rewritten)]);
+    assert_eq!(
+        walked(Sourced, &rewritten),
+        placed(Sourced, false, false, "s.final", 1)
+    );
+    assert_eq!(
+        walked(Sourced, &then(&rewritten, &[parts(Stands)])),
+        Walked::Ended(End::Resolved)
+    );
 }
 
 #[test]
@@ -190,7 +206,7 @@ fn a_rewrite_that_could_not_be_applied_is_tried_once_more() {
 
 #[test]
 fn a_sourced_statement_that_fails_every_rung_is_removed() {
-    let paths: [&[Taken]; 3] = [
+    let paths: [&[Taken]; 4] = [
         &[
             parts(Unproven),
             research(FoundNothing),
@@ -201,6 +217,12 @@ fn a_sourced_statement_that_fails_every_rung_is_removed() {
         ],
         &[
             parts(Refuted),
+            sourced_rewrite(Rewritten),
+            parts(Refuted),
+            cut(Outcome::Cut),
+        ],
+        &[
+            parts(Unproven),
             research(Saved),
             page(Refuted),
             sourced_rewrite(Rewritten),

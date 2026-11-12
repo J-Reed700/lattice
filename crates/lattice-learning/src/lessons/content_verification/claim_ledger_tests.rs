@@ -355,21 +355,11 @@ async fn a_last_attempt_that_cannot_take_the_sentence_out_leaves_it_standing_and
         repairs(claim).first(),
         Some(&(1, false, RepairOutcome::Rewritten))
     );
-    // Research ran once (no web here: nothing found) and is on the record.
-    assert_eq!(
-        claim
-            .events()
-            .iter()
-            .filter(|record| matches!(
-                record.event,
-                ClaimEvent::Researched {
-                    passages_found: 0,
-                    ..
-                }
-            ))
-            .count(),
-        1
-    );
+    // Its own citation contradicts it: it went to its rewrite, not to research.
+    assert!(!claim
+        .events()
+        .iter()
+        .any(|record| matches!(record.event, ClaimEvent::Researched { .. })));
     let shown = store.shown_passages(&lesson_id).await?;
     let passages = &shown[claim.claim_id()];
     assert!(!passages.is_empty());
@@ -2076,19 +2066,46 @@ async fn statements_their_citations_support_cost_one_call_each_and_no_page_is_re
 }
 
 #[tokio::test]
-async fn a_cited_statement_that_fails_reads_a_page_once_and_the_run_stays_within_the_plan(
+async fn a_cited_statement_its_passages_do_not_state_reads_a_page_once_and_the_run_stays_within_the_plan(
 ) -> Result<()> {
-    let (model, trace) =
-        prepared_counting(&[GOOD, GOOD, BAD], &[], &[source(), beside_the_citation()]).await?;
+    let unstated = figure(0);
+    let (model, trace) = prepared_counting(
+        &[GOOD, GOOD, &unstated],
+        &[],
+        &[source(), beside_the_citation()],
+    )
+    .await?;
 
     within_the_plan(&model, &trace);
-    // The failing statement's page is its re-check against what research
+    // The unstated statement's page is its re-check against what research
     // found: once, and not for the two its citations support.
     assert_eq!(
         model.strict.load(Ordering::Relaxed),
         1,
         "{} part by part, {} requests the plan counts, ceilings {:?}",
         model.part_wise.load(Ordering::Relaxed),
+        model.made(),
+        trace.ceilings
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_cited_statement_its_citation_contradicts_is_rewritten_without_a_page_and_the_run_stays_within_the_plan(
+) -> Result<()> {
+    let (model, trace) =
+        prepared_counting(&[GOOD, GOOD, BAD], &[], &[source(), beside_the_citation()]).await?;
+
+    within_the_plan(&model, &trace);
+    // Read part by part: its two neighbours, itself and its rewrite's
+    // successor; no page is read.
+    assert_eq!(
+        (
+            model.part_wise.load(Ordering::Relaxed),
+            model.strict.load(Ordering::Relaxed)
+        ),
+        (4, 0),
+        "{} requests the plan counts, ceilings {:?}",
         model.made(),
         trace.ceilings
     );
@@ -2990,10 +3007,10 @@ async fn statements_alone_in_their_sections_are_published_not_verified_instead_o
 
 // A question's claims are the lesson's own and are not among the learner's
 // teaching claims, so the next two read the lesson as the preparation returns
-// it: it publishes, and each explanation keeps its sentence.
+// it: it publishes, and keeps a question.
 
 #[tokio::test]
-async fn a_lesson_whose_cuts_would_take_all_of_its_questions_is_published_with_their_statements_standing(
+async fn a_lesson_whose_cuts_would_take_all_of_its_questions_keeps_the_last_with_its_statement_standing(
 ) -> Result<()> {
     let course = Course::new().await?;
     let draft = with_questions(vec![quiz("quiz", &figure(5)), quiz("quiz", &figure(6))]);
@@ -3006,7 +3023,7 @@ async fn a_lesson_whose_cuts_would_take_all_of_its_questions_is_published_with_t
             &draft,
         )
         .await
-        .expect("the lesson publishes, two statements not verified");
+        .expect("the lesson publishes, its last question kept");
 
     assert!(report.issues.is_empty(), "{:?}", report.issues);
     assert!(held_for_review(
@@ -3019,10 +3036,8 @@ async fn a_lesson_whose_cuts_would_take_all_of_its_questions_is_published_with_t
     let published: Value = serde_json::from_str(&raw)?;
     let questions = published["questions"].as_array().unwrap();
     let trail = course.trail().await?;
-    assert_eq!(questions.len(), 2, "{questions:?}\n{trail}");
-    for (index, sentence) in [figure(0), figure(1)].iter().enumerate() {
-        assert_eq!(questions[index]["explanation"], json!(sentence), "{trail}");
-    }
+    assert_eq!(questions.len(), 1, "{questions:?}\n{trail}");
+    assert_eq!(questions[0]["explanation"], json!(figure(1)), "{trail}");
     course.assert_invariants(&raw, &report).await?;
     Ok(())
 }
