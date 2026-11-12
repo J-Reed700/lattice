@@ -1,6 +1,7 @@
 //! The one contract of a model call: its identity, the single place it is
 //! attached to the request, and the single rule for a reply that cannot be
-//! used (one larger send for a cut-off, one correction, then unusable).
+//! used (a cut-off reply of a call that splits is reported at once; otherwise
+//! one larger send where there is one, one correction, then unusable).
 
 use crate::application::ports::llm_port::{
     CacheHold, CompletionInput, CompletionRequest, CompletionResponse, Finish, LLMPort, Pace,
@@ -23,6 +24,10 @@ mod tests;
 pub const CORRECTION_LEAD: &str = "That answer could not be used:";
 
 const CUT_OFF: &str = "The model response was cut off before the learning material was complete. Try again with a smaller outline or lesson.";
+
+/// What the correction says after a reply that was cut off and could not be sent larger.
+pub const CUT_OFF_REFUSAL: &str =
+    "The reply was cut off before it ended. Give the whole answer again, more briefly.";
 
 const DECLINED: &str = "The model declined to write this learning material. Try again, or choose another model in Settings → AI.";
 
@@ -52,6 +57,8 @@ pub struct ContractCall {
     pub id: ContractId,
     pub step: Step,
     pub input: serde_json::Value,
+    /// Whether a cut-off answer is answered by the caller sending fewer items per call.
+    pub splits: bool,
 }
 
 pub trait Contract {
@@ -78,7 +85,13 @@ impl ContractCall {
             id: C::ID,
             step: Step::Answer,
             input,
+            splits: false,
         })
+    }
+
+    /// Whether the caller answers a cut-off by sending fewer items per call.
+    pub fn splitting(self, splits: bool) -> Self {
+        Self { splits, ..self }
     }
 
     pub fn draft(&self) -> Self {
@@ -301,6 +314,7 @@ pub fn refusal(error: &AppError) -> String {
         | AppError::InvalidData(reason)
         | AppError::ValidationFailed(reason)
         | AppError::ModelAnswerUnusable(reason)
+        | AppError::AnswerCutOff(reason)
         | AppError::Json {
             message: reason, ..
         } => reason.clone(),
@@ -308,29 +322,46 @@ pub fn refusal(error: &AppError) -> String {
     }
 }
 
-/// The reply to a request: sent once, and once more with a larger allowance when cut off.
+/// A reply that ended, with the request that drew it.
+enum Reply<R> {
+    Complete(R, CompletionResponse),
+    CutOff(R, CompletionResponse),
+}
+
+/// The reply to a request. A cut-off reply of a call that splits is an
+/// [`AppError::AnswerCutOff`] at once; otherwise it is sent once more with a
+/// larger allowance where the transport offers one, and a call without one gets the
+/// cut-off reply back to be corrected.
 async fn complete_reply<T: Transport>(
     llm: &dyn LLMPort,
+    call: &ContractCall,
     transport: &T,
     request: T::Request,
-) -> Result<(T::Request, CompletionResponse)> {
+) -> Result<Reply<T::Request>> {
     let response = transport.send(llm, &request).await?;
-    let larger = match response.finish() {
-        Finish::CutOff => transport.larger(llm, &request).await,
-        _ => None,
-    };
-    let (request, response) = match larger {
-        Some(larger) => {
-            let response = transport.send(llm, &larger).await?;
-            (larger, response)
-        }
-        None => (request, response),
+    let (request, response) = match response.finish() {
+        Finish::CutOff if call.splits => return Err(cut_off()),
+        Finish::CutOff => match transport.larger(llm, &request).await {
+            Some(larger) => {
+                let response = transport.send(llm, &larger).await?;
+                if response.finish() == Finish::CutOff {
+                    return Err(cut_off());
+                }
+                (larger, response)
+            }
+            None => return Ok(Reply::CutOff(request, response)),
+        },
+        _ => (request, response),
     };
     match response.finish() {
-        Finish::Complete => Ok((request, response)),
+        Finish::Complete => Ok(Reply::Complete(request, response)),
         Finish::Declined => Err(AppError::ModelAnswerUnusable(DECLINED.into())),
         Finish::CutOff | Finish::Filtered => Err(AppError::ModelAnswerUnusable(CUT_OFF.into())),
     }
+}
+
+fn cut_off() -> AppError {
+    AppError::AnswerCutOff(CUT_OFF.into())
 }
 
 /// The accepted answer to `request`: one correction quoting why a reply was refused, then unusable.
@@ -342,14 +373,23 @@ pub async fn answer<T: Transport, A>(
     accept: impl Fn(&str) -> Result<A> + Send + Sync,
 ) -> Result<A> {
     let llm = tagged(llm, call);
-    let (request, response) = complete_reply(&llm, transport, request).await?;
-    let error = match accept(&response.text) {
-        Ok(answer) => return Ok(answer),
-        Err(error) => error,
+    let (request, response, reason) = match complete_reply(&llm, call, transport, request).await? {
+        Reply::Complete(request, response) => match accept(&response.text) {
+            Ok(answer) => return Ok(answer),
+            Err(error) => {
+                let reason = refusal(&error);
+                (request, response, reason)
+            }
+        },
+        Reply::CutOff(request, response) => (request, response, CUT_OFF_REFUSAL.to_owned()),
     };
     let correction = transport
-        .correction(&llm, &request, &response, &refusal(&error))
+        .correction(&llm, &request, &response, &reason)
         .await?;
-    let (_, response) = complete_reply(&llm, transport, correction).await?;
-    accept(&response.text).map_err(|error| AppError::ModelAnswerUnusable(refusal(&error)))
+    match complete_reply(&llm, call, transport, correction).await? {
+        Reply::Complete(_, response) => {
+            accept(&response.text).map_err(|error| AppError::ModelAnswerUnusable(refusal(&error)))
+        }
+        Reply::CutOff(..) => Err(cut_off()),
+    }
 }

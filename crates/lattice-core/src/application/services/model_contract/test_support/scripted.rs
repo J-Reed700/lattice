@@ -437,6 +437,7 @@ mod tests {
             id: Number::ID,
             step: Step::Answer,
             input: serde_json::json!(5),
+            splits: false,
         };
         let request = CompletionRequest {
             contract: Some(call),

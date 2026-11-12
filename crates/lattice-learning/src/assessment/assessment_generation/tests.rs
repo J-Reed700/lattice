@@ -314,7 +314,7 @@ async fn a_batch_cut_off_asks_for_fewer_and_a_single_item_cut_off_is_refused() -
     };
     assert!(batch(2).author(&CutOff, &collection).await?.is_none());
     let single = batch(1).author(&CutOff, &collection).await;
-    assert!(matches!(single, Err(AppError::ModelAnswerUnusable(_))));
+    assert!(matches!(single, Err(AppError::AnswerCutOff(_))));
     Ok(())
 }
 

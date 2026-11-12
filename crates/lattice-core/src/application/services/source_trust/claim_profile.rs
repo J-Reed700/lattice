@@ -313,7 +313,8 @@ pub async fn profile_claims(
         let call = ContractCall::of::<ProfileCall>(&PromptInput {
             system: CLAIM_PROFILE_SYSTEM.to_owned(),
             prompt: prompt.clone(),
-        })?;
+        })?
+        .splitting(claims.len() > 1);
         let outcome = judge(
             llm,
             &call,

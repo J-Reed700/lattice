@@ -6,6 +6,7 @@
 )]
 use super::*;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::services::model_contract::{CORRECTION_LEAD, CUT_OFF_REFUSAL};
 use lattice_core::domain::learning::acceptance::{Outcome, Reading, StandardPolicy};
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::JobStore;
@@ -2096,7 +2097,9 @@ async fn durable_judge_recovers_truncated_output_without_using_it_as_approval() 
                     ..Default::default()
                 });
             }
-            assert!(serde_json::to_string(&request.input)?.contains("Correct the response format"));
+            let sent = serde_json::to_string(&request.input)?;
+            assert!(sent.contains(CORRECTION_LEAD));
+            assert!(sent.contains(CUT_OFF_REFUSAL));
             Ok(CompletionResponse {
                 text: "Reason: The reference does not state the claimed date.\nSource passage: none\nVerdict: unsupported".into(),
                 finish_reason: "stop".into(),

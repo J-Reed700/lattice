@@ -9,12 +9,12 @@ use crate::assessment_engine::{
 use crate::assessment_generation::text_call;
 use crate::key_review::{self, KeyVerdict, Solution};
 use crate::lessons::structured_call::complete_checked_request;
-use crate::model_call::{self, ErrorClass};
+use crate::model_call;
 use lattice_core::{
     application::ports::LLMPort,
     application::services::grounded_generation::GroundedRequest,
     application::services::model_contract::{Contract, ContractId, PromptInput},
-    shared::error::{AppError, Result},
+    shared::error::{smaller_parts_may_succeed, AppError, Result},
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -327,8 +327,8 @@ impl Judge<'_> {
 
     /// One check per item of the chunk, corrected once by the shared driver
     /// when the answer misses an item or reports a defect without saying what
-    /// it is. None when the answer was cut off for more than one item: the
-    /// caller then asks for fewer.
+    /// it is. None when more than one item cannot be answered in one call and
+    /// smaller parts may succeed: the caller then asks for fewer.
     async fn checks(
         &self,
         llm: &dyn LLMPort,
@@ -337,11 +337,11 @@ impl Judge<'_> {
     ) -> Result<Option<Vec<Check>>> {
         let wanted = self.ids(start, size);
         let request = self.request(start, size);
-        let call = text_call::<QuizItemReview>(&request)?;
+        let call = text_call::<QuizItemReview>(&request)?.splitting(size > 1);
         let read = |text: &str| read_checks(text, &wanted);
         match complete_checked_request(llm, &call, request, None, None, read).await {
             Ok(checks) => Ok(Some(checks)),
-            Err(error) if size > 1 && ErrorClass::of(&error) == ErrorClass::DoesNotFit => Ok(None),
+            Err(error) if size > 1 && smaller_parts_may_succeed(&error) => Ok(None),
             Err(error) => Err(error),
         }
     }

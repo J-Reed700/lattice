@@ -179,7 +179,7 @@ async fn an_unreadable_answer_is_asked_for_once_more_and_then_left_unchecked() {
     for (replies, sends) in [
         (vec![unreadable(), unreadable()], 2),
         (vec![unknown(), unknown()], 2),
-        (vec![cut(), cut()], 1),
+        (vec![cut(), cut()], 2),
     ] {
         let llm = Scripted::new(replies);
         let judgment = checker(&llm, CheckPolicy::Consistency)

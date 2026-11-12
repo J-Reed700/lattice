@@ -7,7 +7,7 @@ use std::sync::{Mutex, PoisonError};
 use async_trait::async_trait;
 
 use lattice_core::application::ports::llm_port::{
-    CompletionResponse, Finish, InferencePriority, SamplingOverride, ANSWER_EFFORT,
+    CompletionResponse, InferencePriority, SamplingOverride, ANSWER_EFFORT,
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::context_assembler::budget::{
@@ -225,16 +225,14 @@ pub(super) struct Spent {
 pub(super) struct Audit<'a> {
     pub reserve: usize,
     pub web: Option<&'a dyn VerifierWeb>,
-    pub items: usize,
     spent: Mutex<Spent>,
 }
 
 impl<'a> Audit<'a> {
-    pub(super) fn new(reserve: usize, web: Option<&'a dyn VerifierWeb>, items: usize) -> Self {
+    pub(super) fn new(reserve: usize, web: Option<&'a dyn VerifierWeb>) -> Self {
         Self {
             reserve,
             web,
-            items,
             spent: Mutex::default(),
         }
     }
@@ -279,11 +277,6 @@ impl Transport for Audit<'_> {
             spent.web_note = answer.web_note;
         }
         spent.fetched = answer.fetched;
-        if answer.response.finish() == Finish::CutOff && self.items > 1 {
-            return Err(AppError::WindowTooSmall(
-                "The Verifier's answer was cut off at its output limit.".into(),
-            ));
-        }
         Ok(answer.response)
     }
 

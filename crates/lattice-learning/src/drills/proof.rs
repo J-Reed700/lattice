@@ -221,7 +221,7 @@ pub(crate) async fn judge(
     trail.call("judge", tools.llm.model_name());
     let judgement = match asked {
         Ok(asked) => asked.value,
-        Err(AppError::ModelAnswerUnusable(reason)) => {
+        Err(AppError::ModelAnswerUnusable(reason) | AppError::AnswerCutOff(reason)) => {
             return Ok(unproven(
                 format!("The judge's answer could not be used: {reason}"),
                 trail,

@@ -132,6 +132,10 @@ pub enum AppError {
     /// checks. The text says what was wrong with the answer.
     ModelAnswerUnusable(String),
 
+    /// A model's answer ended before it was complete and was not asked for again;
+    /// the same work may succeed in smaller parts.
+    AnswerCutOff(String),
+
     /// A request whose prompt alone fills the configured context window, so
     /// it leaves no room for an answer and was never sent. The numbers let a
     /// caller send less and ask again: `prompt_tokens` is the prompt as the
@@ -312,6 +316,7 @@ impl AppError {
             AppError::ServiceNotAvailable(_) => "SERVICE_UNAVAILABLE",
             AppError::ModelRejected(_) => "MODEL_REJECTED",
             AppError::ModelAnswerUnusable(_) => "MODEL_ANSWER_UNUSABLE",
+            AppError::AnswerCutOff(_) => "ANSWER_CUT_OFF",
             AppError::PromptExceedsWindow { .. } => "PROMPT_EXCEEDS_WINDOW",
             AppError::Serialization(_) => "SERIALIZATION_ERROR",
             AppError::Security(_) => "SECURITY_ERROR",
@@ -348,7 +353,9 @@ impl AppError {
             AppError::ServiceNotAvailable(_)
             | AppError::DatabaseBusy(_)
             | AppError::AiModelsNotInstalled(_) => 503,
-            AppError::ModelRejected(_) | AppError::ModelAnswerUnusable(_) => 502,
+            AppError::ModelRejected(_)
+            | AppError::ModelAnswerUnusable(_)
+            | AppError::AnswerCutOff(_) => 502,
             AppError::FileTooLarge { .. } => 413,
             AppError::ConcurrentModification { .. } | AppError::Conflict(_) => 409,
             AppError::Domain(err) if err.is_not_found() => 404,
@@ -582,6 +589,9 @@ impl fmt::Display for AppError {
             AppError::ServiceNotAvailable(e) => write!(f, "Service not available: {}", e),
             AppError::ModelRejected(e) => write!(f, "{}", e),
             AppError::ModelAnswerUnusable(e) => {
+                write!(f, "The model's answer could not be used: {}", e)
+            }
+            AppError::AnswerCutOff(e) => {
                 write!(f, "The model's answer could not be used: {}", e)
             }
             AppError::PromptExceedsWindow { message, .. } => write!(f, "{}", message),

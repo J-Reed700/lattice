@@ -366,7 +366,7 @@ pub(super) async fn ask(
         .await;
     match &result {
         Ok(raw) => crate::lesson_drafts::record_checkpoint(&key, json!({"answer": raw})).await?,
-        Err(AppError::ModelAnswerUnusable(reason)) => {
+        Err(AppError::ModelAnswerUnusable(reason) | AppError::AnswerCutOff(reason)) => {
             crate::lesson_drafts::record_checkpoint(&key, json!({"refused": reason})).await?;
         }
         Err(_) => {}

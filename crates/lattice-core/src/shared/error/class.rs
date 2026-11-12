@@ -13,6 +13,11 @@ pub enum ErrorClass {
     Fault,
 }
 
+/// Whether the same work may succeed when sent in smaller parts.
+pub fn smaller_parts_may_succeed(error: &AppError) -> bool {
+    ErrorClass::of(error) == ErrorClass::DoesNotFit || matches!(error, AppError::AnswerCutOff(_))
+}
+
 impl ErrorClass {
     /// The one classification of an error, for every caller.
     pub fn of(error: &AppError) -> Self {
@@ -22,7 +27,9 @@ impl ErrorClass {
             | AppError::ServiceNotAvailable(_)
             | AppError::DatabaseBusy(_) => Self::Outage,
             AppError::HttpStatus { status, .. } if is_retry_later_status(*status) => Self::Outage,
-            AppError::ModelAnswerUnusable(_) | AppError::ModelRejected(_) => Self::Unusable,
+            AppError::ModelAnswerUnusable(_)
+            | AppError::AnswerCutOff(_)
+            | AppError::ModelRejected(_) => Self::Unusable,
             AppError::PromptExceedsWindow { .. } | AppError::WindowTooSmall(_) => Self::DoesNotFit,
             AppError::HttpStatus { .. }
             | AppError::Io { .. }
@@ -112,6 +119,7 @@ mod tests {
     fn a_model_that_answered_badly_or_refused_is_unusable() {
         for unusable in [
             AppError::ModelAnswerUnusable("no".into()),
+            AppError::AnswerCutOff("no".into()),
             AppError::ModelRejected("no".into()),
         ] {
             assert_eq!(ErrorClass::of(&unusable), ErrorClass::Unusable);

@@ -4642,6 +4642,11 @@ export type AppError =
  */
 { ModelAnswerUnusable: string } |
 /**
+ * A model's answer ended before it was complete and was not asked for again;
+ * the same work may succeed in smaller parts.
+ */
+{ AnswerCutOff: string } |
+/**
  * A request whose prompt alone fills the configured context window, so
  * it leaves no room for an answer and was never sent. The numbers let a
  * caller send less and ask again: `prompt_tokens` is the prompt as the

@@ -298,15 +298,13 @@ async fn a_reply_that_cannot_be_read_is_asked_for_once_more_and_then_left_unjudg
     };
     for first in bad() {
         let second = bad().pop().unwrap();
-        let cut_off = matches!(first, Reply::Cut(_));
         let llm = Scripted::new(vec![first, second]);
         let judgment = checker(&llm, CheckPolicy::Bridge)
             .check_bridge("A part.", &passages())
             .await
             .judgments;
         assert!(matches!(judgment, ClassJudgment::Unusable), "{judgment:?}");
-        let sends = if cut_off { 1 } else { 2 };
-        assert_eq!(llm.sent().len(), sends);
+        assert_eq!(llm.sent().len(), 2);
     }
 }
 
