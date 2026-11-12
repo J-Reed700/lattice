@@ -21,8 +21,12 @@ struct Answer {
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, Debug, PartialEq)
+)]
 #[serde(deny_unknown_fields)]
-struct Entry {
+pub(crate) struct Entry {
     finding: String,
     plan: String,
     #[serde(default)]
@@ -33,7 +37,7 @@ struct Entry {
     uncite: Vec<Value>,
 }
 
-fn entries(raw: &str) -> Result<Vec<Entry>> {
+pub(super) fn entries(raw: &str) -> Result<Vec<Entry>> {
     crate::generation::parse_json::<Answer>(raw).map(|answer| answer.answers)
 }
 

@@ -40,7 +40,7 @@ impl lattice_core::application::services::model_contract::test_support::RenderAn
     }
 
     fn read(text: &str) -> Result<Review> {
-        crate::generation::parse_json::<Review>(text)
+        read_review(text)
     }
 }
 
@@ -604,14 +604,19 @@ fn read_checks(
     }
 }
 
-/// The reviewer's reply as findings; every problem it has, in one error.
-fn read(raw: &str, reading: &Reading<'_>) -> Result<Judged> {
-    let review: Review = generation::parse_json(raw).map_err(|_| {
+/// The review a reply holds, before it is held to the sections asked about.
+fn read_review(raw: &str) -> Result<Review> {
+    generation::parse_json(raw).map_err(|_| {
         AppError::InvalidInput(
             "The review was incomplete. Give the issues and a check for every requested section."
                 .into(),
         )
-    })?;
+    })
+}
+
+/// The reviewer's reply as findings; every problem it has, in one error.
+fn read(raw: &str, reading: &Reading<'_>) -> Result<Judged> {
+    let review = read_review(raw)?;
     let mut problems = Vec::new();
     let mut reported = Vec::new();
     read_issues(review.issues, reading, &mut reported, &mut problems);

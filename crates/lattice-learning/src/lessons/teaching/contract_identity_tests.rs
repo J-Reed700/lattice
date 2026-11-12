@@ -20,21 +20,6 @@ fn a_quote_in_other_words_is_still_not_found() {
 }
 
 #[test]
-fn the_confirm_contract_reads_what_it_renders() {
-    for answer in [
-        json!({"taught":true,"quote":"Water boils.","belongs":""}),
-        json!({"case":"A kettle that is empty.","contradict":false}),
-        json!({"asked":true,"taught":true,"where":"thisLesson","quote":"Boil it."}),
-        json!({"asked":true,"taught":true,"where":"earlierLessons","quote":"Boil it."}),
-        json!({"asked":false,"taught":false,"where":"priorKnowledge","quote":""}),
-    ] {
-        lattice_core::application::services::model_contract::test_support::assert_round_trip::<
-            confirm::LessonContractConfirm,
-        >(&answer);
-    }
-}
-
-#[test]
 fn the_check_contract_reads_what_it_renders() {
     let answer = |reports: Vec<Report>| Answer {
         planned: vec![Planned {

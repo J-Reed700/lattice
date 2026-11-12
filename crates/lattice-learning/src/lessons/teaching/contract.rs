@@ -89,6 +89,11 @@ impl Contract for LessonContractCheck {
     type Input = PromptInput;
 }
 
+/// The check a reply holds.
+fn read_answer(raw: &str) -> Result<Answer> {
+    crate::generation::parse_json::<Answer>(raw)
+}
+
 #[cfg(any(test, feature = "test-support"))]
 impl lattice_core::application::services::model_contract::test_support::RenderAnswer
     for LessonContractCheck
@@ -100,7 +105,7 @@ impl lattice_core::application::services::model_contract::test_support::RenderAn
     }
 
     fn read(text: &str) -> Result<Answer> {
-        crate::generation::parse_json::<Answer>(text)
+        read_answer(text)
     }
 }
 
@@ -866,7 +871,7 @@ pub(super) async fn check(
                     subject: "the check against the course plan",
                     brief: &brief,
                 }),
-                crate::generation::parse_json::<Answer>,
+                read_answer,
             )
             .await?;
             crate::lesson_drafts::record_checkpoint(&key, serde_json::to_value(&answer)?).await?;
