@@ -19,7 +19,6 @@ use crate::domain::provenance::{
 use crate::shared::error::Result;
 use crate::shared::hash::sha256_hex;
 
-/// The prompt's version: part of every cache key.
 /// The model call of the standing judgement.
 pub(crate) struct SourceStanding;
 
@@ -28,6 +27,7 @@ impl Contract for SourceStanding {
     type Input = PromptInput;
 }
 
+/// The prompt's version: part of every cache key.
 pub const STANDING_POLICY: &str = "source-standing-v2";
 
 /// The system prompt, fixed text; `STANDING_POLICY` versions it.
