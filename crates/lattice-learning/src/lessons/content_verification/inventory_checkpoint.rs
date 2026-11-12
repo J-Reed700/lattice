@@ -279,3 +279,41 @@ pub(super) async fn complete_inventory(
     section_checkpoints::save(llm, content, &inventory.units, &coverage.units).await?;
     Ok((inventory, coverage))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lattice_core::domain::learning::claim_review::{
+        Actor, ClaimLocation, EventProvenance, UnitKind,
+    };
+
+    #[test]
+    fn a_held_claim_with_a_long_quote_stays_held() {
+        let long = format!("Alpha {}omega.", "beta gamma delta ".repeat(100));
+        let candidate = json!({"blocks": [{"kind": "explanation", "title": "A", "body": long}], "questions": []});
+        let held = ClaimLedgerEntry::extracted(
+            ClaimId("c1".into()),
+            EventProvenance {
+                actor: Actor::Machine,
+                at: 1,
+                job_id: None,
+                app_version: "test".into(),
+                checker_model: None,
+            },
+            ClaimLocation::locate(0, UnitKind::Block, "body", long.clone(), &long),
+            "A scoped factual statement.".into(),
+        )
+        .unwrap();
+        let mut inventory = Inventory {
+            units: vec![UnitClaims {
+                index: 0,
+                claims: vec![],
+                non_factual_reason: "A section.".into(),
+            }],
+        };
+
+        let kept = keep_held(&mut inventory, &candidate, &[held]);
+
+        assert_eq!(kept, 1);
+    }
+}
