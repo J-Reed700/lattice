@@ -33,14 +33,24 @@ fn a_section_patch_keeps_other_content_and_only_receives_its_evidence() -> Resul
     assert_eq!(result["blocks"][0], original["blocks"][0]);
     assert_eq!(result["questions"], original["questions"]);
     assert_eq!(result["blocks"][1]["body"], "Corrected");
-    assert!(merge(&mut result, original.clone(), 1).is_err());
-    assert!(merge(
-        &mut result,
-        json!({"blocks":[{"kind":"recap"}],"questions":[]}),
-        1
-    )
-    .is_err());
     Ok(())
+}
+
+#[test]
+fn an_edited_section_of_another_kind_or_number_is_refused() {
+    let original = json!({"blocks":[{"kind":"explanation","title":"Keep","body":"Keep this. Fix that."}],"questions":[]});
+    let schema = json!({"type":"object","properties":{"blocks":{"type":"array","items":{"type":"object"}},"questions":{"type":"array","items":{"type":"object"}}}});
+    let accept = |edit: Value| {
+        accept_edits(
+            &edit.to_string(),
+            (&original, &original, &Default::default()),
+            (&schema, "blocks"),
+            (&[], &[]),
+        )
+    };
+    let renamed =
+        json!({"edits":[{"path":"/blocks/0/kind","before":"explanation","after":"recap"}]});
+    assert!(accept(renamed).is_err());
 }
 
 /// Answers each request with the next of its answers and keeps every request.
@@ -82,16 +92,17 @@ fn messages(request: &CompletionRequest) -> Vec<(&str, &str)> {
 }
 
 #[tokio::test]
-async fn a_section_whose_edits_cannot_be_applied_is_asked_for_in_the_same_conversation(
+async fn a_section_whose_edits_cannot_be_applied_is_asked_again_in_the_same_conversation(
 ) -> Result<()> {
     let original = json!({"blocks":[{"kind":"explanation","title":"Keep","body":"Keep this. Keep that."}],"questions":[]});
     let local =
         json!({"candidate":original,"failedClaims":[{"unit":0,"statement":"Correct one fact."}]});
-    let replacement = json!({"blocks":[{"kind":"explanation","title":"Keep","body":"Keep this. Correct that."}],"questions":[]});
     let ambiguous =
         json!({"edits":[{"path":"/blocks/0/body","before":"Keep","after":"Correct"}]}).to_string();
+    let applies =
+        json!({"edits":[{"path":"/blocks/0/body","before":"Keep that.","after":"Correct that."}]});
     let model = Recording {
-        answers: Mutex::new([ambiguous.clone(), replacement.to_string()].into()),
+        answers: Mutex::new([ambiguous.clone(), applies.to_string()].into()),
         sent: Mutex::new(Vec::new()),
     };
     let schema = json!({"type":"object","properties":{"blocks":{"type":"array","items":{"type":"object"}},"questions":{"type":"array","items":{"type":"object"}}}});
@@ -113,17 +124,14 @@ async fn a_section_whose_edits_cannot_be_applied_is_asked_for_in_the_same_conver
     )
     .await?;
 
-    assert_eq!(repaired, replacement);
+    assert_eq!(repaired["blocks"][0]["body"], "Keep this. Correct that.");
     assert!(put_back.is_empty());
     let sent = model.sent.lock().unwrap().clone();
-    assert_eq!(sent.len(), 2, "the edits, then the section");
-    let (edits, section) = (messages(&sent[0]), messages(&sent[1]));
-    // The server has just read the edit request, so the section request
-    // continues it rather than opening another conversation.
-    assert_eq!(section.len(), edits.len() + 2, "{section:?}");
-    assert_eq!(section[..edits.len()], edits[..]);
-    assert_eq!(section[edits.len()], ("assistant", ambiguous.as_str()));
-    let (role, asked) = section[edits.len() + 1];
+    assert_eq!(sent.len(), 2, "the edits, then the correction");
+    let (first, second) = (messages(&sent[0]), messages(&sent[1]));
+    assert_eq!(second[..first.len()], first[..]);
+    assert_eq!(second[first.len()], ("assistant", ambiguous.as_str()));
+    let (role, asked) = second[first.len() + 1];
     assert_eq!(role, "user");
     assert!(asked.contains("occurs more than once"), "{asked}");
     Ok(())
@@ -1247,7 +1255,7 @@ async fn passage_wide_with(
 }
 
 #[tokio::test]
-async fn a_passage_wide_quote_is_cut_to_the_sentence_that_states_the_claim_and_every_copy_of_it_goes(
+async fn a_passage_wide_quote_is_cut_to_the_sentence_that_states_the_claim_in_its_first_place(
 ) -> Result<()> {
     let llm = SmallWindow {
         window: 4_000,
@@ -1271,11 +1279,11 @@ async fn a_passage_wide_quote_is_cut_to_the_sentence_that_states_the_claim_and_e
     .await?;
 
     // The first sentence of the passage stays; the stating one goes where the
-    // lesson writes it again too.
+    // quote first stands, and its second copy is kept.
     assert_eq!(handled, 1);
     assert_eq!(
         context["candidate"]["blocks"][0]["body"],
-        format!("{COLD} Middle line. Closing line.")
+        format!("{COLD} Middle line. {BISQUE} Closing line.")
     );
     Ok(())
 }
