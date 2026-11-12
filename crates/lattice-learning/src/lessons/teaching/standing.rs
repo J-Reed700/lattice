@@ -273,7 +273,8 @@ impl Standing {
     }
 
     /// Takes the reviewer's verdicts into the open findings, numbers what is
-    /// new, and returns the new findings, not yet open.
+    /// new, and returns the new findings, not yet open. An open finding with
+    /// no verdict the reply could give stays as it stood.
     pub fn judged(
         &mut self,
         candidate: &Value,
@@ -281,7 +282,6 @@ impl Standing {
         judged: Judged,
     ) -> Vec<ReviewFinding> {
         let Judged { verdicts, reported } = judged;
-        let mut present: BTreeSet<FindingId> = BTreeSet::new();
         for verdict in verdicts {
             let Some(position) = self
                 .open
@@ -300,12 +300,14 @@ impl Standing {
             };
             finding.passage = Some(verdict.quote);
             let written = sentence_digests(&sentences_of(candidate, finding));
-            self.about
-                .entry(verdict.id.clone())
-                .or_default()
-                .extend(written);
-            present.insert(verdict.id);
+            self.about.entry(verdict.id).or_default().extend(written);
         }
+        let present: BTreeSet<FindingId> = round
+            .asked
+            .iter()
+            .map(|asked| asked.id.clone())
+            .filter(|id| self.open.iter().any(|finding| finding.id() == *id))
+            .collect();
         let mut fresh = Vec::new();
         for report in reported {
             if report

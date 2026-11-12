@@ -374,7 +374,8 @@ struct Reading<'a> {
     passages: &'a [Vec<String>],
     sections: &'a [usize],
     asked: &'a [&'a Asked],
-    /// A blank issue or finding is dropped, not refused.
+    /// The reply after a correction: a blank issue or finding is dropped and
+    /// an open finding with no usable verdict stays as it stood, not refused.
     settle: bool,
 }
 
@@ -427,14 +428,20 @@ fn read_verdicts(
     reading: &Reading<'_>,
     problems: &mut Vec<String>,
 ) -> Vec<Verdict> {
+    let mut refuse = |message: String| {
+        if reading.settle {
+            tracing::warn!(%message, "A verdict that could not be used leaves its finding open as it stood");
+        } else {
+            note(problems, message);
+        }
+    };
     let mut parsed = Vec::new();
     for entry in entries {
         match serde_json::from_value::<VerdictEntry>(entry) {
             Ok(entry) => parsed.push(entry),
-            Err(_) => note(
-                problems,
-                "A verdict has missing, unexpected or incorrectly typed fields.".into(),
-            ),
+            Err(_) => {
+                refuse("A verdict has missing, unexpected or incorrectly typed fields.".into())
+            }
         }
     }
     for entry in &parsed {
@@ -443,13 +450,10 @@ fn read_verdicts(
             .iter()
             .any(|finding| finding.id.as_str() == entry.id)
         {
-            note(
-                problems,
-                format!(
-                    "{} was not asked about; give a verdict only for the ids in openFindings.",
-                    entry.id
-                ),
-            );
+            refuse(format!(
+                "{} was not asked about; give a verdict only for the ids in openFindings.",
+                entry.id
+            ));
         }
     }
     let mut verdicts = Vec::new();
@@ -458,10 +462,7 @@ fn read_verdicts(
             .iter()
             .filter(|entry| entry.id == finding.id.as_str());
         let (Some(entry), None) = (own.next(), own.next()) else {
-            note(
-                problems,
-                format!("{} needs one verdict.", finding.id.as_str()),
-            );
+            refuse(format!("{} needs one verdict.", finding.id.as_str()));
             continue;
         };
         let quote = entry.quote.trim();
@@ -478,7 +479,7 @@ fn read_verdicts(
                 quote: held.to_owned(),
             });
         } else {
-            note(problems, format!("{}: the quote is not in {} as it now stands; quote the words there that still show the defect, or answer resolved.", finding.id.as_str(), finding.site.label()));
+            refuse(format!("{}: the quote is not in {} as it now stands; quote the words there that still show the defect, or answer resolved.", finding.id.as_str(), finding.site.label()));
         }
     }
     verdicts
@@ -632,7 +633,9 @@ fn read(raw: &str, reading: &Reading<'_>) -> Result<Judged> {
 /// What the reviewer found: its verdict on each finding in `scope.asked`,
 /// and the defects it reports beyond those. A defect of a section's check is
 /// placed in that section; a reviewer's issue is placed later, by the
-/// evidence check. A reply that cannot be read is corrected once; a second
+/// evidence check. A reply that cannot be read is corrected once. In the
+/// second, a verdict that cannot be used leaves its finding as it stood, as
+/// an unjudged statement is left (claim classes design §3.2); anything else
 /// that cannot be read fails the review.
 pub async fn review(
     llm: &dyn LLMPort,
