@@ -27,6 +27,7 @@ impl ClaimLedger {
     }
 
     /// Every fault recorded, claim by claim, in the order each claim met them.
+    #[cfg(test)]
     pub fn faults(&self) -> Vec<StatementFault> {
         self.entries()
             .iter()
@@ -37,7 +38,7 @@ impl ClaimLedger {
                     .filter_map(|record| match &record.event {
                         ClaimEvent::Faulted { stage, message } => Some(StatementFault {
                             claim: entry.claim_id().clone(),
-                            stage: stage.clone(),
+                            stage: *stage,
                             message: message.clone(),
                         }),
                         _ => None,

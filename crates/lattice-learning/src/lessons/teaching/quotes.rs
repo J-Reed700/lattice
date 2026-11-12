@@ -73,9 +73,11 @@ pub(super) fn lesson_quote_checks(candidate: &Value, authoring: &Value) -> Vec<Q
     authored(authoring).map_or_else(Vec::new, |table| quote_checks_in(candidate, &table))
 }
 
+type SiteOf = fn(usize) -> FindingSite;
+
 pub(crate) fn quote_checks_in(candidate: &Value, sources: &Table) -> Vec<QuoteCheck> {
     let mut failures = Vec::new();
-    let fields: [(&str, fn(usize) -> FindingSite); 2] = [
+    let fields: [(&str, SiteOf); 2] = [
         ("blocks", FindingSite::Section),
         ("questions", FindingSite::Question),
     ];

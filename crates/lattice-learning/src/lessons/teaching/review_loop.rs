@@ -62,7 +62,6 @@ pub(super) async fn review_material(
         let quote_checks = subject.quote_checks(&value, &authoring);
         // review
         let pass = Pass {
-            attempt,
             candidate: &candidate,
             value: &value,
             authoring: &authoring,

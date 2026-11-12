@@ -1260,7 +1260,7 @@ async fn a_statement_no_reading_judged_is_published_not_verified_as_unchecked() 
     ledger.append(&id, ClaimEvent::Checked(check)).await?;
 
     ledger
-        .cut(&policy, &[id.clone()], Outcome::CannotCut)
+        .cut(&policy, std::slice::from_ref(&id), Outcome::CannotCut)
         .await?;
 
     let state = ledger.entry(&id).unwrap().state();

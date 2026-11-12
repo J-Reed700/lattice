@@ -268,7 +268,7 @@ pub(super) fn states_a_specific(text: &str) -> bool {
 }
 
 /// Marks that open or close a quotation: double quotation marks only.
-pub(crate) const QUOTE_MARKS: &[char] = &['"', '\u{201c}', '\u{201d}'];
+const QUOTE_MARKS: &[char] = &['"', '\u{201c}', '\u{201d}'];
 
 /// Whether a quotation mark opens a quotation: a curly mark says so itself; a
 /// straight one opens at the start of the text or after whitespace or an

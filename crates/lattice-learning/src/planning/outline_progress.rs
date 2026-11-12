@@ -190,11 +190,6 @@ impl OutlineProgress {
         AppError::Cancelled(message.into())
     }
 
-    fn public_failure(&self, code: ErrorCode, message: String) -> AppError {
-        self.record_public_failure(code, message.clone());
-        AppError::ServiceNotAvailable(message)
-    }
-
     fn record_public_failure(&self, code: ErrorCode, message: String) {
         self.state
             .lock()

@@ -158,7 +158,6 @@ pub(super) enum Step {
 }
 
 pub(super) struct Pass<'a> {
-    pub attempt: usize,
     pub candidate: &'a str,
     pub value: &'a Value,
     pub authoring: &'a Value,

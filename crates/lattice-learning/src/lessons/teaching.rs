@@ -28,7 +28,7 @@ mod waiting;
 use passes::Passes;
 use quotes::QuoteCheck;
 use review_loop::{review_material, Reviewed};
-pub(crate) use standing::{references_hold, versions, Versions};
+pub(crate) use standing::{references_hold, versions};
 use subject::{LessonSubject, MaterialSubject, OutlineSubject};
 pub(crate) use waiting::question_texts;
 pub(crate) use waiting::record as record_waiting;

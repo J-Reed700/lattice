@@ -8,7 +8,6 @@ use lattice_core::application::ports::llm_port::{
 };
 use lattice_core::application::services::grounded_generation;
 use lattice_core::application::services::model_contract::{Contract, ContractId, PromptInput};
-use lattice_core::shared::persistence::Database;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 

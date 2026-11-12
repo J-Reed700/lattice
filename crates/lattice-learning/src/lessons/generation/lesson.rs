@@ -100,13 +100,11 @@ struct GeneratedBlock {
     citations: Vec<GeneratedCitation>,
 }
 
-/// A sentence the writer cites: copied from the body or explanation it stands
-/// in, with the source and the verbatim words of that source that contain
-/// what it states.
+/// The source a cited sentence adds and the verbatim words of that source
+/// that contain what it states; `teaching::quotes` checks the sentence.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GeneratedCitation {
-    sentence: String,
     source_index: Option<usize>,
     quote: String,
 }
