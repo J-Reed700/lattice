@@ -47,6 +47,12 @@ impl Contract for ReviewEvidence {
     type Input = PromptInput;
 }
 
+impl ReviewEvidence {
+    fn read(raw: &str) -> Result<Decisions> {
+        generation::parse_json(raw)
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 impl lattice_core::application::services::model_contract::test_support::RenderAnswer
     for ReviewEvidence
@@ -58,7 +64,7 @@ impl lattice_core::application::services::model_contract::test_support::RenderAn
     }
 
     fn read(text: &str) -> Result<Decisions> {
-        generation::parse_json(text)
+        Self::read(text)
     }
 }
 
@@ -210,7 +216,7 @@ fn accepted(
     beside: Beside<'_>,
     evidence: &HashMap<String, EvidenceKind>,
 ) -> Result<Checked> {
-    let Decisions { decisions } = generation::parse_json(raw)?;
+    let Decisions { decisions } = ReviewEvidence::read(raw)?;
     let mut answers: HashMap<&str, Vec<&Finding>> = HashMap::new();
     for decision in &decisions {
         answers

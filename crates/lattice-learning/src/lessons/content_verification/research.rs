@@ -81,6 +81,12 @@ impl Contract for ResearchQuery {
     type Input = PromptInput;
 }
 
+impl ResearchQuery {
+    fn read(raw: &str) -> Result<Selection> {
+        crate::generation::parse_json(raw)
+    }
+}
+
 fn selection_prompt(topic: &str, query: &str, gaps: &[Value], shown: &[Value]) -> String {
     json!({"topic":topic,"query":query,"gaps":gaps,"results":shown}).to_string()
 }
@@ -255,14 +261,14 @@ impl RenderAnswer for ResearchQuery {
     }
 
     fn read(text: &str) -> Result<Selection> {
-        crate::generation::parse_json(text)
+        Self::read(text)
     }
 }
 
 /// The selector's answer over `results`, the candidates it was shown: the
 /// ones it keeps, each with its reason.
 fn selection(raw: &str, results: &[WebSearchResult]) -> Result<Vec<(WebSearchResult, String)>> {
-    let selection: Selection = crate::generation::parse_json(raw)?;
+    let selection = ResearchQuery::read(raw)?;
     let mut seen = HashSet::new();
     let mut selected = Vec::new();
     if selection.decisions.len() > results.len() {

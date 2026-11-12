@@ -234,6 +234,12 @@ impl Contract for FidelityAudit {
     type Input = PromptInput;
 }
 
+impl FidelityAudit {
+    fn read(raw: &str) -> Result<FidelityFinding> {
+        crate::generation::parse_json(raw)
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 impl lattice_core::application::services::model_contract::test_support::RenderAnswer
     for FidelityAudit
@@ -245,7 +251,7 @@ impl lattice_core::application::services::model_contract::test_support::RenderAn
     }
 
     fn read(text: &str) -> Result<FidelityFinding> {
-        crate::generation::parse_json(text)
+        Self::read(text)
     }
 }
 
@@ -271,7 +277,7 @@ async fn judge(
         None,
         None,
         |raw| {
-            let finding: FidelityFinding = crate::generation::parse_json(raw)?;
+            let finding = FidelityAudit::read(raw)?;
             if !finding.valid() {
                 return Err(invalid(
                     "Each missing assertion needs a nonempty statement.",

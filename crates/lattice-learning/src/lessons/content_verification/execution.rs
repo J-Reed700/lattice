@@ -35,6 +35,12 @@ impl Contract for FenceLabels {
     type Input = PromptInput;
 }
 
+impl FenceLabels {
+    fn read(raw: &str) -> Result<Labels> {
+        crate::generation::parse_json(raw)
+    }
+}
+
 #[derive(Deserialize)]
 #[cfg_attr(
     any(test, feature = "test-support"),
@@ -67,7 +73,7 @@ impl lattice_core::application::services::model_contract::test_support::RenderAn
     }
 
     fn read(text: &str) -> Result<Labels> {
-        crate::generation::parse_json(text)
+        Self::read(text)
     }
 }
 
@@ -159,7 +165,7 @@ pub(crate) async fn label_unlabeled(llm: &dyn LLMPort, raw: String) -> Result<St
         prompt.prompt.clone(),
         json!({"type":"object","additionalProperties":false,"required":["fences"],"properties":{"fences":{"type":"array","minItems":ids.len(),"maxItems":ids.len(),"items":{"type":"object","additionalProperties":false,"required":["id","language"],"properties":{"id":{"type":"string","enum":ids},"language":{"enum":FENCE_LABELS}}}}}}),2000, None, None,
         |raw| {
-        let labels: Labels = crate::generation::parse_json(raw)?;
+        let labels = FenceLabels::read(raw)?;
         let mut resolved = std::collections::BTreeMap::new();
         for label in labels.fences {
             if !ids.contains(&label.id.as_str())

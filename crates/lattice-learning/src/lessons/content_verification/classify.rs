@@ -59,6 +59,12 @@ impl Contract for SortStatements {
     type Input = PromptInput;
 }
 
+impl SortStatements {
+    fn read(raw: &str) -> Result<BTreeMap<String, String>> {
+        crate::generation::parse_json(raw)
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 impl lattice_core::application::services::model_contract::test_support::RenderAnswer
     for SortStatements
@@ -70,7 +76,7 @@ impl lattice_core::application::services::model_contract::test_support::RenderAn
     }
 
     fn read(text: &str) -> Result<Self::Answer> {
-        crate::generation::parse_json(text)
+        Self::read(text)
     }
 }
 
@@ -420,7 +426,7 @@ fn schema(ids: &[String]) -> Value {
 
 /// The classes the model gave `ids`, in order: each id once, each a class.
 fn classes_of(raw: &str, ids: &[String]) -> Result<Vec<Class>> {
-    let answer: BTreeMap<String, String> = crate::generation::parse_json(raw)?;
+    let answer = SortStatements::read(raw)?;
     if let Some(extra) = answer.keys().find(|id| !ids.contains(id)) {
         return Err(invalid(format!(
             "Sort only the statements supplied; {extra} is not one of them."
