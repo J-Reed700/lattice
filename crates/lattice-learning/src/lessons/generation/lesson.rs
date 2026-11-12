@@ -144,6 +144,9 @@ struct GeneratedBlock {
 )]
 #[serde(rename_all = "camelCase")]
 struct GeneratedCitation {
+    #[cfg(any(test, feature = "test-support"))]
+    #[serde(default)]
+    sentence: String,
     source_index: Option<usize>,
     quote: String,
 }

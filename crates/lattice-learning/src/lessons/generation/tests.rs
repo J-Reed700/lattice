@@ -744,3 +744,35 @@ fn the_recall_contract_reads_what_it_renders() {
         .unwrap(),
     );
 }
+
+#[test]
+fn a_rendered_outline_meets_the_outline_schema() {
+    let (modules, _, lessons, _) = crate::dto::LearningCourseDepth::bounds(None);
+    let cited = || json!({"text":"A statement.","sourceIndex":0,"quote":"A quote."});
+    let module = |index: usize| {
+        json!({
+            "title":format!("Module {index}"),
+            "summary":cited(),
+            "outcomes":[cited(), cited()],
+            "prerequisiteIndices":if index == 0 { vec![] } else { vec![0] },
+            "project":{"title":"A project","brief":"Its brief.","deliverables":["One","Two"],"successCriteria":["Works","Is clear"]},
+            "lessons":(0..lessons).map(|n| json!({"title":format!("Lesson {n}"),"objective":"Its objective.","estimatedMinutes":20,"sourceIndex":0,"quote":"A quote."})).collect::<Vec<_>>()
+        })
+    };
+    let outline: outline::GeneratedOutline =
+        serde_json::from_value(json!({"modules":(0..modules).map(module).collect::<Vec<_>>()}))
+            .unwrap();
+    let rendered: Value = serde_json::from_str(
+        &<outline::OutlineDescription as lattice_core::application::services::model_contract::test_support::RenderAnswer>::render(&outline),
+    )
+    .unwrap();
+    let validator = jsonschema::JSONSchema::compile(&outline_schema(None, 1)).unwrap();
+    let errors: Vec<String> = validator
+        .validate(&rendered)
+        .err()
+        .into_iter()
+        .flatten()
+        .map(|error| error.to_string())
+        .collect();
+    assert!(errors.is_empty(), "{errors:?}");
+}
