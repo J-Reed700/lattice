@@ -13,7 +13,8 @@ use crate::dto::{
 };
 use crate::embedded_runtime::BuiltinRuntimes;
 use crate::lessons::course_plan::CoursePlan;
-use crate::lessons::shape::{self, LessonShape, ShapePolicy, CHOICES_PER_QUESTION};
+use crate::assessment::assessment_engine::checks::CHOICES_PER_QUESTION;
+use crate::lessons::shape::{self, LessonShape, ShapePolicy};
 use crate::lessons::structured_call::{complete_checked, CallKind, ReasonFirst};
 use crate::model_call;
 use crate::reference_collection::ReferenceCollection;
