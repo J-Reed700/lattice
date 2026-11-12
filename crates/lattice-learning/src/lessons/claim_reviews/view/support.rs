@@ -335,3 +335,7 @@ fn passage(
         None => candidates.into_iter().next(),
     }
 }
+
+#[cfg(test)]
+#[path = "support_tests.rs"]
+mod tests;

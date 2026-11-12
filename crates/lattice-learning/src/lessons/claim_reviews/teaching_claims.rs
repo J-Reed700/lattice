@@ -507,6 +507,22 @@ mod tests {
     }
 
     #[test]
+    fn a_part_of_a_segmenter_sentence_is_not_removable() {
+        let after_an_abbreviation = about(waiting(0, "quotation:section-0"), "Go.");
+        assert!(!removable_after(
+            after_an_abbreviation,
+            Vec::new(),
+            "Pick Rust vs. Go. Both are fast."
+        ));
+        let after_a_colon = about(waiting(0, "quotation:section-0"), "Rust is fast.");
+        assert!(!removable_after(
+            after_a_colon,
+            Vec::new(),
+            "Note: Rust is fast."
+        ));
+    }
+
+    #[test]
     fn a_sentence_that_occurs_twice_in_the_section_is_not_removable() {
         let twice = format!("{SENTENCE} {NEIGHBOUR} {SENTENCE}");
         assert!(!removable_after(
