@@ -841,7 +841,10 @@ async fn a_correction_only_the_exact_count_overflows_is_refused_with_that_count(
     };
     let restated = restate(first_request(), &reason);
     let measured = grounded_generation::measure(&llm, &restated).await.unwrap();
-    assert_eq!((prompt_tokens, measured.exact), (measured.prompt_tokens, true));
+    assert_eq!(
+        (prompt_tokens, measured.exact),
+        (measured.prompt_tokens, true)
+    );
     assert!(counted_exactly);
     assert_eq!(llm.sent().len(), 1, "no correction was sent");
 }

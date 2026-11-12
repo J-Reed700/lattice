@@ -237,15 +237,16 @@ pub trait Transport: Sync {
     async fn send(&self, llm: &dyn LLMPort, request: &Self::Request) -> Result<CompletionResponse>;
 
     /// The request that asks again after `previous`, quoting `refusal`. Err when it cannot be sent.
-    fn correction(
+    async fn correction(
         &self,
+        llm: &dyn LLMPort,
         request: &Self::Request,
         previous: &CompletionResponse,
         refusal: &str,
     ) -> Result<Self::Request>;
 
     /// The same request with a larger output allowance, or None.
-    fn larger(&self, request: &Self::Request) -> Option<Self::Request>;
+    async fn larger(&self, llm: &dyn LLMPort, request: &Self::Request) -> Option<Self::Request>;
 }
 
 /// A request sent as it is, asked again with the refused reply in the history.
@@ -265,8 +266,9 @@ impl Transport for Plain {
         llm.complete(request).await
     }
 
-    fn correction(
+    async fn correction(
         &self,
+        _llm: &dyn LLMPort,
         request: &CompletionRequest,
         previous: &CompletionResponse,
         refusal: &str,
@@ -283,7 +285,11 @@ impl Transport for Plain {
         Ok(next)
     }
 
-    fn larger(&self, _request: &CompletionRequest) -> Option<CompletionRequest> {
+    async fn larger(
+        &self,
+        _llm: &dyn LLMPort,
+        _request: &CompletionRequest,
+    ) -> Option<CompletionRequest> {
         None
     }
 }
@@ -309,12 +315,16 @@ async fn complete_reply<T: Transport>(
     request: T::Request,
 ) -> Result<(T::Request, CompletionResponse)> {
     let response = transport.send(llm, &request).await?;
-    let (request, response) = match (response.finish(), transport.larger(&request)) {
-        (Finish::CutOff, Some(larger)) => {
+    let larger = match response.finish() {
+        Finish::CutOff => transport.larger(llm, &request).await,
+        _ => None,
+    };
+    let (request, response) = match larger {
+        Some(larger) => {
             let response = transport.send(llm, &larger).await?;
             (larger, response)
         }
-        _ => (request, response),
+        None => (request, response),
     };
     match response.finish() {
         Finish::Complete => Ok((request, response)),
@@ -337,7 +347,9 @@ pub async fn answer<T: Transport, A>(
         Ok(answer) => return Ok(answer),
         Err(error) => error,
     };
-    let correction = transport.correction(&request, &response, &refusal(&error))?;
+    let correction = transport
+        .correction(llm, &request, &response, &refusal(&error))
+        .await?;
     let (_, response) = complete_reply(&llm, transport, correction).await?;
     accept(&response.text).map_err(|error| AppError::ModelAnswerUnusable(refusal(&error)))
 }

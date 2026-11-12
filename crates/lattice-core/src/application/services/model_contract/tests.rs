@@ -191,8 +191,9 @@ impl Transport for Growing {
         llm.complete(request).await
     }
 
-    fn correction(
+    async fn correction(
         &self,
+        _llm: &dyn LLMPort,
         request: &CompletionRequest,
         _previous: &CompletionResponse,
         _refusal: &str,
@@ -200,7 +201,11 @@ impl Transport for Growing {
         Ok(request.clone())
     }
 
-    fn larger(&self, request: &CompletionRequest) -> Option<CompletionRequest> {
+    async fn larger(
+        &self,
+        _llm: &dyn LLMPort,
+        request: &CompletionRequest,
+    ) -> Option<CompletionRequest> {
         request
             .max_output_tokens
             .is_none()

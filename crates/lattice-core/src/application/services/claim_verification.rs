@@ -301,8 +301,9 @@ impl Transport for Judging<'_> {
         Ok(response)
     }
 
-    fn correction(
+    async fn correction(
         &self,
+        llm: &dyn LLMPort,
         request: &CompletionRequest,
         previous: &CompletionResponse,
         refusal: &str,
@@ -310,10 +311,15 @@ impl Transport for Judging<'_> {
         Plain {
             request: request.clone(),
         }
-        .correction(request, previous, refusal)
+        .correction(llm, request, previous, refusal)
+        .await
     }
 
-    fn larger(&self, _request: &CompletionRequest) -> Option<CompletionRequest> {
+    async fn larger(
+        &self,
+        _llm: &dyn LLMPort,
+        _request: &CompletionRequest,
+    ) -> Option<CompletionRequest> {
         None
     }
 }
