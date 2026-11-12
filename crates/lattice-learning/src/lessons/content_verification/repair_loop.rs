@@ -396,11 +396,15 @@ impl Review for PreparationReview<'_, '_> {
                 self.expanded = Some(*additional);
                 (searched, true)
             }
-            research::Expansion::Unchanged(searched) if searched.unreached => {
+            research::Expansion::Unchanged(research::Searched {
+                unresearched: Some(cause),
+                ..
+            }) => {
                 tracing::info!(
-                    "claim.state: research reached nothing; the claims stay at their node"
+                    ?cause,
+                    "claim.state: research could not run; the claims stay at their node"
                 );
-                return Ok(Researched::Unreached);
+                return Ok(Researched::Unresearched(cause));
             }
             research::Expansion::Unchanged(searched) => (searched, false),
             research::Expansion::Exhausted(exhausted, searched) => {
@@ -704,10 +708,13 @@ impl Review for PreparationReview<'_, '_> {
                 Err(hold(&mut self.ledger, &self.raw, claims, reason).await?)
             }
             Verdict::Stop(reason) => Err(stop(&mut self.ledger, &self.raw, reason).await?),
-            Verdict::NoProgress { waiting, unreached } => {
+            Verdict::NoProgress {
+                waiting,
+                unresearched,
+            } => {
                 let error = self
                     .ledger
-                    .stop_no_progress(&self.raw, &waiting, unreached)
+                    .stop_no_progress(&self.raw, &waiting, unresearched)
                     .await?;
                 crate::lesson_progress::phase(
                     crate::lesson_progress::Phase::Evidence,

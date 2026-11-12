@@ -87,6 +87,8 @@ pub(super) struct Figures {
     unusable_asks: usize,
     /// The judge calls a figure contradicted, not just unsupported.
     contradicted: bool,
+    /// What the research planner answers; None, and it gives no usable plan.
+    plan: Option<String>,
     asks: AtomicUsize,
     repairs: AtomicUsize,
     judged: Mutex<Vec<String>>,
@@ -101,6 +103,7 @@ impl Figures {
             fail_repair_at: None,
             unusable_asks: 0,
             contradicted: false,
+            plan: None,
             asks: AtomicUsize::new(0),
             repairs: AtomicUsize::new(0),
             judged: Mutex::new(Vec::new()),
@@ -117,7 +120,21 @@ impl Figures {
         }
     }
 
+    /// A research planner that plans one web search for the first gap.
+    pub(super) fn planning(query: &str) -> Self {
+        Self {
+            plan: Some(json!({"needs":[{"gap":0,"kind":"web","query":query}]}).to_string()),
+            ..Self::new()
+        }
+    }
+
     pub(super) async fn respond(&self, prompt: &str) -> Result<String> {
+        if let (Some(plan), true) = (
+            &self.plan,
+            prompt.starts_with("Plan focused reference searches"),
+        ) {
+            return Ok(plan.clone());
+        }
         if prompt.starts_with("Extract lesson claims.") {
             let data = self::context(prompt);
             let units = data["units"].as_array().unwrap();

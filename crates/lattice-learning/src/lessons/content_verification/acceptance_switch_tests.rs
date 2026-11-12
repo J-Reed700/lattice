@@ -740,8 +740,32 @@ async fn only_a_statement_the_ledger_does_not_hold_is_sorted() -> Result<()> {
     Ok(())
 }
 
+/// A web whose every search fails, as the network gone would.
+struct DownWeb;
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::WebServiceTrait for DownWeb {
+    async fn search_web(
+        &self,
+        _: &lattice_core::application::contracts::web::WebSearchInput,
+    ) -> Result<lattice_core::application::contracts::web::WebSearchOutput> {
+        Err(AppError::Network(
+            "fixture: the search engines are down".into(),
+        ))
+    }
+    async fn fetch_url_content(
+        &self,
+        _: &str,
+    ) -> Result<lattice_core::application::contracts::web::FetchUrlContentOutput> {
+        Err(AppError::Network("fixture: the network is down".into()))
+    }
+    fn validate_url(&self, _: &str) -> Result<()> {
+        Ok(())
+    }
+}
+
 #[tokio::test]
-async fn research_that_reached_nothing_records_nothing_and_a_round_where_nothing_else_moves_stops_with_no_progress(
+async fn research_whose_planner_gives_no_usable_plan_records_nothing_and_stops_naming_the_model(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
     let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
@@ -750,7 +774,7 @@ async fn research_that_reached_nothing_records_nothing_and_a_round_where_nothing
     let statement = figure(0);
     let draft = lesson_of(&section(&statement)).to_string();
     // The fixture gives the research planner no answer it can use: the round
-    // reaches nothing.
+    // cannot plan its searches.
     let error = research::run(
         Database::from(pool.clone()),
         program_id,
@@ -775,7 +799,7 @@ async fn research_that_reached_nothing_records_nothing_and_a_round_where_nothing
     // node names.
     assert_eq!(
         error,
-        format!("Research could not reach any search engine or web page, so 1 statement still waits for a source: \"{statement}\".")
+        format!("Research could not plan its searches: the Learning model gave no plan Lattice could use, so 1 statement still waits for a source: \"{statement}\".")
     );
     let ledger = ClaimReviewRepository::new(pool.clone())
         .load(&lesson_id)
@@ -786,7 +810,7 @@ async fn research_that_reached_nothing_records_nothing_and_a_round_where_nothing
     assert_eq!(reason.code, StopCode::NoProgress);
     assert_eq!(
         reason.fix,
-        "Check your internet connection and the research settings, then resume this lesson."
+        "Resume this lesson to try again. If it stops here again, choose another Learning model in Settings → AI."
     );
     let [claim] = ledger.claims.as_slice() else {
         panic!("one claim: {:?}", ledger.claims);
@@ -814,6 +838,66 @@ async fn research_that_reached_nothing_records_nothing_and_a_round_where_nothing
             name: "s.research".into(),
             step: Step::Research
         })
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn research_whose_searches_all_fail_records_nothing_and_stops_naming_the_connection(
+) -> Result<()> {
+    let pool = crate::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let program_id = repo.job(&job).await?.program_id;
+    let statement = figure(0);
+    let draft = lesson_of(&section(&statement)).to_string();
+    // The planner plans a search, and the web fails every one.
+    let error = research::run(
+        Database::from(pool.clone()),
+        program_id,
+        "CSV".into(),
+        Some(std::sync::Arc::new(DownWeb)),
+        prepare(
+            &Database::from(pool.clone()),
+            &repo,
+            &job,
+            &lesson_id,
+            &Figures::planning("csv dictreader buffer size"),
+            Some(draft.clone()),
+            &[source()],
+        ),
+    )
+    .await
+    .err()
+    .unwrap()
+    .to_string();
+
+    assert_eq!(
+        error,
+        format!("Research could not reach any search engine or web page, so 1 statement still waits for a source: \"{statement}\".")
+    );
+    let ledger = ClaimReviewRepository::new(pool.clone())
+        .load(&lesson_id)
+        .await?;
+    let review = ledger.review.clone().unwrap();
+    assert_eq!(review.state, LessonReviewState::Stopped);
+    let reason = review.stop_reason.unwrap();
+    assert_eq!(reason.code, StopCode::NoProgress);
+    assert_eq!(
+        reason.fix,
+        "Check your internet connection and the research settings, then resume this lesson."
+    );
+    let [claim] = ledger.claims.as_slice() else {
+        panic!("one claim: {:?}", ledger.claims);
+    };
+    assert!(
+        events_of(claim).iter().all(|event| !matches!(
+            event,
+            ClaimEvent::Stepped {
+                step: Step::Research,
+                ..
+            }
+        )),
+        "a round that reached nothing is not research"
     );
     Ok(())
 }

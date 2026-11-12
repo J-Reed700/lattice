@@ -359,13 +359,20 @@ pub(super) struct Searched {
     /// claims it researched: what researching one claim on the web costs.
     /// `None` when no round ran.
     pub(super) per_claim: Option<Duration>,
-    /// The round could not research: every search and page read it tried
-    /// failed (the search engines down, the network gone), or its planner
-    /// gave no usable answer. That is not research: recorded as one, it used
-    /// up each claim's one round and sent unsupported claims to be
-    /// rewritten. A round with nothing to search, or no web to search it
-    /// on, is research that found nothing, as before.
-    pub(super) unreached: bool,
+    /// Why the round could not research, if it could not. That is not
+    /// research: recorded as one, it used up each claim's one round and sent
+    /// unsupported claims to be rewritten. A round with nothing to search, or
+    /// no web to search it on, is research that found nothing, as before.
+    pub(super) unresearched: Option<Unresearched>,
+}
+
+/// Why a research round could not research.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Unresearched {
+    /// Every search and page read it tried failed.
+    Unreached,
+    /// Its planner gave no plan it could use.
+    Unplanned,
 }
 
 /// What a research round did for the lesson's gaps.
@@ -467,7 +474,7 @@ pub(super) async fn expand<'a>(
         Err(error) if leaves_held(&error) => {
             tracing::warn!(%error, claims, "Claim research gave no usable answer; the claims stay held");
             return Ok(Expansion::Unchanged(Searched {
-                unreached: true,
+                unresearched: Some(Unresearched::Unplanned),
                 ..Searched::default()
             })
             .timed(started.elapsed().checked_div(claims)));
@@ -822,7 +829,7 @@ async fn research<'a>(
             .await?;
         }
     }
-    searched.unreached = failed && !reached;
+    searched.unresearched = (failed && !reached).then_some(Unresearched::Unreached);
     if added == 0 && sources.len() == references.sources.len() {
         return Ok(Expansion::Unchanged(searched));
     }

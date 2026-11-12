@@ -1229,7 +1229,10 @@ async fn a_round_whose_searches_found_nothing_did_reach_a_search_engine() -> Res
                 panic!("a search that found nothing adds nothing");
             };
             assert!(!searched.queries.is_empty(), "the search ran");
-            assert!(!searched.unreached, "an answer of nothing was an answer");
+            assert!(
+                searched.unresearched.is_none(),
+                "an answer of nothing was an answer"
+            );
             Ok(())
         },
     )
