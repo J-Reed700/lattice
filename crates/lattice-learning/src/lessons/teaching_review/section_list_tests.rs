@@ -109,3 +109,12 @@ async fn a_check_without_its_section_is_asked_for_again() {
     assert_eq!(prompts.len(), 2);
     assert!(prompts[1].contains("needs the sectionId"));
 }
+
+#[tokio::test]
+async fn a_missing_check_is_named_by_its_section_id() {
+    let first = reply(vec![check(1), check(2)]);
+    let (result, prompts) = reviewed(vec![first, reply(vec![check(0)])]).await;
+    assert!(result.unwrap().is_empty());
+    assert_eq!(prompts.len(), 2);
+    assert!(prompts[1].contains("section-0 still needs a valid check."));
+}

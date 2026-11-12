@@ -1002,3 +1002,71 @@ fn the_open_findings_sentence_sends_the_reviewer_to_the_part_as_it_now_stands_li
     assert!(OPEN_FINDINGS_BRIEF.contains("whether or not sectionIndicesToReview lists that part"));
     assert!(OPEN_FINDINGS_BRIEF.contains("quote"));
 }
+
+#[tokio::test]
+async fn a_verdict_quote_is_stored_as_the_lesson_bytes() {
+    let asked = [asked_at(1, FindingSite::Section(0))];
+    let lesson = json!({"blocks":[{"body":"The borrow checker’s rule holds."}],"questions":[]});
+    let model = model(vec![answer_of(
+        vec![quoted(1, "present", "the borrow checker's rule")],
+        vec![check(0)],
+    )]);
+    let judged = super::review(
+        &model,
+        "Review instructional quality.",
+        json!({}),
+        &lesson,
+        Scope {
+            sections: Some(&[0]),
+            asked: Some(&asked),
+        },
+        None,
+        LengthRule::Fail,
+    )
+    .await
+    .unwrap();
+    assert_eq!(judged.verdicts[0].quote, "The borrow checker’s rule");
+}
+
+#[tokio::test]
+async fn a_teaching_review_that_stays_unreadable_fails_the_lesson() {
+    let unreadable = json!({"issues":[],"blockChecks":[]});
+    let model = model(vec![unreadable; 6]);
+    let result = review(
+        &model,
+        "Review instructional quality.",
+        json!({}),
+        &candidate(),
+        None,
+        LengthRule::Fail,
+    )
+    .await;
+    assert!(matches!(result, Err(AppError::ModelAnswerUnusable(_))));
+    assert_eq!(model.prompts.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn a_blank_issue_left_after_the_correction_is_dropped_in_an_outline_review() {
+    let long = format!(
+        "The worked example's stated result is wrong: {}",
+        "x".repeat(720)
+    );
+    let mut blank = check(1);
+    blank["hasDefect"] = json!(true);
+    blank["finding"] = json!("  ");
+    let first = json!({"issues":["  "],"blockChecks":fixture_checks(vec![check(0),blank.clone(),check(2)])});
+    let second = json!({"issues":[" ",long],"blockChecks":fixture_checks(vec![blank])});
+    let model = model(vec![first, second]);
+    let issues = review(
+        &model,
+        "Review instructional quality.",
+        json!({}),
+        &candidate(),
+        None,
+        LengthRule::Fail,
+    )
+    .await
+    .unwrap();
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].note, long);
+}

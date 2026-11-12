@@ -71,3 +71,12 @@ fn a_fence_with_blank_lines_inside_stays_whole_and_a_table_stays_whole() {
     assert_eq!(texts[2], "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |");
     assert_eq!(rejoined(&texts), body);
 }
+
+#[test]
+fn a_fence_of_four_backticks_is_one_passage() {
+    let body = "Intro.\n\n````md\n```\nx\n\ny\n```\n````\n\nAfter.";
+    let texts = passages(body);
+    assert_eq!(texts.len(), 3);
+    assert_eq!(texts[1], "````md\n```\nx\n\ny\n```\n````\n\n");
+    assert_eq!(rejoined(&texts), body);
+}
