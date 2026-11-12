@@ -313,8 +313,8 @@ async fn a_batch_cut_off_asks_for_fewer_and_a_single_item_cut_off_is_refused() -
         repair: None,
     };
     assert!(batch(2).author(&CutOff, &collection).await?.is_none());
-    let single = batch(1).author(&CutOff, &collection).await?.unwrap();
-    assert!(matches!(single.as_slice(), [Err(reason)] if reason.contains("cut off")));
+    let single = batch(1).author(&CutOff, &collection).await;
+    assert!(matches!(single, Err(AppError::ModelAnswerUnusable(_))));
     Ok(())
 }
 
@@ -384,7 +384,7 @@ fn the_item_schemas_hold_no_text_length_cap() {
             .into_iter()
             .filter(|rule| {
                 !rule.starts_with("/properties/rubric/")
-                    && rule.as_str() != "/properties/quote/minLength = 12"
+                    && rule.as_str() != "/properties/quote/minLength = 25"
             })
             .collect();
         assert!(rules.is_empty(), "{format:?}: {rules:?}");
@@ -492,8 +492,8 @@ async fn the_writer_is_told_what_the_learner_sees_and_never_to_cite_passages() -
     let system = writer_instructions().await?;
     for sentence in [
         "The learner sees each question with its options, explanation and rationales beside the lesson, never these passages as excerpts or the sources behind them.",
-        "never mention a passage, an excerpt, a tutorial, a document or a source",
-        "never give what one says or does not say as the reason an answer is right or wrong",
+        "mentions a passage, an excerpt, a tutorial, a document or a source",
+        "never give what a passage says or does not say as the reason an answer is right or wrong",
     ] {
         assert!(system.contains(sentence), "missing \"{sentence}\" in {system}");
     }
@@ -514,7 +514,7 @@ async fn the_writer_is_told_an_explanation_is_about_its_own_question() -> Result
 #[tokio::test]
 async fn the_writer_is_told_a_prompt_states_every_value_its_answer_depends_on() -> Result<()> {
     let system = writer_instructions().await?;
-    let sentence = "A prompt states every value its answer depends on, so it can be answered from the prompt and the lesson alone.";
+    let sentence = "the question depends on a value its prompt never gives";
     assert!(
         system.contains(sentence),
         "missing \"{sentence}\" in {system}"
@@ -538,7 +538,7 @@ async fn the_bank_writer_names_no_subjects_values() -> Result<()> {
         "{rules}"
     );
     assert!(
-        rules.contains("depends on, so it can be answered from the prompt and the lesson alone"),
+        rules.contains("the question depends on a value its prompt never gives"),
         "{rules}"
     );
     Ok(())
@@ -547,11 +547,11 @@ async fn the_bank_writer_names_no_subjects_values() -> Result<()> {
 #[test]
 fn the_writer_is_told_options_are_shuffled_so_they_are_named_by_their_words() {
     assert!(
-        SYSTEM.contains("shuffled order"),
+        system().contains("shuffled order"),
         "SYSTEM must say options are shown in a shuffled order"
     );
     assert!(
-        SYSTEM.contains("never by its position, number or letter"),
+        system().contains("names an option by its position, number or letter"),
         "SYSTEM must forbid naming an option by position, number or letter"
     );
 }
@@ -559,11 +559,11 @@ fn the_writer_is_told_options_are_shuffled_so_they_are_named_by_their_words() {
 #[test]
 fn the_instructions_say_what_do_not_repeat_requires() {
     assert!(
-        SYSTEM.contains("doNotRepeat"),
+        system().contains("doNotRepeat"),
         "SYSTEM never names doNotRepeat"
     );
     assert!(
-        SYSTEM.contains("never asks one of them again"),
+        system().contains("never asks one of them again"),
         "SYSTEM never says a new item does not ask one of its questions again"
     );
 }
@@ -604,8 +604,8 @@ fn do_not_repeat_holds_every_existing_prompt_in_full() {
 
 #[test]
 fn the_quiz_bank_writer_is_asked_for_choices_alike_in_form() {
-    assert!(SYSTEM.contains("Write all the choices of a question alike in form: close in length and detail, the same grammatical shape and opening, none alone hedged or absolute, none alone carrying a reason or an example, and none repeating the question's distinctive words, so that the right one cannot be told from the others without knowing the material."));
-    assert!(!SYSTEM.contains("distractors of similar length"));
+    assert!(system().contains("Write all the choices of a question alike in form: close in length and detail, the same grammatical shape and opening, none alone hedged or absolute, none alone carrying a reason or an example, and none repeating the question's distinctive words, so that the right one cannot be told from the others without knowing the material."));
+    assert!(!system().contains("distractors of similar length"));
 }
 
 const STAMPS: &str =
