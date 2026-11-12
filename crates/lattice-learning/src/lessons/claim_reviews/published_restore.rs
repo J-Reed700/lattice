@@ -461,11 +461,7 @@ pub(super) async fn undo_in(
                     successor: None,
                     by: Actor::User,
                 };
-                let machine = EventProvenance {
-                    actor: Actor::Machine,
-                    ..user.clone()
-                };
-                append_in(connection, lesson_id, successor, machine, ended).await?;
+                append_in(connection, lesson_id, successor, user.as_machine(), ended).await?;
             }
             blocks::write_section_body(connection, lesson_id, undoing.unit, &undoing.then).await?;
             let mut claims: HashSet<String> =

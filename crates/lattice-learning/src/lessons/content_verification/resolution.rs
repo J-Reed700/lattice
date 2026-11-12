@@ -47,7 +47,9 @@ pub(super) fn standing<'a>(
         ClaimState::Unverified { reason, .. } => {
             Standing::Resolved(Resolution::Unverified { reason: *reason })
         }
-        state if state.is_verified() => Standing::Verified,
+        ClaimState::ResolvedByEvidence { .. }
+        | ClaimState::Consistent { .. }
+        | ClaimState::GeneralKnowledge { .. } => Standing::Verified,
         ClaimState::Removed { .. }
         | ClaimState::Edited {
             successor: None, ..

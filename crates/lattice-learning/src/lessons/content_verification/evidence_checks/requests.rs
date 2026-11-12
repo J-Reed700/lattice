@@ -46,12 +46,8 @@ pub(super) async fn finish(
             return Ok((pending.ordinal, pending.key, finding, false));
         }
     }
-    Ok((
-        pending.ordinal,
-        pending.key,
-        unusable(pending, parts),
-        false,
-    ))
+    let (ordinal, key) = (pending.ordinal, pending.key.clone());
+    Ok((ordinal, key, unusable(pending, parts), false))
 }
 
 /// The finding of a comparison whose answer could not be used.

@@ -30,6 +30,17 @@ pub struct EventProvenance {
     pub checker_model: Option<String>,
 }
 
+impl EventProvenance {
+    /// The same provenance with the machine acting: what it records because
+    /// of the user's action.
+    pub fn as_machine(&self) -> Self {
+        Self {
+            actor: Actor::Machine,
+            ..self.clone()
+        }
+    }
+}
+
 /// An event as stored: its ordinal in the claim's log (0, 1, 2, ...).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordedEvent {

@@ -30,7 +30,7 @@ impl Contract for DrillStageAsk {
 pub(crate) async fn ask_request<V>(
     llm: &dyn LLMPort,
     request: GroundedRequest,
-    accept: impl Fn(&str) -> Result<V>,
+    accept: impl Fn(&str) -> Result<V> + Send + Sync,
 ) -> Result<Asked<V>> {
     let call = ContractCall::of::<DrillStageAsk>(&PromptInput {
         system: request.instructions.clone(),
@@ -55,7 +55,7 @@ pub(crate) async fn ask_until_suite_passes<V>(
     request: GroundedRequest,
     purpose: &str,
     what_runs: &str,
-    accept: impl Fn(&str) -> Result<V>,
+    accept: impl Fn(&str) -> Result<V> + Send + Sync,
     to_run: impl Fn(&V) -> Option<(Vec<DrillFile>, String)>,
     trail: &mut Trail,
 ) -> Result<V> {

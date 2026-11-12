@@ -54,10 +54,7 @@ pub(super) async fn user_sentence_in(
     location: ClaimLocation,
     user: &EventProvenance,
 ) -> Result<()> {
-    let machine = EventProvenance {
-        actor: Actor::Machine,
-        ..user.clone()
-    };
+    let machine = user.as_machine();
     let statement = location.quote.clone();
     for event in [
         ClaimEvent::Extracted {
@@ -189,10 +186,7 @@ pub(super) async fn apply_in(
         span: Some((range.0, range.0 + after.len())),
     };
     confirmed_sentence_in(connection, lesson_id, &successor, location, &user).await?;
-    let machine = EventProvenance {
-        actor: Actor::Machine,
-        ..user.clone()
-    };
+    let machine = user.as_machine();
     for entry in &replaced {
         let edited = ClaimEvent::UserAction {
             action: UserAction::Edit {

@@ -194,22 +194,19 @@ fn accept(
     }
     let mut decided = serde_json::Map::new();
     let mut errors = Vec::<String>::new();
+    let mut refused = HashSet::new();
     for (id, check) in entries {
         if counts.get(&id) == Some(&1) && valid_row(units, &id, &check) {
             decided.insert(id, check);
         } else {
             errors.push(format!("Passage {id} needs one decision using its own unit's claim IDs, or specific missing claims, or an explanation of its nonfactual content. Empty decisions, duplicate IDs and foreign IDs are invalid."));
+            refused.insert(id);
         }
     }
     errors.extend(
         requested
             .iter()
-            .filter(|id| !decided.contains_key(*id))
-            .filter(|id| {
-                !errors
-                    .iter()
-                    .any(|error| error.starts_with(&format!("Passage {id} ")))
-            })
+            .filter(|id| !decided.contains_key(*id) && !refused.contains(*id))
             .map(|id| format!("Passage {id} still needs a valid decision.")),
     );
     if errors.is_empty() {

@@ -7,8 +7,8 @@
 use std::collections::HashSet;
 
 use lattice_core::domain::learning::claim_review::{
-    span_of, Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, EventProvenance,
-    UnitKind, UserAction,
+    span_of, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, EventProvenance, UnitKind,
+    UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::WriteTx;
@@ -182,11 +182,14 @@ pub(super) async fn remove_in(
                 follows: follows.clone(),
                 precedes: precedes.clone(),
             };
-            let machine = EventProvenance {
-                actor: Actor::Machine,
-                ..user.clone()
-            };
-            append_in(connection, lesson_id, entry.claim_id(), machine, event).await?;
+            append_in(
+                connection,
+                lesson_id,
+                entry.claim_id(),
+                user.as_machine(),
+                event,
+            )
+            .await?;
         }
         let event = ClaimEvent::UserAction {
             action: UserAction::Remove,

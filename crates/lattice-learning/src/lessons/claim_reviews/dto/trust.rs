@@ -10,6 +10,7 @@ use lattice_core::domain::provenance::{
 use serde::{Deserialize, Serialize};
 
 use crate::dto::{LearningSourceKind, LearningTrustLevel};
+use crate::references::trust::dto_map::level;
 
 /// One support as the gate counted it: `level` is `null` when it was
 /// excluded (distrusted, ruled out by its date).
@@ -150,9 +151,7 @@ impl StandingAssessedDto {
                 .iter()
                 .map(|support| CountedSupportDto {
                     source_version_id: support.source_version_id.clone(),
-                    level: Some(crate::references::trust::dto_map::level(
-                        support.trust.level,
-                    )),
+                    level: Some(level(support.trust.level)),
                 })
                 .collect(),
             reason: reason.to_owned(),

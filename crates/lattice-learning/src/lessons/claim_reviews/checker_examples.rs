@@ -171,7 +171,9 @@ fn evidence_added_example(
         claim_id: flagged.claim_id().0.clone(),
         checker_model: basis.checker_model.clone(),
         context_window: i64::try_from(basis.window_tokens).unwrap_or(i64::MAX),
-        policy: crate::content_verification::evidence_policy().into(),
+        policy: crate::content_verification::Judged::Passages
+            .policy()
+            .into(),
         claim: flagged.statement().into(),
         passages: passages
             .iter()
@@ -222,7 +224,9 @@ fn human_example(
         claim_id: entry.claim_id().0.clone(),
         checker_model: basis.checker_model.clone(),
         context_window: i64::try_from(basis.window_tokens).unwrap_or(i64::MAX),
-        policy: crate::content_verification::evidence_policy().into(),
+        policy: crate::content_verification::Judged::Passages
+            .policy()
+            .into(),
         claim: entry.statement().into(),
         passages: passages
             .iter()

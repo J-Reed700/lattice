@@ -479,7 +479,7 @@ impl LessonVerificationReport {
             || coverage_ids.iter().any(|index| *index >= unit_count)
         {
             "does not cover each section and question of the lesson once"
-        } else if self.policy != POLICY {
+        } else if !POLICY.names(&self.policy) {
             "was made under another verification policy"
         } else if self.lesson_id != lesson_id || self.content_sha256 != content_hash(lesson)? {
             "was made for another revision of the lesson"

@@ -11,8 +11,9 @@ use super::super::classify::states_a_specific;
 use super::requests::{finish, labelled, unlabelled};
 use super::*;
 use lattice_core::application::services::claim_verification::{
-    BridgeOutcome, ClassJudgment, Outcome, PartKind,
+    BridgeOutcome, ClassJudgment, PartKind,
 };
+use lattice_core::domain::learning::acceptance::Outcome;
 
 /// Whether `pending` is read part by part: it is a comparison with the
 /// statement's own citation and a source's passage is among those it cites (an

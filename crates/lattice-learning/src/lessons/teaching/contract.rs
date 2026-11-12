@@ -3,8 +3,8 @@
 //! contradicts itself, or points the learner at what they cannot see. The
 //! model finds; code keeps only what the lesson's own words bear out.
 use super::protected;
+use crate::dto::LearningBlockKind;
 use crate::lessons::content_verification::{unit_fields, Protected};
-use crate::lessons::shape::TEACHING_KINDS;
 use crate::lessons::structured_call::{self, CallKind, ReasonFirst};
 use crate::review_findings::{subject_of, FindingSite, PlanCheck, ReviewFinding};
 use lattice_core::shared::hash::sha256_hex;
@@ -323,7 +323,8 @@ fn teaching_before(candidate: &Value, site: FindingSite) -> Option<FindingSite> 
         block
             .get("kind")
             .and_then(Value::as_str)
-            .is_some_and(|kind| TEACHING_KINDS.contains(&kind))
+            .and_then(LearningBlockKind::parse)
+            .is_some_and(|kind| kind.teaches())
     };
     let upto = match site {
         FindingSite::Section(index) => {
@@ -572,7 +573,7 @@ fn findings(
             .iter()
             .map(|other| other.site.label())
             .collect();
-        let one_place = before.map_or_else(|| "this step".to_owned(), label);
+        let one_place = before.map_or_else(|| "this step".to_owned(), FindingSite::label);
         let too = match labels.split_last() {
             None => String::new(),
             Some((only, [])) => {

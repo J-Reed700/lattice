@@ -239,7 +239,7 @@ pub(in crate::lessons::content_verification) fn cite_where_supported(
             repairs.push(Cited::Cannot);
             continue;
         }
-        let (field, item) = super::location(candidate, finding.unit)?;
+        let (field, item) = super::section_of(candidate, finding.unit)?;
         let numbered_at = numbered.iter().position(|known| known.id == source.id);
         let index = numbered_at.unwrap_or(numbered.len());
         let added = candidate
@@ -362,7 +362,7 @@ pub(in crate::lessons::content_verification) fn uncite(
             dropped.push(sources.clone());
             continue;
         }
-        let (field, item) = super::location(candidate, *unit)?;
+        let (field, item) = super::section_of(candidate, *unit)?;
         let cited = candidate
             .get_mut(field)
             .and_then(Value::as_array_mut)

@@ -372,6 +372,7 @@ pub(super) async fn record_edit<'a>(
         };
         confirmed_sentence_in(&mut *tx, lesson_id, &item.successor, location, user).await?;
     }
+    let machine = user.as_machine();
     let mut planned = Vec::new();
     for item in ending {
         let (action, label) = match &item.after {
