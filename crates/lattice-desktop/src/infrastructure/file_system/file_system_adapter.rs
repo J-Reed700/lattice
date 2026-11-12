@@ -138,6 +138,7 @@ impl FileSystemAdapter {
     /// Uses std::process::Command with proper argument passing to prevent
     /// command injection. Paths are passed as separate arguments, NOT
     /// concatenated into shell strings.
+    // detached-process: Explorer keeps running after Lattice quits
     #[cfg(all(target_os = "windows", not(test)))]
     async fn reveal_with_system(path: &Path) -> Result<()> {
         use std::process::Command;
@@ -169,6 +170,7 @@ impl FileSystemAdapter {
         Ok(())
     }
 
+    // detached-process: Finder keeps running after Lattice quits
     #[cfg(all(target_os = "macos", not(test)))]
     async fn reveal_with_system(path: &Path) -> Result<()> {
         use std::process::Command;
@@ -200,6 +202,7 @@ impl FileSystemAdapter {
         Ok(())
     }
 
+    // detached-process: the file manager keeps running after Lattice quits
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos"), not(test)))]
     async fn reveal_with_system(path: &Path) -> Result<()> {
         use std::process::Command;

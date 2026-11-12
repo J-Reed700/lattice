@@ -7,15 +7,11 @@ use lattice_core::domain::models::fit::Footprint;
 /// tokio runtime tears down. Each entry holds a strong reference to a child,
 /// so one whose only other owner is a cancelled startup future is reachable.
 ///
-/// Zombie protection has four layers: `Drop` kills a handle; the exit sweep
-/// kills everything on quit; on Windows a `KILL_ON_JOB_CLOSE` Job Object has
-/// the kernel kill sidecars when Lattice dies (see `JobObjectGuard`); and on
-/// macOS and Linux the boot-time `reap_orphan_sidecars()` catches what
-/// survived a crash. The mutex is `parking_lot`, not tokio's, because the
-/// shutdown consumer is a synchronous callback where `block_on` can deadlock.
-///
-/// On Linux there is no parent-death signal, because `prctl(PR_SET_PDEATHSIG)`
-/// needs a pre-exec hook that `tauri-plugin-shell` does not expose.
+/// On every OS the kernel ends a sidecar when Lattice dies, however it dies:
+/// `BoundCommand` binds each child to this process. `Drop` on a handle and the
+/// exit sweep are the orderly path. The mutex is `parking_lot`, not tokio's,
+/// because the shutdown consumer is a synchronous callback where `block_on`
+/// can deadlock.
 pub struct SidecarRegistry {
     pub(super) entries: SyncMutex<RegistryState>,
 
@@ -35,13 +31,6 @@ pub struct SidecarRegistry {
     /// The id the next registered child gets; ids only need to be unique
     /// within this registry, which is where their owners release them.
     next_id: AtomicU64,
-
-    /// Windows Job Object (no-op on other platforms). Sidecar PIDs
-    /// get assigned to this object on spawn so Windows kernel kills
-    /// them automatically when our process handle closes — even on
-    /// segfault.
-    #[cfg(windows)]
-    pub(super) job: SyncMutex<Option<JobObjectGuard>>,
 }
 
 pub(super) struct RegistryState {
@@ -53,32 +42,12 @@ pub(super) struct RegistryEntry {
     /// Identifies the slot so its owner can release it, even when its only strong
     /// reference is a cancelled startup future.
     pub(super) id: u64,
-    pub(super) child: Arc<SyncMutex<Option<CommandChild>>>,
+    pub(super) child: Arc<SyncMutex<Option<ServerProcess>>>,
     pub(super) endpoint: String,
 }
 
 impl SidecarRegistry {
     pub fn new() -> Self {
-        #[cfg(windows)]
-        let job = match JobObjectGuard::create() {
-            Ok(guard) => {
-                tracing::debug!("Created Windows Job Object for sidecar lifecycle");
-                Some(guard)
-            }
-            Err(err) => {
-                // Non-fatal: layers 1+2+4 still apply. Job Object is
-                // belt-and-suspenders. Most likely cause of failure
-                // is running under another Job Object that doesn't
-                // allow nesting (Tauri test harnesses, AppContainer
-                // sandboxes), in which case we just warn and move on.
-                tracing::warn!(
-                    "Failed to create Windows Job Object; sidecar processes may \
-                     leak on hard kill: {err}"
-                );
-                None
-            }
-        };
-
         Self {
             entries: SyncMutex::new(RegistryState {
                 entries: Vec::new(),
@@ -88,51 +57,21 @@ impl SidecarRegistry {
             ports: Arc::default(),
             preflight: PreflightCache::new(),
             next_id: AtomicU64::new(1),
-            #[cfg(windows)]
-            job: SyncMutex::new(job),
         }
     }
 
     /// Register a live sidecar. Called by `SidecarManager::start_attempt`
     /// after readiness confirmation. Cleans up dead weak refs from
     /// previous spawns at the same time.
-    ///
-    /// On Windows, also assigns the sidecar PID to the registry's
-    /// Job Object so the kernel kills it automatically when our
-    /// process handle closes. The PID is read from the
-    /// `CommandChild` while the registry holds it locked, so we know
-    /// it hasn't been killed/swapped underneath us.
     pub(super) fn register(
         &self,
-        child: &Arc<SyncMutex<Option<CommandChild>>>,
+        child: &Arc<SyncMutex<Option<ServerProcess>>>,
         endpoint: &str,
     ) -> Option<u64> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
 
         let admitted = self.with_open_entries(|entries| {
             // Admission and insertion share the state lock with `kill_all`.
-            #[cfg(windows)]
-            {
-                let pid_opt = child.lock().as_ref().map(|c| c.pid());
-                if let Some(pid) = pid_opt {
-                    if let Some(job) = self.job.lock().as_ref() {
-                        if let Err(err) = job.assign_pid(pid) {
-                            tracing::warn!(
-                                pid,
-                                endpoint,
-                                "Failed to assign sidecar to Job Object: {err}"
-                            );
-                        } else {
-                            tracing::debug!(
-                                pid,
-                                endpoint,
-                                "Assigned sidecar to Windows Job Object"
-                            );
-                        }
-                    }
-                }
-            }
-
             entries.retain(|entry| entry.child.lock().is_some());
             entries.push(RegistryEntry {
                 id,
@@ -192,7 +131,7 @@ impl SidecarRegistry {
 
         let mut killed = 0;
         for entry in drained {
-            // Lock the per-child mutex briefly: take the CommandChild
+            // Lock the per-child mutex briefly: take the ServerProcess
             // out, then release before calling kill so a concurrent
             // SidecarHandle::stop sees an empty slot and no-ops.
             let child_opt = entry.child.lock().take();
@@ -407,290 +346,4 @@ impl Default for SidecarRegistry {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// RAII guard around a Windows Job Object configured to kill all
-/// member processes when the job handle closes.
-///
-/// The Job Object uses `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`,
-/// which means: when the OS handle to this job closes (because our
-/// process exits — including segfault, taskkill /f, or panic),
-/// every process assigned to it is terminated by the kernel.
-///
-/// Drop closes the handle. We rely on Drop running when the
-/// `SidecarRegistry` is dropped (which happens at app shutdown OR
-/// process abort, since Tauri-managed state lifetime ends with the
-/// process). For abnormal exits where Drop doesn't run, the OS
-/// closes orphaned handles automatically — same effect.
-#[cfg(windows)]
-pub(super) struct JobObjectGuard {
-    pub(super) handle: windows::Win32::Foundation::HANDLE,
-}
-
-#[cfg(windows)]
-impl JobObjectGuard {
-    pub(super) fn create() -> lattice_core::shared::error::Result<Self> {
-        use lattice_core::shared::error::AppError;
-        use windows::Win32::Foundation::HANDLE;
-        use windows::Win32::System::JobObjects::{
-            CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
-            JOBOBJECT_BASIC_LIMIT_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        };
-
-        // SAFETY: CreateJobObjectW with null `name` and null security
-        // attributes returns a handle owned by the calling process.
-        // Per Microsoft docs, the only failure modes are out-of-resources
-        // and access denied, both of which surface as INVALID_HANDLE
-        // and we can convert to a Rust error. No memory borrowed across
-        // the FFI boundary.
-        #[allow(unsafe_code)]
-        let handle: HANDLE = unsafe { CreateJobObjectW(None, windows::core::PCWSTR::null()) }
-            .map_err(|e| AppError::InternalError(format!("CreateJobObjectW failed: {e}")))?;
-
-        if handle.is_invalid() {
-            return Err(AppError::InternalError(
-                "CreateJobObjectW returned invalid handle".to_string(),
-            ));
-        }
-
-        // Configure: kill all child processes when the job handle
-        // closes. This is the kill_on_close behavior; without this
-        // flag, dead Lattice would leave llama-server running.
-        let info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
-            BasicLimitInformation: JOBOBJECT_BASIC_LIMIT_INFORMATION {
-                LimitFlags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        // SAFETY: SetInformationJobObject reads the `info` struct
-        // through the void pointer for the size we specify
-        // (`size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>()`).
-        // `info` is a stack-local of exactly that type, owned by us
-        // for the duration of the call. The handle is the one we
-        // just created and haven't closed.
-        #[allow(unsafe_code)]
-        let result = unsafe {
-            SetInformationJobObject(
-                handle,
-                JobObjectExtendedLimitInformation,
-                &info as *const _ as *const _,
-                std::mem::size_of_val(&info) as u32,
-            )
-        };
-
-        if let Err(err) = result {
-            // Best-effort: try to close the handle we just created.
-            #[allow(unsafe_code)]
-            unsafe {
-                let _ = windows::Win32::Foundation::CloseHandle(handle);
-            }
-            return Err(AppError::InternalError(format!(
-                "SetInformationJobObject failed: {err}"
-            )));
-        }
-
-        Ok(Self { handle })
-    }
-
-    pub(super) fn assign_pid(&self, pid: u32) -> lattice_core::shared::error::Result<()> {
-        use lattice_core::shared::error::AppError;
-        use windows::Win32::Foundation::CloseHandle;
-        use windows::Win32::System::JobObjects::AssignProcessToJobObject;
-        use windows::Win32::System::Threading::{
-            OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
-        };
-
-        // Open a handle to the child process with the rights needed
-        // for AssignProcessToJobObject (set_quota + terminate).
-        // SAFETY: OpenProcess returns a HANDLE we own and must close.
-        // PID was just read from a CommandChild we control — the
-        // process is alive and we have permission to inspect it
-        // (we spawned it).
-        #[allow(unsafe_code)]
-        let child_handle =
-            unsafe { OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, false, pid) }.map_err(
-                |e| AppError::InternalError(format!("OpenProcess(pid={pid}) failed: {e}")),
-            )?;
-
-        // SAFETY: Both handles are valid — we created `self.handle`
-        // in `create()` and just opened `child_handle`.
-        #[allow(unsafe_code)]
-        let assign_result = unsafe { AssignProcessToJobObject(self.handle, child_handle) };
-
-        // Always close the child handle once assignment completes;
-        // the process stays alive (Windows holds its own ref), the
-        // job-object membership persists.
-        #[allow(unsafe_code)]
-        unsafe {
-            let _ = CloseHandle(child_handle);
-        }
-
-        assign_result.map_err(|e| {
-            AppError::InternalError(format!("AssignProcessToJobObject(pid={pid}) failed: {e}"))
-        })?;
-        Ok(())
-    }
-}
-
-#[cfg(windows)]
-impl Drop for JobObjectGuard {
-    fn drop(&mut self) {
-        // Closing the handle triggers KILL_ON_JOB_CLOSE. Every
-        // process assigned to this job dies. This is the
-        // shutdown-time guarantee.
-        // SAFETY: Handle was returned from CreateJobObjectW and
-        // never closed by anyone else (we own it exclusively).
-        #[allow(unsafe_code)]
-        unsafe {
-            let _ = windows::Win32::Foundation::CloseHandle(self.handle);
-        }
-    }
-}
-
-// `windows::Win32::Foundation::HANDLE` already implements `Send` +
-// `Sync` (kernel handles are thread-safe by definition; HANDLE is
-// just an index into a kernel table). The compiler auto-derives both
-// for `JobObjectGuard` since its only field is HANDLE — no manual
-// `unsafe impl` needed.
-
-/// Kills orphan `llama-server` processes left by a crashed Lattice, once at
-/// boot before any sidecar starts. A process is ours only when its executable
-/// is an installed sidecar file beside the running Lattice executable, and it
-/// is left alone while its parent is this Lattice executable
-/// (`has_live_lattice_parent`). Best-effort: `sysinfo` failures mean no
-/// orphans found.
-pub fn reap_orphan_sidecars() {
-    let Some(lattice_exe) = tauri::utils::platform::current_exe()
-        .ok()
-        .map(|exe| canonical_or_raw(&exe))
-    else {
-        tracing::debug!("Skipping orphan sidecar scan: Lattice executable path unknown");
-        return;
-    };
-    let Some(lattice_dir) = lattice_exe.parent().map(std::path::Path::to_path_buf) else {
-        tracing::debug!("Skipping orphan sidecar scan: Lattice executable directory unknown");
-        return;
-    };
-
-    // `refresh_processes()` never loads argv; ask for it (and the exe path)
-    // explicitly.
-    let mut system = sysinfo::System::new();
-    system.refresh_processes_specifics(
-        sysinfo::ProcessRefreshKind::new()
-            .with_exe(sysinfo::UpdateKind::OnlyIfNotSet)
-            .with_cmd(sysinfo::UpdateKind::OnlyIfNotSet),
-    );
-
-    let mut reaped = 0usize;
-    for (pid, process) in system.processes() {
-        let name = process.name();
-        // Cheap prefilter before touching the filesystem. Linux reports the
-        // 15-byte `comm`, so `llama-server-cpu` shows up as `llama-server-cp`.
-        if !name.to_ascii_lowercase().starts_with(SIDECAR_BIN) {
-            continue;
-        }
-
-        let exe = process
-            .exe()
-            .map(std::path::Path::to_path_buf)
-            .or_else(|| process.cmd().first().map(PathBuf::from));
-        let is_ours = exe
-            .as_deref()
-            .is_some_and(|exe| is_installed_sidecar(&canonical_or_raw(exe), &lattice_dir));
-        if !is_ours {
-            tracing::debug!(
-                pid = pid.as_u32(),
-                process_name = name,
-                exe = ?exe,
-                "Skipping `llama-server` process — not a sidecar of this Lattice install"
-            );
-            continue;
-        }
-
-        // A second launch of Lattice runs this scan too; a sidecar whose
-        // parent is a running Lattice belongs to that window, mid-turn.
-        let parent_exe = process
-            .parent()
-            .and_then(|ppid| system.process(ppid))
-            .and_then(|parent| parent.exe());
-        if has_live_lattice_parent(parent_exe, &lattice_exe) {
-            tracing::info!(
-                pid = pid.as_u32(),
-                process_name = name,
-                "Leaving llama-server alone — its Lattice is still running"
-            );
-            continue;
-        }
-
-        let killed = process.kill();
-        if killed {
-            reaped += 1;
-            tracing::warn!(
-                pid = pid.as_u32(),
-                process_name = name,
-                "Reaped orphan llama-server process from previous Lattice run"
-            );
-        } else {
-            // sysinfo returns false for both "permission denied" and
-            // "process already terminated." The latter is success for
-            // our purposes (the orphan is gone), the former leaves it
-            // for the next-boot pass.
-            tracing::debug!(
-                pid = pid.as_u32(),
-                process_name = name,
-                "Found orphan llama-server but kill returned false (already dead or perms)"
-            );
-        }
-    }
-
-    if reaped > 0 {
-        tracing::info!(
-            count = reaped,
-            "Reaped {} orphan llama-server process(es) on startup",
-            reaped
-        );
-    }
-}
-
-/// Whether `exe` is one of the installed sidecar files in `lattice_dir`.
-/// Both paths must already be in the same (canonical) form.
-pub(super) fn is_installed_sidecar(exe: &std::path::Path, lattice_dir: &std::path::Path) -> bool {
-    let is_sidecar_file = exe
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| {
-            let name = name.to_ascii_lowercase();
-            let stem = name.strip_suffix(".exe").unwrap_or(&name);
-            stem == SIDECAR_BIN || stem == SIDECAR_CPU_BIN
-        });
-    is_sidecar_file && exe.parent() == Some(lattice_dir)
-}
-
-/// Whether a sidecar's parent is a live Lattice from this install: the parent
-/// process still exists and runs `lattice_exe` (canonical). An orphan's parent
-/// is gone (Windows), or it has been re-parented to init/launchd or a
-/// subreaper, or its PID has been reused by something else.
-///
-/// Linux reports a running executable whose file was replaced, as a package
-/// upgrade does, as `<path> (deleted)`; that is still the same install.
-pub(super) fn has_live_lattice_parent(
-    parent_exe: Option<&std::path::Path>,
-    lattice_exe: &std::path::Path,
-) -> bool {
-    parent_exe.is_some_and(|exe| {
-        let exe = exe
-            .to_str()
-            .and_then(|raw| raw.strip_suffix(" (deleted)"))
-            .map_or_else(|| exe.to_path_buf(), PathBuf::from);
-        canonical_or_raw(&exe) == lattice_exe
-    })
-}
-
-/// Canonical form for path comparison (symlinks resolved; `\\?\` form on
-/// Windows), or the path as given when it can't be resolved.
-pub(super) fn canonical_or_raw(path: &std::path::Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }

@@ -228,16 +228,16 @@ pub(crate) fn new_api_token() -> String {
 }
 
 /// Spawns the long-lived event-drain task for a sidecar. It reads every
-/// `CommandEvent` for the sidecar's life (tauri-plugin-shell's pipes are
-/// bounded, so an unread receiver would stop the output), logs each line
+/// `ServerEvent` for the sidecar's life (the event channel is bounded, so an
+/// unread receiver would stop the output), logs each line
 /// under `target = "llama_server"`, keeps the startup `tail`, clears the child
 /// slot on `Terminated`, and fires the returned oneshot once: `Ok(())` at the
 /// readiness needle, or how the sidecar ended before it.
 pub(super) fn spawn_event_drain(
     background: &lattice_core::shared::runtime::background::BackgroundTasks,
-    rx: Receiver<CommandEvent>,
+    rx: Receiver<ServerEvent>,
     endpoint: String,
-    child_arc: Arc<SyncMutex<Option<CommandChild>>>,
+    child_arc: Arc<SyncMutex<Option<ServerProcess>>>,
     tail: Arc<SyncMutex<OutputTail>>,
     signals: Arc<StartupSignals>,
 ) -> tokio::sync::oneshot::Receiver<Result<(), StartupEnd>> {
@@ -276,21 +276,21 @@ pub(super) fn spawn_event_drain(
                 false
             };
             match event {
-                CommandEvent::Stderr(line_bytes) => {
+                ServerEvent::Stderr(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes);
                     if on_line(line.trim_end(), "") {
                         tracing::info!("llama-server sidecar ready on {endpoint}");
                         signal_ready(&mut ready_tx, Ok(()));
                     }
                 }
-                CommandEvent::Stdout(line_bytes) => {
+                ServerEvent::Stdout(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes);
                     if on_line(line.trim_end(), "stdout: ") {
                         tracing::info!("llama-server sidecar ready on {endpoint}");
                         signal_ready(&mut ready_tx, Ok(()));
                     }
                 }
-                CommandEvent::Error(err) => {
+                ServerEvent::Error(err) => {
                     if readiness_pending {
                         signal_ready(&mut ready_tx, Err(StartupEnd::EventError(err)));
                     } else {
@@ -304,7 +304,7 @@ pub(super) fn spawn_event_drain(
                         );
                     }
                 }
-                CommandEvent::Terminated(payload) => {
+                ServerEvent::Terminated(payload) => {
                     if readiness_pending {
                         signal_ready(
                             &mut ready_tx,
@@ -325,7 +325,7 @@ pub(super) fn spawn_event_drain(
                     // Clear the child slot so kill_all at shutdown
                     // doesn't try to kill a dead PID. The Arc itself
                     // stays alive — owned by SidecarHandle — but the
-                    // CommandChild inside is gone. An empty slot is also
+                    // ServerProcess inside is gone. An empty slot is also
                     // what `is_running` reads, so the role caches treat the
                     // cached port as a miss and the next request starts a
                     // new server instead of failing against this dead one.

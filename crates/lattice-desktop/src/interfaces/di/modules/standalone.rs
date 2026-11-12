@@ -4,11 +4,12 @@
 //! for the same model, and kills every server it started when it drops.
 
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Stdio;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::process::BoundCommand;
 
 use crate::features::embedding::llama_cpp::{
     EmbeddingHeader, EmbeddingLaunch, EmbeddingServerStarter, LlamaEmbeddingService,
@@ -27,7 +28,7 @@ const HEALTH_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 /// one: one server per configuration, shared while it runs.
 pub struct StandaloneServers {
     binary: PathBuf,
-    children: parking_lot::Mutex<Vec<Arc<parking_lot::Mutex<Child>>>>,
+    children: parking_lot::Mutex<Vec<Arc<parking_lot::Mutex<tokio::process::Child>>>>,
     /// Running servers by launch flags.
     running: tokio::sync::Mutex<std::collections::HashMap<String, Arc<RunningLlamaServer>>>,
 }
@@ -53,11 +54,11 @@ impl StandaloneServers {
 
     /// What the binary's own `--list-devices` reports, as the app asks it.
     async fn has_accelerator(&self) -> bool {
-        let binary = self.binary.clone();
-        tokio::task::spawn_blocking(move || Command::new(binary).arg("--list-devices").output())
+        BoundCommand::new(&self.binary)
+            .arg("--list-devices")
+            .output()
             .await
             .ok()
-            .and_then(std::result::Result::ok)
             .is_some_and(|output| {
                 let text = format!(
                     "{}{}",
@@ -90,12 +91,13 @@ impl StandaloneServers {
             .port();
         let key = new_api_token();
         let args = build_server_args(config, port);
-        let child = Command::new(&self.binary)
+        let child = BoundCommand::new(&self.binary)
             .args(&args)
             .env("LLAMA_API_KEY", &key)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
+            .await
             .map_err(|e| {
                 AppError::ModelLoadFailed(format!("{} did not spawn: {e}", self.binary.display()))
             })?;
@@ -183,9 +185,7 @@ impl RerankServerStarter for StandaloneServers {
 impl Drop for StandaloneServers {
     fn drop(&mut self) {
         for child in self.children.lock().drain(..) {
-            let mut child = child.lock();
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.lock().start_kill();
         }
     }
 }

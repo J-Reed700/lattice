@@ -222,7 +222,7 @@ pub(super) fn suppress_loader_error_dialogs() {
 
 pub(super) async fn collect_preflight(
     binary: SidecarBinary,
-    mut rx: Receiver<CommandEvent>,
+    mut rx: Receiver<ServerEvent>,
     child: SpawnedChild,
 ) -> PreflightOutcome {
     let mut tail = OutputTail::default();
@@ -232,7 +232,7 @@ pub(super) async fn collect_preflight(
         let mut exit = (None, None);
         while let Some(event) = rx.recv().await {
             match event {
-                CommandEvent::Stderr(bytes) | CommandEvent::Stdout(bytes) => {
+                ServerEvent::Stderr(bytes) | ServerEvent::Stdout(bytes) => {
                     let remaining = PROBE_OUTPUT_MAX_BYTES.saturating_sub(output_bytes);
                     if bytes.len() > remaining {
                         output_exceeded = true;
@@ -245,8 +245,8 @@ pub(super) async fn collect_preflight(
                         tail.push(line);
                     }
                 }
-                CommandEvent::Error(err) => tail.push(&format!("(event error) {err}")),
-                CommandEvent::Terminated(payload) => {
+                ServerEvent::Error(err) => tail.push(&format!("(event error) {err}")),
+                ServerEvent::Terminated(payload) => {
                     exit = (payload.code, payload.signal);
                     child.mark_exited();
                 }

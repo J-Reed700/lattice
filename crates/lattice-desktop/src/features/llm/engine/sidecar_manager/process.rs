@@ -1,4 +1,5 @@
 use super::*;
+use lattice_core::shared::process::BoundCommand;
 
 /// Live sidecar process handle.
 ///
@@ -16,11 +17,10 @@ pub struct SidecarHandle {
     /// and read back the model path. Never logged.
     pub(super) api_token: String,
 
-    /// Process handle. Sync `Mutex` because `CommandChild::kill()` is
-    /// itself synchronous (a syscall, no `.await`) and the shutdown
-    /// path runs from a sync Tauri callback. `Option` so the kill
-    /// owner takes the child exactly once.
-    pub(super) child: Arc<SyncMutex<Option<CommandChild>>>,
+    /// Process handle. Sync `Mutex` because `ServerProcess::kill()` does not
+    /// await and the shutdown path runs from a sync Tauri callback.
+    /// `Option` so the kill owner takes the child exactly once.
+    pub(super) child: Arc<SyncMutex<Option<ServerProcess>>>,
 
     /// The `--ctx-size` this server was launched with: the window saved for the
     /// model, else the one it was trained for. Prompt budgets must use this
@@ -163,11 +163,11 @@ impl Drop for SidecarHandle {
 }
 
 /// A spawned sidecar that kills itself if dropped before it becomes a
-/// [`SidecarHandle`]. `CommandChild::Drop` does not kill the OS process, so a
-/// future cancelled during the readiness wait would otherwise leave a
-/// full-weight server holding its memory and port with no owner.
+/// [`SidecarHandle`]. Dropping a [`ServerProcess`] does not kill the OS
+/// process, so a future cancelled during the readiness wait would otherwise
+/// leave a full-weight server holding its memory and port with no owner.
 pub(in crate::features::llm::engine) struct SpawnedChild {
-    pub(super) child: Arc<SyncMutex<Option<CommandChild>>>,
+    pub(super) child: Arc<SyncMutex<Option<ServerProcess>>>,
     pub(super) registration: Option<Registration>,
     pub(super) endpoint: String,
     pub(super) armed: bool,
@@ -176,24 +176,25 @@ pub(in crate::features::llm::engine) struct SpawnedChild {
 impl SpawnedChild {
     /// Spawn `binary` and register it. Registration happens before readiness
     /// so the shutdown sweep can find a child that never became ready.
-    pub(super) fn spawn(
+    pub(super) async fn spawn(
         app: &AppHandle,
         binary: SidecarBinary,
         args: Vec<String>,
         endpoint: &str,
         api_token: &str,
         invalidate_preflight: bool,
-    ) -> Result<(Receiver<CommandEvent>, Self), AttemptError> {
+    ) -> Result<(Receiver<ServerEvent>, Self), AttemptError> {
+        let program = binary
+            .installed_path()
+            .map_err(|err| spawn_failure(binary, &err))?;
         // The key goes in the environment, not `--api-key`: argv is world-
         // readable through `ps` to every process on the machine, which is the
         // same set of processes the key exists to keep off the port.
-        let (rx, child) = app
-            .shell()
-            .sidecar(binary.label())
-            .map_err(|err| spawn_failure(binary, &err))?
+        let command = BoundCommand::new(program)
             .args(args)
-            .env("LLAMA_API_KEY", api_token)
-            .spawn()
+            .env("LLAMA_API_KEY", api_token);
+        let (rx, child) = child::start(command)
+            .await
             .map_err(|err| spawn_failure(binary, &err))?;
 
         // It executed, so whatever a stale preflight says about this build is
@@ -238,13 +239,13 @@ impl SpawnedChild {
         ))
     }
 
-    pub(super) fn spawn_probe(
+    pub(super) async fn spawn_probe(
         app: &AppHandle,
         binary: SidecarBinary,
         args: Vec<String>,
         endpoint: &str,
-    ) -> Result<(Receiver<CommandEvent>, Self), AttemptError> {
-        Self::spawn(app, binary, args, endpoint, "", false)
+    ) -> Result<(Receiver<ServerEvent>, Self), AttemptError> {
+        Self::spawn(app, binary, args, endpoint, "", false).await
     }
 
     pub(in crate::features::llm::engine) async fn run_bounded_probe(
@@ -263,14 +264,14 @@ impl SpawnedChild {
         if cancellation.is_cancelled() {
             return None;
         }
-        let (mut rx, child) = match Self::spawn_probe(app, binary, vec![arg.to_string()], endpoint)
-        {
-            Ok(spawned) => spawned,
-            Err(error) => {
-                tracing::debug!(%error.message, "sidecar probe could not start");
-                return None;
-            }
-        };
+        let (mut rx, child) =
+            match Self::spawn_probe(app, binary, vec![arg.to_string()], endpoint).await {
+                Ok(spawned) => spawned,
+                Err(error) => {
+                    tracing::debug!(%error.message, "sidecar probe could not start");
+                    return None;
+                }
+            };
 
         let collect = async {
             let mut stdout = Vec::new();
@@ -278,7 +279,7 @@ impl SpawnedChild {
             let mut total = 0usize;
             while let Some(event) = rx.recv().await {
                 match event {
-                    CommandEvent::Stdout(bytes)
+                    ServerEvent::Stdout(bytes)
                         if !append_probe_line(&mut stdout, &bytes, &mut total) =>
                     {
                         tracing::debug!(
@@ -287,7 +288,7 @@ impl SpawnedChild {
                         );
                         return None;
                     }
-                    CommandEvent::Stderr(bytes)
+                    ServerEvent::Stderr(bytes)
                         if !append_probe_line(&mut stderr, &bytes, &mut total) =>
                     {
                         tracing::debug!(
@@ -296,7 +297,7 @@ impl SpawnedChild {
                         );
                         return None;
                     }
-                    CommandEvent::Terminated(_) => child.mark_exited(),
+                    ServerEvent::Terminated(_) => child.mark_exited(),
                     _ => {}
                 }
             }
@@ -319,7 +320,7 @@ impl SpawnedChild {
     }
 
     /// The child slot, for the drain task to clear when the process exits.
-    pub(super) fn child(&self) -> Arc<SyncMutex<Option<CommandChild>>> {
+    pub(super) fn child(&self) -> Arc<SyncMutex<Option<ServerProcess>>> {
         Arc::clone(&self.child)
     }
 
