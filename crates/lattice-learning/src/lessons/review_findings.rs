@@ -228,7 +228,7 @@ pub enum Rule {
     PromptRepeated,
     /// A question has no answer explanation.
     ExplanationMissing,
-    /// A question lacks [`CHOICES_PER_QUESTION`](crate::lessons::shape::CHOICES_PER_QUESTION) distinct answer choices.
+    /// A question lacks [`CHOICES_PER_QUESTION`](crate::assessment::assessment_engine::checks::CHOICES_PER_QUESTION) distinct answer choices.
     Choices,
     /// A question's right choice is much longer than the others.
     KeyLongest,

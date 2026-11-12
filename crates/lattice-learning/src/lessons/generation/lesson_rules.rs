@@ -6,12 +6,14 @@
 //! repairs cannot settle waits for the user. It never stops the lesson from
 //! publishing.
 use super::validate_text;
-use crate::assessment::assessment_engine::checks::{answer_in_prompt, choice_faults, ChoiceFault};
+use crate::assessment::assessment_engine::checks::{
+    answer_in_prompt, choice_faults, ChoiceFault, CHOICES_PER_QUESTION,
+};
 use crate::content_verification::{names_a_source, quoted_wording};
 use crate::dto::LearningBlockKind;
 use crate::lessons::repeats;
 use crate::lessons::same_text::{fold, overlap};
-use crate::lessons::shape::{self, CHOICES_PER_QUESTION};
+use crate::lessons::shape;
 use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding, Rule};
 use lattice_core::shared::text::segmentation::code_fences;
 use lattice_core::shared::text::sentences;

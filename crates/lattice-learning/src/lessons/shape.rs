@@ -17,9 +17,6 @@ use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding
 use serde_json::Value;
 use std::collections::BTreeSet;
 
-#[path = "block_kinds.rs"]
-mod block_kinds;
-
 /// Which promise a lesson is held to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Phase {
@@ -148,9 +145,6 @@ const SECTION_MIX: [(LearningBlockKind, usize, bool); 8] = [
     (LearningBlockKind::Reflection, 1, true),
     (LearningBlockKind::Recap, 1, true),
 ];
-
-/// The answer choices every lesson question offers; the learner picks one.
-pub(crate) const CHOICES_PER_QUESTION: usize = 4;
 
 /// Questions the writer is asked for of each kind (`LessonQuestionKind::ALL`),
 /// so that a cut can spend one; a kept lesson needs one question of any kind.
