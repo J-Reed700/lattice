@@ -3,7 +3,7 @@
 //! docs/design/2026-10-16-lesson-claim-review.md.
 
 use super::{ClaimVerdict, Finding};
-use lattice_core::domain::learning::claim_review::{ClaimId, ClaimState, UnverifiedReason};
+use lattice_core::domain::learning::claim_review::{ClaimId, ClaimState, Class, UnverifiedReason};
 use serde::{Deserialize, Serialize};
 
 /// How a claim without a supporting passage was resolved by the user. Set on
@@ -47,9 +47,7 @@ pub(super) fn standing<'a>(
         ClaimState::Unverified { reason, .. } => {
             Standing::Resolved(Resolution::Unverified { reason: *reason })
         }
-        ClaimState::ResolvedByEvidence { .. }
-        | ClaimState::Consistent { .. }
-        | ClaimState::GeneralKnowledge { .. } => Standing::Verified,
+        state if state.is_verified() => Standing::Verified,
         ClaimState::Removed { .. }
         | ClaimState::Edited {
             successor: None, ..
@@ -100,6 +98,12 @@ impl Finding {
     pub(super) fn publishable(&self) -> bool {
         self.verdict == ClaimVerdict::Supported || self.resolution.is_some()
     }
+
+    /// A claim the learner is told about: every statement but one sorted Internal.
+    pub(super) fn is_claim(&self) -> bool {
+        self.class
+            .is_none_or(|classed| classed.class != Class::Internal)
+    }
 }
 
 #[cfg(test)]
@@ -127,13 +131,13 @@ mod tests {
             ("Small handlers are easier to test.", None, false),
         ] {
             let lesson = PreparedLearningLesson {
-                blocks: vec![LearningBlockDto {
-                    kind: LearningBlockKind::Explanation,
-                    title: "Handlers".into(),
-                    body: body.into(),
-                    source_ids: vec![],
-                    rubric: vec![],
-                }],
+                blocks: vec![LearningBlockDto::new(
+                    LearningBlockKind::Explanation,
+                    "Handlers".into(),
+                    body.into(),
+                    vec![],
+                    vec![],
+                )],
                 questions: vec![],
                 keys: vec![],
                 verification: None,

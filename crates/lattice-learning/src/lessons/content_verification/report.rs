@@ -1,6 +1,11 @@
 //! Binding, validating and persisting the verification report at publication.
+use super::learner_view::{told, unverified_sentences};
 use super::resolution::Resolution;
 use super::*;
+use crate::lesson_evidence::LearningClaimResolutionDto;
+use crate::teaching::{references_hold, versions};
+use lattice_core::domain::learning::claim_review::span_of;
+use lattice_core::shared::text::same_text::{overlaps, stands};
 
 mod repository;
 
@@ -82,21 +87,64 @@ pub(crate) struct Rewritten<'a> {
     pub at: i64,
 }
 
-/// Whether `finding` stood on the text at `range` of `old_body` in `unit`:
-/// its claim is in `claims`, or it names no claim and quotes that text.
-fn stood_on(
-    finding: &Finding,
-    unit: usize,
-    claims: &HashSet<String>,
-    old_body: &str,
-    range: (usize, usize),
-) -> bool {
-    finding.unit == unit
-        && match &finding.claim_id {
-            Some(id) => claims.contains(id),
-            None => lattice_core::domain::learning::claim_review::span_of(old_body, &finding.quote)
-                .is_some_and(|(start, end)| start < range.1 && range.0 < end),
+/// What a user's edit took out of a unit: the findings that stood on it go.
+pub(crate) enum Took<'a> {
+    /// The text at `range` of `old_body`; an empty range takes nothing.
+    Range {
+        old_body: &'a str,
+        range: (usize, usize),
+    },
+    /// The whole section, rewritten as `new_body` under `new_title`.
+    Section {
+        new_body: &'a str,
+        new_title: &'a str,
+    },
+}
+
+const USER_WROTE: &str = "You wrote this sentence; it was not checked against the sources.";
+
+fn taken(finding: &Finding, unit: usize, claims: &HashSet<String>, took: &Took<'_>) -> bool {
+    match &finding.claim_id {
+        Some(id) => claims.contains(id),
+        None => {
+            finding.unit == unit
+                && match took {
+                    Took::Range { old_body, range } => {
+                        span_of(old_body, &finding.quote).is_some_and(|span| overlaps(span, *range))
+                    }
+                    Took::Section {
+                        new_body,
+                        new_title,
+                    } => !stands(new_body, &finding.quote) && !stands(new_title, &finding.quote),
+                }
         }
+    }
+}
+
+/// The finding for a sentence the user wrote, confirmed by them.
+fn users_finding(
+    unit: usize,
+    sentence: &str,
+    statement: &str,
+    reason: &str,
+    claim: &ClaimId,
+    at: i64,
+) -> Finding {
+    Finding {
+        unit,
+        quote: sentence.to_owned(),
+        statement: statement.to_owned(),
+        verdict: ClaimVerdict::Unverified,
+        reason: reason.to_owned(),
+        evidence: Vec::new(),
+        supporting_quote: None,
+        resolution: Some(Resolution::Confirmed { at, note: None }),
+        claim_id: Some(claim.0.clone()),
+        trust: None,
+        label: None,
+        class: None,
+        two_pass: Default::default(),
+    }
 }
 
 impl LessonVerificationReport {
@@ -104,19 +152,26 @@ impl LessonVerificationReport {
         &self.content_sha256
     }
 
+    /// Where an edit's own finding goes: in the first taken finding's place, else
+    /// before the first finding of a later unit, else at the end.
+    fn place(&self, first_taken: Option<usize>, unit: usize) -> usize {
+        first_taken.unwrap_or_else(|| {
+            self.findings
+                .iter()
+                .position(|other| other.unit > unit)
+                .unwrap_or(self.findings.len())
+        })
+    }
+
     /// The report after the user took out the text the findings in
     /// `removal.removed` stood on: those findings are gone, every other
     /// finding as it was.
     pub(crate) fn taken_out(&mut self, removal: &TakenOut<'_>) {
-        let stood = |finding: &Finding| {
-            stood_on(
-                finding,
-                removal.unit,
-                removal.removed,
-                removal.old_body,
-                removal.range,
-            )
+        let took = Took::Range {
+            old_body: removal.old_body,
+            range: removal.range,
         };
+        let stood = |finding: &Finding| taken(finding, removal.unit, removal.removed, &took);
         let at = self.findings.iter().position(stood).unwrap_or(0);
         let (gone, kept): (Vec<Finding>, Vec<Finding>) = std::mem::take(&mut self.findings)
             .into_iter()
@@ -136,47 +191,20 @@ impl LessonVerificationReport {
     /// The report after the user rewrote a section: the findings on the
     /// claims that ended, and those naming no claim whose quote is in neither
     /// the new text nor the new title, are dropped; the user's sentences stand
-    /// in the first dropped one's place, or after the section's last finding
-    /// (at the end when it has none), confirmed by them; every other finding
-    /// as it was.
+    /// in the first dropped one's place, else where `place` puts them,
+    /// confirmed by them; every other finding as it was.
     pub(crate) fn rewritten(&mut self, rewrite: &Rewritten<'_>) {
-        let dropped = |finding: &Finding| {
-            finding.unit == rewrite.unit
-                && match &finding.claim_id {
-                    Some(id) => rewrite.ended.contains(id),
-                    None => {
-                        !rewrite.new_body.contains(finding.quote.as_str())
-                            && !rewrite.new_title.contains(finding.quote.as_str())
-                    }
-                }
+        let took = Took::Section {
+            new_body: rewrite.new_body,
+            new_title: rewrite.new_title,
         };
+        let dropped = |finding: &Finding| taken(finding, rewrite.unit, rewrite.ended, &took);
         let first = self.findings.iter().position(dropped);
         self.findings.retain(|finding| !dropped(finding));
-        let at = first.unwrap_or_else(|| {
-            self.findings
-                .iter()
-                .rposition(|finding| finding.unit == rewrite.unit)
-                .map_or(self.findings.len(), |last| last + 1)
-        });
+        let at = self.place(first, rewrite.unit);
         for (offset, (text, successor)) in rewrite.written.iter().enumerate() {
-            let finding = Finding {
-                unit: rewrite.unit,
-                quote: (*text).to_owned(),
-                statement: (*text).to_owned(),
-                verdict: ClaimVerdict::Unverified,
-                reason: "You wrote this sentence; it was not checked against the sources.".into(),
-                evidence: Vec::new(),
-                supporting_quote: None,
-                resolution: Some(Resolution::Confirmed {
-                    at: rewrite.at,
-                    note: None,
-                }),
-                claim_id: Some(successor.0.clone()),
-                trust: None,
-                label: None,
-                class: None,
-                two_pass: Default::default(),
-            };
+            let finding =
+                users_finding(rewrite.unit, text, text, USER_WROTE, successor, rewrite.at);
             self.findings.insert(at + offset, finding);
         }
         self.content_sha256 = sha256_hex(
@@ -195,9 +223,11 @@ impl LessonVerificationReport {
     /// sentence, confirmed by them, in the place of those, every other
     /// finding as it was.
     pub(crate) fn written_over(&mut self, edit: &WrittenOver<'_>) {
-        let replaced = |finding: &Finding| {
-            stood_on(finding, edit.unit, edit.replaced, edit.old_body, edit.range)
+        let took = Took::Range {
+            old_body: edit.old_body,
+            range: edit.range,
         };
+        let replaced = |finding: &Finding| taken(finding, edit.unit, edit.replaced, &took);
         let first = self.findings.iter().position(replaced);
         let (gone, kept): (Vec<Finding>, Vec<Finding>) = std::mem::take(&mut self.findings)
             .into_iter()
@@ -210,25 +240,15 @@ impl LessonVerificationReport {
                 findings: gone,
             });
         }
-        let finding = Finding {
-            unit: edit.unit,
-            quote: edit.after.to_owned(),
-            statement: edit.after.to_owned(),
-            verdict: ClaimVerdict::Unverified,
-            reason: "You wrote this sentence; it was not checked against the sources.".into(),
-            evidence: Vec::new(),
-            supporting_quote: None,
-            resolution: Some(Resolution::Confirmed {
-                at: edit.at,
-                note: None,
-            }),
-            claim_id: Some(edit.successor.0.clone()),
-            trust: None,
-            label: None,
-            class: None,
-            two_pass: Default::default(),
-        };
-        let at = first.unwrap_or(self.findings.len());
+        let finding = users_finding(
+            edit.unit,
+            edit.after,
+            edit.after,
+            USER_WROTE,
+            edit.successor,
+            edit.at,
+        );
+        let at = self.place(first, edit.unit);
         self.findings.insert(at, finding);
         self.content_sha256 =
             sha256_hex(json!([self.content_sha256, edit.unit, edit.new_body]).to_string());
@@ -240,18 +260,13 @@ impl LessonVerificationReport {
     /// one finding for it, confirmed by the user, in the place of the findings
     /// of the claims that stood on the replaced text.
     pub(crate) fn written_back(&mut self, back: &WrittenBack<'_>) {
-        let replaced = |finding: &Finding| match &finding.claim_id {
-            Some(id) => id == &back.claim.0 || back.replaced.contains(id),
-            None => {
-                back.range.0 < back.range.1
-                    && finding.unit == back.unit
-                    && lattice_core::domain::learning::claim_review::span_of(
-                        back.old_body,
-                        &finding.quote,
-                    )
-                    .is_some_and(|(start, end)| start < back.range.1 && back.range.0 < end)
-            }
+        let mut claims = back.replaced.clone();
+        claims.insert(back.claim.0.clone());
+        let took = Took::Range {
+            old_body: back.old_body,
+            range: back.range,
         };
+        let replaced = |finding: &Finding| taken(finding, back.unit, &claims, &took);
         let first = self.findings.iter().position(replaced);
         let (gone, kept): (Vec<Finding>, Vec<Finding>) = std::mem::take(&mut self.findings)
             .into_iter()
@@ -264,30 +279,15 @@ impl LessonVerificationReport {
                 findings: gone,
             });
         }
-        let finding = Finding {
-            unit: back.unit,
-            quote: back.sentence.to_owned(),
-            statement: back.statement.to_owned(),
-            verdict: ClaimVerdict::Unverified,
-            reason: back.reason.to_owned(),
-            evidence: Vec::new(),
-            supporting_quote: None,
-            resolution: Some(Resolution::Confirmed {
-                at: back.at,
-                note: None,
-            }),
-            claim_id: Some(back.claim.0.clone()),
-            trust: None,
-            label: None,
-            class: None,
-            two_pass: Default::default(),
-        };
-        let at = first.unwrap_or_else(|| {
-            self.findings
-                .iter()
-                .position(|other| other.unit > back.unit)
-                .unwrap_or(self.findings.len())
-        });
+        let finding = users_finding(
+            back.unit,
+            back.sentence,
+            back.statement,
+            back.reason,
+            back.claim,
+            back.at,
+        );
+        let at = self.place(first, back.unit);
         self.findings.insert(at, finding);
         self.content_sha256 =
             sha256_hex(json!([self.content_sha256, back.unit, back.new_body]).to_string());
@@ -346,13 +346,19 @@ pub(crate) fn not_verified_line(count: usize) -> Option<String> {
 impl LessonVerificationReport {
     /// The statements this lesson publishes not verified.
     pub(crate) fn unverified_count(&self) -> usize {
-        self.findings
-            .iter()
-            .filter(|finding| matches!(finding.resolution, Some(Resolution::Unverified { .. })))
-            .filter(|finding| {
-                finding.class.is_none_or(|classed| {
-                    classed.class != lattice_core::domain::learning::claim_review::Class::Internal
-                })
+        let claims = || self.findings.iter().filter(|finding| finding.is_claim());
+        let sentence = unverified_sentences(claims().map(|f| (f, f.resolution.clone())));
+        claims()
+            .filter(|f| {
+                let shared = sentence.get(&(f.unit, f.quote.as_str())).copied();
+                let (resolution, _, _) = told(
+                    f.resolution.as_ref(),
+                    false,
+                    f.verdict,
+                    (false, false),
+                    shared,
+                );
+                resolution == LearningClaimResolutionDto::NotVerified
             })
             .count()
     }
@@ -388,11 +394,12 @@ impl LessonVerificationReport {
             Ok(None) => {}
             Err(error) => return Some(error.to_string()),
         }
-        let changed = !self.sources.iter().all(|binding| {
-            sources.iter().any(|source| {
-                source.id == binding.id && sha256_hex(&source.excerpt) == binding.sha256
-            })
-        });
+        let recorded: Vec<(String, String)> = self
+            .sources
+            .iter()
+            .map(|binding| (binding.id.clone(), binding.sha256.clone()))
+            .collect();
+        let changed = !references_hold(&recorded, &versions(sources));
         changed.then(|| {
             "a source it was checked against changed while it was being prepared; prepare it again once the sources stop changing".to_owned()
         })
