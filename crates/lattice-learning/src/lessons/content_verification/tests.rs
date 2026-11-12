@@ -1017,7 +1017,7 @@ async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> R
                 &[(0, claim(GOOD)), (1, claim(GOOD))],
             )
             .await?;
-            assert!(repaired.iter().all(|read| read.finding.publishable()));
+            assert!(repaired.iter().all(|read| read.finding().publishable()));
             assert_eq!(
                 *model.judge_calls.lock().unwrap(),
                 3,
@@ -1037,7 +1037,7 @@ async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> R
                 &[(0, reworded), (1, claim(GOOD))],
             )
             .await?;
-            assert!(again.iter().all(|read| read.reused));
+            assert!(again.iter().all(|read| read.reused()));
             assert_eq!(*model.judge_calls.lock().unwrap(), 3);
             Ok(())
         },
@@ -1069,13 +1069,10 @@ fn reused_comparisons_keep_current_retrieval_metadata_and_exact_source_identity(
         verdict: ClaimVerdict::Supported,
         reason: "The passage states it.".into(),
         supporting_quote: Some(GOOD.into()),
-        interpretation_policy: Some(
-            lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY
-                .into(),
-        ),
         shown: None,
+        parts: vec![],
     };
-    let restored = receipt.finding(0, &claim, &rescored).unwrap();
+    let restored = receipt.finding(0, &claim, rescored.clone()).unwrap();
     assert_eq!(restored.evidence[0].score, rescored[0].score);
     // Another version of the source, other text and another section are
     // other comparisons.
@@ -1330,17 +1327,6 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
         target,
         async {
             let saved = lesson_drafts::resume("same-inputs".into()).await?.unwrap();
-            assert!(
-                has_pending_repair(
-                    &model,
-                    "{}",
-                    &crate::lessons::shape::FixedSchema(json!({})),
-                    0,
-                    &saved,
-                    &ReferenceCollection::lexical(&sources)?
-                )
-                .await?
-            );
             verify_and_repair(&model, "{}", &json!({}), saved, &sources, 4000).await
         },
     )
@@ -1782,6 +1768,26 @@ fn omitted_duplicate_and_fabricated_inventory_units_are_rejected() {
     .is_err());
 }
 
+#[test]
+fn a_claim_quoting_only_a_citation_quote_is_not_in_its_section() {
+    let content = vec![json!({
+        "kind": "explanation",
+        "body": "Something else entirely.",
+        "citations": [{"quote": GOOD}],
+    })];
+    let inventory = Inventory {
+        units: vec![UnitClaims {
+            index: 0,
+            claims: vec![Claim {
+                quote: GOOD.into(),
+                statement: GOOD.into(),
+            }],
+            non_factual_reason: String::new(),
+        }],
+    };
+    assert!(validate_inventory(&inventory, &content).is_err());
+}
+
 /// Persistence-only tests use an explicit synthetic attestation. This is
 /// compiled only for tests and does not bypass production verification.
 pub(crate) fn attest(lesson_id: &str, lesson: &PreparedLearningLesson) -> LessonVerificationReport {
@@ -1880,13 +1886,13 @@ async fn publication_requires_current_report_and_source_and_rolls_back_on_reject
     .await?;
     let value: Value = serde_json::from_str(&raw)?;
     let mut prepared = PreparedLearningLesson {
-        blocks: vec![LearningBlockDto {
-            kind: LearningBlockKind::Explanation,
-            title: "CSV header names".into(),
-            body: value["blocks"][0]["body"].as_str().unwrap().into(),
-            rubric: vec![],
-            source_ids: vec![sources[0].id.clone()],
-        }],
+        blocks: vec![LearningBlockDto::new(
+            LearningBlockKind::Explanation,
+            "CSV header names".into(),
+            value["blocks"][0]["body"].as_str().unwrap().into(),
+            vec![sources[0].id.clone()],
+            vec![],
+        )],
         questions: vec![],
         keys: vec![],
         verification: None,

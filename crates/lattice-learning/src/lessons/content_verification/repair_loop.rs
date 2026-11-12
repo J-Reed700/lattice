@@ -4,7 +4,7 @@ use super::claim_ledger::{self, ClaimLedger, StepKind};
 use super::passes;
 use super::readings::Readers;
 use super::repair::Cited;
-use super::repair_request::{repair_context, repair_fingerprint, PendingRepair};
+use super::repair_request::{repair_context, repair_fingerprint, restart, PendingRepair, Restart};
 use super::round::{self, Audit, Researched, Review, Settled, Unsettled, Verdict};
 use super::*;
 use crate::lessons::shape::{LessonSchema, LessonShape, Phase, ShapePolicy};
@@ -12,9 +12,7 @@ use async_trait::async_trait;
 use lattice_core::domain::learning::acceptance::{
     AcceptancePolicy, Outcome, Position, StandardPolicy, Step, Taken,
 };
-use lattice_core::domain::learning::claim_review::{
-    ClaimEvent, ClaimId, ClaimState, StopReason, UnverifiedReason,
-};
+use lattice_core::domain::learning::claim_review::{ClaimEvent, ClaimId, ClaimState, StopReason};
 
 /// [`verify_and_repair_with_references`] over lexical references, for tests.
 #[cfg(test)]
@@ -27,32 +25,35 @@ pub(crate) async fn verify_and_repair(
     output_tokens: usize,
 ) -> Result<(String, LessonVerificationReport)> {
     let references = ReferenceCollection::lexical(sources)?;
-    let (raw, report, _) = verify_and_repair_with_references(
+    let shape = crate::lessons::shape::FixedSchema(schema.clone());
+    let mut numbered = sources.to_vec();
+    let started = restart(llm, prompt, &shape, &raw, &references, &mut numbered).await?;
+    verify_and_repair_with_references(
         llm,
         &BuiltinRuntimes::for_tests(),
         prompt,
-        &crate::lessons::shape::FixedSchema(schema.clone()),
+        &shape,
         raw,
         &references,
-        (output_tokens, &mut sources.to_vec()),
+        (output_tokens, &mut numbered),
+        started,
     )
-    .await?;
-    Ok((raw, report))
+    .await
 }
 
 /// The checkpoint holding the sources this lesson's verification numbered to
 /// cite them, by version id, in the order it numbered them.
-const NUMBERED_KEY: &str = "lesson-numbered-sources-v1";
+const NUMBERED_KEY: Protocol = lattice_core::protocol!("lesson-numbered-sources", 1);
 
 /// `numbered` with the sources an earlier run of this preparation numbered
 /// to cite them appended, in their order, so the draft's source indices name
 /// the same sources after a restart. A source no longer in `references` is
 /// left out.
-async fn renumber(
+pub(super) async fn renumber(
     numbered: &mut Vec<LearningSourceDto>,
     references: &ReferenceCollection<'_>,
 ) -> Result<()> {
-    let Some(saved) = crate::lesson_drafts::checkpoint(NUMBERED_KEY)
+    let Some(saved) = crate::lesson_drafts::checkpoint(NUMBERED_KEY.as_str())
         .await?
         .and_then(|value| serde_json::from_value::<Vec<String>>(value).ok())
     else {
@@ -83,9 +84,8 @@ async fn renumber(
 /// widened to it. Verification holds the lesson to what it is kept with
 /// (`Phase::Kept`), so it builds that schema from `shape` itself.
 ///
-/// Gives, with the lesson and its report, the ids of the program's references
-/// as they stand once verification is done: those of the collection research
-/// grew when it saved any, else of `references`.
+/// `restart` is what [`restart`] made of an earlier attempt: the writer's
+/// source count and the repair it saved.
 pub(crate) async fn verify_and_repair_with_references(
     llm: &dyn LLMPort,
     runtimes: &BuiltinRuntimes,
@@ -94,7 +94,8 @@ pub(crate) async fn verify_and_repair_with_references(
     raw: String,
     references: &ReferenceCollection<'_>,
     (output_tokens, numbered): (usize, &mut Vec<LearningSourceDto>),
-) -> Result<(String, LessonVerificationReport, HashSet<String>)> {
+    restart: Restart,
+) -> Result<(String, LessonVerificationReport)> {
     let policy = StandardPolicy::new();
     let mut review = open(
         llm,
@@ -104,16 +105,10 @@ pub(crate) async fn verify_and_repair_with_references(
         raw,
         references,
         (output_tokens, numbered),
+        restart,
     )
     .await?;
-    let (raw, report) = round::run(&mut review, &policy).await?;
-    let held = review.expanded.as_ref().unwrap_or(review.references);
-    let owned = held
-        .sources
-        .iter()
-        .map(|source| source.id.clone())
-        .collect();
-    Ok((raw, report, owned))
+    round::run(&mut review, &policy).await
 }
 
 /// The review of `raw`, held to the kept lesson's schema: the one choice of
@@ -126,10 +121,9 @@ async fn open<'a, 'r>(
     raw: String,
     references: &'a ReferenceCollection<'r>,
     (output_tokens, numbered): (usize, &'a mut Vec<LearningSourceDto>),
+    restart: Restart,
 ) -> Result<PreparationReview<'a, 'r>> {
     let readers = Readers::standard();
-    let writers = numbered.len();
-    renumber(numbered, references).await?;
     let schema = shape.schema(Phase::Kept, numbered.len());
     let ledger = ClaimLedger::open(llm, &raw).await?;
     Ok(PreparationReview {
@@ -139,7 +133,8 @@ async fn open<'a, 'r>(
         output_tokens,
         references,
         numbered,
-        writers,
+        writers: restart.writers,
+        saved: restart.saved,
         shape,
         schema,
         readers,
@@ -178,6 +173,10 @@ pub(crate) async fn settle_after_cuts(
         raw,
         references,
         (4_000, &mut numbered),
+        Restart {
+            writers: 0,
+            saved: None,
+        },
     )
     .await?;
     for (unit, label) in going {
@@ -198,6 +197,8 @@ struct PreparationReview<'a, 'r> {
     numbered: &'a mut Vec<LearningSourceDto>,
     /// How many of `numbered` the writer was given.
     writers: usize,
+    /// The repair an earlier attempt saved for this draft, until it resumes.
+    saved: Option<PendingRepair>,
     shape: &'a dyn ShapePolicy,
     /// The kept schema, its source indices widened to `numbered`.
     schema: LessonSchema,
@@ -240,6 +241,7 @@ impl Review for PreparationReview<'_, '_> {
         self.checks.removed = self.ledger.cuts.units();
         if review_pass::apply_user_changes(&mut self.ledger, &mut self.candidate).await? {
             self.raw = self.candidate.to_string();
+            self.saved = None;
             crate::lesson_drafts::save(&self.raw).await?;
             // The user's text gets the teaching review a rewrite gets (§6.2).
             let protected =
@@ -262,24 +264,12 @@ impl Review for PreparationReview<'_, '_> {
 
     async fn resume(&mut self, policy: &dyn AcceptancePolicy) -> Result<bool> {
         let active = self.expanded.as_ref().unwrap_or(self.references);
-        let saved = crate::lesson_drafts::pending_repair(&self.candidate.to_string())
-            .await?
-            .and_then(|raw| serde_json::from_str::<PendingRepair>(&raw).ok())
-            .filter(|saved| {
-                saved.matches(
-                    self.llm,
-                    self.prompt,
-                    self.schema.value(),
-                    &self.candidate,
-                    active,
-                )
-            });
-        let left = saved.map(|saved| still_repairable(&self.ledger, policy, saved.context));
-        if matches!(left, Some(None)) {
+        let Some(saved) = self.saved.take() else {
+            return Ok(false);
+        };
+        let Some(context) = still_repairable(&self.ledger, policy, saved.context) else {
             // Everything the saved repair was for was resolved meanwhile.
             crate::lesson_drafts::save_repair(&self.raw, None).await?;
-        }
-        let Some(context) = left.flatten() else {
             return Ok(false);
         };
         crate::lesson_progress::phase(
@@ -477,12 +467,12 @@ impl Review for PreparationReview<'_, '_> {
                 .iter()
                 .find(|(read, _)| read == id)
                 .and_then(|(_, walk)| walk.steps.first())
-                .map(|step| &step.read.finding)
+                .map(|step| step.read.finding())
                 .or_else(|| {
                     hinted
                         .iter()
                         .find(|(read, _)| read == id)
-                        .map(|(_, read)| &read.finding)
+                        .map(|(_, read)| read.finding())
                 });
             finding.map_or(0, |finding| {
                 finding
@@ -536,7 +526,7 @@ impl Review for PreparationReview<'_, '_> {
                 .skip(self.writers)
                 .map(|source| source.id.as_str())
                 .collect();
-            crate::lesson_drafts::record_checkpoint(NUMBERED_KEY, json!(added)).await?;
+            crate::lesson_drafts::record_checkpoint(NUMBERED_KEY.as_str(), json!(added)).await?;
             self.schema = self.schema.numbered(self.shape, self.numbered.len());
             self.raw = self.candidate.to_string();
             crate::lesson_drafts::save(&self.raw).await?;
@@ -665,22 +655,11 @@ impl Review for PreparationReview<'_, '_> {
         }
     }
 
-    async fn publish_unverified(
-        &mut self,
-        _policy: &dyn AcceptancePolicy,
-        unsettled: Unsettled,
-    ) -> Result<usize> {
+    async fn publish_unsettled(&mut self, unsettled: Unsettled) -> Result<usize> {
         self.ledger.sync().await?;
-        let (claims, reason) = match unsettled {
-            Unsettled::Waiting(claims) | Unsettled::Unreadable(claims) => {
-                (claims, Some(UnverifiedReason::Unchecked))
-            }
-            // A dispute is the Verifier audit's hold, which stays.
-            Unsettled::AwaitingUser if self.ledger.disputed() => return Ok(0),
-            Unsettled::AwaitingUser => (self.ledger.unsettled(), Some(UnverifiedReason::Unchecked)),
-            Unsettled::Ended => (self.ledger.ended_standing(&self.candidate), None),
-        };
-        self.ledger.publish_unverified(&claims, reason).await
+        self.ledger
+            .publish_unsettled(unsettled, &self.candidate)
+            .await
     }
 
     fn ended_but_standing(&self) -> Option<(StopReason, usize)> {
