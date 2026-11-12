@@ -28,14 +28,14 @@ impl LearningRecallRepository {
             return Err(invalid("Card change reason must contain 1–500 characters."));
         }
         let hash = payload_hash(req)?;
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         lock_active_program(&mut tx, &req.program_id).await?;
         let operation = recall_operation(&req.operation_id, &req.program_id, "save_card", &hash);
         if let Some(card_id) = operation.replay::<String>(&mut tx).await? {
             if card_id != req.card_id {
                 return Err(invalid("Operation replay does not match this card."));
             }
-            return tx.commit().await.map_err(db);
+            return tx.commit().await.map_err(AppError::from);
         }
         let deck_id = memory_deck(&mut tx, &req.program_id).await?;
         for version_id in &req.source_version_ids {
@@ -45,8 +45,7 @@ impl LearningRecallRepository {
             .bind(&req.program_id)
             .bind(version_id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
             if owned.is_none() {
                 return Err(invalid(
                     "Recall source version does not belong to this program.",
@@ -57,8 +56,7 @@ impl LearningRecallRepository {
             .bind(&req.card_id)
             .bind(&req.program_id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         let new_card = prior.is_none();
         let revision = if let Some(row) = &prior {
             let old_revision: i64 = row.get("content_revision");
@@ -78,8 +76,7 @@ impl LearningRecallRepository {
                 sqlx::query_scalar("SELECT 1 FROM study_cards WHERE id=?")
                     .bind(&req.card_id)
                     .fetch_optional(&mut *tx)
-                    .await
-                    .map_err(db)?;
+                    .await?;
             if existing_card.is_some() {
                 return Err(invalid("Card ID is already in use."));
             }
@@ -118,8 +115,7 @@ impl LearningRecallRepository {
             let count: i64 = sqlx::query_scalar("SELECT count(*) FROM study_cards WHERE deck_id=?")
                 .bind(&deck_id)
                 .fetch_one(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
             if count >= MAX_CARDS {
                 return Err(invalid(
                     "A Learning recall deck can contain at most 2,000 cards.",
@@ -138,8 +134,7 @@ impl LearningRecallRepository {
                 .bind(timestamp)
                 .bind(study_format)
                 .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
             sqlx::query("INSERT INTO learning_recall_card_profiles(card_id,program_id,format,prompt_json,answer_json,source_version_ids_json,content_revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)")
                 .bind(&req.card_id)
                 .bind(&req.program_id)
@@ -151,8 +146,7 @@ impl LearningRecallRepository {
                 .bind(timestamp)
                 .bind(timestamp)
                 .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         } else {
             sqlx::query("UPDATE study_cards SET question=?,answer=?,options_json=?,correct_index=?,explanation=?,source_json=?,format=? WHERE id=?")
                 .bind(req.content.prompt.trim())
@@ -164,8 +158,7 @@ impl LearningRecallRepository {
                 .bind(study_format)
                 .bind(&req.card_id)
                 .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
             sqlx::query("UPDATE learning_recall_card_profiles SET format=?,prompt_json=?,answer_json=?,source_version_ids_json=?,content_revision=?,updated_at=? WHERE card_id=? AND program_id=?")
                 .bind(format_name(req.format))
                 .bind(json(&req.content.prompt)?)
@@ -176,8 +169,7 @@ impl LearningRecallRepository {
                 .bind(&req.card_id)
                 .bind(&req.program_id)
                 .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         }
         sqlx::query("INSERT INTO learning_recall_card_versions(card_id,revision,format,prompt_json,answer_json,source_version_ids_json,change_reason,created_at) VALUES(?,?,?,?,?,?,?,?)")
             .bind(&req.card_id)
@@ -189,8 +181,7 @@ impl LearningRecallRepository {
             .bind(req.change_reason.trim())
             .bind(timestamp)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         self.suggest_duplicates(
             &mut tx,
             &req.program_id,
@@ -200,7 +191,7 @@ impl LearningRecallRepository {
         )
         .await?;
         operation.record(&mut tx, &req.card_id).await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     pub async fn decide_duplicate(
@@ -211,7 +202,7 @@ impl LearningRecallRepository {
         validate_uuid(&req.program_id, "program")?;
         validate_uuid(&req.suggestion_id, "duplicate suggestion")?;
         let hash = payload_hash(req)?;
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         lock_active_program(&mut tx, &req.program_id).await?;
         let operation = recall_operation(
             &req.operation_id,
@@ -220,7 +211,7 @@ impl LearningRecallRepository {
             &hash,
         );
         if operation.seen(&mut tx).await? {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return self.workspace(&req.program_id).await;
         }
         let status = if req.accept { "confirmed" } else { "dismissed" };
@@ -230,15 +221,14 @@ impl LearningRecallRepository {
             .bind(&req.program_id)
             .bind(&req.suggestion_id)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         if result.rows_affected() != 1 {
             return Err(AppError::NotFound(
                 "Pending duplicate suggestion not found in this program.".into(),
             ));
         }
         operation.record(&mut tx, &req.suggestion_id).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         self.workspace(&req.program_id).await
     }
 
@@ -269,18 +259,17 @@ impl LearningRecallRepository {
             req.selected_option,
             req.expected_review_count,
         ))?;
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         lock_active_program(&mut tx, &req.program_id).await?;
         let operation = recall_operation(&req.review_id, &req.program_id, "review", &hash);
         if operation.seen(&mut tx).await? {
-            return tx.commit().await.map_err(db);
+            return tx.commit().await.map_err(AppError::from);
         }
         let row = sqlx::query("SELECT c.format,c.options_json,c.correct_index FROM study_cards c JOIN learning_recall_card_profiles p ON p.card_id=c.id WHERE c.id=? AND p.program_id=?")
             .bind(&req.card_id)
             .bind(&req.program_id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
+            .await?
             .ok_or_else(|| AppError::NotFound("Recall card not found in this program.".into()))?;
         let multiple_choice = row.get::<String, _>("format") == "multiple_choice";
         let options: Vec<String> = serde_json::from_str(row.get("options_json"))
@@ -323,11 +312,10 @@ impl LearningRecallRepository {
                 .bind(&req.card_id)
                 .bind(&req.program_id)
                 .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         }
         operation.record(&mut tx, &req.review_id).await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     async fn canonical_sources(
@@ -342,8 +330,7 @@ impl LearningRecallRepository {
                 .bind(program_id)
                 .bind(version_id)
                 .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?
+                .await?
                 .ok_or_else(|| invalid("Source version does not belong to this program."))?;
             let url: Option<String> = row.get("resolved_url");
             let requested: Option<String> = row.get("requested_url");
@@ -377,8 +364,7 @@ impl LearningRecallRepository {
             .bind(program_id)
             .bind(card_id)
             .fetch_all(&mut **tx)
-            .await
-            .map_err(db)?;
+            .await?;
         for row in rows {
             let other_id: String = row.get("card_id");
             let other_prompt: String =
@@ -399,8 +385,7 @@ impl LearningRecallRepository {
                 .bind(first)
                 .bind(second)
                 .fetch_optional(&mut **tx)
-                .await
-                .map_err(db)?;
+                .await?;
             if exists.is_some() {
                 continue;
             }
@@ -413,8 +398,7 @@ impl LearningRecallRepository {
                 .bind(similarity)
                 .bind(timestamp)
                 .execute(&mut **tx)
-                .await
-                .map_err(db)?;
+                .await?;
         }
         Ok(())
     }

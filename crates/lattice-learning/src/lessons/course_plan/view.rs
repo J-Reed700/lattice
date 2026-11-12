@@ -6,7 +6,6 @@ use super::repository::{
     saved_entries,
 };
 use super::PlannedLesson;
-use crate::persistence::db;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::JobStatus;
@@ -90,7 +89,7 @@ pub(super) struct OutlineLesson {
 
 /// The course plan as the learner sees it, read in one snapshot.
 pub async fn view(database: &Database, program_id: &str) -> Result<CoursePlanViewDto> {
-    let mut tx = database.begin_read().await.map_err(db)?;
+    let mut tx = database.begin_read().await?;
     let revision = content_revision(&mut tx, program_id).await?;
     let lessons = outline_lessons(&mut tx, program_id).await?;
     let mut saved = saved_entries(&mut tx, program_id, revision).await?;

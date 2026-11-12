@@ -1,7 +1,7 @@
 //! Versioned course provenance, independent of optional learner activity.
 //! Kept out of the schema-dependent aggregate table dump. Private assessment
 //! findings remain backend-only and use the normal learner-safe projection.
-use super::{db, invalid, json_string, parse, remap::remap};
+use super::{invalid, json_string, parse, remap::remap};
 use crate::{
     content_verification::LessonVerificationReport, dto::LearningProgramDto,
     outline_draft::OutlineDraft, pack::DecodedLearningPack,
@@ -106,11 +106,10 @@ pub(super) async fn snapshot(
         sqlx::query_scalar("SELECT state_json FROM learning_outline_drafts WHERE program_id=?")
             .bind(program_id)
             .fetch_optional(&mut *connection)
-            .await
-            .map_err(db)?;
+            .await?;
     let outline = outline.map(|json| parse(json.as_bytes())).transpose()?;
     let rows = sqlx::query("SELECT revision,state_json,created_at FROM learning_outline_checkpoints WHERE program_id=? ORDER BY revision")
-        .bind(program_id).fetch_all(&mut *connection).await.map_err(db)?;
+        .bind(program_id).fetch_all(&mut *connection).await?;
     let outline_checkpoints = rows
         .into_iter()
         .map(|row| {
@@ -122,7 +121,7 @@ pub(super) async fn snapshot(
         })
         .collect::<Result<Vec<_>>>()?;
     let rows = sqlx::query("SELECT lesson_id,policy,content_sha256,report_json,checked_at FROM learning_lesson_verifications WHERE program_id=? ORDER BY lesson_id")
-        .bind(program_id).fetch_all(&mut *connection).await.map_err(db)?;
+        .bind(program_id).fetch_all(&mut *connection).await?;
     let lessons = rows.into_iter().map(|row| {
         let lesson_id: String = row.get("lesson_id");
         let report: LessonVerificationReport = parse(row.get::<String, _>("report_json").as_bytes())?;
@@ -175,14 +174,13 @@ pub(super) async fn restore(
             .bind(program_id)
             .bind(json_string(draft)?)
             .execute(&mut **tx)
-            .await
-            .map_err(db)?;
+            .await?;
     }
     for mut checkpoint in snapshot.outline_checkpoints {
         remap_outline(&mut checkpoint.draft, ids);
         sqlx::query("INSERT INTO learning_outline_checkpoints(program_id,revision,state_json,created_at) VALUES(?,?,?,?)")
             .bind(program_id).bind(checkpoint.revision).bind(json_string(&checkpoint.draft)?).bind(checkpoint.created_at)
-            .execute(&mut **tx).await.map_err(db)?;
+            .execute(&mut **tx).await?;
     }
     for mut lesson in snapshot.lessons {
         lesson.lesson_id = remap(ids, &lesson.lesson_id);
@@ -191,7 +189,7 @@ pub(super) async fn restore(
             lesson.report.archived_metadata(&lesson.lesson_id)?;
         sqlx::query("INSERT INTO learning_lesson_verifications(lesson_id,program_id,policy,content_sha256,report_json,checked_at) VALUES(?,?,?,?,?,?)")
             .bind(&lesson.lesson_id).bind(program_id).bind(policy).bind(fingerprint).bind(json_string(&lesson.report)?).bind(checked_at)
-            .execute(&mut **tx).await.map_err(db)?;
+            .execute(&mut **tx).await?;
     }
     Ok(())
 }

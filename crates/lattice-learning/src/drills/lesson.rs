@@ -1,6 +1,6 @@
 //! The lesson a drill is built from: its course, its module, and what the lesson teaches, read from the course.
 
-use crate::persistence::{db, decode};
+use crate::persistence::decode;
 use lattice_core::domain::learning::drills::{LessonBrief, LessonSentence};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Database;
@@ -36,7 +36,7 @@ pub(crate) struct LessonContext {
 impl LessonContext {
     /// The lesson `lesson_id` of the course `program_id`. An error when the lesson is not one of the course's.
     pub async fn load(database: &Database, program_id: &str, lesson_id: &str) -> Result<Self> {
-        let mut tx = database.begin_read().await.map_err(db)?;
+        let mut tx = database.begin_read().await?;
         let row = repository::lesson_in(&mut tx, program_id, lesson_id).await?;
         let Some((
             course,
@@ -56,7 +56,7 @@ impl LessonContext {
             ));
         };
         let blocks = repository::blocks_in(&mut tx, lesson_id).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         let prepared = preparation == "ready";
         let mut teaching = Vec::new();
         let mut cited_versions: Vec<String> = Vec::new();

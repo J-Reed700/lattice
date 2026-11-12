@@ -8,7 +8,7 @@ use crate::{
     source_library::{CapturedLearningSource, LearningSourceLibraryRepository},
     tests,
 };
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Database;
 use sqlx::sqlite::SqlitePoolOptions;
 
@@ -22,7 +22,7 @@ async fn file_pool(path: &std::path::Path) -> Result<sqlx::SqlitePool> {
         .max_connections(1)
         .connect_with(options)
         .await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))
+        .map_err(AppError::from)
 }
 
 async fn active_program(db: &Database) -> Result<crate::dto::LearningProgramDto> {
@@ -393,22 +393,19 @@ async fn deck_cards_without_a_recall_profile_join_recall_with_their_schedule() -
         sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
             .bind(&program.summary.id)
             .fetch_one(&pool)
-            .await
-            .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+            .await?;
     let card_id = id();
     sqlx::query("INSERT INTO study_cards(id,deck_id,question,answer,options_json,correct_index,explanation,source_json,topic,due_at,review_count,format) VALUES(?,?,?,?,?,?,?,?,?,?,1,?)")
         .bind(&card_id).bind(&deck_id).bind("Accepted question").bind("Yes")
         .bind("[\"No\",\"Yes\"]").bind(1_i64).bind("Old note")
         .bind("{}").bind("accepted").bind(chrono::Utc::now().timestamp_millis())
         .bind("multiple_choice")
-        .execute(&pool).await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+        .execute(&pool).await?;
     let review_id = id();
     sqlx::query("INSERT INTO study_reviews(id,card_id,reviewed_at,rating,mode,correct,selected_option) VALUES(?,?,?,?,?,?,?)")
         .bind(&review_id).bind(&card_id).bind(100_i64).bind("good").bind("quiz")
         .bind(1_i64).bind(1_i64)
-        .execute(&pool).await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+        .execute(&pool).await?;
 
     let workspace = LearningRecallRepository::new(db.clone())
         .workspace(&program.summary.id)
@@ -419,8 +416,7 @@ async fn deck_cards_without_a_recall_profile_join_recall_with_their_schedule() -
     let preserved: i64 = sqlx::query_scalar("SELECT count(*) FROM study_reviews WHERE id=?")
         .bind(review_id)
         .fetch_one(&pool)
-        .await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+        .await?;
     assert_eq!(preserved, 1);
     Ok(())
 }
@@ -751,8 +747,7 @@ async fn an_accepted_deck_card_with_a_long_option_joins_recall() -> Result<()> {
         sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
             .bind(&program.summary.id)
             .fetch_one(&pool)
-            .await
-            .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+            .await?;
     let wrong = "An option that restates the condition in full. "
         .repeat(15)
         .trim()
@@ -764,8 +759,7 @@ async fn an_accepted_deck_card_with_a_long_option_joins_recall() -> Result<()> {
         .bind(&options).bind(1_i64).bind("Old note")
         .bind("{}").bind("accepted").bind(chrono::Utc::now().timestamp_millis())
         .bind("multiple_choice")
-        .execute(&pool).await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+        .execute(&pool).await?;
 
     let workspace = LearningRecallRepository::new(db.clone())
         .workspace(&program.summary.id)

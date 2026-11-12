@@ -7,7 +7,7 @@ use super::{
     LearningAssessmentRepository, StoredCandidate,
 };
 use crate::dto::*;
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use crate::quiz_bank_jobs::QUIZ_BANK;
 use crate::quiz_blueprints;
 use lattice_core::shared::error::{AppError, Result};
@@ -41,8 +41,7 @@ async fn bank_job(
         .bind(scope_kind_name(scope.kind))
         .bind(&scope.id)
         .fetch_optional(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(row.map(|r| (r.get("id"), r.get("status"))))
 }
 
@@ -69,8 +68,7 @@ impl LearningAssessmentRepository {
             .bind(scope_kind_name(scope.kind))
             .bind(&scope.id)
             .fetch_all(&mut **tx)
-            .await
-            .map_err(db)?
+            .await?
             .iter()
             .map(attempt)
             .collect::<Result<Vec<_>>>()?;
@@ -105,8 +103,7 @@ impl LearningAssessmentRepository {
             .bind(scope_kind_name(scope.kind))
             .bind(&scope.id)
             .fetch_optional(&mut **tx)
-            .await
-            .map_err(db)?;
+            .await?;
         let active_form_id: Option<String> = active.as_ref().map(|r| r.get("id"));
         let active_form_started_at: Option<i64> = active.as_ref().map(|r| r.get("created_at"));
         let active_form_updated_at: Option<i64> = active.as_ref().map(|r| r.get("updated_at"));
@@ -199,12 +196,11 @@ impl LearningAssessmentRepository {
 
     pub async fn overview(&self, program_id: &str) -> Result<LearningQuizOverviewDto> {
         uuid(program_id, "program")?;
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         if exists.is_none() {
             return Err(AppError::NotFound("Learning program not found".into()));
         }
@@ -287,7 +283,7 @@ impl LearningAssessmentRepository {
         let outcomes = Self::outcomes_in(&mut tx, program_id).await?;
         let evidence = Self::evidence_in(&mut tx, program_id).await?;
         let follow_ups = Self::follow_ups_in(&mut tx, program_id).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(LearningQuizOverviewDto {
             program_id: program_id.into(),
             settings,
@@ -317,7 +313,7 @@ impl LearningAssessmentRepository {
                 "A pass mark is a share of the points between 1 % and 100 %.",
             ));
         }
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let operation = assessment_operation(
             &req.operation_id,
             &req.program_id,
@@ -327,7 +323,7 @@ impl LearningAssessmentRepository {
             "Operation ID was reused with different settings.",
         );
         if operation.seen(&mut tx).await? {
-            return tx.commit().await.map_err(db);
+            return tx.commit().await.map_err(AppError::from);
         }
         Self::active_program(&mut tx, &req.program_id).await?;
         sqlx::query("INSERT INTO learning_quiz_settings(program_id,quiz_pass,test_pass,exam_pass,written_answers,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(program_id) DO UPDATE SET quiz_pass=excluded.quiz_pass,test_pass=excluded.test_pass,exam_pass=excluded.exam_pass,written_answers=excluded.written_answers,updated_at=excluded.updated_at")
@@ -338,10 +334,9 @@ impl LearningAssessmentRepository {
             .bind(i64::from(s.written_answers))
             .bind(now())
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         operation.record(&mut tx, &()).await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     /// The course's module outcomes, created from the modules' outcome lists
@@ -351,14 +346,14 @@ impl LearningAssessmentRepository {
         program_id: &str,
     ) -> Result<Vec<LearningOutcomeDefinitionDto>> {
         uuid(program_id, "program")?;
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         Self::ensure_outcomes(&mut tx, program_id).await?;
         let outcomes = Self::outcomes_in(&mut tx, program_id)
             .await?
             .into_iter()
             .filter(|o| o.lesson_id.is_none())
             .collect();
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(outcomes)
     }
 
@@ -369,8 +364,7 @@ impl LearningAssessmentRepository {
         sqlx::query("SELECT * FROM learning_outcome_definitions WHERE program_id=? ORDER BY module_id,ordinal,id")
             .bind(program_id)
             .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?
+            .await?
             .into_iter()
             .map(|r| {
                 Ok(LearningOutcomeDefinitionDto {
@@ -393,8 +387,7 @@ impl LearningAssessmentRepository {
         sqlx::query("SELECT * FROM learning_evidence_events WHERE program_id=? ORDER BY observed_at DESC,id LIMIT 1000")
             .bind(program_id)
             .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?
+            .await?
             .into_iter()
             .map(|r| {
                 Ok(LearningEvidenceEventDto {
@@ -421,8 +414,7 @@ impl LearningAssessmentRepository {
         sqlx::query("SELECT * FROM learning_follow_up_recommendations WHERE program_id=? ORDER BY created_at DESC,id LIMIT 500")
             .bind(program_id)
             .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?
+            .await?
             .into_iter()
             .map(|r| {
                 Ok(LearningFollowUpRecommendationDto {

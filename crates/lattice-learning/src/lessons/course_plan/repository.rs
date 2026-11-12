@@ -7,7 +7,7 @@ use super::job::COURSE_PLAN;
 use super::view::OutlineLesson;
 use super::PlannedLesson;
 use crate::curriculum_repository::LearningCurriculumRepository;
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::WriteTx;
 use lattice_core::shared::runtime::jobs::{JobRecord, JobStatus, JobStore};
@@ -22,8 +22,7 @@ pub(super) async fn content_revision(
     sqlx::query_scalar("SELECT content_revision FROM learning_programs WHERE id=?")
         .bind(program_id)
         .fetch_optional(connection)
-        .await
-        .map_err(db)?
+        .await?
         .ok_or_else(|| AppError::NotFound("Learning program not found".into()))
 }
 
@@ -36,7 +35,7 @@ pub(super) async fn program_state(
         .bind(program_id)
         .fetch_optional(connection)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// Each lesson's id, preparation and completed flag, in course order.
@@ -50,7 +49,7 @@ pub(super) async fn outline_rows(
     .bind(program_id)
     .fetch_all(connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The saved entries of a revision: lesson id, entry JSON, entry revision.
@@ -66,7 +65,7 @@ pub(super) async fn saved_rows(
     .bind(outline_revision)
     .fetch_all(connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The entries of a revision as lesson id and entry JSON.
@@ -82,7 +81,7 @@ pub(super) async fn entry_rows(
     .bind(outline_revision)
     .fetch_all(connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The newest replaced entry of each lesson: lesson id and entry JSON.
@@ -98,7 +97,7 @@ pub(super) async fn newest_replaced_rows(
     .bind(outline_revision)
     .fetch_all(connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// Saves a lesson's entry unless it already has one.
@@ -117,8 +116,7 @@ pub(super) async fn insert_entry(
         .bind(entry_json)
         .bind(created_at)
         .execute(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(())
 }
 
@@ -138,8 +136,7 @@ pub(super) async fn replace_entry(
     .bind(outline_revision)
     .bind(lesson_id)
     .fetch_one(&mut **tx)
-    .await
-    .map_err(db)?;
+    .await?;
     sqlx::query("INSERT INTO learning_course_plan_entry_history(program_id,outline_revision,lesson_id,entry_revision,entry_json,replaced_at) VALUES(?,?,?,?,?,?)")
         .bind(program_id)
         .bind(outline_revision)
@@ -148,16 +145,14 @@ pub(super) async fn replace_entry(
         .bind(old)
         .bind(replaced_at)
         .execute(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
     sqlx::query("UPDATE learning_course_plan_lessons SET entry_json=?,entry_revision=entry_revision+1 WHERE program_id=? AND outline_revision=? AND lesson_id=?")
         .bind(entry_json)
         .bind(program_id)
         .bind(outline_revision)
         .bind(lesson_id)
         .execute(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(())
 }
 
@@ -176,8 +171,7 @@ pub(super) async fn restore_entry(
     .bind(outline_revision)
     .bind(lesson_id)
     .fetch_optional(&mut **tx)
-    .await
-    .map_err(db)?;
+    .await?;
     let Some((replaced, entry)) = newest else {
         return Ok(false);
     };
@@ -187,16 +181,14 @@ pub(super) async fn restore_entry(
         .bind(outline_revision)
         .bind(lesson_id)
         .execute(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
     sqlx::query("DELETE FROM learning_course_plan_entry_history WHERE program_id=? AND outline_revision=? AND lesson_id=? AND entry_revision=?")
         .bind(program_id)
         .bind(outline_revision)
         .bind(lesson_id)
         .bind(replaced)
         .execute(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(true)
 }
 
@@ -209,7 +201,7 @@ pub(super) async fn job_revisions(
         .bind(program_id)
         .fetch_all(connection)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// Records the program, base revision and outline revision of a new job.
@@ -226,8 +218,7 @@ pub(super) async fn insert_job_row(
         .bind(base_revision)
         .bind(outline_revision)
         .execute(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(())
 }
 
@@ -241,8 +232,7 @@ pub(super) async fn copy_job_row(
         .bind(new_job_id)
         .bind(old_job_id)
         .execute(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(())
 }
 

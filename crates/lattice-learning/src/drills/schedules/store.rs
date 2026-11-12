@@ -5,7 +5,7 @@ use super::repository::{self, Memory, Table, LESSONS, PATTERNS};
 use super::{fit_material, schedule_material, study_rating};
 use crate::drills::material::code;
 use crate::drills::repository::StoredDrill;
-use crate::persistence::{db, hash};
+use crate::persistence::hash;
 use crate::recall::schedule::CardSchedule;
 use lattice_core::domain::learning::drills::{
     per_pattern, IssueRating, LessonStanding, Material, PatternDue, PatternRating,
@@ -247,9 +247,9 @@ pub(crate) async fn fit_basis(
     program_id: &str,
     lesson_id: &str,
 ) -> Result<String> {
-    let mut tx = database.begin_read().await.map_err(db)?;
+    let mut tx = database.begin_read().await?;
     let basis = fit_basis_in(&mut tx, program_id, lesson_id).await?;
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(basis)
 }
 
@@ -263,9 +263,9 @@ pub(crate) async fn record_fit(
     basis: &str,
     now: i64,
 ) -> Result<()> {
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     record_fit_in(&mut tx, program_id, lesson_id, material, fits, basis, now).await?;
-    tx.commit().await.map_err(db)
+    tx.commit().await.map_err(AppError::from)
 }
 
 /// Records whether the lesson fits `material`, and the basis the decision rests on, replacing an earlier record;

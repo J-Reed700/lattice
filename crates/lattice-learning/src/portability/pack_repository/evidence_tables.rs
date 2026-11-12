@@ -2,7 +2,7 @@
 //! per-table rules live: which tables, how each is filtered to one program,
 //! how many rows one may hold, and how rows are read and written.
 use super::{
-    db, invalid, json_string,
+    invalid, json_string,
     remap::{remap_id_array, remap_nested_value},
 };
 use lattice_core::shared::error::{AppError, Result};
@@ -139,8 +139,7 @@ pub(super) async fn snapshot_table(
     let pragma = format!("PRAGMA table_info({})", spec.table);
     let cols = sqlx::query(sqlx::AssertSqlSafe(pragma.as_str()))
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
     let columns: Vec<String> = cols
         .into_iter()
         .map(|row| row.get::<String, _>("name"))
@@ -159,8 +158,7 @@ pub(super) async fn snapshot_table(
     let rows = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
         .bind(program_id)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
     let mut values = Vec::with_capacity(rows.len());
     for row in rows {
         let mut object = serde_json::Map::new();
@@ -170,16 +168,14 @@ pub(super) async fn snapshot_table(
             }
             let type_name = column.type_info().name().to_ascii_uppercase();
             let value = if type_name.contains("INT") || type_name == "BOOL" {
-                row.try_get::<Option<i64>, _>(index)
-                    .map_err(db)?
+                row.try_get::<Option<i64>, _>(index)?
                     .map(serde_json::Value::from)
                     .unwrap_or(serde_json::Value::Null)
             } else if type_name.contains("REAL")
                 || type_name.contains("FLOA")
                 || type_name.contains("DOUB")
             {
-                row.try_get::<Option<f64>, _>(index)
-                    .map_err(db)?
+                row.try_get::<Option<f64>, _>(index)?
                     .and_then(serde_json::Number::from_f64)
                     .map(serde_json::Value::Number)
                     .unwrap_or(serde_json::Value::Null)
@@ -190,8 +186,7 @@ pub(super) async fn snapshot_table(
                     column.name()
                 )));
             } else {
-                row.try_get::<Option<String>, _>(index)
-                    .map_err(db)?
+                row.try_get::<Option<String>, _>(index)?
                     .map(serde_json::Value::String)
                     .unwrap_or(serde_json::Value::Null)
             };
@@ -222,8 +217,7 @@ pub(super) async fn checked_rows(
     let pragma = format!("PRAGMA table_info({})", spec.table);
     let cols = sqlx::query(sqlx::AssertSqlSafe(pragma.as_str()))
         .fetch_all(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
     let expected: Vec<String> = cols
         .into_iter()
         .map(|row| row.get::<String, _>("name"))
@@ -303,7 +297,7 @@ pub(super) async fn insert_row(
         }
     }
     values.push_unseparated(")");
-    query.build().execute(&mut **tx).await.map_err(db)?;
+    query.build().execute(&mut **tx).await?;
     Ok(())
 }
 

@@ -84,13 +84,9 @@ async fn live_topic_course_passes_review_and_prepares_its_first_lesson() -> Resu
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(5)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = lattice_core::shared::persistence::Database::new(pool);
+    crate::infrastructure::persistence::database::run_migrations(&db).await?;
     let model = Arc::new(ObservedModel::new(&config, directory.clone(), 0).await?);
     let web_directory = directory.join("web");
     std::fs::create_dir_all(&web_directory)?;

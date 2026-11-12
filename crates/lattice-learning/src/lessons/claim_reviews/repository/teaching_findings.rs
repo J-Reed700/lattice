@@ -7,8 +7,6 @@ use lattice_core::shared::persistence::{Database, WriteTx};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqliteConnection};
 
-use crate::persistence::db;
-
 /// A finding's columns that tell whether it still holds.
 pub(in crate::lessons::claim_reviews) struct HeldRow {
     pub finding_key: String,
@@ -77,15 +75,14 @@ pub(in crate::lessons::claim_reviews) async fn held_rows(
     database: &Database,
     lesson_id: &str,
 ) -> Result<Vec<HeldRow>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let rows = sqlx::query(
         "SELECT finding_key, identity, kind, site, unit_index, unit_sha256, note, summary, passage, sentence FROM learning_lesson_teaching_findings WHERE lesson_id=?",
     )
     .bind(lesson_id)
     .fetch_all(&mut *read)
-    .await
-    .map_err(db)?;
-    read.commit().await.map_err(db)?;
+    .await?;
+    read.commit().await?;
     Ok(rows.iter().map(held_row).collect())
 }
 
@@ -94,15 +91,14 @@ pub(in crate::lessons::claim_reviews) async fn waiting_question_hashes(
     database: &Database,
     lesson_id: &str,
 ) -> Result<Vec<String>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let hashes = sqlx::query_scalar(
         "SELECT unit_sha256 FROM learning_lesson_teaching_findings WHERE lesson_id=? AND site='question' AND state='waiting'",
     )
     .bind(lesson_id)
     .fetch_all(&mut *read)
-    .await
-    .map_err(db)?;
-    read.commit().await.map_err(db)?;
+    .await?;
+    read.commit().await?;
     Ok(hashes)
 }
 
@@ -116,8 +112,7 @@ pub(in crate::lessons::claim_reviews) async fn place_rows(
     )
     .bind(lesson_id)
     .fetch_all(&mut *connection)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(rows.iter().map(held_row).collect())
 }
 
@@ -133,8 +128,7 @@ pub(in crate::lessons::claim_reviews) async fn delete_not_raised(
     .bind(lesson_id)
     .bind(keys_json)
     .execute(&mut **tx)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(())
 }
 
@@ -150,8 +144,7 @@ pub(in crate::lessons::claim_reviews) async fn delete_keys(
     .bind(lesson_id)
     .bind(keys_json)
     .execute(&mut **tx)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(())
 }
 
@@ -189,8 +182,7 @@ pub(in crate::lessons::claim_reviews) async fn upsert(
     .bind(finding.job_id)
     .bind(finding.found_at)
     .execute(&mut **tx)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(())
 }
 
@@ -199,7 +191,7 @@ pub(in crate::lessons::claim_reviews) async fn stored_findings(
     database: &Database,
     lesson_id: &str,
 ) -> Result<Vec<StoredFinding>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let rows = sqlx::query(
         "SELECT finding_key, kind, site, unit_index, unit_title, note, summary, passage, sentence, repairs, state, resolution, resolved_at, \
          part_changed_at IS NOT NULL AND part_changed_at >= found_at AS part_changed \
@@ -208,9 +200,8 @@ pub(in crate::lessons::claim_reviews) async fn stored_findings(
     )
     .bind(lesson_id)
     .fetch_all(&mut *read)
-    .await
-    .map_err(db)?;
-    read.commit().await.map_err(db)?;
+    .await?;
+    read.commit().await?;
     Ok(rows
         .iter()
         .map(|row| StoredFinding {
@@ -265,8 +256,7 @@ pub(in crate::lessons::claim_reviews) async fn settle(
     .bind(lesson_id)
     .bind(program_id)
     .execute(&mut **tx)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(changed.rows_affected())
 }
 
@@ -287,8 +277,7 @@ pub(in crate::lessons::claim_reviews) async fn mark_part_changed(
     .bind(site)
     .bind(i64::try_from(unit_index).unwrap_or(i64::MAX))
     .execute(&mut **tx)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(())
 }
 
@@ -302,8 +291,7 @@ pub(in crate::lessons::claim_reviews) async fn waiting_questions(
     )
     .bind(program_id)
     .fetch_all(&mut *connection)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(rows
         .into_iter()
         .filter_map(|(lesson, index)| Some((lesson, usize::try_from(index).ok()?)))

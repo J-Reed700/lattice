@@ -23,7 +23,7 @@ use crate::lessons::claim_reviews::published_rewrite::{plan, FieldPlan, Written}
 use crate::lessons::claim_reviews::repository::{
     append_in, blocks, bump_revision, check_revision, teaching_findings,
 };
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use lattice_core::domain::learning::claim_review::LessonReviewState;
 
 /// The text a section changed since the user opened it.
@@ -122,9 +122,9 @@ impl ClaimReviewService {
         if body.trim().is_empty() {
             return Err(AppError::InvalidInput(NO_TEXT.into()));
         }
-        let mut read = self.database.begin_read().await.map_err(db)?;
+        let mut read = self.database.begin_read().await?;
         let current = blocks::section_title_body(&mut read, &lesson_id, unit).await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         let (old_title, old_body) =
             current.ok_or_else(|| AppError::InvalidInput(SECTION_CHANGED.into()))?;
         if old_title != before_title || old_body != before_body {
@@ -214,7 +214,7 @@ impl ClaimReviewService {
             at,
         } = *write;
         let user = ledger.review.as_ref().map(provenance);
-        let mut tx = self.database.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await?;
         if ledger.review.is_some() {
             check_revision(&mut tx, lesson_id, ledger.revision).await?;
         }
@@ -267,7 +267,7 @@ impl ClaimReviewService {
         let moved = self
             .settle_planned_in(&mut tx, ledger, lesson_id, &planned)
             .await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok((moved, bumped))
     }
 }

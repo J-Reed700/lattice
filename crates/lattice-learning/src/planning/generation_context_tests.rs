@@ -318,8 +318,7 @@ impl Course {
         sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(id)
             .execute(&self.pool)
-            .await
-            .map_err(db)?;
+            .await?;
         Ok(())
     }
 
@@ -496,8 +495,7 @@ async fn a_lesson_whose_own_row_stopped_being_an_outline_lesson_is_refused() -> 
             .bind(completed)
             .bind(&target)
             .execute(&course.pool)
-            .await
-            .map_err(db)?;
+            .await?;
         assert!(
             course.publish(&job, &target).await.is_err(),
             "{state} with completed={completed} was published"
@@ -506,8 +504,7 @@ async fn a_lesson_whose_own_row_stopped_being_an_outline_lesson_is_refused() -> 
             sqlx::query_scalar("SELECT preparation FROM learning_lessons WHERE id=?")
                 .bind(&target)
                 .fetch_one(&course.pool)
-                .await
-                .map_err(db)?;
+                .await?;
         assert_eq!(preparation, "outline");
     }
     Ok(())

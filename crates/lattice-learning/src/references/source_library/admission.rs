@@ -71,7 +71,7 @@ impl LearningSourceLibraryRepository {
     /// course, is theirs and is never marked. No model is asked. Returns the
     /// pages refused now.
     pub async fn sweep_admission(&self, program_id: &str) -> Result<Vec<RefusedSource>> {
-        let mut tx = self.database.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await?;
         let pages = stored::unadmitted(&mut tx, program_id, gate::POLICY).await?;
         let mut refused = Vec::new();
         for page in pages {
@@ -95,7 +95,7 @@ impl LearningSourceLibraryRepository {
                 });
             }
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(refused)
     }
 

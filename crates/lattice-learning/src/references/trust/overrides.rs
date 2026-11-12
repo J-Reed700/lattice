@@ -7,7 +7,6 @@
 
 use super::repository::overrides::covered_in;
 use super::repository::rows::{delete_override, write_override};
-use crate::persistence::db;
 use lattice_core::domain::provenance::{OverrideScope, TrustOverride};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Database;
@@ -31,22 +30,22 @@ pub struct TrustChange {
 pub async fn set(database: &Database, trust_override: &TrustOverride) -> Result<TrustChange> {
     let scope = trust_override.scope();
     validate(&scope)?;
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     write_override(&mut tx, trust_override).await?;
     let versions = covered_in(&mut tx, &scope).await?;
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(TrustChange { scope, versions })
 }
 
 /// Removes the override at `scope`; `None` when there was none, so nothing
 /// moves.
 pub async fn clear(database: &Database, scope: &OverrideScope) -> Result<Option<TrustChange>> {
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     if !delete_override(&mut tx, scope).await? {
         return Ok(None);
     }
     let versions = covered_in(&mut tx, scope).await?;
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(Some(TrustChange {
         scope: scope.clone(),
         versions,
@@ -56,9 +55,9 @@ pub async fn clear(database: &Database, scope: &OverrideScope) -> Result<Option<
 /// The versions an override at `scope` would cover, without changing it:
 /// what the menu counts before the user commits.
 pub async fn preview(database: &Database, scope: &OverrideScope) -> Result<Vec<CoveredVersion>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let versions = covered_in(&mut read, scope).await?;
-    read.commit().await.map_err(db)?;
+    read.commit().await?;
     Ok(versions)
 }
 

@@ -92,7 +92,7 @@ async fn a_busy_database_is_waited_out_and_never_blamed_on_the_model() {
     let (_, job) = repository_tests::queued_job(&db).await;
     let job = JobStore::new(db).get(&job.id).await.unwrap();
     for busy in [
-        crate::persistence::db(sqlx::Error::PoolTimedOut),
+        AppError::from(sqlx::Error::PoolTimedOut),
         AppError::DatabaseBusy("error returned from database: (code: 5) database is locked".into()),
     ] {
         assert_eq!(ErrorClass::of(&busy), ErrorClass::Outage, "{busy}");
@@ -144,8 +144,7 @@ async fn outage_schedule_and_checkpoints_survive_reopen_and_cancellation_wins() 
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
         .await
@@ -175,8 +174,7 @@ async fn outage_schedule_and_checkpoints_survive_reopen_and_cancellation_wins() 
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     let repo = LearningCurriculumRepository::new(db.clone());
     JobStore::new(db.clone())
@@ -193,8 +191,7 @@ async fn outage_schedule_and_checkpoints_survive_reopen_and_cancellation_wins() 
     sqlx::query("UPDATE jobs SET retry_not_before=0 WHERE id=?")
         .bind(&job.id)
         .execute(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     assert!(JobStore::new(db.clone())
         .due(LESSON_PREPARATION)
         .await?
@@ -242,8 +239,7 @@ async fn outage_schedule_and_checkpoints_survive_reopen_and_cancellation_wins() 
         sqlx::query("UPDATE jobs SET retry_not_before=0 WHERE id=?")
             .bind(&job.id)
             .execute(&pool)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
         assert!(JobStore::new(db.clone()).claim(&job.id).await?.is_some());
     }
     defer(
@@ -317,8 +313,7 @@ async fn source_limit_failure_retries_after_restart_without_losing_saved_checks(
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
         .await
@@ -382,8 +377,7 @@ async fn source_limit_failure_retries_after_restart_without_losing_saved_checks(
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     let repo = LearningCurriculumRepository::new(db.clone());
     let retry = repo

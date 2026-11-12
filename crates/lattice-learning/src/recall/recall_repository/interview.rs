@@ -1,10 +1,6 @@
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqliteConnection};
 
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
-}
-
 /// An interview activity as a drill reads it.
 pub(in crate::recall) struct InterviewActivity {
     pub title: String,
@@ -23,8 +19,7 @@ pub(in crate::recall) async fn activity(
     .bind(program_id)
     .bind(activity_id)
     .fetch_optional(&mut *conn)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(row.map(|row| InterviewActivity {
         title: row.get("title"),
         kind: row.get("kind"),
@@ -43,7 +38,7 @@ pub(in crate::recall) async fn ready_activity_ids(
     .bind(program_id)
     .fetch_all(&mut *conn)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The path and content of each of the activity's files at `paths`.
@@ -59,8 +54,7 @@ pub(in crate::recall) async fn files(
     .bind(paths[0])
     .bind(paths[1])
     .fetch_all(&mut *conn)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(files
         .iter()
         .map(|file| (file.get("path"), file.get("content")))
@@ -77,7 +71,6 @@ pub(in crate::recall) async fn source_title_and_link(
         .bind(program_id)
         .bind(version_id)
         .fetch_optional(&mut *conn)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(row.map(|row| (row.get("title"), row.get("url"))))
 }

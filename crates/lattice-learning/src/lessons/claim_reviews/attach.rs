@@ -37,7 +37,6 @@ use super::dto::AttachEvidenceDto;
 use super::repository::{ClaimReviewRepository, ShownPassage};
 use super::trust_changed::{redecide_kinds, Redecided};
 use crate::dto::LearningSourceDto;
-use crate::persistence::db;
 use crate::reference_collection::{ReferenceCollection, ReferencePassage};
 use crate::references::course_index::{CourseIndexes, CourseSearch};
 use crate::references::trust::outcomes::{self, VerdictScope};
@@ -275,7 +274,7 @@ async fn write_check(
     in_collection: bool,
     count_verdict: bool,
 ) -> Result<Vec<ClaimKind>> {
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     ClaimReviewRepository::show_passages_in(&mut tx, lesson_id, flagged.claim_id(), shown).await?;
     let mut moved = Vec::new();
     if check.result.passed() {
@@ -301,7 +300,7 @@ async fn write_check(
             .await?;
         }
     }
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(moved)
 }
 

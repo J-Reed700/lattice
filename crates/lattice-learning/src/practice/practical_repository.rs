@@ -6,7 +6,6 @@ use crate::{
     embedded_runtime::{BuiltinLabExecutionSpec, LearningBuiltinRuntime},
     lab_runtime::{LearningContainerEngine, LearningLabExecutionSpec, LearningLabLimits},
     operations::Operation,
-    persistence::db,
     practical_dto::*,
     practice::coding::{harness::CaseHarness, problem::ProblemCase},
 };
@@ -269,8 +268,7 @@ impl LearningPracticalRepository {
         let row = sqlx::query("SELECT status,revision FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
+            .await?
             .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
         if row.get::<String, _>("status") != "active" {
             return Err(invalid(

@@ -112,7 +112,7 @@ impl QuizGradingWorker {
         only: Option<i64>,
         note: Option<&str>,
     ) -> Result<Vec<PendingItem>> {
-        let mut tx = self.database.begin_read().await.map_err(db)?;
+        let mut tx = self.database.begin_read().await?;
         let form = LearningAssessmentRepository::form_in(&mut tx, form_id).await?;
         let Some(submission) = &form.submission else {
             return Ok(vec![]);
@@ -171,7 +171,7 @@ impl QuizGradingWorker {
                 _ => {}
             }
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(out)
     }
 

@@ -2,7 +2,6 @@
 //! `conversations.lesson_id`.
 
 use super::repository;
-use crate::persistence::db;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Database;
 use serde::{Deserialize, Serialize};
@@ -29,7 +28,7 @@ pub async fn bind_conversation(
     database: &Database,
     request: &SetConversationCourseRequestDto,
 ) -> Result<()> {
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     let status = repository::program_status(&mut tx, &request.program_id).await?;
     match status.as_deref() {
         Some("active") => {}
@@ -60,5 +59,5 @@ pub async fn bind_conversation(
             request.conversation_id
         )));
     }
-    tx.commit().await.map_err(db)
+    tx.commit().await.map_err(AppError::from)
 }

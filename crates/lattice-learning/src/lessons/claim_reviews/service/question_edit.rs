@@ -27,7 +27,7 @@ use crate::lessons::claim_reviews::repository::{
     blocks, bump_revision, check_revision, questions, teaching_findings,
 };
 use crate::lessons::review_findings::FindingSite;
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use crate::quiz_blueprints::parse_format;
 
 const QUESTION_CHANGED: &str =
@@ -291,9 +291,9 @@ impl ClaimReviewService {
         question_index: usize,
     ) -> Result<QuestionText> {
         self.ensure_in_course(program_id, lesson_id).await?;
-        let mut read = self.database.begin_read().await.map_err(db)?;
+        let mut read = self.database.begin_read().await?;
         let row = questions::question_at(&mut read, program_id, lesson_id, question_index).await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         stored_from(row)?
             .map(|stored| stored.text)
             .ok_or_else(|| AppError::NotFound(NOT_IN_LESSON.into()))
@@ -315,7 +315,7 @@ impl ClaimReviewService {
         } = edit;
         let ledger = self.editable_ledger(&program_id, &lesson_id).await?;
         validate(before.kind, &after)?;
-        let mut read = self.database.begin_read().await.map_err(db)?;
+        let mut read = self.database.begin_read().await?;
         let row =
             questions::question_at(&mut read, &program_id, &lesson_id, question_index).await?;
         let stored = stored_from(row)?.ok_or_else(|| AppError::NotFound(NOT_IN_LESSON.into()))?;
@@ -344,7 +344,7 @@ impl ClaimReviewService {
         if questions::token_taken_by_another(&mut read, &program_id, &stored.id, &token).await? {
             return Err(AppError::InvalidInput(SAME_QUESTION.into()));
         }
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
 
         let unit = FindingSite::Question(question_index)
             .unit(usize::try_from(sections).unwrap_or_default())
@@ -461,7 +461,7 @@ impl ClaimReviewService {
             at,
         } = *write;
         let user = ledger.review.as_ref().map(provenance);
-        let mut tx = self.database.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await?;
         if ledger.review.is_some() {
             check_revision(&mut tx, lesson_id, ledger.revision).await?;
         }
@@ -536,7 +536,7 @@ impl ClaimReviewService {
         let moved = self
             .settle_planned_in(&mut tx, ledger, lesson_id, &planned)
             .await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok((moved, bumped))
     }
 }

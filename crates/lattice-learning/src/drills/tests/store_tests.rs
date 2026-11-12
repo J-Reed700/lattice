@@ -10,7 +10,6 @@ use crate::drills::build::{CleanCode, DroppedMutation, LessonCheck, LessonChecke
 use crate::drills::repository::{self, DrillStatus, StoredDrill};
 use crate::drills::schedules;
 use crate::drills::spec::DrillSpec;
-use crate::persistence::db;
 use lattice_core::domain::learning::drills::Material;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobOutcome, JobStatus};
@@ -19,7 +18,7 @@ async fn count(harness: &Harness, table: &str) -> Result<i64> {
     sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))
         .fetch_one(&harness.pool)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 #[tokio::test]
@@ -56,7 +55,7 @@ async fn a_finished_drill_is_stored_with_its_patterns_and_the_job_completes_with
     assert_eq!(job.status, JobStatus::Completed);
     assert_eq!(job.result_ref, Some(format!("drill:{}", code.drill_id)));
 
-    let mut connection = harness.pool.acquire().await.map_err(db)?;
+    let mut connection = harness.pool.acquire().await?;
     let stored = repository::find_in(&mut connection, &code.drill_id)
         .await?
         .expect("the drill is in the bank");
@@ -81,8 +80,7 @@ async fn a_finished_drill_is_stored_with_its_patterns_and_the_job_completes_with
     )
     .bind(&code.drill_id)
     .fetch_all(&harness.pool)
-    .await
-    .map_err(db)?;
+    .await?;
     assert_eq!(patterns, [OPERATOR, LITERALS]);
     Ok(())
 }
@@ -111,7 +109,7 @@ async fn without_a_runner_no_suite_or_runner_is_stored() -> Result<()> {
             },
         )
         .await?;
-    let mut connection = harness.pool.acquire().await.map_err(db)?;
+    let mut connection = harness.pool.acquire().await?;
     let stored = repository::find_in(&mut connection, &code.drill_id)
         .await?
         .expect("the drill is in the bank");
@@ -278,7 +276,7 @@ async fn fits_of(harness: &Harness, material: &str) -> Result<Vec<(i64, String)>
         .bind(material)
         .fetch_all(&harness.pool)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// Whether the lesson the stored drill was built from still fits code.
@@ -287,7 +285,7 @@ async fn lesson_fits_code(harness: &Harness, stored: &StoredDrill) -> Result<boo
     else {
         return Err(AppError::InternalError("The drill has no lesson.".into()));
     };
-    let mut connection = harness.pool.acquire().await.map_err(db)?;
+    let mut connection = harness.pool.acquire().await?;
     schedules::lesson_fits_in(&mut connection, program, lesson, &Material::code("python")).await
 }
 
@@ -332,7 +330,7 @@ async fn stored_on(
         )
         .await?;
     assert_eq!(outcome, JobOutcome::Committed);
-    let mut connection = harness.pool.acquire().await.map_err(db)?;
+    let mut connection = harness.pool.acquire().await?;
     let stored = repository::find_in(&mut connection, &code.drill_id)
         .await?
         .expect("the drill is in the bank");
@@ -410,8 +408,7 @@ async fn a_drill_whose_lesson_is_gone_by_the_store_is_stored_without_it_and_reco
         .bind(spec.program_id.as_deref())
         .bind(spec.lesson_id.as_deref())
         .execute(&harness.pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(gone.rows_affected(), 1);
     let checked = LessonChecked {
         links: vec![lesson_brief().link(&[1]), None],
@@ -429,8 +426,7 @@ async fn a_drill_whose_lesson_is_gone_by_the_store_is_stored_without_it_and_reco
         sqlx::query_as("SELECT program_id,lesson_id FROM learning_drills WHERE id=?")
             .bind(&stored.drill.id)
             .fetch_one(&harness.pool)
-            .await
-            .map_err(db)?;
+            .await?;
     assert_eq!(course, (program_id, None));
     assert!(fits_of(&harness, "code").await?.is_empty());
     Ok(())

@@ -210,8 +210,7 @@ async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_deci
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
@@ -238,8 +237,7 @@ async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_deci
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     let repo = LearningCurriculumRepository::new(db.clone());
     JobStore::new(db.clone())

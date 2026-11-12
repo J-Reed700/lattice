@@ -42,8 +42,6 @@ use super::test_support::{fixture, fixture_on_pool, id};
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::Row;
 
-use crate::persistence::db;
-
 fn generated() -> GeneratedPracticalActivity {
     GeneratedPracticalActivity {
         title: "Investigate the system".into(),
@@ -223,7 +221,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
     // Upgrading the app must not silently reinterpret an old exercise under
     // a different embedded interpreter. Saved attempts remain readable.
     sqlx::query("UPDATE learning_practical_activities SET builtin_runtime_version='previous-runtime-v1' WHERE id=?")
-        .bind(&request.activity_id).execute(&pool).await.map_err(db)?;
+        .bind(&request.activity_id).execute(&pool).await?;
     let older = repository
         .workspace(&program_id)
         .await?
@@ -357,8 +355,7 @@ async fn practical_activity_replay_is_safe_and_hidden_checks_never_reach_the_ren
     )
     .bind(&activity_id)
     .fetch_one(&pool)
-    .await
-    .map_err(db)?;
+    .await?;
     assert_eq!(hidden, 1);
 
     let replay = repository
@@ -459,8 +456,7 @@ async fn practical_draft_is_revision_scoped_idempotent_and_rejects_private_files
     sqlx::query("UPDATE learning_practical_activities SET revision=1 WHERE id=?")
         .bind(&activity_id)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     crate::tests::assert_conflict(repository.get_draft(&scope).await);
     let mut old_activity = request.clone();
     old_activity.operation_id = id();
@@ -510,8 +506,7 @@ async fn practical_draft_survives_closing_and_reopening_file_backed_database() -
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options())
-        .await
-        .map_err(db)?;
+        .await?;
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
         .await
@@ -539,8 +534,7 @@ async fn practical_draft_survives_closing_and_reopening_file_backed_database() -
         SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(options())
-            .await
-            .map_err(db)?,
+            .await?,
     );
     let restored = LearningPracticalRepository::new(reopened.clone())
         .get_draft(&GetLearningPracticalDraftRequestDto {
@@ -666,8 +660,7 @@ async fn simulation_uses_cas_replays_mutations_and_records_only_uncertain_eviden
     let evidence = sqlx::query("SELECT outcome_id,result,score FROM learning_evidence_events WHERE program_id=? AND source_kind='simulation'")
         .bind(&program_id)
         .fetch_one(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(evidence.get::<String, _>("outcome_id"), outcome_id);
     assert_eq!(evidence.get::<String, _>("result"), "uncertain");
     assert_eq!(evidence.get::<Option<f64>, _>("score"), None);
@@ -813,8 +806,7 @@ async fn runtime_profiles_use_cas_and_restart_recovery_marks_runs_interrupted() 
         .bind("recovery-payload")
         .bind(chrono::Utc::now().timestamp_millis())
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(
         crate::practical_runs::recover_running_runs(&repository).await?,
         1
@@ -835,8 +827,7 @@ async fn a_database_error_while_settling_runs_at_startup_does_not_fail_setup() -
     let repository = LearningPracticalRepository::new(database.clone());
     sqlx::query("ALTER TABLE learning_practical_runs RENAME TO learning_practical_runs_away")
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert!(
         crate::practical_runs::recover_running_runs(&repository)
             .await
@@ -980,7 +971,7 @@ async fn interview_activity_with_plan_roundtrips_and_hides_internal_plan_file() 
     assert_eq!(replay.turns[0].id, session.turns[0].id);
     // A later revision or retirement must not change a running interview.
     sqlx::query("UPDATE learning_practical_activities SET brief='Changed brief',revision=1,status='retired' WHERE id=?")
-        .bind(&activity_id).execute(&pool).await.map_err(db)?;
+        .bind(&activity_id).execute(&pool).await?;
     let (frozen, _) = repository
         .simulation_session_generation_context(&program_id, &session.id)
         .await?;

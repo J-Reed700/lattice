@@ -2,7 +2,7 @@
 //! stored blueprint revisions with their slots.
 
 use crate::dto::LearningQuizSettingsDto;
-use crate::persistence::db;
+use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::WriteTx;
 use sqlx::{Row, SqliteConnection};
@@ -64,8 +64,7 @@ pub(super) async fn quiz_settings_in(
     let row = sqlx::query("SELECT * FROM learning_quiz_settings WHERE program_id=?")
         .bind(program_id)
         .fetch_optional(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(row.map(|row| LearningQuizSettingsDto {
         quiz_pass: row.get("quiz_pass"),
         test_pass: row.get("test_pass"),
@@ -87,7 +86,7 @@ pub(crate) async fn lesson_outcome_in(
     .bind(lesson_id)
     .fetch_optional(&mut *connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The lesson's title, objective and ordinal, when it is one of the course's.
@@ -102,8 +101,7 @@ pub(super) async fn lesson_heading_in(
     .bind(lesson_id)
     .bind(program_id)
     .fetch_optional(&mut *connection)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(row.map(|lesson| {
         (
             lesson.get::<String, _>("title"),
@@ -140,7 +138,7 @@ pub(super) async fn insert_lesson_outcome_in(
         .execute(&mut **tx)
         .await
         .map(drop)
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// The course's title, when the course is there.
@@ -152,7 +150,7 @@ pub(super) async fn program_title_in(
         .bind(program_id)
         .fetch_optional(&mut *connection)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// The ids of the course's source versions.
@@ -164,7 +162,7 @@ pub(super) async fn source_version_ids_in(
         .bind(program_id)
         .fetch_all(&mut *connection)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// The course's modules as (id, title), in order.
@@ -176,8 +174,7 @@ pub(super) async fn modules_in(
         sqlx::query("SELECT id,title FROM learning_modules WHERE program_id=? ORDER BY ordinal")
             .bind(program_id)
             .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?;
+            .await?;
     Ok(rows
         .into_iter()
         .map(|row| (row.get("id"), row.get("title")))
@@ -195,7 +192,7 @@ pub(super) async fn module_outcome_ids_in(
         .bind(module_id)
         .fetch_all(&mut *connection)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// The course's lessons other than replaced or skipped ones, in course order.
@@ -206,8 +203,7 @@ pub(super) async fn lessons_in(
     let rows = sqlx::query("SELECT l.id,l.module_id,l.title,l.objective,l.preparation FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND l.curriculum_state NOT IN ('replaced','skipped') ORDER BY m.ordinal,l.ordinal")
         .bind(program_id)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(rows
         .into_iter()
         .map(|row| LessonRow {
@@ -229,7 +225,7 @@ pub(super) async fn block_source_ids_json_in(
         .bind(lesson_id)
         .fetch_all(&mut *connection)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// The id and revision of the scope's latest accepted blueprint.
@@ -244,8 +240,7 @@ pub(super) async fn latest_accepted_in(
         .bind(scope_kind)
         .bind(scope_id)
         .fetch_optional(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(row.map(|row| (row.get("id"), row.get("revision"))))
 }
 
@@ -259,8 +254,7 @@ pub(super) async fn stored_blueprint_in(
         .bind(id)
         .bind(revision)
         .fetch_one(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(StoredBlueprint {
         title: row.get("title"),
         passing_score: row.get("passing_score"),
@@ -278,8 +272,7 @@ pub(super) async fn stored_slots_in(
         .bind(id)
         .bind(revision)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?
+        .await?
         .into_iter()
         .map(|r| {
             (
@@ -303,8 +296,7 @@ pub(super) async fn slot_requirements_in(
         .bind(id)
         .bind(revision)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(rows
         .into_iter()
         .map(|row| {
@@ -341,7 +333,7 @@ pub(super) async fn insert_blueprint_in(
         .execute(&mut **tx)
         .await
         .map(drop)
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// Stores a slot of a blueprint revision.
@@ -358,5 +350,5 @@ pub(super) async fn insert_slot_in(tx: &mut WriteTx, slot: &NewSlot<'_>) -> Resu
         .execute(&mut **tx)
         .await
         .map(drop)
-        .map_err(db)
+        .map_err(AppError::from)
 }

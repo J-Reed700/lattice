@@ -40,7 +40,6 @@ use super::teaching_findings::TeachingFindingsRepository;
 use crate::content_verification::{field_text, located};
 use crate::dto::LearningSourceKind;
 use crate::lesson_evidence::LearningEvidencePassageDto;
-use crate::persistence::db;
 use crate::reference_collection::PassageKind;
 use crate::references::trust::dto_map;
 use crate::repository::LearningRepository;
@@ -269,9 +268,9 @@ impl ClaimReviewService {
     /// Every version of the course's sources, deleted ones included: a card
     /// still names a source the user removed.
     async fn sources(&self, program_id: &str) -> Result<HashMap<String, SourceFacts>> {
-        let mut read = self.database.begin_read().await.map_err(db)?;
+        let mut read = self.database.begin_read().await?;
         let workspace = workspace_in(&mut read, program_id, true).await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         Ok(workspace
             .sources
             .into_iter()

@@ -81,10 +81,6 @@ fn refuse(message: impl std::fmt::Display) -> AppError {
     AppError::InvalidInput(format!("course eval: {message}"))
 }
 
-fn db(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
-}
-
 impl CourseRecipe {
     pub(super) fn parse(text: &str) -> Result<Self> {
         let recipe: Self = serde_json::from_str(text)?;
@@ -698,13 +694,9 @@ async fn live_course_eval() -> Result<()> {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(5)
         .connect_with(options.clone())
-        .await
-        .map_err(db)?;
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let database = lattice_core::shared::persistence::Database::new(pool);
+    crate::infrastructure::persistence::database::run_migrations(&database).await?;
     let mut run = Run {
         metrics: read_json(&dir.join("metrics.json"))?.unwrap_or_else(|| json!({})),
         dir,

@@ -37,8 +37,7 @@ async fn titles(db: &Database, sql: &str, ids: &[String]) -> Result<HashMap<Stri
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(ids)
         .fetch_all(&mut *read)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     read.commit().await?;
     Ok(rows
         .iter()

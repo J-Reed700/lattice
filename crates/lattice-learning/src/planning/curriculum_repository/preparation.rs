@@ -2,7 +2,7 @@
 use super::jobs::{job_scope, preparable_in};
 use super::LearningCurriculumRepository;
 use crate::curriculum::{self, LearningCurriculumLessonState, LearningCurriculumRevision};
-use crate::persistence::{db, decode, encode, now};
+use crate::persistence::{decode, encode, now};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::runtime::jobs::{JobStatus, JobStore};
@@ -69,9 +69,9 @@ impl LearningCurriculumRepository {
         key: &str,
         value: serde_json::Value,
     ) -> Result<()> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let in_course: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_jobs j JOIN learning_lessons l ON l.program_id=j.program_id WHERE j.job_id=? AND l.id=?)")
-            .bind(job_id).bind(lesson_id).fetch_one(&mut *tx).await.map_err(db)?;
+            .bind(job_id).bind(lesson_id).fetch_one(&mut *tx).await?;
         if !in_course
             || !JobStore::put_checkpoint_in(
                 &mut tx,
@@ -85,7 +85,7 @@ impl LearningCurriculumRepository {
                 "Lesson preparation is no longer running or the lesson changed.".into(),
             ));
         }
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     pub async fn publish_prepared_lessons(
@@ -114,7 +114,7 @@ impl LearningCurriculumRepository {
                 "A generation job publishes at least one prepared lesson.".into(),
             ));
         }
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let not_found = || AppError::NotFound("Generation job not found".into());
         let scope = job_scope(&mut tx, id).await?.ok_or_else(not_found)?;
         let job = JobStore::find_in(&mut tx, id)
@@ -135,8 +135,7 @@ impl LearningCurriculumRepository {
             sqlx::query("SELECT revision,content_revision FROM learning_programs WHERE id=?")
                 .bind(&program_id)
                 .fetch_one(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         let current_revision: i64 = program.get("revision");
         // Completion and grading may advance the UI's concurrency token while
         // this job runs. Only unchanged teaching inputs can publish across that
@@ -149,7 +148,7 @@ impl LearningCurriculumRepository {
                 "Course content changed while this lesson was being prepared. Start preparation again for the updated course.".into(),
             ));
         }
-        let changed=sqlx::query("UPDATE learning_programs SET revision=revision+1 WHERE id=? AND revision=? AND status='active'").bind(&program_id).bind(current_revision).execute(&mut *tx).await.map_err(db)?;
+        let changed=sqlx::query("UPDATE learning_programs SET revision=revision+1 WHERE id=? AND revision=? AND status='active'").bind(&program_id).bind(current_revision).execute(&mut *tx).await?;
         if changed.rows_affected() != 1 {
             return Err(AppError::InvalidState(
                 "Program changed before generation could publish.".into(),
@@ -172,9 +171,9 @@ impl LearningCurriculumRepository {
             crate::content_verification::persist_report(&mut tx, &program_id, lesson_id, prepared)
                 .await?;
             for (ordinal, b) in prepared.blocks.iter().enumerate() {
-                sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json,rubric_json) VALUES(?,?,?,?,?,?,?)").bind(lesson_id).bind(ordinal as i64).bind(b.kind.as_str()).bind(&b.title).bind(&b.body).bind(encode(&b.source_ids)?).bind(encode(&b.rubric)?).execute(&mut *tx).await.map_err(db)?;
+                sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json,rubric_json) VALUES(?,?,?,?,?,?,?)").bind(lesson_id).bind(ordinal as i64).bind(b.kind.as_str()).bind(&b.title).bind(&b.body).bind(encode(&b.source_ids)?).bind(encode(&b.rubric)?).execute(&mut *tx).await?;
             }
-            sqlx::query("UPDATE learning_lessons SET preparation='ready',curriculum_state='ready' WHERE id=? AND program_id=?").bind(lesson_id).bind(&program_id).execute(&mut *tx).await.map_err(db)?;
+            sqlx::query("UPDATE learning_lessons SET preparation='ready',curriculum_state='ready' WHERE id=? AND program_id=?").bind(lesson_id).bind(&program_id).execute(&mut *tx).await?;
             // The lesson's quiz (section 5.4): its outcome, its own reviewed
             // questions and its blueprint; a quiz job writes the rest.
             let outcome_id = crate::quiz_blueprints::ensure_lesson_outcome_in(
@@ -212,7 +211,7 @@ impl LearningCurriculumRepository {
         // lesson records and the program revision. The old accepted snapshot
         // remains historical; readers never observe a half-prepared plan.
         let accepted_row = sqlx::query("SELECT id,snapshot_json,required_lesson_count,resume_lesson_id FROM learning_curriculum_revisions WHERE program_id=? AND status='accepted'")
-            .bind(&program_id).fetch_optional(&mut *tx).await.map_err(db)?
+            .bind(&program_id).fetch_optional(&mut *tx).await?
             .ok_or_else(|| AppError::NotFound("Accepted curriculum not found".into()))?;
         let predecessor: String = accepted_row.get("id");
         let mut snapshot: LearningCurriculumRevision = decode(accepted_row.get("snapshot_json"))?;
@@ -257,11 +256,11 @@ impl LearningCurriculumRepository {
             .count() as i64;
         let resume: Option<String> = accepted_row.get("resume_lesson_id");
         sqlx::query("UPDATE learning_curriculum_revisions SET status='superseded' WHERE id=? AND status='accepted'")
-            .bind(&predecessor).execute(&mut *tx).await.map_err(db)?;
+            .bind(&predecessor).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO learning_curriculum_revisions(id,program_id,revision,predecessor_id,status,reason,snapshot_json,snapshot_sha256,required_lesson_count,resume_lesson_id,created_at,accepted_at) VALUES(?,?,?,?,'accepted',?,?,?,?,?,?,?)")
             .bind(&snapshot.id).bind(&program_id).bind(snapshot.revision_number as i64).bind(&predecessor)
             .bind(&snapshot.reason).bind(snapshot_json).bind(snapshot_hash).bind(required).bind(resume)
-            .bind(snapshot.created_at).bind(snapshot.created_at).execute(&mut *tx).await.map_err(db)?;
+            .bind(snapshot.created_at).bind(snapshot.created_at).execute(&mut *tx).await?;
         let (result_ref, message) = if held.is_empty() {
             let unverified: usize = lessons
                 .iter()
@@ -277,7 +276,7 @@ impl LearningCurriculumRepository {
             crate::content_verification::review_outcome(held)
         };
         JobStore::complete_in(&mut tx, id, &result_ref, &message).await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 }
 

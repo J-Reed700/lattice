@@ -3,7 +3,6 @@
 #![allow(clippy::indexing_slicing)]
 
 use crate::dto::AcceptLearningProgramRequestDto;
-use crate::persistence::db;
 use crate::repository::LearningRepository;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::Database;
@@ -39,8 +38,7 @@ pub async fn fixture_on_pool(
         .bind("Use the module idea in a practical setting.")
         .bind(chrono::Utc::now().timestamp_millis())
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok((pool, program_id, lesson_id, outcome_id))
 }
 

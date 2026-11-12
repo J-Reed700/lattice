@@ -18,7 +18,7 @@ use crate::drills::repository::{self, NewDrill, StoredDrill};
 use crate::drills::runner::{CodeRunner, RunOutcome};
 use crate::drills::schedules;
 use crate::drills::spec::DrillSpec;
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
@@ -993,12 +993,11 @@ pub(super) async fn stock_on(db: &Database, id: &str, spec: &DrillSpec) -> Resul
 pub(super) async fn built_drill(pool: &SqlitePool) -> Result<Option<StoredDrill>> {
     let id: Option<String> = sqlx::query_scalar("SELECT id FROM learning_drills")
         .fetch_optional(pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let Some(id) = id else {
         return Ok(None);
     };
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut connection = pool.acquire().await?;
     repository::find_in(&mut connection, &id).await
 }
 
@@ -1509,7 +1508,7 @@ pub(super) async fn lesson_titled(
         .bind(title)
         .fetch_one(pool)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// Gives the lesson `lesson_id` these teaching blocks, in order: a kind, a body and the source versions it cites each.
@@ -1527,8 +1526,7 @@ pub(super) async fn add_blocks(
             .bind(*body)
             .bind(serde_json::to_string(cited).unwrap_or_default())
             .execute(pool)
-            .await
-            .map_err(db)?;
+            .await?;
     }
     Ok(())
 }
@@ -1545,7 +1543,7 @@ pub(super) async fn prepare_lesson(
         .execute(pool)
         .await
         .map(drop)
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// A spec for code in Python on a new course from [`course`], built from its spacing lesson.
@@ -1577,7 +1575,7 @@ pub(super) async fn lessons_of(pool: &SqlitePool, program_id: &str) -> Result<Ve
         .bind(program_id)
         .fetch_all(pool)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// Records that the lesson `lesson_id` of the course `program_id` does not fit `material`, on the lesson's basis now.
@@ -1629,7 +1627,7 @@ pub(super) async fn set_state(pool: &SqlitePool, lesson_id: &str, state: &str) -
         .execute(pool)
         .await
         .map(drop)
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// The patterns of a drill's key, each once and in the key's order, as the schedule holds them back while the drill
@@ -1662,5 +1660,5 @@ pub(super) async fn schedule_pattern(
         .execute(pool)
         .await
         .map(drop)
-        .map_err(db)
+        .map_err(AppError::from)
 }

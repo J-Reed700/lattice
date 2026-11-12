@@ -70,8 +70,7 @@ async fn cite(pool: &SqlitePool, program_id: &str, version_id: &str) -> Result<(
     )
     .bind(program_id)
     .fetch_one(pool)
-    .await
-    .map_err(db)?;
+    .await?;
     let report = serde_json::json!({"findings": [{"evidence": [{"source_id": version_id}]}]});
     sqlx::query("INSERT INTO learning_lesson_verifications(lesson_id,program_id,policy,content_sha256,report_json,checked_at) VALUES(?,?,?,?,?,?)")
         .bind(lesson)
@@ -81,8 +80,7 @@ async fn cite(pool: &SqlitePool, program_id: &str, version_id: &str) -> Result<(
         .bind(report.to_string())
         .bind(1_i64)
         .execute(pool)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(())
 }
 
@@ -285,14 +283,12 @@ async fn a_research_source_a_lesson_block_cites_is_not_listed_as_unused() -> Res
     )
     .bind(&program_id)
     .fetch_one(&pool)
-    .await
-    .map_err(db)?;
+    .await?;
     sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json) VALUES(?,0,'explanation','A block','Its text.',?)")
         .bind(&lesson)
         .bind(serde_json::json!([cited]).to_string())
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     library.sweep_admission(&program_id).await?;
 
     let workspace = library.workspace(&program_id).await?;
@@ -333,8 +329,7 @@ async fn no_research_source_is_listed_as_unused_while_a_lesson_is_being_prepared
         .bind(&program_id)
         .bind(id())
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
 
     assert!(library
         .workspace(&program_id)
@@ -366,13 +361,12 @@ async fn a_sweep_that_cannot_mark_every_page_marks_none() -> Result<()> {
         )
         .fetch_one(&pool)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
     };
     let before = marked().await?;
     sqlx::query(sqlx::AssertSqlSafe(format!("CREATE TRIGGER refuse_for_test BEFORE UPDATE ON learning_source_versions WHEN (SELECT COUNT(*) FROM learning_source_versions WHERE admission_policy IS NOT NULL)>={} BEGIN SELECT RAISE(ABORT, 'refused for the test'); END", before + 1)))
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
 
     assert!(library.sweep_admission(&program_id).await.is_err());
 

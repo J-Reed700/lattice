@@ -562,9 +562,9 @@ async fn a_lessons_quiz_job_takes_the_lessons_rank() -> Result<()> {
     let (_, job) = repository_tests::queued_job(&db).await;
     let lessons = lesson_ids_in_course_order(&db, &job.program_id).await;
     for (place, lesson) in lessons.iter().enumerate().rev() {
-        let mut tx = db.begin_write().await.map_err(crate::persistence::db)?;
+        let mut tx = db.begin_write().await?;
         crate::quiz_bank_jobs::queue_lesson_bank_in(&mut tx, &job.program_id, lesson).await?;
-        tx.commit().await.map_err(crate::persistence::db)?;
+        tx.commit().await?;
         let quiz = quiz_jobs(&db, &job.program_id)
             .await?
             .into_iter()

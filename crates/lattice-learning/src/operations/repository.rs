@@ -1,5 +1,5 @@
 use super::Operation;
-use crate::persistence::{db, decode, encode, now};
+use crate::persistence::{decode, encode, now};
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::WriteTx;
 use serde::{de::DeserializeOwned, Serialize};
@@ -69,8 +69,7 @@ pub(super) async fn insert(
         .bind(result_json)
         .bind(now())
         .execute(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(())
 }
 
@@ -81,8 +80,7 @@ pub(super) async fn delete(tx: &mut WriteTx, operation: &Operation<'_>) -> Resul
         .bind(operation.kind)
         .bind(operation.payload_hash)
         .execute(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(())
 }
 
@@ -93,8 +91,7 @@ pub(super) async fn find(
     let row = sqlx::query("SELECT scope,kind,program_id,subject_id,payload_hash,result_json FROM learning_operations WHERE operation_id=?")
         .bind(operation_id)
         .fetch_optional(connection)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(row.map(|row| RecordedOperation {
         scope: row.get("scope"),
         kind: row.get("kind"),

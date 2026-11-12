@@ -103,10 +103,7 @@ pub(super) async fn ready_program(repo: &LearningRepository) -> Result<LearningP
 async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> Result<()> {
     let pool = pool().await?;
     let db = Database::new(pool.clone());
-    sqlx::query("PRAGMA foreign_keys=ON")
-        .execute(&pool)
-        .await
-        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    sqlx::query("PRAGMA foreign_keys=ON").execute(&pool).await?;
     let repo = LearningRepository::new(db.clone());
     let program = ready_program(&repo).await?;
     let lesson = &program.modules[0].lessons[0];
@@ -118,8 +115,7 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
         )
         .bind(&lesson.id)
         .execute(&pool)
-        .await
-        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+        .await?;
     let (_, created) = repo
         .ensure_lesson_note(
             &program.summary.id,
@@ -137,8 +133,7 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
         sqlx::query_scalar("SELECT count(*) FROM daily_notes_workspace WHERE id=?")
             .bind(&note_id)
             .fetch_one(&pool)
-            .await
-            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+            .await?;
     assert_eq!(note_count, 1);
 
     let generated = super::generation::GeneratedLearningCardDraft {
@@ -154,8 +149,7 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
     )
     .bind(&program.summary.id)
     .fetch_one(&pool)
-    .await
-    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    .await?;
     let cleared = SaveLearningCardDraftRequestDto {
         draft_id: Some(generated_id.clone()),
         program_id: program.summary.id.clone(),
@@ -169,7 +163,7 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
     let other_source = id();
     sqlx::query("INSERT INTO learning_sources(id,program_id,title,url,excerpt,acquired_at) VALUES(?,?,?,NULL,?,1)")
         .bind(&other_source).bind(&program.summary.id).bind("Different source").bind("Not referenced by this lesson")
-        .execute(&pool).await.map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+        .execute(&pool).await?;
     let swapped = SaveLearningCardDraftRequestDto {
         source_ids: vec![other_source],
         ..cleared
@@ -238,8 +232,7 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
     sqlx::query("DELETE FROM journals WHERE id=?")
         .bind(&original_journal_id)
         .execute(&pool)
-        .await
-        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+        .await?;
     let detached = repo.memory_state(&program.summary.id).await?;
     assert!(detached.journal_id.is_none());
     assert!(detached.lesson_notes.is_empty());
@@ -277,8 +270,7 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
     let journal_count: i64 = sqlx::query_scalar("SELECT count(*) FROM journals WHERE id=?")
         .bind(journal_id)
         .fetch_one(&pool)
-        .await
-        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+        .await?;
     assert_eq!(journal_count, 1);
     Ok(())
 }
@@ -292,8 +284,7 @@ async fn notebook_and_lesson_links_survive_database_pool_restart() -> Result<()>
     let first = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+        .await?;
     let first_db = Database::new(first.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&first)
@@ -318,8 +309,7 @@ async fn notebook_and_lesson_links_survive_database_pool_restart() -> Result<()>
     let second = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
-        .await
-        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+        .await?;
     let second_db = Database::new(second.clone());
     let restarted = LearningRepository::new(second_db.clone())
         .memory_state(&program.summary.id)
@@ -364,8 +354,7 @@ async fn memory_resources_and_lesson_ids_are_isolated_between_programs() -> Resu
         sqlx::query_scalar("SELECT count(*) FROM learning_card_drafts WHERE program_id=?")
             .bind(&first.summary.id)
             .fetch_one(&pool)
-            .await
-            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+            .await?;
     assert_eq!(drafts, 0);
     Ok(())
 }
@@ -377,8 +366,7 @@ async fn normalized_course_survives_pool_restart_and_hides_answer_keys() -> Resu
     let first = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+        .await?;
     let first_db = Database::new(first.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&first)
@@ -390,8 +378,7 @@ async fn normalized_course_survives_pool_restart_and_hides_answer_keys() -> Resu
     let second = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
-        .await
-        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+        .await?;
     let second_db = Database::new(second.clone());
     let saved = LearningRepository::new(second_db.clone())
         .get(&p.summary.id)
@@ -920,8 +907,7 @@ async fn source_versions_survive_pool_restart_are_program_isolated_and_cascade_o
     let pool1 = SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+        .await?;
     let db1 = Database::new(pool1.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool1)
@@ -958,8 +944,7 @@ async fn source_versions_survive_pool_restart_are_program_isolated_and_cascade_o
     let pool2 = SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
-        .await
-        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+        .await?;
     let db2 = Database::new(pool2.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool2)
@@ -996,14 +981,12 @@ async fn source_versions_survive_pool_restart_are_program_isolated_and_cascade_o
         sqlx::query_scalar("SELECT count(*) FROM learning_source_library WHERE program_id=?")
             .bind(&program1.summary.id)
             .fetch_one(&pool2)
-            .await
-            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+            .await?;
     let versions: i64 =
         sqlx::query_scalar("SELECT count(*) FROM learning_source_versions WHERE program_id=?")
             .bind(&program1.summary.id)
             .fetch_one(&pool2)
-            .await
-            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+            .await?;
     assert_eq!(logical, 0);
     assert_eq!(versions, 0);
     pool2.close().await;
@@ -1022,13 +1005,13 @@ async fn legacy_migration_metadata_is_backfilled_from_the_captured_text() -> Res
     for program_id in [&program.summary.id, &program2.summary.id] {
         sqlx::query("INSERT INTO learning_sources(id,program_id,title,url,excerpt,acquired_at) VALUES(?,?,?,NULL,?,7)")
             .bind(&legacy_source).bind(program_id).bind("Legacy excerpt").bind("migration text has four words")
-            .execute(&pool).await.map_err(|e|lattice_core::shared::error::AppError::Database(e.to_string()))?;
+            .execute(&pool).await?;
         sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at) VALUES(?,?, 'document',?,NULL,'fixed',?,NULL,0,7,7)")
             .bind(&legacy_source).bind(program_id).bind(&legacy_source).bind(&legacy_source)
-            .execute(&pool).await.map_err(|e|lattice_core::shared::error::AppError::Database(e.to_string()))?;
+            .execute(&pool).await?;
         sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES(?,?,?,1,'Legacy excerpt',NULL,NULL,NULL,'migration text has four words','migration text has four words','',0,1,'legacy_bounded_extraction_v1',7)")
             .bind(&legacy_source).bind(program_id).bind(&legacy_source)
-            .execute(&pool).await.map_err(|e|lattice_core::shared::error::AppError::Database(e.to_string()))?;
+            .execute(&pool).await?;
     }
     let library = super::source_library::LearningSourceLibraryRepository::new(db.clone());
     let workspace = library.workspace(&program.summary.id).await?;
@@ -1209,8 +1192,7 @@ async fn test_learning_tangents_lifecycle() -> Result<()> {
     )
     .bind(&l1_id)
     .execute(&pool)
-    .await
-    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    .await?;
 
     // Insert a candidate document in documents table
     let doc_id = id();
@@ -1219,8 +1201,7 @@ async fn test_learning_tangents_lifecycle() -> Result<()> {
     )
     .bind(&doc_id)
     .execute(&pool)
-    .await
-    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    .await?;
 
     // Link document in learning_source_library
     let src_lib_id = id();
@@ -1231,8 +1212,7 @@ async fn test_learning_tangents_lifecycle() -> Result<()> {
     .bind(&p1_id)
     .bind(&doc_id)
     .execute(&pool)
-    .await
-    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    .await?;
 
     // Insert a web source in learning_sources
     let web_src_id = id();
@@ -1242,8 +1222,7 @@ async fn test_learning_tangents_lifecycle() -> Result<()> {
     .bind(&web_src_id)
     .bind(&p1_id)
     .execute(&pool)
-    .await
-    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    .await?;
 
     // Test 1: Validation error on empty selection
     let empty_req = CreateLearningTangentRequestDto {
@@ -1309,8 +1288,7 @@ async fn test_learning_tangents_lifecycle() -> Result<()> {
         sqlx::query_scalar("SELECT model_choice FROM conversations WHERE id = ?")
             .bind(&tangent1.conversation_id)
             .fetch_one(&pool)
-            .await
-            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+            .await?;
     assert_eq!(model_choice, None);
 
     // Verify Course Space creation
@@ -1318,8 +1296,7 @@ async fn test_learning_tangents_lifecycle() -> Result<()> {
         sqlx::query("SELECT id, name, icon, space_prompt FROM conversation_spaces WHERE id = ?")
             .bind(&tangent1.space_id)
             .fetch_one(&pool)
-            .await
-            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+            .await?;
     let space_icon: String = space_row.get("icon");
     let space_name: String = space_row.get("name");
     assert_eq!(space_icon, "graduation-cap");
@@ -1331,8 +1308,7 @@ async fn test_learning_tangents_lifecycle() -> Result<()> {
     )
     .bind(&tangent1.space_id)
     .fetch_one(&pool)
-    .await
-    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    .await?;
     assert_eq!(member_role, "owner");
 
     // Verify Conversation row
@@ -1341,8 +1317,7 @@ async fn test_learning_tangents_lifecycle() -> Result<()> {
     )
     .bind(&tangent1.conversation_id)
     .fetch_one(&pool)
-    .await
-    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    .await?;
     let conv_space: String = conv_row.get("space_id");
     let conv_sel: String = conv_row.get("tangent_selection");
     let conv_parent: Option<String> = conv_row.get("tangent_parent_id");
@@ -1358,8 +1333,7 @@ async fn test_learning_tangents_lifecycle() -> Result<()> {
     )
     .bind(&tangent1.conversation_id)
     .fetch_one(&pool)
-    .await
-    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    .await?;
     let msg_role: String = msg_row.get("role");
     let msg_content: String = msg_row.get("content");
     assert_eq!(msg_role, "assistant");
@@ -1374,8 +1348,7 @@ async fn test_learning_tangents_lifecycle() -> Result<()> {
     .bind(&tangent1.conversation_id)
     .bind(&doc_id)
     .fetch_one(&pool)
-    .await
-    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    .await?;
     assert_eq!(doc_attached, 1);
 
     let doc_space_member: i64 = sqlx::query_scalar(
@@ -1384,8 +1357,7 @@ async fn test_learning_tangents_lifecycle() -> Result<()> {
     .bind(&tangent1.space_id)
     .bind(&doc_id)
     .fetch_one(&pool)
-    .await
-    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    .await?;
     assert_eq!(doc_space_member, 1);
 
     // Verify web source attached
@@ -1394,8 +1366,7 @@ async fn test_learning_tangents_lifecycle() -> Result<()> {
     )
     .bind(&tangent1.conversation_id)
     .fetch_one(&pool)
-    .await
-    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    .await?;
     assert_eq!(web_attached, 1);
 
     // Verify learning_tangents table entry
@@ -1405,8 +1376,7 @@ async fn test_learning_tangents_lifecycle() -> Result<()> {
     .bind(&tangent1.conversation_id)
     .bind(&p1_id)
     .fetch_one(&pool)
-    .await
-    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    .await?;
     assert_eq!(lt_count, 1);
 
     // 2. Setup program 2 with a tangent to test list filtering

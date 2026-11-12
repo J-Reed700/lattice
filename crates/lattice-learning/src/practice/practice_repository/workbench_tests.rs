@@ -33,10 +33,7 @@ fn assert_not_found<T: std::fmt::Debug>(result: Result<T>) {
 
 async fn fk_pool() -> Result<SqlitePool> {
     let pool = tests::pool().await?;
-    sqlx::query("PRAGMA foreign_keys=ON")
-        .execute(&pool)
-        .await
-        .map_err(db)?;
+    sqlx::query("PRAGMA foreign_keys=ON").execute(&pool).await?;
     Ok(pool)
 }
 
@@ -54,8 +51,7 @@ async fn setup(pool: &SqlitePool, database: &Database) -> Result<(LearningProgra
     sqlx::query("UPDATE learning_lessons SET preparation='ready' WHERE program_id=?")
         .bind(&program.summary.id)
         .execute(pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let ready = repo.get(&program.summary.id).await?;
     let lesson = ready.modules[0].lessons[0].id.clone();
     Ok((ready, lesson))
@@ -79,8 +75,7 @@ async fn add_block(
         .bind(json(source_ids)?)
         .bind(json(rubric)?)
         .execute(pool)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(())
 }
 
@@ -247,8 +242,7 @@ async fn starting_needs_an_active_program_a_ready_lesson_and_owned_sources() -> 
     sqlx::query("UPDATE learning_lessons SET preparation='outline' WHERE id=?")
         .bind(&outline_lesson)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_invalid(
         repo.start(
             &start_request(&program, &outline_lesson, LearningPracticeMode::Practice),

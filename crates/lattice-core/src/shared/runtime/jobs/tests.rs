@@ -484,7 +484,7 @@ async fn the_same_failure_twice_with_nothing_saved_ends_the_job() -> Result<()> 
 async fn a_busy_database_never_ends_a_job_however_often_it_repeats() -> Result<()> {
     for error in [
         AppError::DatabaseBusy("error returned from database: (code: 5) database is locked".into()),
-        AppError::DatabaseBusy("The database is temporarily busy. Saved work is retained.".into()),
+        AppError::from(sqlx::Error::PoolTimedOut),
     ] {
         let (runtime, id) = repeating(error.clone(), false).await?;
         let job = saved_once(&runtime, &id, |job| {
@@ -690,7 +690,7 @@ impl JobHandler for BusyAtTheEnd {
         let connection = loop {
             match self.pool.acquire().await {
                 Err(sqlx::Error::PoolTimedOut) => continue,
-                other => break other.map_err(|error| AppError::Database(error.to_string()))?,
+                other => break other?,
             }
         };
         let hold = self.hold;
@@ -1478,7 +1478,7 @@ fn deferral(error: &AppError) -> Deferral {
 fn a_wait_describes_the_database_when_the_database_is_busy() {
     for busy in [
         AppError::DatabaseBusy("error returned from database: (code: 5) database is locked".into()),
-        AppError::DatabaseBusy("The database is temporarily busy. Saved work is retained.".into()),
+        AppError::from(sqlx::Error::PoolTimedOut),
     ] {
         let deferral = deferral(&busy);
         assert_eq!(deferral.code, "temporarily_unavailable", "{busy}");
@@ -1505,7 +1505,7 @@ fn a_wait_keeps_the_outage_message_when_the_connection_is_lost() {
 async fn a_job_deferred_on_a_busy_database_records_the_database_as_its_cause() -> Result<()> {
     for error in [
         AppError::DatabaseBusy("error returned from database: (code: 5) database is locked".into()),
-        AppError::DatabaseBusy("The database is temporarily busy. Saved work is retained.".into()),
+        AppError::from(sqlx::Error::PoolTimedOut),
     ] {
         let runtime = JobRuntime::with_poll_interval(database().await, Duration::from_millis(10));
         runtime

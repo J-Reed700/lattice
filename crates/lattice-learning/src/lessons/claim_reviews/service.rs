@@ -38,7 +38,7 @@ mod settle;
 use crate::content_verification::located_quote;
 use crate::curriculum::{LearningGenerationJob, LearningGenerationJobStatus};
 use crate::curriculum_repository::LearningCurriculumRepository;
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use crate::plan_dto::LearningGenerationJobActionRequestDto;
 use lattice_core::shared::text::plain_text;
 use lattice_core::shared::text::same_text::whole_sentences;
@@ -389,7 +389,7 @@ impl ClaimReviewService {
     ) -> Result<(Vec<ClaimId>, Vec<ClaimKind>, Revision)> {
         let lesson_id = ledger.lesson_id.as_str();
         let user = provenance(review);
-        let mut tx = self.database.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await?;
         check_revision(&mut tx, lesson_id, ledger.revision).await?;
         let mut ended: Vec<ClaimId> = Vec::new();
         let mut through_claims: Vec<ClaimId> = Vec::new();
@@ -445,7 +445,7 @@ impl ClaimReviewService {
                 add_kinds(&mut moved, kinds);
             }
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok((ended, moved, written))
     }
 
@@ -512,7 +512,7 @@ impl ClaimReviewService {
     ) -> Result<(Revision, Vec<ClaimKind>)> {
         let published = review.state == LessonReviewState::Ready;
         let user = provenance(review);
-        let mut tx = self.database.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await?;
         check_revision(&mut tx, lesson_id, revision).await?;
         let mut ended: HashSet<ClaimId> = HashSet::new();
         for item in planned {
@@ -575,7 +575,7 @@ impl ClaimReviewService {
             let kinds = self.settle_in(&mut tx, review, lesson_id, item).await?;
             add_kinds(&mut moved, kinds);
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok((written, moved))
     }
 

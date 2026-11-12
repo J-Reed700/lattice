@@ -22,8 +22,7 @@ async fn setup() -> Result<(
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
-        .await
-        .map_err(db)?;
+        .await?;
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
         .await
@@ -97,15 +96,14 @@ async fn replacement_keeps_other_writers_out_until_after_delete_or_rollback() ->
     sqlx::query("DELETE FROM learning_programs WHERE id=?")
         .bind(&program.summary.id)
         .execute(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
     tokio::select! {
         result = &mut write => panic!("A writer escaped the replacement transaction: {result:?}"),
         _ = tokio::time::sleep(Duration::from_millis(100)) => {},
     }
     // A failed restoration leaves the old program intact, then releases writers.
-    tx.rollback().await.map_err(db)?;
-    assert_eq!(write.await.map_err(db)?.rows_affected(), 1);
+    tx.rollback().await?;
+    assert_eq!(write.await?.rows_affected(), 1);
     assert_eq!(
         LearningRepository::new(database.clone())
             .get(&program.summary.id)
@@ -121,12 +119,11 @@ async fn replacement_keeps_other_writers_out_until_after_delete_or_rollback() ->
 #[tokio::test]
 async fn replacement_captures_prior_writer_even_without_a_program_revision_bump() -> Result<()> {
     let (directory, pool, database, program, preview_id) = setup().await?;
-    let mut writer = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+    let mut writer = pool.begin_with("BEGIN IMMEDIATE").await?;
     sqlx::query("UPDATE learning_programs SET title='Saved while import was starting' WHERE id=?")
         .bind(&program.summary.id)
         .execute(&mut *writer)
-        .await
-        .map_err(db)?;
+        .await?;
     let begin = async {
         let mut tx = database.begin_write().await?;
         let backup = prepare_apply(
@@ -144,12 +141,12 @@ async fn replacement_captures_prior_writer_even_without_a_program_revision_bump(
         _ = &mut begin => panic!("Backup started before the prior writer committed"),
         _ = tokio::time::sleep(Duration::from_millis(100)) => {},
     }
-    writer.commit().await.map_err(db)?;
+    writer.commit().await?;
     let (tx, backup) = begin.await?;
     let saved = backup_program(&backup.expect("durable backup")).await?;
     assert_eq!(saved.summary.title, "Saved while import was starting");
     assert_eq!(saved.summary.revision, program.summary.revision);
-    tx.rollback().await.map_err(db)?;
+    tx.rollback().await?;
     pool.close().await;
     Ok(())
 }
@@ -160,9 +157,9 @@ async fn replacement_rechecks_unportable_state_after_preview() -> Result<()> {
     let activity_id = uuid::Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO learning_practical_activities(id,program_id,lesson_id,kind,title,brief,status,practice_mode,allowed_aids_json,outcome_ids_json,source_version_ids_json,rubric_json,runtime_kind,generator_model,revision,created_at,updated_at) VALUES(?,?,?,'project','Protected project','A project with a private evaluator','ready','practice','[]','[]','[]','[]','none','test-model',0,1,1)")
         .bind(&activity_id).bind(&program.summary.id).bind(&program.modules[0].lessons[0].id)
-        .execute(&pool).await.map_err(db)?;
+        .execute(&pool).await?;
     sqlx::query("INSERT INTO learning_practical_files(activity_id,ordinal,path,role,content,content_sha256,editable) VALUES(?,0,'checks/test.sh','check','assertion','private-check-hash',0)")
-        .bind(&activity_id).execute(&pool).await.map_err(db)?;
+        .bind(&activity_id).execute(&pool).await?;
     let mut tx = database.begin_write().await?;
     let error = match prepare_apply(
         &mut tx,

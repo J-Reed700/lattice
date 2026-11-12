@@ -1,7 +1,6 @@
 //! Finishing a coding session: the scorecard, the debrief, the ratings and the course's evidence, in one transaction.
 use super::super::{decode, json, uuid, InternalActivitySnapshot, LearningPracticalRepository};
 use super::{add_event, name_of, open_row_on};
-use crate::persistence::db;
 use crate::practice::coding::patterns;
 use crate::practice::coding::records::{Applied, CodingOp, FinishWrite};
 use lattice_core::domain::learning::practice::ScoreStatus;
@@ -38,15 +37,15 @@ impl LearningPracticalRepository {
         uuid(op.operation_id, "operation")?;
         write.scorecard.validate()?;
         uuid(program_id, "program")?;
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let operation = op.operation(program_id, session_id);
         if operation.seen(&mut tx).await? {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(Applied::Replayed);
         }
         let row = super::row_on(&mut tx, program_id, session_id).await?;
         if row.finished_at.is_some() {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(Applied::Replayed);
         }
         let row = open_row_on(&mut tx, program_id, session_id).await?;
@@ -55,8 +54,7 @@ impl LearningPracticalRepository {
         )
         .bind(session_id)
         .fetch_one(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
         let activity: InternalActivitySnapshot = decode(&snapshot)?;
         let mut active_ms = row.active_ms;
         if let Some(opened) = row.opened_at {
@@ -69,15 +67,14 @@ impl LearningPracticalRepository {
                 .bind(&each.title).bind(name_of(&each.status)?)
                 .bind(each.points.map(i64::from)).bind(i64::from(each.max_points))
                 .bind(json(&each.evidence)?).bind(&each.feedback).bind(&each.next_step)
-                .execute(&mut *tx).await.map_err(db)?;
+                .execute(&mut *tx).await?;
         }
         let target: Option<i64> = sqlx::query_scalar(
             "SELECT interview_at FROM learning_practice_profiles WHERE program_id=?",
         )
         .bind(program_id)
         .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?
+        .await?
         .flatten();
         let ratings = patterns::record_ratings_in(
             &mut tx,
@@ -92,7 +89,7 @@ impl LearningPracticalRepository {
         sqlx::query("INSERT INTO learning_exercise_debriefs(session_id,approach,complexity,ratings_json,model,written_at) VALUES(?,?,?,?,?,?)")
             .bind(session_id).bind(write.approach).bind(write.complexity)
             .bind(json(&ratings)?).bind(write.model).bind(at)
-            .execute(&mut *tx).await.map_err(db)?;
+            .execute(&mut *tx).await?;
         let observed = write
             .scorecard
             .rows
@@ -108,7 +105,7 @@ impl LearningPracticalRepository {
                 .bind(uuid::Uuid::new_v4().to_string()).bind(program_id).bind(outcome_id)
                 .bind(session_id).bind(if observed { "observed" } else { "uncertain" })
                 .bind(score_of(write)).bind(&observation).bind(json(&assistance)?).bind(at)
-                .execute(&mut *tx).await.map_err(db)?;
+                .execute(&mut *tx).await?;
         }
         sqlx::query("UPDATE learning_exercise_sessions SET draft_json=?,active_ms=?,opened_at=NULL,pending_cue_json=NULL,finished_at=?,revision=revision+1 WHERE id=?")
             .bind(json(write.files)?)
@@ -116,31 +113,28 @@ impl LearningPracticalRepository {
             .bind(at)
             .bind(session_id)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         sqlx::query("UPDATE learning_simulation_sessions SET status='submitted',submitted_at=?,updated_at=?,revision=revision+1 WHERE id=?")
             .bind(at)
             .bind(at)
             .bind(session_id)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         operation.record(&mut tx, &()).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(Applied::Done(()))
     }
 
     /// How many evidence events a session left, for tests.
     #[cfg(test)]
     pub(crate) async fn coding_evidence_count(&self, session_id: &str) -> Result<i64> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let count =
             sqlx::query_scalar("SELECT count(*) FROM learning_evidence_events WHERE source_id=?")
                 .bind(session_id)
                 .fetch_one(&mut *read)
-                .await
-                .map_err(db)?;
-        read.commit().await.map_err(db)?;
+                .await?;
+        read.commit().await?;
         Ok(count)
     }
 }

@@ -315,8 +315,7 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
         sqlx::query_scalar("SELECT id FROM learning_card_drafts WHERE program_id=? LIMIT 1")
             .bind(&prepared.summary.id)
             .fetch_one(&pool)
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .await?;
     assert!(!repo
         .accept_card_draft(&prepared.summary.id, &draft_id)
         .await?
@@ -327,8 +326,7 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
     )
     .bind(&lesson_id)
     .fetch_one(&pool)
-    .await
-    .map_err(|error| AppError::Database(error.to_string()))?;
+    .await?;
     assert!(banked > 0);
     Ok(())
 }

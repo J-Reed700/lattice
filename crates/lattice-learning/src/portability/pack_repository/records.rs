@@ -1,7 +1,7 @@
 //! What the repository records about packs and reads back: the export and
 //! import ledgers, stored previews, the workspace read model built from them,
 //! and the notice of what an export leaves behind.
-use super::{conflicts::blocks, db, guards::active_job_exists, invalid, json_string, parse};
+use super::{conflicts::blocks, guards::active_job_exists, invalid, json_string, parse};
 use crate::{
     operations::Operation,
     pack::{DecodedLearningPack, LearningPackManifest},
@@ -113,8 +113,7 @@ pub(super) async fn replayed_export(
         Some(path) if Path::new(&path).exists() => sqlx::query("SELECT manifest_json,destination_path,created_at,id,program_id FROM learning_pack_exports WHERE operation_id=?")
             .bind(&req.operation_id)
             .fetch_optional(&mut *read)
-            .await
-            .map_err(db)?,
+            .await?,
         _ => None,
     };
     read.commit().await?;
@@ -137,13 +136,12 @@ pub(super) async fn record_export(
     sqlx::query("DELETE FROM learning_pack_exports WHERE operation_id=?")
         .bind(&req.operation_id)
         .execute(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
     pack_operation(&req.operation_id, "export", payload)
         .forget(&mut tx)
         .await?;
     sqlx::query("INSERT INTO learning_pack_exports(id,program_id,operation_id,payload_hash,format_version,root_sha256,destination_path,privacy_manifest_json,entry_manifest_json,manifest_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
-        .bind(&id).bind(&req.program_id).bind(&req.operation_id).bind(payload).bind(manifest.version as i64).bind(&manifest.root_sha256).bind(&destination).bind(json_string(&manifest.privacy)?).bind(json_string(&manifest.entries)?).bind(json_string(&manifest)?).bind(created).execute(&mut *tx).await.map_err(db)?;
+        .bind(&id).bind(&req.program_id).bind(&req.operation_id).bind(payload).bind(manifest.version as i64).bind(&manifest.root_sha256).bind(&destination).bind(json_string(&manifest.privacy)?).bind(json_string(&manifest.entries)?).bind(json_string(&manifest)?).bind(created).execute(&mut *tx).await?;
     pack_operation(&req.operation_id, "export", payload)
         .record(&mut tx, &destination)
         .await?;
@@ -189,8 +187,7 @@ async fn export_notice(
         let count: i64 = sqlx::query_scalar(sql)
             .bind(program_id)
             .fetch_one(&mut *connection)
-            .await
-            .map_err(db)?;
+            .await?;
         if count > 0 {
             stays_behind.push(LearningPackStaysBehindDto {
                 kind,
@@ -228,14 +225,13 @@ pub(super) async fn workspace(
     };
     let mut read = database.begin_read().await?;
     let exports = sqlx::query("SELECT manifest_json,destination_path,created_at,id,program_id FROM learning_pack_exports WHERE program_id=? ORDER BY created_at DESC")
-            .bind(program_id).fetch_all(&mut *read).await.map_err(db)?.iter().map(export_dto).collect::<Result<Vec<_>>>()?;
+            .bind(program_id).fetch_all(&mut *read).await?.iter().map(export_dto).collect::<Result<Vec<_>>>()?;
     let import_previews = sqlx::query(
         "SELECT * FROM learning_pack_import_previews WHERE program_id=? ORDER BY created_at DESC",
     )
     .bind(program_id)
     .fetch_all(&mut *read)
-    .await
-    .map_err(db)?
+    .await?
     .into_iter()
     .map(|r| -> Result<_> {
         let status = match r.get::<String, _>("status").as_str() {
@@ -275,8 +271,7 @@ pub(super) async fn workspace(
     )
     .bind(program_id)
     .fetch_all(&mut *read)
-    .await
-    .map_err(db)?
+    .await?
     .into_iter()
     .map(|r| -> Result<_> {
         Ok(LearningPackImportResultDto {
@@ -308,8 +303,7 @@ pub(super) async fn preview_program(database: &Database, preview_id: &str) -> Re
         sqlx::query_scalar("SELECT program_id FROM learning_pack_import_previews WHERE id=?")
             .bind(preview_id)
             .fetch_one(&mut *read)
-            .await
-            .map_err(db)?;
+            .await?;
     read.commit().await?;
     Ok(program_id)
 }
@@ -333,7 +327,7 @@ pub(super) async fn record_preview(
     let manifest_json = json_string(&decoded.manifest)?;
     let mut tx = database.begin_write().await?;
     sqlx::query("INSERT INTO learning_pack_import_previews(id,operation_id,payload_hash,source_path,root_sha256,program_id,program_title,conflict_policy,conflicts_json,changes_json,warnings_json,manifest_json,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)")
-        .bind(&id).bind(&req.operation_id).bind(payload).bind(&req.source_path).bind(&decoded.manifest.root_sha256).bind(&result_program_id).bind(&preview.title).bind(policy_column(req.conflict_policy)?).bind(json_string(&preview.conflicts)?).bind(json_string(&preview.changes)?).bind(json_string(&preview.warnings)?).bind(&manifest_json).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+        .bind(&id).bind(&req.operation_id).bind(payload).bind(&req.source_path).bind(&decoded.manifest.root_sha256).bind(&result_program_id).bind(&preview.title).bind(policy_column(req.conflict_policy)?).bind(json_string(&preview.conflicts)?).bind(json_string(&preview.changes)?).bind(json_string(&preview.warnings)?).bind(&manifest_json).bind(timestamp).execute(&mut *tx).await?;
     pack_operation(&req.operation_id, "preview_import", payload)
         .record(&mut tx, &id)
         .await?;
@@ -359,8 +353,7 @@ pub(super) async fn pending_preview(
     let row = sqlx::query("SELECT * FROM learning_pack_import_previews WHERE id=?")
         .bind(preview_id)
         .fetch_optional(&mut *read)
-        .await
-        .map_err(db)?;
+        .await?;
     read.commit().await?;
     let row = row.ok_or_else(|| AppError::NotFound("Pack preview not found".into()))?;
     if row.get::<String, _>("status") != "pending" {
@@ -397,20 +390,19 @@ pub(super) async fn record_import(
         // If restoration fails, the old program rolls back and the durable
         // backup file remains as an additional recovery copy.
         sqlx::query("INSERT INTO learning_pack_exports(id,program_id,operation_id,payload_hash,format_version,root_sha256,destination_path,privacy_manifest_json,entry_manifest_json,manifest_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
-            .bind(&backup.id).bind(&backup.program_id).bind(&backup.operation_id).bind(&backup.payload_hash).bind(backup.format_version).bind(&backup.root_sha256).bind(&backup.destination_path).bind(&backup.privacy_manifest_json).bind(&backup.entry_manifest_json).bind(&backup.manifest_json).bind(backup.created_at).execute(&mut **tx).await.map_err(db)?;
+            .bind(&backup.id).bind(&backup.program_id).bind(&backup.operation_id).bind(&backup.payload_hash).bind(backup.format_version).bind(&backup.root_sha256).bind(&backup.destination_path).bind(&backup.privacy_manifest_json).bind(&backup.entry_manifest_json).bind(&backup.manifest_json).bind(backup.created_at).execute(&mut **tx).await?;
     }
     let result_id = uuid::Uuid::new_v4().to_string();
     let timestamp = now();
     sqlx::query("INSERT INTO learning_pack_imports(id,preview_id,operation_id,payload_hash,imported_program_id,backup_id,applied_changes_json,imported_at) VALUES(?,?,?,?,?,?,?,?)")
-        .bind(&result_id).bind(&req.preview_id).bind(&req.operation_id).bind(payload).bind(program_id).bind(backup.map(|x|x.id.as_str())).bind(json_string(&changes)?).bind(timestamp).execute(&mut **tx).await.map_err(db)?;
+        .bind(&result_id).bind(&req.preview_id).bind(&req.operation_id).bind(payload).bind(program_id).bind(backup.map(|x|x.id.as_str())).bind(json_string(&changes)?).bind(timestamp).execute(&mut **tx).await?;
     sqlx::query(
         "UPDATE learning_pack_import_previews SET status='applied',decided_at=? WHERE id=?",
     )
     .bind(timestamp)
     .bind(&req.preview_id)
     .execute(&mut **tx)
-    .await
-    .map_err(db)?;
+    .await?;
     pack_operation(&req.operation_id, "apply_import", payload)
         .record(tx, &result_id)
         .await

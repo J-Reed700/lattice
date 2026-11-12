@@ -7,7 +7,7 @@ use super::{
     LearningAssessmentRepository,
 };
 use crate::dto::*;
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use crate::quiz_bank_jobs;
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
@@ -76,8 +76,7 @@ async fn ordinal_of(
     .bind(form_id)
     .bind(item_id)
     .fetch_optional(&mut *connection)
-    .await
-    .map_err(db)?
+    .await?
     .ok_or_else(|| invalid("That question is not part of this quiz."))
 }
 
@@ -89,8 +88,7 @@ impl LearningAssessmentRepository {
         let rows = sqlx::query("SELECT * FROM learning_assessment_grade_contests WHERE form_id=?")
             .bind(form_id)
             .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?;
+            .await?;
         let mut contests = HashMap::new();
         for row in rows {
             let first: KeptGrade = decode(row.get("first_results_json")).unwrap_or_default();
@@ -131,7 +129,7 @@ impl LearningAssessmentRepository {
                 "A note is at most {MAX_CHAT_MESSAGE_CHARS} characters."
             )));
         }
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let operation = assessment_operation(
             &req.operation_id,
             &req.program_id,
@@ -141,7 +139,7 @@ impl LearningAssessmentRepository {
             "Operation ID was reused with a different contest.",
         );
         if operation.seen(&mut tx).await? {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok((self.get_form(&req.form_id).await?, None));
         }
         Self::active_program(&mut tx, &req.program_id).await?;
@@ -151,8 +149,7 @@ impl LearningAssessmentRepository {
             .bind(ordinal)
             .bind(&req.program_id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
+            .await?
             .ok_or_else(|| invalid("This answer has no grade to contest yet."))?;
         if !matches!(
             result.get::<String, _>("grade_status").as_str(),
@@ -166,8 +163,7 @@ impl LearningAssessmentRepository {
             .bind(&req.form_id)
             .bind(ordinal)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         let rationale_json: String = result.get("rationale_json");
         let first = KeptGrade {
             rationale: decode(&rationale_json).ok(),
@@ -186,8 +182,7 @@ impl LearningAssessmentRepository {
                     .bind(json(&first)?)
                     .bind(now())
                     .execute(&mut *tx)
-                    .await
-                    .map_err(db)?;
+                    .await?;
                 id
             }
             // A regrade that failed may be asked for again.
@@ -197,14 +192,12 @@ impl LearningAssessmentRepository {
                     .bind(&req.form_id)
                     .bind(ordinal)
                     .execute(&mut *tx)
-                    .await
-                    .map_err(db)?;
+                    .await?;
                 sqlx::query_scalar("SELECT id FROM learning_assessment_grade_contests WHERE form_id=? AND item_ordinal=?")
                     .bind(&req.form_id)
                     .bind(ordinal)
                     .fetch_one(&mut *tx)
-                    .await
-                    .map_err(db)?
+                    .await?
             }
             Some(_) => return Err(invalid("This grade was already contested.")),
         };
@@ -217,18 +210,17 @@ impl LearningAssessmentRepository {
         )
         .await?;
         operation.record(&mut tx, &contest_id).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok((self.get_form(&req.form_id).await?, Some(job)))
     }
 
     pub(crate) async fn contest_input(&self, contest_id: &str) -> Result<Option<ContestInput>> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let row = sqlx::query("SELECT form_id,item_ordinal,note FROM learning_assessment_grade_contests WHERE id=? AND status='open'")
             .bind(contest_id)
             .fetch_optional(&mut *read)
-            .await
-            .map_err(db)?;
-        read.commit().await.map_err(db)?;
+            .await?;
+        read.commit().await?;
         Ok(row.map(|r| ContestInput {
             form_id: r.get("form_id"),
             ordinal: r.get("item_ordinal"),
@@ -244,12 +236,11 @@ impl LearningAssessmentRepository {
         regrade: Regrade,
         model: &str,
     ) -> Result<()> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let contest = sqlx::query("SELECT form_id,item_ordinal,first_score FROM learning_assessment_grade_contests WHERE id=? AND status='open'")
             .bind(contest_id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
+            .await?
             .ok_or_else(|| AppError::NotFound("Open contest not found".into()))?;
         let form_id: String = contest.get("form_id");
         let ordinal: i64 = contest.get("item_ordinal");
@@ -261,8 +252,7 @@ impl LearningAssessmentRepository {
                     .bind(now())
                     .bind(contest_id)
                     .execute(&mut *tx)
-                    .await
-                    .map_err(db)?;
+                    .await?;
             }
             Regrade::Graded {
                 fraction,
@@ -286,8 +276,7 @@ impl LearningAssessmentRepository {
                     .bind(now())
                     .bind(contest_id)
                     .execute(&mut *tx)
-                    .await
-                    .map_err(db)?;
+                    .await?;
                 if revised {
                     sqlx::query("UPDATE learning_assessment_item_results SET score=?,correct=?,grade_status=?,feedback=?,points_earned=?*points_possible,rationale_json=? WHERE form_id=? AND item_ordinal=?")
                         .bind(fraction)
@@ -299,13 +288,12 @@ impl LearningAssessmentRepository {
                         .bind(&form_id)
                         .bind(ordinal)
                         .execute(&mut *tx)
-                        .await
-                        .map_err(db)?;
+                        .await?;
                     Self::finalize_in(&mut tx, &form_id).await?;
                 }
             }
         }
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     /// Count an item as right after its regrade was upheld. Labelled, kept
@@ -318,7 +306,7 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let operation = assessment_operation(
             &req.operation_id,
             &req.program_id,
@@ -328,7 +316,7 @@ impl LearningAssessmentRepository {
             "Operation ID was reused with a different override.",
         );
         if operation.seen(&mut tx).await? {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return self.get_form(&req.form_id).await;
         }
         Self::active_program(&mut tx, &req.program_id).await?;
@@ -339,8 +327,7 @@ impl LearningAssessmentRepository {
             .bind(ordinal)
             .bind(&req.program_id)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         if changed.rows_affected() != 1 {
             return Err(invalid(
                 "An override is possible only after a regrade upheld the grade.",
@@ -350,12 +337,11 @@ impl LearningAssessmentRepository {
             .bind(&req.form_id)
             .bind(ordinal)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         Self::record_override_evidence_in(&mut tx, &req.form_id, ordinal).await?;
         Self::finalize_in(&mut tx, &req.form_id).await?;
         operation.record(&mut tx, &()).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         self.get_form(&req.form_id).await
     }
 
@@ -374,7 +360,7 @@ impl LearningAssessmentRepository {
                 "A note is at most {MAX_CHAT_MESSAGE_CHARS} characters."
             )));
         }
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let operation = assessment_operation(
             &req.operation_id,
             &req.program_id,
@@ -384,7 +370,7 @@ impl LearningAssessmentRepository {
             "Operation ID was reused with a different report.",
         );
         if operation.seen(&mut tx).await? {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return self.get_form(&req.form_id).await;
         }
         Self::active_program(&mut tx, &req.program_id).await?;
@@ -395,8 +381,7 @@ impl LearningAssessmentRepository {
         .bind(&req.form_id)
         .bind(ordinal)
         .fetch_one(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
         if !parse_format(&format)?.is_keyed() {
             return Err(invalid(
                 "Written answers are contested, not reported: use “I think I was right”.",
@@ -410,16 +395,14 @@ impl LearningAssessmentRepository {
             .bind(req.note.trim())
             .bind(now())
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         sqlx::query("UPDATE learning_assessment_candidates SET review_status='reported' WHERE id=? AND program_id=?")
             .bind(&req.item_id)
             .bind(&req.program_id)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         operation.record(&mut tx, &()).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         self.get_form(&req.form_id).await
     }
 }

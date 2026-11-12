@@ -4,7 +4,7 @@ use super::{
     PracticalDraftOperationResult,
 };
 use crate::lab_runtime::LearningLabFile;
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use crate::practical_dto::*;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::path_safety::single_file_name;
@@ -21,15 +21,14 @@ impl LearningPracticalRepository {
         if request.activity_revision < 0 {
             return Err(invalid("Invalid practical activity revision."));
         }
-        let mut tx = self.db.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await?;
         let activity = sqlx::query(
             "SELECT revision FROM learning_practical_activities WHERE program_id=? AND id=?",
         )
         .bind(&request.program_id)
         .bind(&request.activity_id)
         .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?
+        .await?
         .ok_or_else(|| AppError::NotFound("Practical activity not found".into()))?;
         let current_revision: i64 = activity.get("revision");
         if current_revision != request.activity_revision {
@@ -39,18 +38,18 @@ impl LearningPracticalRepository {
         }
         if let Some(row) = sqlx::query("SELECT draft_revision,files_json,updated_at FROM learning_practical_drafts WHERE program_id=? AND activity_id=? AND activity_revision=?")
             .bind(&request.program_id).bind(&request.activity_id).bind(request.activity_revision)
-            .fetch_optional(&mut *tx).await.map_err(db)?
+            .fetch_optional(&mut *tx).await?
         {
             let draft = LearningPracticalDraftDto {
                 program_id: request.program_id.clone(), activity_id: request.activity_id.clone(),
                 activity_revision: request.activity_revision, draft_revision: row.get("draft_revision"),
                 files: decode(&row.get::<String, _>("files_json"))?, updated_at: Some(row.get("updated_at")),
             };
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(draft);
         }
         let rows = sqlx::query("SELECT path,content FROM learning_practical_files WHERE activity_id=? AND role='starter' AND editable=1 ORDER BY ordinal")
-            .bind(&request.activity_id).fetch_all(&mut *tx).await.map_err(db)?;
+            .bind(&request.activity_id).fetch_all(&mut *tx).await?;
         let draft = LearningPracticalDraftDto {
             program_id: request.program_id.clone(),
             activity_id: request.activity_id.clone(),
@@ -65,7 +64,7 @@ impl LearningPracticalRepository {
                 .collect(),
             updated_at: None,
         };
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(draft)
     }
 
@@ -113,7 +112,7 @@ impl LearningPracticalRepository {
             return Err(invalid("Practical draft exceeds the 2 MiB total limit."));
         }
 
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let operation = practical_operation(
             "practical_draft",
             &request.operation_id,
@@ -135,7 +134,7 @@ impl LearningPracticalRepository {
                 files: request.files.clone(),
                 updated_at: Some(result.updated_at),
             };
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(replay);
         }
         Self::active_program(&mut tx, &request.program_id).await?;
@@ -145,8 +144,7 @@ impl LearningPracticalRepository {
         .bind(&request.program_id)
         .bind(&request.activity_id)
         .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?
+        .await?
         .ok_or_else(|| AppError::NotFound("Practical activity not found".into()))?;
         if activity.get::<i64, _>("revision") != request.activity_revision {
             return Err(AppError::Conflict(
@@ -154,7 +152,7 @@ impl LearningPracticalRepository {
             ));
         }
         let allowed_rows = sqlx::query("SELECT path FROM learning_practical_files WHERE activity_id=? AND role='starter' AND editable=1 ORDER BY ordinal")
-            .bind(&request.activity_id).fetch_all(&mut *tx).await.map_err(db)?;
+            .bind(&request.activity_id).fetch_all(&mut *tx).await?;
         let allowed = allowed_rows
             .into_iter()
             .map(|row| row.get::<String, _>("path"))
@@ -171,7 +169,7 @@ impl LearningPracticalRepository {
         }
         let existing = sqlx::query("SELECT draft_revision FROM learning_practical_drafts WHERE program_id=? AND activity_id=? AND activity_revision=?")
             .bind(&request.program_id).bind(&request.activity_id).bind(request.activity_revision)
-            .fetch_optional(&mut *tx).await.map_err(db)?;
+            .fetch_optional(&mut *tx).await?;
         let current_revision = existing
             .map(|row| row.get::<i64, _>("draft_revision"))
             .unwrap_or(0);
@@ -184,7 +182,7 @@ impl LearningPracticalRepository {
         let timestamp = now();
         sqlx::query("INSERT INTO learning_practical_drafts(program_id,activity_id,activity_revision,draft_revision,files_json,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(program_id,activity_id,activity_revision) DO UPDATE SET draft_revision=excluded.draft_revision,files_json=excluded.files_json,updated_at=excluded.updated_at")
             .bind(&request.program_id).bind(&request.activity_id).bind(request.activity_revision)
-            .bind(result_revision).bind(json(&request.files)?).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+            .bind(result_revision).bind(json(&request.files)?).bind(timestamp).execute(&mut *tx).await?;
         operation
             .record(
                 &mut tx,
@@ -194,7 +192,7 @@ impl LearningPracticalRepository {
                 },
             )
             .await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(LearningPracticalDraftDto {
             program_id: request.program_id.clone(),
             activity_id: request.activity_id.clone(),

@@ -1,5 +1,5 @@
 use super::super::capture::{compare_all_saved, Comparison, SavedTexts, VersionText};
-use crate::persistence::db;
+use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::Database;
 use sqlx::{Row, SqliteConnection};
@@ -15,9 +15,9 @@ pub(in crate::references::trust) async fn active_texts(
     database: &Database,
     program_id: &str,
 ) -> Result<Vec<CourseText>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let texts = active_texts_in(&mut read, program_id).await?;
-    read.commit().await.map_err(db)?;
+    read.commit().await?;
     Ok(texts)
 }
 
@@ -42,8 +42,7 @@ pub(in crate::references::trust) async fn active_texts_in(
     )
     .bind(program_id)
     .fetch_all(&mut *conn)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(saved
         .iter()
         .map(|row| CourseText {
@@ -66,7 +65,7 @@ pub(in crate::references::trust) async fn signals_json(
     .bind(version_id)
     .fetch_optional(&mut *conn)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 pub(in crate::references::trust) async fn other_active_version_ids(
@@ -81,7 +80,7 @@ pub(in crate::references::trust) async fn other_active_version_ids(
     .bind(source_id)
     .fetch_all(&mut *conn)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 pub(in crate::references::trust) async fn version_text(
@@ -94,7 +93,7 @@ pub(in crate::references::trust) async fn version_text(
         .bind(version_id)
         .fetch_one(connection)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 pub(in crate::references::trust) async fn captured_version_of(
@@ -112,5 +111,5 @@ pub(in crate::references::trust) async fn captured_version_of(
     .bind(url)
     .fetch_optional(&mut *conn)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }

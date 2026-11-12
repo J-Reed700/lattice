@@ -68,20 +68,3 @@ pub(crate) fn lesson_failure(job: &JobRecord, error: &AppError) -> JobFailure {
         activity,
     })
 }
-
-#[cfg(test)]
-#[test]
-fn only_database_pool_admission_timeout_is_a_temporary_service_failure() {
-    assert!(matches!(
-        db(sqlx::Error::PoolTimedOut),
-        AppError::DatabaseBusy(_)
-    ));
-    assert!(matches!(
-        db(sqlx::Error::RowNotFound),
-        AppError::Database(_)
-    ));
-    assert!(matches!(
-        db(sqlx::Error::Protocol("invalid state".into())),
-        AppError::Database(_)
-    ));
-}

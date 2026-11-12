@@ -4,7 +4,6 @@
 //! guide is studied as feedback on an attempt rather than read in advance.
 use super::recall_repository::interview;
 use super::study_dto::{StudyCardDto, StudyCardFormat, StudyDeckDto, StudySourceDto};
-use crate::persistence::db;
 use crate::practice::{
     interview_answers::{InterviewAnswerGuide, InterviewAnswerGuides, INTERVIEW_ANSWERS_FILE_PATH},
     practical_dto::{
@@ -37,9 +36,9 @@ pub(crate) async fn load(
     program_id: &str,
     activity_id: &str,
 ) -> Result<InterviewMaterial> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let material = load_in(&mut read, program_id, activity_id).await?;
-    read.commit().await.map_err(db)?;
+    read.commit().await?;
     Ok(material)
 }
 
@@ -267,7 +266,7 @@ fn deck_id(material: &InterviewMaterial) -> String {
 /// The IDs of the decks the course's ready interviews make, whether or not the drill was made yet. An interview that
 /// cannot become a drill makes none.
 pub(crate) async fn deck_ids(database: &Database, program_id: &str) -> Result<Vec<String>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let activity_ids = interview::ready_activity_ids(&mut read, program_id).await?;
     let mut ids = Vec::new();
     for activity_id in activity_ids {
@@ -277,7 +276,7 @@ pub(crate) async fn deck_ids(database: &Database, program_id: &str) -> Result<Ve
             Err(_) => {}
         }
     }
-    read.commit().await.map_err(db)?;
+    read.commit().await?;
     Ok(ids)
 }
 
@@ -326,7 +325,6 @@ pub(crate) fn deck(material: &InterviewMaterial, now: i64) -> StudyDeckDto {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::persistence::db;
     use serde_json::json;
     use sqlx::SqlitePool;
 
@@ -501,11 +499,11 @@ mod tests {
     ) -> Result<()> {
         sqlx::query("INSERT INTO learning_practical_activities(id,program_id,lesson_id,kind,title,brief,status,practice_mode,allowed_aids_json,outcome_ids_json,source_version_ids_json,rubric_json,runtime_kind,generator_model,created_at,updated_at) VALUES(?,'program','lesson',?,'Acme loop','',?,'practice','[]','[]','[]','[]','none','model',0,0)")
             .bind(id).bind(kind).bind(status)
-            .execute(pool).await.map_err(db)?;
+            .execute(pool).await?;
         for (ordinal, (path, role, content)) in files.iter().enumerate() {
             sqlx::query("INSERT INTO learning_practical_files(activity_id,ordinal,path,role,content,content_sha256,editable) VALUES(?,?,?,?,?,'sha',0)")
                 .bind(id).bind(ordinal as i64).bind(*path).bind(*role).bind(content)
-                .execute(pool).await.map_err(db)?;
+                .execute(pool).await?;
         }
         Ok(())
     }
@@ -517,8 +515,7 @@ mod tests {
         // Only the rows `load` reads; their program, lesson and source library are not under test.
         sqlx::query("PRAGMA foreign_keys=OFF")
             .execute(&pool)
-            .await
-            .map_err(db)?;
+            .await?;
         let json = |value: serde_json::Result<String>| {
             value.map_err(|error| AppError::Serialization(error.to_string()))
         };
@@ -541,7 +538,7 @@ mod tests {
         )
         .await?;
         sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES('v1','program','s1',1,'Acme engineering blog',NULL,'https://acme.example.com/requested','https://acme.example.com/blog','text','text','sha',1,0,'test',0)")
-            .execute(&pool).await.map_err(db)?;
+            .execute(&pool).await?;
 
         let material = load(&database, "program", "ready").await?;
         assert_eq!(material.title, "Acme loop");
@@ -614,8 +611,7 @@ mod tests {
         let database = Database::new(pool.clone());
         sqlx::query("PRAGMA foreign_keys=OFF")
             .execute(&pool)
-            .await
-            .map_err(db)?;
+            .await?;
         let plan = serde_json::to_string(&plan())
             .map_err(|error| AppError::Serialization(error.to_string()))?;
         save(
@@ -641,8 +637,7 @@ mod tests {
             .bind(interview)
             .bind(&first.cards[0].id)
             .execute(&pool)
-            .await
-            .map_err(db)?;
+            .await?;
         let ids = |deck: &StudyDeckDto| {
             deck.cards
                 .iter()

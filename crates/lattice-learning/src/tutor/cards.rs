@@ -3,7 +3,7 @@
 
 use super::course_turn::CourseTurn;
 use super::repository::{assistant_replies, card_due_at, card_to_rate, due_cards, due_count};
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use crate::portability_dto::{
     LearningRecallCardFormat, LearningRecallContentDto, ReviewLearningRecallCardRequestDto,
     SaveLearningRecallCardRequestDto,
@@ -75,7 +75,7 @@ fn plain_words(text: &str) -> String {
 /// card asked last is the one answered.
 async fn asked_in(database: &Database, conversation_id: &str, front: &str) -> Result<bool> {
     let front = plain_words(front);
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let mut replies = assistant_replies(&mut read, conversation_id);
     while let Some(reply) = replies.try_next().await? {
         if plain_words(&reply).contains(&front) {
@@ -83,7 +83,7 @@ async fn asked_in(database: &Database, conversation_id: &str, front: &str) -> Re
         }
     }
     drop(replies);
-    read.commit().await.map_err(db)?;
+    read.commit().await?;
     Ok(false)
 }
 

@@ -6,7 +6,6 @@ use super::support::{
 };
 use crate::drills::brief::lesson_brief;
 use crate::drills::lesson::LessonContext;
-use crate::persistence::db;
 use crate::tests::pool;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{evidence_units, LessonSentence};
@@ -178,8 +177,7 @@ async fn an_outline_lesson_takes_no_more_than_its_planned_minutes_take_to_read_b
     sqlx::query("UPDATE learning_lessons SET estimated_minutes=0 WHERE id=?")
         .bind(&context.lesson_id)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let context = LessonContext::load(&database, &context.program_id, &context.lesson_id).await?;
     assert_eq!(context.estimated_minutes, 0);
     let none_planned = lesson_brief(&none(), &database, &context, usize::MAX).await?;
@@ -198,8 +196,7 @@ async fn an_outline_lesson_the_sources_say_nothing_of_has_no_evidence_and_is_not
     )
     .bind(&context.lesson_id)
     .execute(&pool)
-    .await
-    .map_err(db)?;
+    .await?;
     let context = LessonContext::load(&database, &context.program_id, &context.lesson_id).await?;
     let brief = lesson_brief(&none(), &database, &context, usize::MAX).await?;
     assert!(brief.evidence.is_empty());

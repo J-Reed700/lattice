@@ -272,12 +272,11 @@ async fn outline_stage(
 ) -> Result<Option<LearningProgramDto>> {
     let repo = LearningRepository::new(database.clone());
     let drafts = DraftRunRegistry::new();
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM learning_programs")
         .fetch_all(&mut *read)
-        .await
-        .map_err(db)?;
-    read.commit().await.map_err(db)?;
+        .await?;
+    read.commit().await?;
     if ids.len() > 1 {
         return Err(refuse("the run database holds more than one course"));
     }
@@ -614,8 +613,7 @@ async fn lesson_stage(
         sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(options.clone())
-            .await
-            .map_err(db)?,
+            .await?,
     );
     let library = LearningRepository::new(reopened.clone());
     let lesson = library
@@ -626,16 +624,15 @@ async fn lesson_stage(
         .and_then(|m| m.lessons.get(position))
         .cloned()
         .ok_or_else(|| refuse(format!("lesson {selector} is no longer in the course")))?;
-    let mut read = reopened.begin_read().await.map_err(db)?;
+    let mut read = reopened.begin_read().await?;
     let report: Option<String> = sqlx::query_scalar(
         "SELECT report_json FROM learning_lesson_verifications WHERE program_id=? AND lesson_id=?",
     )
     .bind(program_id)
     .bind(&lesson.id)
     .fetch_optional(&mut *read)
-    .await
-    .map_err(db)?;
-    read.commit().await.map_err(db)?;
+    .await?;
+    read.commit().await?;
     let report: Option<Value> = report.as_deref().map(serde_json::from_str).transpose()?;
     // The lesson's questions are bank items now; the quiz stage records them with their keys.
     let sources = library.verification_sources(program_id).await?;

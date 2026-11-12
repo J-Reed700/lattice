@@ -5,7 +5,7 @@ use crate::{
 };
 use crate::{
     operations::Operation,
-    persistence::{db, hash, now},
+    persistence::{hash, now},
 };
 use futures::TryStreamExt;
 use lattice_core::domain::learning::claim_review::SourceAddedBy;
@@ -202,11 +202,11 @@ impl LearningSourceLibraryRepository {
         payload_hash: &str,
     ) -> Result<bool> {
         uuid(operation_id, "operation")?;
-        let mut read = self.database.begin_read().await.map_err(db)?;
+        let mut read = self.database.begin_read().await?;
         let seen = source_operation(operation_id, program_id, source_id, kind, payload_hash)
             .seen(&mut read)
             .await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         Ok(seen)
     }
 
@@ -219,7 +219,7 @@ impl LearningSourceLibraryRepository {
         Self::validate_program_id(program_id)?;
         uuid(source_id, "source")?;
         uuid(version_id, "source version")?;
-        let mut read = self.database.begin_read().await.map_err(db)?;
+        let mut read = self.database.begin_read().await?;
         if !repository::active_program_exists(&mut read, program_id).await? {
             return Err(AppError::NotFound(
                 "Active learning program not found".into(),
@@ -230,7 +230,7 @@ impl LearningSourceLibraryRepository {
                 "The requested source or version ID is already in use.",
             ));
         }
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         Ok(())
     }
 
