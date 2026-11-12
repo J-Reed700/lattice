@@ -130,7 +130,7 @@ async fn the_request_shows_every_sentence_with_its_id_and_the_schema_allows_exac
 
     let asked = model.asked.lock().unwrap();
     let (prompt, schema) = asked.first().expect("the extractor was asked");
-    let shown: Value = serde_json::from_str(prompt.rsplit("\n\n").next().unwrap()).unwrap();
+    let shown: Value = fixture_task(prompt).unwrap();
     assert_eq!(
         shown["units"][0]["passages"][0]["sentences"],
         json!([
@@ -216,7 +216,7 @@ fn audits(prompt: &str) -> String {
         })
         .to_string();
     }
-    let data: Value = serde_json::from_str(prompt.rsplit("\n\n").next().unwrap()).unwrap();
+    let data: Value = fixture_task(prompt).unwrap();
     let decisions: Vec<Value> = data["units"]
         .as_array()
         .unwrap()

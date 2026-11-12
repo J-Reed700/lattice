@@ -476,7 +476,7 @@ mod passage_list_tests;
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
-    use crate::content_verification::tests::{fixture_completion, fixture_prompts};
+    use crate::content_verification::tests::{fixture_completion, fixture_prompts, fixture_task};
     use crate::lessons::course_generation_tests::ScriptedModel;
     use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 
@@ -513,9 +513,6 @@ mod tests {
             outputs: std::sync::Mutex::new(outputs.into()),
             prompts: std::sync::Mutex::new(Vec::new()),
         }
-    }
-    fn request(prompt: &str) -> Value {
-        serde_json::from_str(prompt.rsplit("\n\n").next().unwrap()).unwrap()
     }
 
     struct ConcurrentFidelityModel(std::sync::atomic::AtomicUsize);
@@ -599,7 +596,7 @@ mod tests {
             }]
         );
         assert!(coverage[0].reason.contains("a: Equal inputs guarantee"));
-        let data = request(&model.prompts.lock().unwrap()[0]);
+        let data = fixture_task(&model.prompts.lock().unwrap()[0]).unwrap();
         assert_eq!(data["targetPassage"]["id"], "a");
         assert_eq!(data["inventory"].as_array().unwrap().len(), 2);
         assert_eq!(data["section"].as_array().unwrap().len(), 1);
@@ -786,7 +783,7 @@ mod tests {
             .unwrap();
         let prompts = model.prompts.lock().unwrap();
         assert_eq!(prompts.len(), 1);
-        let data = request(&prompts[0]);
+        let data = fixture_task(&prompts[0]).unwrap();
         assert_eq!(data["targetPassage"]["field"], "/explanation");
         assert_eq!(data["assessment"]["correctIndex"], 0);
         assert!(data["assessment"]["question"][0]
@@ -826,7 +823,7 @@ mod tests {
         assert!(checked.iter().all(|unit| unit.complete));
         let prompts = model.prompts.lock().unwrap();
         assert_eq!(prompts.len(), 1, "nonfactual passages are not judged");
-        let data = request(&prompts[0]);
+        let data = fixture_task(&prompts[0]).unwrap();
         assert_eq!(data["targetPassage"]["id"], "target");
         assert!(data["section"]
             .to_string()

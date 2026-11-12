@@ -136,7 +136,7 @@ impl Figures {
             return Ok(plan.clone());
         }
         if prompt.starts_with("Extract lesson claims.") {
-            let data = self::context(prompt);
+            let data = fixture_task(prompt).unwrap();
             let units = data["units"].as_array().unwrap();
             self.extracted
                 .lock()
@@ -166,7 +166,7 @@ impl Figures {
             return Ok(reply);
         }
         if prompt.starts_with("Repair verified lesson defects.") {
-            let data = self::context(prompt);
+            let data = fixture_task(prompt).unwrap();
             assert!(
                 !prompt.contains("lastAttempt"),
                 "a last attempt is cut in code, never sent"

@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::test_support::candidate;
 use super::*;
+use crate::content_verification::tests::fixture_task;
 use crate::lessons::course_generation_tests::{ScriptedModel, Windowed};
 
 /// A first review of everything: what it reported.
@@ -414,7 +415,7 @@ fn verdict_entry(number: u32, verdict: &str, quote: &str) -> Value {
 
 fn sent(model: &ScriptedModel, call: usize) -> Value {
     let prompts = model.prompts.lock().unwrap();
-    serde_json::from_str(prompts[call].rsplit("\n\n").next().unwrap()).unwrap()
+    fixture_task(&prompts[call]).unwrap()
 }
 
 #[test]

@@ -85,7 +85,7 @@ impl JudgingModel {
     async fn respond(&self, prompt: &str) -> Result<String> {
         if self.premise_missed && prompt.starts_with("Extract lesson claims.") {
             let mut response: Value = serde_json::from_str(&fixture_response(prompt).unwrap())?;
-            for unit in context(prompt)["units"].as_array().unwrap() {
+            for unit in fixture_task(prompt).unwrap()["units"].as_array().unwrap() {
                 let exercise = unit["passages"]
                     .as_array()
                     .unwrap()
@@ -98,7 +98,7 @@ impl JudgingModel {
             return Ok(response.to_string());
         }
         if prompt.starts_with("Audit inventory fidelity.") {
-            let data = context(prompt);
+            let data = fixture_task(prompt).unwrap();
             if passage_text(&data["targetPassage"]) == self.proposed_passage {
                 self.judged.fetch_add(1, Ordering::Relaxed);
                 let sentence = &data["targetPassage"]["sentences"][0]["id"];
@@ -114,7 +114,7 @@ impl JudgingModel {
         }
         if prompt.starts_with("Audit claim coverage independently.") {
             let mut response: Value = serde_json::from_str(&fixture_response(prompt).unwrap())?;
-            for unit in context(prompt)["units"].as_array().unwrap() {
+            for unit in fixture_task(prompt).unwrap()["units"].as_array().unwrap() {
                 for passage in unit["passages"].as_array().unwrap() {
                     if passage["text"] == self.proposed_passage {
                         let id = passage["id"].as_str().unwrap();

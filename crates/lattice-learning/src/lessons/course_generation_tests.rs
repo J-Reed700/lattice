@@ -1,5 +1,5 @@
 //! Exercise the real authoring, validation and persistence boundaries without a live model.
-use crate::content_verification::tests::{fixture_completion, fixture_prompts};
+use crate::content_verification::tests::{fixture_completion, fixture_prompts, fixture_task};
 use crate::lessons::course_plan::CoursePlan;
 use crate::{
     dto::*, generation, practice_repository::LearningPracticeRepository,
@@ -46,8 +46,7 @@ impl Model {
             return Ok("supported\nReason: The fixture reference supports the experimental design.\nSource quote: A randomized comparison isolates the intervention.\nSource passage: passage-0".into());
         }
         if prompt.starts_with("Review instructional quality.") {
-            let context: serde_json::Value =
-                serde_json::from_str(prompt.rsplit("\n\n").next().unwrap_or("{}"))?;
+            let context: serde_json::Value = fixture_task(prompt).expect("a JSON task");
             // Only the outline plan review numbers the modules it shows;
             // the teaching reviews keep their own response shape.
             if context.get("moduleNumbering").is_some() {
@@ -692,8 +691,7 @@ pub(crate) const LINKS_SENTINEL: &str = "{\"@links\":";
 
 fn link_reply(prompt: &str, sentinel: &str) -> String {
     let picks: serde_json::Value = serde_json::from_str(sentinel).expect("links sentinel");
-    let payload: serde_json::Value =
-        serde_json::from_str(prompt.rsplit("\n\n").next().unwrap_or("{}")).expect("link prompt");
+    let payload: serde_json::Value = fixture_task(prompt).expect("link prompt");
     let passages = payload["passages"].as_array().cloned().unwrap_or_default();
     let text_of = |id: &str| {
         passages
@@ -1513,8 +1511,7 @@ async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_repo
     assert!(linking.iter().any(|p| p.contains(quote)));
     assert!(!linking.iter().any(|p| p.contains("does not isolate")));
     // The reviewer sees no citation fields on items and no quote findings.
-    let review_context: serde_json::Value =
-        serde_json::from_str(prompts[1].rsplit("\n\n").next().unwrap())?;
+    let review_context: serde_json::Value = fixture_task(&prompts[1]).expect("a JSON task");
     assert!(review_context["candidate"]["modules"][0]["summary"]
         .get("sourceIndex")
         .is_none());
@@ -1805,8 +1802,7 @@ async fn outline_automatic_repair_is_bounded_by_attempts_and_repair_starts_them_
     // review was told how many attempts the finding had used.
     assert!(prompts[4].contains("This is the last attempt"));
     assert!(!prompts[2].contains("This is the last attempt"));
-    let second_review: serde_json::Value =
-        serde_json::from_str(prompts[3].rsplit("\n\n").next().unwrap())?;
+    let second_review: serde_json::Value = fixture_task(&prompts[3]).expect("a JSON task");
     assert_eq!(second_review["openFindings"][0]["attempts"], 1);
     assert_eq!(
         second_review["openFindings"][0]["claim"],
@@ -1843,8 +1839,7 @@ async fn outline_automatic_repair_is_bounded_by_attempts_and_repair_starts_them_
     assert_eq!(review.repair_passes, 3);
     let prompts = model.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 3);
-    let reopened: serde_json::Value =
-        serde_json::from_str(prompts[0].rsplit("\n\n").next().unwrap())?;
+    let reopened: serde_json::Value = fixture_task(&prompts[0]).expect("a JSON task");
     assert_eq!(reopened["openFindings"][0]["attempts"], 0);
     Ok(())
 }
