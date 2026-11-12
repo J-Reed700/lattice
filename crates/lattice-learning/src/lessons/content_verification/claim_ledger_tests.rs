@@ -3052,7 +3052,7 @@ async fn a_lesson_whose_cuts_would_take_all_of_its_questions_keeps_the_last_with
 }
 
 #[tokio::test]
-async fn a_lesson_whose_cuts_take_every_question_of_a_kind_it_asks_is_published_without_that_question(
+async fn a_lesson_whose_cuts_would_take_every_question_of_a_kind_it_asks_is_published_with_that_statement_standing(
 ) -> Result<()> {
     let course = Course::new().await?;
     let draft = with_questions(vec![quiz("practice", &figure(5)), quiz("quiz", GOOD)]);
@@ -3065,7 +3065,7 @@ async fn a_lesson_whose_cuts_take_every_question_of_a_kind_it_asks_is_published_
             &draft,
         )
         .await
-        .expect("the lesson publishes, one question cut");
+        .expect("the lesson publishes, one statement not verified");
 
     assert!(report.issues.is_empty(), "{:?}", report.issues);
     assert!(held_for_review(
@@ -3078,9 +3078,10 @@ async fn a_lesson_whose_cuts_take_every_question_of_a_kind_it_asks_is_published_
     let published: Value = serde_json::from_str(&raw)?;
     let questions = published["questions"].as_array().unwrap();
     let trail = course.trail().await?;
-    assert_eq!(questions.len(), 1, "{questions:?}\n{trail}");
-    assert_eq!(questions[0]["kind"], json!("quiz"));
-    assert_eq!(questions[0]["explanation"], json!(GOOD));
+    assert_eq!(questions.len(), 2, "{questions:?}\n{trail}");
+    assert_eq!(questions[0]["kind"], json!("practice"));
+    assert_eq!(questions[0]["explanation"], json!(figure(0)));
+    assert_eq!(questions[1]["explanation"], json!(GOOD));
     course.assert_invariants(&raw, &report).await?;
     Ok(())
 }
