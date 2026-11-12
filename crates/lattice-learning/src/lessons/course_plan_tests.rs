@@ -547,12 +547,8 @@ async fn a_written_lesson_is_planned_from_what_it_taught() {
     use crate::dto::{LearningBlockDto, LearningBlockKind};
     let pool = crate::tests::pool().await.unwrap();
     let mut program = saved_program(&pool).await;
-    let block = |kind, title: &str, body: &str| LearningBlockDto {
-        kind,
-        title: title.into(),
-        body: body.into(),
-        source_ids: Vec::new(),
-        rubric: Vec::new(),
+    let block = |kind, title: &str, body: &str| {
+        LearningBlockDto::new(kind, title.into(), body.into(), Vec::new(), Vec::new())
     };
     {
         let lessons = &mut program.modules[0].lessons;

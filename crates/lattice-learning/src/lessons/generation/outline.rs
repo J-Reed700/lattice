@@ -14,11 +14,21 @@ use crate::lessons::same_text::fold;
 use crate::lessons::structured_call::{complete_checked_request, CallKind, ReasonFirst};
 use crate::model_call;
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, PoisonError};
+
+struct OutlineDescription;
+
+impl Contract for OutlineDescription {
+    const ID: ContractId = ContractId::new("outline-description");
+    type Input = PromptInput;
+}
 
 /// What the prose step of an outline works through before the outline is
 /// written to its schema.
@@ -136,7 +146,7 @@ pub(crate) async fn draft_outline<T>(
     sources: &[LearningSourceDto],
     subtopics: &[String],
     progress: &crate::outline_progress::OutlineProgress,
-    accept: impl Fn(&str) -> Result<T>,
+    accept: impl Fn(&str) -> Result<T> + Send + Sync,
 ) -> Result<(T, serde_json::Value, usize)> {
     validate_outline_request(request)?;
     let (min_modules, max_modules, min_lessons, max_lessons) =
@@ -191,20 +201,26 @@ pub(crate) async fn draft_outline<T>(
             context.to_string(),
             outline_schema(request.course_depth, sources.len()),
             output_tokens,
-            "low",
         );
         *built.lock().unwrap_or_else(PoisonError::into_inner) = context;
         grounded
     };
-    let room = model_call::source_room(llm, &build(0), usize::MAX);
+    let bare = build(0);
+    let room = model_call::source_room(llm, &bare, usize::MAX);
+    let call = ContractCall::of::<OutlineDescription>(&PromptInput {
+        system: system.clone(),
+        prompt: bare.task,
+    })?;
     progress.stage(crate::outline_progress::OutlineStage::Drafting);
     let outline = super::send_packed(
         llm,
+        &call,
         room,
         build,
         |grounded| {
             complete_checked_request(
                 llm,
+                &call,
                 grounded,
                 Some(progress),
                 Some(ReasonFirst {
@@ -235,16 +251,7 @@ fn description_too_long(llm: &dyn LLMPort, error: AppError) -> AppError {
     if llm.max_context_tokens() < window_needed {
         return error;
     }
-    let refusals = [
-        OUTLINE_DOES_NOT_FIT,
-        crate::lessons::structured_call::MATERIAL_DOES_NOT_FIT,
-    ]
-    .map(|what| model_call::window_too_small(llm, what));
-    if matches!(error, AppError::InvalidConfig(_))
-        && refusals
-            .iter()
-            .any(|refusal| refusal.to_string() == error.to_string())
-    {
+    if matches!(error, AppError::WindowTooSmall(_)) {
         return AppError::InvalidInput(
             "Your course description is too long for the Learning model's context window. Shorten the course description and try again."
                 .into(),

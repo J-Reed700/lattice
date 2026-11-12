@@ -12,11 +12,21 @@ use crate::model_call;
 use crate::reference_collection::{ReferenceCollection, ReferencePassage};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::shared::error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;
 use std::sync::{Mutex, PoisonError};
+struct RecallDrafts;
+
+impl Contract for RecallDrafts {
+    const ID: ContractId = ContractId::new("recall-drafts");
+    type Input = PromptInput;
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct GeneratedRecallDraftResponse {
@@ -344,7 +354,6 @@ pub async fn generate_recall_drafts(
             recall_draft_prompt(lesson, count, &allowed_source_ids, source_data),
             recall_draft_schema(count, &allowed_source_ids),
             output_tokens,
-            "low",
         );
         *built.lock().unwrap_or_else(PoisonError::into_inner) = sources;
         request
@@ -356,14 +365,20 @@ pub async fn generate_recall_drafts(
         .collect::<Vec<_>>()
         .join("\n\n");
     let lesson_text = lesson_text.as_str();
+    let call = ContractCall::of::<RecallDrafts>(&PromptInput {
+        system: system.to_owned(),
+        prompt: skeleton.task,
+    })?;
+    let call = &call;
     send_packed(
         llm,
+        call,
         room,
         build,
         |request| {
             let sources = built.lock().unwrap_or_else(PoisonError::into_inner).clone();
             async move {
-                complete_checked_request(llm, request, None, None, |raw| {
+                complete_checked_request(llm, call, request, None, None, |raw| {
                     parse_recall_drafts_with_lesson(raw, count, &sources, lesson_text)
                 })
                 .await

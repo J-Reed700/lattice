@@ -14,6 +14,9 @@ use crate::model_call;
 use crate::persistence::{db, now};
 use lattice_core::application::ports::llm_port::InferencePriority;
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::{Database, Transactions};
 use serde::{Deserialize, Serialize};
@@ -186,17 +189,31 @@ async fn save(
     tx.commit().await.map_err(db)
 }
 
+struct PlanCourse;
+
+impl Contract for PlanCourse {
+    const ID: ContractId = ContractId::new("course-plan");
+    type Input = PromptInput;
+}
+
 async fn generate(llm: &dyn LLMPort, program: &LearningProgramDto) -> Result<CoursePlan> {
     let lessons = lesson_ids(program).len();
+    let prompt = plan_prompt(program)?;
+    let call = ContractCall::of::<PlanCourse>(&PromptInput {
+        system: PLAN_SYSTEM.to_owned(),
+        prompt: prompt.clone(),
+    })?;
     let mut request = model_call::structured(
         PLAN_SYSTEM,
-        plan_prompt(program)?,
+        prompt,
         plan_schema(program),
         PLAN_BASE_TOKENS + PLAN_TOKENS_PER_LESSON * lessons,
-        "low",
     );
     request.call.priority = InferencePriority::Background;
-    complete_checked_request(llm, request, None, None, |raw| parse_plan(raw, program)).await
+    complete_checked_request(llm, &call, request, None, None, |raw| {
+        parse_plan(raw, program)
+    })
+    .await
 }
 
 fn plan_prompt(program: &LearningProgramDto) -> Result<String> {
