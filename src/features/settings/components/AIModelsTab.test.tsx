@@ -75,11 +75,11 @@ describe('Downloaded model chat selection', () => {
     VaultAPI.getDownloadedModels = vi.fn(async () => ({ ok: true as const, data: models }));
     VaultAPI.setActiveChatModel = vi.fn(async (id) => {
       models = models.map(model => ({ ...model, is_active_for_chat: model.model_id === id }));
-      return { ok: true as const, data: undefined };
+      return { ok: true as const, data: null };
     });
     VaultAPI.clearActiveUtilityModel = vi.fn(async () => {
       models = models.map(model => ({ ...model, is_active_for_utility: false }));
-      return { ok: true as const, data: undefined };
+      return { ok: true as const, data: null };
     });
   });
 
@@ -186,7 +186,7 @@ describe('Downloaded model chat selection', () => {
     models[0] = { ...models[0], is_active_for_utility: false };
     VaultAPI.setActiveUtilityModel = vi.fn(async (id) => {
       models = models.map(model => ({ ...model, is_active_for_utility: model.model_id === id }));
-      return { ok: true as const, data: undefined };
+      return { ok: true as const, data: null };
     });
     const user = await renderModels();
     expect(row('llama.cpp connection').getByText('Utility')).toHaveAttribute('data-active-role', 'utility');
@@ -298,8 +298,8 @@ describe('Downloaded model chat selection', () => {
 
   it('warms only the local utility assignment while llama.cpp is selected for chat', async () => {
     settings.llm.provider = 'llamacpp';
-    VaultAPI.warmUpActiveChatModel = vi.fn(async () => ({ ok: true as const, data: undefined }));
-    VaultAPI.warmUpActiveUtilityModel = vi.fn(async () => ({ ok: true as const, data: undefined }));
+    VaultAPI.warmUpActiveChatModel = vi.fn(async () => ({ ok: true as const, data: null }));
+    VaultAPI.warmUpActiveUtilityModel = vi.fn(async () => ({ ok: true as const, data: null }));
     const user = await renderModels();
     await user.click(row('Local model').getByRole('button', { name: 'Warm up' }));
     expect(VaultAPI.warmUpActiveUtilityModel).toHaveBeenCalledOnce();

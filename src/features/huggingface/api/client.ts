@@ -1,4 +1,3 @@
-import type * as Wire from '@/lib/bindings';
 import { apiCall } from '@/shared/ipc/transport';
 import type { ApiResult, HfTokenStatus } from '@/types';
 
@@ -10,8 +9,8 @@ export const huggingfaceApi = {
    * @param token - HuggingFace API token
    * @returns Void on success
    */
-  setHuggingFaceToken: async (token: string): Promise<ApiResult<void>> =>
-    apiCall<void>('set_huggingface_token', { token }),
+  setHuggingFaceToken: async (token: string): Promise<ApiResult<null>> =>
+    apiCall('set_huggingface_token', { token }),
 
   /**
    * Gets HuggingFace token status (whether it's set).
@@ -20,13 +19,13 @@ export const huggingfaceApi = {
    * @returns Token status object
    */
   getHuggingFaceTokenStatus: async (): Promise<ApiResult<HfTokenStatus>> =>
-    apiCall<Wire.HfTokenStatus>('get_huggingface_token_status'),
+    apiCall('get_huggingface_token_status'),
 
   /**
    * Deletes the stored HuggingFace token from OS keyring.
    *
    * @returns Void on success
    */
-  deleteHuggingFaceToken: async (): Promise<ApiResult<void>> =>
-    apiCall<void>('delete_huggingface_token'),
+  deleteHuggingFaceToken: async (): Promise<ApiResult<null>> =>
+    apiCall('delete_huggingface_token'),
 };

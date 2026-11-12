@@ -56,7 +56,7 @@ test('a search with no matches says so, and a recent search can be picked again'
   await expect(page.getByText('No results for “sourdough hydration”.')).toBeVisible();
   await expect(page.getByText('Try a broader term or a different search mode.')).toBeVisible();
   expect(argsOf(backend, 'hybrid_search')).toEqual([{ args: { query: 'sourdough hydration', limit: 20, search_mode: 'hybrid' } }]);
-  expect(argsOf(backend, 'search_documents')).toEqual([{ options: { query: 'sourdough hydration', limit: 20, searchMode: 'hybrid' } }]);
+  expect(argsOf(backend, 'search_documents')).toEqual([{ options: { query: 'sourdough hydration', limit: 20, searchMode: 'hybrid', filter: null } }]);
 
   // Clearing the box returns to the start screen.
   await page.getByRole('textbox', { name: 'Search your documents' }).fill('');

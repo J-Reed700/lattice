@@ -11,7 +11,7 @@ export const healthApi = {
    * @returns Success message confirming database initialization
    */
   initializeDatabase: async (): Promise<ApiResult<string>> =>
-    apiCall<string>('initialize_database'),
+    apiCall('initialize_database'),
 
   /**
    * Performs a health check on the backend system (DDD architecture).
@@ -21,7 +21,7 @@ export const healthApi = {
    * Uses the current domain command.
    */
   healthCheck: async (): Promise<ApiResult<HealthStatus>> =>
-    apiCall<Wire.HealthStatus>('health_check'),
+    apiCall('health_check'),
 
   /**
    * Retrieves system statistics (DDD architecture).
@@ -31,7 +31,7 @@ export const healthApi = {
    * Uses the current domain command.
    */
   getSystemStats: async (): Promise<ApiResult<SystemStats>> =>
-    apiCall<Wire.SystemStats>('get_system_stats'),
+    apiCall('get_system_stats'),
 
   /**
    * Gets the application version from Cargo.toml.
@@ -40,7 +40,7 @@ export const healthApi = {
    * @returns Version string (e.g., "0.1.0")
    */
   getVersion: async (): Promise<ApiResult<string>> =>
-    apiCall<string>('get_version'),
+    apiCall('get_version'),
 
   /**
    * The newest lines of the backend's log file, oldest first, unredacted.
@@ -48,5 +48,5 @@ export const healthApi = {
    * @param limit - Lines to return (default 300, at most 1000)
    */
   getBackendLogs: async (limit?: number): Promise<ApiResult<Wire.BackendLogEntry[]>> =>
-    apiCall<Wire.BackendLogEntry[]>('get_backend_logs', { limit: limit ?? null }),
+    apiCall('get_backend_logs', { limit: limit ?? null }),
 };

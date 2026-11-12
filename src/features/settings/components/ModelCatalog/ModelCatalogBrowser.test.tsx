@@ -160,6 +160,19 @@ describe('ModelCatalogBrowser', () => {
     expect(listed().sort()).toEqual(['small', 'tight']);
   });
 
+  it('filters search results by the fit verdict on each model', () => {
+    const verdict = (kind: string) => ({ kind, needsBytes: 1, budgetBytes: 2, device: { name: 'GPU', kind: 'dedicated', totalBytes: 2 } });
+    h.catalog.searchQuery = 'thyme';
+    h.catalog.searchResults = [
+      { model: model('thyme-huge', { fit: verdict('too_large') }), relevance_score: 0.9 },
+      { model: model('thyme-small', { fit: verdict('fits') }), relevance_score: 0.8 },
+    ];
+    h.store = { ...h.store, fitFilter: 'fits' };
+    render(<ModelCatalogBrowser />);
+    expect(listed()).toEqual(['thyme-small']);
+    expect(h.props.ModelListView.models[0]).toMatchObject({ fit: { kind: 'fits' } });
+  });
+
   it('shows search results in the order the search returned them', () => {
     h.catalog.searchQuery = 'thyme';
     h.catalog.searchLoading = true;

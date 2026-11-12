@@ -42,7 +42,7 @@ const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider 
 
 beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  for (const fn of Object.values(mocks.api)) fn.mockReset().mockResolvedValue({ ok: true, data: undefined });
+  for (const fn of Object.values(mocks.api)) fn.mockReset().mockResolvedValue({ ok: true, data: null });
   mocks.api.getDownloadedModels.mockResolvedValue({ ok: true, data: models });
   mocks.handlers.clear();
   mocks.unlisten.mockReset();
@@ -127,7 +127,7 @@ describe('useDownloadedModels', () => {
 
 describe('reportWarmupFailure', () => {
   it('stays quiet on success and names the role on failure', () => {
-    reportWarmupFailure({ ok: true, data: undefined }, 'Herb', 'chat');
+    reportWarmupFailure({ ok: true, data: null }, 'Herb', 'chat');
     expect(toast.error).not.toHaveBeenCalled();
     reportWarmupFailure({ ok: false, error: 'GPU busy' }, 'Herb', 'utility');
     expect(toast.error).toHaveBeenCalledWith("Herb downloaded but couldn't start", { message: 'The utility model failed to load: GPU busy' });

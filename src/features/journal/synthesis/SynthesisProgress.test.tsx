@@ -21,6 +21,8 @@ vi.mock('@/lib/api', () => {
   return { VaultAPI: api, default: api };
 });
 vi.mock('@/shared/ipc/transport', () => ({ apiCall: vi.fn() }));
+
+const apiCallMock = vi.mocked(apiCall as unknown as (command: string, args?: unknown) => Promise<unknown>);
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn((name: string, handler: (event: { payload: unknown }) => void) => {
     const handlers = mocks.listeners.get(name) ?? new Set();
@@ -60,7 +62,7 @@ function publish(job: JobDto) {
   });
 }
 
-const calls = (command: string) => vi.mocked(apiCall).mock.calls.filter(([name]) => name === command);
+const calls = (command: string) => apiCallMock.mock.calls.filter(([name]) => name === command);
 
 describe('synthesis progress', () => {
   beforeEach(() => {
@@ -69,7 +71,7 @@ describe('synthesis progress', () => {
     client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     useSynthesisPanel.setState({ minimized: false, autoSave: [], saving: {}, saved: null });
     vi.mocked(VaultAPI.quickCapture).mockResolvedValue({ ok: true, data: { noteId: 'note 1', noteTitle: 'Research notes', created: true } });
-    vi.mocked(apiCall).mockImplementation(async (command: string) => {
+    apiCallMock.mockImplementation(async (command: string) => {
       switch (command) {
         case 'get_journal_synthesis_result': return { ok: true, data: result };
         case 'mark_journal_synthesis_applied': return { ok: true, data: true };

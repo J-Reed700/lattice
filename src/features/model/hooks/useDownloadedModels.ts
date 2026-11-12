@@ -111,7 +111,7 @@ export const useDownloadedModels = () => {
   }, [api, downloadedModels]);
 
   // A warm-up loads a model, maybe on the CPU: the loaded list says which.
-  const warmUp = useCallback(async (call: () => Promise<ApiResult<void>>) => {
+  const warmUp = useCallback(async (call: () => Promise<ApiResult<null>>) => {
     const result = await call();
     await queryClient.invalidateQueries({ queryKey: LOADED_MODELS_QUERY_KEY });
     if (!result.ok) throw new Error(result.error);
@@ -151,7 +151,7 @@ export const useDownloadedModels = () => {
 
 /** Own the model-completion listener at one app-level mount. */
 export function reportWarmupFailure(
-  result: ApiResult<void>,
+  result: ApiResult<null>,
   modelName: string,
   role: 'chat' | 'utility'
 ): void {

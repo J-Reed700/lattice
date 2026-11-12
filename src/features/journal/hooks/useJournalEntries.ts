@@ -112,6 +112,7 @@ export const journalEntriesQueryOptions = (journalSpaceId: string, api: ApiClien
     queryFn: async () => {
       const result = await api.listJournalConversations({
         journalSpaceId,
+        query: null,
         includeArchived: true,
         limit: CONVERSATION_LIMIT,
         offset: 0,
