@@ -764,3 +764,93 @@ async fn a_rewrite_that_fails_the_checks_is_dropped_with_its_own_fault() -> Resu
     );
     Ok(())
 }
+
+/// Answers a blind solve, and a judge whose first reply misses the item; keeps each judge request whole.
+struct Incomplete {
+    judged: Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Incomplete {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let rendered = request
+            .input
+            .iter()
+            .flat_map(|item| match item {
+                CompletionInput::Message { role, content } => vec![role.clone(), content.clone()],
+                _ => Vec::new(),
+            })
+            .collect::<Vec<_>>()
+            .join(
+                "
+",
+            );
+        let (system, _) = crate::lessons::structured_call::task_messages(request);
+        let reply = if system.starts_with("Solve quiz questions") {
+            json!({"answers": [{"index": 0, "reason": "It follows.", "correctIndices": [0], "answer": "", "blankAnswers": [], "matches": [], "orderedValues": []}]})
+        } else {
+            let mut judged = self.judged.lock().unwrap();
+            judged.push(rendered);
+            if judged.len() == 1 {
+                json!({"checks": []})
+            } else {
+                json!({"checks": [{"id": "new-0", "finding": "", "hasDefect": false, "repeats": []}]})
+            }
+        };
+        Ok(CompletionResponse::from_text(reply.to_string()))
+    }
+    fn model_name(&self) -> &str {
+        "incomplete"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn an_incomplete_item_review_is_corrected_with_why() -> Result<()> {
+    let item = crate::assessment_engine::LearningAssessmentCandidate {
+        id: uuid::Uuid::new_v4().to_string(),
+        outcome_ids: vec![uuid::Uuid::new_v4().to_string()],
+        format: LearningItemFormat::SingleChoice,
+        difficulty: 3,
+        prompt: SORTED.into(),
+        options: vec![
+            TRAY.into(),
+            "The green box".into(),
+            "The red box".into(),
+            "The blue box".into(),
+        ],
+        left: vec![],
+        source_version_ids: vec![],
+        rubric: vec![],
+        key: LearningAssessmentKey::Choice(0),
+        explanation: "A torn stamp is set aside.".into(),
+        distractor_rationales: vec![],
+    };
+    let llm = Incomplete {
+        judged: Mutex::new(Vec::new()),
+    };
+    let entries = [item_review::Entry {
+        item: &item,
+        quote: STAMP_QUOTE,
+    }];
+    let context = item_review::Context {
+        outcome: "Sorting stamps",
+        outcome_description: "Where stamps go.",
+        learner_has: &[],
+    };
+    let findings = item_review::review(&llm, &entries, &context).await?;
+    assert!(findings.iter().all(item_review::Findings::is_sound));
+    let judged = llm.judged.lock().unwrap();
+    assert_eq!(judged.len(), 2);
+    assert!(
+        judged[1].contains("That answer could not be used"),
+        "second request: {}",
+        judged[1]
+    );
+    Ok(())
+}
