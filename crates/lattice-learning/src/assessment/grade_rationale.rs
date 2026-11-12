@@ -17,6 +17,7 @@ use serde::Deserialize;
 
 /// A grader's verdict on one criterion, before any check.
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[cfg_attr(any(test, feature = "test-support"), derive(serde::Serialize))]
 #[serde(rename_all = "snake_case")]
 pub enum GraderVerdict {
     Met,
@@ -27,6 +28,10 @@ pub enum GraderVerdict {
 /// One criterion as the grader returned it. Field order in the schema puts
 /// the reasoning first and the points last.
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, PartialEq)
+)]
 #[serde(rename_all = "camelCase")]
 pub struct GraderCriterion {
     pub criterion_id: String,

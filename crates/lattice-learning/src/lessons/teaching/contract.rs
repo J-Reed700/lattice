@@ -89,7 +89,28 @@ impl Contract for LessonContractCheck {
     type Input = PromptInput;
 }
 
+/// The check a reply holds.
+fn read_answer(raw: &str) -> Result<Answer> {
+    crate::generation::parse_json::<Answer>(raw)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for LessonContractCheck
+{
+    type Answer = Answer;
+
+    fn render(answer: &Answer) -> String {
+        json!(answer).to_string()
+    }
+
+    fn read(text: &str) -> Result<Answer> {
+        read_answer(text)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Planned {
     item: String,
@@ -98,6 +119,7 @@ struct Planned {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Used {
     what: String,
@@ -108,6 +130,7 @@ struct Used {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Contradiction {
     quote: String,
@@ -115,6 +138,7 @@ struct Contradiction {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Unseen {
     quote: String,
@@ -122,8 +146,9 @@ struct Unseen {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Answer {
+pub(crate) struct Answer {
     planned: Vec<Planned>,
     used_before_taught: Vec<Used>,
     contradictions: Vec<Contradiction>,
@@ -134,6 +159,7 @@ struct Answer {
 
 /// Whether the defect a report describes is of a kind these checks decide.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Report {
     report: String,
@@ -845,7 +871,7 @@ pub(super) async fn check(
                     subject: "the check against the course plan",
                     brief: &brief,
                 }),
-                crate::generation::parse_json::<Answer>,
+                read_answer,
             )
             .await?;
             crate::lesson_drafts::record_checkpoint(&key, serde_json::to_value(&answer)?).await?;

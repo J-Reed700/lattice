@@ -169,6 +169,7 @@ pub struct LearningModuleDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LearningProjectMilestoneDto {
     pub title: String,

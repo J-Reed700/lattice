@@ -52,12 +52,42 @@ impl Contract for QuizAuthor {
     type Input = PromptInput;
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for QuizAuthor
+{
+    type Answer = Vec<RawItem>;
+
+    fn render(answer: &Vec<RawItem>) -> String {
+        json!({ "items": answer }).to_string()
+    }
+
+    fn read(text: &str) -> Result<Vec<RawItem>> {
+        read_batch(text)
+    }
+}
+
 /// The writer of a quiz item's replacement, and what a call is told about it.
 pub(crate) struct QuizRewrite;
 
 impl Contract for QuizRewrite {
     const ID: ContractId = ContractId::new("quiz-rewrite");
     type Input = PromptInput;
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for QuizRewrite
+{
+    type Answer = Vec<RawItem>;
+
+    fn render(answer: &Vec<RawItem>) -> String {
+        json!({ "items": answer }).to_string()
+    }
+
+    fn read(text: &str) -> Result<Vec<RawItem>> {
+        read_batch(text)
+    }
 }
 
 /// The contract call for a request whose prompt is only text.

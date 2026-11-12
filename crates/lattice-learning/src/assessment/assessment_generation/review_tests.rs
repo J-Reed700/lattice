@@ -792,3 +792,15 @@ async fn a_rewrite_that_repeats_a_rewrite_dropped_as_a_repeat_is_not_written_aga
     assert_eq!(prompts(&result?), [FIRST]);
     Ok(())
 }
+
+#[test]
+fn the_item_review_contract_reads_what_it_renders() {
+    let checks: Vec<item_review::Check> = serde_json::from_value(json!([
+        {"id":"i1","finding":"","hasDefect":false,"repeats":[]},
+        {"id":"i2","finding":"No answer is defensible.","hasDefect":true,"repeats":["i1"]}
+    ]))
+    .unwrap();
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        item_review::QuizItemReview,
+    >(&checks);
+}

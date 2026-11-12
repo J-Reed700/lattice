@@ -20,20 +20,43 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;
 use std::sync::{Mutex, PoisonError};
-struct RecallDrafts;
+pub(super) struct RecallDrafts;
 
 impl Contract for RecallDrafts {
     const ID: ContractId = ContractId::new("recall-drafts");
     type Input = PromptInput;
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for RecallDrafts
+{
+    type Answer = GeneratedRecallDraftResponse;
+
+    fn render(answer: &GeneratedRecallDraftResponse) -> String {
+        json!(answer).to_string()
+    }
+
+    fn read(text: &str) -> Result<GeneratedRecallDraftResponse> {
+        read_recall_drafts(text)
+    }
+}
+
 #[derive(Debug, Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, PartialEq)
+)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct GeneratedRecallDraftResponse {
+pub(crate) struct GeneratedRecallDraftResponse {
     cards: Vec<GeneratedRecallDraft>,
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, PartialEq)
+)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct GeneratedRecallDraft {
     question: String,
@@ -62,6 +85,11 @@ pub(super) fn parse_recall_drafts(
     parse_recall_drafts_with_lesson(raw, count, allowed_sources, "")
 }
 
+/// The drafts a reply holds, before they are held to the lesson.
+fn read_recall_drafts(raw: &str) -> Result<GeneratedRecallDraftResponse> {
+    parse_json(raw)
+}
+
 fn parse_recall_drafts_with_lesson(
     raw: &str,
     count: usize,
@@ -72,7 +100,7 @@ fn parse_recall_drafts_with_lesson(
         .iter()
         .map(|source| source.id.as_str())
         .collect();
-    let generated: GeneratedRecallDraftResponse = parse_json(raw)?;
+    let generated = read_recall_drafts(raw)?;
     if generated.cards.len() != count {
         return Err(invalid(
             "The model returned an unexpected number of recall drafts. Try again.",

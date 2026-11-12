@@ -52,6 +52,10 @@ pub fn validate_project(project: &crate::dto::LearningProjectMilestoneDto) -> Re
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, PartialEq)
+)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GeneratedCriterion {
     pub title: String,

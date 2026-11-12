@@ -7,7 +7,6 @@ use lattice_core::{
     application::services::grounded_generation::GroundedRequest,
     shared::error::{AppError, Result},
 };
-use serde_json::Value;
 use std::collections::BTreeMap;
 
 /// One answer per item, in item order. Items go in as many requests as the
@@ -21,7 +20,7 @@ pub(crate) async fn answers<T>(
     call: &ContractCall,
     count: usize,
     request_for: impl Fn(&[usize]) -> GroundedRequest,
-    read: impl Fn(&Value, &[usize]) -> BTreeMap<usize, T>,
+    read: impl Fn(&str) -> Result<Vec<(usize, T)>>,
     window: &str,
     unusable: &str,
 ) -> Result<Vec<T>> {
@@ -56,8 +55,8 @@ pub(crate) async fn answers<T>(
                 room = size.div_ceil(2);
                 continue 'chunks;
             }
-            if let Ok(parsed) = crate::generation::parse_json::<Value>(&response.text) {
-                for (index, answer) in read(&parsed, indices.as_slice()) {
+            if let Ok(answers) = read(&response.text) {
+                for (index, answer) in answers {
                     if indices.contains(&index) && !read_so_far.contains_key(&index) {
                         read_so_far.insert(index, answer);
                     }
