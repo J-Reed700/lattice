@@ -44,9 +44,8 @@ impl ServerProcess {
     /// Asks the owning task to kill the process. Does not block and is
     /// idempotent: the request is a stored permit, and the task ignores it
     /// once the process has been reaped.
-    pub(in crate::features::llm::engine) fn kill(&self) -> std::io::Result<()> {
+    pub(in crate::features::llm::engine) fn kill(&self) {
         self.kill.notify_one();
-        Ok(())
     }
 }
 

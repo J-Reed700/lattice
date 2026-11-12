@@ -83,8 +83,8 @@ async fn output_arrives_line_by_line_and_the_exit_comes_last() {
 async fn a_kill_requested_at_once_ends_the_process_and_is_reported() {
     let (rx, process) = start(role(SLEEPER)).await.unwrap();
 
-    process.kill().unwrap();
-    process.kill().unwrap();
+    process.kill();
+    process.kill();
 
     let events = every_event(rx).await;
     match events.last() {

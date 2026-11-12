@@ -133,7 +133,9 @@ pub(super) async fn run_preflight(app: &AppHandle, binary: SidecarBinary) -> Pre
         binary,
         vec!["--version".to_string()],
         &format!("probe://{}/version", binary.label()),
-    ) {
+    )
+    .await
+    {
         Err(err) => preflight_attempt_failure(err),
         Ok((rx, child)) => collect_preflight(binary, rx, child).await,
     };
@@ -250,7 +252,6 @@ pub(super) async fn collect_preflight(
                     exit = (payload.code, payload.signal);
                     child.mark_exited();
                 }
-                _ => {}
             }
         }
         exit

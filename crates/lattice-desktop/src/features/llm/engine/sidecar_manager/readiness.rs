@@ -332,7 +332,6 @@ pub(super) fn spawn_event_drain(
                     let _ = child_arc.lock().take();
                     // Channel will close after this; loop exits.
                 }
-                _ => {}
             }
         }
 

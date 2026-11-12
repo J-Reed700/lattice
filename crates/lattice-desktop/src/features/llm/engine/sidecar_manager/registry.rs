@@ -87,7 +87,7 @@ impl SidecarRegistry {
         });
         let Some(id) = admitted else {
             if let Some(child) = child.lock().take() {
-                let _ = child.kill();
+                child.kill();
             }
             return None;
         };
@@ -111,16 +111,9 @@ impl SidecarRegistry {
         self.entries.lock().entries.retain(|e| e.id != id);
     }
 
-    /// Synchronously kill every registered sidecar. Idempotent — call
+    /// Ask every registered sidecar to die, without waiting. Idempotent — call
     /// from the Tauri RunEvent::ExitRequested handler. Returns the
-    /// number of children killed (for logging).
-    ///
-    /// Lock discipline: we drain `entries` into a local Vec first, then
-    /// release the registry mutex before walking children. `child.kill()`
-    /// is a blocking syscall (TerminateProcess on Windows, SIGKILL on
-    /// Unix) — holding the registry lock across it would block any
-    /// concurrent `register()` calls (e.g. a spawn-in-flight on another
-    /// thread) for the full kill duration.
+    /// number of children asked to die (for logging).
     pub fn kill_all(&self) -> usize {
         // Drain into a local Vec, then release entries lock immediately.
         let drained: Vec<RegistryEntry> = {
@@ -136,22 +129,12 @@ impl SidecarRegistry {
             // SidecarHandle::stop sees an empty slot and no-ops.
             let child_opt = entry.child.lock().take();
             if let Some(child) = child_opt {
-                match child.kill() {
-                    Ok(()) => {
-                        killed += 1;
-                        tracing::info!(
-                            endpoint = %entry.endpoint,
-                            "Killed sidecar via registry shutdown"
-                        );
-                    }
-                    Err(err) => {
-                        tracing::warn!(
-                            endpoint = %entry.endpoint,
-                            error = %err,
-                            "Failed to kill sidecar at shutdown"
-                        );
-                    }
-                }
+                child.kill();
+                killed += 1;
+                tracing::info!(
+                    endpoint = %entry.endpoint,
+                    "Killed sidecar via registry shutdown"
+                );
             }
         }
         killed

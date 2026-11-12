@@ -17,8 +17,8 @@ pub struct SidecarHandle {
     /// and read back the model path. Never logged.
     pub(super) api_token: String,
 
-    /// Process handle. Sync `Mutex` because `ServerProcess::kill()` does not
-    /// await and the shutdown path runs from a sync Tauri callback.
+    /// Process handle. Sync `Mutex` because the shutdown path runs from a sync
+    /// Tauri callback.
     /// `Option` so the kill owner takes the child exactly once.
     pub(super) child: Arc<SyncMutex<Option<ServerProcess>>>,
 
@@ -134,11 +134,8 @@ impl SidecarHandle {
             registration.release();
         }
         if let Some(child) = child {
-            if let Err(err) = child.kill() {
-                tracing::warn!("Failed to kill llama-server sidecar: {err}");
-            } else {
-                tracing::info!("Stopped llama-server sidecar at {}", self.endpoint);
-            }
+            child.kill();
+            tracing::info!("Stopped llama-server sidecar at {}", self.endpoint);
         }
     }
 }
@@ -362,16 +359,10 @@ impl Drop for SpawnedChild {
             registration.release();
         }
         let Some(child) = child else { return };
-        match child.kill() {
-            Ok(()) => tracing::warn!(
-                endpoint = %self.endpoint,
-                "Killed llama-server: its startup was abandoned before it had an owner"
-            ),
-            Err(err) => tracing::warn!(
-                endpoint = %self.endpoint,
-                error = %err,
-                "Failed to kill an abandoned llama-server startup"
-            ),
-        }
+        child.kill();
+        tracing::warn!(
+            endpoint = %self.endpoint,
+            "Killed llama-server: its startup was abandoned before it had an owner"
+        );
     }
 }

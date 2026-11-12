@@ -274,24 +274,20 @@ impl SystemInfoAdapter {
 #[async_trait]
 impl SystemInfoPort for SystemInfoAdapter {
     async fn get_system_info(&self) -> Result<SystemInfo, AppError> {
-        // Refresh system information
-        {
+        let (total_ram_gb, cpu_cores, cpu_model) = {
             let mut sys = self.system.lock();
             sys.refresh_all();
-        }
-
-        let sys = self.system.lock();
-
-        let total_ram_gb = sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
-
-        let cpu_cores = sys.cpus().len() as u32;
-        let cpu_model = sys
-            .cpus()
-            .first()
-            .map(|cpu| cpu.brand().to_string())
-            .unwrap_or_else(|| "Unknown CPU".to_string());
-
-        drop(sys); // Release lock before GPU detection
+            let cpu_model = sys
+                .cpus()
+                .first()
+                .map(|cpu| cpu.brand().to_string())
+                .unwrap_or_else(|| "Unknown CPU".to_string());
+            (
+                sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0),
+                sys.cpus().len() as u32,
+                cpu_model,
+            )
+        };
 
         let gpu_info = self.detect_gpu_info().await;
 
@@ -310,10 +306,11 @@ mod tests {
     use lattice_core::application::ports::NoAcceleratorProbe;
 
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    #[test]
-    fn intel_mac_does_not_advertise_gpu_inference() {
+    #[tokio::test]
+    async fn intel_mac_does_not_advertise_gpu_inference() {
         assert!(SystemInfoAdapter::new(Arc::new(NoAcceleratorProbe))
             .detect_gpu_info()
+            .await
             .is_none());
     }
 
