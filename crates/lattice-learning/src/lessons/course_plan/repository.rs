@@ -6,9 +6,10 @@ use super::edit::{ENTRY_CHANGED, LESSON_LOCKED, LESSON_WRITTEN, REVISION_CHANGED
 use super::job::COURSE_PLAN;
 use super::view::OutlineLesson;
 use super::PlannedLesson;
+use crate::curriculum_repository::LearningCurriculumRepository;
 use crate::persistence::{db, now};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::runtime::jobs::{JobRecord, JobStatus, JobStore};
+use lattice_core::shared::runtime::jobs::{JobRecord, JobStore};
 use sqlx::SqliteConnection;
 use std::collections::{HashMap, HashSet};
 
@@ -258,33 +259,19 @@ pub(super) async fn outline_lessons(
         .collect())
 }
 
-/// The lessons a running `lesson_preparation` job covers. A pending job does
-/// not lock: the writer reads the plan only once its job is claimed.
+/// The lessons an unfinished `lesson_preparation` job of the current outline names.
 pub(super) async fn locked_lessons(
     connection: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<HashSet<String>> {
-    let jobs = JobStore::list_for_subject_in(
-        connection,
-        crate::curriculum_repository::LESSON_PREPARATION,
-        program_id,
+    let revision = content_revision(&mut *connection, program_id).await?;
+    Ok(
+        LearningCurriculumRepository::unfinished_preparations(connection, program_id, revision)
+            .await?
+            .into_iter()
+            .flat_map(|(_, request)| request.lesson_ids)
+            .collect(),
     )
-    .await?;
-    Ok(jobs
-        .into_iter()
-        .filter(|job| job.status == JobStatus::Running)
-        .flat_map(|job| {
-            job.requested
-                .get("lessonIds")
-                .and_then(serde_json::Value::as_array)
-                .map(|ids| {
-                    ids.iter()
-                        .filter_map(|id| id.as_str().map(str::to_owned))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default()
-        })
-        .collect())
 }
 
 /// The saved entries of a revision with their entry revisions, by lesson.
@@ -391,4 +378,48 @@ pub(super) async fn replace_in(
         now(),
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::curriculum::LearningGenerationJobKind;
+    use crate::dto::AcceptLearningProgramRequestDto;
+    use crate::plan_dto::StartLearningGenerationJobRequestDto;
+    use crate::repository::LearningRepository;
+
+    #[tokio::test]
+    async fn a_queued_preparation_locks_its_lesson() -> Result<()> {
+        let pool = crate::tests::pool().await?;
+        let programs = LearningRepository::new(pool.clone());
+        let fixture = crate::tests::fixture();
+        programs.create(&fixture).await?;
+        programs
+            .accept(&AcceptLearningProgramRequestDto {
+                program_id: fixture.summary.id.clone(),
+                expected_revision: 0,
+                title: fixture.summary.title.clone(),
+            })
+            .await?;
+        let program = programs.get(&fixture.summary.id).await?;
+        let lesson = program.modules[0].lessons[0].id.clone();
+        let job = LearningCurriculumRepository::new(pool.clone())
+            .start_job(&StartLearningGenerationJobRequestDto {
+                operation_id: uuid::Uuid::new_v4().to_string(),
+                program_id: program.summary.id.clone(),
+                expected_revision: program.summary.revision,
+                kind: LearningGenerationJobKind::LessonPreparation,
+                request_json: serde_json::json!({"lessonIds":[lesson]}).to_string(),
+                progress_total: 1,
+            })
+            .await?;
+        assert_eq!(
+            job.status,
+            crate::curriculum::LearningGenerationJobStatus::Pending
+        );
+        let mut connection = pool.acquire().await.map_err(db)?;
+        let locked = locked_lessons(&mut connection, &program.summary.id).await?;
+        assert!(locked.contains(&lesson), "{locked:?}");
+        Ok(())
+    }
 }

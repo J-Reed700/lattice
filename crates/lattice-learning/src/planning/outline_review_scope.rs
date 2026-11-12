@@ -1,6 +1,7 @@
 //! Reuse completed semantic checks only while their inputs still match.
 use crate::outline_draft::OutlineDraft;
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::shared::protocol::Protocol;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 
-const REVIEW_VERSION: &str = "outline-incremental-review-v2";
+const REVIEW_VERSION: Protocol = lattice_core::protocol!("outline-incremental-review", 2);
 
 /// Separate from the draft's content hash: checkpoints also occur before review.
 /// Only a successfully parsed, validated semantic review creates this receipt.

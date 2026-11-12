@@ -1,5 +1,5 @@
 //! Lesson drafts and checkpoints saved while preparing, and publishing the prepared lessons.
-use super::jobs::job_scope;
+use super::jobs::{job_scope, preparable_in};
 use super::LearningCurriculumRepository;
 use crate::curriculum::{self, LearningCurriculumLessonState, LearningCurriculumRevision};
 use crate::persistence::{db, decode, encode, now};
@@ -110,9 +110,9 @@ impl LearningCurriculumRepository {
         held: &[crate::content_verification::HeldForReview],
         author_model: Option<&str>,
     ) -> Result<()> {
-        if lessons.is_empty() || lessons.len() + held.len() > 3 {
+        if lessons.is_empty() {
             return Err(AppError::InvalidInput(
-                "A generation job may publish one to three prepared lessons.".into(),
+                "A generation job publishes at least one prepared lesson.".into(),
             ));
         }
         let mut tx = self.pool.begin_write().await.map_err(db)?;
@@ -156,28 +156,18 @@ impl LearningCurriculumRepository {
                 "Program changed before generation could publish.".into(),
             ));
         }
+        let named: Vec<String> = lessons.iter().map(|(id, _)| id.clone()).collect();
+        let preparable = preparable_in(&mut tx, &program_id, &named).await?;
+        if named.iter().any(|id| !preparable.contains(id)) {
+            return Err(AppError::InvalidState(
+                "Only unfinished outline lessons can be published by this job.".into(),
+            ));
+        }
         let mut unique = std::collections::HashSet::new();
         for (lesson_id, prepared) in lessons {
             if !unique.insert(lesson_id) {
                 return Err(AppError::InvalidInput(
                     "A preparation job cannot repeat lesson IDs.".into(),
-                ));
-            }
-            let row = sqlx::query(
-                "SELECT preparation,completed,curriculum_state FROM learning_lessons WHERE id=? AND program_id=?",
-            )
-            .bind(lesson_id)
-            .bind(&program_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
-            .ok_or_else(|| AppError::NotFound("Lesson not found in this program".into()))?;
-            if row.get::<String, _>("preparation") != "outline"
-                || row.get::<bool, _>("completed")
-                || row.get::<String, _>("curriculum_state") != "outline"
-            {
-                return Err(AppError::InvalidState(
-                    "Only unfinished outline lessons can be published by this job.".into(),
                 ));
             }
             crate::content_verification::persist_report(&mut tx, &program_id, lesson_id, prepared)
