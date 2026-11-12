@@ -269,7 +269,7 @@ async fn a_checksum_that_is_not_the_other_line_endings_of_the_same_sql_is_refuse
 }
 
 #[tokio::test]
-async fn a_real_change_is_refused_and_left_alone_when_other_rows_differ_only_in_line_endings() {
+async fn a_refused_start_changes_no_row_not_even_one_that_differs_only_in_line_endings() {
     let pool = migrated_database().await;
     let db = Database::new(pool.clone());
     let migrator = embedded();
@@ -280,13 +280,12 @@ async fn a_real_change_is_refused_and_left_alone_when_other_rows_differ_only_in_
     let changed = migrations[5];
     let edited = checksum_of(&format!("{}-- edited\n", changed.sql));
     set_checksum(&pool, changed.version, &edited).await;
+    let before = recorded(&pool).await;
 
     let error = run_migrations(&db).await.unwrap_err().to_string();
 
     assert!(error.contains(&refusal(changed.version)), "{error}");
-    let mut expected = embedded_rows(&migrator);
-    expected[5].1 = hex::encode(&edited);
-    assert_eq!(recorded(&pool).await, expected);
+    assert_eq!(recorded(&pool).await, before);
 }
 
 #[tokio::test]
