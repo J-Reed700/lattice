@@ -11,22 +11,14 @@ use super::super::classify::states_a_specific;
 use super::requests::{finish, labelled, unlabelled};
 use super::*;
 use lattice_core::application::services::claim_verification::{
-    BridgeDecision, BridgeOutcome, ClassJudgment, PartKind,
+    BridgeOutcome, ClassJudgment, Outcome, PartKind,
 };
-use serde_json::Value;
-
-/// The most a part-wise answer may take: what the replay allowed it.
-const OUTPUT_TOKENS: u32 = 600;
 
 /// Whether `pending` is read part by part: it is a comparison with the
 /// statement's own citation and a source's passage is among those it cites (an
 /// example's run is no source).
 pub(in crate::lessons::content_verification) fn applies(pending: &PendingClaim) -> bool {
-    pending.pass == Pass::Attribution
-        && pending
-            .evidence
-            .iter()
-            .any(|passage| passage.retrieval_kind != "execution")
+    pending.pass == Pass::Attribution && pending.evidence.iter().any(|passage| !passage.is_run())
 }
 
 /// `pending` judged part by part, with what the answer cost, a common part
@@ -43,12 +35,7 @@ pub(super) async fn individual(
 pub(in crate::lessons::content_verification) fn bridge_checker(
     llm: &dyn LLMPort,
 ) -> ClaimChecker<'_> {
-    ClaimChecker::new(
-        llm,
-        SamplingOverride::deterministic(),
-        OUTPUT_TOKENS,
-        CheckPolicy::Bridge,
-    )
+    ClaimChecker::for_policy(llm, SamplingOverride::deterministic(), CheckPolicy::Bridge)
 }
 
 /// [`individual`], with `names_a_specific` deciding which of the parts the
@@ -121,8 +108,8 @@ pub(super) fn weigh(
             .cloned()
     };
     let said = outcome.reason.trim();
-    let (verdict, quote, reason) = match outcome.decision() {
-        BridgeDecision::Supported => {
+    let (verdict, quote, reason) = match outcome.outcome() {
+        Outcome::Stands => {
             let common = of_kind(PartKind::Common);
             let own = of_kind(PartKind::Own);
             let mut reason = said.to_owned();
@@ -140,7 +127,7 @@ pub(super) fn weigh(
             }
             (ClaimVerdict::Supported, cited(PartKind::Stated), reason)
         }
-        BridgeDecision::Contradicted => (
+        Outcome::Refuted => (
             ClaimVerdict::Contradicted,
             cited(PartKind::Contradicted),
             if said.is_empty() {
@@ -149,7 +136,7 @@ pub(super) fn weigh(
                 said.to_owned()
             },
         ),
-        BridgeDecision::Unsupported => {
+        _ => {
             let missing = of_kind(PartKind::SpecificMissing);
             let mut reason = said.to_owned();
             if !missing.is_empty() {
@@ -181,20 +168,13 @@ pub(super) fn weigh(
     )
 }
 
-/// The parts a receipt recorded beside its verdict.
-pub(super) fn saved_parts(receipt: &Value) -> Vec<CheckedPart> {
-    receipt
-        .get("parts")
-        .and_then(|parts| serde_json::from_value(parts.clone()).ok())
-        .unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
     use super::*;
+    use crate::reference_collection::PassageKind;
     use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-    use serde_json::json;
+    use serde_json::{json, Value};
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
@@ -260,10 +240,9 @@ mod tests {
                 .to_string();
         let model = Said(Mutex::new(VecDeque::from([reply])));
         let texts = vec![CITED.to_owned()];
-        let checker = ClaimChecker::new(
+        let checker = ClaimChecker::for_policy(
             &model,
             SamplingOverride::deterministic(),
-            OUTPUT_TOKENS,
             CheckPolicy::Bridge,
         );
         let ClassJudgment::Judged(outcome) =
@@ -295,10 +274,9 @@ mod tests {
         .to_string();
         let model = Said(Mutex::new(VecDeque::from([reply.clone(), reply])));
         let texts = vec![CITED.to_owned()];
-        let checker = ClaimChecker::new(
+        let checker = ClaimChecker::for_policy(
             &model,
             SamplingOverride::deterministic(),
-            OUTPUT_TOKENS,
             CheckPolicy::Bridge,
         );
         let answered = checker.check_bridge(statement, &texts).await.judgments;
@@ -484,7 +462,7 @@ mod tests {
         assert!(!applies(&item));
         // So is an example's run: it is no source.
         item.pass = Pass::Attribution;
-        item.evidence[0].retrieval_kind = "execution".into();
+        item.evidence[0].retrieval_kind = PassageKind::Run.label().into();
         assert!(!applies(&item));
     }
 }
