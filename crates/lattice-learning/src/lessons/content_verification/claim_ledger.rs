@@ -10,6 +10,7 @@ mod audit;
 mod checks;
 mod cotenancy;
 mod cuts;
+mod faults;
 mod fields;
 mod held;
 mod history;
@@ -26,6 +27,7 @@ mod unverified;
 
 pub(super) use audit::Audited;
 pub(super) use cotenancy::{sentences, CutOf};
+pub(crate) use faults::StatementFault;
 pub(super) use position::StepKind;
 pub(super) use successor::Rewrites;
 
@@ -49,7 +51,9 @@ use lattice_core::domain::learning::claim_review::{
 use lattice_core::shared::protocol::Protocol;
 use lattice_core::shared::text::same_text;
 
-pub(crate) use fields::{field_pointer, field_text, locate, unit_fields, unit_texts};
+pub(crate) use fields::{
+    field_pointer, field_text, locate, stands, stands_in_part, unit_fields, unit_texts,
+};
 pub(crate) use held::{held_for_review, held_lessons, needs_review, review_outcome, HeldForReview};
 pub(crate) use located::{claim_quote, located, located_quote, narrow};
 
