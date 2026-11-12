@@ -314,17 +314,15 @@ fn labels(
         };
         let verified = state.is_verified() && matches!(standing, Standing::Verified);
         let mate_not_verified = mates().any(|other| other.resolution == NotVerified);
-        let ledger_mate_unverified = mates().any(|other| {
-            other
-                .claim_id
-                .as_deref()
-                .and_then(|id| entry_of(run, id))
-                .is_some_and(|mate| {
-                    matches!(
-                        standing_of(run, mate.state()),
-                        Standing::Unsettled | Standing::Resolved(Resolution::Unverified { .. })
-                    )
-                })
+        let ledger_mate_unverified = run.ledger.claims.iter().any(|mate| {
+            let place = mate.location();
+            mate.claim_id() != entry.claim_id()
+                && place.unit_index == item.section_index
+                && place.quote == item.content_quote
+                && matches!(
+                    standing_of(run, mate.state()),
+                    Standing::Unsettled | Standing::Resolved(Resolution::Unverified { .. })
+                )
         });
         let allowed = match item.resolution {
             Verified => verified && !mate_not_verified,

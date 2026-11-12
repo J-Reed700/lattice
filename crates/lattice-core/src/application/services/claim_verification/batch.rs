@@ -325,9 +325,8 @@ mod tests {
 
     #[test]
     fn an_entry_is_unusable_when_it_cites_outside_its_claims_passages_or_lacks_a_line() {
-        let own = "Reason: Stated.\nSource passage: passage-0\nVerdict: supported";
-        let other = "Reason: Stated.\nSource passage: passage-1\nVerdict: supported";
-        let results = resolved([own, other]);
+        let first_claims = "Reason: Stated.\nSource passage: passage-0\nVerdict: supported";
+        let results = resolved([first_claims, first_claims]);
         assert!(matches!(&results[0], ClaimJudgment::Judged(_)));
         assert!(matches!(&results[1], ClaimJudgment::Unusable));
         let blank = "Reason: Not stated.\nSource passage: ``\nVerdict: unsupported";

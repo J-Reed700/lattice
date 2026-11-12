@@ -18,6 +18,7 @@ use crate::lessons::claim_reviews::repository::{ClaimReviewRepository, ShownPass
 use crate::lessons::claim_reviews::service::ClaimReviewService;
 use crate::repository::LearningRepository;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
+use lattice_core::application::services::model_contract::CORRECTION_LEAD;
 use lattice_core::domain::learning::acceptance::{Goal, Outcome, Reading, Step, Then};
 use lattice_core::domain::learning::claim_review::{
     text_sha256, Actor, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry,
@@ -204,9 +205,7 @@ impl LLMPort for Figures {
             .iter()
             .any(|prompt| prompt.starts_with("Source passages:"))
         {
-            let correcting = prompts
-                .iter()
-                .any(|prompt| prompt.contains("Your previous response was incomplete"));
+            let correcting = serde_json::to_string(&request.input)?.contains(CORRECTION_LEAD);
             let ask = if correcting {
                 self.asks.load(Ordering::Relaxed)
             } else {
