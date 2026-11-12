@@ -76,7 +76,7 @@ pub(crate) fn window_too_small(
             capitalized(&larger(role))
         ),
     };
-    AppError::InvalidConfig(message)
+    AppError::WindowTooSmall(message)
 }
 
 /// The refusal for work that needs tools from a model that cannot call them.

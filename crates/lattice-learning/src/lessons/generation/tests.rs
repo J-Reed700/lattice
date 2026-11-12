@@ -438,7 +438,7 @@ async fn a_lesson_whose_prompt_leaves_no_room_for_evidence_is_refused_up_front()
     .unwrap_err();
 
     assert!(
-        matches!(&error, AppError::InvalidConfig(message)
+        matches!(&error, AppError::WindowTooSmall(message)
             if message.starts_with("This course's goal and the lesson brief leave no room for evidence in Ornith-1.5-9B's 24000-token context window.")),
         "{error:?}"
     );
@@ -465,7 +465,7 @@ async fn a_lesson_outline_of_any_length_is_not_called_incomplete() {
     .unwrap_err();
 
     assert!(
-        matches!(&error, AppError::InvalidConfig(message)
+        matches!(&error, AppError::WindowTooSmall(message)
             if message.starts_with("This course's goal and the lesson brief leave no room for evidence")),
         "{error:?}"
     );

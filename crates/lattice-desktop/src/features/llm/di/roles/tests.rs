@@ -267,7 +267,7 @@ async fn work_that_needs_a_larger_window_than_the_model_has_is_refused() {
     let refused = models.llm_for(&learning).await;
 
     assert!(
-        matches!(refused, Err(AppError::InvalidConfig(message)) if message ==
+        matches!(refused, Err(AppError::WindowTooSmall(message)) if message ==
         "Learning work needs a context window of at least 20,480 tokens. Your Learning model, \
          test-model, has a window of 8,192. Choose a larger Learning model.")
     );
@@ -438,7 +438,7 @@ async fn a_floor_above_the_trained_window_is_refused_before_loading() {
 
     let refused = models.llm_for(&learning).await;
 
-    let Err(AppError::InvalidConfig(message)) = refused else {
+    let Err(AppError::WindowTooSmall(message)) = refused else {
         panic!("expected a window refusal");
     };
     assert_eq!(

@@ -169,7 +169,7 @@ async fn instructions_the_window_cannot_hold_by_exact_count_name_the_window() {
     );
     let llm = notation();
     let error = author_items(&llm, &need(description, 4)).await.err();
-    let Some(AppError::InvalidConfig(message)) = error else {
+    let Some(AppError::WindowTooSmall(message)) = error else {
         panic!("expected the window to be named, got {error:?}");
     };
     assert!(
