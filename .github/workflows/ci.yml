@@ -37,6 +37,7 @@ jobs:
     outputs:
       rust: ${{ steps.paths.outputs.rust }}
       web: ${{ steps.paths.outputs.web }}
+      process: ${{ steps.paths.outputs.process }}
       all: ${{ steps.paths.outputs.all }}
       rust_packages: ${{ steps.crates.outputs.packages }}
     steps:
@@ -48,7 +49,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
         run: |
-          fail_safe() { echo rust=true >> "$GITHUB_OUTPUT"; echo web=true >> "$GITHUB_OUTPUT"; echo all=true >> "$GITHUB_OUTPUT"; }
+          fail_safe() { echo rust=true >> "$GITHUB_OUTPUT"; echo web=true >> "$GITHUB_OUTPUT"; echo process=true >> "$GITHUB_OUTPUT"; echo all=true >> "$GITHUB_OUTPUT"; }
           if [ "$EVENT" != "pull_request" ]; then fail_safe; exit 0; fi
           if ! gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --jq '.[] | .filename, (.previous_filename // empty)' > files.txt; then
             fail_safe; exit 0
@@ -69,10 +70,11 @@ jobs:
               return f.startswith(('docs/', 'evals/')) or f.endswith('.md')
           rust = any(is_rust(f) for f in files)
           web = any(is_web(f) for f in files)
+          process = any(f.startswith('crates/lattice-core/src/shared/process') for f in files)
           every = not files or len(files) >= 3000 or any(f.startswith('.github/') or not (is_rust(f) or is_web(f) or is_quiet(f)) for f in files)
           open('rust-files.txt', 'w').write(''.join(f + '\n' for f in files if is_rust(f)))
           with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
-              print('rust=' + str(rust).lower(), 'web=' + str(web).lower(), 'all=' + str(every).lower(), sep=chr(10), file=out)
+              print('rust=' + str(rust).lower(), 'web=' + str(web).lower(), 'process=' + str(process).lower(), 'all=' + str(every).lower(), sep=chr(10), file=out)
           PYCODE
 
       - id: crates
@@ -147,6 +149,33 @@ jobs:
       - name: cargo clippy
         working-directory: crates/lattice-desktop
         run: cargo clippy ${{ env.PACKAGE_ARGS }} --all-targets -- -D warnings
+
+  # The macOS child-process binding (a forked watcher) is only exercised on macOS.
+  process-macos:
+    name: bound process (macOS)
+    needs: changes
+    if: ${{ github.event_name == 'pull_request' && !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && needs.changes.outputs.process == 'true' }}
+    runs-on: macos-latest
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: process-macos
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+
+      - name: Clippy
+        run: cargo clippy --locked -p lattice-core --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked -p lattice-core --lib shared::process
 
   # Build on each supported platform to catch target-specific dependencies.
   rust-check:
