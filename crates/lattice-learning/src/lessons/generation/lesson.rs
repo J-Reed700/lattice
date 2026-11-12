@@ -13,23 +13,29 @@ use crate::dto::{
 };
 use crate::embedded_runtime::BuiltinRuntimes;
 use crate::lessons::course_plan::CoursePlan;
-use crate::lessons::shape::{self, LessonShape, ShapePolicy};
+use crate::lessons::shape::{self, LessonShape, ShapePolicy, CHOICES_PER_QUESTION};
 use crate::lessons::structured_call::{complete_checked, CallKind, ReasonFirst};
 use crate::model_call;
 use crate::reference_collection::ReferenceCollection;
-use crate::review_findings::{plain_part, FindingKind, FindingSite, ReviewFinding, Rule};
+use crate::review_findings::ReviewFinding;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
+use lattice_core::protocol;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::shared::protocol::Protocol;
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashSet;
 
 /// What the prose step of a lesson works through. Solving the questions here
 /// is the point: the schema puts each `correctIndex` before its explanation,
 /// so a one-step answer picks the option before working it out.
-const LESSON_DRAFT_BRIEF: &str = "Write the lesson block by block in teaching order, giving each block's kind and title and then its full body as the learner will read it. Then write each question with its kind, its four options, the correct option and the misconception each other option reflects. Solve every exercise, check and question yourself before settling its answer.";
+fn lesson_draft_brief() -> String {
+    format!("Write the lesson block by block in teaching order, giving each block's kind and title and then its full body as the learner will read it. Then write each question with its kind, its {CHOICES_PER_QUESTION} options, the correct option and the misconception each other option reflects. Solve every exercise, check and question yourself before settling its answer.")
+}
 
 /// The reason-first call's own step instructions and message framing,
 /// beyond its brief: about what `structured_call` adds to the two steps.
@@ -37,7 +43,17 @@ const REASON_FIRST_STEP_TOKENS: usize = 512;
 
 /// The authoring policy. The authoring scope also carries every requirement,
 /// so a changed requirement alone keeps earlier drafts from being reused.
-const AUTHORING_POLICY: &str = "lesson-authoring";
+const AUTHORING_POLICY: Protocol = protocol!("lesson-authoring", 1);
+
+const DRAFT_POLICY: Protocol = protocol!("lesson-draft", 1);
+
+/// The lesson writer's call: its reasoning step and its answer.
+pub(crate) struct LessonWriter;
+
+impl Contract for LessonWriter {
+    const ID: ContractId = ContractId::new("lesson-writer");
+    type Input = PromptInput;
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -165,12 +181,12 @@ pub(crate) fn lesson_schema_counting(
         "properties":{
             "blocks":{"type":"array","minItems":blocks.0,"maxItems":blocks.1,"items":{
                 "type":"object","additionalProperties":false,"required":["kind","title","body","rubric","sourceIndex","quote","citations"],"properties":{
-                    "kind":{"type":"string","enum":["explanation","worked_example","contrast","check","guided_practice","independent_practice","reflection","recap"]},"title":{"type":"string"},"body":{"type":"string","minLength":1},"rubric":crate::teaching::rubric_schema(),"sourceIndex":source_index_schema(source_count),"quote":{"type":"string"},"citations":citations_schema(source_count)
+                    "kind":{"type":"string","enum":LearningBlockKind::ALL.map(|kind| kind.as_str())},"title":{"type":"string"},"body":{"type":"string","minLength":1},"rubric":crate::teaching::rubric_schema(),"sourceIndex":source_index_schema(source_count),"quote":{"type":"string"},"citations":citations_schema(source_count)
                 }
             }},
             "questions":{"type":"array","minItems":questions.0,"maxItems":questions.1,"items":{
                 "type":"object","additionalProperties":false,"required":["kind","prompt","options","correctIndex","rationales","explanation","sourceIndex","quote","citations"],"properties":{
-                    "kind":{"type":"string","enum":["practice","quiz","test"]},"prompt":{"type":"string"},"options":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"string"}},"correctIndex":{"type":"integer","minimum":0,"maximum":3},"rationales":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"string"}},"explanation":{"type":"string"},"sourceIndex":source_index_schema(source_count),"quote":{"type":"string"},"citations":citations_schema(source_count)
+                    "kind":{"type":"string","enum":["practice","quiz","test"]},"prompt":{"type":"string"},"options":{"type":"array","minItems":CHOICES_PER_QUESTION,"maxItems":CHOICES_PER_QUESTION,"items":{"type":"string"}},"correctIndex":{"type":"integer","minimum":0,"maximum":CHOICES_PER_QUESTION.saturating_sub(1)},"rationales":{"type":"array","minItems":CHOICES_PER_QUESTION,"maxItems":CHOICES_PER_QUESTION,"items":{"type":"string"}},"explanation":{"type":"string"},"sourceIndex":source_index_schema(source_count),"quote":{"type":"string"},"citations":citations_schema(source_count)
                 }
             }}
         }
@@ -247,7 +263,7 @@ fn lesson_prompt(
             "Write a worked_example's steps as a numbered Markdown list, one step per item; where a step has the learner type or enter something, put it in a code span or fence and say what they should see after it.",
             "Spread the questions across the lesson's ideas; no two test the same fact.",
             "For Python or JavaScript code in a worked_example, contrast or check, put each complete independently runnable program in a labeled python or javascript Markdown fence, including imports, inputs and output-producing calls. Use Python's standard library or plain ECMAScript only; no network, host files, input prompts, packages, or browser/Node APIs. Use text, output, csv or json fences only for non-executable data. If demonstrating an exception, catch it and print its type. State the expected observation in the surrounding explanation. Do not silently change versions or language to evade verification.",
-            concat!("Use exactly four distinct choices and one correct index per question; rationales has one entry per choice, in the order of the choices. ", crate::assessment::assessment_generation::alike_in_form!()),
+            format!("Use exactly {CHOICES_PER_QUESTION} distinct choices and one correct index per question; rationales has one entry per choice, in the order of the choices. {}", crate::assessment::assessment_generation::alike_in_form!()),
             "Every question, its choices, its rationales and its explanation rest only on what this lesson teaches or on an earlier lesson's planned ideas, terms and actions in coursePlan; a learner who studied only those can answer it. Practice questions test application with feedback; quizzes diagnose common misconceptions; test questions require transfer to new scenarios. Make every wrong choice a specific misconception a learner could plausibly hold, never filler. Each wrong choice's entry in rationales names the misconception it reflects and why it fails, never referring to a choice by its letter or position; the right choice's entry is an empty string. The explanation says why the correct answer is right. Every rationale and the explanation say what is true about this question's own case, using the names and values its prompt gives; never give what a source, an excerpt, a passage or a tutorial says or does not say as the reason. An explanation names each choice by its words, never by its number, letter or position, because the choices are shuffled before learners see them.",
             "evidenceByTopic lists the lesson's topics in teaching order with the sourceIndexes whose excerpts cover each. Teach every topic; a topic with no covering sourceIndex has no evidence.",
             grounding_instructions(grounded),
@@ -307,7 +323,7 @@ fn evidence_room(llm: &dyn LLMPort, skeleton: &str, output_tokens: usize) -> (us
         request.output_tokens = reserve;
         (model_call::source_room(llm, &request, usize::MAX), reserve)
     };
-    let brief = llm.count_tokens(LESSON_DRAFT_BRIEF) + llm.count_tokens(CITATION_DRAFT_BRIEF);
+    let brief = llm.count_tokens(&lesson_draft_brief()) + llm.count_tokens(CITATION_DRAFT_BRIEF);
     match room(3 * output_tokens + brief + REASON_FIRST_STEP_TOKENS) {
         (0, _) => room(2 * output_tokens),
         found => found,
@@ -458,11 +474,7 @@ pub async fn prepare_lesson_with_references<'a>(
             scope_hash,
             prompt: prompt.clone(),
             sources: sources.clone(),
-            reference_hashes: active
-                .sources
-                .iter()
-                .map(|source| (source.id.clone(), sha256_hex(&source.excerpt)))
-                .collect(),
+            reference_hashes: crate::teaching::versions(&active.sources),
         });
         expanded = gathered.expanded.take();
         (prompt, sources, None)
@@ -474,7 +486,7 @@ pub async fn prepare_lesson_with_references<'a>(
     let draft_schema = policy.schema(shape::Phase::Draft, sources.len());
     // Approval is deliberately never cached here.
     let draft_input = serde_json::to_string(&json!({
-        "policy":"lesson-draft", "prompt":prompt, "schema":draft_schema.value(),
+        "policy":DRAFT_POLICY, "prompt":prompt, "schema":draft_schema.value(),
         "revision":crate::lesson_drafts::authoring_revision(program.summary.revision), "model":llm.model_name(),
         "sources":references.sources,
     }))?;
@@ -492,7 +504,8 @@ pub async fn prepare_lesson_with_references<'a>(
             format!("Writing {}", lesson.title),
         );
         let brief = format!(
-            "{LESSON_DRAFT_BRIEF}{}",
+            "{}{}",
+            lesson_draft_brief(),
             if sources.is_empty() {
                 ""
             } else {
@@ -501,9 +514,15 @@ pub async fn prepare_lesson_with_references<'a>(
         );
         // Every later stage reads the draft as a lesson; the lesson's own
         // rules run once review and verification have finished with it.
+        let system = lesson_system(!sources.is_empty());
+        let call = ContractCall::of::<LessonWriter>(&PromptInput {
+            system: system.clone(),
+            prompt: prompt.clone(),
+        })?;
         let raw = complete_checked(
             llm,
-            &lesson_system(!sources.is_empty()),
+            &call,
+            &system,
             prompt.clone(),
             draft_schema.value().clone(),
             output_tokens,
@@ -534,34 +553,28 @@ pub async fn prepare_lesson_with_references<'a>(
     // Finish an interrupted section repair before reviewing the assembled
     // lesson. Its checkpoint is scoped to exact inputs and cannot approve it;
     // the repair path performs teaching review after all patches are saved.
-    let raw = if crate::content_verification::has_pending_repair(
-        llm,
-        &prompt,
-        policy,
-        sources.len(),
-        &raw,
-        references,
-    )
-    .await?
-    {
+    // Verification may number a course source the writer was not given, to
+    // cite the passage that supports a claim (course evidence index §5.1).
+    let mut numbered = sources.clone();
+    let restart =
+        crate::content_verification::restart(llm, &prompt, policy, &raw, references, &mut numbered)
+            .await?;
+    let raw = if restart.saved.is_some() {
         raw
     } else {
         crate::teaching::review_lesson(
             llm,
             crate::teaching::LESSON_REPAIR_SYSTEM,
             &prompt,
-            LessonShape::new(&draft_schema, policy),
+            LessonShape::new(&policy.schema(shape::Phase::Draft, numbered.len()), policy),
             raw,
             output_tokens,
-            (references, &sources),
+            (references, &numbered),
             &[],
         )
         .await?
     };
-    // Verification may number a course source the writer was not given, to
-    // cite the passage that supports a claim (course evidence index §5.1).
-    let mut numbered = sources.clone();
-    let (raw, report, owned) = crate::content_verification::verify_and_repair_with_references(
+    let (raw, report) = crate::content_verification::verify_and_repair_with_references(
         llm,
         runtimes,
         &prompt,
@@ -569,11 +582,10 @@ pub async fn prepare_lesson_with_references<'a>(
         raw,
         references,
         (output_tokens, &mut numbered),
+        restart,
     )
     .await?;
     let value: serde_json::Value = parse_json(&raw).map_err(unusable)?;
-    let generated: GeneratedLesson = serde_json::from_value(value.clone())
-        .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))?;
     // A repaired citation may quote any part of the source it names, not
     // only the passages the writer was shown: a quotation is checked against
     // the whole saved text of the source it cites.
@@ -597,8 +609,7 @@ pub async fn prepare_lesson_with_references<'a>(
         &raw,
         &crate::lessons::copied_wording::Wording::of(references),
     )?;
-    let owned_ids: HashSet<&str> = owned.iter().map(String::as_str).collect();
-    let (mut prepared, citations) = assemble(generated, &sources, &owned_ids)?;
+    let (mut prepared, citations) = assemble(&value, &sources)?;
     findings.extend(citations);
     crate::teaching::record_waiting(&value, findings).await?;
     report.cite_user_evidence(&mut prepared);
@@ -618,69 +629,45 @@ fn unusable(error: AppError) -> AppError {
 /// The lesson as it is saved. What the lesson's rules ask of its shape is a
 /// finding (`teaching::structural_findings`), not a refusal; publication
 /// (`service::validate_generated`) refuses only what cannot be saved. A
-/// citation whose quotation does not match its source keeps the source it
-/// names and comes back as a finding; a fabricated citation in a course
-/// without sources, or a part naming no source it was given, is saved with
-/// none and comes back as a finding.
+/// quotation that matches no source is a finding: its part keeps the source
+/// it names, a cited sentence adds none, and a part naming no source it was
+/// given is saved with none.
 fn assemble(
-    generated: GeneratedLesson,
+    value: &serde_json::Value,
     sources: &[LearningSourceDto],
-    owned_ids: &HashSet<&str>,
 ) -> Result<(PreparedLearningLesson, Vec<ReviewFinding>)> {
-    let mut findings = Vec::new();
+    let generated: GeneratedLesson = serde_json::from_value(value.clone())
+        .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))?;
+    let checks = crate::teaching::quotes::quote_checks_in(
+        value,
+        &crate::teaching::quotes::numbered(sources),
+    );
     let mut blocks = Vec::with_capacity(generated.blocks.len());
-    for (index, block) in generated.blocks.into_iter().enumerate() {
-        let mut source_ids = citation(
-            sources,
-            block.source_index,
-            &block.quote,
-            FindingSite::Section(index),
-            &mut findings,
-        )?;
-        cite_sentences(
-            sources,
-            block.citations,
-            (FindingSite::Section(index), &mut source_ids),
-            &mut findings,
-        )?;
+    for block in generated.blocks {
+        let source_ids = cited_ids(sources, (block.source_index, &block.quote), block.citations);
         // Criteria the rules refuse are not saved, and a practice section
         // without them is a finding (`teaching::structural_findings`).
-        let rubric = match crate::teaching::rubric(block.rubric, false) {
+        let rubric = match crate::teaching::rubric(block.rubric, block.kind.sets_practice()) {
             Ok(rubric) => rubric,
             Err(AppError::InvalidInput(_)) => Vec::new(),
             Err(other) => return Err(other),
         };
-        blocks.push(LearningBlockDto {
-            rubric,
-            kind: block.kind,
-            title: block.title.trim().to_owned(),
-            body: block.body.trim().to_owned(),
+        blocks.push(LearningBlockDto::new(
+            block.kind,
+            block.title.trim().to_owned(),
+            block.body.trim().to_owned(),
             source_ids,
-        });
+            rubric,
+        ));
     }
     let mut questions = Vec::with_capacity(generated.questions.len());
     let mut keys = Vec::with_capacity(generated.questions.len());
-    for (index, question) in generated.questions.into_iter().enumerate() {
-        let mut source_ids = citation(
+    for question in generated.questions {
+        let source_ids = cited_ids(
             sources,
-            question.source_index,
-            &question.quote,
-            FindingSite::Question(index),
-            &mut findings,
-        )?;
-        cite_sentences(
-            sources,
+            (question.source_index, &question.quote),
             question.citations,
-            (FindingSite::Question(index), &mut source_ids),
-            &mut findings,
-        )?;
-        // This assertion ties the generated ref back to one of the immutable
-        // program source snapshots and prevents cross-program identifier use.
-        if source_ids.iter().any(|id| !owned_ids.contains(id.as_str())) {
-            return Err(AppError::ModelAnswerUnusable(
-                "A question referred to a source outside this program.".into(),
-            ));
-        }
+        );
         let question_id = uuid::Uuid::new_v4().to_string();
         questions.push(LessonQuestion {
             id: question_id.clone(),
@@ -711,97 +698,33 @@ fn assemble(
             keys,
             verification: None,
         },
-        findings,
+        crate::teaching::quotation_findings(&checks),
     ))
 }
 
-/// The sources a part's cited sentences add to the ones it is saved with. A
-/// sentence whose citation cannot be confirmed comes back as a finding and
-/// adds nothing; it never stops the lesson, as the part's own citation might.
-fn cite_sentences(
+/// The sources a part is saved with: the one its quotation confirms, else the
+/// one it names, and those its confirmed cited sentences add.
+fn cited_ids(
     sources: &[LearningSourceDto],
+    (index, quote): (Option<usize>, &str),
     citations: Vec<GeneratedCitation>,
-    (site, source_ids): (FindingSite, &mut Vec<String>),
-    findings: &mut Vec<ReviewFinding>,
-) -> Result<()> {
+) -> Vec<String> {
+    let mut ids = generated_source_ids(sources, index, quote).unwrap_or_else(|_| {
+        index
+            .and_then(|index| sources.get(index))
+            .map(|source| vec![source.id.clone()])
+            .unwrap_or_default()
+    });
     for cited in citations {
-        match generated_source_ids(sources, cited.source_index, &cited.quote) {
-            Ok(ids) => {
-                for id in ids {
-                    if !source_ids.contains(&id) {
-                        source_ids.push(id);
-                    }
-                }
+        let confirmed =
+            generated_source_ids(sources, cited.source_index, &cited.quote).unwrap_or_default();
+        for id in confirmed {
+            if !ids.contains(&id) {
+                ids.push(id);
             }
-            Err(AppError::InvalidInput(message)) => {
-                let shown: String = cited.sentence.chars().take(80).collect();
-                let summary = if cited.sentence.trim().is_empty() {
-                    "The quotation cited for a sentence could not be found in its source."
-                        .to_owned()
-                } else {
-                    format!(
-                        "The quotation cited for this sentence could not be found in its source: \u{201c}{}\u{201d}",
-                        cited.sentence.trim()
-                    )
-                };
-                findings.push(
-                    ReviewFinding::rule_about(
-                        Rule::SentenceCitation,
-                        FindingKind::Quotation,
-                        site,
-                        &cited.sentence,
-                        format!(
-                            "The source citation of the sentence \"{shown}\" could not be confirmed: {message}"
-                        ),
-                    )
-                    .with_summary(summary)
-                    .with_passage(&cited.quote)
-                    .with_sentence(&cited.sentence),
-                );
-            }
-            Err(other) => return Err(other),
         }
     }
-    Ok(())
-}
-
-/// The sources a part is saved with: none when it names no supplied source,
-/// which is a finding that waits.
-fn citation(
-    sources: &[LearningSourceDto],
-    index: Option<usize>,
-    quote: &str,
-    site: FindingSite,
-    findings: &mut Vec<ReviewFinding>,
-) -> Result<Vec<String>> {
-    let error = match generated_source_ids(sources, index, quote) {
-        Ok(ids) => return Ok(ids),
-        Err(AppError::InvalidInput(message)) => message,
-        Err(other) => return Err(other),
-    };
-    let part = match site {
-        FindingSite::Question(index) => format!("questions[{index}]"),
-        FindingSite::Section(index) => format!("blocks[{index}]"),
-        FindingSite::Lesson => "the lesson".to_owned(),
-    };
-    findings.push(
-        ReviewFinding::rule_about(
-            Rule::PartCitation,
-            FindingKind::Quotation,
-            site,
-            quote,
-            format!("The source citation at {part} could not be confirmed: {error}"),
-        )
-        .with_summary(format!(
-            "The quotation cited in {} could not be found in its source.",
-            plain_part(site)
-        ))
-        .with_passage(quote),
-    );
-    Ok(index
-        .and_then(|index| sources.get(index))
-        .map(|source| vec![source.id.clone()])
-        .unwrap_or_default())
+    ids
 }
 
 #[cfg(test)]
