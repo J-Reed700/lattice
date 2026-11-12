@@ -504,7 +504,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
     )
     .await;
     let error = first.expect_err("missing section reviews must fail");
-    assert!(error.to_string().contains("lesson draft is saved"));
+    assert!(error.to_string().contains("still needs a valid check"));
     assert_eq!(llm.authored.load(Ordering::Relaxed), 1);
     JobStore::new(pool.clone())
         .fail(&job.id, "generation_failed", &error.to_string())
