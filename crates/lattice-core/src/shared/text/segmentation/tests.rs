@@ -319,6 +319,24 @@ fn windows_overlap_by_whole_sentences() {
 }
 
 #[test]
+fn windows_start_at_the_strongest_rung_that_finds_a_break_before_the_step() {
+    let text = "Aa bb. Cc dd ee ff gg hh. Ii jj.";
+    let plan = Plan {
+        max: 30,
+        ladder: &[rung(Strength::Sentence, 0.0), rung(Strength::Word, 0.0)],
+        overflow: Overflow::Cut,
+    };
+    assert_eq!(windows(text, &Prose, &Chars, &plan, 12), vec![0..25, 7..32]);
+}
+
+#[test]
+fn a_shorter_run_inside_a_fence_keeps_its_lines_code() {
+    let text = "Intro.\n\n````md\n```\nC. D.\n```\n````\n";
+    let at = text.find("D.").unwrap();
+    assert!(sentences(text).iter().all(|&(start, _)| start != at));
+}
+
+#[test]
 fn the_next_window_starts_no_later_than_the_end_of_a_cut_made_by_a_stronger_rung() {
     let text = "aaa\n\nbbb ccc ddd eee fff ggg";
     let plan = Plan {

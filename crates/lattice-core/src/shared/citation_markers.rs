@@ -100,6 +100,14 @@ mod tests {
     }
 
     #[test]
+    fn a_shorter_run_inside_a_fence_does_not_close_it() {
+        assert_eq!(
+            without_citation_markers("````\n```\nx [1]\n````\nText [2].\n"),
+            "````\n```\nx [1]\n````\nText.\n"
+        );
+    }
+
+    #[test]
     fn a_formula_keeps_its_brackets() {
         assert_eq!(
             without_citation_markers("The term $a[1]$ grows [2]."),
