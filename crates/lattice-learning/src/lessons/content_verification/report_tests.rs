@@ -1,8 +1,9 @@
 //! What the stored report keeps of the findings a published edit, put back
 //! or removal replaced, and gives back when it is undone.
 use super::claim_ledger_tests::pass_report;
+use super::resolution::Resolution;
 use super::*;
-use lattice_core::domain::learning::claim_review::ClaimId;
+use lattice_core::domain::learning::claim_review::{ClaimId, UnverifiedReason};
 use std::collections::HashSet;
 
 const OLD: &str = "Taken out by the machine.";
@@ -79,4 +80,84 @@ fn undoing_the_removal_of_a_sentence_put_back_brings_back_the_put_back_finding_o
     report.written_out(0, "A.", &claims);
 
     assert_eq!(reasons(&report, "x"), [OLD]);
+}
+
+#[test]
+fn a_statement_sharing_a_sentence_with_one_published_not_verified_counts_as_not_verified() {
+    let mut unverified = finding("a", "Not supported.");
+    unverified.resolution = Some(Resolution::Unverified {
+        reason: UnverifiedReason::Unsupported,
+    });
+    let mut supported = finding("b", "Supported.");
+    supported.verdict = ClaimVerdict::Supported;
+    let report = pass_report(vec![unverified, supported]);
+
+    assert_eq!(report.unverified_count(), 2);
+}
+
+fn later_section_report() -> LessonVerificationReport {
+    let mut later = finding("later", "In a later section.");
+    later.unit = 1;
+    pass_report(vec![later])
+}
+
+#[test]
+fn a_rewrite_that_takes_no_finding_puts_the_users_sentences_before_later_sections() {
+    let mut report = later_section_report();
+    let written = ClaimId("written".into());
+
+    report.rewritten(&report::Rewritten {
+        unit: 0,
+        new_title: "Title",
+        new_body: "New sentence.",
+        ended: &HashSet::new(),
+        written: &[("New sentence.", &written)],
+        at: 1,
+    });
+
+    assert_eq!(report.findings[0].claim_id.as_deref(), Some("written"));
+}
+
+#[test]
+fn a_sentence_written_over_nothing_lands_before_later_sections() {
+    let mut report = later_section_report();
+    let successor = ClaimId("written".into());
+
+    report.written_over(&report::WrittenOver {
+        unit: 0,
+        old_body: "A.",
+        range: (0, 0),
+        new_body: "A. New.",
+        replaced: &HashSet::new(),
+        after: "New.",
+        successor: &successor,
+        at: 1,
+    });
+
+    assert_eq!(report.findings[0].claim_id.as_deref(), Some("written"));
+}
+
+#[test]
+fn an_edit_of_an_empty_range_takes_no_finding() {
+    let mut unclaimed = finding("unused", "Stays.");
+    unclaimed.claim_id = None;
+    unclaimed.quote = "Alpha beta.".into();
+    let mut report = pass_report(vec![unclaimed]);
+    let successor = ClaimId("written".into());
+
+    report.written_over(&report::WrittenOver {
+        unit: 0,
+        old_body: "Alpha beta. Next.",
+        range: (3, 3),
+        new_body: "Alpha beta. Next.",
+        replaced: &HashSet::new(),
+        after: "New.",
+        successor: &successor,
+        at: 1,
+    });
+
+    assert!(report
+        .findings
+        .iter()
+        .any(|finding| finding.reason == "Stays."));
 }
