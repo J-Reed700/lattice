@@ -59,6 +59,21 @@ impl Contract for SortStatements {
     type Input = PromptInput;
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for SortStatements
+{
+    type Answer = BTreeMap<String, String>;
+
+    fn render(answer: &Self::Answer) -> String {
+        json!(answer).to_string()
+    }
+
+    fn read(text: &str) -> Result<Self::Answer> {
+        crate::generation::parse_json(text)
+    }
+}
+
 /// The figures of a text: each run of digits, with its decimal or thousands
 /// separators, except a number a label word precedes ("Source 0", "Option
 /// 2", "Step 3"): that numbers a part of the text and states nothing.

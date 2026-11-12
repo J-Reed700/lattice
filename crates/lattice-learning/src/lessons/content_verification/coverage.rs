@@ -32,6 +32,7 @@ struct PassageCheck {
 /// One passage's fidelity verdict. Represented means `missing_assertions` is
 /// empty; there is no separate label to disagree with the list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct FidelityFinding {
     missing_assertions: Vec<UnrepresentedAssertion>,
@@ -41,6 +42,7 @@ pub(super) struct FidelityFinding {
 /// An assertion the inventory does not represent, with the sentence of the
 /// passage the judge named as its own.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct UnrepresentedAssertion {
     sentence_id: String,
@@ -230,6 +232,21 @@ pub(super) struct FidelityAudit;
 impl Contract for FidelityAudit {
     const ID: ContractId = ContractId::new("fidelity-audit");
     type Input = PromptInput;
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for FidelityAudit
+{
+    type Answer = FidelityFinding;
+
+    fn render(answer: &FidelityFinding) -> String {
+        serde_json::to_string(answer).unwrap_or_default()
+    }
+
+    fn read(text: &str) -> Result<FidelityFinding> {
+        crate::generation::parse_json(text)
+    }
 }
 
 /// A malformed answer is asked for once more and otherwise fails the check,
@@ -456,6 +473,23 @@ mod tests {
     use crate::content_verification::tests::{fixture_completion, fixture_prompts};
     use crate::lessons::course_generation_tests::ScriptedModel;
     use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+
+    #[test]
+    fn the_fidelity_contract_reads_what_it_renders() {
+        use lattice_core::application::services::model_contract::test_support::assert_round_trip;
+        for missing_assertions in [
+            Vec::new(),
+            vec![UnrepresentedAssertion {
+                sentence_id: "s0".into(),
+                statement: "Water boils at 100 degrees.".into(),
+            }],
+        ] {
+            assert_round_trip::<FidelityAudit>(&FidelityFinding {
+                missing_assertions,
+                reason: "Judged.".into(),
+            });
+        }
+    }
 
     fn represented() -> String {
         json!({"missingAssertions":[],"reason":"Every assertion is represented."}).to_string()

@@ -16,6 +16,8 @@ use lattice_core::application::services::context_assembler::budget::{
 use lattice_core::application::services::grounded_generation::{
     self, CallOptions, GroundedGenerationError, GroundedRequest,
 };
+#[cfg(any(test, feature = "test-support"))]
+use lattice_core::application::services::model_contract::test_support::RenderAnswer;
 use lattice_core::application::services::model_contract::{
     Contract, ContractId, PromptInput, Transport, CORRECTION_LEAD,
 };
@@ -32,6 +34,19 @@ pub(super) struct VerifierAudit;
 impl Contract for VerifierAudit {
     const ID: ContractId = ContractId::new("verifier-audit");
     type Input = PromptInput;
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl RenderAnswer for VerifierAudit {
+    type Answer = policy::RawAnswer;
+
+    fn render(answer: &policy::RawAnswer) -> String {
+        serde_json::to_string(answer).unwrap_or_default()
+    }
+
+    fn read(text: &str) -> Result<policy::RawAnswer, AppError> {
+        policy::parse_answer(text).map_err(AppError::InvalidInput)
+    }
 }
 
 /// What one request came back with: the final reply, carrying the tokens of

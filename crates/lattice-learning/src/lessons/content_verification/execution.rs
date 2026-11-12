@@ -35,6 +35,42 @@ impl Contract for FenceLabels {
     type Input = PromptInput;
 }
 
+#[derive(Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(Serialize, Debug, PartialEq)
+)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Labels {
+    fences: Vec<Label>,
+}
+
+#[derive(Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(Serialize, Debug, PartialEq)
+)]
+#[serde(deny_unknown_fields)]
+struct Label {
+    id: String,
+    language: String,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for FenceLabels
+{
+    type Answer = Labels;
+
+    fn render(answer: &Labels) -> String {
+        serde_json::to_string(answer).unwrap_or_default()
+    }
+
+    fn read(text: &str) -> Result<Labels> {
+        crate::generation::parse_json(text)
+    }
+}
+
 /// The labels the fence classifier may give: data labels, the languages a
 /// lesson may run, and other-code for any other program.
 const FENCE_LABELS: [&str; 20] = [
@@ -112,17 +148,6 @@ pub(crate) async fn label_unlabeled(llm: &dyn LLMPort, raw: String) -> Result<St
         .iter()
         .filter_map(|p| p.get("id").and_then(Value::as_str))
         .collect();
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Labels {
-        fences: Vec<Label>,
-    }
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Label {
-        id: String,
-        language: String,
-    }
     let prompt = PromptInput {
         system: LABEL_SYSTEM.into(),
         prompt: json!({"fences":pending}).to_string(),
@@ -417,6 +442,21 @@ mod capacity_tests {
 #[cfg(test)]
 mod fence_tests {
     use super::*;
+
+    #[test]
+    fn the_fence_contract_reads_what_it_renders() {
+        let fences = FENCE_LABELS
+            .iter()
+            .enumerate()
+            .map(|(index, language)| Label {
+                id: format!("block-0-fence-{index}"),
+                language: (*language).to_owned(),
+            })
+            .collect();
+        lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+            FenceLabels,
+        >(&Labels { fences });
+    }
 
     #[test]
     fn a_fence_opened_in_a_list_item_names_its_language() {
