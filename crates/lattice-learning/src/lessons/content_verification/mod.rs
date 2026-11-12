@@ -352,6 +352,16 @@ fn claim_receipt_key(llm: &dyn LLMPort, comparison: &str) -> String {
 }
 
 impl ClaimReceipt {
+    /// The finding of this saved receipt against `page`, narrowed to the
+    /// passages its judge was shown when it records them.
+    fn restored(self, unit: usize, claim: &Claim, page: &[EvidencePassage]) -> Option<Finding> {
+        let shown = match &self.shown {
+            Some(shown) => shown_of(page, shown),
+            None => page.to_vec(),
+        };
+        self.finding(unit, claim, shown)
+    }
+
     /// The finding this receipt makes of `claim` of section `unit` against
     /// `evidence`, the passages its judge was shown; `None` when it makes none:
     /// an unverified answer, or support whose quotation no passage holds. A
