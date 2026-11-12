@@ -366,3 +366,7 @@ pub(crate) async fn record_teaching(candidate: &str, receipt: String) -> Result<
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "lesson_drafts_tests.rs"]
+pub(crate) mod tests;
