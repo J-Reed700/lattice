@@ -158,8 +158,7 @@ pub(super) async fn review(
         .to_string(),
     };
     let call = ContractCall::of::<CoverageMapping>(&prompt)?;
-    let valid = std::sync::Mutex::new(serde_json::Map::new());
-    let outcome = crate::generation::complete_checked(
+    let decided = crate::generation::complete_checked(
         llm,
         &call,
         &prompt.system,
@@ -168,27 +167,21 @@ pub(super) async fn review(
         MAPPING_OUTPUT_TOKENS,
         progress,
         None,
-        |raw| accept(raw, units, &requested, &valid),
+        |raw| accept(raw, units, &requested),
     )
-    .await;
-    if let Ok(valid) = valid.into_inner() {
-        accepted.extend(valid);
-    }
+    .await?;
+    accepted.extend(decided);
     crate::lesson_drafts::record_checkpoint(&key, Value::Object(accepted.clone())).await?;
-    outcome?;
     Ok(Value::Object(accepted).to_string())
 }
 
-/// Takes the valid decisions of a reply into `valid`, and refuses the reply
-/// unless `valid` then holds a decision for every requested passage. A reply
-/// naming a passage that was not requested is refused whole: its finding may
-/// belong to a requested passage.
+/// The decisions of a reply that answers every requested passage once and
+/// validly. A reply that does not is refused whole, naming what is wrong.
 fn accept(
     raw: &str,
     units: &[Value],
     requested: &HashSet<String>,
-    valid: &std::sync::Mutex<serde_json::Map<String, Value>>,
-) -> Result<()> {
+) -> Result<serde_json::Map<String, Value>> {
     let entries = CoverageMapping::read(raw)?;
     if entries.iter().any(|(id, _)| !requested.contains(id)) {
         return Err(invalid(
@@ -199,13 +192,11 @@ fn accept(
     for (id, _) in &entries {
         *counts.entry(id.clone()).or_insert(0) += 1;
     }
+    let mut decided = serde_json::Map::new();
     let mut errors = Vec::<String>::new();
-    let mut valid = valid
-        .lock()
-        .map_err(|_| invalid("The coverage decisions are unavailable."))?;
     for (id, check) in entries {
         if counts.get(&id) == Some(&1) && valid_row(units, &id, &check) {
-            valid.insert(id, check);
+            decided.insert(id, check);
         } else {
             errors.push(format!("Passage {id} needs one decision using its own unit's claim IDs, or specific missing claims, or an explanation of its nonfactual content. Empty decisions, duplicate IDs and foreign IDs are invalid."));
         }
@@ -213,11 +204,16 @@ fn accept(
     errors.extend(
         requested
             .iter()
-            .filter(|id| !valid.contains_key(*id))
+            .filter(|id| !decided.contains_key(*id))
+            .filter(|id| {
+                !errors
+                    .iter()
+                    .any(|error| error.starts_with(&format!("Passage {id} ")))
+            })
             .map(|id| format!("Passage {id} still needs a valid decision.")),
     );
     if errors.is_empty() {
-        Ok(())
+        Ok(decided)
     } else {
         Err(invalid(errors.join(" ")))
     }
@@ -276,10 +272,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn corrects_only_empty_decisions_and_preserves_reported_omissions() -> Result<()> {
+    async fn corrects_empty_decisions_and_preserves_reported_omissions() -> Result<()> {
         let model = model(vec![
             listed(&[("p0", missing()), ("p1", empty())]),
-            listed(&[("p1", label())]),
+            listed(&[("p0", missing()), ("p1", label())]),
         ]);
         let raw = review(&model, &units(), None).await?;
         let parsed: Value = serde_json::from_str(&raw)?;
@@ -289,6 +285,14 @@ mod tests {
         assert_eq!(prompts.len(), 2);
         assert!(prompts[1].contains("Passage p1"), "{}", prompts[1]);
         Ok(())
+    }
+
+    #[test]
+    fn the_mapping_contract_reads_what_it_renders() {
+        let answer = vec![("p0".to_owned(), missing()), ("p1".to_owned(), label())];
+        lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+            CoverageMapping,
+        >(&answer);
     }
 
     #[tokio::test]
@@ -317,7 +321,10 @@ mod tests {
     #[tokio::test]
     async fn duplicate_or_foreign_decisions_cannot_silently_complete_mapping() -> Result<()> {
         let duplicate = listed(&[("p0", missing()), ("p0", empty()), ("p1", label())]);
-        let model = model(vec![duplicate, listed(&[("p0", missing())])]);
+        let model = model(vec![
+            duplicate,
+            listed(&[("p0", missing()), ("p1", label())]),
+        ]);
         let raw = review(&model, &units(), None).await?;
         assert!(!resolve(&raw, &units())?[0].complete);
         assert!(model.prompts.lock().unwrap()[1].contains("Passage p0"));
@@ -338,17 +345,17 @@ mod tests {
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
             crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
-        let first = model(vec![listed(&[("p0", missing()), ("p1", empty())])]);
+        let first = model(vec![listed(&[("p0", missing()), ("p1", label())])]);
         crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
-            assert!(review(&first, &units(), None).await.is_err());
+            review(&first, &units(), None).await?;
             Ok(())
         })
         .await?;
-        let next = model(vec![listed(&[("p1", label())])]);
+        let next = model(vec![]);
         crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
             let raw = review(&next, &units(), None).await?;
             assert!(!resolve(&raw, &units())?[0].complete);
-            assert_eq!(requested(&next.prompts.lock().unwrap()[0]), vec!["p1"]);
+            assert!(next.prompts.lock().unwrap().is_empty());
             let mut changed = units();
             changed[0]["passages"][0]["text"] = json!("A different guarantee is asserted.");
             let changed_model = model(vec![listed(&[("p0", missing()), ("p1", label())])]);

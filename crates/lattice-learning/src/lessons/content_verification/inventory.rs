@@ -350,6 +350,19 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_extraction_contract_reads_what_it_renders() {
+        let answer = ExtractionResponse {
+            units: BTreeMap::from([(
+                "unit-0".to_owned(),
+                json!({"claims":[],"nonFactualReason":"A label."}),
+            )]),
+        };
+        lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+            InventoryExtraction,
+        >(&answer);
+    }
+
     #[tokio::test]
     async fn an_unreadable_inventory_fails_the_job_instead_of_deferring() -> Result<()> {
         let pool = crate::tests::pool().await?;
