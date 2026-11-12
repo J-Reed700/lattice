@@ -256,6 +256,7 @@ fn each_rule_has_the_remedy_its_fix_needs() {
         (Rule::SectionMix, Whole),
         (Rule::QuestionCount, Whole),
         (Rule::NoExplanation, Whole),
+        (Rule::QuestionKinds, Whole),
         (Rule::NoQuestion, Whole),
         (Rule::CopiedWording, Edits),
         (Rule::SentenceCitation, Edits),

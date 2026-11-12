@@ -2345,7 +2345,7 @@ fn the_draft_review_still_reports_a_question_shortfall_and_a_section_shortfall()
 }
 
 #[tokio::test]
-async fn a_lesson_a_cut_left_without_a_test_question_waits_for_nothing_after_a_protected_review(
+async fn a_lesson_a_cut_left_without_a_test_question_waits_for_one_after_a_protected_review(
 ) -> Result<()> {
     let mut candidate = shaped_lesson_after_a_cut();
     candidate["questions"]
@@ -2354,7 +2354,10 @@ async fn a_lesson_a_cut_left_without_a_test_question_waits_for_nothing_after_a_p
         .retain(|question| question["kind"] != "test");
     assert_eq!(candidate["questions"].as_array().unwrap().len(), 4);
     let waiting = waiting_after_review(&candidate, true).await?;
-    assert!(waiting.is_empty(), "{waiting:?}");
+    assert!(
+        waiting.iter().any(|id| id == "structure:lesson"),
+        "{waiting:?}"
+    );
     Ok(())
 }
 
@@ -2840,7 +2843,9 @@ async fn a_review_after_a_cut_and_its_repair_are_told_the_shape_the_lesson_is_ke
     assert!(!lines.is_empty(), "the repair was not told the shape");
     let words: Vec<&str> = lines.iter().filter_map(Value::as_str).collect();
     assert!(
-        words.join("\n").contains("at least one question."),
+        words
+            .join("\n")
+            .contains("at least one question of each kind"),
         "{words:?}"
     );
     Ok(())

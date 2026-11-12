@@ -1696,8 +1696,8 @@ async fn a_refuted_rationale_whose_corrections_were_rejected_takes_its_question_
 }
 
 #[tokio::test]
-async fn a_refuted_rationale_in_the_last_question_of_its_kind_goes_with_its_question() -> Result<()>
-{
+async fn a_refuted_rationale_in_the_last_question_of_its_kind_stays_and_is_published_not_verified(
+) -> Result<()> {
     let lesson = lesson_asking(
         "The middle section stands. It says two things.",
         &[
@@ -1717,23 +1717,12 @@ async fn a_refuted_rationale_in_the_last_question_of_its_kind_goes_with_its_ques
     )
     .await?;
 
-    assert_eq!(
-        ledger.cuts.going.get(&4).map(String::as_str),
-        Some("Which?"),
-        "{:?}",
-        ledger.cuts.going
-    );
-    assert_eq!(ledger.cuts.going.len(), 1, "{:?}", ledger.cuts.going);
+    assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
     assert_eq!(context["candidate"], lesson);
     let entry = ledger.entry(&id).unwrap();
+    assert_eq!(entry.decided(), Some(&Then::End(End::Unverified)));
     assert!(
-        matches!(
-            entry.state(),
-            ClaimState::Removed {
-                by: Actor::Machine,
-                ..
-            }
-        ),
+        matches!(entry.state(), ClaimState::Unverified { .. }),
         "{:?}",
         entry.state()
     );
@@ -1777,7 +1766,7 @@ fn cuttable() -> String {
 }
 
 #[tokio::test]
-async fn a_refused_statement_in_the_last_question_of_its_kind_takes_its_question_and_the_cuts_beside_it_are_made(
+async fn a_refused_statement_in_the_last_question_of_its_kind_does_not_hold_back_the_cuts_beside_it(
 ) -> Result<()> {
     let body = cuttable();
     let lesson = lesson_asking(
@@ -1817,30 +1806,15 @@ async fn a_refused_statement_in_the_last_question_of_its_kind_takes_its_question
             ..
         }
     ));
-    assert_eq!(
-        ledger.cuts.going.get(&4).map(String::as_str),
-        Some("Which?"),
-        "{:?}",
-        ledger.cuts.going
-    );
-    assert_eq!(ledger.cuts.going.len(), 1, "{:?}", ledger.cuts.going);
+    assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
     assert_eq!(context["candidate"]["questions"], lesson["questions"]);
     let state = ledger.entry(&rationale).unwrap().state();
-    assert!(
-        matches!(
-            state,
-            ClaimState::Removed {
-                by: Actor::Machine,
-                ..
-            }
-        ),
-        "{state:?}"
-    );
+    assert!(matches!(state, ClaimState::Unverified { .. }), "{state:?}");
     Ok(())
 }
 
 #[tokio::test]
-async fn questions_that_together_are_the_whole_of_a_kind_all_go_while_another_question_stays_and_the_cuts_beside_them_are_made(
+async fn questions_that_together_would_leave_no_question_of_a_kind_all_stay_and_the_cuts_beside_them_are_made(
 ) -> Result<()> {
     let body = cuttable();
     let lesson = lesson_asking(
@@ -1888,32 +1862,11 @@ async fn questions_that_together_are_the_whole_of_a_kind_all_go_while_another_qu
             ..
         }
     ));
-    assert_eq!(
-        ledger.cuts.going.get(&4).map(String::as_str),
-        Some("Which?"),
-        "{:?}",
-        ledger.cuts.going
-    );
-    assert_eq!(
-        ledger.cuts.going.get(&5).map(String::as_str),
-        Some("Another?"),
-        "{:?}",
-        ledger.cuts.going
-    );
-    assert_eq!(ledger.cuts.going.len(), 2, "{:?}", ledger.cuts.going);
+    assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
     assert_eq!(context["candidate"]["questions"], lesson["questions"]);
     for id in [first, second] {
         let state = ledger.entry(&id).unwrap().state();
-        assert!(
-            matches!(
-                state,
-                ClaimState::Removed {
-                    by: Actor::Machine,
-                    ..
-                }
-            ),
-            "{state:?}"
-        );
+        assert!(matches!(state, ClaimState::Unverified { .. }), "{state:?}");
     }
     Ok(())
 }
