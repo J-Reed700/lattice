@@ -446,3 +446,47 @@ fn an_audit_waiting_to_retry_or_unable_to_run_holds_the_lesson() {
     .publishable());
     assert!(AuditOutcome::Completed(summary).publishable());
 }
+
+#[tokio::test]
+async fn a_service_outage_during_an_audit_defers_instead_of_failing() {
+    let harness = Harness::new(vec![verified("a", BOILS)]);
+    let down = ScriptedVerifier::new(BIG, |_, _| {
+        Err(AppError::HttpStatus {
+            status: 503,
+            message: "Service Unavailable".into(),
+        })
+    });
+
+    for _ in 0..2 {
+        let outcome = harness.audit(&down, None).await;
+        assert!(
+            matches!(outcome, Ok(AuditOutcome::Deferred { .. })),
+            "{outcome:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_audit_item_correction_quotes_the_refusal() {
+    let harness = Harness::new(vec![verified("a", BOILS)]);
+    let llm = ScriptedVerifier::new(BIG, |request, call| {
+        Ok(CompletionResponse::from_text(if call == 1 {
+            "Sure! Here is my audit.".to_owned()
+        } else {
+            answer_each(request, &supports)
+        }))
+    });
+
+    let outcome = harness.audit(&llm, None).await.unwrap();
+
+    assert!(outcome.publishable());
+    let second = llm.user_texts().remove(1);
+    assert!(
+        second.contains("That answer could not be used:"),
+        "{second}"
+    );
+    assert!(
+        second.contains("the answer is not the audit's JSON"),
+        "{second}"
+    );
+}
