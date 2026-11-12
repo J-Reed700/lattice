@@ -324,19 +324,30 @@ fn the_plan_schema_bounds_no_text_but_a_blank() {
 fn the_evidence_plan_contract_reads_what_it_renders() {
     lattice_core::application::services::model_contract::test_support::assert_round_trip::<
         EvidencePlan,
-    >(&json!({
-        "topics":[{"topic":"A topic","queries":["a search","another search"]}]
-    }));
+    >(&vec![
+        PlannedTopic {
+            topic: "A topic".into(),
+            queries: vec!["a search".into(), "another search".into()],
+        },
+        PlannedTopic {
+            topic: "Another topic".into(),
+            queries: vec![],
+        },
+    ]);
 }
 
 #[test]
 fn the_evidence_coverage_contract_reads_what_it_renders() {
     lattice_core::application::services::model_contract::test_support::assert_round_trip::<
         EvidenceCoverage,
-    >(&json!({
-        "topics":[
-            {"id":"t1","covering":["p1","p2"]},
-            {"id":"t2","covering":[]}
-        ]
-    }));
+    >(&vec![
+        CoverageEntry {
+            id: "t1".into(),
+            covering: vec!["p1".into(), "p2".into()],
+        },
+        CoverageEntry {
+            id: "t2".into(),
+            covering: vec![],
+        },
+    ]);
 }

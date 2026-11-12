@@ -1148,8 +1148,19 @@ fn lesson_drafts_are_keyed_by_versioned_protocols() {
 fn the_lesson_writer_contract_reads_what_it_renders() {
     lattice_core::application::services::model_contract::test_support::assert_round_trip::<
         LessonWriter,
-    >(&json!({
-        "blocks":[block("explanation", "A section", "Its body.", true)],
-        "questions":[question("single_choice", "Which one?", true)]
-    }));
+    >(
+        &serde_json::from_value(json!({
+            "blocks":[
+                "explanation", "worked_example", "contrast", "check", "guided_practice",
+                "independent_practice", "recap", "reflection"
+            ].map(|kind| block(kind, "A section", "Its body.", true)),
+            "questions":["practice", "quiz", "test"].map(|kind| question(kind, "Which one?", true))
+        }))
+        .unwrap(),
+    );
+}
+
+#[test]
+fn a_draft_without_sections_is_refused_by_the_lesson_reader() {
+    assert!(read_lesson(&json!({"blocks":[],"questions":[]}).to_string()).is_err());
 }

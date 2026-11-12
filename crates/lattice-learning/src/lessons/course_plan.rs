@@ -207,7 +207,7 @@ impl lattice_core::application::services::model_contract::test_support::RenderAn
     }
 
     fn read(text: &str) -> Result<CoursePlan> {
-        parse_json(text)
+        read_plan(text)
     }
 }
 
@@ -313,10 +313,15 @@ pub(crate) fn parse_plan(raw: &str, program: &LearningProgramDto) -> Result<Cour
     parse_entries(raw, &lesson_ids(program), "every lesson of the course")
 }
 
+/// The plan a reply holds, before it is held to the lessons asked about.
+pub(crate) fn read_plan(raw: &str) -> Result<CoursePlan> {
+    parse_json(raw)
+}
+
 /// The entries an answer makes: each of `order` exactly once, in that order.
 /// `subject` names them in the refusal.
 pub(crate) fn parse_entries(raw: &str, order: &[&str], subject: &str) -> Result<CoursePlan> {
-    let answer: CoursePlan = parse_json(raw)?;
+    let answer = read_plan(raw)?;
     let known: HashSet<&str> = order.iter().copied().collect();
     let mut planned: HashMap<String, PlannedLesson> = HashMap::new();
     let mut repeated = Vec::new();

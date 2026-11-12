@@ -38,7 +38,7 @@ impl lattice_core::application::services::model_contract::test_support::RenderAn
     }
 
     fn read(text: &str) -> Result<GeneratedRecallDraftResponse> {
-        parse_json(text)
+        read_recall_drafts(text)
     }
 }
 
@@ -85,6 +85,11 @@ pub(super) fn parse_recall_drafts(
     parse_recall_drafts_with_lesson(raw, count, allowed_sources, "")
 }
 
+/// The drafts a reply holds, before they are held to the lesson.
+fn read_recall_drafts(raw: &str) -> Result<GeneratedRecallDraftResponse> {
+    parse_json(raw)
+}
+
 fn parse_recall_drafts_with_lesson(
     raw: &str,
     count: usize,
@@ -95,7 +100,7 @@ fn parse_recall_drafts_with_lesson(
         .iter()
         .map(|source| source.id.as_str())
         .collect();
-    let generated: GeneratedRecallDraftResponse = parse_json(raw)?;
+    let generated = read_recall_drafts(raw)?;
     if generated.cards.len() != count {
         return Err(invalid(
             "The model returned an unexpected number of recall drafts. Try again.",

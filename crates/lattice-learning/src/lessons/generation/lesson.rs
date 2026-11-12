@@ -60,20 +60,24 @@ impl Contract for LessonWriter {
 impl lattice_core::application::services::model_contract::test_support::RenderAnswer
     for LessonWriter
 {
-    type Answer = serde_json::Value;
+    type Answer = GeneratedLesson;
 
-    fn render(answer: &serde_json::Value) -> String {
-        answer.to_string()
+    fn render(answer: &GeneratedLesson) -> String {
+        json!(answer).to_string()
     }
 
-    fn read(text: &str) -> Result<serde_json::Value> {
-        parse_json(text)
+    fn read(text: &str) -> Result<GeneratedLesson> {
+        read_lesson(text)
     }
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, PartialEq)
+)]
 #[serde(rename_all = "camelCase")]
-struct GeneratedLesson {
+pub(crate) struct GeneratedLesson {
     blocks: Vec<GeneratedBlock>,
     questions: Vec<GeneratedQuestion>,
 }
@@ -82,6 +86,18 @@ impl GeneratedLesson {
     /// A lesson has at least one section.
     fn has_sections(&self) -> bool {
         !self.blocks.is_empty()
+    }
+}
+
+/// The lesson a draft reply holds: refused when it has no section.
+fn read_lesson(raw: &str) -> Result<GeneratedLesson> {
+    let lesson: GeneratedLesson = parse_json(raw)?;
+    if lesson.has_sections() {
+        Ok(lesson)
+    } else {
+        Err(AppError::InvalidInput(
+            "The lesson has no sections; write at least one.".into(),
+        ))
     }
 }
 
@@ -103,6 +119,10 @@ pub(crate) fn reads_as_part(part: &serde_json::Value, block: bool) -> bool {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, PartialEq)
+)]
 #[serde(rename_all = "camelCase")]
 struct GeneratedBlock {
     kind: LearningBlockKind,
@@ -118,6 +138,10 @@ struct GeneratedBlock {
 /// The source a cited sentence adds and the verbatim words of that source
 /// that contain what it states; `teaching::quotes` checks the sentence.
 #[derive(Debug, Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, PartialEq)
+)]
 #[serde(rename_all = "camelCase")]
 struct GeneratedCitation {
     source_index: Option<usize>,
@@ -125,6 +149,10 @@ struct GeneratedCitation {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, PartialEq)
+)]
 #[serde(rename_all = "camelCase")]
 struct GeneratedQuestion {
     kind: LessonQuestionKind,
@@ -546,15 +574,7 @@ pub async fn prepare_lesson_with_references<'a>(
                 subject: "the lesson",
                 brief: &brief,
             }),
-            |raw| {
-                if parse_json::<GeneratedLesson>(raw)?.has_sections() {
-                    Ok(raw.to_owned())
-                } else {
-                    Err(AppError::InvalidInput(
-                        "The lesson has no sections; write at least one.".into(),
-                    ))
-                }
-            },
+            |raw| read_lesson(raw).map(|_| raw.to_owned()),
         )
         .await?;
         crate::lesson_drafts::save(&raw).await?;

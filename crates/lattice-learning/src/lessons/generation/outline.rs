@@ -41,7 +41,7 @@ impl lattice_core::application::services::model_contract::test_support::RenderAn
     }
 
     fn read(text: &str) -> Result<GeneratedOutline> {
-        parse_json(text)
+        read_outline(text)
     }
 }
 
@@ -98,6 +98,11 @@ struct GeneratedOutlineLesson {
     estimated_minutes: i64,
     source_index: Option<usize>,
     quote: String,
+}
+
+/// The outline a reply holds, before it is held to the depth asked for.
+fn read_outline(raw: &str) -> Result<GeneratedOutline> {
+    parse_json(raw)
 }
 
 pub(crate) fn outline_schema(
@@ -432,7 +437,7 @@ pub(crate) fn decode_outline(
 ) -> Result<Vec<LearningModuleDto>> {
     let (min_modules, max_modules, min_lessons, max_lessons) =
         LearningCourseDepth::bounds(request.course_depth);
-    let generated: GeneratedOutline = parse_json(raw)?;
+    let generated = read_outline(raw)?;
     if !(min_modules..=max_modules).contains(&generated.modules.len()) {
         return Err(invalid(format!(
             "The outline needs {min_modules} to {max_modules} modules; this answer has {}.",

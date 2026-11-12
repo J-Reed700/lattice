@@ -44,7 +44,7 @@ impl lattice_core::application::services::model_contract::test_support::RenderAn
     }
 
     fn read(text: &str) -> Result<super::CoursePlan> {
-        crate::generation::parse_json(text)
+        super::read_plan(text)
     }
 }
 
