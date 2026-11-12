@@ -71,11 +71,11 @@ impl ReadTx {
 }
 
 /// Rows the connection's statements have inserted, updated or deleted since it
-/// opened.
+/// opened. A read unit asks as it begins and as it commits.
+pub(crate) const CHANGED_ROWS: &str = "SELECT total_changes()";
+
 async fn changed_rows(connection: &mut SqliteConnection) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar("SELECT total_changes()")
-        .fetch_one(connection)
-        .await
+    sqlx::query_scalar(CHANGED_ROWS).fetch_one(connection).await
 }
 
 impl Deref for WriteTx {

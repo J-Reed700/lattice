@@ -49,11 +49,21 @@ async fn a_unit_of_work_begun_on_the_database_persists_when_committed() {
 
 #[tokio::test]
 async fn a_copy_goes_to_a_path_with_sql_in_its_name() {
-    let db = open().await;
-    write_a_note(&db).await;
     let dir = tempfile::tempdir().unwrap();
+    let live = SqliteConnectOptions::new()
+        .filename(dir.path().join("live.db"))
+        .create_if_missing(true);
+    let db = Database::new(
+        SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(live)
+            .await
+            .unwrap(),
+    );
+    write_a_note(&db).await;
     let copy = dir.path().join("it's; -- a copy.db");
     db.vacuum_into(copy.to_str().unwrap()).await.unwrap();
+    db.close().await;
     let mut copied = SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&copy))
         .await
         .unwrap();
