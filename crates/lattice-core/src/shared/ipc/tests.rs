@@ -301,3 +301,90 @@ fn a_busy_database_converts_to_its_own_code() {
         "DATABASE_ERROR"
     );
 }
+
+#[test]
+fn each_model_and_lesson_error_has_a_code_of_its_own() {
+    for (error, code) in [
+        (AppError::WindowTooSmall("x".into()), ErrorCode::WindowTooSmall),
+        (AppError::ModelRejected("x".into()), ErrorCode::ModelRejected),
+        (
+            AppError::ModelAnswerUnusable("x".into()),
+            ErrorCode::ModelAnswerUnusable,
+        ),
+        (AppError::AnswerCutOff("x".into()), ErrorCode::AnswerCutOff),
+        (AppError::Cancelled("x".into()), ErrorCode::Cancelled),
+        (AppError::LessonHeld("x".into()), ErrorCode::LessonHeld),
+    ] {
+        assert_eq!(ErrorCode::from(&error), code, "{error}");
+        assert_eq!(ApiError::from(error.clone()).code, code, "{error}");
+    }
+}
+
+#[test]
+fn the_code_of_an_api_error_is_the_code_of_its_source_error() {
+    let errors = [
+        AppError::NotFound("x".into()),
+        AppError::DatabaseBusy("x".into()),
+        AppError::ServiceNotAvailable("x".into()),
+        AppError::ValidationFailed("x".into()),
+        AppError::InternalError("x".into()),
+        AppError::Domain(Box::new(DomainError::InvalidState {
+            details: "x".into(),
+        })),
+        AppError::Domain(Box::new(DomainError::ConstraintViolation {
+            constraint: "x".into(),
+        })),
+        AppError::Application(Box::new(ApplicationError::JsonError {
+            message: "x".into(),
+            line: 1,
+            column: 2,
+        })),
+        AppError::Application(Box::new(ApplicationError::UseCaseFailed {
+            use_case: "x".into(),
+            reason: "y".into(),
+        })),
+    ];
+    for error in errors {
+        assert_eq!(
+            ApiError::from(error.clone()).code,
+            ErrorCode::from(&error),
+            "{error}"
+        );
+    }
+    assert_eq!(
+        ErrorCode::from(&AppError::Domain(Box::new(DomainError::InvalidState {
+            details: "x".into()
+        }))),
+        ErrorCode::InvalidState
+    );
+    assert_eq!(
+        ErrorCode::from(&AppError::Application(Box::new(
+            ApplicationError::UseCaseFailed {
+                use_case: "x".into(),
+                reason: "y".into()
+            }
+        ))),
+        ErrorCode::ProcessingError
+    );
+}
+
+#[test]
+fn an_error_code_prints_as_it_serializes() {
+    assert_eq!(ErrorCode::AnswerCutOff.to_string(), "ANSWER_CUT_OFF");
+    for code in [
+        ErrorCode::WindowTooSmall,
+        ErrorCode::ModelRejected,
+        ErrorCode::ModelAnswerUnusable,
+        ErrorCode::AnswerCutOff,
+        ErrorCode::Cancelled,
+        ErrorCode::LessonHeld,
+        ErrorCode::NotFound,
+        ErrorCode::DatabaseBusy,
+        ErrorCode::ServiceNotAvailable,
+    ] {
+        assert_eq!(
+            serde_json::to_value(code).unwrap(),
+            serde_json::Value::String(code.to_string())
+        );
+    }
+}

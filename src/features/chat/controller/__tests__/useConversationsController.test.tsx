@@ -545,7 +545,7 @@ describe('useConversationsController optimistic cleanup', () => {
       resolveChat?.({
         ok: false,
         error: 'generation cancelled',
-        details: { code: ErrorCode.INVALID_STATE },
+        details: { code: ErrorCode.CANCELLED },
       });
       await sendPromise;
     });
@@ -555,7 +555,7 @@ describe('useConversationsController optimistic cleanup', () => {
     expect(result.current.error).toBeNull();
   });
 
-  const cancelMidTurn = async (persistedMessages: unknown[]) => {
+  const cancelMidTurn = async (persistedMessages: unknown[], endedWith: ErrorCode = ErrorCode.CANCELLED) => {
     conversationUiStore.setState({ composerDraft: null });
     let resolveChat: ((value: unknown) => void) | undefined;
     api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => {
@@ -572,7 +572,7 @@ describe('useConversationsController optimistic cleanup', () => {
     });
     await act(async () => result.current.cancelGeneration('conversation-1'));
     await act(async () => {
-      resolveChat?.({ ok: false, error: 'generation cancelled', details: { code: ErrorCode.INVALID_STATE } });
+      resolveChat?.({ ok: false, error: 'generation cancelled', details: { code: endedWith } });
       await sendPromise;
     });
     return result;
@@ -581,6 +581,11 @@ describe('useConversationsController optimistic cleanup', () => {
   it('hands the question back to the composer when a stop lands before it was saved', async () => {
     const result = await cancelMidTurn([]);
     expect(result.current.composerDraft).toBe('Where is the draft?');
+  });
+
+  it('treats a pending stop that ended with any other code as a failure, not a stop', async () => {
+    const result = await cancelMidTurn([], ErrorCode.INVALID_STATE);
+    expect(result.current.composerDraft).toBeNull();
   });
 
   it('leaves the composer alone when the stopped question was already saved', async () => {
