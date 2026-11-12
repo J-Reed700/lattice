@@ -287,15 +287,15 @@ fn moving_statements_one_graph_edge_at_a_time_never_raises_the_ceiling() {
     // The 5 sorting calls are made. Each step a statement takes makes the
     // calls of the node it leaves, which come out of what the plan holds for
     // it.
-    let mut made = 5;
+    let mut calls = 5;
     let mut plan = made(&policy, &after(0), &[], 4);
-    let mut ceiling = plan.ceiling(made);
+    let mut ceiling = plan.ceiling(calls);
     assert!(ceiling > 0);
     for steps in 1..=longest {
         let (now, held) = (after(steps), mosts(&plan));
         for journey in &journeys {
             if journey.taken.len() >= steps {
-                made += calls_of(&policy, journey, place(&policy, journey, steps - 1));
+                calls += calls_of(&policy, journey, place(&policy, journey, steps - 1));
             }
         }
         plan.moved(&policy, &now);
@@ -311,15 +311,15 @@ fn moving_statements_one_graph_edge_at_a_time_never_raises_the_ceiling() {
                 "step {steps}, statement {index}"
             );
         }
-        let next = plan.ceiling(made);
+        let next = plan.ceiling(calls);
         assert!(next <= ceiling, "step {steps}: {next} after {ceiling}");
         ceiling = next;
     }
     // Every journey is over or at its last step; the ceiling is the calls
     // made and what is left.
     assert_eq!(
-        plan.ceiling(made),
-        made + 4 + mosts(&plan).iter().sum::<u32>(),
+        plan.ceiling(calls),
+        calls + 4 + mosts(&plan).iter().sum::<u32>(),
         "no reserve is held where no statement shares a sentence"
     );
 }

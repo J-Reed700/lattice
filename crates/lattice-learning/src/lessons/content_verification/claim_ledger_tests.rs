@@ -2240,7 +2240,6 @@ async fn a_full_extraction_that_misses_a_claim_whose_sentence_stands_carries_it_
 
 #[tokio::test]
 async fn a_claim_whose_sentence_is_gone_is_not_carried_by_the_extraction() -> Result<()> {
-    let policy = StandardPolicy::new();
     let model = Classes::new(&[TWELVE_SENTENCE]);
     let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
     claim(&mut ledger, "atp", (ATP_SENTENCE, ATP), CELL, SOURCED).await?;
@@ -2263,7 +2262,6 @@ async fn a_claim_whose_sentence_is_gone_is_not_carried_by_the_extraction() -> Re
 #[tokio::test]
 async fn a_claim_the_extraction_words_differently_on_its_sentence_is_continued_not_carried_twice(
 ) -> Result<()> {
-    let policy = StandardPolicy::new();
     // The extractor states the sentence itself, where the ledger holds a
     // restatement of it.
     let model = Classes::new(&[ATP_SENTENCE]);
