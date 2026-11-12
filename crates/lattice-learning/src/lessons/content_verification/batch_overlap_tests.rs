@@ -120,7 +120,7 @@ async fn a_batch_with_a_malformed_first_answer_is_asked_once_more() -> Result<()
 }
 
 #[tokio::test]
-async fn a_batch_failing_twice_names_its_sections_and_the_others_are_kept() -> Result<()> {
+async fn a_batch_failing_twice_fails_the_inventory_and_the_other_batches_are_kept() -> Result<()> {
     let pool = crate::tests::pool().await?;
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
     let model = Flaky::new(2);
@@ -130,7 +130,11 @@ async fn a_batch_failing_twice_names_its_sections_and_the_others_are_kept() -> R
             .await
             .err()
             .unwrap();
-        assert!(error.to_string().contains("sections 5"), "{error}");
+        assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error}");
+        assert!(
+            error.to_string().contains("Unit 4 needs an inventory"),
+            "{error}"
+        );
         assert_eq!(
             sorted(&model.inner.extracted_sections),
             vec![vec![0, 1, 2, 3], vec![4], vec![4]]

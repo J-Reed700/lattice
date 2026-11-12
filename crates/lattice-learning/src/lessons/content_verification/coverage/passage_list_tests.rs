@@ -1,5 +1,9 @@
 use super::*;
 use crate::lessons::course_generation_tests::{property_count, ScriptedModel};
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
+use lattice_core::application::services::model_contract::CORRECTION_LEAD;
 
 fn passage(id: &str) -> Value {
     json!({"id":id,"text":"A fact."})
@@ -39,14 +43,68 @@ fn model(answers: Vec<String>) -> ScriptedModel {
     }
 }
 
-/// The error of a mapping the model answers with `first`, and with `second`
-/// when asked again for what is still unanswered.
-async fn refused(units: &[Value], first: String, second: String) -> String {
-    let model = model(vec![first, second]);
-    mapping::review(&model, units, None)
-        .await
-        .unwrap_err()
-        .to_string()
+/// A decision that reports an omission, so it differs from [`covered`].
+fn omitted(id: &str) -> Value {
+    json!({"passageId":id,"claimIds":[],"nonFactualReason":"","missingClaims":["An omitted fact."]})
+}
+
+/// Passes each request on to `inner` and keeps it.
+struct Sent<'a> {
+    inner: &'a ScriptedModel,
+    requests: std::sync::Mutex<Vec<CompletionRequest>>,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Sent<'_> {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        self.requests.lock().unwrap().push(request.clone());
+        self.inner.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.inner.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.inner.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.inner.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// The last user message of each request that is a correction.
+fn corrections(requests: &[CompletionRequest]) -> Vec<String> {
+    requests
+        .iter()
+        .filter_map(|request| {
+            request.input.iter().rev().find_map(|item| match item {
+                CompletionInput::Message { role, content } if role == "user" => {
+                    Some(content.clone())
+                }
+                _ => None,
+            })
+        })
+        .filter(|last| last.starts_with(CORRECTION_LEAD))
+        .collect()
+}
+
+/// The mapping of a model that answers with `first`, and with `second` when
+/// corrected, and every request it was sent.
+async fn mapped(
+    units: &[Value],
+    first: String,
+    second: String,
+) -> (Result<String>, Vec<CompletionRequest>) {
+    let scripted = model(vec![first, second]);
+    let sent = Sent {
+        inner: &scripted,
+        requests: Default::default(),
+    };
+    let mapping = mapping::review(&sent, units, None).await;
+    let requests = sent.requests.lock().unwrap().clone();
+    (mapping, requests)
 }
 
 #[test]
@@ -85,55 +143,91 @@ async fn a_complete_answer_is_kept_by_passage() {
 }
 
 #[tokio::test]
-async fn a_passage_left_out_is_named_and_the_others_are_not() {
+async fn a_passage_left_out_is_named_and_the_correction_alone_is_kept() {
     let units = two_sections();
     let first = answer(vec![covered("p0", &["c0"])]);
-    let error = refused(&units, first, answer(Vec::new())).await;
-    assert!(error.contains("p1"), "{error}");
-    assert!(!error.contains("p0"), "{error}");
+    let second = answer(vec![omitted("p0"), covered("p1", &["c1"])]);
+    let (mapping, requests) = mapped(&units, first, second).await;
+    let asked = corrections(&requests);
+    assert_eq!(requests.len(), 2);
+    assert_eq!(asked.len(), 1);
+    assert!(asked[0].contains("p1"), "{}", asked[0]);
+    assert!(!asked[0].contains("p0"), "{}", asked[0]);
+    let kept: Value = serde_json::from_str(&mapping.unwrap()).unwrap();
+    assert_eq!(kept["p0"]["missingClaims"], json!(["An omitted fact."]));
+    assert_eq!(kept["p0"]["claimIds"], json!([]));
+    assert_eq!(kept["p1"]["claimIds"], json!(["c1"]));
 }
 
 #[tokio::test]
-async fn a_passage_answered_twice_is_named_and_the_others_are_not() {
+async fn a_passage_answered_twice_is_named_and_the_correction_alone_is_kept() {
     let units = two_sections();
     let first = answer(vec![
         covered("p0", &["c0"]),
         covered("p0", &["c0"]),
         covered("p1", &["c1"]),
     ]);
-    let again = answer(vec![covered("p0", &["c0"]), covered("p0", &["c0"])]);
-    let error = refused(&units, first, again).await;
-    assert!(error.contains("p0"), "{error}");
-    assert!(!error.contains("p1"), "{error}");
+    let second = answer(vec![omitted("p0"), covered("p1", &["c1"])]);
+    let (mapping, requests) = mapped(&units, first, second).await;
+    let asked = corrections(&requests);
+    assert_eq!(requests.len(), 2);
+    assert_eq!(asked.len(), 1);
+    assert!(asked[0].contains("p0"), "{}", asked[0]);
+    assert!(!asked[0].contains("p1"), "{}", asked[0]);
+    let kept: Value = serde_json::from_str(&mapping.unwrap()).unwrap();
+    assert_eq!(kept["p0"]["missingClaims"], json!(["An omitted fact."]));
+    assert_eq!(kept["p0"]["claimIds"], json!([]));
+    assert_eq!(kept["p1"]["claimIds"], json!(["c1"]));
 }
 
 #[tokio::test]
 async fn a_claim_from_another_section_is_named_with_its_passage() {
     let units = two_sections();
     let first = answer(vec![covered("p0", &["c1"]), covered("p1", &["c1"])]);
-    let again = answer(vec![covered("p0", &["c1"])]);
-    let error = refused(&units, first, again).await;
-    assert!(error.contains("p0"), "{error}");
-    assert!(!error.contains("p1"), "{error}");
+    let second = answer(vec![omitted("p0"), covered("p1", &["c1"])]);
+    let (mapping, requests) = mapped(&units, first, second).await;
+    let asked = corrections(&requests);
+    assert_eq!(requests.len(), 2);
+    assert_eq!(asked.len(), 1);
+    assert!(asked[0].contains("p0"), "{}", asked[0]);
+    assert!(!asked[0].contains("p1"), "{}", asked[0]);
+    let kept: Value = serde_json::from_str(&mapping.unwrap()).unwrap();
+    assert_eq!(kept["p0"]["missingClaims"], json!(["An omitted fact."]));
+    assert_eq!(kept["p0"]["claimIds"], json!([]));
+    assert_eq!(kept["p1"]["claimIds"], json!(["c1"]));
 }
 
 #[tokio::test]
-async fn a_passage_asked_for_again_is_the_only_one_in_the_next_request() {
+async fn a_correction_leaving_a_passage_out_again_fails_without_the_first_answer() {
     let units = two_sections();
-    let model = model(vec![
-        answer(vec![covered("p0", &["c0"])]),
-        answer(vec![covered("p1", &["c1"])]),
-    ]);
-    let raw = mapping::review(&model, &units, None).await.unwrap();
-    assert!(resolve(&raw, &units).is_ok());
-    let prompts = model.prompts.lock().unwrap();
-    assert_eq!(prompts.len(), 2);
-    let next: Value = serde_json::from_str(prompts[1].rsplit("\n\n").next().unwrap()).unwrap();
-    let asked: Vec<_> = next["units"][0]["passages"]
-        .as_array()
-        .unwrap()
+    let first = answer(vec![covered("p0", &["c0"])]);
+    let second = answer(vec![covered("p1", &["c1"])]);
+    let (mapping, requests) = mapped(&units, first, second).await;
+    assert_eq!(requests.len(), 2, "one correction, then the call fails");
+    let error = mapping.unwrap_err();
+    assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error}");
+    assert!(error.to_string().contains("p0"), "{error}");
+    assert!(!error.to_string().contains("p1"), "{error}");
+}
+
+#[tokio::test]
+async fn a_correction_is_asked_in_the_same_conversation_about_every_passage() {
+    let units = two_sections();
+    let first = answer(vec![covered("p0", &["c0"])]);
+    let second = answer(vec![covered("p0", &["c0"]), covered("p1", &["c1"])]);
+    let (mapping, requests) = mapped(&units, first.clone(), second).await;
+    assert!(resolve(&mapping.unwrap(), &units).is_ok());
+    assert_eq!(requests.len(), 2);
+    let said: Vec<String> = requests[1]
+        .input
         .iter()
-        .map(|passage| passage["id"].clone())
+        .filter_map(|item| match item {
+            CompletionInput::Message { content, .. } => Some(content.clone()),
+            _ => None,
+        })
         .collect();
-    assert_eq!(asked, [json!("p1")]);
+    let said = said.join(" ");
+    assert!(said.contains(&first), "the refused reply is carried");
+    assert!(said.contains("\"id\":\"p0\""), "{said}");
+    assert!(said.contains("\"id\":\"p1\""), "{said}");
 }
