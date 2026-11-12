@@ -257,7 +257,7 @@ fn carried_on(run: &PreparedRun, entry: &ClaimLedgerEntry) -> bool {
 }
 
 /// 3. Every label the learner reads and every count of them is what the
-/// ledger derives.
+/// ledger permits.
 fn labels(
     run: &PreparedRun,
     ledger: &ClaimLedger,
@@ -340,11 +340,10 @@ fn labels(
         };
         if !allowed {
             found.push(format!(
-                "{}: the learner reads it as {:?}, but the ledger holds it {:?} (standing {:?}, verified {}, an unverified claim on its sentence {})",
+                "{}: the learner reads it as {:?}, but the ledger holds it {:?} (verified {}, an unverified claim on its sentence {})",
                 about(entry),
                 item.resolution,
                 state,
-                standing,
                 verified,
                 ledger_mate_unverified
             ));
