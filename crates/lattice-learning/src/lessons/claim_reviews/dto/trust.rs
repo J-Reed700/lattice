@@ -5,7 +5,7 @@
 
 use lattice_core::domain::learning::claim_review::{TrustAssessment, TrustCause};
 use lattice_core::domain::provenance::{
-    ContentNature, CountedSupport, Decision, PublisherKind, TrustLevel, WorkEvidence,
+    ContentNature, CountedSupport, Decision, PublisherKind, WorkEvidence,
 };
 use serde::{Deserialize, Serialize};
 
@@ -150,7 +150,9 @@ impl StandingAssessedDto {
                 .iter()
                 .map(|support| CountedSupportDto {
                     source_version_id: support.source_version_id.clone(),
-                    level: Some(level(support.trust.level)),
+                    level: Some(crate::references::trust::dto_map::level(
+                        support.trust.level,
+                    )),
                 })
                 .collect(),
             reason: reason.to_owned(),
@@ -165,15 +167,4 @@ pub(super) fn bar_name(bar: lattice_core::domain::provenance::Bar) -> String {
         .ok()
         .and_then(|value| value.as_str().map(str::to_owned))
         .unwrap_or_default()
-}
-
-pub(super) fn level(level: TrustLevel) -> LearningTrustLevel {
-    match level {
-        TrustLevel::Primary => LearningTrustLevel::Primary,
-        TrustLevel::Authoritative => LearningTrustLevel::Authoritative,
-        TrustLevel::Established => LearningTrustLevel::Established,
-        TrustLevel::Community => LearningTrustLevel::Community,
-        TrustLevel::Unknown => LearningTrustLevel::Unknown,
-        TrustLevel::Distrusted => LearningTrustLevel::Distrusted,
-    }
 }

@@ -9,18 +9,19 @@ use std::collections::HashSet;
 
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
-    Actor, ClaimActionKind, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry, EventProvenance,
-    HumanBinding, Ledger, LessonReview, LessonReviewState, Revision, TrustVerdict, UserAction,
+    span_of, Actor, ClaimActionKind, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry,
+    EventProvenance, HumanBinding, Ledger, LessonReview, LessonReviewState, Revision, TrustVerdict,
+    UserAction,
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::{Database, Transactions};
 use serde_json::Value;
 
-use super::actions::{in_section_body, refusal, whole_sentence, ONLY_SECTION};
+use super::actions::{in_section_body, refusal, ONLY_SECTION};
 use super::checker_examples::LabelSource;
 use super::dto::ClaimActionRequestDto;
-use super::published_edit::{self, PublishedEdit};
+use super::published_edit::{self, placed, PublishedEdit};
 use super::published_remove;
 use super::published_restore;
 use super::put_back;
@@ -37,6 +38,7 @@ mod settle;
 use crate::content_verification::located_quote;
 use crate::curriculum::{LearningGenerationJob, LearningGenerationJobStatus};
 use crate::curriculum_repository::LearningCurriculumRepository;
+use crate::lessons::same_text::whole_sentences;
 use crate::persistence::{db, now};
 use crate::plan_dto::LearningGenerationJobActionRequestDto;
 use lattice_core::shared::text::plain_text;
@@ -364,8 +366,7 @@ impl ClaimReviewService {
             ));
         }
 
-        let (ended, moved) = self.remove_sentences(&review, &ledger, &chosen).await?;
-        let mut revision = Revision(expected_revision + 1);
+        let (ended, moved, mut revision) = self.remove_sentences(&review, &ledger, &chosen).await?;
         if self.redecide(lesson_id, moved).await? {
             revision = self.store.load(lesson_id).await?.revision;
         }
@@ -378,13 +379,14 @@ impl ClaimReviewService {
     /// Takes the chosen notes' sentences out of the published text, ends the
     /// claims they stood on and settles what the removals give the checker
     /// examples and calibration, in one unit of work under the ledger's
-    /// revision. Returns the claims it ended and the kinds whose bar moved.
+    /// revision. Returns the claims it ended, the kinds whose bar moved and
+    /// the revision it left.
     async fn remove_sentences(
         &self,
         review: &LessonReview,
         ledger: &Ledger,
         chosen: &[&TeachingFindingDto],
-    ) -> Result<(Vec<ClaimId>, Vec<ClaimKind>)> {
+    ) -> Result<(Vec<ClaimId>, Vec<ClaimKind>, Revision)> {
         let lesson_id = ledger.lesson_id.as_str();
         let user = provenance(review);
         let mut tx = self.database.begin_write().await.map_err(db)?;
@@ -432,7 +434,7 @@ impl ClaimReviewService {
                 }
             }
         }
-        bump_revision(&mut tx, lesson_id).await?;
+        let written = bump_revision(&mut tx, lesson_id).await?;
         let mut moved = Vec::new();
         for id in &through_claims {
             if let Some(entry) = ledger.claims.iter().find(|entry| entry.claim_id() == id) {
@@ -444,7 +446,7 @@ impl ClaimReviewService {
             }
         }
         tx.commit().await.map_err(db)?;
-        Ok((ended, moved))
+        Ok((ended, moved, written))
     }
 
     /// One claim's action checked against the claim and, in a published
@@ -567,14 +569,14 @@ impl ClaimReviewService {
                 }
             }
         }
-        bump_revision(&mut tx, lesson_id).await?;
+        let written = bump_revision(&mut tx, lesson_id).await?;
         let mut moved = Vec::new();
         for item in planned {
             let kinds = self.settle_in(&mut tx, review, lesson_id, item).await?;
             add_kinds(&mut moved, kinds);
         }
         tx.commit().await.map_err(db)?;
-        Ok((Revision(revision.0 + 1), moved))
+        Ok((written, moved))
     }
 
     /// Whether claim activity or a different checker gives verification new
@@ -656,7 +658,7 @@ impl ClaimReviewService {
                 let sentence = located_quote(entry.location(), entry.statement(), &text);
                 let before = if before == sentence || before == plain_text(&sentence) {
                     sentence
-                } else if text.matches(before.as_str()).count() == 1 {
+                } else if span_of(&text, &before).is_some() {
                     before
                 } else {
                     return Err(AppError::InvalidInput(
@@ -677,8 +679,7 @@ impl ClaimReviewService {
             }
             ClaimActionRequestDto::Remove => {
                 let text = self.field_text(review, lesson_id, entry).await?;
-                let sentence = located_quote(entry.location(), entry.statement(), &text);
-                if !whole_sentence(&text, &sentence) {
+                if !placed(entry, &text).is_some_and(|span| whole_sentences(&text, span)) {
                     return Err(AppError::InvalidInput(
                         "This statement is part of a sentence. Edit the sentence to say what goes."
                             .into(),

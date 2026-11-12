@@ -6,6 +6,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use lattice_core::application::ports::SourceTrustStore;
+use lattice_core::application::services::claim_verification::quote_in;
 use lattice_core::domain::learning::claim_review::{
     ClaimLedgerEntry, ClaimState, Ledger, TrustAssessment,
 };
@@ -17,6 +18,7 @@ use super::super::repository::ShownPassage;
 use super::super::service::ClaimReviewService;
 use super::{evidence_passage, latest_check, PassageKey, PassageText, SourceFacts};
 use crate::dto::LearningTrustLevel;
+use crate::lessons::same_text;
 use crate::references::trust::dto_map;
 use crate::references::trust::repository::SqliteSourceTrustStore;
 use crate::references::trust::source_view::latest_standing;
@@ -273,10 +275,7 @@ fn support(
                 &assessment.work,
             )
         });
-    let quote_span = (!quote.is_empty())
-        .then(|| passage.text.find(&quote))
-        .flatten()
-        .map(|at| (at, at + quote.len()));
+    let quote_span = same_text::find(&passage.text, &quote);
     Some(ClaimSupportDto {
         role,
         source: facts.reference(version),
@@ -329,9 +328,13 @@ fn passage(
     }
     let holding = candidates
         .iter()
-        .position(|(text, _, _)| !quote.is_empty() && text.contains(quote));
+        .position(|(text, _, _)| quote_in(text, quote).is_some());
     match holding {
         Some(at) => Some(candidates.swap_remove(at)),
         None => candidates.into_iter().next(),
     }
 }
+
+#[cfg(test)]
+#[path = "support_tests.rs"]
+mod tests;

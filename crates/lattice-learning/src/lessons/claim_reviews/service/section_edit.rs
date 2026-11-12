@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState, EventProvenance,
-    HumanBinding, Ledger, UnitKind, UnverifiedReason, UserAction,
+    Ledger, Revision, UnitKind, UserAction,
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
@@ -17,7 +17,8 @@ use lattice_core::shared::persistence::{Transactions, WriteTx};
 
 use super::{add_kinds, provenance, user_resolution, ClaimReviewService, LabelSource, Planned};
 use crate::content_verification::Rewritten;
-use crate::lessons::claim_reviews::published_edit::{placed, update_report};
+use crate::lessons::claim_reviews::count;
+use crate::lessons::claim_reviews::published_edit::{confirmed_sentence_in, placed, update_report};
 use crate::lessons::claim_reviews::published_rewrite::{plan, FieldPlan, Written};
 use crate::lessons::claim_reviews::repository::{
     append_in, blocks, bump_revision, check_revision, teaching_findings,
@@ -66,10 +67,6 @@ pub(super) struct Ending<'a> {
     pub(super) before: String,
     /// The sentence that replaces it and its claim; none when it was deleted.
     pub(super) after: Option<(ClaimId, String)>,
-}
-
-pub(super) fn count(items: usize) -> u32 {
-    u32::try_from(items).unwrap_or(u32::MAX)
 }
 
 pub(super) fn endings<'a>(
@@ -151,11 +148,11 @@ impl ClaimReviewService {
         } else {
             &[]
         };
-        let mut title_plan = plan(claims, unit, "title", &old_title, &title);
+        let mut title_plan = plan(claims, unit, true, "title", &old_title, &title);
         if title_plan.edited.is_empty() {
             title_plan.written.clear();
         }
-        let body_plan = plan(claims, unit, "body", &old_body, &body);
+        let body_plan = plan(claims, unit, true, "body", &old_body, &body);
         let mut ending = endings(claims, &title_plan, &old_title);
         ending.extend(endings(claims, &body_plan, &old_body));
         let written: Vec<(&str, &Written)> = title_plan
@@ -191,20 +188,21 @@ impl ClaimReviewService {
             ending: &ending,
             at: now(),
         };
-        let moved = self.write_section_edit(&ledger, &write).await?;
-        outcome.revision = self.settled_revision(&ledger, &lesson_id, moved).await?;
+        let (moved, bumped) = self.write_section_edit(&ledger, &write).await?;
+        outcome.revision = self.settled_revision(&lesson_id, moved, bumped).await?;
         Ok(outcome)
     }
 
     /// The edit and its settlement in one unit of work: the section, the
     /// ledger's events, the stored report, the teaching notes' marker and
     /// what each ended statement gives the checker examples and calibration.
-    /// Returns the kinds whose bar the settlement moved.
+    /// Returns the kinds whose bar the settlement moved and the revision the
+    /// write left; none for a lesson without a review.
     async fn write_section_edit(
         &self,
         ledger: &Ledger,
         write: &SectionWrite<'_>,
-    ) -> Result<Vec<ClaimKind>> {
+    ) -> Result<(Vec<ClaimKind>, Option<Revision>)> {
         let SectionWrite {
             program_id,
             lesson_id,
@@ -262,14 +260,15 @@ impl ClaimReviewService {
         })
         .await?;
         teaching_findings::mark_part_changed(&mut tx, lesson_id, "section", unit, at).await?;
-        if ledger.review.is_some() {
-            bump_revision(&mut tx, lesson_id).await?;
-        }
+        let bumped = match ledger.review {
+            Some(_) => Some(bump_revision(&mut tx, lesson_id).await?),
+            None => None,
+        };
         let moved = self
             .settle_planned_in(&mut tx, ledger, lesson_id, &planned)
             .await?;
         tx.commit().await.map_err(db)?;
-        Ok(moved)
+        Ok((moved, bumped))
     }
 }
 
@@ -337,17 +336,17 @@ impl ClaimReviewService {
     /// review.
     pub(super) async fn settled_revision(
         &self,
-        ledger: &Ledger,
         lesson_id: &str,
         moved: Vec<ClaimKind>,
+        bumped: Option<Revision>,
     ) -> Result<Option<i64>> {
-        if ledger.review.is_none() {
+        let Some(bumped) = bumped else {
             return Ok(None);
-        }
+        };
         Ok(Some(if self.redecide(lesson_id, moved).await? {
             self.store().load(lesson_id).await?.revision.0
         } else {
-            ledger.revision.0 + 1
+            bumped.0
         }))
     }
 }
@@ -363,10 +362,6 @@ pub(super) async fn record_edit<'a>(
     ending: &[Ending<'a>],
     user: &EventProvenance,
 ) -> Result<Vec<Planned<'a>>> {
-    let machine = EventProvenance {
-        actor: Actor::Machine,
-        ..user.clone()
-    };
     for (field, kind, item) in written {
         let location = ClaimLocation {
             unit_index: unit,
@@ -375,32 +370,7 @@ pub(super) async fn record_edit<'a>(
             quote: item.text.clone(),
             span: Some(item.span),
         };
-        for (by, event) in [
-            (
-                &machine,
-                ClaimEvent::Extracted {
-                    location,
-                    statement: item.text.clone(),
-                },
-            ),
-            (
-                &machine,
-                ClaimEvent::PublishedUnverified {
-                    reason: UnverifiedReason::Unchecked,
-                },
-            ),
-            (
-                user,
-                ClaimEvent::UserAction {
-                    action: UserAction::Confirm {
-                        bound: HumanBinding::new(&item.text, Vec::new()),
-                    },
-                    note: None,
-                },
-            ),
-        ] {
-            append_in(&mut *tx, lesson_id, &item.successor, by.clone(), event).await?;
-        }
+        confirmed_sentence_in(&mut *tx, lesson_id, &item.successor, location, user).await?;
     }
     let mut planned = Vec::new();
     for item in ending {

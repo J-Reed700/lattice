@@ -7,13 +7,13 @@
 use std::collections::HashSet;
 
 use lattice_core::domain::learning::claim_review::{
-    ClaimLedgerEntry, ClaimState, Ledger, UnitKind,
+    ClaimLedgerEntry, ClaimState, Ledger, Revision, UnitKind,
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 
-use super::section_edit::{count, endings, record_edit, Ending};
+use super::section_edit::{endings, record_edit, Ending};
 use super::{provenance, ClaimReviewService};
 use crate::assessment_engine::{
     self as engine, normalize_answer, LearningAssessmentKey, LearningItemFormat,
@@ -21,11 +21,13 @@ use crate::assessment_engine::{
 use crate::assessment_generation::StoredItem;
 use crate::assessment_repository::{content_hash, LearningAssessmentRepository};
 use crate::content_verification::Rewritten;
+use crate::lessons::claim_reviews::count;
 use crate::lessons::claim_reviews::published_edit::update_report;
 use crate::lessons::claim_reviews::published_rewrite::{plan, FieldPlan, Written};
 use crate::lessons::claim_reviews::repository::{
     blocks, bump_revision, check_revision, questions, teaching_findings,
 };
+use crate::lessons::review_findings::FindingSite;
 use crate::persistence::{db, now};
 use crate::quiz_blueprints::parse_format;
 
@@ -259,19 +261,18 @@ struct FieldChange {
     plan: FieldPlan,
 }
 
-/// `replaces_only`: a new sentence is written only where it replaces one a
+/// A prompt or choice gets a new sentence only where it replaces one a
 /// statement stood on, as for a section's title.
 fn field_change(
     claims: &[ClaimLedgerEntry],
     unit: usize,
     field: String,
-    kind: UnitKind,
     old: &str,
     new: &str,
-    replaces_only: bool,
 ) -> FieldChange {
-    let mut changed = plan(claims, unit, &field, old, new);
-    if replaces_only && changed.edited.is_empty() {
+    let kind = UnitKind::of(false, &field);
+    let mut changed = plan(claims, unit, false, &field, old, new);
+    if kind == UnitKind::Question && changed.edited.is_empty() {
         changed.written.clear();
     }
     FieldChange {
@@ -346,9 +347,9 @@ impl ClaimReviewService {
         }
         read.commit().await.map_err(db)?;
 
-        let unit = usize::try_from(sections)
-            .unwrap_or_default()
-            .saturating_add(question_index);
+        let unit = FindingSite::Question(question_index)
+            .unit(usize::try_from(sections).unwrap_or_default())
+            .ok_or_else(|| AppError::NotFound(NOT_IN_LESSON.into()))?;
         let claims: &[ClaimLedgerEntry] = if ledger.review.is_some() {
             &ledger.claims
         } else {
@@ -359,40 +360,32 @@ impl ClaimReviewService {
             claims,
             unit,
             "prompt".into(),
-            UnitKind::Question,
             &old.prompt,
             &new.prompt,
-            true,
         )];
         for slot in 0..old.choices.len().max(new.choices.len()) {
             changes.push(field_change(
                 claims,
                 unit,
                 format!("options/{slot}"),
-                UnitKind::Question,
                 old.choices.get(slot).map_or("", String::as_str),
                 new.choices.get(slot).map_or("", String::as_str),
-                true,
             ));
         }
         changes.push(field_change(
             claims,
             unit,
             "explanation".into(),
-            UnitKind::AnswerKey,
             &old.explanation,
             &new.explanation,
-            false,
         ));
         for slot in 0..old.rationales.len().max(new.rationales.len()) {
             changes.push(field_change(
                 claims,
                 unit,
                 format!("rationales/{slot}"),
-                UnitKind::AnswerKey,
                 old.rationales.get(slot).map_or("", String::as_str),
                 new.rationales.get(slot).map_or("", String::as_str),
-                false,
             ));
         }
         let mut ending = Vec::new();
@@ -441,20 +434,21 @@ impl ClaimReviewService {
             ending: &ending,
             at: now(),
         };
-        let moved = self.write_question_edit(&ledger, &write).await?;
-        outcome.revision = self.settled_revision(&ledger, &lesson_id, moved).await?;
+        let (moved, bumped) = self.write_question_edit(&ledger, &write).await?;
+        outcome.revision = self.settled_revision(&lesson_id, moved, bumped).await?;
         Ok(outcome)
     }
 
     /// The edit and its settlement in one unit of work: the question, its
     /// key, the ledger's events, the stored report, the teaching notes'
     /// marker and what each ended statement gives the checker examples and
-    /// calibration. Returns the kinds whose bar the settlement moved.
+    /// calibration. Returns the kinds whose bar the settlement moved and the
+    /// revision the write left; none for a lesson without a review.
     async fn write_question_edit(
         &self,
         ledger: &Ledger,
         write: &QuestionWrite<'_>,
-    ) -> Result<Vec<ClaimKind>> {
+    ) -> Result<(Vec<ClaimKind>, Option<Revision>)> {
         let QuestionWrite {
             program_id,
             lesson_id,
@@ -536,14 +530,15 @@ impl ClaimReviewService {
         .await?;
         teaching_findings::mark_part_changed(&mut tx, lesson_id, "question", question_index, at)
             .await?;
-        if ledger.review.is_some() {
-            bump_revision(&mut tx, lesson_id).await?;
-        }
+        let bumped = match ledger.review {
+            Some(_) => Some(bump_revision(&mut tx, lesson_id).await?),
+            None => None,
+        };
         let moved = self
             .settle_planned_in(&mut tx, ledger, lesson_id, &planned)
             .await?;
         tx.commit().await.map_err(db)?;
-        Ok(moved)
+        Ok((moved, bumped))
     }
 }
 

@@ -28,14 +28,18 @@ use serde_json::{json, Value};
 
 use super::super::recheck::waiting_claims;
 use super::acquire::{acquire, Acquired};
+use super::check;
 use super::failures::AttachFailureDto;
 use super::report::{ClaimAttachProgressDto, PutBackOutcomeDto, SnapshotNoteDto};
 use super::{
     attach, attach_to, attach_to_lesson, AttachDeps, AttachRequest, Evidence, LessonSourceRequest,
     Others,
 };
+use crate::dto::LearningSourceDto;
 use crate::lessons::claim_reviews::dto::{AttachOutcomeDto, SourceAddedByDto};
+use crate::lessons::content_verification::fits_window;
 use crate::lessons::content_verification::tests::{fixture_completion, fixture_prompts};
+use crate::reference_collection::ReferenceCollection;
 use crate::source_library::LearningSourceLibraryRepository;
 use crate::{repository::LearningRepository, tests};
 
@@ -1204,6 +1208,54 @@ async fn a_lesson_with_no_open_claims_saves_the_source_and_checks_nothing() {
         .iter()
         .all(|stage| !matches!(stage, ClaimAttachProgressDto::Checking { .. })));
     assert!(matches!(stages.last(), Some(ClaimAttachProgressDto::Done)));
+}
+
+/// A model with a chosen context window and no replies.
+struct Window(usize);
+
+#[async_trait]
+impl LLMPort for Window {
+    async fn complete(&self, _: &CompletionRequest) -> Result<CompletionResponse> {
+        Err(AppError::InvalidState("This model answers nothing.".into()))
+    }
+    fn model_name(&self) -> &str {
+        "window-fixture"
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.0
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn an_attached_sources_passages_fill_the_single_claim_judges_window() {
+    let filler = "The quick lemon fox jumps over the lazy dog. ".repeat(150);
+    let sources = [LearningSourceDto {
+        id: "source-1".into(),
+        title: "Notes".into(),
+        url: None,
+        excerpt: format!("{WATER} {filler}{WATER} {filler}{WATER}"),
+        acquired_at: 0,
+    }];
+    let references = ReferenceCollection::lexical(&sources).unwrap();
+    let all = check::passages_from(&Window(1_000_000), &references, "source-1", WATER)
+        .await
+        .unwrap();
+    assert!(all.len() >= 2);
+    let window = (1..2_000_000)
+        .find(|&window| fits_window(&Window(window), WATER, &all))
+        .unwrap();
+
+    let held = check::passages_from(&Window(window), &references, "source-1", WATER)
+        .await
+        .unwrap();
+
+    assert_eq!(held.len(), all.len());
 }
 
 #[path = "write_tests.rs"]

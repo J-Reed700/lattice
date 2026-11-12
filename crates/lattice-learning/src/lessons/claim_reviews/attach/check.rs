@@ -5,17 +5,18 @@
 //! "no passage".
 
 use lattice_core::application::ports::LLMPort;
-use lattice_core::application::services::claim_verification::{ClaimJudgment, ClaimVerdict};
+use lattice_core::application::services::claim_verification::ClaimJudgment;
 use lattice_core::domain::learning::claim_review::{
-    text_sha256, AttachOutcome, Check, CheckResult, Checker, EvidenceFingerprint, EvidenceSeen,
-    VerdictKind,
+    AttachOutcome, Check, CheckResult, Checker, EvidenceFingerprint, EvidenceSeen, VerdictKind,
 };
 use lattice_core::shared::error::{AppError, Result};
 
 use crate::lessons::content_verification::{
-    bank_tokens, claim_share, evidence_policy, judge_for_publication, ranking, shown_of,
+    fits_window, judge_for_publication, ranking, shown_of, supporting_passage, Judged,
 };
-use crate::reference_collection::{ReferenceCollection, ReferencePassage};
+use crate::reference_collection::{PassageKind, ReferenceCollection, ReferencePassage};
+
+const UNUSABLE: &str = "The checker's answer held no usable verdict.";
 
 /// The passages of `source_version_id` the claim's check may read: those
 /// that mention the claim's terms, best first, within the single-claim
@@ -26,14 +27,9 @@ pub(super) async fn passages_from(
     source_version_id: &str,
     statement: &str,
 ) -> Result<Vec<ReferencePassage>> {
-    let room = claim_share(llm, statement, 1);
     let page = references
         .retrieve_from(source_version_id, statement, |passages| {
-            passages
-                .iter()
-                .map(|passage| bank_tokens(llm, &passage.text))
-                .sum::<usize>()
-                <= room
+            fits_window(llm, statement, passages)
         })
         .await?;
     let subject = references.subject_of(statement).await?;
@@ -54,21 +50,11 @@ pub(super) fn picked_passage(
         .iter()
         .find(|source| source.id == source_version_id)
         .ok_or_else(|| AppError::NotFound("Source version not found in this course".into()))?;
-    let text = source
-        .excerpt
-        .get(start_byte..end_byte)
-        .filter(|text| !text.trim().is_empty())
+    ReferencePassage::of(source, start_byte..end_byte, PassageKind::UserSelected, 0.0)
+        .filter(|passage| !passage.text.trim().is_empty())
         .ok_or_else(|| {
             AppError::InvalidInput("The passage is not a span of that source's text.".into())
-        })?;
-    Ok(ReferencePassage {
-        source_id: source_version_id.into(),
-        text: text.into(),
-        start_byte,
-        end_byte,
-        retrieval_kind: "user_selected".into(),
-        score: 0.0,
-    })
+        })
 }
 
 /// The check of `statement` against `passages`, as the ledger records it.
@@ -78,9 +64,9 @@ pub(super) async fn judge(
     statement: &str,
     passages: &[ReferencePassage],
 ) -> Result<AttachOutcome> {
-    let Some(first) = passages.first() else {
+    if passages.is_empty() {
         return Ok(AttachOutcome::NoPassage);
-    };
+    }
     let texts: Vec<String> = passages
         .iter()
         .map(|passage| passage.text.clone())
@@ -92,47 +78,46 @@ pub(super) async fn judge(
     let (result, reason) = match judged.judgment {
         ClaimJudgment::Judged(outcome) => {
             let reason = outcome.reason.unwrap_or_default();
-            let result = match outcome.verdict {
-                ClaimVerdict::Supported => {
-                    let quote = outcome.quote.unwrap_or_else(|| first.text.clone());
-                    let source_version_id = passages
-                        .iter()
-                        .find(|passage| passage.text.contains(quote.trim()))
-                        .unwrap_or(first)
-                        .source_id
-                        .clone();
-                    CheckResult::Supported {
-                        source_version_id,
-                        supporting_quote: quote,
-                    }
-                }
-                ClaimVerdict::Contradicted => CheckResult::Failed {
-                    kind: VerdictKind::Contradicted,
+            match outcome.verdict.failure(true) {
+                Some(kind) => (CheckResult::Failed { kind }, reason),
+                None => match outcome
+                    .quote
+                    .as_deref()
+                    .and_then(|quote| supporting_passage(quote, passages, None))
+                {
+                    Some((passage, words)) => (
+                        CheckResult::Supported {
+                            source_version_id: passage.source_id.clone(),
+                            supporting_quote: words.to_owned(),
+                        },
+                        reason,
+                    ),
+                    None => (
+                        CheckResult::Failed {
+                            kind: VerdictKind::CouldNotJudge,
+                        },
+                        UNUSABLE.to_owned(),
+                    ),
                 },
-                ClaimVerdict::Unsupported => CheckResult::Failed {
-                    kind: VerdictKind::Unsupported,
-                },
-                ClaimVerdict::Unverified => CheckResult::Failed {
-                    kind: VerdictKind::CouldNotJudge,
-                },
-            };
-            (result, reason)
+            }
         }
         ClaimJudgment::Unusable => (
             CheckResult::Failed {
                 kind: VerdictKind::CouldNotJudge,
             },
-            "The checker's answer held no usable verdict.".to_owned(),
+            UNUSABLE.to_owned(),
         ),
         ClaimJudgment::Failed(error) => return Err(error),
     };
     let evidence: Vec<EvidenceSeen> = passages
         .iter()
-        .map(|passage| EvidenceSeen {
-            source_version_id: passage.source_id.clone(),
-            start_byte: passage.start_byte,
-            end_byte: passage.end_byte,
-            text_sha256: text_sha256(&passage.text),
+        .map(|passage| {
+            EvidenceSeen::of(
+                &passage.source_id,
+                passage.start_byte,
+                passage.end_byte,
+                &passage.text,
+            )
         })
         .collect();
     Ok(AttachOutcome::Checked(Check {
@@ -141,9 +126,11 @@ pub(super) async fn judge(
         },
         result,
         reason,
-        // A pass's own checks name the same policy, so a pass finds nothing
-        // new in this check and reuses it (`claim_ledger::receipts`).
-        fingerprint: EvidenceFingerprint::of(evidence_policy(), llm.model_name(), &evidence),
+        fingerprint: EvidenceFingerprint::of(
+            Judged::Passages.policy(),
+            llm.model_name(),
+            &evidence,
+        ),
         evidence,
         window_tokens: llm.max_context_tokens(),
     }))

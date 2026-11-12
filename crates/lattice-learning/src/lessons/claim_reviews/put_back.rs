@@ -5,7 +5,7 @@
 
 use lattice_core::domain::learning::acceptance::Outcome;
 use lattice_core::domain::learning::claim_review::{
-    span_of, Anchor, ClaimActionKind, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, CutPlace,
+    span_of, Anchor, ClaimActionKind, ClaimEvent, ClaimId, ClaimLedgerEntry, CutPlace,
     EventProvenance, PutPlace, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
@@ -111,13 +111,6 @@ fn section_went_out(claims: &[ClaimLedgerEntry]) -> bool {
     })
 }
 
-fn gone(entry: &ClaimLedgerEntry) -> bool {
-    matches!(
-        entry.state(),
-        ClaimState::Removed { .. } | ClaimState::Edited { .. }
-    )
-}
-
 /// The unit the claim's sentence is in now, found through the claims still
 /// standing that were extracted from the same unit it was: both are numbered
 /// as the lesson was extracted. `None` when none survived or they disagree.
@@ -127,7 +120,7 @@ fn surviving_unit(claims: &[ClaimLedgerEntry], entry: &ClaimLedgerEntry) -> Opti
         .iter()
         .filter(|other| {
             other.claim_id() != entry.claim_id()
-                && !gone(other)
+                && !other.state().is_gone()
                 && other.location().unit_kind == entry.location().unit_kind
                 && original_unit(other) == Some(original)
         })
