@@ -1150,11 +1150,11 @@ fn the_lesson_writer_contract_reads_what_it_renders() {
         LessonWriter,
     >(
         &serde_json::from_value(json!({
-            "blocks":[
+            "blocks": ([
                 "explanation", "worked_example", "contrast", "check", "guided_practice",
                 "independent_practice", "recap", "reflection"
-            ].map(|kind| block(kind, "A section", "Its body.", true)),
-            "questions":["practice", "quiz", "test"].map(|kind| question(kind, "Which one?", true))
+            ].map(|kind| block(kind, "A section", "Its body.", true))),
+            "questions": (["practice", "quiz", "test"].map(|kind| question(kind, "Which one?", true)))
         }))
         .unwrap(),
     );
