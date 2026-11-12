@@ -10,7 +10,7 @@ use super::*;
 use crate::lessons::claim_reviews::repository::ShownPassage;
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Position, Walked};
 use lattice_core::domain::learning::claim_review::{
-    CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, VerdictKind,
+    CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState,
 };
 
 /// What a pass extracts from a candidate lesson before anything is read.
@@ -43,9 +43,11 @@ pub(super) struct Pass {
 /// What the readings of a round made of the statements: the steps of each.
 pub(super) type Readings = Vec<(ClaimId, ReadSteps)>;
 
+const FINDING_KEYS: Protocol = lattice_core::protocol!("claim-finding", 1);
+
 /// The checkpoint holding a statement's latest reading's finding, by claim.
 fn finding_key(id: &ClaimId) -> String {
-    format!("claim-finding-v1:{}", id.0)
+    FINDING_KEYS.key(&id.0)
 }
 
 /// The claim inventory and coverage audit of `candidate` and the runs of its
@@ -62,7 +64,7 @@ pub(super) async fn extract(
         .await?
         .and_then(|raw| serde_json::from_str::<InventoryCheckpoint>(&raw).ok())
         .filter(|saved| {
-            saved.policy == INVENTORY_POLICY
+            INVENTORY_POLICY.names(&saved.policy)
                 && saved.model == llm.model_name()
                 && saved.model_context == llm.max_context_tokens()
                 && saved.content_sha256 == sha256_hex(&candidate_text)
@@ -70,7 +72,10 @@ pub(super) async fn extract(
         });
     let (inventory, coverage) = match checkpoint {
         Some(mut saved) => {
-            if saved.coverage_policy.as_deref() != Some(coverage::POLICY)
+            if !saved
+                .coverage_policy
+                .as_deref()
+                .is_some_and(|policy| coverage::POLICY.names(policy))
                 || !valid_saved_coverage(&saved.coverage, &content)
             {
                 saved.coverage.units.clear();
@@ -100,13 +105,13 @@ pub(super) async fn extract(
         }
     };
     let checkpoint = InventoryCheckpoint {
-        policy: INVENTORY_POLICY.into(),
+        policy: INVENTORY_POLICY.to_string(),
         model: llm.model_name().into(),
         model_context: llm.max_context_tokens(),
         content_sha256: sha256_hex(&candidate_text),
         inventory,
         coverage,
-        coverage_policy: Some(coverage::POLICY.into()),
+        coverage_policy: Some(coverage::POLICY.to_string()),
     };
     crate::lesson_drafts::record_claim_inventory(
         &candidate_text,
@@ -225,7 +230,7 @@ pub(super) async fn identify(
             claim: claim.clone(),
         });
     }
-    crate::lesson_progress::claims(ledger.tally());
+    crate::lesson_progress::claims(ledger.tally(policy));
     Ok(Pass {
         extraction,
         left,
@@ -307,7 +312,7 @@ pub(super) async fn record_readings(
 ) -> Result<Vec<ClaimId>> {
     for (id, read) in &readings {
         if let Some(last) = read.steps.last() {
-            let finding = last.read.finding.clone();
+            let finding = last.read.finding().clone();
             crate::lesson_drafts::record_checkpoint(
                 &finding_key(id),
                 serde_json::to_value(&finding)?,
@@ -327,17 +332,17 @@ pub(super) async fn record_readings(
             .steps
             .iter()
             .rev()
-            .find(|step| !step.read.finding.evidence.is_empty());
+            .find(|step| !step.read.finding().evidence.is_empty());
         if let Some(step) = compared {
             ledger
-                .show_evidence(id, &step.read.finding.evidence)
+                .show_evidence(id, &step.read.finding().evidence)
                 .await?;
         }
         if matches!(read.walked, Walked::Stopped) {
             stopped.push(id.clone());
         }
     }
-    crate::lesson_progress::claims(ledger.tally());
+    crate::lesson_progress::claims(ledger.tally(policy));
     Ok(stopped)
 }
 
@@ -347,24 +352,6 @@ async fn saved_finding(id: &ClaimId) -> Result<Option<Finding>> {
     Ok(crate::lesson_drafts::checkpoint(&finding_key(id))
         .await?
         .and_then(|value| serde_json::from_value::<Finding>(value).ok()))
-}
-
-/// What a check's result says of a statement.
-fn verdict_of(result: &CheckResult) -> ClaimVerdict {
-    match result {
-        CheckResult::Supported { .. }
-        | CheckResult::SupportedElsewhere { .. }
-        | CheckResult::Consistent
-        | CheckResult::KnownCommon
-        | CheckResult::NotFalse => ClaimVerdict::Supported,
-        CheckResult::Failed {
-            kind: VerdictKind::Contradicted,
-        } => ClaimVerdict::Contradicted,
-        CheckResult::Failed {
-            kind: VerdictKind::CouldNotJudge,
-        } => ClaimVerdict::Unverified,
-        CheckResult::Failed { .. } => ClaimVerdict::Unsupported,
-    }
 }
 
 /// The finding of a statement no reading of this job has made, rebuilt from the
@@ -393,16 +380,12 @@ fn from_ledger(
             }
             _ => None,
         });
-    let passed = matches!(
-        entry.state(),
-        ClaimState::ResolvedByEvidence { .. }
-            | ClaimState::Consistent { .. }
-            | ClaimState::GeneralKnowledge { .. }
-    );
-    let verdict = if passed {
+    let verdict = if entry.state().is_verified() {
         ClaimVerdict::Supported
     } else {
-        latest.map_or(ClaimVerdict::Unsupported, |check| verdict_of(&check.result))
+        latest.map_or(ClaimVerdict::Unsupported, |check| {
+            ClaimVerdict::of_check(&check.result)
+        })
     };
     let supporting_quote = match entry.state() {
         ClaimState::ResolvedByEvidence {
@@ -412,6 +395,17 @@ fn from_ledger(
             .and_then(|check| check.result.support())
             .map(|(_, quote)| quote.to_owned()),
     };
+    let evidence = shown
+        .iter()
+        .map(|passage| EvidencePassage {
+            source_id: passage.source_version_id.clone(),
+            text: passage.text.clone(),
+            start_byte: passage.start_byte,
+            end_byte: passage.end_byte,
+            retrieval_kind: passage.retrieval_kind.clone(),
+            score: 0.0,
+        })
+        .collect::<Vec<_>>();
     let supported_by = match latest.map(|check| (&check.result, &check.evidence)) {
         Some((
             CheckResult::SupportedElsewhere {
@@ -421,14 +415,9 @@ fn from_ledger(
             },
             seen,
         )) => {
-            let of_source =
-                |passage: &&ShownPassage| passage.source_version_id == *source_version_id;
-            let bytes = shown
-                .iter()
-                .find(|passage| {
-                    of_source(passage) && passage.text.contains(supporting_quote.as_str())
-                })
-                .or_else(|| shown.iter().find(of_source))
+            let bytes = supporting_passage(supporting_quote, &evidence, Some(source_version_id))
+                .map(|(passage, _)| passage)
+                .filter(|passage| passage.source_id == *source_version_id)
                 .map(|passage| (passage.start_byte, passage.end_byte))
                 .or_else(|| {
                     seen.iter()
@@ -444,17 +433,6 @@ fn from_ledger(
         }
         _ => None,
     };
-    let evidence = shown
-        .iter()
-        .map(|passage| EvidencePassage {
-            source_id: passage.source_version_id.clone(),
-            text: passage.text.clone(),
-            start_byte: passage.start_byte,
-            end_byte: passage.end_byte,
-            retrieval_kind: passage.retrieval_kind.clone(),
-            score: 0.0,
-        })
-        .collect();
     Ok(Finding {
         unit: known.unit,
         quote: known.claim.quote.clone(),
@@ -590,11 +568,11 @@ pub(super) async fn record_hinted(
     answers: Answers,
 ) -> Result<()> {
     for (id, read) in answers {
-        let finding = read.finding;
-        crate::lesson_drafts::record_checkpoint(&finding_key(&id), serde_json::to_value(&finding)?)
+        let finding = read.finding();
+        crate::lesson_drafts::record_checkpoint(&finding_key(&id), serde_json::to_value(finding)?)
             .await?;
         checks.latest.insert(id.clone(), finding.clone());
-        ledger.record_hint_reading(&id, &finding).await?;
+        ledger.record_hint_reading(&id, &read).await?;
         if !finding.evidence.is_empty() {
             ledger.show_evidence(&id, &finding.evidence).await?;
         }
@@ -668,19 +646,12 @@ pub(super) fn report(
         }
     }
     LessonVerificationReport {
-        policy: POLICY.into(),
+        policy: POLICY.to_string(),
         lesson_id: String::new(),
         content_sha256: String::new(),
         checker_model: llm.model_name().into(),
         checked_at: chrono::Utc::now().timestamp_millis(),
-        sources: references
-            .sources
-            .iter()
-            .map(|s| SourceBinding {
-                id: s.id.clone(),
-                sha256: sha256_hex(&s.excerpt),
-            })
-            .collect(),
+        sources: evidence_selection::sources(references),
         coverage: accounted,
         coverage_audit: pass.extraction.coverage.units.clone(),
         findings,

@@ -679,44 +679,9 @@ fn incomplete_or_unquoted_receipts_never_resume_as_approval() {
             verdict,
             reason: "Incomplete fixture".into(),
             supporting_quote: None,
-            interpretation_policy: None,
             shown: None,
+            parts: vec![],
         };
-        assert!(receipt.finding(0, &claim, &[]).is_none());
-    }
-}
-
-#[test]
-fn interpretation_update_keeps_approvals_and_reconsiders_old_negative_receipts() {
-    let claim = Claim {
-        quote: GOOD.into(),
-        statement: GOOD.into(),
-    };
-    let evidence = vec![EvidencePassage {
-        source_id: "reference".into(),
-        text: GOOD.into(),
-        start_byte: 0,
-        end_byte: GOOD.len(),
-        retrieval_kind: "test".into(),
-        score: 0.0,
-    }];
-    for (verdict, policy, reusable) in [
-        (ClaimVerdict::Supported, None, true),
-        (ClaimVerdict::Unsupported, None, false),
-        (ClaimVerdict::Contradicted, None, false),
-        (
-            ClaimVerdict::Unsupported,
-            Some(lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY),
-            true,
-        ),
-    ] {
-        let receipt = ClaimReceipt {
-            verdict,
-            reason: "Recorded comparison".into(),
-            supporting_quote: Some(GOOD.into()),
-            interpretation_policy: policy.map(str::to_owned),
-            shown: None,
-        };
-        assert_eq!(receipt.finding(0, &claim, &evidence).is_some(), reusable);
+        assert!(receipt.finding(0, &claim, vec![]).is_none());
     }
 }
