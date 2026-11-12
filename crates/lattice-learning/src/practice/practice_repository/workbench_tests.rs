@@ -9,6 +9,7 @@ use crate::{
     tests,
 };
 use lattice_core::shared::persistence::Database;
+use sqlx::SqlitePool;
 
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()

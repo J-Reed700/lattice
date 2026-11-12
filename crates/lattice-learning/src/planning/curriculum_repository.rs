@@ -130,7 +130,7 @@ impl LearningCurriculumRepository {
     }
 
     async fn seed_on(conn: &mut WriteTx, program_id: &str) -> Result<()> {
-        if Self::accepted_count(&mut **conn, program_id).await? > 0 {
+        if Self::accepted_count(conn, program_id).await? > 0 {
             return Ok(());
         }
         let p = sqlx::query("SELECT id,current_lesson_id FROM learning_programs WHERE id=?")

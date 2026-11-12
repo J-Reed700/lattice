@@ -27,7 +27,7 @@ pub(super) async fn pool(dir: &Path) -> Result<SqlitePool> {
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
     sqlx::migrate!("./migrations")
-        .run(&db)
+        .run(&pool)
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
     Ok(pool)

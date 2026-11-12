@@ -141,7 +141,7 @@ async fn a_batch_for_an_audit_that_is_gone_is_refused() {
 
 #[tokio::test]
 async fn the_course_switch_is_stored_and_turning_it_off_clears_the_consent() {
-    let programs = LearningCurriculumRepository::new(database().await);
+    let programs = LearningCurriculumRepository::new(Database::new(database().await));
     assert_eq!(
         programs.verifier_audit("p1").await.unwrap(),
         ProgramVerifierAudit::default(),

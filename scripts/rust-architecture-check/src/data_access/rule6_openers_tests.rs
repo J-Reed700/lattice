@@ -121,7 +121,7 @@ fn f(db: &Database, other: Database) {
 }
 fn g(conn: &mut SqliteConnection) {}
 ";
-    assert_eq!(found(SERVICE, source), vec![]);
+    assert_eq!(found(SERVICE, source), none());
 }
 
 #[test]

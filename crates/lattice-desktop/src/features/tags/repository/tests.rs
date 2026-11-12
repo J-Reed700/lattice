@@ -2,6 +2,7 @@
 
 use super::*;
 use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::SqlitePool;
 
 async fn create_test_pool() -> SqlitePool {
     SqlitePoolOptions::new().connect(":memory:").await.unwrap()

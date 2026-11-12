@@ -63,11 +63,9 @@ async fn insert_session(
 #[tokio::test]
 async fn reconciliation_query_returns_only_latest_durable_mismatches() {
     let dir = tempfile::tempdir().unwrap();
-    let connection = Arc::new(
-        DatabaseConnection::new(dir.path().join("downloads.db"))
-            .await
-            .unwrap(),
-    );
+    let connection = DatabaseConnection::new(dir.path().join("downloads.db"))
+        .await
+        .unwrap();
     run_migrations(connection.database()).await.unwrap();
     let repository = SqliteDownloadRepository::new(connection.database().clone());
 

@@ -11,6 +11,7 @@ use crate::{
 };
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::RecoveryPolicy;
+use sqlx::SqlitePool;
 
 fn prepared(lesson: &str) -> PreparedLearningLesson {
     let mut result = PreparedLearningLesson {

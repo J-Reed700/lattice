@@ -6,6 +6,7 @@ use crate::{
     repository::LearningRepository,
     tests::fixture,
 };
+use lattice_core::shared::persistence::Database;
 use sqlx::SqlitePool;
 use std::time::Duration;
 

@@ -59,7 +59,7 @@ async fn section_fixture() -> sqlx::SqlitePool {
 
 #[tokio::test]
 async fn dotted_labels_match_only_at_line_starts_with_headings_first() {
-    let repo = ConversationRepository::new(section_fixture().await);
+    let repo = ConversationRepository::new(Database::new(section_fixture().await));
     let allowed = HashSet::from(["a".into()]);
     // The breadcrumb hit ranks first although its chunk comes later; the
     // mid-sentence pH value is prose, not the numbered paragraph.
@@ -86,7 +86,7 @@ async fn dotted_labels_match_only_at_line_starts_with_headings_first() {
 
 #[tokio::test]
 async fn child_neighbors_keep_their_own_heading() {
-    let repo = ConversationRepository::new(section_fixture().await);
+    let repo = ConversationRepository::new(Database::new(section_fixture().await));
     let allowed = HashSet::from(["a".into()]);
     let neighbors = repo
         .retrieval_neighbors("neighbor-parent", &allowed)
@@ -106,7 +106,7 @@ async fn child_neighbors_keep_their_own_heading() {
 
 #[tokio::test]
 async fn exact_section_lookup_preserves_scope_subsections_and_comparison_coverage() {
-    let repo = ConversationRepository::new(section_fixture().await);
+    let repo = ConversationRepository::new(Database::new(section_fixture().await));
     let allowed = HashSet::from(["a".into(), "b".into()]);
     let found = repo
         .retrieval_section_passages(&["706.07(a)".into()], &allowed)
