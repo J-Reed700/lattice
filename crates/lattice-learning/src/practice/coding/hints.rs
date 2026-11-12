@@ -4,6 +4,9 @@
 use async_trait::async_trait;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::domain::learning::practice::named_in;
 use lattice_core::domain::learning::practice::work::{Rung, Setting};
 use lattice_core::shared::error::{AppError, Result};
@@ -273,6 +276,13 @@ fn rung_instruction(rung: Rung, setting: Setting) -> &'static str {
     }
 }
 
+struct HintAuthor;
+
+impl Contract for HintAuthor {
+    const ID: ContractId = ContractId::new("coding-hint");
+    type Input = PromptInput;
+}
+
 /// The request that asks for a hint of `rung`.
 fn ask(
     reference: &str,
@@ -301,7 +311,7 @@ fn ask(
         rung_name(rung),
         rung_instruction(rung, setting)
     );
-    model_call::structured(&system, prompt, schema(), HINT_TOKENS, "low")
+    model_call::structured(&system, prompt, schema(), HINT_TOKENS)
 }
 
 /// Asks for `request`, checks the answer, and asks once more with the reason when a check refuses it.
@@ -312,13 +322,18 @@ async fn write_checked(
     request: GroundedRequest,
     rung: Rung,
 ) -> Result<CodeHint> {
+    let call = ContractCall::of::<HintAuthor>(&PromptInput {
+        system: request.instructions.clone(),
+        prompt: request.task.clone(),
+    })?;
     let mut request = request;
     let mut again = false;
     loop {
-        let (raw, written) = complete_checked_request(llm, request.clone(), None, None, |raw| {
-            parse_json::<Written>(raw).map(|written| (raw.to_owned(), written))
-        })
-        .await?;
+        let (raw, written) =
+            complete_checked_request(llm, &call, request.clone(), None, None, |raw| {
+                parse_json::<Written>(raw).map(|written| (raw.to_owned(), written))
+            })
+            .await?;
         let hint = if rung == Rung::Point {
             CodeHint {
                 rung,
