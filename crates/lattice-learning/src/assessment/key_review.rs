@@ -321,6 +321,54 @@ mod tests {
         Ok(())
     }
 
+    /// Cuts every answer off until a request reserves twice the room of the first.
+    struct NeedsDoubleRoom(Mutex<Vec<Option<u32>>>);
+
+    #[async_trait::async_trait]
+    impl lattice_core::application::ports::LLMPort for NeedsDoubleRoom {
+        async fn complete(
+            &self,
+            request: &lattice_core::application::ports::llm_port::CompletionRequest,
+        ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+            use lattice_core::application::ports::llm_port::CompletionResponse;
+            let mut budgets = self.0.lock().unwrap();
+            budgets.push(request.max_output_tokens);
+            let first = budgets.first().copied().flatten().unwrap_or(0);
+            if request.max_output_tokens.unwrap_or(0) < first.saturating_mul(2) {
+                return Ok(CompletionResponse {
+                    finish_reason: "length".into(),
+                    ..CompletionResponse::from_text("{\"answers\":[{\"index\":0,\"reason\":")
+                });
+            }
+            Ok(CompletionResponse::from_text(
+                json!({"answers":[{"index":0,"reason":"It follows.","correctIndices":[],"answer":"A written answer.","blankAnswers":[],"matches":[],"orderedValues":[]}]}).to_string(),
+            ))
+        }
+        fn model_name(&self) -> &str {
+            "needs-double-room"
+        }
+        fn max_context_tokens(&self) -> usize {
+            131_072
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_single_item_whose_solve_is_cut_off_is_asked_again_with_twice_the_room() -> Result<()>
+    {
+        let item = rubric_item();
+        let llm = NeedsDoubleRoom(Mutex::new(Vec::new()));
+        let solutions = solve_items(&llm, &[(&item, "Reference quote.")]).await?;
+        assert_eq!(solutions.len(), 1);
+        assert_eq!(solutions[0].answer, "A written answer.");
+        let budgets = llm.0.lock().unwrap().clone();
+        assert!(budgets[0].is_some());
+        assert_eq!(budgets.get(1).copied().flatten(), budgets[0].map(|b| b * 2));
+        Ok(())
+    }
+
     #[test]
     fn a_blinded_item_carries_its_passage_as_quote() {
         let blind = blinded(0, &rubric_item(), "A passage.");
