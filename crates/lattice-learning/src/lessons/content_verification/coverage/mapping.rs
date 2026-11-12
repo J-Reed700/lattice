@@ -302,6 +302,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_correction_reply_missing_a_passage_fails_the_job() {
+        let model = model(vec![
+            listed(&[("p0", missing()), ("p1", empty())]),
+            listed(&[("p1", label())]),
+        ]);
+        let error = review(&model, &units(), None).await.err();
+        assert!(
+            matches!(error, Some(AppError::ModelAnswerUnusable(_))),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn duplicate_or_foreign_decisions_cannot_silently_complete_mapping() -> Result<()> {
         let duplicate = listed(&[("p0", missing()), ("p0", empty()), ("p1", label())]);
         let model = model(vec![duplicate, listed(&[("p0", missing())])]);
