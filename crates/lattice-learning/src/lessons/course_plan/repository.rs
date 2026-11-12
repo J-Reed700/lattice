@@ -9,7 +9,7 @@ use super::PlannedLesson;
 use crate::curriculum_repository::LearningCurriculumRepository;
 use crate::persistence::{db, now};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::runtime::jobs::{JobRecord, JobStore};
+use lattice_core::shared::runtime::jobs::{JobRecord, JobStatus, JobStore};
 use sqlx::SqliteConnection;
 use std::collections::{HashMap, HashSet};
 
@@ -259,7 +259,8 @@ pub(super) async fn outline_lessons(
         .collect())
 }
 
-/// The lessons an unfinished `lesson_preparation` job of the current outline names.
+/// The lessons a running `lesson_preparation` job of the current outline names.
+/// A queued job does not lock: the writer reads the plan only once its job is claimed.
 pub(super) async fn locked_lessons(
     connection: &mut SqliteConnection,
     program_id: &str,
@@ -269,6 +270,7 @@ pub(super) async fn locked_lessons(
         LearningCurriculumRepository::unfinished_preparations(connection, program_id, revision)
             .await?
             .into_iter()
+            .filter(|(job, _)| job.status == JobStatus::Running)
             .flat_map(|(_, request)| request.lesson_ids)
             .collect(),
     )
@@ -382,44 +384,32 @@ pub(super) async fn replace_in(
 
 #[cfg(test)]
 mod tests {
+    use super::super::topics_support::*;
+    use super::super::{edit_entry, EditCoursePlanEntryRequestDto};
     use super::*;
-    use crate::curriculum::LearningGenerationJobKind;
-    use crate::dto::AcceptLearningProgramRequestDto;
-    use crate::plan_dto::StartLearningGenerationJobRequestDto;
-    use crate::repository::LearningRepository;
 
     #[tokio::test]
-    async fn a_queued_preparation_locks_its_lesson() -> Result<()> {
+    async fn a_queued_preparation_leaves_topics_editable_and_a_running_one_locks_them() -> Result<()>
+    {
         let pool = crate::tests::pool().await?;
-        let programs = LearningRepository::new(pool.clone());
-        let fixture = crate::tests::fixture();
-        programs.create(&fixture).await?;
-        programs
-            .accept(&AcceptLearningProgramRequestDto {
-                program_id: fixture.summary.id.clone(),
-                expected_revision: 0,
-                title: fixture.summary.title.clone(),
-            })
-            .await?;
-        let program = programs.get(&fixture.summary.id).await?;
-        let lesson = program.modules[0].lessons[0].id.clone();
-        let job = LearningCurriculumRepository::new(pool.clone())
-            .start_job(&StartLearningGenerationJobRequestDto {
-                operation_id: uuid::Uuid::new_v4().to_string(),
-                program_id: program.summary.id.clone(),
-                expected_revision: program.summary.revision,
-                kind: LearningGenerationJobKind::LessonPreparation,
-                request_json: serde_json::json!({"lessonIds":[lesson]}).to_string(),
-                progress_total: 1,
-            })
-            .await?;
-        assert_eq!(
-            job.status,
-            crate::curriculum::LearningGenerationJobStatus::Pending
+        let (program, revision) = planned_program(&pool, &Topics::new()).await;
+        let lesson = ids(&program)[1].clone();
+        let database = lattice_core::shared::persistence::Database::from(pool.clone());
+        let edit = |revision_seen: i64, idea: &str| EditCoursePlanEntryRequestDto {
+            program_id: program.summary.id.clone(),
+            outline_revision: revision,
+            expected_entry_revision: revision_seen,
+            topics: topics_of(&lesson, idea),
+        };
+        let job = lesson_job(&pool, &program, &lesson, false).await;
+        edit_entry(&database, edit(1, "a first idea")).await?;
+
+        assert!(JobStore::new(pool.clone()).claim(&job).await?.is_some());
+        let refused = edit_entry(&database, edit(2, "a second idea")).await;
+        assert!(
+            matches!(&refused, Err(AppError::InvalidState(text)) if text == LESSON_LOCKED),
+            "{refused:?}"
         );
-        let mut connection = pool.acquire().await.map_err(db)?;
-        let locked = locked_lessons(&mut connection, &program.summary.id).await?;
-        assert!(locked.contains(&lesson), "{locked:?}");
         Ok(())
     }
 }
