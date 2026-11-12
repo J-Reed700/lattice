@@ -171,7 +171,7 @@ impl From<CompactionError> for AppError {
                     details: message,
                 }
             }
-            CompactionError::Commit(MemoryCommitError::Database(_)) => AppError::Database(message),
+            CompactionError::Commit(MemoryCommitError::Database(inner)) => inner,
             _ => AppError::Other(message),
         }
     }

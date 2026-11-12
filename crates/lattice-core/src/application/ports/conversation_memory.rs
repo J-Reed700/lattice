@@ -11,7 +11,7 @@ use crate::domain::conversation::memory::{
     ConversationMemoryState, MemoryCommit, MemoryId, MemorySnapshot, SourceMessage, SourceRole,
     SuppressedSpan,
 };
-use crate::shared::error::Result;
+use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 
 /// Ceilings on one source read. Both matter: a message limit alone does not
@@ -185,7 +185,7 @@ pub struct CommittedMemorySnapshot {
 }
 
 /// Why a commit did not happen.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum MemoryCommitError {
     #[error("conversation {0} not found")]
     NotFound(String),
@@ -205,11 +205,16 @@ pub enum MemoryCommitError {
     UnresolvableEvidence(String),
     #[error("{0} active items exceeds the host work limit")]
     TooManyItems(usize),
-    #[error("database error: {0}")]
-    Database(String),
+    #[error("{0}")]
+    Database(AppError),
 }
 
 impl MemoryCommitError {
+    /// A store failure, classified by the app's one database conversion.
+    pub fn database(error: impl Into<AppError>) -> Self {
+        Self::Database(error.into())
+    }
+
     /// Stable code for `last_error_code` and structured logs.
     pub fn code(&self) -> &'static str {
         match self {
