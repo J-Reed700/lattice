@@ -4534,9 +4534,26 @@ export type AppError =
  */
 { Database: string } |
 /**
+ * Another connection kept the work out of the database; a later attempt
+ * gets the lock.
+ */
+{ DatabaseBusy: string } |
+/**
  * Configuration file errors
  */
 { InvalidConfig: string } |
+/**
+ * The configured context window cannot hold what the work needs.
+ */
+{ WindowTooSmall: string } |
+/**
+ * The work was stopped on request.
+ */
+{ Cancelled: string } |
+/**
+ * A lesson was held back for review; the text says why.
+ */
+{ LessonHeld: string } |
 /**
  * No Learning model is set; the text says where to choose one
  */
@@ -8311,7 +8328,11 @@ endedByUpdate?: boolean;
 /**
  * The lessons the job prepares, in course order.
  */
-lessonIds?: string[]; heldLessonIds?: string[]; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
+lessonIds?: string[];
+/**
+ * The lessons the job finished by holding them for review.
+ */
+heldLessonIds?: string[]; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
 export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity" |
 /**
@@ -11427,7 +11448,7 @@ findingKey: string; kind: TeachingFindingKindDto; site: TeachingFindingSiteDto;
  */
 unitIndex: number | null;
 /**
- * "Section 3: Loops", "Question 2" or "Whole lesson".
+ * "Section 3 · Loops", "Question 2" or "The whole lesson".
  */
 unitTitle: string;
 /**
@@ -12314,6 +12335,7 @@ export type CommandArgs = {
 	capture_learning_source_snapshot: { request: CaptureLearningSourceSnapshotRequestDto };
 	capture_reference: { request: CaptureReferenceRequestDto };
 	capture_web_page_snapshot: { conversationId: string; url: string };
+	change_learning_course_plan_entries: { request: ChangeCoursePlanEntriesRequestDto };
 	change_learning_practice_mode: { request: ChangeLearningPracticeModeRequestDto };
 	chat_with_conversation: { conversationId?: string | null; message: string; toolPreferences?: ToolPreferences | null; cancelOnly?: boolean | null; requestId?: string | null; attachmentNames?: string[] | null; attachmentDocumentIds?: string[] | null; attachmentImageIds?: string[] | null };
 	check_coding_example: { request: CheckCodingExampleRequestDto };
@@ -12379,6 +12401,7 @@ export type CommandArgs = {
 	download_default_embedding_model: void;
 	download_model: { modelId: string };
 	download_reranker: void;
+	edit_learning_course_plan_entry: { request: EditCoursePlanEntryRequestDto };
 	edit_learning_lesson_question: { request: EditLearningLessonQuestionRequestDto };
 	edit_learning_lesson_section: { request: EditLearningLessonSectionRequestDto };
 	ensure_learning_lesson_note: { request: EnsureLearningLessonNoteRequestDto };
@@ -12458,6 +12481,7 @@ export type CommandArgs = {
 	get_learning_assessment_form: { id: string };
 	get_learning_canvas_workspace: { id: string };
 	get_learning_checker_accuracy: void;
+	get_learning_course_plan: { programId: string };
 	get_learning_generation_job: { id: string };
 	get_learning_lesson_audit: { programId: string; lessonId: string };
 	get_learning_lesson_claim_review: { programId: string; lessonId: string };
@@ -12566,6 +12590,7 @@ export type CommandArgs = {
 	parse_wikilinks: { text: string; sourcePath?: string | null };
 	pause_download: { id: string };
 	pause_indexing: void;
+	plan_learning_course: { request: PlanLearningCourseRequestDto };
 	plugin_begin_archive_setup: void;
 	plugin_choose_archive_destination: void;
 	plugin_confirm_archive_setup: { request: ConfirmArchiveSetupRequestDto };
@@ -12582,6 +12607,7 @@ export type CommandArgs = {
 	plugin_set_archive_keep_count: { request: SetArchiveKeepCountRequestDto };
 	plugin_set_archive_passphrase: { request: SetArchivePassphraseRequestDto };
 	practice_due: { request: PracticeDueRequestDto };
+	prepare_learning_ahead: { request: PrepareLearningAheadRequestDto };
 	prepare_learning_lesson: { request: PrepareLearningLessonRequestDto };
 	prepare_learning_module: { request: PrepareLearningModuleRequestDto };
 	prepare_learning_quiz_bank: { request: PrepareLearningQuizBankRequestDto };
@@ -12716,6 +12742,7 @@ export type CommandArgs = {
 	transcribe_speech: { pcm: string };
 	truncate_conversation_after: { request: TruncateConversationAfterRequestDto };
 	unbookmark_conversation_message: { request: UnbookmarkConversationMessageRequestDto };
+	undo_learning_course_plan_entry: { request: UndoCoursePlanEntryRequestDto };
 	update_conversation_space: { request: UpdateConversationSpaceRequestDto };
 	update_daily_note_content: { request: UpdateDailyNoteContentRequestDto };
 	update_journal: { request: UpdateConversationJournalRequestDto };
@@ -12774,6 +12801,7 @@ export type CommandResults = {
 	capture_learning_source_snapshot: SnapshotNoteDto;
 	capture_reference: CaptureReferenceResultDto;
 	capture_web_page_snapshot: WebPageSnapshotDto;
+	change_learning_course_plan_entries: CoursePlanViewDto;
 	change_learning_practice_mode: LearningPracticeWorkspaceDto;
 	chat_with_conversation: ChatResponse;
 	check_coding_example: PracticeSessionDto;
@@ -12839,6 +12867,7 @@ export type CommandResults = {
 	download_default_embedding_model: string;
 	download_model: DownloadModelResponse;
 	download_reranker: RerankerStatusDto;
+	edit_learning_course_plan_entry: CoursePlanViewDto;
 	edit_learning_lesson_question: LessonQuestionEditDto;
 	edit_learning_lesson_section: LessonSectionEditDto;
 	ensure_learning_lesson_note: LearningMemoryDto;
@@ -12918,6 +12947,7 @@ export type CommandResults = {
 	get_learning_assessment_form: LearningAssessmentFormDto;
 	get_learning_canvas_workspace: LearningCanvasWorkspaceDto;
 	get_learning_checker_accuracy: CheckerAccuracyDto[];
+	get_learning_course_plan: CoursePlanViewDto;
 	get_learning_generation_job: LearningGenerationJob;
 	get_learning_lesson_audit: LearningLessonAuditDto | null;
 	get_learning_lesson_claim_review: LessonClaimReviewDto | null;
@@ -13026,6 +13056,7 @@ export type CommandResults = {
 	parse_wikilinks: ParsedLinksResponse;
 	pause_download: null;
 	pause_indexing: null;
+	plan_learning_course: CoursePlanViewDto;
 	plugin_begin_archive_setup: ArchiveSetupDto;
 	plugin_choose_archive_destination: ArchiveStatusDto;
 	plugin_confirm_archive_setup: ArchiveStatusDto;
@@ -13042,6 +13073,7 @@ export type CommandResults = {
 	plugin_set_archive_keep_count: ArchiveStatusDto;
 	plugin_set_archive_passphrase: ArchiveStatusDto;
 	practice_due: PracticeDueDto;
+	prepare_learning_ahead: LearningProgramDto;
 	prepare_learning_lesson: LearningProgramDto;
 	prepare_learning_module: LearningProgramDto;
 	prepare_learning_quiz_bank: LearningGenerationJob;
@@ -13176,6 +13208,7 @@ export type CommandResults = {
 	transcribe_speech: TranscribedSpeechDto;
 	truncate_conversation_after: TruncateConversationAfterResponseDto;
 	unbookmark_conversation_message: RenameConversationResponseDto;
+	undo_learning_course_plan_entry: CoursePlanViewDto;
 	update_conversation_space: ConversationSpaceDto;
 	update_daily_note_content: null;
 	update_journal: ConversationJournalDto;
