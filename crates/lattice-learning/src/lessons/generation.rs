@@ -5,13 +5,14 @@
 //! snapshot before output crosses into persistence.
 
 use crate::dto::{GenerateLearningProgramRequestDto, LearningSourceDto};
-use crate::lessons::same_text::fold;
 pub(crate) use crate::lessons::structured_call::complete_checked;
 pub(crate) use crate::lessons::structured_call::{complete_json, complete_json_with_progress};
 use crate::model_call;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::application::services::model_contract::ContractCall;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::text::same_text;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;
@@ -61,7 +62,7 @@ fn validate_quote(quote: &str, source: &LearningSourceDto) -> Result<()> {
 }
 
 pub(crate) fn validate_excerpt_quote(quote: &str, excerpt: &str) -> Result<()> {
-    if !long_enough_quote(quote) || !fold(excerpt).contains(&fold(quote)) {
+    if !long_enough_quote(quote) || same_text::find(excerpt, quote.trim()).is_none() {
         return Err(invalid("The generated quotation does not match a valid passage in the saved reference. No material was published."));
     }
     Ok(())
@@ -93,18 +94,7 @@ pub(crate) fn generated_source_ids(
         return Ok(Vec::new());
     }
     let index = index.ok_or_else(|| invalid("Source-backed material needs a source citation."))?;
-    let source = match evidence_source(sources, index, quote) {
-        Ok(source) => source,
-        Err(strict) => match sources.get(index) {
-            Some(source)
-                if crate::outline_citations::exact_source_quote(&source.excerpt, quote)
-                    .is_some() =>
-            {
-                source
-            }
-            _ => return Err(strict),
-        },
-    };
+    let source = evidence_source(sources, index, quote)?;
     Ok(vec![source.id.clone()])
 }
 
@@ -231,6 +221,7 @@ async fn fits(llm: &dyn LLMPort, system: &str, prompt: &str, output_tokens: usiz
 /// [`model_call::window_too_small`], `what` saying what does not fit.
 pub(crate) async fn send_packed<T, F>(
     llm: &dyn LLMPort,
+    contract: &ContractCall,
     room: usize,
     mut build: impl FnMut(usize) -> GroundedRequest,
     mut call: impl FnMut(GroundedRequest) -> F,
@@ -249,6 +240,7 @@ where
     }
     tracing::warn!(
         subject,
+        contract = contract.id.as_str(),
         "No source material fits beside the request; sending it without"
     );
     call(bare).await.map_err(|error| match error {

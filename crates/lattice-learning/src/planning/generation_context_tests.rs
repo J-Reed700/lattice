@@ -14,13 +14,13 @@ use lattice_core::shared::runtime::jobs::RecoveryPolicy;
 
 fn prepared(lesson: &str) -> PreparedLearningLesson {
     let mut result = PreparedLearningLesson {
-        blocks: vec![LearningBlockDto {
-            kind: LearningBlockKind::Recap,
-            title: "Earlier teaching".into(),
-            body: "A saved teaching fixture, independent of learner progress.".into(),
-            source_ids: vec![],
-            rubric: vec![],
-        }],
+        blocks: vec![LearningBlockDto::new(
+            LearningBlockKind::Recap,
+            "Earlier teaching".into(),
+            "A saved teaching fixture, independent of learner progress.".into(),
+            vec![],
+            vec![],
+        )],
         questions: vec![],
         keys: vec![],
         verification: None,
