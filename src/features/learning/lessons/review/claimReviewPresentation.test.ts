@@ -79,7 +79,7 @@ describe('claim review presentation', () => {
     expect(heldLessonIds(job({}))).toEqual(['lesson-1', 'lesson-2']);
     expect(heldLessonIds(job({ status: 'running', heldLessonIds: [] }))).toEqual([]);
     expect(heldLessonIds(job({ heldLessonIds: [] }))).toEqual([]);
-    const retry = job({ id: 'job-2', status: 'pending', resultId: null, retryOfJobId: 'job-1' });
+    const retry = job({ id: 'job-2', status: 'pending', resultId: null, retryOfJobId: 'job-1', heldLessonIds: [] });
     expect(jobHoldingLesson([job({}), retry], 'lesson-1')).toBeNull();
     expect(jobHoldingLesson([job({})], 'lesson-2')?.id).toBe('job-1');
   });
