@@ -13,9 +13,27 @@ pub struct StatementFault {
     pub message: String,
 }
 
+/// `result` with an invariant breach given back as its message; any other
+/// error is the `Err`.
+pub(in crate::lessons::content_verification) fn contain<T>(
+    result: Result<T>,
+) -> Result<std::result::Result<T, String>> {
+    match result {
+        Err(AppError::InternalError(message)) => Ok(Err(message)),
+        other => other.map(Ok),
+    }
+}
+
 impl ClaimLedger {
     /// Records `fault` in its claim's history.
     pub async fn record_fault(&mut self, fault: StatementFault) -> Result<()> {
+        tracing::error!(
+            target: "lattice::fault",
+            claim = %fault.claim.0,
+            stage = ?fault.stage,
+            message = %fault.message,
+            "A statement was held unjudged"
+        );
         let StatementFault {
             claim,
             stage,
