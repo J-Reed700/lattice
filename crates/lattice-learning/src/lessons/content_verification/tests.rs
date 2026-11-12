@@ -542,7 +542,9 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
     if prompt.starts_with("You sort statements extracted from a lesson") {
         // The fixtures' statements are the ones the strict check was written
         // for.
-        let statements: serde_json::Map<String, Value> = fixture_task(prompt).unwrap();
+        let Some(Value::Object(statements)) = fixture_task(prompt) else {
+            panic!("a JSON task");
+        };
         return Some(
             Value::Object(
                 statements

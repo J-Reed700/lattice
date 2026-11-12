@@ -125,8 +125,9 @@ impl Script {
             return Ok(inventory::fixture_response(units).to_string());
         }
         if prompt.starts_with("You sort statements extracted from a lesson") {
-            let statements: serde_json::Map<String, Value> =
-                fixture_task(prompt).expect("a JSON task");
+            let Some(Value::Object(statements)) = fixture_task(prompt) else {
+                panic!("a JSON task");
+            };
             self.sorted.lock().unwrap().extend(
                 statements
                     .values()

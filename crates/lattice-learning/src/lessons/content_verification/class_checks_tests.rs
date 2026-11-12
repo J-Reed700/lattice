@@ -117,8 +117,9 @@ impl Classes {
         }
         if prompt.starts_with("You sort statements extracted from a lesson") {
             self.asked.lock().unwrap().push("sort");
-            let statements: serde_json::Map<String, Value> =
-                fixture_task(prompt).expect("a JSON task");
+            let Some(Value::Object(statements)) = fixture_task(prompt) else {
+                panic!("a JSON task");
+            };
             let answer: serde_json::Map<String, Value> = statements
                 .iter()
                 .map(|(id, statement)| {
