@@ -27,6 +27,7 @@ mod unverified;
 
 pub(super) use audit::Audited;
 pub(super) use cotenancy::{sentences, CutOf};
+pub(super) use faults::contain;
 pub(crate) use faults::StatementFault;
 pub(super) use position::StepKind;
 pub(super) use successor::Rewrites;
@@ -267,6 +268,25 @@ impl ClaimLedger {
             .unwrap_or_default();
         ledger.load_cuts().await?;
         Ok(ledger)
+    }
+
+    /// A ledger holding `entries`, in memory, for tests that read a stored one.
+    #[cfg(test)]
+    pub(super) fn holding(entries: Vec<ClaimLedgerEntry>) -> Self {
+        Self {
+            sink: None,
+            entries,
+            revision: Revision(0),
+            checker_model: String::new(),
+            window_tokens: 0,
+            pending: Pending::default(),
+            findings: Vec::new(),
+            examples: HashMap::new(),
+            carried: HashMap::new(),
+            unplaced: Vec::new(),
+            edited_now: HashSet::new(),
+            cuts: Cuts::default(),
+        }
     }
 
     /// A sync point (§9): reload what the user did since the last one.

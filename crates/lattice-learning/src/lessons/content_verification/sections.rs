@@ -485,6 +485,21 @@ impl Contract for FlowRepair {
     type Input = PromptInput;
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for FlowRepair
+{
+    type Answer = text_edits::Patch;
+
+    fn render(answer: &text_edits::Patch) -> String {
+        serde_json::to_string(answer).unwrap_or_default()
+    }
+
+    fn read(text: &str) -> Result<text_edits::Patch> {
+        text_edits::read_patch(text)
+    }
+}
+
 /// One section's flow repair: the section with the edits the model gave for
 /// its gaps, or `None` when it gave none that can stand. A change to a
 /// sentence a claim stands on is no repair, and neither is one outside the

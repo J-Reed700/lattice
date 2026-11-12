@@ -854,3 +854,51 @@ async fn an_incomplete_item_review_is_corrected_with_why() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn the_grading_contracts_read_what_they_render() {
+    let criterion = |verdict: &str| {
+        json!({"criterionId":"c1","yourWords":["a phrase"],"whatWasMissing":"","fullCreditIncludes":"",
+            "sourceQuote":"","verdict":verdict,"points":1.0})
+    };
+    let graded: Vec<grading::RawGradeItem> = serde_json::from_value(json!([
+        {"itemId":"i1","criteria":[criterion("met"),criterion("partly_met"),criterion("missed")],"summary":"Fair.","responseToNote":"Noted."}
+    ]))
+    .unwrap();
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        grading::GradeWritten,
+    >(&graded);
+    for verdict in ["equivalent", "not_equivalent"] {
+        let judged: Vec<grading::RawJudgeItem> = serde_json::from_value(json!([{
+            "itemId":"i1","yourWords":[],"whatWasMissing":"","fullCreditIncludes":"",
+            "verdict":verdict,"summary":"Judged."
+        }]))
+        .unwrap();
+        lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+            grading::JudgeShort,
+        >(&judged);
+    }
+}
+
+#[test]
+fn the_quiz_writing_contracts_read_what_they_render() {
+    let items: Vec<formats::RawItem> = serde_json::from_value(json!([{
+        "prompt":"Which one?","options":["A","B","C","D"],"answerIndex":1,
+        "distractorRationales":["No.","","No.","No."],"explanation":"B follows.",
+        "blockIndex":0,"quote":"A passage.","difficulty":2,
+        "blanks":[{"acceptedAnswers":["x"]}],"pairs":[{"left":"l","right":"r"}],
+        "rubric":[
+            {"title":"T","description":"D","dimension":"recall"},
+            {"title":"T","description":"D","dimension":"explanation"},
+            {"title":"T","description":"D","dimension":"application"},
+            {"title":"T","description":"D","dimension":"transfer"}
+        ]
+    }]))
+    .unwrap();
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        QuizAuthor,
+    >(&items);
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        QuizRewrite,
+    >(&items);
+}

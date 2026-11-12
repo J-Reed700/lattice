@@ -26,11 +26,26 @@ use lattice_core::shared::persistence::{Database, Transactions};
 use serde_json::json;
 use std::collections::HashSet;
 
-struct ChangeEntries;
+pub(super) struct ChangeEntries;
 
 impl Contract for ChangeEntries {
     const ID: ContractId = ContractId::new("course-plan-change");
     type Input = PromptInput;
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for ChangeEntries
+{
+    type Answer = super::CoursePlan;
+
+    fn render(answer: &super::CoursePlan) -> String {
+        json!(answer).to_string()
+    }
+
+    fn read(text: &str) -> Result<super::CoursePlan> {
+        super::read_plan(text)
+    }
 }
 
 /// The `task` of a request to change planned topics.

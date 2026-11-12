@@ -29,6 +29,21 @@ impl Contract for TeachingReview {
     type Input = PromptInput;
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for TeachingReview
+{
+    type Answer = Review;
+
+    fn render(answer: &Review) -> String {
+        json!(answer).to_string()
+    }
+
+    fn read(text: &str) -> Result<Review> {
+        read_review(text)
+    }
+}
+
 /// The room the review's answer is given.
 const REVIEW_ANSWER_TOKENS: usize = 6000;
 
@@ -72,8 +87,12 @@ struct BlockCheck {
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(Serialize, Debug, PartialEq)
+)]
 #[serde(deny_unknown_fields)]
-struct Review {
+pub(crate) struct Review {
     issues: Vec<Issue>,
     #[serde(default, rename = "blockChecks")]
     block_checks: Vec<Value>,
@@ -84,6 +103,10 @@ struct Review {
 /// An issue as the reviewer gave it: plain text, or, when open findings were
 /// asked about, text with the open finding it continues.
 #[derive(Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(Serialize, Debug, PartialEq)
+)]
 #[serde(untagged)]
 enum Issue {
     Plain(String),
@@ -581,14 +604,19 @@ fn read_checks(
     }
 }
 
-/// The reviewer's reply as findings; every problem it has, in one error.
-fn read(raw: &str, reading: &Reading<'_>) -> Result<Judged> {
-    let review: Review = generation::parse_json(raw).map_err(|_| {
+/// The review a reply holds, before it is held to the sections asked about.
+fn read_review(raw: &str) -> Result<Review> {
+    generation::parse_json(raw).map_err(|_| {
         AppError::InvalidInput(
             "The review was incomplete. Give the issues and a check for every requested section."
                 .into(),
         )
-    })?;
+    })
+}
+
+/// The reviewer's reply as findings; every problem it has, in one error.
+fn read(raw: &str, reading: &Reading<'_>) -> Result<Judged> {
+    let review = read_review(raw)?;
     let mut problems = Vec::new();
     let mut reported = Vec::new();
     read_issues(review.issues, reading, &mut reported, &mut problems);

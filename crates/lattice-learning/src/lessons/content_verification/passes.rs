@@ -4,13 +4,14 @@
 //! the ledger each statement is, the reading of each statement that waits for
 //! one along its graph, and the report of what the latest readings found.
 use super::claim_ledger::ClaimLedger;
-use super::readings::driver::{read_page, read_until_remedy, ReadSteps};
+use super::claim_ledger::{contain, StatementFault};
+use super::readings::driver::{read_page, read_until_remedy, Fault, ReadSteps};
 use super::readings::{Read, ReadContext, ReaderSet, Statement};
 use super::*;
 use crate::lessons::claim_reviews::repository::ShownPassage;
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Position, Walked};
 use lattice_core::domain::learning::claim_review::{
-    CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState,
+    CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, FaultStage,
 };
 
 /// What a pass extracts from a candidate lesson before anything is read.
@@ -323,8 +324,29 @@ pub(super) async fn record_readings(
     }
     let mut stopped = Vec::new();
     for (id, read) in &readings {
+        if let Some(Fault { stage, message }) = &read.fault {
+            let fault = StatementFault {
+                claim: id.clone(),
+                stage: *stage,
+                message: message.clone(),
+            };
+            ledger.record_fault(fault).await?;
+        }
+        let mut breach = None;
         for step in &read.steps {
-            ledger.record_reading(policy, id, step).await?;
+            if let Err(message) = contain(ledger.record_reading(policy, id, step).await)? {
+                breach = Some(message);
+                break;
+            }
+        }
+        if let Some(message) = breach {
+            let fault = StatementFault {
+                claim: id.clone(),
+                stage: FaultStage::Record,
+                message,
+            };
+            ledger.record_fault(fault).await?;
+            continue;
         }
         // The card keeps the passages the last reading that compared some
         // showed.

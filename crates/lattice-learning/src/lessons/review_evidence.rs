@@ -47,6 +47,27 @@ impl Contract for ReviewEvidence {
     type Input = PromptInput;
 }
 
+impl ReviewEvidence {
+    fn read(raw: &str) -> Result<Decisions> {
+        generation::parse_json(raw)
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for ReviewEvidence
+{
+    type Answer = Decisions;
+
+    fn render(answer: &Decisions) -> String {
+        serde_json::to_string(answer).unwrap_or_default()
+    }
+
+    fn read(text: &str) -> Result<Decisions> {
+        Self::read(text)
+    }
+}
+
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Finding {
@@ -195,7 +216,7 @@ fn accepted(
     beside: Beside<'_>,
     evidence: &HashMap<String, EvidenceKind>,
 ) -> Result<Checked> {
-    let Decisions { decisions } = generation::parse_json(raw)?;
+    let Decisions { decisions } = ReviewEvidence::read(raw)?;
     let mut answers: HashMap<&str, Vec<&Finding>> = HashMap::new();
     for decision in &decisions {
         answers

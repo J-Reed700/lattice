@@ -9,6 +9,7 @@ use lattice_core::domain::learning::acceptance::{
     start, walk_from, AcceptancePolicy, End, NodeId, Outcome, Position, Reading, Step, Taken, Then,
     Walked,
 };
+use lattice_core::domain::learning::claim_review::FaultStage;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -616,15 +617,13 @@ async fn an_outcome_the_node_does_not_answer_is_a_fault() -> Result<()> {
         at(&policy, Class::Common, false, "c.ground"),
     )];
 
-    let fault = drive(&script, &ClaimChecks::default(), &given)
-        .await
-        .unwrap_err();
+    let read = drive(&script, &ClaimChecks::default(), &given).await?;
 
-    let AppError::InternalError(message) = fault else {
-        panic!("an internal error: {fault:?}");
-    };
-    assert!(message.contains("c.ground"), "{message}");
-    assert!(message.contains("AllCommon"), "{message}");
+    let held = read[0].fault.as_ref().expect("a fault");
+    assert_eq!(held.stage, FaultStage::Take);
+    assert!(held.message.contains("c.ground"), "{}", held.message);
+    assert!(held.message.contains("AllCommon"), "{}", held.message);
+    assert!(read[0].steps.is_empty());
     Ok(())
 }
 
@@ -642,14 +641,11 @@ async fn a_position_the_graph_does_not_have_is_a_fault() -> Result<()> {
         nowhere,
     )];
 
-    let fault = drive(&script, &ClaimChecks::default(), &given)
-        .await
-        .unwrap_err();
+    let read = drive(&script, &ClaimChecks::default(), &given).await?;
 
-    assert!(
-        matches!(&fault, AppError::InternalError(message) if message.contains("s.nowhere")),
-        "{fault:?}"
-    );
+    let held = read[0].fault.as_ref().expect("a fault");
+    assert_eq!(held.stage, FaultStage::Read);
+    assert!(held.message.contains("s.nowhere"), "{}", held.message);
     Ok(())
 }
 
@@ -668,11 +664,11 @@ async fn a_reader_that_answers_for_fewer_statements_than_it_was_given_is_a_fault
     };
     let given = [sourced(&lexer), sourced(&cli)];
 
-    let fault = drive(&script, &ClaimChecks::default(), &given)
-        .await
-        .unwrap_err();
+    let read = drive(&script, &ClaimChecks::default(), &given).await?;
 
-    assert!(matches!(fault, AppError::InternalError(_)), "{fault:?}");
+    assert!(read
+        .iter()
+        .all(|walk| matches!(&walk.fault, Some(held) if held.stage == FaultStage::Ask)));
     Ok(())
 }
 

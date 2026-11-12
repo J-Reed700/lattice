@@ -1230,3 +1230,34 @@ async fn a_flow_repair_whose_edits_do_not_apply_is_asked_again() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn the_flow_repair_contract_reads_what_it_renders() {
+    use crate::lessons::text_edits::{Cite, Edit, NamedUncite, Patch, Uncite};
+    let edit = |finding: Option<&str>| Edit {
+        finding: finding.map(str::to_owned),
+        path: "/blocks/0/body".into(),
+        before: json!("Old sentence."),
+        after: json!("New sentence."),
+    };
+    let cite = |finding: Option<&str>, source_index: Option<u64>| Cite {
+        finding: finding.map(str::to_owned),
+        path: "/blocks/0/citations".into(),
+        sentence: "New sentence.".into(),
+        source_index,
+        quote: "A quoted span.".into(),
+    };
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        FlowRepair,
+    >(&Patch {
+        edits: vec![edit(None), edit(Some("issue-0"))],
+        citations: vec![cite(None, Some(0)), cite(Some("issue-0"), None)],
+        uncite: vec![
+            Uncite::Path("/blocks/0/citations/0".into()),
+            Uncite::Named(NamedUncite {
+                finding: "issue-0".into(),
+                path: "/blocks/0/citations/1".into(),
+            }),
+        ],
+    });
+}

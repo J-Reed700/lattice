@@ -16,13 +16,39 @@ use lattice_core::{
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::marker::PhantomData;
 
-/// The confirming read of one finding of the check.
-pub(crate) struct LessonContractConfirm;
+/// The reply of one kind of confirming read, and the contract it is asked under.
+pub(crate) trait ConfirmQuestion: DeserializeOwned + Serialize {
+    const ID: ContractId;
+}
 
-impl Contract for LessonContractConfirm {
-    const ID: ContractId = ContractId::new("lesson-contract-confirm");
+/// The confirming read of one finding of the check, as the question `Q` asks it.
+pub(crate) struct Confirm<Q>(PhantomData<Q>);
+
+impl<Q: ConfirmQuestion> Contract for Confirm<Q> {
+    const ID: ContractId = Q::ID;
     type Input = PromptInput;
+}
+
+/// The reply to a confirming read.
+fn read_question<Q: ConfirmQuestion>(raw: &str) -> Result<Q> {
+    crate::generation::parse_json::<Q>(raw)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl<Q: ConfirmQuestion + PartialEq + std::fmt::Debug>
+    lattice_core::application::services::model_contract::test_support::RenderAnswer for Confirm<Q>
+{
+    type Answer = Q;
+
+    fn render(answer: &Q) -> String {
+        json!(answer).to_string()
+    }
+
+    fn read(text: &str) -> Result<Q> {
+        read_question::<Q>(text)
+    }
 }
 
 pub(crate) const PLANNED_TASK: &str = "Confirm that the lesson teaches a planned item";
@@ -38,6 +64,7 @@ const CLASH_BRIEF: &str = "Read each statement in its part with the words around
 const USE_BRIEF: &str = concat!("Read the part's words first and note whether they ask it of the learner. If they do, read the lesson up to and including the part that uses it, the earlier lessons' actions and terms, and the learner's prior knowledge, looking for the place that says, ", each_shown!(), ". Note which of the three it is and the words.");
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Belongs {
     taught: bool,
@@ -45,14 +72,24 @@ struct Belongs {
     belongs: String,
 }
 
+impl ConfirmQuestion for Belongs {
+    const ID: ContractId = ContractId::new("lesson-contract-confirm-planned");
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Conflict {
     case: String,
     contradict: bool,
 }
 
+impl ConfirmQuestion for Conflict {
+    const ID: ContractId = ContractId::new("lesson-contract-confirm-clash");
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(rename_all = "camelCase")]
 enum Where {
     ThisLesson,
@@ -61,6 +98,7 @@ enum Where {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Standing {
     asked: bool,
@@ -68,6 +106,10 @@ struct Standing {
     #[serde(rename = "where")]
     place: Where,
     quote: String,
+}
+
+impl ConfirmQuestion for Standing {
+    const ID: ContractId = ContractId::new("lesson-contract-confirm-use");
 }
 
 /// What the check and its confirming reads settled.
@@ -344,7 +386,7 @@ fn strings<'a>(lesson: &'a Value, name: &str) -> impl Iterator<Item = &'a str> {
 }
 
 /// One checkpointed, schema-held question.
-async fn ask<T: DeserializeOwned + Serialize>(
+async fn ask<T: ConfirmQuestion>(
     llm: &dyn LLMPort,
     subject: &str,
     brief: &str,
@@ -364,7 +406,7 @@ async fn ask<T: DeserializeOwned + Serialize>(
     {
         return Ok(saved);
     }
-    let call = ContractCall::of::<LessonContractConfirm>(&PromptInput {
+    let call = ContractCall::of::<Confirm<T>>(&PromptInput {
         system: SYSTEM.to_owned(),
         prompt: prompt.clone(),
     })?;
@@ -381,9 +423,48 @@ async fn ask<T: DeserializeOwned + Serialize>(
             subject,
             brief,
         }),
-        crate::generation::parse_json::<T>,
+        read_question::<T>,
     )
     .await?;
     crate::lesson_drafts::record_checkpoint(&key, serde_json::to_value(&answer)?).await?;
     Ok(answer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lattice_core::application::services::model_contract::test_support::assert_round_trip;
+
+    #[test]
+    fn a_planned_item_confirmation_reads_what_it_renders() {
+        assert_round_trip::<Confirm<Belongs>>(&Belongs {
+            taught: false,
+            quote: String::new(),
+            belongs: "section-2".into(),
+        });
+    }
+
+    #[test]
+    fn a_contradiction_confirmation_reads_what_it_renders() {
+        assert_round_trip::<Confirm<Conflict>>(&Conflict {
+            case: "A kettle that is empty.".into(),
+            contradict: true,
+        });
+    }
+
+    #[test]
+    fn a_use_confirmation_reads_what_it_renders() {
+        for place in [
+            Where::ThisLesson,
+            Where::EarlierLessons,
+            Where::PriorKnowledge,
+        ] {
+            assert_round_trip::<Confirm<Standing>>(&Standing {
+                asked: true,
+                taught: true,
+                place,
+                quote: "Boil it.".into(),
+            });
+        }
+    }
 }
