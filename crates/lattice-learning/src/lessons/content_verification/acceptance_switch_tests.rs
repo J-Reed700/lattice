@@ -8,6 +8,7 @@ use super::super::class_checks::{finding_of, unjudged_finding};
 use super::super::passes::{self, Extraction, Pass};
 use super::super::readings::driver::ReadStep;
 use super::super::readings::{Read, ReadContext, Reader, ReaderSet, Statement};
+use super::super::research::Unresearched;
 use super::claim_ledger_tests::{figure, pass_report, prepare, section, Figures};
 use super::class_checks_tests::Classes;
 use super::*;
@@ -3192,7 +3193,7 @@ async fn a_pass_that_changed_nothing_stops_naming_what_each_statement_waits_for_
     };
 
     let error = ledger
-        .stop_no_progress("{}", &waiting, false)
+        .stop_no_progress("{}", &waiting, None)
         .await?
         .to_string();
 
@@ -3204,13 +3205,24 @@ async fn a_pass_that_changed_nothing_stops_naming_what_each_statement_waits_for_
     );
     // Research that reached nothing is named as the cause of those waiting for it.
     let error = ledger
-        .stop_no_progress("{}", &waiting, true)
+        .stop_no_progress("{}", &waiting, Some(Unresearched::Unreached))
         .await?
         .to_string();
     assert_eq!(
         error,
         format!(
             "Research could not reach any search engine or web page, so 1 statement still waits for a source: \"{SENTENCE}\"."
+        )
+    );
+    // A plan research could not use is named as the cause instead.
+    let error = ledger
+        .stop_no_progress("{}", &waiting, Some(Unresearched::Unplanned))
+        .await?
+        .to_string();
+    assert_eq!(
+        error,
+        format!(
+            "Research could not plan its searches: the Learning model gave no plan Lattice could use, so 1 statement still waits for a source: \"{SENTENCE}\"."
         )
     );
     Ok(())
