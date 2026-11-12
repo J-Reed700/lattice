@@ -54,10 +54,11 @@ pub const FEATURE_CYCLE: &str = "feature-cycle";
 pub const FEATURE_REEXPORT: &str = "feature-reexport";
 pub const CONTAINER_IMPORT: &str = "container-import";
 pub const RAW_SPAWN: &str = "raw-spawn";
+pub const RAW_PROCESS: &str = "raw-process";
 pub const GLOBAL_STATE: &str = "global-state";
 pub const FILE_LENGTH: &str = "file-length";
 pub const COMPOSITION_ROOT_IMPORT: &str = "composition-root-import";
-const RULES: [&str; 9] = [
+const RULES: [&str; 10] = [
     INFRASTRUCTURE_IMPORTS_FEATURE,
     FEATURE_EDGE,
     FEATURE_CYCLE,
@@ -65,12 +66,13 @@ const RULES: [&str; 9] = [
     CONTAINER_IMPORT,
     COMPOSITION_ROOT_IMPORT,
     RAW_SPAWN,
+    RAW_PROCESS,
     GLOBAL_STATE,
     FILE_LENGTH,
 ];
 /// Rules held at zero. They never appear in the baseline, so any finding
 /// fails, even while the baseline is being written.
-const ZERO_RULES: [&str; 1] = [FEATURE_EDGE];
+const ZERO_RULES: [&str; 2] = [FEATURE_EDGE, RAW_PROCESS];
 
 const RAW_SPAWNS: [&[&str]; 4] = [
     &["tokio", "spawn"],
@@ -80,6 +82,9 @@ const RAW_SPAWNS: [&[&str]; 4] = [
 ];
 const SPAWN_MARKER: &str = "raw-spawn:";
 const SUPERVISOR: &str = "shared/runtime/";
+const PROCESS_MARKER: &str = "detached-process:";
+/// The one place that builds commands: `shared/process.rs` and `shared/process/`.
+const PROCESS_BUILDER: &str = "shared/process";
 const CONTAINER_TARGET: &str = "interfaces::di";
 /// The app's composition root module: startup wiring and shutdown.
 const COMPOSITION_ROOT: &str = "bootstrap";
@@ -126,6 +131,10 @@ const HEADER: &str = "\
 # and commit the smaller file. Do not add lines to get a change through: fix
 # the dependency, or mark a deliberate detached task with a
 # `// raw-spawn: <reason>` comment directly above the statement or its fn.
+# Production code starts a child process only through core's `BoundCommand`,
+# which ends it with Lattice (raw-process, held at zero); a launch that must
+# outlive Lattice carries a `// detached-process: <reason>` comment directly
+# above the statement or its fn.
 # State a static holds belongs in a value the composition root builds and
 # passes on; only a derived constant or a hook the process owns by nature
 # (a panic hook, an OS callback target) may stay global, marked with a
@@ -157,6 +166,9 @@ const HEADER: &str = "\
 #   composition-root-import <file> bootstrap              the composition root named outside itself
 #                                                         and the entry points main.rs, lib.rs, bin/*
 #   raw-spawn <file> <spawn fn>                           detached spawns outside shared/runtime
+#   raw-process <file> <path>                             std/tokio process Command named outside
+#                                                         shared/process; held at zero, so never
+#                                                         listed here
 #   global-state <file> <static>                          statics that hold mutable or lazily
 #                                                         built state, unless a derived constant
 #   file-length <file> max-1000-lines                     files over 1000 lines, except tests.rs,
@@ -489,6 +501,7 @@ pub fn file_findings(file: &SourceFile, modules: &HashSet<Vec<String>>) -> Vec<F
         reexporting: false,
         reexports: Vec::new(),
         spawns: Vec::new(),
+        processes: Vec::new(),
         statics: Vec::new(),
     };
     collector.visit_file(&file.ast);
@@ -549,6 +562,16 @@ pub fn file_findings(file: &SourceFile, modules: &HashSet<Vec<String>>) -> Vec<F
         for (target, line) in collector.spawns {
             found.push(Finding {
                 key: Key::new(RAW_SPAWN, &shown, target),
+                location: at(line),
+            });
+        }
+    }
+    if !(*relative == format!("{PROCESS_BUILDER}.rs")
+        || relative.starts_with(&format!("{PROCESS_BUILDER}/")))
+    {
+        for (target, line) in collector.processes {
+            found.push(Finding {
+                key: Key::new(RAW_PROCESS, &shown, target),
                 location: at(line),
             });
         }
@@ -777,6 +800,8 @@ struct Collector<'a> {
     /// Re-exports of core or another feature: target, line and the path named.
     reexports: Vec<(String, usize, String)>,
     spawns: Vec<(String, usize)>,
+    /// Unmarked names of a process `Command`: target and line.
+    processes: Vec<(String, usize)>,
     /// Unmarked statics that hold state, by name, with their lines.
     statics: Vec<(String, usize)>,
 }
@@ -830,6 +855,7 @@ impl Collector<'_> {
     /// visible outside the owning feature and names core or another feature.
     fn use_leaf(&mut self, segments: &[String], leading_colon: bool, glob: bool, line: usize) {
         self.reference(segments, leading_colon, glob, line);
+        self.process_command(segments, glob, line);
         if !self.reexporting {
             return;
         }
@@ -886,18 +912,32 @@ impl Collector<'_> {
             },
             _ => segments.to_vec(),
         };
+        self.process_command(&expanded, false, line);
         let Some(spawn) = RAW_SPAWNS.iter().find(|spawn| {
             spawn.len() == expanded.len() && spawn.iter().zip(&expanded).all(|(a, b)| a == b)
         }) else {
             return;
         };
-        let marked = self
-            .anchors
+        if !self.marked(line, SPAWN_MARKER) {
+            self.spawns.push((spawn.join("::"), line));
+        }
+    }
+
+    /// Whether the site, or a statement or fn around it, carries the marker.
+    fn marked(&self, line: usize, marker: &str) -> bool {
+        self.anchors
             .iter()
             .chain(std::iter::once(&line))
-            .any(|&anchor| marked_above(self.lines, anchor, SPAWN_MARKER));
-        if !marked {
-            self.spawns.push((spawn.join("::"), line));
+            .any(|&anchor| marked_above(self.lines, anchor, marker))
+    }
+
+    /// A path (already expanded through the file's `use`s) that names a
+    /// process `Command`, unless marked as a launch that outlives Lattice.
+    fn process_command(&mut self, path: &[String], glob: bool, line: usize) {
+        if let Some(target) = process_command_target(path, glob) {
+            if !self.marked(line, PROCESS_MARKER) {
+                self.processes.push((target, line));
+            }
         }
     }
 
@@ -941,6 +981,22 @@ impl Collector<'_> {
         self.anchors.push(line);
         visit(self);
         self.anchors.pop();
+    }
+}
+
+/// `std::process::Command` or `tokio::process::Command` when the path names it
+/// (or anything below it), or the module's glob import, which brings it in.
+fn process_command_target(path: &[String], glob: bool) -> Option<String> {
+    let [root, module, rest @ ..] = path else {
+        return None;
+    };
+    if !(root == "std" || root == "tokio") || module != "process" {
+        return None;
+    }
+    match (glob, rest.first()) {
+        (true, None) => Some(format!("{root}::process::*")),
+        (false, Some(name)) if name == "Command" => Some(format!("{root}::process::Command")),
+        _ => None,
     }
 }
 
@@ -1890,6 +1946,126 @@ mod tests { fn run() { tokio::spawn(async {}); } }
             "fn run() { tokio::spawn(async {}); }",
         );
         assert!(file_findings(&file, &HashSet::new()).is_empty());
+    }
+
+    fn process_commands(relative: &str, text: &str) -> Vec<String> {
+        file_findings(&source(relative, &["features", "x"], text), &HashSet::new())
+            .into_iter()
+            .filter(|finding| finding.key.rule == RAW_PROCESS)
+            .map(|finding| format!("{} {}", finding.key.target, finding.location))
+            .collect()
+    }
+
+    #[test]
+    fn process_commands_are_found_through_every_way_of_naming_them() {
+        let found = process_commands(
+            "features/x.rs",
+            r#"
+use std::process::Command;
+use std::process::Command as Cmd;
+use std::process;
+use tokio::process::{self as tp, Child};
+use std::process::*;
+use tokio::process::*;
+
+fn run() {
+    std::process::Command::new("a");
+    tokio::process::Command::new("b");
+    Command::new("c");
+    Cmd::new("d");
+    process::Command::new("e");
+    tp::Command::new("f");
+    let _ = std::process::exit;
+    let _ = std::process::id();
+    let _: Option<std::process::Stdio> = None;
+    let _: Option<Child> = None;
+}
+            "#,
+        );
+        assert_eq!(
+            found,
+            vec![
+                "std::process::Command features/x.rs:2",
+                "std::process::Command features/x.rs:3",
+                "std::process::* features/x.rs:6",
+                "tokio::process::* features/x.rs:7",
+                "std::process::Command features/x.rs:10",
+                "tokio::process::Command features/x.rs:11",
+                "std::process::Command features/x.rs:12",
+                "std::process::Command features/x.rs:13",
+                "std::process::Command features/x.rs:14",
+                "tokio::process::Command features/x.rs:15",
+            ]
+        );
+    }
+
+    #[test]
+    fn process_commands_may_be_marked_as_launches_that_outlive_lattice() {
+        let found = process_commands(
+            "infrastructure/reveal.rs",
+            r#"
+fn statement_marked() {
+    // detached-process: the file manager keeps running after Lattice quits
+    let _ = std::process::Command::new("open").spawn();
+}
+
+/// Docs stay between the marker and the signature.
+// detached-process: the opened app keeps running after Lattice quits
+#[cfg(unix)]
+fn function_marked() {
+    use std::process::Command;
+    Command::new("xdg-open").spawn().ok();
+}
+
+fn empty_reason_is_not_a_marker() {
+    // detached-process:
+    std::process::Command::new("x");
+}
+
+fn other_marker_is_not_a_marker() {
+    // raw-spawn: not this rule's marker
+    std::process::Command::new("y");
+}
+            "#,
+        );
+        assert_eq!(
+            found,
+            vec![
+                "std::process::Command infrastructure/reveal.rs:17",
+                "std::process::Command infrastructure/reveal.rs:22",
+            ]
+        );
+    }
+
+    #[test]
+    fn process_commands_are_exempt_in_test_code_and_the_process_builder() {
+        let text = "fn run() { std::process::Command::new(\"a\"); }";
+        assert_eq!(process_commands("features/x.rs", text).len(), 1);
+        assert!(process_commands(
+            "features/x.rs",
+            "#[cfg(test)] mod tests { use std::process::Command; fn run() { Command::new(\"a\"); } }"
+        )
+        .is_empty());
+        assert!(process_commands(
+            "features/x.rs",
+            "#[cfg(test)] fn run() { std::process::Command::new(\"a\"); }"
+        )
+        .is_empty());
+        for builder in [
+            "shared/process.rs",
+            "shared/process/windows.rs",
+            "shared/process/tests.rs",
+        ] {
+            assert!(process_commands(builder, text).is_empty(), "{builder}");
+        }
+        assert_eq!(process_commands("shared/processing.rs", text).len(), 1);
+    }
+
+    #[test]
+    fn raw_process_is_held_at_zero() {
+        assert!(ZERO_RULES.contains(&RAW_PROCESS));
+        assert!(RULES.contains(&RAW_PROCESS));
+        assert!(parse_baseline("raw-process features/x.rs std::process::Command 1").is_err());
     }
 
     #[test]

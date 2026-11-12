@@ -116,6 +116,13 @@ smaller baselines; never add a line to get a change through. To find every
 site of a rule, run
 `bash scripts/check-rust-layer-boundaries.sh --list <rule> [subject]`.
 
+The check also holds `raw-process` at zero: production code starts a child
+process only through `lattice_core::shared::process::BoundCommand`, which ends
+the child with Lattice however Lattice ends, so naming `std::process::Command`
+or `tokio::process::Command` anywhere else fails. A launch that must outlive
+Lattice (revealing a file in the OS file manager) carries a
+`// detached-process: <reason>` comment directly above the statement or its fn.
+
 The same check holds three data-access rules at zero, with no baseline. A
 transaction begins only with `begin_write()` or `begin_read()` (SQLite crates;
 the Postgres sync server keeps `.begin()`). Only a data module builds or runs
