@@ -4,6 +4,7 @@
 //! It records nothing; `ClaimLedger::record_reading` takes each step. It
 //! counts a statement into the pass's progress when no reading of it is left,
 //! as its last reading lands.
+use super::super::claim_ledger::contain;
 use super::*;
 use lattice_core::domain::learning::acceptance::{
     decide, rewrite_ahead, AcceptancePolicy, Position, Step, Taken, Then, Walked,
@@ -39,15 +40,6 @@ pub(in super::super) struct Fault {
     pub(in super::super) message: String,
 }
 
-/// `result` with an invariant breach given back as its message; any other
-/// error is the `Err`.
-fn contain<T>(result: Result<T>) -> Result<std::result::Result<T, String>> {
-    match result {
-        Err(AppError::InternalError(message)) => Ok(Err(message)),
-        other => other.map(Ok),
-    }
-}
-
 /// A statement on its way through its graph.
 struct Course<'s> {
     statement: Statement<'s>,
@@ -76,7 +68,6 @@ impl Course<'_> {
 
     /// Holds the statement where it is, unjudged, for the breach `message`.
     fn hold(&mut self, stage: FaultStage, message: String) {
-        tracing::error!(target: "lattice::fault", ?stage, %message, "A statement was held unjudged");
         self.fault = Some(Fault { stage, message });
     }
 

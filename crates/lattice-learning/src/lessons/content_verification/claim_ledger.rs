@@ -27,7 +27,7 @@ mod unverified;
 
 pub(super) use audit::Audited;
 pub(super) use cotenancy::{sentences, CutOf};
-pub(crate) use faults::StatementFault;
+pub(crate) use faults::{contain, StatementFault};
 pub(super) use position::StepKind;
 pub(super) use successor::Rewrites;
 
