@@ -1948,10 +1948,9 @@ async fn consistency_shows_every_passage_its_judge_holds() -> Result<()> {
     let texts = texts_of(&three);
     let window = (1..)
         .find(|&window| {
-            ClaimChecker::new(
+            ClaimChecker::for_policy(
                 &Windowed::new(window, Vec::new()),
                 SamplingOverride::deterministic(),
-                CHECKER_OUTPUT_TOKENS,
                 CheckPolicy::Consistency,
             )
             .consistency_fits(FEEDS, &texts)

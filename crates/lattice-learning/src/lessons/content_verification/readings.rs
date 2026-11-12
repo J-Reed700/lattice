@@ -218,7 +218,7 @@ enum Restored {
 }
 
 async fn restored(at: &ReadContext<'_>, pending: PendingClaim) -> Result<Restored> {
-    match compare(at.llm, pending).await? {
+    match compare(pending).await? {
         Comparison::Done(finding, reused) => Ok(Restored::Receipt(finding, reused)),
         Comparison::Pending(pending) => Ok(Restored::Ask(pending)),
     }
