@@ -32,7 +32,7 @@ import type { CheckerVerdictDto, ClaimAttachReportDto, ClaimEventDto, ClaimRevie
 const job = (overrides: Partial<LearningGenerationJob>): LearningGenerationJob => ({
   id: 'job-1', programId: 'program-1', operationId: 'op', kind: 'lesson_preparation', payloadSha256: 'hash', baseRevisionNumber: 1,
   status: 'completed', progressCompleted: 1, progressTotal: 1, progressMessage: 'Needs your review: 2 statements', activity: null,
-  resultId: 'needs_review:lesson-1,lesson-2', error: null, retryOfJobId: null, createdAt: 1, startedAt: 1, finishedAt: STOPPED_AT,
+  resultId: 'result-1', heldLessonIds: ['lesson-1', 'lesson-2'], error: null, retryOfJobId: null, createdAt: 1, startedAt: 1, finishedAt: STOPPED_AT,
   ...overrides,
 });
 
@@ -77,8 +77,8 @@ describe('claim review presentation', () => {
 
   it('finds the lessons a completed job holds, ignoring superseded and unfinished attempts', () => {
     expect(heldLessonIds(job({}))).toEqual(['lesson-1', 'lesson-2']);
-    expect(heldLessonIds(job({ status: 'running' }))).toEqual([]);
-    expect(heldLessonIds(job({ resultId: 'lesson-1' }))).toEqual([]);
+    expect(heldLessonIds(job({ status: 'running', heldLessonIds: [] }))).toEqual([]);
+    expect(heldLessonIds(job({ heldLessonIds: [] }))).toEqual([]);
     const retry = job({ id: 'job-2', status: 'pending', resultId: null, retryOfJobId: 'job-1' });
     expect(jobHoldingLesson([job({}), retry], 'lesson-1')).toBeNull();
     expect(jobHoldingLesson([job({})], 'lesson-2')?.id).toBe('job-1');
@@ -99,7 +99,7 @@ describe('claim review presentation', () => {
   });
 
   it('tells a hold by claims from a hold by the Verifier audit, so nothing reads "0 statements"', () => {
-    const auditStop = { code: 'verifier_turned_off', message: 'Audit stopped: you turned the Verifier off.', fix: 'Resume to publish without the audit.', at: 1, request: null };
+    const auditStop = { code: 'verifier_turned_off', audit: true, message: 'Audit stopped: you turned the Verifier off.', fix: 'Resume to publish without the audit.', at: 1, request: null };
     expect(reviewHold(review([claimItem()], { changedSinceStop: true }), 1)).toBe('claims');
     expect(reviewHold(review([], { stopReason: auditStop }), 0)).toBe('audit_stop');
     expect(reviewHold(review([]), 0)).toBe('audit');
