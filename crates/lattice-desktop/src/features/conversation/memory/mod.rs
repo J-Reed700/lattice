@@ -37,6 +37,7 @@ use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, InferencePriority, SamplingOverride,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::{tagged, ContractCall};
 use lattice_core::domain::conversation::memory::{
     MemoryCommit, MemorySnapshot, MemoryValidationError, SummaryRefold,
 };
@@ -267,41 +268,15 @@ impl Deadline {
 /// deterministic validator is what actually enforces it.
 async fn complete_json(
     llm: &dyn LLMPort,
+    call: &ContractCall,
     deadline: &Deadline,
     system: &str,
     prompt: String,
     schema: Option<serde_json::Value>,
-) -> std::result::Result<String, CompactionError> {
-    complete_json_within(llm, deadline, system, prompt, schema, 0).await
-}
-
-/// [`complete_json`] with room for at least `min_output_tokens` of answer:
-/// a summary sized from a large window must not be cut off by the provider
-/// cap that stops a runaway response.
-async fn complete_json_within(
-    llm: &dyn LLMPort,
-    deadline: &Deadline,
-    system: &str,
-    prompt: String,
-    schema: Option<serde_json::Value>,
-    min_output_tokens: usize,
+    max_output_tokens: usize,
 ) -> std::result::Result<String, CompactionError> {
     let remaining = deadline.slice()?;
-    let max_output_tokens = if system == prompts::VERIFIER_SYSTEM {
-        VERIFIER_OUTPUT_TOKENS
-    } else {
-        EXTRACTOR_OUTPUT_TOKENS
-    }
-    .max(min_output_tokens);
-    let phase = if system == prompts::EXTRACTOR_SYSTEM {
-        "extractor_model_call"
-    } else if system == prompts::VERIFIER_SYSTEM {
-        "reviewer_model_call"
-    } else if system == prompts::SUMMARIZER_SYSTEM {
-        "summarizer_model_call"
-    } else {
-        "other_model_call"
-    };
+    let phase = call.id.as_str();
     let started = std::time::Instant::now();
     tracing::info!(
         phase,
@@ -337,7 +312,8 @@ async fn complete_json_within(
         cache_key: deadline.cache_key.clone(),
         ..Default::default()
     };
-    let call = llm.complete(&request);
+    let tagged_llm = tagged(llm, call);
+    let call = tagged_llm.complete(&request);
 
     let bounded = async {
         match remaining {

@@ -7,6 +7,9 @@ use crate::practice::practical_dto::LearningSimulationSpeaker;
 use crate::practice::session::record::DebriefSession;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::domain::learning::practice::ScoreStatus;
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
@@ -343,13 +346,23 @@ pub(super) fn settle(plan: &Plan<'_>, answer: RawAnswer, examined: Examined) -> 
     Ok(Debrief { rows, stated })
 }
 
+struct DebriefAnswer;
+impl Contract for DebriefAnswer {
+    const ID: ContractId = ContractId::new("debrief-answer");
+    type Input = PromptInput;
+}
+
 /// The answer to `request`, and the raw text it was read from.
 pub(super) async fn ask(
     llm: &dyn LLMPort,
     plan: &Plan<'_>,
     request: GroundedRequest,
 ) -> Result<(String, RawAnswer)> {
-    complete_checked_request(llm, request, None, None, |raw| {
+    let call = ContractCall::of::<DebriefAnswer>(&PromptInput {
+        system: request.instructions.clone(),
+        prompt: request.task.clone(),
+    })?;
+    complete_checked_request(llm, &call, request, None, None, |raw| {
         read(raw, plan).map(|answer| (raw.to_owned(), answer))
     })
     .await
