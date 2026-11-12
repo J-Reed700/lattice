@@ -12,10 +12,13 @@
 //! most gone, and the order rules (each check after a worked example shown
 //! since the previous check, but the last of two or more checks). The phase
 //! is the caller's to name; nothing infers it from the lesson.
-use crate::dto::LessonQuestionKind;
+use crate::dto::{LearningBlockKind, LessonQuestionKind};
 use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding, Rule};
 use serde_json::Value;
 use std::collections::BTreeSet;
+
+#[path = "block_kinds.rs"]
+mod block_kinds;
 
 /// Which promise a lesson is held to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,23 +138,26 @@ const IDEAS: (usize, usize) = (2, 3);
 /// The sections a lesson is written with: at least this many of each kind, or
 /// exactly this many when `exact`. Each idea has one section of each kind that
 /// is not exact; the exact kinds close the lesson.
-const SECTION_MIX: [(&str, usize, bool); 8] = [
-    ("explanation", IDEAS.0, false),
-    ("worked_example", IDEAS.0, false),
-    ("contrast", 1, false),
-    ("check", IDEAS.0, false),
-    ("guided_practice", 1, true),
-    ("independent_practice", 1, true),
-    ("reflection", 1, true),
-    ("recap", 1, true),
+const SECTION_MIX: [(LearningBlockKind, usize, bool); 8] = [
+    (LearningBlockKind::Explanation, IDEAS.0, false),
+    (LearningBlockKind::WorkedExample, IDEAS.0, false),
+    (LearningBlockKind::Contrast, 1, false),
+    (LearningBlockKind::Check, IDEAS.0, false),
+    (LearningBlockKind::GuidedPractice, 1, true),
+    (LearningBlockKind::IndependentPractice, 1, true),
+    (LearningBlockKind::Reflection, 1, true),
+    (LearningBlockKind::Recap, 1, true),
 ];
+
+/// The answer choices every lesson question offers; the learner picks one.
+pub(crate) const CHOICES_PER_QUESTION: usize = 4;
 
 /// Questions the writer is asked for of each kind (`LessonQuestionKind::ALL`),
 /// so that a cut can spend one; a kept lesson needs one question of any kind.
 const QUESTIONS_PER_KIND: usize = 2;
 
 /// The fewest sections the writer is asked for: the mix at its least.
-const fn least_sections(mix: &[(&str, usize, bool)]) -> usize {
+const fn least_sections(mix: &[(LearningBlockKind, usize, bool)]) -> usize {
     match mix {
         [] => 0,
         [(_, least, _), rest @ ..] => *least + least_sections(rest),
@@ -161,7 +167,7 @@ const fn least_sections(mix: &[(&str, usize, bool)]) -> usize {
 /// The most sections a lesson has: the most ideas, each with a section of
 /// every kind that is not exact, then the exact closing sections. Cuts never
 /// add, so a lesson never has more.
-const fn most_sections(mix: &[(&str, usize, bool)]) -> usize {
+const fn most_sections(mix: &[(LearningBlockKind, usize, bool)]) -> usize {
     match mix {
         [] => 0,
         [(_, least, exact), rest @ ..] => {
@@ -170,32 +176,78 @@ const fn most_sections(mix: &[(&str, usize, bool)]) -> usize {
     }
 }
 
-/// The kinds of section that teach. The others set the learner a task or look back.
-pub(crate) const TEACHING_KINDS: [&str; 3] = ["explanation", "worked_example", "contrast"];
-
 const SECTIONS: (usize, usize) = (least_sections(&SECTION_MIX), most_sections(&SECTION_MIX));
 
 /// A section that took a cut and has fewer teaching sentences than this has
 /// nothing left to teach with.
 const LEAST_TEACHING_SENTENCES: usize = 2;
 
+/// What a kept lesson is held to, each rule with its words.
+#[derive(Clone, Copy)]
+enum KeptRule {
+    Explanation,
+    ShownBeforeCheck,
+    RecapAfterReflection,
+    Question,
+}
+
+const KEPT_RULES: [KeptRule; 4] = [
+    KeptRule::Explanation,
+    KeptRule::ShownBeforeCheck,
+    KeptRule::RecapAfterReflection,
+    KeptRule::Question,
+];
+
+impl KeptRule {
+    fn words(self) -> &'static str {
+        match self {
+            Self::Explanation => "at least one explanation",
+            Self::ShownBeforeCheck => "each check after a worked example shown since the previous check, except the last of two or more checks, which mixes the lesson's ideas",
+            Self::RecapAfterReflection => "the recap after the reflection when it has both",
+            Self::Question => "at least one question",
+        }
+    }
+
+    fn findings(self, lesson: &Value) -> Vec<ReviewFinding> {
+        let blocks = items(lesson, "blocks");
+        match self {
+            Self::Explanation => explanation_finding(blocks).into_iter().collect(),
+            Self::ShownBeforeCheck => unshown_check_findings(blocks),
+            Self::RecapAfterReflection => recap_findings(blocks),
+            Self::Question => question_finding(items(lesson, "questions"))
+                .into_iter()
+                .collect(),
+        }
+    }
+}
+
+/// The words a kept lesson is held to, joined as a sentence's list.
+fn kept_words() -> String {
+    let words: Vec<&str> = KEPT_RULES.iter().map(|rule| rule.words()).collect();
+    match words.split_last() {
+        Some((last, rest)) => format!("{}; and {last}", rest.join("; ")),
+        None => String::new(),
+    }
+}
+
 impl StandardShape {
     /// The findings about the count and the order of `lesson`'s sections and
     /// questions in `phase`.
     pub(crate) fn shape_findings(&self, lesson: &Value, phase: Phase) -> Vec<ReviewFinding> {
-        let blocks = items(lesson, "blocks");
-        let questions = items(lesson, "questions");
-        let mut found = Vec::new();
-        found.extend(match phase {
-            Phase::Draft => section_mix_finding(blocks),
-            Phase::Kept => explanation_finding(blocks),
-        });
-        found.extend(order_findings(blocks));
-        found.extend(match phase {
-            Phase::Draft => question_count_finding(questions),
-            Phase::Kept => question_finding(questions),
-        });
-        found
+        match phase {
+            Phase::Draft => {
+                let blocks = items(lesson, "blocks");
+                section_mix_finding(blocks)
+                    .into_iter()
+                    .chain(order_findings(blocks))
+                    .chain(question_count_finding(items(lesson, "questions")))
+                    .collect()
+            }
+            Phase::Kept => KEPT_RULES
+                .into_iter()
+                .flat_map(|rule| rule.findings(lesson))
+                .collect(),
+        }
     }
 }
 
@@ -223,10 +275,9 @@ impl ShapePolicy for StandardShape {
                     number(QUESTIONS_PER_KIND)
                 ),
             ],
-            // What `shape_findings` holds a `Phase::Kept` lesson to: change the two together.
             Phase::Kept => vec![
                 "Verification takes out of a lesson what no source confirms, so this lesson is no longer held to the number of sections and questions it was drafted with.".to_owned(),
-                "It is held to this instead: at least one explanation; each check after a worked example shown since the previous check, except the last of two or more checks, which mixes the lesson's ideas; the recap after the reflection when it has both; and at least one question.".to_owned(),
+                format!("It is held to this instead: {}.", kept_words()),
             ],
         }
     }
@@ -254,7 +305,7 @@ impl ShapePolicy for StandardShape {
         let lost = (0..sections).filter(|unit| going.contains(unit)).count();
         let first = blocks
             .iter()
-            .position(|block| text(block, "kind") == "explanation");
+            .position(|block| text(block, "kind") == LearningBlockKind::Explanation.as_str());
         let questions = items(lesson, "questions");
         let questions_lost = (sections..sections + questions.len())
             .filter(|unit| going.contains(unit))
@@ -362,19 +413,21 @@ fn mix_asked(exactly: &str) -> String {
             format!(
                 "{} {}{}",
                 number(*least),
-                kind_name(kind),
+                kind_name(kind.as_str()),
                 if *least == 1 { "" } else { "s" }
             )
         })
         .collect();
-    let closing: Vec<String> = wanted(true).map(|(kind, _, _)| kind_name(kind)).collect();
+    let closing: Vec<String> = wanted(true)
+        .map(|(kind, _, _)| kind_name(kind.as_str()))
+        .collect();
     let counts: Vec<usize> = wanted(true).map(|(_, count, _)| *count).collect();
     let same = counts.iter().all(|count| Some(count) == counts.first());
     let closing = match counts.first() {
         Some(each) if same => format!("{} each of {}", number(*each), join_plain(&closing)),
         _ => join_plain(
             &wanted(true)
-                .map(|(kind, count, _)| format!("{} {}", number(*count), kind_name(kind)))
+                .map(|(kind, count, _)| format!("{} {}", number(*count), kind_name(kind.as_str())))
                 .collect::<Vec<_>>(),
         ),
     };
@@ -411,9 +464,9 @@ fn unshown_checks(blocks: &[Value], going: &BTreeSet<usize>) -> BTreeSet<usize> 
         if going.contains(&index) {
             continue;
         }
-        match text(block, "kind") {
-            "worked_example" => shown = true,
-            "check" => {
+        match LearningBlockKind::parse(text(block, "kind")) {
+            Some(LearningBlockKind::WorkedExample) => shown = true,
+            Some(LearningBlockKind::Check) => {
                 if !shown {
                     found.insert(index);
                 }
@@ -431,7 +484,7 @@ fn mixed_check(blocks: &[Value]) -> Option<usize> {
     let checks: Vec<usize> = blocks
         .iter()
         .enumerate()
-        .filter(|(_, block)| text(block, "kind") == "check")
+        .filter(|(_, block)| text(block, "kind") == LearningBlockKind::Check.as_str())
         .map(|(index, _)| index)
         .collect();
     if checks.len() >= 2 {
@@ -442,38 +495,63 @@ fn mixed_check(blocks: &[Value]) -> Option<usize> {
 }
 
 fn order_findings(blocks: &[Value]) -> Vec<ReviewFinding> {
-    let mut found = Vec::new();
-    let mixed = mixed_check(blocks);
-    for index in unshown_checks(blocks, &BTreeSet::new()) {
-        if mixed == Some(index) {
-            continue;
-        }
-        let section = format!("Section {} (candidate blocks-{index})", index + 1);
-        found.push(structure(
-            Rule::UnshownCheck,
-            FindingSite::Section(index),
-            format!("Section {} is a check on an idea that no worked example has shown since the previous check.", index + 1),
-            format!("{section} checks an idea no worked example has shown since the previous check; place each check after the example of the idea it asks the learner to apply."),
-        ));
-    }
-    let first = |kind: &str| blocks.iter().position(|block| text(block, "kind") == kind);
-    if let (Some(reflection), Some(recap)) = (first("reflection"), first("recap")) {
-        if reflection > recap {
-            found.push(structure(
-                Rule::RecapFirst,
-                FindingSite::Section(recap),
-                format!("Section {} recaps the lesson before the learner is asked to explain it from memory.", recap + 1),
-                format!("Section {} (candidate blocks-{recap}) recaps before the reflection asks the learner to explain the lesson from memory; put the reflection first, so the recap is what they compare their explanation with.", recap + 1),
-            ));
-        }
-    }
+    let mut found = unshown_check_findings(blocks);
+    found.extend(recap_findings(blocks));
     found
+}
+
+fn unshown_check_findings(blocks: &[Value]) -> Vec<ReviewFinding> {
+    let mixed = mixed_check(blocks);
+    unshown_checks(blocks, &BTreeSet::new())
+        .into_iter()
+        .filter(|index| mixed != Some(*index))
+        .map(|index| {
+            let site = FindingSite::Section(index);
+            structure(
+                Rule::UnshownCheck,
+                site,
+                format!("{} is a check on an idea that no worked example has shown since the previous check.", site.label()),
+                format!("{} checks an idea no worked example has shown since the previous check; place each check after the example of the idea it asks the learner to apply.", site.note_label()),
+            )
+        })
+        .collect()
+}
+
+fn recap_findings(blocks: &[Value]) -> Vec<ReviewFinding> {
+    let first = |kind: LearningBlockKind| {
+        blocks
+            .iter()
+            .position(|block| text(block, "kind") == kind.as_str())
+    };
+    let (Some(reflection), Some(recap)) = (
+        first(LearningBlockKind::Reflection),
+        first(LearningBlockKind::Recap),
+    ) else {
+        return Vec::new();
+    };
+    if reflection < recap {
+        return Vec::new();
+    }
+    let site = FindingSite::Section(recap);
+    vec![structure(
+        Rule::RecapFirst,
+        site,
+        format!("{} recaps the lesson before the learner is asked to explain it from memory.", site.label()),
+        format!("{} recaps before the reflection asks the learner to explain the lesson from memory; put the reflection first, so the recap is what they compare their explanation with.", site.note_label()),
+    )]
 }
 
 fn section_mix_finding(blocks: &[Value]) -> Option<ReviewFinding> {
     let counts: Vec<_> = SECTION_MIX
         .iter()
-        .map(|(kind, minimum, exact)| (*kind, kind_count(blocks, kind), *minimum, *exact))
+        .map(|(kind, minimum, exact)| {
+            (
+                kind.as_str(),
+                kind_count(blocks, kind.as_str()),
+                *minimum,
+                *exact,
+            )
+        })
         .collect();
     if !counts
         .iter()
@@ -541,7 +619,7 @@ fn question_count_finding(questions: &[Value]) -> Option<ReviewFinding> {
 }
 
 fn explanation_finding(blocks: &[Value]) -> Option<ReviewFinding> {
-    if kind_count(blocks, "explanation") > 0 {
+    if kind_count(blocks, LearningBlockKind::Explanation.as_str()) > 0 {
         return None;
     }
     Some(structure(

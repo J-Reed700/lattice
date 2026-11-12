@@ -6,6 +6,8 @@
 //! paragraph, which lessons repeat on purpose.
 use crate::generation::long_enough_quote;
 use crate::lessons::same_text::fold;
+use crate::review_findings::FindingSite;
+use lattice_core::shared::text::segmentation::code_fences;
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -53,13 +55,6 @@ fn is_item(line: &str) -> bool {
             .is_some_and(|rest| rest.starts_with(char::is_whitespace))
 }
 
-/// The marker of the code fence `line` opens, if it does.
-fn fence_marker(line: &str) -> Option<char> {
-    ['`', '~']
-        .into_iter()
-        .find(|marker| line.starts_with(&marker.to_string().repeat(3)))
-}
-
 /// How far `line` is indented; a tab counts as four.
 fn indent(line: &str) -> usize {
     line.chars()
@@ -73,19 +68,21 @@ fn indent(line: &str) -> usize {
 /// marker, fences and blank lines among them, and an unindented line that
 /// follows its text directly; the list ends at the first other line.
 fn paragraphs(text: &str) -> Vec<String> {
+    let fences = code_fences(text);
     let mut found = Vec::new();
     let mut current = String::new();
-    let mut fence: Option<char> = None;
     let mut item: Option<usize> = None;
     let mut lazy = false;
-    for raw in text.lines() {
+    let mut offset = 0;
+    for raw in text.split_inclusive('\n') {
+        let start = offset;
+        offset += raw.len();
         let (line, at) = (raw.trim(), indent(raw));
-        if let Some(marker) = fence {
-            if line.starts_with(&marker.to_string().repeat(3)) {
-                fence = None;
-            }
+        let fence = fences.iter().find(|fence| fence.whole().contains(&start));
+        if fence.is_some_and(|fence| fence.opening.start != start) {
             continue;
         }
+        let opens_fence = fence.is_some();
         if line.is_empty() {
             if !current.is_empty() {
                 found.push(std::mem::take(&mut current));
@@ -93,14 +90,13 @@ fn paragraphs(text: &str) -> Vec<String> {
             lazy = false;
             continue;
         }
-        let structural = line.starts_with(['#', '|']) || fence_marker(line).is_some();
+        let structural = line.starts_with(['#', '|']) || opens_fence;
         if let Some(marker) = item {
             if at > marker {
-                fence = fence_marker(line);
-                lazy = fence.is_none();
+                lazy = !opens_fence;
                 continue;
             }
-            if is_item(line) {
+            if is_item(line) && !opens_fence {
                 item = Some(at);
                 lazy = true;
                 continue;
@@ -113,9 +109,10 @@ fn paragraphs(text: &str) -> Vec<String> {
         if !current.is_empty() && (structural || is_item(line)) {
             found.push(std::mem::take(&mut current));
         }
-        if let Some(marker) = fence_marker(line) {
-            fence = Some(marker);
-        } else if is_item(line) {
+        if opens_fence {
+            continue;
+        }
+        if is_item(line) {
             item = Some(at);
             lazy = true;
         } else if !structural {
@@ -181,48 +178,40 @@ pub(crate) fn teaches_path(path: &str) -> bool {
     path.split('/').all(teaches)
 }
 
-fn collect(value: &Value, counts: &mut Counts) {
-    match value {
-        Value::String(text) => {
-            for (sentence, count) in counts_of_text(text) {
+/// The sentences a lesson may say once: its sections' bodies.
+pub(crate) fn said(values: &[&Value]) -> Counts {
+    let mut counts = Counts::new();
+    for value in values {
+        let bodies = value
+            .get("blocks")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|block| block.get("body").and_then(Value::as_str));
+        for body in bodies {
+            for (sentence, count) in counts_of_text(body) {
                 *counts.entry(sentence).or_default() += count;
             }
         }
-        Value::Object(fields) => {
-            for value in fields
-                .iter()
-                .filter(|(name, _)| teaches(name))
-                .map(|(_, value)| value)
-            {
-                collect(value, counts);
-            }
-        }
-        Value::Array(items) => {
-            for value in items {
-                collect(value, counts);
-            }
-        }
-        _ => (),
-    }
-}
-
-/// The sentences of every text in `values`.
-pub(crate) fn counts_of(values: &[&Value]) -> Counts {
-    let mut counts = Counts::new();
-    for value in values {
-        collect(value, &mut counts);
     }
     counts
 }
 
-/// The first sentence the text `after` has more of than `before` that
-/// `lesson` already has, as `after` writes it.
-pub(crate) fn gained_repeat(before: &str, after: &str, lesson: &Counts) -> Option<String> {
+/// Whether `path` names a section body.
+pub(crate) fn says_at(path: &str) -> bool {
+    FindingSite::of_pointer(path)
+        .field_pointer("body")
+        .as_deref()
+        == Some(path)
+}
+
+/// The sentences `after` has more of than `before`, as `after` writes them.
+pub(crate) fn added(before: &str, after: &str) -> Vec<String> {
     let (had, has) = (counts_of_text(before), counts_of_text(after));
-    comparable(after).into_iter().find(|sentence| {
-        let sentence = key(sentence);
-        has.get(&sentence) > had.get(&sentence) && lesson.contains_key(&sentence)
-    })
+    comparable(after)
+        .into_iter()
+        .filter(|sentence| has.get(&key(sentence)) > had.get(&key(sentence)))
+        .collect()
 }
 
 /// The compared sentences of each text in `value` by its path, laid out as
