@@ -336,20 +336,17 @@ impl Course {
 
     async fn publish_one_and_hold_one(&self) -> Result<LearningGenerationJob> {
         let (first, second) = (self.lessons[0].as_str(), self.lessons[1].as_str());
-        let job = self.started(&[first, second]).await?;
+        let published = self.started(&[first]).await?;
+        self.publish(&published, first).await?;
+        let job = self.started(&[second]).await?;
         let held = crate::content_verification::HeldForReview {
             lesson_id: second.to_string(),
             claims: 1,
             stop: None,
         };
-        self.jobs
-            .publish_prepared(
-                &job.id,
-                self.revision().await?,
-                &[(first.to_string(), prepared(first))],
-                &[held],
-                None,
-            )
+        let (result_ref, message) = crate::content_verification::review_outcome(&[held]);
+        JobStore::new(self.pool.clone())
+            .complete(&job.id, &result_ref, &message)
             .await?;
         Ok(job)
     }
