@@ -234,3 +234,7 @@ impl Progress for Told<'_> {
 
     fn saved(&mut self, _documents: usize) {}
 }
+
+#[cfg(test)]
+#[path = "sync_tests.rs"]
+mod tests;

@@ -109,6 +109,23 @@ fn explanation_keeps_the_reason_and_only_accepts_an_exact_source_quote() {
 }
 
 #[test]
+fn a_typographic_copy_of_the_evidence_is_kept_as_its_bytes() {
+    let evidence = ClaimEvidence {
+        text: "[1]\nIt’s the borrow checker’s job.".into(),
+        quote: None,
+    };
+    let parsed = parse_judge_explanation(
+        "supported\nReason: r\nSource quote: \"It's the borrow checker's job\"",
+        &evidence,
+        ClaimVerdict::Supported,
+    );
+    assert_eq!(
+        parsed.quote.as_deref(),
+        Some("It’s the borrow checker’s job")
+    );
+}
+
+#[test]
 fn a_reason_past_600_characters_is_kept_whole() {
     let evidence = ClaimEvidence {
         text: "[1]\nThe mill closed in 1887.".into(),
