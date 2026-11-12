@@ -303,7 +303,7 @@ impl ConversationRepository {
 
 /// The search rows that belong to a bookmark: its own text, its message, and
 /// its conversation's title.
-fn push_bookmark_matches(qb: &mut QueryBuilder<'_, Sqlite>, fts: &str) {
+fn push_bookmark_matches(qb: &mut QueryBuilder<Sqlite>, fts: &str) {
     qb.push(
         " FROM conversation_search_fts fts
         WHERE fts.conversation_id = b.conversation_id
