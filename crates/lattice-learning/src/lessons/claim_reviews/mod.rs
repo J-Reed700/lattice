@@ -14,6 +14,8 @@ pub(crate) fn count(n: usize) -> u32 {
 mod actions;
 pub mod attach;
 pub mod checker_examples;
+#[cfg(test)]
+mod code_example_migration_tests;
 pub mod dto;
 #[cfg(test)]
 mod dto_tests;

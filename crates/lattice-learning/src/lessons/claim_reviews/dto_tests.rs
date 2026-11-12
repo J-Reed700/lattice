@@ -5,7 +5,8 @@
 use lattice_core::domain::learning::claim_review::{
     Actor, AttachOutcome, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLocation,
     ClaimState, Class, ClassifiedBy, EventProvenance, EvidenceFingerprint, EvidenceSeen,
-    HumanBinding, Provenance, RecordedEvent, ReopenCause, RepairOutcome, RequestFacts, StopReason,
+    HumanBinding, Provenance, RecordedEvent, ReopenCause, RepairOutcome, RequestFacts, StopCode,
+    StopReason,
     SupportedBy, TrustAssessment, TrustCause, UnitKind, UserAction, VerdictKind,
 };
 use lattice_core::domain::provenance::{
@@ -17,7 +18,7 @@ use serde_json::Value;
 
 use super::dto::{
     AttachEvidenceDto, ClaimActionRequestDto, ClaimEventDto, ClaimStateDto, LessonClaimReviewDto,
-    VerdictKindDto,
+    StopReasonDto, VerdictKindDto,
 };
 
 /// Parses `fixture`, reads it as `T`, writes it back and requires the same
@@ -340,7 +341,7 @@ fn claim_events_mirror_the_domain() {
         ClaimEvent::Undone { event_ordinal: 5 },
         ClaimEvent::Stopped {
             reason: StopReason {
-                code: "model_rejected".into(),
+                code: StopCode::Retired("model_rejected".into()),
                 message: "llama.cpp rejected this request twice.".into(),
                 fix: "Lower the context window in Settings to match the server.".into(),
                 at: 1_760_000_900_000,
@@ -520,4 +521,19 @@ fn a_claim_published_not_verified_is_a_state_with_its_reason_and_has_no_history_
         },
     };
     assert!(ClaimEventDto::of(&marked).is_none());
+}
+
+#[test]
+fn a_verifier_stop_is_an_audit_stop_and_a_model_stop_is_not() {
+    let stop = |code| StopReasonDto::from(&StopReason {
+        code,
+        message: String::new(),
+        fix: String::new(),
+        at: 1,
+        request: None,
+    });
+    let verifier = stop(StopCode::VerifierUnset);
+    assert!(verifier.audit);
+    assert_eq!(verifier.code, "verifier_unset");
+    assert!(!stop(StopCode::Retired("model_rejected".into())).audit);
 }
