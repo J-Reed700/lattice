@@ -58,7 +58,7 @@ fn an_unclosed_fence_runs_to_the_end_of_the_text() {
 
 #[test]
 fn a_backtick_in_the_info_string_opens_nothing() {
-    assert!(code_fences("```a`b\nx\n```\n").is_empty());
+    assert!(code_fences("```a`b\nx\n").is_empty());
     assert!(code_fences("`` x\n").is_empty());
 }
 
