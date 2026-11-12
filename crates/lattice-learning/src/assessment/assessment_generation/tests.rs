@@ -390,7 +390,7 @@ async fn a_single_item_cut_off_is_asked_again_with_twice_the_room() -> Result<()
     };
     let llm = CutOnce(Mutex::new(Vec::new()));
     let single = batch.author(&llm, &collection).await?;
-    assert!(!matches!(single.as_deref(), Some([Err(reason)]) if reason.contains("cut off")));
+    assert!(single.is_some(), "the answer given twice the room is read");
     assert!(doubled(&llm.0));
     Ok(())
 }
