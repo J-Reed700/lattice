@@ -18,7 +18,7 @@ use super::actions::{in_section_body, ONLY_SECTION};
 use super::published_edit::{placed, section_body, update_report, user_sentence_in, CHANGED};
 use super::repository::{append_in, blocks, load_in};
 use crate::content_verification::TakenOut;
-use crate::lessons::same_text::common_prefix;
+use lattice_core::shared::text::same_text::common_prefix;
 
 /// `body` with the sentence at `range` taken out, and the whitespace around
 /// it: no double space, no empty list item, no extra blank line is left.

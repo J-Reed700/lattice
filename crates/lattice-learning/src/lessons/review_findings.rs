@@ -2,7 +2,7 @@
 //! identified by what raised it and what it is about (`FindingId`), never by
 //! its wording, which the reviewer rewrites every pass. Rows stored before
 //! finding ids are identified by kind and place (`FindingKey`).
-use crate::lessons::same_text;
+use lattice_core::shared::text::same_text;
 use lattice_core::domain::learning::claim_review::text_sha256;
 use lattice_core::shared::text::plain_text;
 use lattice_core::shared::text::segmentation::sentences;

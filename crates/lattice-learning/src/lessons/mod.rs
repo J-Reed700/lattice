@@ -20,7 +20,6 @@ pub mod reference_collection;
 pub(crate) mod repeats;
 pub mod review_evidence;
 pub mod review_findings;
-pub(crate) use lattice_core::shared::text::same_text;
 #[cfg(test)]
 mod sentence_identity_tests;
 pub(crate) mod shape;

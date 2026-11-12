@@ -11,7 +11,7 @@ use super::super::sections::{
 };
 use super::super::*;
 use super::goal_words;
-use crate::lessons::same_text::{overlaps, stands};
+use lattice_core::shared::text::same_text::{overlaps, stands};
 use crate::lessons::shape::ShapePolicy;
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal, Outcome};
 use lattice_core::domain::learning::claim_review::{ClaimId, CutPlace};

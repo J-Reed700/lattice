@@ -12,7 +12,7 @@ use crate::assessment::assessment_engine::checks::{
 use crate::content_verification::{names_a_source, quoted_wording};
 use crate::dto::LearningBlockKind;
 use crate::lessons::repeats;
-use crate::lessons::same_text::{fold, overlap};
+use lattice_core::shared::text::same_text::{fold, overlap};
 use crate::lessons::shape;
 use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding, Rule};
 use lattice_core::shared::text::segmentation::code_fences;

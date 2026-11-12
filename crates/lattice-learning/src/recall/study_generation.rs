@@ -2,7 +2,7 @@
 use super::study_dto::*;
 use crate::assessment_generation::text_call;
 use crate::generation::validate_excerpt_quote;
-use crate::lessons::same_text::fold;
+use lattice_core::shared::text::same_text::fold;
 use crate::model_call;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;

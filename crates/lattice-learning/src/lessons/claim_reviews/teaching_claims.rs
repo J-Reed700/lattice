@@ -19,7 +19,7 @@ use super::teaching_findings::{
     TeachingFindingDto, TeachingFindingSiteDto, TeachingFindingStateDto, TeachingResolutionDto,
 };
 use crate::content_verification::claim_quote;
-use crate::lessons::same_text::whole_sentences;
+use lattice_core::shared::text::same_text::whole_sentences;
 
 /// Where the sentence of a waiting section note is in `body` when "Remove this
 /// sentence" can take it out: it occurs once and is a whole sentence.

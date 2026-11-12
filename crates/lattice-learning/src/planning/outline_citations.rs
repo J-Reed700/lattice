@@ -1,6 +1,6 @@
 //! Restore a cited source's own bytes over a quote that is the same words apart
 //! from typography, emphasis, spacing and letter case ([`same_text::find`]).
-use crate::lessons::same_text;
+use lattice_core::shared::text::same_text;
 use crate::{dto::LearningSourceDto, generation, outline_evidence};
 use serde_json::{json, Value};
 

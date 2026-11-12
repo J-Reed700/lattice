@@ -460,7 +460,7 @@ pub(super) fn gaps(field: &str, before: &str, after: &str) -> Vec<Gap> {
 /// The place `after` lost a code block `before` held at, with the sentences
 /// kept beside it.
 pub(super) fn gap_around_code(field: &str, before: &str, after: &str) -> Vec<Gap> {
-    let shared = crate::lessons::same_text::common_prefix(before, after);
+    let shared = lattice_core::shared::text::same_text::common_prefix(before, after);
     let before_it = before
         .get(..shared)
         .and_then(|head| teaching_sentences(head).pop());

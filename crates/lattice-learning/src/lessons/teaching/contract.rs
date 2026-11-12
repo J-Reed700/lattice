@@ -4,7 +4,7 @@
 //! model finds; code keeps only what the lesson's own words bear out.
 use super::protected;
 use crate::lessons::content_verification::{unit_fields, Protected};
-use crate::lessons::same_text;
+use lattice_core::shared::text::same_text;
 use crate::lessons::shape::TEACHING_KINDS;
 use crate::lessons::structured_call::{self, CallKind, ReasonFirst};
 use crate::review_findings::{subject_of, FindingSite, PlanCheck, ReviewFinding};

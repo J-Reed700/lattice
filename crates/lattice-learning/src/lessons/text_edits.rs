@@ -4,7 +4,7 @@
 use super::copied_wording::{self, Wording, SAY_IT_YOURSELF};
 use super::repeats::{self, Counts};
 use super::review_findings::{index_segment, leaves, FindingSite};
-use super::same_text;
+use lattice_core::shared::text::same_text;
 use lattice_core::domain::learning::claim_review::span_of;
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;

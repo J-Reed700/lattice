@@ -38,7 +38,7 @@ mod settle;
 use crate::content_verification::located_quote;
 use crate::curriculum::{LearningGenerationJob, LearningGenerationJobStatus};
 use crate::curriculum_repository::LearningCurriculumRepository;
-use crate::lessons::same_text::whole_sentences;
+use lattice_core::shared::text::same_text::whole_sentences;
 use crate::persistence::{db, now};
 use crate::plan_dto::LearningGenerationJobActionRequestDto;
 use lattice_core::shared::text::plain_text;

@@ -5,7 +5,7 @@
 //! own), a sentence too short to be quoted, or the strong label that opens a
 //! paragraph, which lessons repeat on purpose.
 use crate::generation::long_enough_quote;
-use crate::lessons::same_text::fold;
+use lattice_core::shared::text::same_text::fold;
 use crate::review_findings::FindingSite;
 use lattice_core::shared::text::segmentation::code_fences;
 use lattice_core::shared::text::sentences;

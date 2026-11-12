@@ -18,7 +18,7 @@ use super::super::repository::ShownPassage;
 use super::super::service::ClaimReviewService;
 use super::{evidence_passage, latest_check, PassageKey, PassageText, SourceFacts};
 use crate::dto::LearningTrustLevel;
-use crate::lessons::same_text;
+use lattice_core::shared::text::same_text;
 use crate::references::trust::dto_map;
 use crate::references::trust::repository::SqliteSourceTrustStore;
 use crate::references::trust::source_view::latest_standing;

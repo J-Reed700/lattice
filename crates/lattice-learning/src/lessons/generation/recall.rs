@@ -6,7 +6,7 @@ use crate::dto::{
     LearningLessonDto, LearningPreparation, LearningProgramDto, LearningProgramStatus,
     LearningSourceDto,
 };
-use crate::lessons::same_text::fold;
+use lattice_core::shared::text::same_text::fold;
 use crate::lessons::structured_call::complete_checked_request;
 use crate::model_call;
 use crate::reference_collection::{ReferenceCollection, ReferencePassage};
