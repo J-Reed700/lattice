@@ -607,3 +607,160 @@ fn the_quiz_bank_writer_is_asked_for_choices_alike_in_form() {
     assert!(SYSTEM.contains("Write all the choices of a question alike in form: close in length and detail, the same grammatical shape and opening, none alone hedged or absolute, none alone carrying a reason or an example, and none repeating the question's distinctive words, so that the right one cannot be told from the others without knowing the material."));
     assert!(!SYSTEM.contains("distractors of similar length"));
 }
+
+const STAMPS: &str =
+    "A stamp goes into the box that matches its colour, and a torn stamp goes into the repair tray.";
+const STAMP_QUOTE: &str = "goes into the box that matches its colour";
+const TRAY: &str = "The repair tray";
+const LONG_TRAY: &str =
+    "The repair tray, where every torn stamp is set aside before anything else happens to it";
+const SORTED: &str = "A torn blue stamp arrives at the desk. Which place takes it first?";
+const SORTED_AGAIN: &str =
+    "A torn red stamp arrives at the desk. Which place takes it first, and why?";
+const GAP: &str = "The question depends on a value it never gives.";
+
+fn stamp_item(prompt: &str, right: &str) -> Value {
+    json!({
+        "prompt": prompt,
+        "options": [right, "The green box", "The red box", "The blue box"],
+        "distractorRationales": ["", "A green box takes green stamps.", "The red box takes red stamps.", "The blue box takes blue stamps."],
+        "answerIndex": 0,
+        "explanation": "A torn stamp is set aside whatever its colour.",
+        "blockIndex": 0,
+        "quote": STAMP_QUOTE,
+        "difficulty": 3
+    })
+}
+
+/// Writes from a queue, solves by the repair tray, and flags the prompt `flag`.
+struct Rewriter {
+    writes: Mutex<std::collections::VecDeque<Value>>,
+    requests: Mutex<Vec<Value>>,
+    flag: &'static str,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Rewriter {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let (system, user) = crate::lessons::structured_call::task_messages(request);
+        let context: Value = serde_json::from_str(user).unwrap_or(Value::Null);
+        let reply = if system.starts_with("Write quiz questions") {
+            self.requests.lock().unwrap().push(context);
+            self.writes
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| json!({"items": []}))
+        } else if system.starts_with("Solve quiz questions") {
+            let answers: Vec<Value> = context["questions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|question| {
+                    let right = question["options"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .position(|o| o.as_str().is_some_and(|o| o.starts_with(TRAY)));
+                    json!({"index": question["index"], "reason": "Torn stamps are set aside.", "correctIndices": right.into_iter().collect::<Vec<_>>(), "answer": "", "blankAnswers": [], "matches": [], "orderedValues": []})
+                })
+                .collect();
+            json!({"answers": answers})
+        } else {
+            let checks: Vec<Value> = context["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|item| {
+                    let flagged = item["prompt"] == self.flag;
+                    json!({"id": item["id"], "hasDefect": flagged, "finding": if flagged { GAP } else { "" }, "repeats": []})
+                })
+                .collect();
+            json!({"checks": checks})
+        };
+        Ok(CompletionResponse::from_text(reply.to_string()))
+    }
+    fn model_name(&self) -> &str {
+        "rewriter"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+fn rewriter(writes: Vec<Value>, flag: &'static str) -> Rewriter {
+    Rewriter {
+        writes: Mutex::new(writes.into()),
+        requests: Mutex::new(Vec::new()),
+        flag,
+    }
+}
+
+fn stamp_need() -> AuthoringNeed {
+    AuthoringNeed {
+        requirement: LearningBlueprintRequirement {
+            outcome_id: uuid::Uuid::new_v4().to_string(),
+            format: LearningItemFormat::SingleChoice,
+            count: 1,
+            difficulty_min: 2,
+            difficulty_max: 3,
+        },
+        outcome_title: "Sorting stamps".into(),
+        outcome_description: "Say where a stamp goes by its colour and condition.".into(),
+        lesson_id: Some("lesson".into()),
+        count: 1,
+        material: vec![MaterialPassage {
+            lesson_title: "Stamps".into(),
+            title: "The boxes".into(),
+            text: STAMPS.into(),
+            source_version_ids: vec![],
+        }],
+        existing_prompts: vec![],
+    }
+}
+
+#[tokio::test]
+async fn a_quiz_item_whose_right_choice_is_much_the_longest_is_rewritten_not_dropped() -> Result<()>
+{
+    let llm = rewriter(
+        vec![
+            json!({"items": [stamp_item(SORTED, LONG_TRAY)]}),
+            json!({"items": [stamp_item(SORTED_AGAIN, TRAY)]}),
+        ],
+        "",
+    );
+    let authored = author_items(&llm, &stamp_need()).await?;
+    let requests = llm.requests.lock().unwrap();
+    let rewrites: Vec<&Value> = requests.iter().filter(|r| !r["repair"].is_null()).collect();
+    assert_eq!(rewrites.len(), 1, "rewrite requests: {}", rewrites.len());
+    assert!(rewrites[0]["repair"]["findings"]
+        .to_string()
+        .contains("longest"));
+    assert_eq!(authored.items.len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_rewrite_that_fails_the_checks_is_dropped_with_its_own_fault() -> Result<()> {
+    let llm = rewriter(
+        vec![
+            json!({"items": [stamp_item(SORTED, TRAY)]}),
+            json!({"items": [stamp_item(SORTED_AGAIN, LONG_TRAY)]}),
+        ],
+        SORTED,
+    );
+    let authored = author_items(&llm, &stamp_need()).await?;
+    assert!(authored.items.is_empty(), "{:?}", authored.items);
+    assert!(
+        authored
+            .dropped
+            .iter()
+            .any(|reason| reason.contains("longest")),
+        "dropped: {:?}",
+        authored.dropped
+    );
+    Ok(())
+}
