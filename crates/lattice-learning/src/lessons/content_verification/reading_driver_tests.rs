@@ -74,17 +74,17 @@ impl Reader for Scripted {
                 .iter()
                 .map(|statement| {
                     let outcome = outcomes.pop_front().expect("an outcome for each statement");
-                    Read {
+                    Read::new(
                         outcome,
-                        finding: finding_of(
+                        finding_of(
                             (statement.unit, statement.claim, statement.classed),
                             verdict_of(outcome),
                             format!("{outcome:?}"),
                             &[],
                             None,
                         ),
-                        reused: false,
-                    }
+                        false,
+                    )
                 })
                 .collect()
         };
@@ -234,7 +234,7 @@ fn replayed(policy: &dyn AcceptancePolicy, start: Position, read: &ReadSteps) ->
         .iter()
         .map(|step| Taken {
             step: Step::Read(step.reading),
-            outcome: step.read.outcome,
+            outcome: step.read.outcome(),
         })
         .collect();
     walk_from(policy, start, &taken)
@@ -300,7 +300,7 @@ async fn a_sourced_statement_its_citation_states_is_resolved_in_one_reading() ->
         panic!("one reading: {:?}", read[0].steps);
     };
     assert_eq!(step.reading, Reading::Parts);
-    assert_eq!(step.read.outcome, Outcome::Stands);
+    assert_eq!(step.read.outcome(), Outcome::Stands);
     assert_eq!(step.then, Then::End(End::Resolved));
     assert!(!step.rewrite_ahead);
     assert_eq!(step.class, None);
@@ -333,7 +333,7 @@ async fn a_reasoning_statement_that_stands_is_put_to_the_veto_in_the_same_call()
         .map(|step| {
             (
                 step.reading,
-                step.read.outcome,
+                step.read.outcome(),
                 step.then.clone(),
                 step.rewrite_ahead,
             )
@@ -459,7 +459,7 @@ async fn an_unreadable_answer_is_read_once_more_at_the_same_node() -> Result<()>
     let steps: Vec<_> = read[0]
         .steps
         .iter()
-        .map(|step| (step.reading, step.read.outcome, step.then.clone()))
+        .map(|step| (step.reading, step.read.outcome(), step.then.clone()))
         .collect();
     assert_eq!(
         steps,

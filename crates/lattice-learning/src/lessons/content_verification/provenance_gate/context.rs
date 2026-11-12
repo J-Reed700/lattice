@@ -209,16 +209,16 @@ impl Judgements {
         &self.bars
     }
 
-    /// The profile of each `(unit, statement)`, in order: from the store, or
-    /// judged one call per lesson unit for the claims it lacks (§12.3).
+    /// The profile of each `(unit title, statement)`, in order: from the store,
+    /// or judged one call per unit title for the claims it lacks (§12.3).
     pub(in crate::lessons::content_verification) async fn profiles(
         &mut self,
         llm: &dyn LLMPort,
-        claims: &[(usize, &str)],
+        claims: &[(&str, &str)],
     ) -> Result<Vec<ClaimProfile>> {
         let mut known: HashMap<String, ClaimProfile> = HashMap::new();
-        let mut missing: HashMap<usize, Vec<String>> = HashMap::new();
-        for (unit, statement) in claims {
+        let mut missing: Vec<(&str, Vec<String>)> = Vec::new();
+        for (title, statement) in claims {
             if known.contains_key(*statement) {
                 continue;
             }
@@ -228,54 +228,61 @@ impl Judgements {
                     known.insert((*statement).to_owned(), saved.value);
                 }
                 None => {
-                    let unit_claims = missing.entry(*unit).or_default();
-                    if !unit_claims.iter().any(|claim| claim.as_str() == *statement) {
-                        unit_claims.push((*statement).to_owned());
+                    let at = match missing.iter().position(|(held, _)| *held == *title) {
+                        Some(at) => at,
+                        None => {
+                            missing.push((*title, Vec::new()));
+                            missing.len() - 1
+                        }
+                    };
+                    if let Some((_, unit_claims)) = missing.get_mut(at) {
+                        if !unit_claims.iter().any(|claim| claim.as_str() == *statement) {
+                            unit_claims.push((*statement).to_owned());
+                        }
                     }
                 }
             }
         }
-        let mut units: Vec<_> = missing.into_iter().collect();
-        units.sort_by_key(|(unit, _)| *unit);
         let (topic, known_classes) = (&self.topic, &self.known_classes);
         let (store, model) = (&self.store, &self.model);
-        let tasks = units.into_iter().map(|(unit, statements)| async move {
-            let to_profile: Vec<ClaimToProfile> = statements
-                .iter()
-                .enumerate()
-                .map(|(index, statement)| ClaimToProfile {
-                    id: format!("claim-{index}"),
-                    statement: statement.clone(),
-                })
-                .collect();
-            let unit_title = format!("Section {}", unit + 1);
-            let judged = profile_claims(
-                llm,
-                &ProfileRequest {
-                    unit_title: &unit_title,
-                    course_topic: topic,
-                    known_classes,
-                    claims: &to_profile,
-                },
-            )
-            .await?;
-            if judged.len() != statements.len() {
-                return Err(AppError::InternalError(
-                    "The claim profile call answered for a different number of claims.".into(),
-                ));
-            }
-            let mut profiles = Vec::new();
-            let mut rows = Vec::new();
-            for (statement, judged) in statements.into_iter().zip(judged) {
-                profiles.push((statement.clone(), judged.value.clone()));
-                rows.push(stored(
-                    claim_profile_key(&statement, known_classes, model),
-                    judged,
-                ));
-            }
-            store.save_claim_profiles(&rows).await?;
-            Ok::<_, AppError>(profiles)
-        });
+        let tasks = missing
+            .into_iter()
+            .map(|(unit_title, statements)| async move {
+                let to_profile: Vec<ClaimToProfile> = statements
+                    .iter()
+                    .enumerate()
+                    .map(|(index, statement)| ClaimToProfile {
+                        id: format!("claim-{index}"),
+                        statement: statement.clone(),
+                    })
+                    .collect();
+                let judged = profile_claims(
+                    llm,
+                    &ProfileRequest {
+                        unit_title,
+                        course_topic: topic,
+                        known_classes,
+                        claims: &to_profile,
+                    },
+                )
+                .await?;
+                if judged.len() != statements.len() {
+                    return Err(AppError::InternalError(
+                        "The claim profile call answered for a different number of claims.".into(),
+                    ));
+                }
+                let mut profiles = Vec::new();
+                let mut rows = Vec::new();
+                for (statement, judged) in statements.into_iter().zip(judged) {
+                    profiles.push((statement.clone(), judged.value.clone()));
+                    rows.push(stored(
+                        claim_profile_key(&statement, known_classes, model),
+                        judged,
+                    ));
+                }
+                store.save_claim_profiles(&rows).await?;
+                Ok::<_, AppError>(profiles)
+            });
         let mut first_error = None;
         for outcome in futures::future::join_all(tasks).await {
             match outcome {

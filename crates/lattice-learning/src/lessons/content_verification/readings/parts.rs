@@ -110,9 +110,5 @@ async fn restore(at: &ReadContext<'_>, ordinal: usize, statement: &Statement<'_>
 /// The reading of `statement` that `finding` on its own passages makes.
 fn read_of(statement: &Statement<'_>, mut finding: Finding, reused: bool) -> Read {
     finding.class = Some(statement.classed);
-    Read {
-        outcome: parts_outcome(&finding),
-        finding,
-        reused,
-    }
+    Read::new(parts_outcome(&finding), finding, reused)
 }

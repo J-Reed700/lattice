@@ -2,8 +2,10 @@
 //! Reasoning statement meets it today. Every receipt of its batch is restored
 //! before its first call.
 use super::super::class_checks::{
-    consistency_key, consistency_of, finding_of, fitted, saved_consistency, unjudged_finding,
+    consistency_checker, consistency_key, consistency_of, finding_of, saved_consistency,
+    unjudged_finding,
 };
+use super::super::evidence_checks::attribution_page;
 use super::*;
 use lattice_core::application::services::claim_verification::{
     ConsistencyOutcome, ConsistencyVerdict,
@@ -23,7 +25,13 @@ impl Reader for Consistency {
         let mut asks = Vec::new();
         for (ordinal, statement) in statements.iter().enumerate() {
             let Statement { unit, claim, .. } = *statement;
-            let shown = fitted(at.llm, &claim.statement, at.citations.of(unit));
+            let (shown, _) = attribution_page(
+                at.executions,
+                at.citations,
+                (unit, &claim.statement),
+                &claim.statement,
+                consistency_fit(at.llm),
+            );
             let key = consistency_key(at.llm, &claim.statement, &shown);
             match saved_consistency(&key).await? {
                 Some(saved) => {
@@ -49,6 +57,18 @@ impl Reader for Consistency {
     }
 }
 
+/// Whether the consistency judge holds a check of a statement against
+/// passages beside its answer.
+fn consistency_fit(llm: &dyn LLMPort) -> impl Fn(&str, &[EvidencePassage]) -> bool + '_ {
+    move |statement, passages| {
+        let texts: Vec<String> = passages
+            .iter()
+            .map(|passage| passage.text.clone())
+            .collect();
+        consistency_checker(llm).consistency_fits(statement, &texts)
+    }
+}
+
 /// The reading of `statement` that the consistency judge's answer on `shown`,
 /// the passages it was asked with, makes; `None` when its reply could not be
 /// read.
@@ -63,20 +83,20 @@ fn read_of(
         classed,
     } = *statement;
     match judged {
-        None => Read {
-            outcome: Outcome::Unjudged,
-            finding: unjudged_finding(unit, claim, classed, shown),
-            reused: false,
-        },
+        None => Read::new(
+            Outcome::Unjudged,
+            unjudged_finding(unit, claim, classed, shown),
+            false,
+        ),
         Some((consistency, reused)) => {
             let verdict = match consistency.verdict {
                 ConsistencyVerdict::Consistent => ClaimVerdict::Supported,
                 ConsistencyVerdict::Contradicted => ClaimVerdict::Contradicted,
                 ConsistencyVerdict::UnfoundedSpecific => ClaimVerdict::Unsupported,
             };
-            Read {
-                outcome: consistency.outcome(),
-                finding: finding_of(
+            Read::new(
+                consistency.outcome(),
+                finding_of(
                     (unit, claim, classed),
                     verdict,
                     consistency.reason,
@@ -84,7 +104,7 @@ fn read_of(
                     None,
                 ),
                 reused,
-            }
+            )
         }
     }
 }

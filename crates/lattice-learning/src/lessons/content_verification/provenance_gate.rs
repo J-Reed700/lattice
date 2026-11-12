@@ -7,8 +7,9 @@
 //! Design: docs/design/2026-10-18-source-provenance-and-trust.md §6, §10, §11;
 //! docs/design/2026-11-01-lesson-claim-classes.md §3.2.
 
-use super::support_gate::{Sufficiency, Support as Supported, SupportGate};
+use super::evidence_checks::holders;
 use super::*;
+use crate::review_findings::FindingSite;
 use lattice_core::domain::learning::claim_review::{SupportedBy, TrustAssessment};
 use lattice_core::domain::provenance::TRUST_POLICY_VERSION;
 use lattice_core::domain::provenance::{
@@ -22,21 +23,14 @@ use std::sync::Arc;
 mod context;
 mod relevel;
 mod repository;
-mod strongest;
 pub(super) use context::passage_labels;
 pub use context::with_outline_trust;
 pub(crate) use context::{outline_trust, with_trust};
 pub(crate) use relevel::relevel;
-#[cfg(test)]
-pub(super) use strongest::name_strongest;
 
 #[cfg(test)]
 #[path = "provenance_gate_tests.rs"]
 mod tests;
-
-/// The retrieval kind of a passage that is a code example's run, not a
-/// source: it has no provenance and is never weighed.
-const EXECUTION: &str = "execution";
 
 /// What the gate weighed for one supported finding: the claim's profile,
 /// each supporting source levelled for the claim's subject, the contrary
@@ -69,6 +63,15 @@ impl FindingTrust {
         match &self.decision {
             Decision::Sufficient { label, .. } => label.clone(),
             Decision::Insufficient { .. } => label_below_primary(&self.profile),
+        }
+    }
+
+    /// The source of the support that met the bar, the one a sufficient
+    /// claim's check names (claim sources design §8); `None` below the bar.
+    pub(crate) fn strongest(&self) -> Option<&str> {
+        match &self.decision {
+            Decision::Sufficient { met_by, .. } => met_by.first().map(String::as_str),
+            Decision::Insufficient { .. } => None,
         }
     }
 
@@ -160,31 +163,6 @@ fn reason_lines(reasons: &[Reason]) -> String {
         .collect()
 }
 
-/// The claim ledger's gate (CR §4 "P4 seam"): a supported verdict becomes
-/// verified when the quotation it rests on is in the passage it names. What
-/// the gate weighed of the source is the claim's label and decides nothing
-/// (claim classes design §3.2).
-pub(super) struct ProvenanceGate;
-
-impl SupportGate for ProvenanceGate {
-    fn judge(&self, support: &Supported<'_>) -> Sufficiency {
-        let quoted = support.supporting_quote.is_empty()
-            || support.passages.iter().any(|passage| {
-                passage.source_id == support.source_version_id
-                    && passage.text.contains(support.supporting_quote)
-            });
-        if !quoted {
-            return Sufficiency::Insufficient {
-                reason: format!(
-                    "The checker supported \"{}\" with a quotation that is not in the passage it names.",
-                    support.claim
-                ),
-            };
-        }
-        Sufficiency::Sufficient
-    }
-}
-
 /// A source version's saved text and the links in it (their byte offsets
 /// index this text), shared by every claim it supports.
 #[derive(Debug)]
@@ -219,22 +197,16 @@ pub(super) struct Evidence<'a> {
     pub(super) available: Option<Available>,
 }
 
-/// The passages that support `finding`: one per source version, first those
-/// holding the checker's supporting quotation, in evidence order, then the
-/// other supports it carries (`also_supported`, claim sources design §8).
+/// The passages that support `finding`: the source passages holding the
+/// checker's supporting quotation, one per source version, in evidence order;
+/// an example's run is not a source.
 pub(super) fn supporting_passages(finding: &Finding) -> Vec<&EvidencePassage> {
     let quote = finding.supporting_quote.as_deref().unwrap_or_default();
     let mut seen = HashSet::new();
-    let quoted = finding.evidence.iter().filter(|passage| {
-        !quote.is_empty() && passage.retrieval_kind != EXECUTION && passage.text.contains(quote)
-    });
-    let others = finding
-        .two_pass
-        .also_supported
-        .iter()
-        .map(|other| &other.passage);
-    quoted
-        .chain(others)
+    holders(quote, &finding.evidence)
+        .into_iter()
+        .map(|(passage, _)| passage)
+        .filter(|passage| !passage.is_run())
         .filter(|passage| seen.insert(passage.source_id.as_str()))
         .collect()
 }
@@ -443,13 +415,13 @@ pub(super) fn owner_hinted(url: &str, hints: &[String]) -> bool {
 }
 
 /// Weighs and labels every supported finding of a pass, in a preparation
-/// job (where provenance is stored); elsewhere nothing is weighed and the
-/// ledger's gate applies the quotation rule alone. The weighing never takes
-/// the checker's verdict away. `settled` holds the ordinals of findings
+/// job (where provenance is stored); elsewhere nothing is weighed. The
+/// weighing never takes the checker's verdict away. `settled` holds the ordinals of findings
 /// decided before any model check (a quotation found in the source it names,
 /// evidence the user brought).
 pub(super) async fn weigh(
     llm: &dyn LLMPort,
+    candidate: &Value,
     results: &mut [CheckedClaim],
     settled: &HashSet<usize>,
 ) -> Result<()> {
@@ -473,10 +445,19 @@ pub(super) async fn weigh(
         "Weighing where the support of {} statements comes from",
         targets.len()
     ));
-    let claims: Vec<(usize, &str)> = targets
+    let findings: Vec<&Finding> = targets
         .iter()
         .filter_map(|index| results.get(*index))
-        .map(|(_, _, finding, _)| (finding.unit, finding.statement.as_str()))
+        .map(|(_, _, finding, _)| finding)
+        .collect();
+    let titles: Vec<String> = findings
+        .iter()
+        .map(|finding| FindingSite::in_candidate(candidate, finding.unit).label())
+        .collect();
+    let claims: Vec<(&str, &str)> = titles
+        .iter()
+        .zip(&findings)
+        .map(|(title, finding)| (title.as_str(), finding.statement.as_str()))
         .collect();
     let profiles = judgements.profiles(llm, &claims).await?;
     let wanted: Vec<(Option<ClaimSubject>, Vec<String>)> = targets
@@ -492,12 +473,9 @@ pub(super) async fn weigh(
         let Some((_, _, finding, _)) = results.get_mut(index) else {
             continue;
         };
-        // The strongest counted support is the claim's support (claim
-        // sources design §8), and the claim is labelled for it.
         finding.trust = Some(Box::new(
             weighed(&mut judgements, llm, &profile, finding).await?,
         ));
-        strongest::name_strongest(finding);
         finding.label = finding.trust.as_deref().and_then(FindingTrust::label);
     }
     Ok(())
@@ -553,6 +531,7 @@ async fn weighed(
 pub(crate) async fn weigh_claim(
     llm: &dyn LLMPort,
     unit: usize,
+    unit_title: &str,
     statement: &str,
     page: &[EvidencePassage],
     supported: SupportedBy,
@@ -579,7 +558,7 @@ pub(crate) async fn weigh_claim(
         return Ok(None);
     };
     let Some(profile) = judgements
-        .profiles(llm, &[(unit, statement)])
+        .profiles(llm, &[(unit_title, statement)])
         .await?
         .into_iter()
         .next()
