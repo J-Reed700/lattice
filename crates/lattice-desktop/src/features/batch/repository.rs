@@ -1,14 +1,9 @@
 //! Every read and write of `batch_import_items`.
 use super::items::{BatchItem, ItemCounts, ItemState};
-use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::PersistenceError;
+use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::{Database, WriteTx};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 use std::collections::HashMap;
-
-fn db(error: impl Into<PersistenceError>) -> AppError {
-    AppError::from(error.into())
-}
 
 fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -49,7 +44,7 @@ impl BatchItems {
                 .bind(target)
                 .execute(&mut **tx)
                 .await
-                .map_err(db)?;
+                ?;
         }
         Ok(())
     }
@@ -62,8 +57,7 @@ impl BatchItems {
         sqlx::query("SELECT * FROM batch_import_items WHERE job_id=? ORDER BY position")
             .bind(job_id)
             .fetch_all(connection)
-            .await
-            .map_err(db)?
+            .await?
             .iter()
             .map(parse)
             .collect()
@@ -84,7 +78,7 @@ impl BatchItems {
             .bind(ids)
             .fetch_all(&mut *read)
             .await
-            .map_err(db)?;
+            ?;
         read.commit().await?;
         Ok(rows
             .iter()
@@ -118,8 +112,7 @@ impl BatchItems {
         )
         .bind(job_id)
         .execute(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -127,17 +120,17 @@ impl BatchItems {
     /// Takes the job's next pending item, in batch order. An item the user
     /// cancelled in the meantime is never taken.
     pub async fn claim_next(&self, job_id: &str) -> Result<Option<BatchItem>> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let next = sqlx::query("SELECT * FROM batch_import_items WHERE job_id=? AND status='pending' ORDER BY position LIMIT 1")
             .bind(job_id)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(db)?
+            ?
             .as_ref()
             .map(parse)
             .transpose()?;
         let Some(mut item) = next else {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(None);
         };
         sqlx::query(
@@ -145,9 +138,8 @@ impl BatchItems {
         )
         .bind(&item.id)
         .execute(&mut *tx)
-        .await
-        .map_err(db)?;
-        tx.commit().await.map_err(db)?;
+        .await?;
+        tx.commit().await?;
         item.state = ItemState::Processing;
         Ok(Some(item))
     }
@@ -169,7 +161,7 @@ impl BatchItems {
             .bind(item_id)
             .execute(&mut *tx)
             .await
-            .map_err(db)?;
+            ?;
         tx.commit().await?;
         Ok(())
     }
@@ -182,8 +174,7 @@ impl BatchItems {
             .bind(state.as_str())
             .bind(item_id)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -196,7 +187,7 @@ impl BatchItems {
             .bind(job_id)
             .execute(&mut **tx)
             .await
-            .map_err(db)?
+            ?
             .rows_affected();
         Ok(usize::try_from(cancelled).unwrap_or(usize::MAX))
     }
@@ -207,8 +198,7 @@ impl BatchItems {
             .bind(to_job)
             .bind(from_job)
             .execute(&mut **tx)
-            .await
-            .map_err(db)?;
+            .await?;
         Ok(())
     }
 
@@ -227,7 +217,7 @@ impl BatchItems {
             .bind(item_id)
             .execute(&mut **tx)
             .await
-            .map_err(db)?
+            ?
             .rows_affected();
         Ok(usize::try_from(requeued).unwrap_or(usize::MAX))
     }
