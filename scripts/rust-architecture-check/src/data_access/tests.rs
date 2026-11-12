@@ -579,32 +579,34 @@ fn a_statement_after_the_last_commit_is_flagged_even_with_an_early_return() {
 }
 
 #[test]
-fn a_listed_function_is_excepted() {
+fn a_listed_function_is_excepted_from_rule_3_but_not_rule_6() {
     let source = r#"pub async fn compact(pool: &Database) {
     sqlx::query("VACUUM").execute(pool).await.unwrap();
     sqlx::query("PRAGMA wal_checkpoint").fetch_one(pool).await.unwrap();
 }
 "#;
     let ast = syn::parse_file(source).unwrap();
+    let rules = |exceptions: &[Exception]| -> Vec<u8> {
+        file_violations_with(REPOSITORY, &ast, exceptions)
+            .iter()
+            .map(|violation| violation.rule)
+            .collect()
+    };
     let listed = [(
         REPOSITORY,
         "compact",
         Exempt::Shape,
         "VACUUM runs outside a transaction",
     )];
-    assert_eq!(
-        file_violations_with(REPOSITORY, &ast, &[]).len(),
-        1,
-        "unlisted"
-    );
-    assert!(file_violations_with(REPOSITORY, &ast, &listed).is_empty());
     let other_file = [(
         "crates/x/src/repository.rs",
         "compact",
         Exempt::Shape,
         "elsewhere",
     )];
-    assert_eq!(file_violations_with(REPOSITORY, &ast, &other_file).len(), 1);
+    assert_eq!(rules(&[]), vec![3, 6, 6], "unlisted");
+    assert_eq!(rules(&listed), vec![6, 6], "listed");
+    assert_eq!(rules(&other_file), vec![3, 6, 6], "listed in another file");
 }
 
 #[test]

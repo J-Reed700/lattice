@@ -4,7 +4,7 @@
 //! Migrations are automatically discovered from the migrations/ directory.
 
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Database;
+use lattice_core::shared::persistence::{Database, WriteTx};
 use sha2::{Digest, Sha384};
 use sqlx::migrate::Migrator;
 use std::collections::HashMap;
@@ -14,13 +14,13 @@ use std::collections::HashMap;
 /// This function uses sqlx::migrate!() to automatically discover and run
 /// migration files from the migrations/ directory at compile time. Stored
 /// checksums that differ from the embedded ones only in line endings are
-/// reconciled first.
+/// reconciled first. It is all one write unit: a start that fails changes nothing.
 pub async fn run_migrations(db: &Database) -> Result<()> {
     tracing::info!("Starting database migrations...");
 
     let migrator = sqlx::migrate!("./migrations");
-    reconcile_line_endings(db, &migrator).await?;
     let mut tx = db.begin_write().await?;
+    let reconciled = reconcile_line_endings(&mut tx, &migrator).await?;
     migrator.run_direct(&mut *tx).await.map_err(|error| {
         let error_text = error.to_string();
         tracing::error!("Migration failed: {}", error_text);
@@ -32,28 +32,36 @@ pub async fn run_migrations(db: &Database) -> Result<()> {
     sqlx::query("PRAGMA optimize").execute(&mut *tx).await?;
     tx.commit().await?;
 
+    for version in reconciled {
+        tracing::info!(
+            version,
+            "Migration checksum updated to this build's line endings"
+        );
+    }
     tracing::info!("All migrations completed successfully");
     Ok(())
 }
 
 /// Rewrites the stored checksum of an applied migration to the embedded one when it is the
-/// checksum of the same SQL with the other line endings. Any other difference is left for sqlx
-/// to refuse. Does nothing before `_sqlx_migrations` exists.
-pub(crate) async fn reconcile_line_endings(db: &Database, migrator: &Migrator) -> Result<()> {
-    let mut tx = db.begin_write().await?;
-
+/// checksum of the same SQL with the other line endings, and returns the versions it rewrote.
+/// Any other difference is left for sqlx to refuse. Does nothing before `_sqlx_migrations`
+/// exists.
+pub(crate) async fn reconcile_line_endings(
+    tx: &mut WriteTx,
+    migrator: &Migrator,
+) -> Result<Vec<i64>> {
     let has_table: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
     if has_table == 0 {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     let stored: HashMap<i64, Vec<u8>> =
         sqlx::query_as::<_, (i64, Vec<u8>)>("SELECT version, checksum FROM _sqlx_migrations")
-            .fetch_all(&mut *tx)
+            .fetch_all(&mut **tx)
             .await?
             .into_iter()
             .collect();
@@ -77,21 +85,13 @@ pub(crate) async fn reconcile_line_endings(db: &Database, migrator: &Migrator) -
         .bind(&*migration.checksum)
         .bind(migration.version)
         .bind(checksum.as_slice())
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
         if updated.rows_affected() == 1 {
             reconciled.push(migration.version);
         }
     }
-    tx.commit().await?;
-
-    for version in reconciled {
-        tracing::info!(
-            version,
-            "Migration checksum updated to this build's line endings"
-        );
-    }
-    Ok(())
+    Ok(reconciled)
 }
 
 /// Whether `checksum` is the SHA-384 of `sql` with every line ending LF or with every one CRLF.

@@ -124,7 +124,7 @@ SQL: a `lattice-store` file, or a path segment or file stem that is
 `migrations`, or ends in `_repository` or `_store`. A function that runs two or
 more statements, or is a unit of work, runs them in one transaction, and
 awaits nothing under an open write unit but its own statements; a function
-SQLite refuses to run in a transaction is listed in `EXCEPTIONS` in
+that must do otherwise is listed in `EXCEPTIONS` in
 `scripts/rust-architecture-check/src/data_access.rs` with its reason. Only data
 modules name sqlx, and they keep the driver's handles (pools, connections,
 `sqlx_pool()`) inside them. Every statement runs in a unit of work, and a

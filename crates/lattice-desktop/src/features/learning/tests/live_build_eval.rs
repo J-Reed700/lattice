@@ -1023,14 +1023,16 @@ async fn copied_database(path: &str) -> Result<Database> {
         .connect_with(options)
         .await
         .map_err(db)?;
-    let database = Database::new(pool.clone());
+    let database = Database::new(pool);
     let mut migrator = sqlx::migrate!("./migrations");
     migrator.set_ignore_missing(true);
-    reconcile_line_endings(&database, &migrator).await?;
+    let mut tx = database.begin_write().await?;
+    reconcile_line_endings(&mut tx, &migrator).await?;
     migrator
-        .run(&pool)
+        .run_direct(&mut *tx)
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
+    tx.commit().await?;
     Ok(database)
 }
 

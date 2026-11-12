@@ -512,10 +512,10 @@ fn a_file_query_is_not_flagged() {
 }
 
 #[test]
-fn the_live_database_directory_and_the_sync_server_are_not_scanned() {
+fn the_sync_server_is_not_scanned_and_the_live_database_is() {
     let source = on_connection("DELETE FROM t");
-    assert_eq!(found(LIVE, &source), none());
     assert_eq!(found(SYNC, &source), none());
+    assert_eq!(found(LIVE, &source), vec![writes(LIVE, 2)]);
     assert_eq!(found(REPOSITORY, &source), vec![writes(REPOSITORY, 2)]);
 }
 

@@ -63,12 +63,6 @@ pub type Exception<'a> = (&'a str, &'a str, Exempt, &'a str);
 
 pub const EXCEPTIONS: &[Exception<'static>] = &[
     (
-        "crates/lattice-desktop/src/infrastructure/persistence/database/migrate.rs",
-        "run_migrations",
-        Exempt::Shape,
-        "sqlx's migrator runs each migration in its own transaction, and PRAGMA optimize after it refreshes planner statistics only",
-    ),
-    (
         "crates/lattice-desktop/src/features/indexing/library_owner.rs",
         "adopt",
         Exempt::Awaits,

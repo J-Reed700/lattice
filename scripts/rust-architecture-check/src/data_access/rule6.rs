@@ -13,16 +13,10 @@ const WRITES: &str = "a statement that writes runs outside a write unit; run it 
 const OPENS: &str = "opens a database outside the openers; take the Database you are given instead";
 
 /// `(path prefix, reason)`: files whose statements run outside the units of work.
-pub const STATEMENT_EXCEPTIONS: &[(&str, &str)] = &[
-    (
-        "crates/lattice-core/src/shared/persistence/",
-        "the units themselves, and VACUUM, which SQLite refuses inside one",
-    ),
-    (
-        "crates/lattice-desktop/src/infrastructure/persistence/database/",
-        "opening the live database: migrations and the steps around them run before any unit exists",
-    ),
-];
+pub const STATEMENT_EXCEPTIONS: &[(&str, &str)] = &[(
+    "crates/lattice-core/src/shared/persistence/",
+    "the units themselves, and VACUUM, which SQLite refuses inside one",
+)];
 
 /// `(path prefix, reason)`: the places that create a pool or a `Database`.
 pub const OPENERS: &[(&str, &str)] = &[

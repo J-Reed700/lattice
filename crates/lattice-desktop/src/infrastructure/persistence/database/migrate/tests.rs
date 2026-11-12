@@ -435,7 +435,9 @@ async fn a_database_recorded_with_either_line_endings_is_reconciled_to_the_other
         let db = Database::new(pool.clone());
         recorded_by.run(&pool).await.unwrap();
 
-        reconcile_line_endings(&db, &opened_by).await.unwrap();
+        let mut tx = db.begin_write().await.unwrap();
+        reconcile_line_endings(&mut tx, &opened_by).await.unwrap();
+        tx.commit().await.unwrap();
 
         assert_eq!(
             recorded(&pool).await,
@@ -451,8 +453,11 @@ async fn reconciling_a_database_without_a_migrations_table_does_not_create_one()
     let pool = empty_database().await;
     let db = Database::new(pool.clone());
 
-    reconcile_line_endings(&db, &embedded()).await.unwrap();
+    let mut tx = db.begin_write().await.unwrap();
+    let reconciled = reconcile_line_endings(&mut tx, &embedded()).await.unwrap();
+    tx.commit().await.unwrap();
 
+    assert!(reconciled.is_empty());
     let objects: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master")
         .fetch_one(&pool)
         .await
@@ -484,12 +489,13 @@ async fn the_rewrites_are_one_transaction_and_are_logged_only_once_committed() {
     .unwrap();
     let (logs, _capture) = capture_logs();
 
-    let error = reconcile_line_endings(&db, &migrator)
-        .await
-        .unwrap_err()
-        .to_string();
+    let error = run_migrations(&db).await.unwrap_err().to_string();
 
     assert!(error.contains("refused"), "{error}");
     assert_eq!(recorded(&pool).await, before);
-    assert!(logs.migrator_lines().is_empty());
+    let lines = logs.migrator_lines();
+    assert!(
+        lines.iter().all(|line| !line.contains("checksum updated")),
+        "{lines:#?}"
+    );
 }
