@@ -441,7 +441,7 @@ impl ClaimLedger {
     /// Whether the statement `id` still has its sentence in the lesson, in a
     /// section that stays: a code example's claim has none, and a section that
     /// goes takes its claims with it.
-    fn stands(&self, candidate: &Value, id: &ClaimId) -> bool {
+    pub(super) fn stands(&self, candidate: &Value, id: &ClaimId) -> bool {
         let Some(entry) = self.entry(id).filter(|entry| !is_example(entry)) else {
             return false;
         };
