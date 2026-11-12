@@ -1,9 +1,9 @@
 //! The lesson as a subject of the review.
 use super::super::contract;
 use super::super::passes::{Next, Outcome, Passes};
-use super::super::quotes::{numbered, quote_checks_in};
+use super::super::quotes::{numbered, quote_checks_in, QuoteCheck};
 use super::super::repair::{self, Repaired};
-use super::super::standing::Standing;
+use super::super::standing::{versions, Standing};
 use super::super::{
     holds_up_review, quotation_findings, structural_findings, whole_repairs,
     LESSON_REVIEW_EVIDENCE_SCOPE, RULES_DECIDE,
@@ -16,14 +16,13 @@ use crate::dto::LearningSourceDto;
 use crate::lessons::content_verification::Protected;
 use crate::lessons::copied_wording::Wording;
 use crate::lessons::text_edits::{self, Named};
+use crate::model_call::ErrorClass;
 use crate::outline_progress::OutlineProgress;
 use crate::reference_collection::ReferenceCollection;
 use crate::review_evidence::Checked;
 use crate::review_findings::{
-    new_sentences, part_at, plain_part, sentences_of, FindingSite, Held, ReviewFinding, SetAside,
+    new_sentences, part_at, sentences_of, FindingSite, Held, ReviewFinding, SetAside,
 };
-use crate::teaching_review::LengthRule;
-use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -34,14 +33,26 @@ use std::collections::{BTreeMap, HashSet};
 /// Why a finding about a sentence a live claim stands on is held.
 const PROTECTED_SENTENCE: &str = "a sentence a live claim stands on";
 
-/// The checks that read a lesson beside the reviewer, in the order the gate is given them.
-const BESIDE: [&str; 3] = [
-    crate::question_review::DECIDES,
-    contract::DECIDES,
-    RULES_DECIDE,
-];
-/// Where the check against the course plan stands among them.
-const PLAN_CHECK: usize = 1;
+/// What the lesson's reviewer is given besides the material, by check.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Beside {
+    QuestionKeys,
+    Plan,
+    Rules,
+}
+
+impl Beside {
+    /// The checks that read a lesson beside the reviewer, in the order the gate is given them.
+    const ALL: [Self; 3] = [Self::QuestionKeys, Self::Plan, Self::Rules];
+
+    fn decides(self) -> &'static str {
+        match self {
+            Self::QuestionKeys => crate::question_review::DECIDES,
+            Self::Plan => contract::DECIDES,
+            Self::Rules => RULES_DECIDE,
+        }
+    }
+}
 
 /// The plan findings of a pass: the first ask's, then those of the second
 /// that the first did not give.
@@ -104,7 +115,7 @@ impl<'a> LessonSubject<'a> {
             tracing::info!(
                 lesson = %lesson,
                 finding = %waiting.finding.id().as_str(),
-                part = %plain_part(waiting.finding.site.unwrap_or(FindingSite::Lesson)),
+                part = %waiting.finding.site.unwrap_or(FindingSite::Lesson).plain(),
                 repairs = waiting.repairs,
                 inherited = account.inherited,
                 held = %account.held,
@@ -116,19 +127,14 @@ impl<'a> LessonSubject<'a> {
 
     /// Each reference's id and the digest of its excerpt.
     fn reference_pairs(&self) -> Vec<(String, String)> {
-        self.references
-            .sources
-            .iter()
-            .map(|source| (source.id.clone(), sha256_hex(&source.excerpt)))
-            .collect()
+        versions(&self.references.sources)
     }
 
     /// Each reference's id and the digest of its excerpt, as the reviewer is shown them.
     fn reference_versions(&self) -> Vec<Value> {
-        self.references
-            .sources
-            .iter()
-            .map(|source| json!({"id":source.id,"contentHash":sha256_hex(&source.excerpt)}))
+        self.reference_pairs()
+            .into_iter()
+            .map(|(id, hash)| json!({"id":id,"contentHash":hash}))
             .collect()
     }
 }
@@ -196,13 +202,8 @@ impl Subject for LessonSubject<'_> {
         settle_quotes_in(candidate, &numbered(self.numbered), attempt)
     }
 
-    fn quote_checks(
-        &self,
-        candidate: &Value,
-        _authoring: &Value,
-        _attempt: usize,
-    ) -> Result<Vec<Value>> {
-        Ok(quote_checks_in(candidate, &numbered(self.numbered)))
+    fn quote_checks(&self, candidate: &Value, _authoring: &Value) -> Vec<QuoteCheck> {
+        quote_checks_in(candidate, &numbered(self.numbered))
     }
 
     async fn find(&mut self, llm: &dyn LLMPort, pass: &Pass<'_>) -> Result<Found> {
@@ -256,7 +257,6 @@ impl Subject for LessonSubject<'_> {
                         pass.value,
                         round.scope(),
                         None,
-                        LengthRule::DropBlank,
                     );
                     let (judged, plan) = futures::try_join!(review, against_plan)?;
                     (Some(judged), plan.findings)
@@ -280,7 +280,7 @@ impl Subject for LessonSubject<'_> {
                 llm,
                 &raised,
                 crate::review_evidence::Beside {
-                    decides: &BESIDE,
+                    decides: &Beside::ALL.map(Beside::decides),
                     recorded: &recorded,
                 },
                 pass.authoring,
@@ -294,8 +294,9 @@ impl Subject for LessonSubject<'_> {
                 left,
             } = checked;
             let gate_established = established.len();
-            let (plan_lefts, other_lefts): (Vec<_>, Vec<_>) =
-                left.iter().partition(|left| left.check == PLAN_CHECK);
+            let (plan_lefts, other_lefts): (Vec<_>, Vec<_>) = left
+                .iter()
+                .partition(|left| Beside::ALL.get(left.check) == Some(&Beside::Plan));
             established.extend(
                 other_lefts
                     .iter()
@@ -400,60 +401,48 @@ impl Subject for LessonSubject<'_> {
         &mut self,
         previous: &Value,
         send: &[ReviewFinding],
-        edits: bool,
-        result: Result<Repaired>,
+        repaired: Repaired,
     ) -> Result<Settled> {
-        let made = match result {
-            Ok(Repaired::Patch { patch, plans }) => {
-                self.settle_patch(previous, send, &patch, &plans)
-            }
-            Ok(Repaired::Declined { plans }) => Ok(self.settle_declined(send, &plans)),
-            Ok(Repaired::Whole(text)) => self.settle_whole(previous, send, &text),
-            Err(error) => Err(error),
-        };
-        match made {
-            Ok(Made::Changed(text)) => Ok(Settled::Changed(text)),
-            Ok(Made::Nothing) => {
+        let made = match repaired {
+            Repaired::Patch { patch, plans } => self.settle_patch(previous, send, &patch, &plans),
+            Repaired::Declined { plans } => Ok(self.settle_declined(send, &plans)),
+            Repaired::Whole(text) => self.settle_whole(previous, send, &text),
+        }?;
+        Ok(match made {
+            Made::Changed(text) => Settled::Changed(text),
+            Made::Nothing => {
                 tracing::warn!(
                     sent = send.len(),
                     "The teaching repair changed nothing that could stay"
                 );
-                Ok(Settled::Unchanged)
+                Settled::Unchanged
             }
-            // An answer that cannot be used, or a request that does not fit
-            // the window, is a repair that could not be made, not a lesson
-            // that cannot be published: it fails no job. Only edits are
-            // halved: a rewrite is the whole lesson whatever it is sent.
-            Err(
-                error @ (AppError::ModelAnswerUnusable(_)
-                | AppError::PromptExceedsWindow { .. }
-                | AppError::InvalidConfig(_)),
-            ) => {
-                if edits && send.len() > 1 {
-                    let (first, second) = send.split_at(send.len() / 2);
-                    tracing::info!(%error, findings = send.len(), "The teaching repair could not be made for these findings together; each half is repaired on its own");
-                    return Ok(Settled::Split(first.to_vec(), second.to_vec()));
-                }
-                match error {
-                    AppError::ModelAnswerUnusable(reason) => {
-                        tracing::warn!(%reason, "The teaching repair could not be used");
-                        for finding in send {
-                            self.passes
-                                .charge(finding, Outcome::Unusable(reason.clone()));
-                        }
-                    }
-                    error => {
-                        tracing::warn!(%error, "The teaching repair did not fit the window; its findings wait for the user");
-                        self.passes.hold(
-                            send.iter().map(ReviewFinding::id),
-                            "its repair did not fit the window",
-                        );
-                    }
-                }
-                Ok(Settled::Unchanged)
+        })
+    }
+
+    fn unmade(
+        &mut self,
+        send: &[ReviewFinding],
+        class: ErrorClass,
+        reason: String,
+    ) -> Result<Settled> {
+        match class {
+            ErrorClass::DoesNotFit => {
+                tracing::warn!(%reason, "The teaching repair did not fit the window; its findings wait for the user");
+                self.passes.hold(
+                    send.iter().map(ReviewFinding::id),
+                    "its repair did not fit the window",
+                );
             }
-            Err(error) => Err(error),
+            _ => {
+                tracing::warn!(%reason, "The teaching repair could not be used");
+                for finding in send {
+                    self.passes
+                        .charge(finding, Outcome::Unusable(reason.clone()));
+                }
+            }
         }
+        Ok(Settled::Unchanged)
     }
 
     fn last_attempt(&self, finding: &ReviewFinding) -> Option<String> {

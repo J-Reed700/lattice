@@ -1,31 +1,36 @@
 //! Bind review findings to app-owned passages, not model-transcribed quotations.
 use crate::lessons::structured_call::{CallKind, ReasonFirst};
 use crate::lessons::writer_excerpts::{self, WriterExcerpts};
-use crate::review_findings::{part_holds, FindingId, FindingSite, ReviewFinding};
+use crate::review_findings::{part_quote, FindingId, FindingSite, ReviewFinding};
 use crate::{generation, outline_progress::OutlineProgress};
 use lattice_core::{
     application::ports::LLMPort,
+    application::services::model_contract::{Contract, ContractCall, ContractId, PromptInput},
+    protocol,
     shared::error::{AppError, Result},
     shared::hash::sha256_hex,
+    shared::protocol::Protocol,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-pub(super) const POLICY: &str = "section-review-v6";
+pub(super) const POLICY: Protocol = protocol!("section-review", 6);
+
+/// The saved answers of the section review, by what it was given.
+const FINDINGS_KEYS: Protocol = protocol!("teaching-review-findings", 6);
+
+/// The call that reviews a lesson's sections or an outline.
+pub(crate) struct TeachingReview;
+
+impl Contract for TeachingReview {
+    const ID: ContractId = ContractId::new("teaching-review");
+    type Input = PromptInput;
+}
 
 /// The room the review's answer is given.
 const REVIEW_ANSWER_TOKENS: usize = 6000;
-
-/// What the review does with a blank finding after the response correction.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum LengthRule {
-    /// The review fails.
-    Fail,
-    /// A blank finding is dropped: no teaching-review finding fails a lesson
-    /// job.
-    DropBlank,
-}
 
 /// What the reviewer works through in prose before its findings are written
 /// to the response schema, where each section's verdict would otherwise be
@@ -42,8 +47,14 @@ pub(super) fn fixture_checks(checks: Vec<Value>) -> Value {
             .into_iter()
             .map(|mut check| {
                 if let Some(fields) = check.as_object_mut() {
-                    let index = fields.remove("index").unwrap_or(Value::Null);
-                    fields.insert("sectionId".into(), json!(format!("section-{index}")));
+                    let index = fields
+                        .remove("index")
+                        .and_then(|index| index.as_u64())
+                        .and_then(|index| usize::try_from(index).ok());
+                    fields.insert(
+                        "sectionId".into(),
+                        json!(index.map(|index| FindingSite::Section(index).id_text())),
+                    );
                 }
                 check
             })
@@ -157,16 +168,6 @@ pub struct Judged {
     pub reported: Vec<Reported>,
 }
 
-/// How the reviewer is shown a part: "Section 3", "Question 2" or "The whole
-/// lesson".
-pub(crate) fn label(site: FindingSite) -> String {
-    match site {
-        FindingSite::Lesson => "The whole lesson".to_owned(),
-        FindingSite::Section(index) => format!("Section {}", index + 1),
-        FindingSite::Question(index) => format!("Question {}", index + 1),
-    }
-}
-
 /// Each section's passages as `(id, text)`: the ids are the application's.
 pub(crate) fn passages_of(candidate: &Value) -> Vec<Vec<(String, String)>> {
     candidate
@@ -183,7 +184,10 @@ pub(crate) fn passages_of(candidate: &Value) -> Vec<Vec<(String, String)>> {
             passages::split(body)
                 .into_iter()
                 .enumerate()
-                .map(|(n, text)| (format!("section-{index}-passage-{n}"), text.to_owned()))
+                .map(|(n, text)| {
+                    let id = format!("{}-passage-{n}", FindingSite::Section(index).id_text());
+                    (id, text.to_owned())
+                })
                 .collect()
         })
         .collect()
@@ -205,7 +209,7 @@ fn review_candidate(candidate: &Value) -> (Value, Vec<Vec<String>>) {
             if let Some(block) = block.as_object_mut() {
                 block.remove("body");
                 block.insert("index".into(), json!(index));
-                block.insert("label".into(), json!(label(FindingSite::Section(index))));
+                block.insert("label".into(), json!(FindingSite::Section(index).label()));
                 block.insert("bodyPassages".into(), json!(passages));
             }
         }
@@ -213,7 +217,7 @@ fn review_candidate(candidate: &Value) -> (Value, Vec<Vec<String>>) {
     if let Some(questions) = candidate.get_mut("questions").and_then(Value::as_array_mut) {
         for (index, question) in questions.iter_mut().enumerate() {
             if let Some(question) = question.as_object_mut() {
-                question.insert("label".into(), json!(label(FindingSite::Question(index))));
+                question.insert("label".into(), json!(FindingSite::Question(index).label()));
             }
         }
     }
@@ -227,7 +231,7 @@ fn review_candidate(candidate: &Value) -> (Value, Vec<Vec<String>>) {
 /// The text of passage `id` in section `index` of the reviewed candidate.
 fn passage_text(reviewed: &Value, index: usize, id: &str) -> Option<String> {
     reviewed
-        .pointer(&format!("/blocks/{index}/bodyPassages"))?
+        .pointer(&FindingSite::Section(index).field_pointer("bodyPassages")?)?
         .as_array()?
         .iter()
         .find(|passage| passage.get("id").and_then(Value::as_str) == Some(id))?
@@ -264,7 +268,10 @@ fn schema(indices: &[usize], passages: &[Vec<String>], verdict_ids: &[&str]) -> 
         required.push("blockChecks");
         // Each check names an app-owned section ID and one of those
         // sections' passages; the review holds the passage to its section.
-        let sections: Vec<String> = indices.iter().map(|i| format!("section-{i}")).collect();
+        let sections: Vec<String> = indices
+            .iter()
+            .map(|index| FindingSite::Section(*index).id_text())
+            .collect();
         let cited: Vec<&str> = indices
             .iter()
             .filter_map(|index| passages.get(*index))
@@ -325,7 +332,7 @@ fn open_entries<'a>(asked: impl IntoIterator<Item = &'a Asked>) -> Value {
         .map(|finding| {
             let mut entry = serde_json::Map::new();
             entry.insert("id".into(), json!(finding.id.as_str()));
-            entry.insert("part".into(), json!(label(finding.site)));
+            entry.insert("part".into(), json!(finding.site.label()));
             if let Some(passage_id) = &finding.passage_id {
                 entry.insert("passageId".into(), json!(passage_id));
             }
@@ -336,25 +343,269 @@ fn open_entries<'a>(asked: impl IntoIterator<Item = &'a Asked>) -> Value {
     json!(entries)
 }
 
-/// A finding shown by the part it is about (none: the material as a whole)
-/// and its note.
-fn part_note(site: Option<FindingSite>, note: &str) -> Value {
-    json!({"part": site.map(label), "note": note})
+/// What a reply is read against: the reviewed candidate, the sections it
+/// must check and the open findings it must judge.
+struct Reading<'a> {
+    candidate: &'a Value,
+    shown: &'a Value,
+    passages: &'a [Vec<String>],
+    sections: &'a [usize],
+    asked: &'a [&'a Asked],
+    /// A blank issue or finding is dropped, not refused.
+    settle: bool,
 }
 
-/// The note of a defect a section's check reports.
-fn section_note(index: usize, finding: &str) -> String {
-    format!(
-        "Section {} (candidate blocks-{index}): {finding}",
-        index + 1
-    )
+/// Records `message` once.
+fn note(problems: &mut Vec<String>, message: String) {
+    if !problems.contains(&message) {
+        problems.push(message);
+    }
+}
+
+fn continuing(reading: &Reading<'_>, id: &str) -> Option<FindingId> {
+    reading
+        .asked
+        .iter()
+        .find(|asked| asked.id.as_str() == id)
+        .map(|asked| asked.id.clone())
+}
+
+fn read_issues(
+    issues: Vec<Issue>,
+    reading: &Reading<'_>,
+    reported: &mut Vec<Reported>,
+    problems: &mut Vec<String>,
+) {
+    for issue in issues {
+        let (issue, continued) = match issue {
+            Issue::Plain(note) => (note, None),
+            Issue::Continuing { note, continues } => (note, continues),
+        };
+        if issue.trim().is_empty() {
+            if !reading.settle {
+                note(problems, "An issue must not be blank.".into());
+            }
+        } else if !reported.iter().any(|known| known.note == issue) {
+            let summary = issue.trim().to_owned();
+            reported.push(Reported {
+                site: None,
+                note: issue,
+                summary,
+                passage: None,
+                passage_id: None,
+                continues: continued.and_then(|id| continuing(reading, &id)),
+            });
+        }
+    }
+}
+
+fn read_verdicts(
+    entries: Vec<Value>,
+    reading: &Reading<'_>,
+    problems: &mut Vec<String>,
+) -> Vec<Verdict> {
+    let mut parsed = Vec::new();
+    for entry in entries {
+        match serde_json::from_value::<VerdictEntry>(entry) {
+            Ok(entry) => parsed.push(entry),
+            Err(_) => note(
+                problems,
+                "A verdict has missing, unexpected or incorrectly typed fields.".into(),
+            ),
+        }
+    }
+    for entry in &parsed {
+        if !reading
+            .asked
+            .iter()
+            .any(|finding| finding.id.as_str() == entry.id)
+        {
+            note(
+                problems,
+                format!(
+                    "{} was not asked about; give a verdict only for the ids in openFindings.",
+                    entry.id
+                ),
+            );
+        }
+    }
+    let mut verdicts = Vec::new();
+    for finding in reading.asked {
+        let mut own = parsed
+            .iter()
+            .filter(|entry| entry.id == finding.id.as_str());
+        let (Some(entry), None) = (own.next(), own.next()) else {
+            note(
+                problems,
+                format!("{} needs one verdict.", finding.id.as_str()),
+            );
+            continue;
+        };
+        let quote = entry.quote.trim();
+        if !matches!(entry.verdict, Judgement::Present) {
+            verdicts.push(Verdict {
+                id: finding.id.clone(),
+                present: false,
+                quote: quote.to_owned(),
+            });
+        } else if let Some(held) = part_quote(reading.candidate, finding.site, quote) {
+            verdicts.push(Verdict {
+                id: finding.id.clone(),
+                present: true,
+                quote: held.to_owned(),
+            });
+        } else {
+            note(problems, format!("{}: the quote is not in {} as it now stands; quote the words there that still show the defect, or answer resolved.", finding.id.as_str(), finding.site.label()));
+        }
+    }
+    verdicts
+}
+
+/// The defect a valid check of section `index` reports, if any.
+fn read_check(
+    mut value: Value,
+    index: usize,
+    continues: Option<FindingId>,
+    reading: &Reading<'_>,
+) -> std::result::Result<Option<Reported>, String> {
+    let site = FindingSite::Section(index);
+    let Some(fields) = value.as_object_mut() else {
+        return Err(format!("{} needs an object check.", site.id_text()));
+    };
+    if fields.insert("index".into(), json!(index)).is_some() {
+        return Err(format!(
+            "{}: the sectionId names the section; do not supply an index field.",
+            site.id_text()
+        ));
+    }
+    let check: BlockCheck = serde_json::from_value(value).map_err(|_| {
+        "A block check has missing, unexpected or incorrectly typed fields.".to_owned()
+    })?;
+    if reading
+        .passages
+        .get(index)
+        .is_none_or(|ids| !ids.contains(&check.passage_id))
+    {
+        return Err(format!(
+            "{}: passageId must be one of that section's bodyPassages IDs.",
+            site.id_text()
+        ));
+    }
+    if check.finding.trim().is_empty() {
+        return if reading.settle {
+            Ok(None)
+        } else {
+            Err(format!("{}: finding must not be blank.", site.id_text()))
+        };
+    }
+    Ok(check.has_defect.then(|| Reported {
+        site: Some(site),
+        note: format!("{}: {}", site.note_label(), check.finding),
+        summary: check.finding.trim().to_owned(),
+        passage: passage_text(reading.shown, index, &check.passage_id),
+        passage_id: Some(check.passage_id.clone()),
+        continues,
+    }))
+}
+
+fn read_checks(
+    checks: Vec<Value>,
+    reading: &Reading<'_>,
+    reported: &mut Vec<Reported>,
+    problems: &mut Vec<String>,
+) {
+    let mut named = Vec::new();
+    for mut value in checks {
+        let continued = value
+            .as_object_mut()
+            .and_then(|fields| fields.remove("continues"))
+            .and_then(|id| id.as_str().and_then(|id| continuing(reading, id)));
+        let section = value
+            .as_object_mut()
+            .and_then(|fields| fields.remove("sectionId"))
+            .and_then(|id| id.as_str().map(str::to_owned));
+        match section {
+            Some(section) => named.push((section, value, continued)),
+            None => note(
+                problems,
+                "A block check needs the sectionId of the section it checks.".into(),
+            ),
+        }
+    }
+    let mut seen = HashSet::new();
+    let repeated: HashSet<String> = named
+        .iter()
+        .filter(|(section, _, _)| !seen.insert(section.clone()))
+        .map(|(section, _, _)| section.clone())
+        .collect();
+    let mut checked = BTreeSet::new();
+    for (section, value, continued) in named {
+        let Some(index) = reading
+            .sections
+            .iter()
+            .copied()
+            .find(|index| section == FindingSite::Section(*index).id_text())
+        else {
+            note(problems, format!("Section ID {section} was not requested."));
+            continue;
+        };
+        if repeated.contains(&section) {
+            note(
+                problems,
+                format!("{section} was checked more than once; give each section one check."),
+            );
+            continue;
+        }
+        match read_check(value, index, continued, reading) {
+            Ok(report) => {
+                checked.insert(index);
+                if let Some(report) = report {
+                    if !reported.iter().any(|known| known.note == report.note) {
+                        reported.push(report);
+                    }
+                }
+            }
+            Err(problem) => note(problems, problem),
+        }
+    }
+    for index in reading.sections {
+        if !checked.contains(index) {
+            note(
+                problems,
+                format!(
+                    "{} still needs a valid check.",
+                    FindingSite::Section(*index).id_text()
+                ),
+            );
+        }
+    }
+}
+
+/// The reviewer's reply as findings; every problem it has, in one error.
+fn read(raw: &str, reading: &Reading<'_>) -> Result<Judged> {
+    let review: Review = generation::parse_json(raw).map_err(|_| {
+        AppError::InvalidInput(
+            "The review was incomplete. Give the issues and a check for every requested section."
+                .into(),
+        )
+    })?;
+    let mut problems = Vec::new();
+    let mut reported = Vec::new();
+    read_issues(review.issues, reading, &mut reported, &mut problems);
+    let verdicts = read_verdicts(review.open_findings, reading, &mut problems);
+    read_checks(review.block_checks, reading, &mut reported, &mut problems);
+    if problems.is_empty() {
+        Ok(Judged { verdicts, reported })
+    } else {
+        Err(AppError::InvalidInput(problems.join(" ")))
+    }
 }
 
 /// What the reviewer found: its verdict on each finding in `scope.asked`,
 /// and the defects it reports beyond those. A defect of a section's check is
 /// placed in that section; a reviewer's issue is placed later, by the
-/// evidence check. Malformed output is corrected in the same call without
-/// spending the author's repair pass, and an unavailable provider propagates.
+/// evidence check. A reply that cannot be read is corrected once; a second
+/// that cannot be read fails the review.
 pub async fn review(
     llm: &dyn LLMPort,
     system: &str,
@@ -362,7 +613,6 @@ pub async fn review(
     candidate: &Value,
     scope: Scope<'_>,
     progress: Option<&OutlineProgress>,
-    lengths: LengthRule,
 ) -> Result<Judged> {
     let Value::Object(mut prompt) = prompt else {
         return Err(AppError::InternalError(
@@ -383,40 +633,13 @@ pub async fn review(
     ] {
         inputs.insert(name.into(), value);
     }
-    let key = format!(
-        "teaching-review-findings-v6:{}",
-        sha256_hex(Value::Object(inputs).to_string())
-    );
-    if let Some(saved) = crate::lesson_drafts::checkpoint(&key)
-        .await?
-        .and_then(|v| serde_json::from_value::<Judged>(v).ok())
-    {
-        crate::lesson_progress::stage(
-            "Reusing completed teaching review; continuing evidence checks",
-        );
-        return Ok(saved);
-    }
-    let judged = review_sections(llm, system, prompt, candidate, scope, progress, lengths).await?;
-    crate::lesson_drafts::record_checkpoint(&key, json!(judged)).await?;
-    Ok(judged)
-}
-
-async fn review_sections(
-    llm: &dyn LLMPort,
-    system: &str,
-    mut prompt: serde_json::Map<String, Value>,
-    candidate: &Value,
-    scope: Scope<'_>,
-    progress: Option<&OutlineProgress>,
-    lengths: LengthRule,
-) -> Result<Judged> {
+    let key = FINDINGS_KEYS.key(sha256_hex(Value::Object(inputs).to_string()));
     let (reviewed, passages) = review_candidate(candidate);
-    let shown = reviewed.clone();
-    prompt.insert("candidate".into(), reviewed);
+    prompt.insert("candidate".into(), reviewed.clone());
     let excerpts = prompt
         .get_mut("authoringContext")
         .and_then(|context| WriterExcerpts::take(llm, context, candidate));
-    let wanted: Vec<usize> = scope.sections.map_or_else(
+    let sections: Vec<usize> = scope.sections.map_or_else(
         || (0..passages.len()).collect(),
         |sections| {
             sections
@@ -426,283 +649,69 @@ async fn review_sections(
                 .collect()
         },
     );
-    let brief = if scope.asked.is_some_and(|asked| !asked.is_empty()) {
-        format!("{REVIEW_DRAFT_BRIEF}{OPEN_FINDINGS_BRIEF}")
-    } else {
+    let asked: Vec<&Asked> = scope.asked.into_iter().flatten().collect();
+    let reading = |settle: bool| Reading {
+        candidate,
+        shown: &reviewed,
+        passages: &passages,
+        sections: &sections,
+        asked: &asked,
+        settle,
+    };
+    if let Some(saved) = crate::lesson_drafts::saved::<String>(&key)
+        .await?
+        .and_then(|raw| read(&raw, &reading(true)).ok())
+    {
+        crate::lesson_progress::stage(
+            "Reusing completed teaching review; continuing evidence checks",
+        );
+        return Ok(saved);
+    }
+    prompt.insert("sectionIndicesToReview".into(), json!(sections));
+    let brief = if asked.is_empty() {
         REVIEW_DRAFT_BRIEF.to_owned()
+    } else {
+        format!("{REVIEW_DRAFT_BRIEF}{OPEN_FINDINGS_BRIEF}")
     };
-    let mut accepted = BTreeMap::<usize, BlockCheck>::new();
-    let mut verdicts = BTreeMap::<FindingId, Verdict>::new();
-    let mut ungrounded = BTreeSet::<FindingId>::new();
-    let mut reported: Vec<Reported> = Vec::new();
-    let mut problems = Vec::new();
-    let continuing = |id: &str| {
-        scope
-            .asked
-            .into_iter()
-            .flatten()
-            .find(|asked| asked.id.as_str() == id)
-            .map(|asked| asked.id.clone())
+    let request = writer_excerpts::Request {
+        subject: "the teaching review",
+        system,
+        prompt: &prompt,
+        context: "authoringContext",
+        schema: schema(
+            &sections,
+            &passages,
+            &asked
+                .iter()
+                .map(|finding| finding.id.as_str())
+                .collect::<Vec<_>>(),
+        ),
+        output_tokens: REVIEW_ANSWER_TOKENS,
     };
-    // The first correction is always asked for; later ones while each answer
-    // validates another section.
-    for attempt in 0usize.. {
-        // After the correction, a blank finding no longer fails a lesson's review.
-        let settle = lengths == LengthRule::DropBlank && attempt > 0;
-        let checked = accepted.len() + verdicts.len();
-        let indices: Vec<_> = wanted
-            .iter()
-            .copied()
-            .filter(|i| !accepted.contains_key(i))
-            .collect();
-        let remaining: Vec<&Asked> = scope
-            .asked
-            .into_iter()
-            .flatten()
-            .filter(|finding| !verdicts.contains_key(&finding.id))
-            .collect();
-        prompt.insert("sectionIndicesToReview".into(), json!(indices));
-        if attempt > 0 {
-            crate::lesson_progress::stage(if indices.is_empty() {
-                "Correcting the review's findings".into()
-            } else {
-                format!(
-                    "Correcting the review response ({} sections need checks)",
-                    indices.len()
-                )
-            });
-            prompt.insert("reviewResponseProblems".into(), json!(problems));
-            prompt.insert(
-                "retainedIssues".into(),
-                json!(reported
-                    .iter()
-                    .map(|report| part_note(report.site, &report.note))
-                    .collect::<Vec<_>>()),
-            );
-            prompt.insert(
-                "acceptedBlockChecks".into(),
-                json!(accepted.values().collect::<Vec<_>>()),
-            );
-            if scope.asked.is_some() {
-                prompt.insert(
-                    "openFindings".into(),
-                    open_entries(remaining.iter().copied()),
-                );
-                prompt.insert(
-                    "acceptedVerdicts".into(),
-                    json!(verdicts.values().collect::<Vec<_>>()),
-                );
-            }
-            prompt.insert("responseCorrection".into(), json!("Correct the review response, not the lesson. Return checks only for sectionIndicesToReview. Read all passages in each requested section; select a passageId from that same section. Keep every established defect. Do not regenerate the lesson or treat a response-format error as a content defect."));
-        }
-        let request = writer_excerpts::Request {
-            subject: "the teaching review",
-            system,
-            prompt: &prompt,
-            context: "authoringContext",
-            schema: schema(
-                &indices,
-                &passages,
-                &remaining
-                    .iter()
-                    .map(|finding| finding.id.as_str())
-                    .collect::<Vec<_>>(),
-            ),
-            output_tokens: REVIEW_ANSWER_TOKENS,
-        };
-        // A correction repairs the response, not the judgement, so only the
-        // first review reasons in prose before answering.
-        let reasoning = (attempt == 0).then_some(ReasonFirst {
+    let call = ContractCall::of::<TeachingReview>(&PromptInput {
+        system: system.to_owned(),
+        prompt: Value::Object(prompt.clone()).to_string(),
+    })?;
+    let replies = AtomicUsize::new(0);
+    let (raw, judged) = writer_excerpts::complete(
+        llm,
+        &call,
+        &request,
+        excerpts.as_ref(),
+        progress,
+        Some(ReasonFirst {
             kind: CallKind::Authoring,
             subject: "the teaching review",
             brief: &brief,
-        });
-        let raw = writer_excerpts::complete(
-            llm,
-            &request,
-            excerpts.as_ref(),
-            progress,
-            reasoning,
-            |text| Ok(text.to_owned()),
-        )
-        .await?;
-        problems.clear();
-        match generation::parse_json::<Review>(&raw) {
-            Err(_) => problems.push("The previous review was incomplete. Give the issues and a check for every requested section.".into()),
-            Ok(review) => {
-                for issue in review.issues {
-                    let (issue, continued) = match issue {
-                        Issue::Plain(note) => (note, None),
-                        Issue::Continuing { note, continues } => (note, continues),
-                    };
-                    let blank = issue.trim().is_empty();
-                    if blank && !settle {
-                        problems.push("An issue must not be blank.".into());
-                    } else if !blank && !reported.iter().any(|known| known.note == issue) {
-                        let summary = issue.trim().to_owned();
-                        reported.push(Reported {
-                            site: None,
-                            note: issue,
-                            summary,
-                            passage: None,
-                            passage_id: None,
-                            continues: continued.as_deref().and_then(continuing),
-                        });
-                    }
-                }
-                let mut entries = Vec::new();
-                for entry in review.open_findings {
-                    match serde_json::from_value::<VerdictEntry>(entry) {
-                        Ok(entry) => entries.push(entry),
-                        Err(_) => problems.push("A verdict has missing, unexpected or incorrectly typed fields.".into()),
-                    }
-                }
-                for entry in &entries {
-                    if !remaining.iter().any(|finding| finding.id.as_str() == entry.id) {
-                        let message = format!("{} was not asked about; give a verdict only for the ids in openFindings.", entry.id);
-                        if !problems.contains(&message) {
-                            problems.push(message);
-                        }
-                    }
-                }
-                for finding in &remaining {
-                    let mut own = entries.iter().filter(|entry| entry.id == finding.id.as_str());
-                    match (own.next(), own.next()) {
-                        (Some(entry), None) => {
-                            let quote = entry.quote.trim();
-                            let mut present = matches!(entry.verdict, Judgement::Present);
-                            if present && !part_holds(candidate, finding.site, quote) {
-                                if ungrounded.insert(finding.id.clone()) {
-                                    problems.push(format!("{}: the quote is not in {} as it now stands; quote the words there that still show the defect, or answer resolved.", finding.id.as_str(), label(finding.site)));
-                                    continue;
-                                }
-                                tracing::info!(finding = %finding.id.as_str(), "A present verdict stayed without words of its part and counts as resolved");
-                                present = false;
-                            }
-                            verdicts.insert(finding.id.clone(), Verdict {
-                                id: finding.id.clone(),
-                                present,
-                                quote: quote.to_owned(),
-                            });
-                        }
-                        _ => problems.push(format!("{} needs one verdict.", finding.id.as_str())),
-                    }
-                }
-                let mut named = Vec::new();
-                for mut value in review.block_checks {
-                    let continued = value
-                        .as_object_mut()
-                        .and_then(|fields| fields.remove("continues"))
-                        .and_then(|id| id.as_str().and_then(continuing));
-                    let section = value
-                        .as_object_mut()
-                        .and_then(|fields| fields.remove("sectionId"))
-                        .and_then(|id| id.as_str().map(str::to_owned));
-                    match section {
-                        Some(section) => named.push((section, value, continued)),
-                        None => problems.push("A block check needs the sectionId of the section it checks.".into()),
-                    }
-                }
-                let mut seen = HashSet::new();
-                let repeated: HashSet<String> = named
-                    .iter()
-                    .filter(|(section, _, _)| !seen.insert(section.clone()))
-                    .map(|(section, _, _)| section.clone())
-                    .collect();
-                for (section, mut value, continued) in named {
-                    let Some(index) = indices.iter().copied().find(|index| section == format!("section-{index}")) else {
-                        problems.push(format!("Section ID {section} was not requested."));
-                        continue;
-                    };
-                    if repeated.contains(&section) {
-                        let message = format!("{section} was checked more than once; give each section one check.");
-                        if !problems.contains(&message) {
-                            problems.push(message);
-                        }
-                        continue;
-                    }
-                    // Preserve actionable defects even when another field is
-                    // missing and the complete check cannot deserialize.
-                    if let (Some(finding), Some(true)) = (
-                        value.get("finding").and_then(Value::as_str), value.get("hasDefect").and_then(Value::as_bool),
-                    ) {
-                        if indices.contains(&index) && !finding.trim().is_empty() {
-                            let note = section_note(index, finding);
-                            if !reported.iter().any(|known| known.note == note) {
-                                let chosen = value.get("passageId").and_then(Value::as_str);
-                                reported.push(Reported {
-                                    site: Some(FindingSite::Section(index)),
-                                    note,
-                                    summary: finding.trim().to_owned(),
-                                    passage: chosen.and_then(|id| passage_text(&shown, index, id)),
-                                    passage_id: chosen.map(str::to_owned),
-                                    continues: continued.clone(),
-                                });
-                            }
-                        }
-                    }
-                    let Some(fields) = value.as_object_mut() else {
-                        problems.push(format!("Section {index} needs an object check."));
-                        continue;
-                    };
-                    if fields.insert("index".into(), json!(index)).is_some() {
-                        problems.push(format!("Section {index}: the sectionId names the section; do not supply an index field."));
-                        continue;
-                    }
-                    let check: BlockCheck = match serde_json::from_value(value) {
-                        Ok(check) => check,
-                        Err(_) => { problems.push("A block check has missing, unexpected or incorrectly typed fields.".into()); continue; }
-                    };
-                    if !indices.contains(&check.index) {
-                        problems.push(format!("Section index {} was not requested. Use the explicit zero-based index from the candidate.", check.index));
-                        continue;
-                    }
-                    if passages.get(check.index).is_none_or(|ids| !ids.contains(&check.passage_id)) {
-                        problems.push(format!("Section {}: passageId must be one of that section's bodyPassages IDs.", check.index));
-                    } else if check.finding.trim().is_empty() && !settle {
-                        problems.push(format!("Section {}: finding must not be blank.", check.index));
-                    } else {
-                        if check.has_defect {
-                            let note = section_note(check.index, &check.finding);
-                            let site = Some(FindingSite::Section(check.index));
-                            if let Some(report) = reported
-                                .iter_mut()
-                                .find(|known| known.site == site && known.note == note)
-                            {
-                                report.passage = passage_text(&shown, check.index, &check.passage_id);
-                                report.passage_id = Some(check.passage_id.clone());
-                            }
-                        }
-                        accepted.insert(check.index, check);
-                    }
-                }
-                for index in indices {
-                    if !accepted.contains_key(&index) {
-                        problems.push(format!("Section {index} still needs a valid check."));
-                    }
-                }
-            }
-        }
-        if problems.is_empty() {
-            let verdicts = scope
-                .asked
-                .into_iter()
-                .flatten()
-                .filter_map(|finding| verdicts.remove(&finding.id))
-                .collect();
-            return Ok(Judged { verdicts, reported });
-        }
-        tracing::warn!(attempt = attempt + 1, accepted_sections = accepted.len(), total_sections = passages.len(), problems = ?problems, "Teaching reviewer response failed validation");
-        if attempt > 0 && accepted.len() + verdicts.len() == checked {
-            break;
-        }
-    }
-    let recovery = if crate::lesson_drafts::active() {
-        "The lesson draft is saved. Retry will reuse it and run the checks again."
-    } else {
-        "Retry the review."
-    };
-    Err(AppError::ServiceNotAvailable(format!("The model could not return a complete teaching review after response correction: {} {recovery} Nothing was published.", problems.join(" "))))
+        }),
+        |text| {
+            let settle = replies.fetch_add(1, Ordering::SeqCst) > 0;
+            read(text, &reading(settle)).map(|judged| (text.to_owned(), judged))
+        },
+    )
+    .await?;
+    crate::lesson_drafts::record_checkpoint(&key, json!(raw)).await?;
+    Ok(judged)
 }
 
 #[cfg(any(test, feature = "test-support"))]

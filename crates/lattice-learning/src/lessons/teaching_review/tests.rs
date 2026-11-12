@@ -10,19 +10,12 @@ async fn review(
     prompt: Value,
     candidate: &Value,
     progress: Option<&OutlineProgress>,
-    lengths: LengthRule,
 ) -> Result<Vec<Reported>> {
-    Ok(super::review(
-        llm,
-        system,
-        prompt,
-        candidate,
-        Scope::default(),
-        progress,
-        lengths,
+    Ok(
+        super::review(llm, system, prompt, candidate, Scope::default(), progress)
+            .await?
+            .reported,
     )
-    .await?
-    .reported)
 }
 
 fn check(index: usize) -> Value {
@@ -55,7 +48,6 @@ async fn retains_more_than_six_findings_without_rejecting_a_complete_review() ->
         json!({}),
         &candidate(),
         None,
-        LengthRule::Fail,
     )
     .await?;
     assert_eq!(
@@ -139,7 +131,7 @@ async fn malformed_section_recovers_without_rewriting_content_or_rechecking_vali
         json!("The claimed membrane behavior contradicts the stated boundary condition.");
     let model = model(vec![
         json!({"issues":["An assessment has two defensible correct choices."],"blockChecks":crate::teaching_review::fixture_checks(vec![check(0),wrong_source,check(2)])}),
-        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![check(1)])}),
+        json!({"issues":["An assessment has two defensible correct choices."],"blockChecks":crate::teaching_review::fixture_checks(vec![check(0),check(1),check(2)])}),
     ]);
     let issues = review(
         &model,
@@ -147,45 +139,13 @@ async fn malformed_section_recovers_without_rewriting_content_or_rechecking_vali
         json!({}),
         &candidate(),
         None,
-        LengthRule::Fail,
     )
     .await?;
-    assert_eq!(issues.len(), 2);
-    let defect = issues
-        .iter()
-        .find(|i| i.note.contains("membrane behavior"))
-        .unwrap();
-    assert_eq!(defect.site, Some(FindingSite::Section(1)));
-    assert_eq!(
-        defect.summary,
-        "The claimed membrane behavior contradicts the stated boundary condition."
-    );
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].site, None);
     let prompts = model.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 2);
-    let retry: Value = serde_json::from_str(prompts[1].rsplit("\n\n").next().unwrap())?;
-    assert_eq!(retry["sectionIndicesToReview"], json!([1]));
-    assert_eq!(retry["acceptedBlockChecks"].as_array().unwrap().len(), 2);
-    assert!(retry["responseCorrection"]
-        .as_str()
-        .unwrap()
-        .contains("not the lesson"));
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_review_is_corrected_while_each_answer_checks_another_section() -> Result<()> {
-    let only = |index| json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![check(index)])});
-    let model = model(vec![only(0), only(1), only(2)]);
-    review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        None,
-        LengthRule::Fail,
-    )
-    .await?;
-    assert_eq!(model.prompts.lock().unwrap().len(), 3);
+    assert!(prompts[1].contains("section-1: passageId must be one of"));
     Ok(())
 }
 
@@ -208,21 +168,19 @@ async fn missing_duplicate_unknown_and_invented_checks_never_approve_unchecked_c
             json!({}),
             &candidate(),
             None,
-            LengthRule::Fail,
         )
         .await
         .unwrap_err();
-        assert!(matches!(error, AppError::ServiceNotAvailable(_)));
-        assert!(error.to_string().contains("Nothing was published"));
+        assert!(matches!(error, AppError::ModelAnswerUnusable(_)));
         assert_eq!(model.prompts.lock().unwrap().len(), 2);
     }
 }
 
 #[tokio::test]
-async fn invalid_global_findings_can_be_corrected_without_losing_section_checks() -> Result<()> {
+async fn a_blank_global_finding_is_corrected_by_a_complete_second_answer() -> Result<()> {
     let model = model(vec![
         json!({"issues":["  "],"blockChecks":crate::teaching_review::fixture_checks(vec![check(0),check(1),check(2)])}),
-        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![])}),
+        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![check(0),check(1),check(2)])}),
     ]);
     assert!(review(
         &model,
@@ -230,11 +188,10 @@ async fn invalid_global_findings_can_be_corrected_without_losing_section_checks(
         json!({}),
         &candidate(),
         None,
-        LengthRule::Fail
     )
     .await?
     .is_empty());
-    assert!(model.prompts.lock().unwrap()[1].contains("\"sectionIndicesToReview\":[]"));
+    assert_eq!(model.prompts.lock().unwrap().len(), 2);
     Ok(())
 }
 
@@ -248,7 +205,8 @@ async fn a_lesson_s_corrected_review_drops_blank_findings_and_keeps_the_rest() -
     blank["hasDefect"] = json!(true);
     blank["finding"] = json!("  ");
     let first = json!({"issues":["  "],"blockChecks":fixture_checks(vec![check(0),blank.clone(),check(2)])});
-    let second = json!({"issues":[" ",long],"blockChecks":fixture_checks(vec![blank])});
+    let second =
+        json!({"issues":[" ",long],"blockChecks":fixture_checks(vec![check(0),blank,check(2)])});
     let lesson = model(vec![first.clone(), second.clone()]);
     let issues = review(
         &lesson,
@@ -256,22 +214,10 @@ async fn a_lesson_s_corrected_review_drops_blank_findings_and_keeps_the_rest() -
         json!({}),
         &candidate(),
         None,
-        LengthRule::DropBlank,
     )
     .await?;
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0].note, long);
-    let strict = model(vec![first, second]);
-    assert!(review(
-        &strict,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        None,
-        LengthRule::Fail,
-    )
-    .await
-    .is_err());
     Ok(())
 }
 
@@ -289,7 +235,6 @@ async fn a_section_finding_carries_the_passage_the_reviewer_chose() -> Result<()
         json!({}),
         &candidate(),
         None,
-        LengthRule::DropBlank,
     )
     .await?;
     assert_eq!(issues.len(), 1);
@@ -319,7 +264,6 @@ async fn malformed_json_is_corrected_as_a_review_not_as_lesson_content() -> Resu
         json!({}),
         &candidate(),
         None,
-        LengthRule::Fail
     )
     .await?
     .is_empty());
@@ -328,13 +272,15 @@ async fn malformed_json_is_corrected_as_a_review_not_as_lesson_content() -> Resu
 }
 
 #[tokio::test]
-async fn missing_evidence_field_cannot_erase_a_reported_defect() -> Result<()> {
+async fn a_check_missing_its_passage_is_corrected_not_approved() -> Result<()> {
     let mut incomplete = check(1);
     incomplete.as_object_mut().unwrap().remove("passageId");
     incomplete["hasDefect"] = json!(true);
+    let mut defect = check(1);
+    defect["hasDefect"] = json!(true);
     let model = model(vec![
         json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![check(0),incomplete,check(2)])}),
-        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![check(1)])}),
+        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![check(0),defect,check(2)])}),
     ]);
     let issues = review(
         &model,
@@ -342,7 +288,6 @@ async fn missing_evidence_field_cannot_erase_a_reported_defect() -> Result<()> {
         json!({}),
         &candidate(),
         None,
-        LengthRule::Fail,
     )
     .await?;
     assert_eq!(issues.len(), 1);
@@ -362,21 +307,18 @@ async fn a_long_issue_from_the_teaching_review_is_read_not_refused() -> Result<(
     assert!(long.chars().count() > 700);
     let response =
         json!({"issues":[long],"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])});
-    for lengths in [LengthRule::Fail, LengthRule::DropBlank] {
-        let model = model(vec![response.clone()]);
-        let issues = review(
-            &model,
-            "Review instructional quality.",
-            json!({}),
-            &candidate(),
-            None,
-            lengths,
-        )
-        .await?;
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].note, long);
-        assert_eq!(model.prompts.lock().unwrap().len(), 1);
-    }
+    let model = model(vec![response]);
+    let issues = review(
+        &model,
+        "Review instructional quality.",
+        json!({}),
+        &candidate(),
+        None,
+    )
+    .await?;
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].note, long);
+    assert_eq!(model.prompts.lock().unwrap().len(), 1);
     Ok(())
 }
 
@@ -402,7 +344,6 @@ async fn a_section_finding_of_any_length_is_read_not_refused() -> Result<()> {
         json!({}),
         &candidate(),
         None,
-        LengthRule::Fail,
     )
     .await?;
     let notes: Vec<_> = issues.iter().map(|issue| issue.note.clone()).collect();
@@ -441,7 +382,6 @@ async fn a_review_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_f
         json!({"authoringContext":{"goal":"Read query plans.","sources":sources}}),
         &lesson,
         None,
-        LengthRule::Fail,
     )
     .await?;
 
@@ -503,12 +443,11 @@ fn the_schema_asks_for_a_verdict_on_exactly_the_asked_ids_and_not_at_all_when_no
 }
 
 #[tokio::test]
-async fn an_answer_that_leaves_an_id_out_is_corrected_and_the_verdict_given_before_is_kept(
-) -> Result<()> {
+async fn an_answer_that_leaves_an_id_out_is_corrected_by_a_complete_one() -> Result<()> {
     let asked = [asked(1, 0), asked(2, 0)];
     let model = model(vec![
         json!({"openFindings":[verdict_entry(1, "resolved", "")],"issues":[],"blockChecks":fixture_checks(vec![check(0)])}),
-        json!({"openFindings":[verdict_entry(2, "present", " compiler is rustc. ")],"issues":[],"blockChecks":[]}),
+        json!({"openFindings":[verdict_entry(1, "resolved", ""), verdict_entry(2, "present", " compiler is rustc. ")],"issues":[],"blockChecks":fixture_checks(vec![check(0)])}),
     ]);
     let judged = super::review(
         &model,
@@ -520,7 +459,6 @@ async fn an_answer_that_leaves_an_id_out_is_corrected_and_the_verdict_given_befo
             asked: Some(&asked),
         },
         None,
-        LengthRule::Fail,
     )
     .await?;
     assert_eq!(judged.verdicts.len(), 2);
@@ -528,13 +466,9 @@ async fn an_answer_that_leaves_an_id_out_is_corrected_and_the_verdict_given_befo
     assert!(!judged.verdicts[0].present);
     assert!(judged.verdicts[1].present);
     assert_eq!(judged.verdicts[1].quote, "compiler is rustc.");
-    let retry = sent(&model, 1);
-    assert_eq!(
-        retry["reviewResponseProblems"],
-        json!(["reviewer/2 needs one verdict."])
-    );
-    assert_eq!(retry["acceptedVerdicts"].as_array().unwrap().len(), 1);
-    assert_eq!(retry["acceptedVerdicts"][0]["id"], "reviewer/1");
+    let prompts = model.prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 2);
+    assert!(prompts[1].contains("reviewer/2 needs one verdict."));
     Ok(())
 }
 
@@ -542,7 +476,7 @@ async fn an_answer_that_leaves_an_id_out_is_corrected_and_the_verdict_given_befo
 async fn a_second_verdict_for_one_id_is_refused() {
     let asked = [asked(1, 0)];
     let twice = |checks| json!({"openFindings":[verdict_entry(1, "resolved", ""), verdict_entry(1, "present", "compiler is rustc.")],"issues":[],"blockChecks":fixture_checks(checks)});
-    let model = model(vec![twice(vec![check(0)]), twice(vec![])]);
+    let model = model(vec![twice(vec![check(0)]), twice(vec![check(0)])]);
     let error = super::review(
         &model,
         "Review instructional quality.",
@@ -553,7 +487,6 @@ async fn a_second_verdict_for_one_id_is_refused() {
             asked: Some(&asked),
         },
         None,
-        LengthRule::Fail,
     )
     .await
     .unwrap_err();
@@ -576,7 +509,6 @@ async fn a_verdict_on_an_id_nobody_asked_about_is_refused() {
             asked: Some(&asked),
         },
         None,
-        LengthRule::Fail,
     )
     .await
     .unwrap_err();
@@ -598,7 +530,6 @@ async fn the_scope_limits_the_sections_that_need_a_check() -> Result<()> {
             ..Scope::default()
         },
         None,
-        LengthRule::Fail,
     )
     .await?;
     assert_eq!(sent(&model, 0)["sectionIndicesToReview"], json!([1]));
@@ -616,7 +547,6 @@ async fn a_first_review_sends_no_finding_keys() -> Result<()> {
         json!({}),
         &candidate(),
         None,
-        LengthRule::Fail,
     )
     .await?;
     let prompt = sent(&model, 0);
@@ -627,11 +557,11 @@ async fn a_first_review_sends_no_finding_keys() -> Result<()> {
 }
 
 #[tokio::test]
-async fn a_correction_asks_only_for_the_verdicts_still_wanted() -> Result<()> {
+async fn a_correction_asks_for_every_verdict_again() -> Result<()> {
     let asked = [asked(1, 0), asked(2, 0)];
     let model = model(vec![
         json!({"openFindings":[verdict_entry(1, "resolved", "")],"issues":[],"blockChecks":fixture_checks(vec![check(0)])}),
-        json!({"openFindings":[verdict_entry(2, "resolved", "")],"issues":[],"blockChecks":[]}),
+        json!({"openFindings":[verdict_entry(1, "resolved", ""), verdict_entry(2, "resolved", "")],"issues":[],"blockChecks":fixture_checks(vec![check(0)])}),
     ]);
     super::review(
         &model,
@@ -643,7 +573,6 @@ async fn a_correction_asks_only_for_the_verdicts_still_wanted() -> Result<()> {
             asked: Some(&asked),
         },
         None,
-        LengthRule::Fail,
     )
     .await?;
     let ids = |call: usize| -> Vec<Value> {
@@ -655,7 +584,7 @@ async fn a_correction_asks_only_for_the_verdicts_still_wanted() -> Result<()> {
             .collect()
     };
     assert_eq!(ids(0), [json!("reviewer/1"), json!("reviewer/2")]);
-    assert_eq!(ids(1), [json!("reviewer/2")]);
+    assert_eq!(ids(1), [json!("reviewer/1"), json!("reviewer/2")]);
     Ok(())
 }
 
@@ -671,7 +600,7 @@ async fn a_defect_named_with_a_wrong_passage(passage: &str) -> (Judged, Scripted
     right["passageId"] = json!(passage);
     let model = model(vec![
         json!({"issues":["A general issue."],"blockChecks":fixture_checks(vec![check(0),wrong,check(2)])}),
-        json!({"issues":[],"blockChecks":fixture_checks(vec![right])}),
+        json!({"issues":["A general issue."],"blockChecks":fixture_checks(vec![check(0),right,check(2)])}),
     ]);
     let judged = super::review(
         &model,
@@ -680,7 +609,6 @@ async fn a_defect_named_with_a_wrong_passage(passage: &str) -> (Judged, Scripted
         &candidate(),
         Scope::default(),
         None,
-        LengthRule::Fail,
     )
     .await
     .unwrap();
@@ -704,18 +632,6 @@ async fn a_report_takes_its_passage_from_the_check_that_was_accepted() {
     assert_eq!(
         section[0].passage.as_deref(),
         shown["blocks"][1]["bodyPassages"][0]["text"].as_str()
-    );
-}
-
-#[tokio::test]
-async fn the_correction_lists_each_retained_issue_by_part_and_note() {
-    let (_, model) = a_defect_named_with_a_wrong_passage("section-1-passage-0").await;
-    assert_eq!(
-        sent(&model, 1)["retainedIssues"],
-        json!([
-            {"part":null,"note":"A general issue."},
-            {"part":"Section 2","note":"Section 2 (candidate blocks-1): The claimed membrane behavior contradicts the stated boundary condition."}
-        ])
     );
 }
 
@@ -819,7 +735,6 @@ async fn a_report_carries_the_open_finding_it_continues_and_none_for_an_id_nobod
             asked: Some(&asked),
         },
         None,
-        LengthRule::Fail,
     )
     .await?;
     let continues: Vec<_> = judged
@@ -870,7 +785,6 @@ async fn judge(asked: &[Asked], replies: Vec<Value>) -> (Vec<Verdict>, ScriptedM
             asked: Some(asked),
         },
         None,
-        LengthRule::Fail,
     )
     .await
     .unwrap();
@@ -882,27 +796,29 @@ fn answer_of(verdicts: Vec<Value>, checks: Vec<Value>) -> Value {
 }
 
 #[tokio::test]
-async fn a_present_verdict_whose_quote_is_not_in_its_part_is_asked_for_again_once_then_counts_as_resolved(
-) {
+async fn a_present_verdict_whose_quote_is_not_in_its_part_is_asked_for_again_once_then_fails() {
     let asked = [asked_at(1, FindingSite::Section(0))];
     let bad = quoted(1, "present", "Gamma is absent here.");
-    let (verdicts, model) = judge(
-        &asked,
-        vec![
-            answer_of(vec![bad.clone()], vec![check(0)]),
-            answer_of(vec![bad], vec![]),
-        ],
+    let model = model(vec![
+        answer_of(vec![bad.clone()], vec![check(0)]),
+        answer_of(vec![bad], vec![check(0)]),
+    ]);
+    let error = super::review(
+        &model,
+        "Review instructional quality.",
+        json!({}),
+        &two_parts(),
+        Scope {
+            sections: Some(&[0]),
+            asked: Some(&asked),
+        },
+        None,
     )
-    .await;
-    assert_eq!(verdicts.len(), 1);
-    assert!(!verdicts[0].present);
-    let prompts = model.prompts.lock().unwrap().len();
-    assert_eq!(prompts, 2);
-    let retry = sent(&model, 1);
-    assert!(retry["reviewResponseProblems"][0]
-        .as_str()
-        .unwrap()
-        .contains("reviewer/1"));
+    .await
+    .unwrap_err();
+    assert!(matches!(error, AppError::ModelAnswerUnusable(_)));
+    assert!(error.to_string().contains("reviewer/1"));
+    assert_eq!(model.prompts.lock().unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -931,7 +847,10 @@ async fn a_finding_on_a_part_the_review_was_not_sent_to_is_judged_on_that_parts_
                 vec![quoted(1, "present", "Alpha holds the line.")],
                 vec![check(0)],
             ),
-            answer_of(vec![quoted(1, "present", "Beta follows alpha.")], vec![]),
+            answer_of(
+                vec![quoted(1, "present", "Beta follows alpha.")],
+                vec![check(0)],
+            ),
         ],
     )
     .await;
@@ -1021,7 +940,6 @@ async fn a_verdict_quote_is_stored_as_the_lesson_bytes() {
             asked: Some(&asked),
         },
         None,
-        LengthRule::Fail,
     )
     .await
     .unwrap();
@@ -1038,7 +956,6 @@ async fn a_teaching_review_that_stays_unreadable_fails_the_lesson() {
         json!({}),
         &candidate(),
         None,
-        LengthRule::Fail,
     )
     .await;
     assert!(matches!(result, Err(AppError::ModelAnswerUnusable(_))));
@@ -1055,7 +972,8 @@ async fn a_blank_issue_left_after_the_correction_is_dropped_in_an_outline_review
     blank["hasDefect"] = json!(true);
     blank["finding"] = json!("  ");
     let first = json!({"issues":["  "],"blockChecks":fixture_checks(vec![check(0),blank.clone(),check(2)])});
-    let second = json!({"issues":[" ",long],"blockChecks":fixture_checks(vec![blank])});
+    let second =
+        json!({"issues":[" ",long],"blockChecks":fixture_checks(vec![check(0),blank,check(2)])});
     let model = model(vec![first, second]);
     let issues = review(
         &model,
@@ -1063,7 +981,6 @@ async fn a_blank_issue_left_after_the_correction_is_dropped_in_an_outline_review
         json!({}),
         &candidate(),
         None,
-        LengthRule::Fail,
     )
     .await
     .unwrap();

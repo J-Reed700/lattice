@@ -8,23 +8,20 @@
 //! the protected ones, which stay as they are.
 
 use crate::lessons::content_verification::{confine, unit_fields, Protected};
-use crate::review_findings::{FindingId, FindingSite, ReviewFinding};
+use crate::review_findings::{leaves, FindingId, FindingSite, ReviewFinding};
 use lattice_core::shared::error::Result;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-/// The lesson's sections in unit order: blocks, then questions.
-fn sections(lesson: &Value) -> Vec<(&'static str, usize)> {
+/// How many units the lesson has: blocks, then questions.
+fn units_in(lesson: &Value) -> usize {
     let count = |name: &str| {
         lesson
             .get(name)
             .and_then(Value::as_array)
             .map_or(0, Vec::len)
     };
-    (0..count("blocks"))
-        .map(|index| ("blocks", index))
-        .chain((0..count("questions")).map(|index| ("questions", index)))
-        .collect()
+    count("blocks") + count("questions")
 }
 
 fn blocks_in(lesson: &Value) -> usize {
@@ -36,18 +33,12 @@ fn blocks_in(lesson: &Value) -> usize {
 
 /// The unit index of a part of the lesson candidate.
 fn unit_of(candidate: &Value, site: FindingSite) -> Option<usize> {
-    let blocks = blocks_in(candidate);
-    match site {
-        FindingSite::Section(section) => Some(section),
-        FindingSite::Question(question) => Some(blocks + question),
-        FindingSite::Lesson => None,
-    }
+    site.unit(blocks_in(candidate))
 }
 
 /// The section at unit `unit` in `candidate`.
 fn section_at(candidate: &Value, unit: usize) -> Option<&Value> {
-    let (field, index) = sections(candidate).get(unit).copied()?;
-    candidate.pointer(&format!("/{field}/{index}"))
+    candidate.pointer(&FindingSite::in_candidate(candidate, unit).pointer()?)
 }
 
 /// The protected items for a specific unit.
@@ -123,31 +114,6 @@ pub(super) fn on_protected(
         }
     }
     held
-}
-
-/// Every string field of `value` with its path, as claims name fields.
-fn leaves<'v>(value: &'v Value, path: String, out: &mut Vec<(String, &'v str)>) {
-    let child = |key: &str| {
-        if path.is_empty() {
-            key.to_owned()
-        } else {
-            format!("{path}/{key}")
-        }
-    };
-    match value {
-        Value::String(text) => out.push((path, text)),
-        Value::Object(fields) => {
-            for (key, value) in fields {
-                leaves(value, child(key), out);
-            }
-        }
-        Value::Array(items) => {
-            for (index, value) in items.iter().enumerate() {
-                leaves(value, child(&index.to_string()), out);
-            }
-        }
-        _ => {}
-    }
 }
 
 /// Every sentence of the unit's teaching text that no protected sentence
@@ -235,8 +201,7 @@ fn targets_of(
     sent: &[&ReviewFinding],
     protected: &[Protected],
 ) -> Vec<Protected> {
-    let mut fields = Vec::new();
-    leaves(section, String::new(), &mut fields);
+    let fields = leaves(section);
     let mut targets = Vec::new();
     for finding in sent {
         let open: &[Protected] = if finding.adds() { &[] } else { protected };
@@ -286,8 +251,10 @@ pub(super) fn confine_review(
 ) -> Result<Value> {
     let mut lesson = repaired.clone();
     let blocks = blocks_in(previous);
-    for (unit, (field, index)) in sections(previous).into_iter().enumerate() {
-        let pointer = format!("/{field}/{index}");
+    for unit in 0..units_in(previous) {
+        let Some(pointer) = FindingSite::of_unit(unit, blocks).pointer() else {
+            continue;
+        };
         let (Some(before), Some(after)) =
             (previous.pointer(&pointer), lesson.pointer_mut(&pointer))
         else {

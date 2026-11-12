@@ -477,18 +477,23 @@ async fn a_finding_the_user_already_holds_is_not_repaired_again() -> Result<()> 
 }
 
 #[tokio::test]
-async fn outlines_and_assessments_still_fail_closed_after_one_repair() {
+async fn outlines_and_assessments_still_fail_closed_once_their_repairs_are_spent() {
+    let still = || {
+        judged(
+            Some("Section 1 still prints the result as the string \"4\" instead of the number."),
+            &[present("reviewer/1", NUMBER_FOUR)],
+        )
+    };
     let model = model(vec![
         review(Some(
             "The example shows \"result\": \"4\" although the code returns the number 4.",
         )),
         retitle("Corrected example"),
-        judged(
-            Some("Section 1 still prints the result as the string \"4\" instead of the number."),
-            &[present("reviewer/1", NUMBER_FOUR)],
-        ),
+        still(),
+        retitle_again("Corrected again"),
+        still(),
     ]);
-    assert!(review_and_repair(
+    let result = review_and_repair(
         &model,
         LESSON_REPAIR_SYSTEM,
         &context(),
@@ -496,8 +501,11 @@ async fn outlines_and_assessments_still_fail_closed_after_one_repair() {
         lesson(EXCERPT).to_string(),
         4000,
     )
-    .await
-    .is_err());
+    .await;
+    assert!(
+        result.is_err_and(|error| error.to_string().contains("still found an issue")),
+        "the material was published or failed for another reason"
+    );
 }
 
 /// A schema that has a `modules` property does not make material an outline:
@@ -3948,8 +3956,7 @@ fn an_answer_of_plans_and_no_change_declines_each_finding_and_changes_nothing() 
     let settled = subject.settle_repair(
         &previous,
         &[first.clone(), second.clone()],
-        true,
-        Ok(Repaired::Declined { plans }),
+        Repaired::Declined { plans },
     )?;
 
     assert!(matches!(settled, Settled::Unchanged));
@@ -3994,11 +4001,10 @@ fn a_finding_whose_edit_overlapped_another_findings_is_not_charged_and_is_told_t
     let settled = subject.settle_repair(
         &previous,
         &[first.clone(), second.clone()],
-        true,
-        Ok(Repaired::Patch {
+        Repaired::Patch {
             patch,
             plans: std::collections::BTreeMap::new(),
-        }),
+        },
     )?;
 
     assert!(matches!(settled, Settled::Changed(_)));
