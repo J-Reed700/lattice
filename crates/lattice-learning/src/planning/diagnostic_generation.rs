@@ -1,4 +1,5 @@
 //! Short performance tasks with private keys and evidence-bound placement advice.
+use crate::lessons::same_text;
 use crate::reference_collection::{item_tokens, ReferenceCollection};
 use crate::{dto::*, plan_dto::*};
 use lattice_core::{
@@ -219,8 +220,6 @@ pub async fn evaluate(
     struct Response {
         findings: Vec<LearningDiagnosticFindingDto>,
     }
-    // The answer asked for again is the last.
-    let answers = std::sync::atomic::AtomicUsize::new(0);
     let call = ContractCall::of::<DiagnosticEvaluation>(&PromptInput {
         system: EVALUATE_SYSTEM.to_owned(),
         prompt: prompt.clone(),
@@ -236,9 +235,7 @@ pub async fn evaluate(
         None,
         |raw| {
             let mut result: Response = crate::generation::parse_json(raw)?;
-            if answers.fetch_add(1, std::sync::atomic::Ordering::Relaxed) > 0 {
-                unquoted_are_uncertain(responses, &mut result.findings);
-            }
+            unquoted_are_uncertain(responses, &mut result.findings);
             validate_findings(attempt, responses, &result.findings)?;
             Ok(result.findings)
         },
@@ -256,6 +253,12 @@ fn findings_schema(count: usize) -> serde_json::Value {
 /// What one finding takes: its feedback, its quote and its fields.
 const FINDING_OUTPUT_TOKENS: usize = 600;
 
+/// Whether `quote` is in `response`, apart from spacing, typography and
+/// letter case.
+fn quote_stands(response: &str, quote: &str) -> bool {
+    same_text::find(response, quote).is_some()
+}
+
 /// A finding whose quote is not in its response loses the quote, and with it
 /// any signal but uncertain.
 fn unquoted_are_uncertain(
@@ -269,7 +272,7 @@ fn unquoted_are_uncertain(
         let quoted = !quote.trim().is_empty()
             && responses
                 .iter()
-                .any(|r| r.prompt_id == finding.prompt_id && r.response.contains(quote.as_str()));
+                .any(|r| r.prompt_id == finding.prompt_id && quote_stands(&r.response, quote));
         if !quoted {
             finding.evidence_quote = None;
             finding.signal = LearningDiagnosticSignal::Uncertain;
@@ -294,7 +297,8 @@ pub fn validate_findings(
                 || f.feedback.trim().is_empty()
                 || match &f.evidence_quote {
                     Some(q) => {
-                        q.trim().is_empty() || !response.is_some_and(|r| r.response.contains(q))
+                        q.trim().is_empty()
+                            || !response.is_some_and(|r| quote_stands(&r.response, q))
                     }
                     None => f.signal != LearningDiagnosticSignal::Uncertain,
                 }
