@@ -56,7 +56,10 @@ impl Stopping {
 
     async fn respond(&self, prompt: &str) -> Result<String> {
         if prompt.starts_with("Repair verified lesson defects.") {
-            self.requests.lock().unwrap().push(super::context(prompt));
+            self.requests
+                .lock()
+                .unwrap()
+                .push(fixture_task(prompt).unwrap());
             return Err(AppError::Network(
                 "the run ends at the first repair request".into(),
             ));
@@ -110,7 +113,7 @@ impl Corrections {
 
     async fn respond(&self, prompt: &str) -> Result<String> {
         if prompt.starts_with("Extract lesson claims.") {
-            let data = super::context(prompt);
+            let data = fixture_task(prompt).unwrap();
             let passage = data["units"][0]["passages"]
                 .as_array()
                 .unwrap()
@@ -130,13 +133,13 @@ impl Corrections {
         }
         if prompt.starts_with("Repair verified lesson defects.") {
             let mut asked = self.requests.lock().unwrap();
-            asked.push(super::context(prompt));
+            asked.push(fixture_task(prompt).unwrap());
             if asked.len() > 1 {
                 return Err(AppError::Network(
                     "the run ends at the second repair request".into(),
                 ));
             }
-            let body = super::context(prompt)["candidate"]["blocks"][0]["body"]
+            let body = fixture_task(prompt).unwrap()["candidate"]["blocks"][0]["body"]
                 .as_str()
                 .unwrap()
                 .replace(&format!("{BAD} "), "");

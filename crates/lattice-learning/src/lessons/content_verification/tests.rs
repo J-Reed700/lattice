@@ -63,8 +63,12 @@ impl Model {
         }
     }
 }
-fn context(prompt: &str) -> Value {
-    serde_json::from_str(prompt.rsplit("\n\n").next().unwrap()).unwrap()
+/// The task a fixture prompt carries, as JSON: its last paragraph before the correction an ask-again adds.
+pub(crate) fn fixture_task(prompt: &str) -> Option<Value> {
+    let task = prompt
+        .split_once(&format!("\n\n{CORRECTION_LEAD}"))
+        .map_or(prompt, |(task, _)| task);
+    serde_json::from_str(task.rsplit("\n\n").next()?).ok()
 }
 /// A typed request as the prompts the scripted fixtures answer: one per claim
 /// of a batched check, otherwise one. A generation request reads as its system
@@ -507,7 +511,7 @@ fn verdict_last(reply: &str, ids: &[String]) -> String {
 /// are, and an item judge that finds nothing in any item.
 pub(crate) fn question_review_response(prompt: &str) -> Option<String> {
     if prompt.starts_with("Solve quiz questions independently") {
-        let answers: Vec<Value> = context(prompt)["questions"]
+        let answers: Vec<Value> = fixture_task(prompt).unwrap()["questions"]
             .as_array()
             .into_iter()
             .flatten()
@@ -516,7 +520,7 @@ pub(crate) fn question_review_response(prompt: &str) -> Option<String> {
         return Some(json!({"answers":answers}).to_string());
     }
     if prompt.starts_with("Review quiz questions one at a time") {
-        let checks: Vec<Value> = context(prompt)["items"]
+        let checks: Vec<Value> = fixture_task(prompt).unwrap()["items"]
             .as_array()
             .into_iter()
             .flatten()
@@ -538,8 +542,7 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
     if prompt.starts_with("You sort statements extracted from a lesson") {
         // The fixtures' statements are the ones the strict check was written
         // for.
-        let statements: serde_json::Map<String, Value> =
-            serde_json::from_str(prompt.rsplit("\n\n").next().unwrap()).unwrap();
+        let statements: serde_json::Map<String, Value> = fixture_task(prompt).unwrap();
         return Some(
             Value::Object(
                 statements
@@ -560,7 +563,7 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
         return Some(json!({"edits":[]}).to_string());
     }
     if prompt.starts_with("Extract lesson claims.") {
-        let data = context(prompt);
+        let data = fixture_task(prompt).unwrap();
         let units = data["units"].as_array().unwrap();
         return Some(inventory::fixture_response(units.iter().map(|v| {
             let passages = v["passages"].as_array().unwrap();
@@ -572,7 +575,7 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
         }).collect::<Vec<_>>()).to_string());
     }
     if prompt.starts_with("Audit claim coverage independently.") {
-        let data = context(prompt);
+        let data = fixture_task(prompt).unwrap();
         let mut checks = Vec::new();
         for unit in data["units"].as_array().unwrap() {
             let ids: Vec<_> = unit["claims"]
@@ -624,11 +627,11 @@ impl Model {
                 .lock()
                 .unwrap()
                 .push(serde_json::from_value(
-                    context(prompt)["requestedIndices"].clone(),
+                    fixture_task(prompt).unwrap()["requestedIndices"].clone(),
                 )?);
         }
         if prompt.starts_with("Audit claim coverage independently.") {
-            let batch: Vec<usize> = context(prompt)["units"]
+            let batch: Vec<usize> = fixture_task(prompt).unwrap()["units"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -644,7 +647,7 @@ impl Model {
         }
         if let Some(index) = self.coverage_gap_in {
             if prompt.starts_with("Audit inventory fidelity.") {
-                let data = context(prompt);
+                let data = fixture_task(prompt).unwrap();
                 if data["targetPassage"]["id"]
                     .as_str()
                     .is_some_and(|id| id.starts_with(&format!("unit-{index}-")))
@@ -655,7 +658,7 @@ impl Model {
             }
             if prompt.starts_with("Audit claim coverage independently.") {
                 let mut response: Value = serde_json::from_str(&fixture_response(prompt).unwrap())?;
-                for unit in context(prompt)["units"].as_array().unwrap() {
+                for unit in fixture_task(prompt).unwrap()["units"].as_array().unwrap() {
                     if unit["index"].as_u64() == Some(index as u64) {
                         let id = unit["passages"][0]["id"].as_str().unwrap();
                         let entry = response["passages"]
@@ -682,7 +685,7 @@ impl Model {
             ));
         }
         if prompt.starts_with("Review instructional quality.") {
-            let data = context(prompt);
+            let data = fixture_task(prompt).unwrap();
             let asked = data["sectionIndicesToReview"].as_array().cloned();
             let checks = data["candidate"]["blocks"].as_array().unwrap().iter().enumerate().filter(|(index,_)|asked.as_ref().is_none_or(|asked|asked.contains(&json!(index)))).map(|(index,block)|json!({"index":index,"passageId":block["bodyPassages"][0]["id"],"finding":"The corrected field-name statement agrees with the concrete example.","hasDefect":false})).collect::<Vec<_>>();
             let mut answer =
@@ -743,7 +746,7 @@ fn candidate(statement: &str) -> Value {
     json!({"blocks":[{"kind":"explanation","title":"CSV header names","body":format!("{} ", statement).repeat(24),"rubric":[]}],"questions":[]})
 }
 fn repair_body(prompt: &str, after: Value) -> String {
-    json!({"edits":[{"path":"/blocks/0/body","before":context(prompt)["candidate"]["blocks"][0]["body"],"after":after}]}).to_string()
+    json!({"edits":[{"path":"/blocks/0/body","before":fixture_task(prompt).unwrap()["candidate"]["blocks"][0]["body"],"after":after}]}).to_string()
 }
 /// The checks of a job whose earlier pass measured what an answer costs:
 /// its first request is not set aside to measure one (course evidence index
@@ -1262,7 +1265,7 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
                         "fixture server failure during the second section repair".into(),
                     ));
                 }
-                let mut patch = self::context(prompt)["candidate"].clone();
+                let mut patch = fixture_task(prompt).unwrap()["candidate"].clone();
                 for block in patch["blocks"].as_array_mut().unwrap() {
                     let good = if block["title"].as_str().unwrap().contains("second") {
                         format!("Note that {FIXED}")
@@ -1421,7 +1424,7 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
     impl GradualRepair {
         async fn respond(&self, prompt: &str) -> Result<String> {
             if prompt.starts_with("Extract lesson claims.") {
-                let data = self::context(prompt);
+                let data = fixture_task(prompt).unwrap();
                 let unit = &data["units"][0];
                 let passage = unit["passages"]
                     .as_array()
@@ -1449,12 +1452,12 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
                     self.sections.lock().unwrap().push(task.to_owned());
                     return Ok(asked.last().unwrap()["candidate"].to_string());
                 }
-                asked.push(self::context(prompt));
+                asked.push(fixture_task(prompt).unwrap());
                 assert!(asked.len() <= 2, "A claim's last attempt is no request");
                 assert!(!prompt.contains("lastAttempt"));
                 // The correction drops the first sentence and leaves the
                 // second as it was.
-                let body = self::context(prompt)["candidate"]["blocks"][0]["body"]
+                let body = fixture_task(prompt).unwrap()["candidate"]["blocks"][0]["body"]
                     .as_str()
                     .unwrap()
                     .replace(&format!("{BAD} "), "");

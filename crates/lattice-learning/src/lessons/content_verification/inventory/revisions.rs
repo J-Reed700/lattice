@@ -319,7 +319,7 @@ mod revision_tests {
     use super::*;
 
     const REVISION_KEYS: Protocol = protocol!("inventory-revision", 2);
-    use crate::content_verification::tests::{fixture_completion, fixture_prompts};
+    use crate::content_verification::tests::{fixture_completion, fixture_prompts, fixture_task};
     use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     use std::sync::Mutex;
 
@@ -576,7 +576,7 @@ mod revision_tests {
                 "a rewritten sentence is extracted, not revised from its saved statement: {}",
                 prompt.chars().take(60).collect::<String>()
             );
-            let shown: Value = serde_json::from_str(prompt.rsplit("\n\n").next().unwrap())?;
+            let shown: Value = fixture_task(prompt).expect("a JSON task");
             let unit = &shown["units"][0];
             // The request carries the rewritten sentence alone as a passage,
             // and the two that stand as context.
@@ -630,7 +630,7 @@ mod revision_tests {
             let [_, (prompt, _)] = asked.as_slice() else {
                 panic!("one request for each edit: {asked:?}");
             };
-            let shown: Value = serde_json::from_str(prompt.rsplit("\n\n").next().unwrap())?;
+            let shown: Value = fixture_task(prompt).expect("a JSON task");
             // The first edit's sentence was read once, after the first edit;
             // the second edit's request reads only what it wrote.
             assert_eq!(shown_texts(&shown["units"][0]["passages"]), [third]);
@@ -670,7 +670,7 @@ mod revision_tests {
                 );
             }
             assert!(prompt.starts_with("Extract lesson claims."));
-            let shown: Value = serde_json::from_str(prompt.rsplit("\n\n").next().unwrap())?;
+            let shown: Value = fixture_task(prompt).expect("a JSON task");
             let unit = &shown["units"][0];
             assert_eq!(shown_texts(&unit["passages"]), [BRAVO]);
             assert_eq!(texts(&unit["context"]), [ALPHA, CHARLIE]);
@@ -811,7 +811,7 @@ mod revision_tests {
             let [(prompt, schema)] = asked.as_slice() else {
                 panic!("one request: {asked:?}");
             };
-            let shown: Value = serde_json::from_str(prompt.rsplit("\n\n").next().unwrap())?;
+            let shown: Value = fixture_task(prompt).expect("a JSON task");
             let unit = &shown["units"][0];
             assert_eq!(shown_texts(&unit["passages"]), ["Second reason is new."]);
             assert_eq!(unit["passages"][0]["field"], "/explanation");

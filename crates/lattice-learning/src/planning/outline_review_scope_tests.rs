@@ -1,6 +1,7 @@
 //! Incremental review receipts under optional citations. Carried over from
 //! the deleted research tests; the review protocol itself is rebuilt next.
 use super::outline_reference_tests::*;
+use crate::lessons::content_verification::tests::fixture_task;
 use crate::{
     dto::*,
     lessons::course_generation_tests::{outline, repair_answer, request},
@@ -66,8 +67,8 @@ async fn single_module_recheck_reuses_completed_checks_and_keeps_whole_course_co
             .unwrap();
         assert!(last_link < first_review);
     }
-    let full = payload(&prompts[1]);
-    let recheck = payload(&prompts[3]);
+    let full = fixture_task(&prompts[1]).unwrap();
+    let recheck = fixture_task(&prompts[3]).unwrap();
     assert_eq!(full["reviewScope"]["mode"], "full");
     // The reviewer never sees citation fields anywhere in the payload (source
     // passages are still supplied, so the text itself may appear there).
@@ -260,11 +261,11 @@ async fn interrupted_incremental_review_resumes_from_last_completed_receipt_with
     let prompts = llm.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 1);
     assert_eq!(
-        payload(&prompts[0])["reviewScope"]["moduleIndices"],
+        fixture_task(&prompts[0]).unwrap()["reviewScope"]["moduleIndices"],
         json!([1])
     );
     assert_eq!(
-        payload(&prompts[0])["reviewScope"]["mode"],
+        fixture_task(&prompts[0]).unwrap()["reviewScope"]["mode"],
         "changed_modules"
     );
     Ok(())
@@ -321,9 +322,9 @@ async fn incremental_review_anchors_cross_module_effects_to_the_module_that_must
     // Draft, full review, repair, incremental review, one repair: no other
     // module is rewritten for a problem anchored to module 1.
     assert_eq!(prompts.len(), 5);
-    let recheck = payload(&prompts[3]);
+    let recheck = fixture_task(&prompts[3]).unwrap();
     assert_eq!(recheck["openFindings"][0]["id"], "finding-1");
     assert_eq!(recheck["openFindings"][0]["attempts"], 1);
-    assert_eq!(payload(&prompts[4])["moduleIndex"], 1);
+    assert_eq!(fixture_task(&prompts[4]).unwrap()["moduleIndex"], 1);
     Ok(())
 }

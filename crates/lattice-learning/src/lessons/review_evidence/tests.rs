@@ -1,4 +1,5 @@
 use super::*;
+use crate::content_verification::tests::fixture_task;
 
 /// A reply listing `decisions` in order, each under its issue ID.
 fn reply(decisions: &[(&str, Value)]) -> Value {
@@ -62,7 +63,7 @@ async fn every_matching_reference_is_offered_while_the_window_has_room() -> Resu
     )
     .await?;
     let prompts = model.prompts.lock().unwrap();
-    let request: Value = serde_json::from_str(prompts[0].rsplit("\n\n").next().unwrap())?;
+    let request: Value = fixture_task(&prompts[0]).expect("a JSON task");
     // Not the former eight: every passage that matches and fits.
     assert_eq!(request["referencePassages"].as_array().unwrap().len(), 30);
     Ok(())
@@ -518,7 +519,7 @@ async fn each_candidate_part_is_offered_with_the_label_the_user_sees() -> Result
     .await?;
     let prompts = model.prompts.lock().unwrap();
     assert!(prompts[0].contains("partId"));
-    let request: Value = serde_json::from_str(prompts[0].rsplit("\n\n").next().unwrap())?;
+    let request: Value = fixture_task(&prompts[0]).expect("a JSON task");
     let parts: Vec<_> = request["candidateParts"]
         .as_array()
         .unwrap()

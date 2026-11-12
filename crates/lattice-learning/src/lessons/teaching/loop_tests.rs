@@ -2,6 +2,7 @@
 //! settle waiting for the user.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
+use crate::content_verification::tests::fixture_task;
 use crate::lesson_drafts;
 use crate::lessons::course_generation_tests::{
     present, review_reply, verdict, ScriptedModel, Windowed,
@@ -427,7 +428,7 @@ async fn a_repair_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_f
         .iter()
         .find(|prompt| prompt.contains("issuesToFix"))
         .unwrap();
-    let sent: Value = serde_json::from_str(repair.rsplit("\n\n").next().unwrap())?;
+    let sent: Value = fixture_task(repair).expect("a JSON task");
     let kept: Vec<_> = sent["originalRequirements"]["sources"]
         .as_array()
         .unwrap()
@@ -894,7 +895,7 @@ async fn an_outline_review_sends_every_issue_it_reports_to_the_repair() -> Resul
         .iter()
         .find(|prompt| prompt.contains("issuesToFix"))
         .unwrap();
-    let request: Value = serde_json::from_str(sent.rsplit("\n\n").next().unwrap())?;
+    let request: Value = fixture_task(sent).expect("a JSON task");
     let notes: Vec<&str> = request["issuesToFix"]
         .as_array()
         .unwrap()
@@ -930,9 +931,7 @@ impl LLMPort for Answering {
         if asks_for_repair(request) {
             let sent = crate::content_verification::tests::fixture_prompts(request)
                 .iter()
-                .filter_map(|prompt| {
-                    serde_json::from_str::<Value>(prompt.rsplit("\n\n").next()?).ok()
-                })
+                .filter_map(|prompt| fixture_task(prompt))
                 .find(|sent| sent.get("issuesToFix").is_some())
                 .unwrap();
             self.requests.lock().unwrap().push(sent.clone());
@@ -1697,7 +1696,7 @@ fn repair_requests(model: &ScriptedModel) -> Vec<Value> {
         .lock()
         .unwrap()
         .iter()
-        .filter_map(|prompt| serde_json::from_str::<Value>(prompt.rsplit("\n\n").next()?).ok())
+        .filter_map(|prompt| fixture_task(prompt))
         .filter(|request| request.get("issuesToFix").is_some())
         .collect()
 }
@@ -3106,10 +3105,7 @@ fn evidence_answer(sent: &Value, schema: &Value) -> String {
 impl LLMPort for ByRequest {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let texts = crate::content_verification::tests::fixture_prompts(request);
-        let Some(sent) = texts
-            .iter()
-            .find_map(|text| serde_json::from_str::<Value>(text.rsplit("\n\n").next()?).ok())
-        else {
+        let Some(sent) = texts.iter().find_map(|text| fixture_task(text)) else {
             return Ok(crate::content_verification::tests::fixture_completion(
                 request,
                 Vec::new(),
@@ -3782,7 +3778,7 @@ async fn the_reference_check_is_asked_only_about_the_reviewers_findings() {
         .filter(|prompt| prompt.starts_with(REFERENCE_CHECK))
         .collect();
     assert_eq!(asked.len(), 1, "{prompts:?}");
-    let sent: Value = serde_json::from_str(asked[0].rsplit("\n\n").next().unwrap()).unwrap();
+    let sent: Value = fixture_task(asked[0]).unwrap();
     let proposals = sent["proposals"].as_array().unwrap();
     assert_eq!(proposals.len(), 1, "{proposals:?}");
     assert!(proposals[0]["proposal"].as_str().unwrap().contains(NOTE));
