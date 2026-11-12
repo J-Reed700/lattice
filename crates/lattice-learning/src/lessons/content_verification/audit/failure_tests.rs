@@ -219,7 +219,12 @@ async fn an_outage_defers_and_the_next_audit_resumes_with_the_unaudited_claims()
     assert_eq!(outcome.summary().batches_done, 1);
     let run = harness.runs.only();
     assert_eq!(run.state, RunState::Stopped);
-    assert_eq!(run.last_failure(), Some("NETWORK_ERROR"));
+    assert_eq!(
+        run.batches
+            .last()
+            .and_then(|batch| batch.error_code.as_deref()),
+        Some("NETWORK_ERROR")
+    );
     // Claims are packed in lesson order, and "Water is everywhere." (c)
     // opens the unit.
     assert_eq!(
@@ -276,15 +281,22 @@ async fn a_fault_is_final_at_once() {
 }
 
 #[tokio::test]
-async fn a_rejection_from_the_verifier_is_final_at_once() {
+async fn a_rejection_from_the_verifier_leaves_each_statement_with_its_reason() {
     let harness = Harness::new(vec![verified("a", "Water boils at 100 °C at sea level.")]);
     let rejecting = ScriptedVerifier::new(BIG, |_, _| {
         Err(AppError::ModelRejected("400 invalid_request_error".into()))
     });
 
-    let outcome = harness.audit(&rejecting, None).await;
+    let outcome = harness.audit(&rejecting, None).await.unwrap();
 
-    assert!(matches!(outcome, Err(AppError::ModelRejected(_))));
+    assert!(!outcome.publishable());
+    assert_eq!(outcome.summary().disputes, 1);
+    let check = harness.store.verifier_checks("a").pop().unwrap();
+    assert!(
+        check.reason.contains("400 invalid_request_error"),
+        "{}",
+        check.reason
+    );
     assert_eq!(rejecting.calls(), 1);
 }
 

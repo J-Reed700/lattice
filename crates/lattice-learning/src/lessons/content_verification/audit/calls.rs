@@ -184,7 +184,7 @@ pub(super) async fn ask(
         Ok(output) => Ok(Answer {
             response: CompletionResponse {
                 text: output.text,
-                finish_reason: output.finish_reason.into(),
+                finish_reason: output.finish_reason,
                 input_tokens: output.input_tokens,
                 output_tokens: output.output_tokens,
                 ..Default::default()

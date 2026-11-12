@@ -510,25 +510,20 @@ impl<'a> Judge<'a> {
                     judged.verdicts = verdicts;
                     Ok(judged)
                 }
-                Err(error)
-                    if ErrorClass::of(&error) == ErrorClass::DoesNotFit && items.len() > 1 =>
-                {
-                    self.halves(items, judged).await
-                }
-                Err(error)
-                    if matches!(error, AppError::ModelAnswerUnusable(_))
-                        || ErrorClass::of(&error) == ErrorClass::DoesNotFit =>
-                {
-                    judged.verdicts = vec![
-                        Judged::could_not_verify(format!(
-                            "The Verifier's answer could not be used: {}.",
-                            refusal(&error)
-                        ));
-                        items.len()
-                    ];
-                    Ok(judged)
-                }
-                Err(error) => Err(error),
+                Err(error) => match ErrorClass::of(&error) {
+                    ErrorClass::DoesNotFit if items.len() > 1 => self.halves(items, judged).await,
+                    ErrorClass::Unusable | ErrorClass::DoesNotFit => {
+                        judged.verdicts = vec![
+                            Judged::could_not_verify(format!(
+                                "The Verifier's answer could not be used: {}.",
+                                refusal(&error)
+                            ));
+                            items.len()
+                        ];
+                        Ok(judged)
+                    }
+                    ErrorClass::Outage | ErrorClass::Fault => Err(error),
+                },
             }
         })
     }
