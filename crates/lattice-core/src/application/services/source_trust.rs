@@ -175,7 +175,7 @@ pub(crate) async fn judge<T>(
             ErrorClass::DoesNotFit => Ok(CallOutcome::TooLarge {
                 cause: refusal(&error),
             }),
-            ErrorClass::Outage | ErrorClass::Fault => Err(error),
+            ErrorClass::Outage | ErrorClass::Unavailable | ErrorClass::Fault => Err(error),
         },
     }
 }

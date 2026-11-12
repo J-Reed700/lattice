@@ -635,7 +635,7 @@ async fn while_busy<T, F: std::future::Future<Output = Result<T>>>(
 ) -> Result<T> {
     loop {
         match call().await {
-            Err(error) if ErrorClass::of(&error) == ErrorClass::Outage => {
+            Err(error) if ErrorClass::of(&error).is_temporary() => {
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
             other => return other,

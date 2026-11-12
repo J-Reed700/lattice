@@ -244,7 +244,7 @@ impl<T> Judgment<T> {
                 warn!(reason = %refusal(&error), "Judge call unusable, leaving this statement unjudged");
                 Self::Unusable
             }
-            ErrorClass::Outage | ErrorClass::Fault => Self::Failed(error),
+            ErrorClass::Outage | ErrorClass::Unavailable | ErrorClass::Fault => Self::Failed(error),
         }
     }
 }

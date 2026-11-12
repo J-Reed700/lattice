@@ -250,7 +250,7 @@ impl TracedWeb {
             Ok(output) => {
                 json!({"method":method,"key":key,"input":input,"ok":true,"output":output})
             }
-            Err(error) if ErrorClass::of(error) == ErrorClass::Outage => {
+            Err(error) if ErrorClass::of(error).is_temporary() => {
                 self.lock().transient += 1;
                 return result;
             }
