@@ -646,7 +646,7 @@ async fn a_question_claim_is_reprofiled_under_its_question() -> Result<()> {
             .await
             .unwrap();
     }
-    let reviews = ClaimReviewRepository::new(course.pool.clone());
+    let reviews = ClaimReviewRepository::new(course.database.clone());
     let revision = reviews
         .set_lesson_review(
             &lesson_id,

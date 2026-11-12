@@ -78,7 +78,7 @@ pub(super) async fn unrecoverable_reason(
     const OMITTED: &[(&str, &str)] = &[
         ("hidden practical evaluators", "SELECT COUNT(*) FROM learning_practical_files f JOIN learning_practical_activities a ON a.id=f.activity_id WHERE a.program_id=? AND f.role IN ('check','solution')"),
     ];
-    for (label, sql) in OMITTED {
+    for &(label, sql) in OMITTED {
         if sqlx::query_scalar::<_, i64>(sql)
             .bind(program_id)
             .fetch_one(&mut *connection)

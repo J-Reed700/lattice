@@ -237,7 +237,7 @@ impl LearningCurriculumRepository {
     /// Admits one single-lesson job per lesson, in the order given, inside the
     /// caller's transaction. `operation_of` names each lesson's operation.
     async fn admit_lessons(
-        tx: &mut sqlx::SqliteConnection,
+        tx: &mut WriteTx,
         program_id: &str,
         lessons: &[String],
         expected_revision: i64,
