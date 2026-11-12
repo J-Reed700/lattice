@@ -2782,8 +2782,9 @@ async fn a_sentence_a_claim_the_machine_ended_stood_on_is_published_with_that_cl
     Ok(())
 }
 
+/// A question citing the lesson's source, as the lesson schema requires.
 fn quiz(kind: &str, explanation: &str) -> Value {
-    json!({"kind":kind,"prompt":"Which?","options":["One","Two","Three","Four"],"correctIndex":0,"explanation":explanation})
+    json!({"kind":kind,"prompt":"Which?","options":["One","Two","Three","Four"],"correctIndex":0,"explanation":explanation,"sourceIndex":0,"quote":GOOD})
 }
 
 /// A section whose whole body is one sentence, so a cut that takes the
@@ -2792,11 +2793,12 @@ fn bare(index: usize, sentence: &str) -> Value {
     json!({"kind":"explanation","title":format!("Section {index}"),"body":sentence,"rubric":[]})
 }
 
-/// A lesson of two sections that state what the sources do, and `questions`.
+/// A lesson of two cited sections that state what the sources do, and
+/// `questions`.
 fn with_questions(questions: Vec<Value>) -> Value {
     json!({"blocks":[
-        {"kind":"explanation","title":"Section 0","body":section(GOOD),"rubric":[]},
-        {"kind":"explanation","title":"Section 1","body":section(GOOD),"rubric":[]}
+        {"kind":"explanation","title":"Section 0","body":section(GOOD),"rubric":[],"sourceIndex":0,"quote":GOOD},
+        {"kind":"explanation","title":"Section 1","body":section(GOOD),"rubric":[],"sourceIndex":0,"quote":GOOD}
     ],"questions":questions})
 }
 
