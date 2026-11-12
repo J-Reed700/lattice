@@ -31,27 +31,11 @@ fn answer(decisions: Vec<Value>) -> String {
 }
 
 fn first(raw: &str, count: usize) -> Result<Vec<ReviewFinding>> {
-    accepted(
-        raw,
-        &issues(count),
-        Beside::NONE,
-        &evidence(),
-        false,
-        &mut HashMap::new(),
-    )
-    .map(|checked| checked.established)
+    accepted(raw, &issues(count), Beside::NONE, &evidence()).map(|checked| checked.established)
 }
 
 fn last(raw: &str, count: usize) -> Result<Vec<ReviewFinding>> {
-    accepted(
-        raw,
-        &issues(count),
-        Beside::NONE,
-        &evidence(),
-        true,
-        &mut HashMap::new(),
-    )
-    .map(|checked| checked.established)
+    accepted(raw, &issues(count), Beside::NONE, &evidence()).map(|checked| checked.established)
 }
 
 #[test]

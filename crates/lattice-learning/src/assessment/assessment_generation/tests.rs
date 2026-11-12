@@ -141,7 +141,7 @@ async fn passages_twice_as_dense_as_estimated_are_packed_until_the_request_fits(
 
     let sent = batch.send(&llm, &collection).await?;
 
-    let Some((_, _, carried)) = sent else {
+    let Some((_, carried)) = sent else {
         panic!("expected the request to be sent with the passages that fit");
     };
     assert_eq!(llm.refusals.load(Ordering::SeqCst), 0);

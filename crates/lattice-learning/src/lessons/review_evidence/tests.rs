@@ -973,12 +973,11 @@ fn a_proposal_asked_for_a_second_time_is_handed_back_once() -> Result<()> {
         recorded: &[],
     };
     let raw = gate_decision("actionable", "check-1");
-    let mut kept = HashMap::new();
-    let first = accepted(&raw, &issues, beside, &evidence, false, &mut kept)?;
+    let first = accepted(&raw, &issues, beside, &evidence)?;
     assert_eq!(first.left.len(), 1);
     // The second answer breaks the protocol for this issue; the first one's ruling stands.
     let broken = gate_decision("actionable", "check-9");
-    let second = accepted(&broken, &issues, beside, &evidence, true, &mut kept)?;
+    let second = accepted(&broken, &issues, beside, &evidence)?;
     assert_eq!(second.left, first.left);
     Ok(())
 }

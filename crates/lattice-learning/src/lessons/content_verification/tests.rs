@@ -833,7 +833,7 @@ mod edit_question_tests;
 mod claim_position_tests;
 
 #[path = "acceptance_switch_tests.rs"]
-mod acceptance_switch_tests;
+pub(in crate::lessons::content_verification) mod acceptance_switch_tests;
 
 #[path = "user_hint_tests.rs"]
 mod user_hint_tests;
@@ -910,8 +910,8 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
         let references = ReferenceCollection::lexical(&sources)?;
         let world = world_of(&references, Citations::default());
         let first = read_one(Reading::Page, &model, &world, GOOD).await?;
-        assert_eq!(first.outcome, Outcome::Stands);
-        assert!(first.finding.publishable());
+        assert_eq!(first.outcome(), Outcome::Stands);
+        assert!(first.finding().publishable());
         assert_eq!(*model.judge_calls.lock().unwrap(), 1);
 
         let mut unrelated = source();
@@ -920,8 +920,8 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
         let references = ReferenceCollection::lexical(&sources)?;
         let world = world_of(&references, Citations::default());
         let expanded = read_one(Reading::Page, &model, &world, GOOD).await?;
-        assert!(expanded.reused);
-        assert!(expanded.finding.publishable());
+        assert!(expanded.reused());
+        assert!(expanded.finding().publishable());
         assert_eq!(*model.judge_calls.lock().unwrap(), 1, "Adding an unrelated source should still retrieve current evidence without repeating an identical judgment");
 
         let mut changed = source();
@@ -931,10 +931,10 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
         let references = ReferenceCollection::lexical(&sources)?;
         let world = world_of(&references, Citations::default());
         let failed = read_one(Reading::Page, &model, &world, GOOD).await?;
-        assert_eq!(failed.outcome, Outcome::Unjudged);
-        assert_eq!(failed.finding.verdict, ClaimVerdict::Unverified);
+        assert_eq!(failed.outcome(), Outcome::Unjudged);
+        assert_eq!(failed.finding().verdict, ClaimVerdict::Unverified);
         assert!(
-            !failed.finding.publishable(),
+            !failed.finding().publishable(),
             "New evidence cannot inherit an earlier approval"
         );
         assert_eq!(*model.judge_calls.lock().unwrap(), 2);
@@ -947,7 +947,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
         );
 
         let edited = read_one(Reading::Page, &model, &world, BAD).await?;
-        assert_eq!(edited.finding.verdict, ClaimVerdict::Contradicted);
+        assert_eq!(edited.finding().verdict, ClaimVerdict::Contradicted);
         assert_eq!(*model.judge_calls.lock().unwrap(), 4);
         Ok(())
     })
@@ -1008,7 +1008,7 @@ async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> R
             )
             .await?;
             assert_eq!(*model.judge_calls.lock().unwrap(), 2);
-            assert_eq!(first[1].finding.verdict, ClaimVerdict::Contradicted);
+            assert_eq!(first[1].finding().verdict, ClaimVerdict::Contradicted);
             // The second section is repaired.
             let repaired = read_all(
                 Reading::Page,
@@ -1829,7 +1829,7 @@ pub(crate) fn attest(lesson_id: &str, lesson: &PreparedLearningLesson) -> Lesson
         })
         .collect();
     LessonVerificationReport {
-        policy: POLICY.into(),
+        policy: POLICY.to_string(),
         lesson_id: lesson_id.into(),
         content_sha256: content_hash(lesson).unwrap(),
         checker_model: "persistence-fixture".into(),
@@ -2512,7 +2512,7 @@ async fn evidence_view_hides_assessment_claims_and_marks_source_changes() -> Res
     let source = &program.sources[0];
     let saved = repo.verification_sources(&program.summary.id).await?;
     let report = json!({"policy":POLICY,"lesson_id":lesson.id,"content_sha256":"fixture","checked_at":1,"checker_model":"fixture","sources":[{"id":source.id,"sha256":sha256_hex(&saved[0].excerpt)}],"findings":[{"unit":0,"quote":"PRIVATE QUOTE","statement":"PRIVATE ANSWER KEY","verdict":"supported","reason":"PRIVATE RATIONALE","evidence":[],"supporting_quote":null}],"coverage":[],"coverage_audit":[],"executions":[],"issues":[],"retrieval_mode":"hybrid","embedding_model":null,"unexecuted_languages":[]});
-    sqlx::query("INSERT INTO learning_lesson_verifications(lesson_id,program_id,policy,content_sha256,report_json,checked_at) VALUES(?,?,?,?,?,?)").bind(&lesson.id).bind(&program.summary.id).bind(POLICY).bind("fixture").bind(report.to_string()).bind(1_i64).execute(&pool).await.map_err(|e|AppError::Database(e.to_string()))?;
+    sqlx::query("INSERT INTO learning_lesson_verifications(lesson_id,program_id,policy,content_sha256,report_json,checked_at) VALUES(?,?,?,?,?,?)").bind(&lesson.id).bind(&program.summary.id).bind(POLICY.as_str()).bind("fixture").bind(report.to_string()).bind(1_i64).execute(&pool).await.map_err(|e|AppError::Database(e.to_string()))?;
     let view = crate::lesson_evidence::get(
         &Database::from(pool.clone()),
         &program.summary.id,

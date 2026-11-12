@@ -414,7 +414,7 @@ async fn an_unusable_check_leaves_the_claim_with_its_cause_and_an_outage_defers_
         outage: false,
     })
     .await?;
-    assert_eq!(results[0].outcome, Outcome::Unjudged);
+    assert_eq!(results[0].outcome(), Outcome::Unjudged);
     assert_eq!(results[0].finding().verdict, ClaimVerdict::Unverified);
     assert_eq!(results[0].finding().statement, CLAIM);
     assert!(
@@ -644,7 +644,7 @@ async fn a_page_counted_past_the_window_is_sent_again_with_fewer_passages() -> R
     // The finding names only the passages the judge read.
     assert!(!results[0].finding().evidence.is_empty());
     assert!(results[0]
-        .finding
+        .finding()
         .evidence
         .iter()
         .all(|passage| saw(&checks[0], &passage.text)));

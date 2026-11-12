@@ -709,7 +709,7 @@ async fn a_second_reading_restores_its_own_receipt_and_never_one_an_earlier_comp
             verdict: ClaimVerdict::Supported,
             reason: "The earlier comparison's.".into(),
             supporting_quote: Some(STATED.into()),
-            interpretation_policy: None,
+            parts: Vec::new(),
             shown: None,
         })?;
         lesson_drafts::record_checkpoint(&earlier_key, written).await?;

@@ -129,6 +129,7 @@ pub(super) fn item_schema(
 }
 
 /// An item the checks refused: what it said, and every fault, in words its rewrite is told.
+#[derive(Debug)]
 pub(super) struct Unbuilt {
     pub(super) prompt: String,
     pub(super) options: Vec<String>,

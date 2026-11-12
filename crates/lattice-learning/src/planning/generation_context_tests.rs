@@ -340,8 +340,7 @@ impl Course {
         let held = crate::content_verification::HeldForReview {
             lesson_id: second.to_string(),
             claims: 1,
-            stopped: false,
-            unsupported: None,
+            stop: None,
         };
         self.jobs
             .publish_prepared(
