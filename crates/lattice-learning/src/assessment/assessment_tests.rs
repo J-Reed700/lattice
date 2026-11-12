@@ -276,6 +276,28 @@ fn candidate_checks_refuse_leaks_length_bias_and_bad_blanks() {
     assert!(engine::validate_candidate(&cloze).is_err());
 }
 
+#[test]
+fn a_long_answer_restating_the_prompts_setting_is_kept() {
+    let mut item = candidate(
+        LearningItemFormat::ShortAnswer,
+        &[],
+        LearningAssessmentKey::Text(text_key(&["it waits when no timeout is given"], None)),
+    );
+    item.prompt = "What does the planner do when no timeout is given?".into();
+    assert!(engine::validate_candidate(&item).is_ok());
+}
+
+#[test]
+fn a_choice_question_whose_other_option_no_is_in_the_prompt_is_kept() {
+    let mut item = candidate(
+        LearningItemFormat::SingleChoice,
+        &["Yes", "No", "Maybe", "It depends"],
+        LearningAssessmentKey::Choice(0),
+    );
+    item.prompt = "A form field accepts yes or no only. Is the field optional?".into();
+    assert!(engine::validate_candidate(&item).is_ok());
+}
+
 fn rubric() -> Vec<LearningRubricCriterion> {
     vec![
         LearningRubricCriterion {

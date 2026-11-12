@@ -1,15 +1,33 @@
 //! Generate questions from bounded passages and require an attributable excerpt.
 use super::study_dto::*;
-use crate::generation::long_enough_quote;
+use crate::assessment_generation::text_call;
+use crate::generation::validate_excerpt_quote;
 use crate::lessons::same_text::fold;
 use crate::model_call;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::application::services::model_contract::{Contract, ContractId, PromptInput};
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// The writer of flashcards for verified claims, and what a call is told about it.
+struct ConversationCards;
+
+impl Contract for ConversationCards {
+    const ID: ContractId = ContractId::new("recall-conversation-cards");
+    type Input = PromptInput;
+}
+
+/// The writer of study questions from passages, and what a call is told about it.
+struct StudyDeck;
+
+impl Contract for StudyDeck {
+    const ID: ContractId = ContractId::new("recall-study-deck");
+    type Input = PromptInput;
+}
 
 #[derive(Deserialize)]
 struct GeneratedDeck {
@@ -68,7 +86,7 @@ pub(super) fn parse_cards(
     let checked: Vec<Result<StudyCardDto>> = parsed.cards.into_iter().enumerate().map(|(i, item)| {
         let invalid = || AppError::InvalidInput(format!("Question {} could not be tied to a complete source passage. Try generating again with a narrower focus.", i+1));
         let source = sources.get(item.source_index).ok_or_else(invalid)?;
-        if !long_enough_quote(&item.quote) || !fold(&source.excerpt).contains(&fold(&item.quote)) {
+        if validate_excerpt_quote(&item.quote, &source.excerpt).is_err() {
             return Err(invalid());
         }
         if item.question.trim().is_empty() || item.explanation.trim().is_empty() || item.topic.trim().is_empty() {
@@ -220,7 +238,6 @@ fn conversation_request(system: &str, batch: &[VerifiedConversationClaim]) -> Gr
         prompt,
         schema,
         batch.len() * CLAIM_CARD_OUTPUT_TOKENS + 600,
-        "low",
     );
     request.output_fills_window = true;
     request
@@ -306,8 +323,10 @@ async fn conversation_cards<'a>(
             |request| {
                 let count = carried.load(Ordering::Relaxed);
                 async move {
+                    let call = text_call::<ConversationCards>(&request)?;
                     let completion = model_call::send(
                         llm,
+                        &call,
                         request,
                         None,
                         model_call::TooLarge::Window(
@@ -419,7 +438,6 @@ pub(super) async fn generate(
             deck_prompt(request, passages),
             schema,
             output_tokens,
-            "low",
         );
         call.output_fills_window = true;
         call
@@ -438,8 +456,10 @@ pub(super) async fn generate(
         |call| {
             let carried = selected(built.load(Ordering::Relaxed));
             async move {
+                let contract = text_call::<StudyDeck>(&call)?;
                 let raw = model_call::send(
                     llm,
+                    &contract,
                     call,
                     None,
                     model_call::TooLarge::Window("These passages and questions do not fit"),

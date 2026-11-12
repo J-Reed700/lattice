@@ -313,8 +313,8 @@ async fn a_batch_cut_off_asks_for_fewer_and_a_single_item_cut_off_is_refused() -
         repair: None,
     };
     assert!(batch(2).author(&CutOff, &collection).await?.is_none());
-    let single = batch(1).author(&CutOff, &collection).await?.unwrap();
-    assert!(matches!(single.as_slice(), [Err(reason)] if reason.contains("cut off")));
+    let single = batch(1).author(&CutOff, &collection).await;
+    assert!(matches!(single, Err(AppError::ModelAnswerUnusable(_))));
     Ok(())
 }
 
@@ -384,7 +384,7 @@ fn the_item_schemas_hold_no_text_length_cap() {
             .into_iter()
             .filter(|rule| {
                 !rule.starts_with("/properties/rubric/")
-                    && rule.as_str() != "/properties/quote/minLength = 12"
+                    && rule.as_str() != "/properties/quote/minLength = 25"
             })
             .collect();
         assert!(rules.is_empty(), "{format:?}: {rules:?}");
@@ -492,8 +492,8 @@ async fn the_writer_is_told_what_the_learner_sees_and_never_to_cite_passages() -
     let system = writer_instructions().await?;
     for sentence in [
         "The learner sees each question with its options, explanation and rationales beside the lesson, never these passages as excerpts or the sources behind them.",
-        "never mention a passage, an excerpt, a tutorial, a document or a source",
-        "never give what one says or does not say as the reason an answer is right or wrong",
+        "mentions a passage, an excerpt, a tutorial, a document or a source",
+        "never give what a passage says or does not say as the reason an answer is right or wrong",
     ] {
         assert!(system.contains(sentence), "missing \"{sentence}\" in {system}");
     }
@@ -514,7 +514,7 @@ async fn the_writer_is_told_an_explanation_is_about_its_own_question() -> Result
 #[tokio::test]
 async fn the_writer_is_told_a_prompt_states_every_value_its_answer_depends_on() -> Result<()> {
     let system = writer_instructions().await?;
-    let sentence = "A prompt states every value its answer depends on, so it can be answered from the prompt and the lesson alone.";
+    let sentence = "the question depends on a value its prompt never gives";
     assert!(
         system.contains(sentence),
         "missing \"{sentence}\" in {system}"
@@ -538,7 +538,7 @@ async fn the_bank_writer_names_no_subjects_values() -> Result<()> {
         "{rules}"
     );
     assert!(
-        rules.contains("depends on, so it can be answered from the prompt and the lesson alone"),
+        rules.contains("the question depends on a value its prompt never gives"),
         "{rules}"
     );
     Ok(())
@@ -547,11 +547,11 @@ async fn the_bank_writer_names_no_subjects_values() -> Result<()> {
 #[test]
 fn the_writer_is_told_options_are_shuffled_so_they_are_named_by_their_words() {
     assert!(
-        SYSTEM.contains("shuffled order"),
+        system().contains("shuffled order"),
         "SYSTEM must say options are shown in a shuffled order"
     );
     assert!(
-        SYSTEM.contains("never by its position, number or letter"),
+        system().contains("names an option by its position, number or letter"),
         "SYSTEM must forbid naming an option by position, number or letter"
     );
 }
@@ -559,11 +559,11 @@ fn the_writer_is_told_options_are_shuffled_so_they_are_named_by_their_words() {
 #[test]
 fn the_instructions_say_what_do_not_repeat_requires() {
     assert!(
-        SYSTEM.contains("doNotRepeat"),
+        system().contains("doNotRepeat"),
         "SYSTEM never names doNotRepeat"
     );
     assert!(
-        SYSTEM.contains("never asks one of them again"),
+        system().contains("never asks one of them again"),
         "SYSTEM never says a new item does not ask one of its questions again"
     );
 }
@@ -604,6 +604,253 @@ fn do_not_repeat_holds_every_existing_prompt_in_full() {
 
 #[test]
 fn the_quiz_bank_writer_is_asked_for_choices_alike_in_form() {
-    assert!(SYSTEM.contains("Write all the choices of a question alike in form: close in length and detail, the same grammatical shape and opening, none alone hedged or absolute, none alone carrying a reason or an example, and none repeating the question's distinctive words, so that the right one cannot be told from the others without knowing the material."));
-    assert!(!SYSTEM.contains("distractors of similar length"));
+    assert!(system().contains("Write all the choices of a question alike in form: close in length and detail, the same grammatical shape and opening, none alone hedged or absolute, none alone carrying a reason or an example, and none repeating the question's distinctive words, so that the right one cannot be told from the others without knowing the material."));
+    assert!(!system().contains("distractors of similar length"));
+}
+
+const STAMPS: &str =
+    "A stamp goes into the box that matches its colour, and a torn stamp goes into the repair tray.";
+const STAMP_QUOTE: &str = "goes into the box that matches its colour";
+const TRAY: &str = "The repair tray";
+const LONG_TRAY: &str =
+    "The repair tray, where every torn stamp is set aside before anything else happens to it";
+const SORTED: &str = "A torn blue stamp arrives at the desk. Which place takes it first?";
+const SORTED_AGAIN: &str =
+    "A torn red stamp arrives at the desk. Which place takes it first, and why?";
+const GAP: &str = "The question depends on a value it never gives.";
+
+fn stamp_item(prompt: &str, right: &str) -> Value {
+    json!({
+        "prompt": prompt,
+        "options": [right, "The green box", "The red box", "The blue box"],
+        "distractorRationales": ["", "A green box takes green stamps.", "The red box takes red stamps.", "The blue box takes blue stamps."],
+        "answerIndex": 0,
+        "explanation": "A torn stamp is set aside whatever its colour.",
+        "blockIndex": 0,
+        "quote": STAMP_QUOTE,
+        "difficulty": 3
+    })
+}
+
+/// Writes from a queue, solves by the repair tray, and flags the prompt `flag`.
+struct Rewriter {
+    writes: Mutex<std::collections::VecDeque<Value>>,
+    requests: Mutex<Vec<Value>>,
+    flag: &'static str,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Rewriter {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let (system, user) = crate::lessons::structured_call::task_messages(request);
+        let context: Value = serde_json::from_str(user).unwrap_or(Value::Null);
+        let reply = if system.starts_with("Write quiz questions") {
+            self.requests.lock().unwrap().push(context);
+            self.writes
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| json!({"items": []}))
+        } else if system.starts_with("Solve quiz questions") {
+            let answers: Vec<Value> = context["questions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|question| {
+                    let right = question["options"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .position(|o| o.as_str().is_some_and(|o| o.starts_with(TRAY)));
+                    json!({"index": question["index"], "reason": "Torn stamps are set aside.", "correctIndices": right.into_iter().collect::<Vec<_>>(), "answer": "", "blankAnswers": [], "matches": [], "orderedValues": []})
+                })
+                .collect();
+            json!({"answers": answers})
+        } else {
+            let checks: Vec<Value> = context["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|item| {
+                    let flagged = item["prompt"] == self.flag;
+                    json!({"id": item["id"], "hasDefect": flagged, "finding": if flagged { GAP } else { "" }, "repeats": []})
+                })
+                .collect();
+            json!({"checks": checks})
+        };
+        Ok(CompletionResponse::from_text(reply.to_string()))
+    }
+    fn model_name(&self) -> &str {
+        "rewriter"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+fn rewriter(writes: Vec<Value>, flag: &'static str) -> Rewriter {
+    Rewriter {
+        writes: Mutex::new(writes.into()),
+        requests: Mutex::new(Vec::new()),
+        flag,
+    }
+}
+
+fn stamp_need() -> AuthoringNeed {
+    AuthoringNeed {
+        requirement: LearningBlueprintRequirement {
+            outcome_id: uuid::Uuid::new_v4().to_string(),
+            format: LearningItemFormat::SingleChoice,
+            count: 1,
+            difficulty_min: 2,
+            difficulty_max: 3,
+        },
+        outcome_title: "Sorting stamps".into(),
+        outcome_description: "Say where a stamp goes by its colour and condition.".into(),
+        lesson_id: Some("lesson".into()),
+        count: 1,
+        material: vec![MaterialPassage {
+            lesson_title: "Stamps".into(),
+            title: "The boxes".into(),
+            text: STAMPS.into(),
+            source_version_ids: vec![],
+        }],
+        existing_prompts: vec![],
+    }
+}
+
+#[tokio::test]
+async fn a_quiz_item_whose_right_choice_is_much_the_longest_is_rewritten_not_dropped() -> Result<()>
+{
+    let llm = rewriter(
+        vec![
+            json!({"items": [stamp_item(SORTED, LONG_TRAY)]}),
+            json!({"items": [stamp_item(SORTED_AGAIN, TRAY)]}),
+        ],
+        "",
+    );
+    let authored = author_items(&llm, &stamp_need()).await?;
+    let requests = llm.requests.lock().unwrap();
+    let rewrites: Vec<&Value> = requests.iter().filter(|r| !r["repair"].is_null()).collect();
+    assert_eq!(rewrites.len(), 1, "rewrite requests: {}", rewrites.len());
+    assert!(rewrites[0]["repair"]["findings"]
+        .to_string()
+        .contains("longest"));
+    assert_eq!(authored.items.len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_rewrite_that_fails_the_checks_is_dropped_with_its_own_fault() -> Result<()> {
+    let llm = rewriter(
+        vec![
+            json!({"items": [stamp_item(SORTED, TRAY)]}),
+            json!({"items": [stamp_item(SORTED_AGAIN, LONG_TRAY)]}),
+        ],
+        SORTED,
+    );
+    let authored = author_items(&llm, &stamp_need()).await?;
+    assert!(authored.items.is_empty(), "{:?}", authored.items);
+    assert!(
+        authored
+            .dropped
+            .iter()
+            .any(|reason| reason.contains("longest")),
+        "dropped: {:?}",
+        authored.dropped
+    );
+    Ok(())
+}
+
+/// Answers a blind solve, and a judge whose first reply misses the item; keeps each judge request whole.
+struct Incomplete {
+    judged: Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Incomplete {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let rendered = request
+            .input
+            .iter()
+            .flat_map(|item| match item {
+                CompletionInput::Message { role, content } => vec![role.clone(), content.clone()],
+                _ => Vec::new(),
+            })
+            .collect::<Vec<_>>()
+            .join(
+                "
+",
+            );
+        let (system, _) = crate::lessons::structured_call::task_messages(request);
+        let reply = if system.starts_with("Solve quiz questions") {
+            json!({"answers": [{"index": 0, "reason": "It follows.", "correctIndices": [0], "answer": "", "blankAnswers": [], "matches": [], "orderedValues": []}]})
+        } else {
+            let mut judged = self.judged.lock().unwrap();
+            judged.push(rendered);
+            if judged.len() == 1 {
+                json!({"checks": []})
+            } else {
+                json!({"checks": [{"id": "new-0", "finding": "", "hasDefect": false, "repeats": []}]})
+            }
+        };
+        Ok(CompletionResponse::from_text(reply.to_string()))
+    }
+    fn model_name(&self) -> &str {
+        "incomplete"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn an_incomplete_item_review_is_corrected_with_why() -> Result<()> {
+    let item = crate::assessment_engine::LearningAssessmentCandidate {
+        id: uuid::Uuid::new_v4().to_string(),
+        outcome_ids: vec![uuid::Uuid::new_v4().to_string()],
+        format: LearningItemFormat::SingleChoice,
+        difficulty: 3,
+        prompt: SORTED.into(),
+        options: vec![
+            TRAY.into(),
+            "The green box".into(),
+            "The red box".into(),
+            "The blue box".into(),
+        ],
+        left: vec![],
+        source_version_ids: vec![],
+        rubric: vec![],
+        key: LearningAssessmentKey::Choice(0),
+        explanation: "A torn stamp is set aside.".into(),
+        distractor_rationales: vec![],
+    };
+    let llm = Incomplete {
+        judged: Mutex::new(Vec::new()),
+    };
+    let entries = [item_review::Entry {
+        item: &item,
+        quote: STAMP_QUOTE,
+    }];
+    let context = item_review::Context {
+        outcome: "Sorting stamps",
+        outcome_description: "Where stamps go.",
+        learner_has: &[],
+    };
+    let findings = item_review::review(&llm, &entries, &context).await?;
+    assert!(findings.iter().all(item_review::Findings::is_sound));
+    let judged = llm.judged.lock().unwrap();
+    assert_eq!(judged.len(), 2);
+    assert!(
+        judged[1].contains("That answer could not be used"),
+        "second request: {}",
+        judged[1]
+    );
+    Ok(())
 }
