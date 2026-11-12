@@ -46,8 +46,7 @@ impl Model {
             return Ok("supported\nReason: The fixture reference supports the experimental design.\nSource quote: A randomized comparison isolates the intervention.\nSource passage: passage-0".into());
         }
         if prompt.starts_with("Review instructional quality.") {
-            let context: serde_json::Value =
-                fixture_task(prompt).unwrap_or_else(|| serde_json::json!({}));
+            let context: serde_json::Value = fixture_task(prompt).expect("a JSON task");
             // Only the outline plan review numbers the modules it shows;
             // the teaching reviews keep their own response shape.
             if context.get("moduleNumbering").is_some() {
@@ -692,7 +691,7 @@ pub(crate) const LINKS_SENTINEL: &str = "{\"@links\":";
 
 fn link_reply(prompt: &str, sentinel: &str) -> String {
     let picks: serde_json::Value = serde_json::from_str(sentinel).expect("links sentinel");
-    let payload: serde_json::Value = fixture_task(prompt).unwrap_or_else(|| serde_json::json!({}));
+    let payload: serde_json::Value = fixture_task(prompt).expect("link prompt");
     let passages = payload["passages"].as_array().cloned().unwrap_or_default();
     let text_of = |id: &str| {
         passages
