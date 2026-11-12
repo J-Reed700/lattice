@@ -100,15 +100,19 @@ fn set(keys: &[&str]) -> HashSet<String> {
 
 mod store {
     use super::*;
-    use lattice_core::shared::runtime::jobs::JobFailure;
+    use lattice_core::shared::error::{AppError, ErrorClass};
 
     #[test]
     fn a_busy_store_makes_its_job_wait_rather_than_fail() {
         let busy = super::super::store::db_error("read documents")(sqlx::Error::PoolTimedOut);
-        assert!(JobFailure::is_transient(&busy));
-        assert!(JobFailure::is_outage(&busy), "a busy store is waited out");
+        assert!(matches!(busy, AppError::DatabaseBusy(_)));
+        assert_eq!(
+            ErrorClass::of(&busy),
+            ErrorClass::Outage,
+            "a busy store is waited out"
+        );
         let broken = super::super::store::db_error("read documents")(sqlx::Error::RowNotFound);
-        assert!(!JobFailure::is_transient(&broken));
+        assert_ne!(ErrorClass::of(&broken), ErrorClass::Outage);
     }
 
     #[tokio::test]
