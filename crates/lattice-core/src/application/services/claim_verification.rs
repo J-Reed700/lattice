@@ -31,6 +31,8 @@ mod bridge_tests;
 mod classes_tests;
 #[cfg(test)]
 mod field_emphasis_tests;
+#[cfg(test)]
+mod judgment_tests;
 
 pub use batch::{render_batch_evidence, LocatedClaim};
 pub use bridge::{BridgeDecision, BridgeOutcome, BridgePart, PartKind, BRIDGE_SYSTEM};
