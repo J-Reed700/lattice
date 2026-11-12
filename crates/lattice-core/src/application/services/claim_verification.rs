@@ -5,8 +5,10 @@ use crate::application::ports::llm_port::{
     ANSWER_EFFORT,
 };
 use crate::application::ports::LLMPort;
+#[cfg(any(test, feature = "test-support"))]
+use crate::application::services::model_contract::test_support::RenderAnswer;
 use crate::application::services::model_contract::{
-    answer, refusal, Contract, ContractCall, ContractId, Plain, PromptInput, Transport,
+    answer, refusal, Contract, ContractCall, ContractId, Plain, Transport,
 };
 use crate::domain::learning::acceptance::Outcome;
 use crate::domain::learning::claim_review::{CheckResult, VerdictKind};
@@ -33,6 +35,9 @@ mod classes;
 mod prompt;
 mod rooms;
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
+
 #[cfg(test)]
 mod bridge_tests;
 #[cfg(test)]
@@ -42,12 +47,16 @@ mod field_emphasis_tests;
 #[cfg(test)]
 mod judgment_tests;
 
-pub use batch::{render_batch_evidence, LocatedClaim};
-pub use bridge::{BridgeOutcome, BridgePart, PartKind, BRIDGE_SYSTEM};
+#[cfg(any(test, feature = "test-support"))]
+pub use batch::BatchReply;
+pub use batch::{
+    render_batch_evidence, BatchClaim, BatchInput, BatchPassage, ClaimBatch, LocatedClaim,
+};
+pub use bridge::{BridgeOutcome, BridgePart, ClaimParts, PartKind, PartsInput, BRIDGE_SYSTEM};
 pub use classes::{
-    ClassJudgment, ConsistencyOutcome, ConsistencyVerdict, KnowledgeOutcome, KnowledgeSample,
-    KnowledgeVerdict, CONSISTENCY_POLICY, CONSISTENCY_SYSTEM, KNOWLEDGE_CASE, KNOWLEDGE_POLICY,
-    KNOWLEDGE_SYSTEM,
+    ClassJudgment, Consistency, ConsistencyInput, ConsistencyOutcome, ConsistencyVerdict,
+    Knowledge, KnowledgeInput, KnowledgeOutcome, KnowledgeSample, KnowledgeVerdict,
+    CONSISTENCY_POLICY, CONSISTENCY_SYSTEM, KNOWLEDGE_CASE, KNOWLEDGE_POLICY, KNOWLEDGE_SYSTEM,
 };
 
 /// Judgments and the output tokens the model spent writing them, across
@@ -325,11 +334,21 @@ impl Transport for Judging<'_> {
 }
 
 /// The model call of a claim check, single or located.
-pub(crate) struct ClaimCheck;
+pub struct ClaimCheck;
+
+/// What a claim check is asked: the claim, the passages it is shown, and how the reply is laid out.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckInput {
+    pub claim: String,
+    /// The passages shown, in order; the one evidence text when the check is not located.
+    pub passages: Vec<String>,
+    pub located: bool,
+    pub reasoned: bool,
+}
 
 impl Contract for ClaimCheck {
     const ID: ContractId = ContractId::new("claim-check");
-    type Input = PromptInput;
+    type Input = CheckInput;
 }
 
 /// A reply the judge cannot use, as the correction quotes it.
@@ -508,7 +527,12 @@ impl<'a> ClaimChecker<'a> {
         let prompt = self.compose_prompt(claim, evidence, reasoned, locations.is_some(), context);
         let system = self.system_prompt(locations.is_some(), reasoned);
         let request = self.request(&system, &prompt, reasoned);
-        let call = ContractCall::of::<ClaimCheck>(&PromptInput { system, prompt })?;
+        let call = ContractCall::of::<ClaimCheck>(&CheckInput {
+            claim: claim.to_owned(),
+            passages: locations.map_or_else(|| vec![evidence.text.clone()], <[String]>::to_vec),
+            located: locations.is_some(),
+            reasoned,
+        })?;
         let judging = Judging::default();
         let outcome = answer(self.llm, &call, &judging, request, |text| {
             self.read_judgment(text, judging.logprobs(), evidence, locations)
@@ -526,25 +550,12 @@ impl<'a> ClaimChecker<'a> {
         evidence: &ClaimEvidence,
         locations: Option<&[String]>,
     ) -> Result<JudgeOutcome> {
-        let reasoned = locations.is_some() && self.policy.strict();
+        if let Some(passages) = locations.filter(|_| self.policy.strict()) {
+            return read_reasoned(text, passages);
+        }
         let strict = self.policy.strict();
         let text = without_field_emphasis(text);
-        let text = if reasoned {
-            normalize_reasoned_fields(&text).unwrap_or(text)
-        } else {
-            text
-        };
-        let verdict_of = |text: &str| {
-            if reasoned {
-                final_verdict(text)
-            } else {
-                parse_verdict_word(text)
-            }
-        };
-        let written = verdict_of(&text);
-        // First-token probabilities concern the comparison (or hidden model
-        // reasoning), not the final verdict in this protocol.
-        let logprobs = if reasoned { None } else { logprobs };
+        let written = parse_verdict_word(&text);
         let decided = logprobs
             .as_deref()
             .and_then(verdict_from_logprobs)
@@ -748,9 +759,49 @@ fn final_verdict(text: &str) -> Option<ClaimVerdict> {
     }
 }
 
+/// The outcome of a located, reasoned reply: its parse is [`CheckReply::read`],
+/// the rest looks its source line up among the `passages` shown.
+fn read_reasoned(text: &str, passages: &[String]) -> Result<JudgeOutcome> {
+    CheckReply::read(text)
+        .and_then(|reply| judge_reply(reply, passages, |_| true))
+        .map_err(unreadable)
+}
+
+/// The outcome a read reply makes: a supported or contradicted verdict needs
+/// a passage among those `permitted`, an unsupported one carries no quote.
+fn judge_reply(
+    reply: CheckReply,
+    passages: &[String],
+    permitted: impl Fn(&str) -> bool,
+) -> std::result::Result<JudgeOutcome, &'static str> {
+    let located = reply
+        .source
+        .as_deref()
+        .and_then(|source| located_passage(source, passages));
+    let quote = match reply.verdict {
+        ClaimVerdict::Supported | ClaimVerdict::Contradicted => Some(
+            located
+                .filter(|quote| permitted(quote))
+                .ok_or("the reply names no valid supporting evidence location")?,
+        ),
+        _ => None,
+    };
+    Ok(JudgeOutcome {
+        verdict: reply.verdict,
+        quote,
+        reason: Some(reply.reason),
+        confidence: None,
+        uncertain: false,
+    })
+}
+
 fn located_quote(text: &str, passages: &[String]) -> Option<String> {
-    let value = labeled_value(text, &["Source passage"])?;
-    let value = strip_wrapping_quotes(&value);
+    located_passage(&labeled_value(text, &["Source passage"])?, passages)
+}
+
+/// The passage a `Source passage:` value names among those shown.
+fn located_passage(value: &str, passages: &[String]) -> Option<String> {
+    let value = strip_wrapping_quotes(value);
     let index: usize = value
         .trim_matches(['[', ']'])
         .strip_prefix("passage-")?
@@ -916,4 +967,144 @@ fn truncate_chars(text: &str, limit: usize) -> String {
     let mut out: String = text.chars().take(limit).collect();
     out.push('…');
     out
+}
+
+/// The three labelled lines a located, reasoned claim check answers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckReply {
+    pub verdict: ClaimVerdict,
+    pub reason: String,
+    /// The `Source passage:` value as written (`passage-N` or `none`), when it has one.
+    pub source: Option<String>,
+}
+
+impl CheckReply {
+    /// The reply a located, reasoned check reads, before its passage is looked up.
+    pub fn read(text: &str) -> std::result::Result<Self, &'static str> {
+        let text = without_field_emphasis(text);
+        let text = normalize_reasoned_fields(&text).unwrap_or(text);
+        let verdict = final_verdict(&text).ok_or("the reply holds no verdict")?;
+        let reason = labeled_value(&text, &["Reason", "Explanation"])
+            .map(|reason| strip_wrapping_quotes(&reason))
+            .filter(|reason| !reason.trim().is_empty())
+            .ok_or("the reply gives no reason")?;
+        Ok(Self {
+            verdict,
+            reason,
+            source: labeled_value(&text, &["Source passage"]),
+        })
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl CheckReply {
+    /// A reply that cites the passage at `passage`, or none.
+    pub fn on(verdict: ClaimVerdict, reason: &str, passage: Option<usize>) -> Self {
+        Self {
+            verdict,
+            reason: reason.to_owned(),
+            source: Some(passage.map_or_else(|| "none".to_owned(), |at| format!("passage-{at}"))),
+        }
+    }
+
+    /// The reply's lines; the source line only when it has one.
+    pub fn render(&self) -> String {
+        let source = self
+            .source
+            .as_ref()
+            .map(|source| format!("\nSource passage: {source}"))
+            .unwrap_or_default();
+        format!(
+            "Reason: {}{source}\nVerdict: {}",
+            self.reason,
+            self.verdict.as_str()
+        )
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl RenderAnswer for ClaimCheck {
+    type Answer = CheckReply;
+
+    fn render(answer: &CheckReply) -> String {
+        answer.render()
+    }
+
+    fn read(text: &str) -> Result<CheckReply> {
+        CheckReply::read(text).map_err(unreadable)
+    }
+}
+
+#[cfg(test)]
+mod round_trips {
+    use super::*;
+    use crate::application::services::model_contract::test_support::assert_round_trip;
+
+    #[test]
+    fn a_check_reads_what_it_renders_for_every_verdict() {
+        for (verdict, passage) in [
+            (ClaimVerdict::Supported, Some(2)),
+            (ClaimVerdict::Contradicted, Some(0)),
+            (ClaimVerdict::Unsupported, None),
+        ] {
+            assert_round_trip::<ClaimCheck>(&CheckReply::on(
+                verdict,
+                "The passage says so.",
+                passage,
+            ));
+        }
+    }
+}
+
+#[cfg(test)]
+mod reply_readings {
+    use super::*;
+
+    fn passages() -> Vec<String> {
+        vec!["The mill closed in 1887.".into()]
+    }
+
+    fn refused(text: &str) -> String {
+        refusal(&read_reasoned(text, &passages()).unwrap_err())
+    }
+
+    #[test]
+    fn an_unsupported_reply_whose_source_value_is_blank_is_judged_without_a_quote() {
+        let outcome = read_reasoned(
+            "Reason: Not stated.\nSource passage: ``\nVerdict: unsupported",
+            &passages(),
+        )
+        .unwrap();
+        assert_eq!(outcome.verdict, ClaimVerdict::Unsupported);
+        assert_eq!(outcome.quote, None);
+    }
+
+    #[test]
+    fn a_reply_missing_a_line_or_its_reason_is_refused_with_the_true_cause() {
+        assert_eq!(
+            refused("Reason: Not stated.\nVerdict: unsupported"),
+            "the reply holds no verdict"
+        );
+        assert_eq!(
+            refused("Source passage: none\nVerdict: unsupported"),
+            "the reply holds no verdict"
+        );
+        assert_eq!(refused("It is fine."), "the reply holds no verdict");
+        assert_eq!(
+            refused("Reason: ``\nSource passage: none\nVerdict: unsupported"),
+            "the reply gives no reason"
+        );
+    }
+
+    #[test]
+    fn a_supported_reply_needs_a_passage_it_may_cite() {
+        let text = "Reason: Stated.\nSource passage: passage-3\nVerdict: supported";
+        assert_eq!(
+            refused(text),
+            "the reply names no valid supporting evidence location"
+        );
+        let ok = "Reason: Stated.\nSource passage: passage-0\nVerdict: supported";
+        let outcome = read_reasoned(ok, &passages()).unwrap();
+        assert_eq!(outcome.quote.as_deref(), Some("The mill closed in 1887."));
+    }
 }

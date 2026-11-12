@@ -5,11 +5,31 @@ use serde_json::json;
 use std::collections::{HashMap, HashSet};
 
 /// The model call of a batch of claim checks.
-pub(crate) struct ClaimBatch;
+pub struct ClaimBatch;
+
+/// What a batch is asked: each claim under its id, with the passages it may use.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchInput {
+    pub claims: Vec<BatchClaim>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchClaim {
+    pub id: String,
+    pub claim: String,
+    /// The bank passages this claim may cite, once each, in the order it lists them.
+    pub passages: Vec<BatchPassage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchPassage {
+    pub id: String,
+    pub text: String,
+}
 
 impl Contract for ClaimBatch {
     const ID: ContractId = ContractId::new("claim-batch");
-    type Input = PromptInput;
+    type Input = BatchInput;
 }
 
 #[derive(Clone)]
@@ -30,12 +50,14 @@ struct BatchCheck {
     response: String,
 }
 
-pub fn render_batch_evidence(claims: &[LocatedClaim]) -> (String, Vec<String>) {
+/// Each claim with the bank passages it may use, and the bank: every
+/// distinct passage once, in the order the claims first list it.
+fn evidence_bank(claims: &[LocatedClaim]) -> (BatchInput, Vec<String>) {
     let mut passages = Vec::new();
     let mut identities = HashMap::new();
     let mut targets = Vec::new();
     for (index, target) in claims.iter().enumerate() {
-        let mut permitted = Vec::new();
+        let mut permitted: Vec<BatchPassage> = Vec::new();
         for passage in &target.passages {
             let next = passages.len();
             let id = *identities.entry(passage.clone()).or_insert_with(|| {
@@ -43,14 +65,32 @@ pub fn render_batch_evidence(claims: &[LocatedClaim]) -> (String, Vec<String>) {
                 next
             });
             let id = format!("passage-{id}");
-            if !permitted.contains(&id) {
-                permitted.push(id);
+            if !permitted.iter().any(|shown| shown.id == id) {
+                permitted.push(BatchPassage {
+                    id,
+                    text: passage.clone(),
+                });
             }
         }
-        targets.push(
-            json!({"id":format!("claim-{index}"),"claim":target.claim,"evidenceIds":permitted}),
-        );
+        targets.push(BatchClaim {
+            id: format!("claim-{index}"),
+            claim: target.claim.clone(),
+            passages: permitted,
+        });
     }
+    (BatchInput { claims: targets }, passages)
+}
+
+pub fn render_batch_evidence(claims: &[LocatedClaim]) -> (String, Vec<String>) {
+    let (input, passages) = evidence_bank(claims);
+    let targets = input
+        .claims
+        .iter()
+        .map(|target| {
+            let ids = target.passages.iter().map(|p| &p.id).collect::<Vec<_>>();
+            json!({"id":target.id,"claim":target.claim,"evidenceIds":ids})
+        })
+        .collect::<Vec<_>>();
     let sources = passages
         .iter()
         .enumerate()
@@ -62,50 +102,40 @@ pub fn render_batch_evidence(claims: &[LocatedClaim]) -> (String, Vec<String>) {
     )
 }
 
-fn resolve(raw: &str, claims: &[LocatedClaim], passages: &[String]) -> Option<Vec<ClaimJudgment>> {
+type Reading = std::result::Result<CheckReply, &'static str>;
+
+/// The reply's checks, each under its id, with the reading of its response.
+fn read_checks(raw: &str) -> Option<Vec<(String, Reading)>> {
     let reply: BatchResponse = serde_json::from_str(raw).ok()?;
-    if reply.checks.len() != claims.len() {
+    Some(
+        reply
+            .checks
+            .into_iter()
+            .map(|check| {
+                let reading = CheckReply::read(&check.response);
+                (check.id, reading)
+            })
+            .collect(),
+    )
+}
+
+fn resolve(raw: &str, claims: &[LocatedClaim], passages: &[String]) -> Option<Vec<ClaimJudgment>> {
+    let checks = read_checks(raw)?;
+    if checks.len() != claims.len() {
         return None;
     }
     let mut seen = HashSet::new();
     let mut results = vec![ClaimJudgment::Unusable; claims.len()];
-    for check in reply.checks {
-        let index: usize = check.id.strip_prefix("claim-")?.parse().ok()?;
+    for (id, reading) in checks {
+        let index: usize = id.strip_prefix("claim-")?.parse().ok()?;
         let target = claims.get(index)?;
-        if check.id != format!("claim-{index}") || !seen.insert(index) {
+        if id != format!("claim-{index}") || !seen.insert(index) {
             return None;
         }
-        let response = without_field_emphasis(&check.response);
-        let response = normalize_reasoned_fields(&response).unwrap_or(response);
-        let judgment = (|| {
-            let verdict = final_verdict(&response)?;
-            let reason = labeled_value(&response, &["Reason", "Explanation"])?;
-            if reason.trim().is_empty() {
-                return None;
-            }
-            let quote = located_quote(&response, passages);
-            if matches!(
-                verdict,
-                ClaimVerdict::Supported | ClaimVerdict::Contradicted
-            ) && quote
-                .as_ref()
-                .is_none_or(|quote| !target.passages.contains(quote))
-            {
-                return None;
-            }
-            Some(ClaimJudgment::Judged(JudgeOutcome {
-                verdict,
-                reason: Some(reason),
-                quote: if verdict == ClaimVerdict::Unsupported {
-                    None
-                } else {
-                    quote
-                },
-                confidence: None,
-                uncertain: false,
-            }))
-        })()
-        .unwrap_or(ClaimJudgment::Unusable);
+        let permitted = |quote: &str| target.passages.iter().any(|shown| shown == quote);
+        let judgment = reading
+            .and_then(|reply| judge_reply(reply, passages, permitted))
+            .map_or(ClaimJudgment::Unusable, ClaimJudgment::Judged);
         *results.get_mut(index)? = judgment;
     }
     Some(results)
@@ -189,7 +219,7 @@ impl ClaimChecker<'_> {
             priority: InferencePriority::Verification,
             ..Default::default()
         };
-        let call = ContractCall::of::<ClaimBatch>(&PromptInput { system, prompt })?;
+        let call = ContractCall::of::<ClaimBatch>(&evidence_bank(claims).0)?;
         let judging = Judging::showing(on_text, on_retry);
         let outcome = answer(self.llm, &call, &judging, request, |text| {
             resolve(text, claims, &passages).ok_or_else(|| {
@@ -211,6 +241,36 @@ impl ClaimChecker<'_> {
             judgments,
             output_tokens: judging.spent(),
         })
+    }
+}
+
+/// The checks a batch reply holds, each under its claim id.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchReply {
+    pub checks: Vec<(String, CheckReply)>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl RenderAnswer for ClaimBatch {
+    type Answer = BatchReply;
+
+    fn render(answer: &BatchReply) -> String {
+        json!({"checks": answer.checks.iter().map(|(id, reply)| {
+            json!({"id": id, "response": reply.render()})
+        }).collect::<Vec<_>>()})
+        .to_string()
+    }
+
+    fn read(text: &str) -> Result<BatchReply> {
+        let checks = read_checks(text)
+            .ok_or_else(|| unreadable("the reply must hold one check per claim id"))?;
+        let checks = checks
+            .into_iter()
+            .map(|(id, reading)| reading.map(|reply| (id, reply)))
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(unreadable)?;
+        Ok(BatchReply { checks })
     }
 }
 
@@ -252,6 +312,33 @@ mod tests {
         }
     }
 
+    fn resolved(responses: [&str; 2]) -> Vec<ClaimJudgment> {
+        let claims = targets();
+        let (_, bank) = render_batch_evidence(&claims);
+        let checks: Vec<_> = responses
+            .iter()
+            .enumerate()
+            .map(|(index, response)| json!({"id": format!("claim-{index}"), "response": response}))
+            .collect();
+        resolve(&json!({"checks": checks}).to_string(), &claims, &bank).unwrap()
+    }
+
+    #[test]
+    fn an_entry_is_unusable_when_it_cites_outside_its_claims_passages_or_lacks_a_line() {
+        let own = "Reason: Stated.\nSource passage: passage-0\nVerdict: supported";
+        let other = "Reason: Stated.\nSource passage: passage-1\nVerdict: supported";
+        let results = resolved([own, other]);
+        assert!(matches!(&results[0], ClaimJudgment::Judged(_)));
+        assert!(matches!(&results[1], ClaimJudgment::Unusable));
+        let blank = "Reason: Not stated.\nSource passage: ``\nVerdict: unsupported";
+        let missing = "Reason: Not stated.\nVerdict: unsupported";
+        let results = resolved([blank, missing]);
+        assert!(
+            matches!(&results[0], ClaimJudgment::Judged(f) if f.verdict == ClaimVerdict::Unsupported && f.quote.is_none())
+        );
+        assert!(matches!(&results[1], ClaimJudgment::Unusable));
+    }
+
     #[test]
     fn a_batch_reason_past_600_characters_is_kept_whole() {
         let claims = targets();
@@ -267,5 +354,23 @@ mod tests {
         assert!(
             matches!(&result[0], ClaimJudgment::Judged(f) if f.reason.as_deref() == Some(reason.as_str()))
         );
+    }
+}
+
+#[cfg(test)]
+mod round_trips {
+    use super::*;
+    use crate::application::services::model_contract::test_support::assert_round_trip;
+
+    #[test]
+    fn a_batch_reads_what_it_renders_for_every_verdict() {
+        let reply = |verdict, source: Option<usize>| CheckReply::on(verdict, "Because.", source);
+        assert_round_trip::<ClaimBatch>(&BatchReply {
+            checks: vec![
+                ("claim-0".into(), reply(ClaimVerdict::Supported, Some(0))),
+                ("claim-1".into(), reply(ClaimVerdict::Contradicted, Some(1))),
+                ("claim-2".into(), reply(ClaimVerdict::Unsupported, None)),
+            ],
+        });
     }
 }
