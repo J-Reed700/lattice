@@ -4,7 +4,7 @@
 //! cannot be taken out; the user's
 //! verdicts are never re-litigated and are labelled examples of the checker's
 //! accuracy (§15).
-use super::acceptance_switch_tests::{claim, local_check, stood, SOURCED};
+use super::acceptance_switch_tests::{claim, local_check, open, stood, walk, SOURCED};
 use super::class_checks_tests::Classes;
 use super::*;
 use crate::dto::{
@@ -546,12 +546,14 @@ async fn a_lesson_stopped_on_checks_made_under_other_rules_completes_its_job_as_
         .review
         .unwrap();
     assert_eq!(review.state, LessonReviewState::Stopped);
-    assert_eq!(review.stop_reason.unwrap().code, "policy_changed");
+    let stop = review.stop_reason.clone().unwrap();
+    assert_eq!(stop.code, "policy_changed");
     // The worker completes the job as held, not failed.
     let held = held_for_review(&Database::from(pool.clone()), &lesson_id, &job)
         .await?
         .unwrap();
     let (result_ref, message) = review_outcome(&[held]);
+    assert_eq!(message, format!("Stopped: {}", stop.message));
     assert!(
         JobStore::new(pool.clone())
             .complete(&job, &result_ref, &message)
@@ -1127,67 +1129,87 @@ async fn human_verdicts_on_flagged_claims_are_labelled_examples_that_export_as_c
     Ok(())
 }
 
-#[test]
-fn the_tally_separates_a_claim_awaiting_research_from_a_repair() {
-    let machine = || EventProvenance {
-        actor: Actor::Machine,
-        at: 1,
-        job_id: None,
-        app_version: "fixture".into(),
-        checker_model: Some("figures-fixture".into()),
+#[tokio::test]
+async fn the_tally_counts_a_claim_as_searching_only_where_the_policy_sends_it_to_research(
+) -> Result<()> {
+    let policy = StandardPolicy::new();
+    let mut ledger = open().await?;
+    let sentence = |index: usize| figure(index);
+    let held = |index: usize| (sentence(index), sentence(index));
+    let (unchecked_quote, unchecked_statement) = held(0);
+    claim(
+        &mut ledger,
+        "unchecked",
+        (&unchecked_quote, &unchecked_statement),
+        &section(&unchecked_quote),
+        SOURCED,
+    )
+    .await?;
+    let (research_quote, research_statement) = held(1);
+    let research = claim(
+        &mut ledger,
+        "research",
+        (&research_quote, &research_statement),
+        &section(&research_quote),
+        SOURCED,
+    )
+    .await?;
+    walk(
+        &mut ledger,
+        &research,
+        Class::Sourced,
+        &[(Step::Read(Reading::Parts), Outcome::Unproven)],
+    )
+    .await?;
+    assert_eq!(
+        ledger.waits_at(&policy, &research).map(|(_, step)| step),
+        Some(Step::Research)
+    );
+    let (rewrite_quote, rewrite_statement) = held(2);
+    let rewrite = claim(
+        &mut ledger,
+        "rewrite",
+        (&rewrite_quote, &rewrite_statement),
+        &section(&rewrite_quote),
+        SOURCED,
+    )
+    .await?;
+    walk(
+        &mut ledger,
+        &rewrite,
+        Class::Sourced,
+        &[
+            (Step::Read(Reading::Parts), Outcome::Unproven),
+            (Step::Research, Outcome::FoundNothing),
+            (Step::Read(Reading::Page), Outcome::Refuted),
+        ],
+    )
+    .await?;
+    assert!(matches!(
+        ledger.waits_at(&policy, &rewrite).map(|(_, step)| step),
+        Some(Step::Rewrite(_))
+    ));
+    let outside_text = sentence(3);
+    let outside = ClaimId("outside".into());
+    let extracted = ClaimEvent::Extracted {
+        location: ClaimLocation::locate(
+            0,
+            UnitKind::Block,
+            "body",
+            &outside_text,
+            &section(&outside_text),
+        ),
+        statement: outside_text.clone(),
     };
-    let seen = vec![EvidenceSeen {
-        source_version_id: "source-1".into(),
-        start_byte: 0,
-        end_byte: SOURCE.len(),
-        text_sha256: text_sha256(SOURCE),
-    }];
-    let entry = |index: usize, failed: bool, researched: bool| {
-        let sentence = figure(index);
-        let mut entry = ClaimLedgerEntry::extracted(
-            ClaimId(format!("claim-{index}")),
-            machine(),
-            ClaimLocation::locate(index, UnitKind::Block, "body", &sentence, &sentence),
-            sentence.clone(),
-        )
-        .unwrap();
-        if failed {
-            let check = Check {
-                checker: Checker::Local {
-                    model: "figures-fixture".into(),
-                },
-                result: CheckResult::Failed {
-                    kind: VerdictKind::Unsupported,
-                },
-                reason: "The reference does not say so.".into(),
-                fingerprint: EvidenceFingerprint::of(evidence_policy(), "figures-fixture", &seen),
-                evidence: seen.clone(),
-                window_tokens: 128_000,
-            };
-            entry.append(machine(), ClaimEvent::Checked(check)).unwrap();
-        }
-        if researched {
-            entry
-                .append(
-                    machine(),
-                    ClaimEvent::Researched {
-                        queries: vec![],
-                        sources_added: vec![],
-                        passages_found: 0,
-                        round_ms_per_claim: None,
-                    },
-                )
-                .unwrap();
-        }
-        entry
+    ledger.append(&outside, extracted).await?;
+    let failed = CheckResult::Failed {
+        kind: VerdictKind::Unsupported,
     };
-    let entries = vec![
-        entry(0, false, false),
-        entry(1, true, false),
-        // Researched on this evidence: a rewrite is next.
-        entry(2, true, true),
-    ];
-    let tally = claim_ledger::claim_tally(&entries);
+    let check = local_check(failed, "The reference does not say so.", vec![]);
+    ledger.append(&outside, ClaimEvent::Checked(check)).await?;
+
+    let tally = ledger.tally();
+
     assert_eq!(
         (
             tally.unchecked,
@@ -1195,8 +1217,123 @@ fn the_tally_separates_a_claim_awaiting_research_from_a_repair() {
             tally.repairing,
             tally.waiting
         ),
-        (1, 1, 1, 0)
+        (1, 1, 2, 0)
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_no_reading_judged_is_published_not_verified_as_unchecked() -> Result<()> {
+    let policy = StandardPolicy::new();
+    let mut ledger = open().await?;
+    let text = figure(0);
+    let id = claim(
+        &mut ledger,
+        "unjudged",
+        (&text, &text),
+        &section(&text),
+        SOURCED,
+    )
+    .await?;
+    let to_cut = [
+        (Step::Read(Reading::Parts), Outcome::Unproven),
+        (Step::Research, Outcome::FoundNothing),
+        (Step::Read(Reading::Page), Outcome::Refuted),
+        (
+            Step::Rewrite(Goal::WhatThePassageStates),
+            Outcome::Rewritten,
+        ),
+        (Step::Read(Reading::Parts), Outcome::Refuted),
+    ];
+    walk(&mut ledger, &id, Class::Sourced, &to_cut).await?;
+    let could_not_judge = CheckResult::Failed {
+        kind: VerdictKind::CouldNotJudge,
+    };
+    let check = local_check(could_not_judge, "The checker gave no answer.", vec![]);
+    ledger.append(&id, ClaimEvent::Checked(check)).await?;
+
+    ledger
+        .cut(&policy, &[id.clone()], Outcome::CannotCut)
+        .await?;
+
+    let state = ledger.entry(&id).unwrap().state();
+    assert!(
+        matches!(
+            state,
+            ClaimState::Unverified {
+                reason: UnverifiedReason::Unchecked,
+                ..
+            }
+        ),
+        "{state:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_quote_in_no_field_of_its_unit_is_kept_whole() {
+    let candidate = json!({
+        "blocks": [{"kind":"explanation","title":"Rust","body":"Rust checks borrows at compile time. It is fast.","rubric":[]}],
+        "questions": [],
+    });
+    let quote = "Rust checks borrows at compile time. It has no collector.";
+
+    let location = claim_ledger::locate(
+        &candidate,
+        0,
+        quote,
+        Some("Rust checks borrows at compile time."),
+    );
+
+    assert_eq!(location.quote, quote);
+    assert_eq!(location.span, None);
+}
+
+#[tokio::test]
+async fn a_statement_supported_beside_an_example_run_is_not_reopened_as_a_changed_source(
+) -> Result<()> {
+    let mut ledger = open().await?;
+    let lesson = cell_lesson(CELL);
+    let run: execution::Observation = serde_json::from_value(json!({
+        "id": "block-0-fence-0", "unit": 0, "runtime": "python", "code_sha256": "none",
+        "code": "print(1)",
+        "result": {
+            "status": "passed", "exitCode": 0, "stdout": "1", "stderr": "",
+            "outputTruncated": false, "durationMs": 1
+        }
+    }))?;
+    let mut finding = passage_finding(CELL, ATP, true, CELL_SOURCE);
+    finding.class = Some(Classed {
+        class: Class::Sourced,
+        by: ClassifiedBy::Writer,
+    });
+    finding.evidence.splice(0..0, example_runs(&[run], 0));
+    let report = pass_report(vec![finding.clone()]);
+    let ids = identify_findings(&mut ledger, &lesson, &report).await?;
+    stood(
+        &mut ledger,
+        &ids[0],
+        Class::Sourced,
+        (Reading::Parts, finding),
+    )
+    .await?;
+    let id = ids[0].clone();
+
+    let ids = identify_findings(&mut ledger, &lesson, &report).await?;
+    ledger
+        .reopen_changed(&lesson, &HashSet::from(["source-1"]), &ids)
+        .await?;
+
+    let entry = ledger.entry(&id).unwrap();
+    assert!(
+        !entry
+            .events()
+            .iter()
+            .any(|record| matches!(record.event, ClaimEvent::Reopened { .. })),
+        "{:?}",
+        entry.state()
+    );
+    Ok(())
 }
 
 /// A biology paragraph under 600 characters, so the extractor is given it as
