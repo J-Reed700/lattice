@@ -366,3 +366,14 @@ mod capacity_tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod fence_tests {
+    use super::*;
+
+    #[test]
+    fn a_fence_opened_in_a_list_item_names_its_language() {
+        let candidate = json!({"blocks":[{"kind":"worked_example","body":"- ```rust\n  fn main() {}\n  ```\n"}]});
+        assert_eq!(unexecuted_languages(&candidate), ["rust"]);
+    }
+}

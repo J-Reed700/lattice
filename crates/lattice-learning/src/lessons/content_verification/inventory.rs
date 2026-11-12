@@ -869,7 +869,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sentence_longer_than_the_inventory_keeps_is_quoted_by_its_first_1600_characters() {
+    fn a_long_sentence_is_quoted_whole() {
         let long = format!("Alpha {}omega.", "beta gamma delta ".repeat(100));
         let content = vec![json!({"body":long})];
         let input =
@@ -882,9 +882,26 @@ mod tests {
             let unit =
                 resolve(extracted("unit-0-passage-0-sentence-0", statement), &input).unwrap();
             let quote = &unit.claims[0].quote;
-            assert_eq!(quote.chars().count(), 1_600, "{statement}");
-            assert!(long.starts_with(quote.as_str()), "{statement}");
+            assert_eq!(quote, &long, "{statement}");
             validate_inventory(&Inventory { units: vec![unit] }, &content).unwrap();
         }
+    }
+
+    #[test]
+    fn an_inventory_may_quote_a_long_contained_span() {
+        let long = format!("Alpha {}omega.", "beta gamma delta ".repeat(100));
+        let content = vec![json!({"body":long})];
+        let inventory = Inventory {
+            units: vec![UnitClaims {
+                index: 0,
+                claims: vec![Claim {
+                    quote: long.clone(),
+                    statement: "A scoped factual statement.".into(),
+                }],
+                non_factual_reason: String::new(),
+            }],
+        };
+        let validated = validate_inventory(&inventory, &content);
+        assert!(validated.is_ok(), "{:?}", validated.as_ref().err());
     }
 }
