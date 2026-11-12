@@ -34,7 +34,7 @@ const job = (overrides: Partial<LearningGenerationJob>): LearningGenerationJob =
   status: 'completed', progressCompleted: 1, progressTotal: 1, progressMessage: 'Needs your review: 2 statements', activity: null,
   resultId: 'result-1', heldLessonIds: ['lesson-1', 'lesson-2'], error: null, retryOfJobId: null, createdAt: 1, startedAt: 1, finishedAt: STOPPED_AT,
   ...overrides,
-} as LearningGenerationJob);
+});
 
 const KINDS: SourceKindDto[] = ['online_book', 'documentation', 'reference_work', 'peer_reviewed_paper', 'report', 'article', 'guide', 'forum', 'wiki', 'marketing_page', 'your_file', 'pasted_text', 'page'];
 const LEVELS: LearningTrustLevel[] = ['primary', 'authoritative', 'established', 'community', 'unknown', 'distrusted'];
@@ -77,8 +77,8 @@ describe('claim review presentation', () => {
 
   it('finds the lessons a completed job holds, ignoring superseded and unfinished attempts', () => {
     expect(heldLessonIds(job({}))).toEqual(['lesson-1', 'lesson-2']);
-    expect(heldLessonIds(job({ status: 'running', heldLessonIds: [] } as Partial<LearningGenerationJob>))).toEqual([]);
-    expect(heldLessonIds(job({ heldLessonIds: [] } as Partial<LearningGenerationJob>))).toEqual([]);
+    expect(heldLessonIds(job({ status: 'running', heldLessonIds: [] }))).toEqual([]);
+    expect(heldLessonIds(job({ heldLessonIds: [] }))).toEqual([]);
     const retry = job({ id: 'job-2', status: 'pending', resultId: null, retryOfJobId: 'job-1' });
     expect(jobHoldingLesson([job({}), retry], 'lesson-1')).toBeNull();
     expect(jobHoldingLesson([job({})], 'lesson-2')?.id).toBe('job-1');

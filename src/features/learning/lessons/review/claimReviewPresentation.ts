@@ -27,9 +27,6 @@ import type {
   VerdictKindDto,
 } from '@/lib/bindings';
 
-/** The job's result reference for lessons held for review (§6.1). */
-export const NEEDS_REVIEW_RESULT_PREFIX = 'needs_review:';
-
 /** Where a claim stands for the user: theirs to act on, the machine's, or settled. */
 export function claimFilterOf(item: ClaimReviewItemDto): 'needs_you' | 'repairing' | 'machine' | 'confirmed' | 'changed' {
   const state = item.state;
@@ -460,10 +457,9 @@ export function reviewHold(review: LessonClaimReviewDto, waiting: number): Revie
 
 export const NOTHING_CHANGED = 'Nothing changed since the last check. Resolve a statement or add a source first.';
 
-/** Lessons a completed job held for review, from its result reference. */
-export function heldLessonIds(job: Pick<LearningGenerationJob, 'status' | 'resultId'> | null | undefined): string[] {
-  if (job?.status !== 'completed' || !job.resultId?.startsWith(NEEDS_REVIEW_RESULT_PREFIX)) return [];
-  return job.resultId.slice(NEEDS_REVIEW_RESULT_PREFIX.length).split(',').filter(Boolean);
+/** The lessons a job holds for review (§6.1). */
+export function heldLessonIds(job: Pick<LearningGenerationJob, 'heldLessonIds'> | null | undefined): string[] {
+  return job?.heldLessonIds ?? [];
 }
 
 /** The latest attempt of each lesson preparation job (a retry supersedes its parent). */
