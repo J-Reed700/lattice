@@ -259,6 +259,7 @@ where
 mod tests {
     use super::*;
     use lattice_core::shared::persistence::driver::DriverPool;
+    use lattice_core::shared::persistence::Transactions;
 
     #[tokio::test]
     async fn file_backed_pool_applies_connection_pragmas_and_closes_with_a_clone() {
@@ -321,6 +322,24 @@ mod tests {
         let cloned_pool = pool.clone();
         connection.close().await.unwrap();
         assert!(cloned_pool.acquire().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn each_connection_bounds_its_analysis() {
+        let dir = tempfile::tempdir().unwrap();
+        let connection = DatabaseConnection::new(dir.path().join("lattice.db"))
+            .await
+            .unwrap();
+
+        let mut read = connection.database().begin_read().await.unwrap();
+        let limit: i64 = sqlx::query_scalar("PRAGMA analysis_limit")
+            .fetch_one(&mut *read)
+            .await
+            .unwrap();
+        drop(read);
+
+        assert_eq!(limit, 400);
+        connection.close().await.unwrap();
     }
 
     #[tokio::test]

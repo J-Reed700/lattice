@@ -1019,3 +1019,88 @@ fn test_sql_safe_path_validator() {
     // Valid: path with single quote (will be escaped during use)
     assert!(validate_sql_safe_path("/backup/user's_backup.db").is_ok());
 }
+
+/// `VACUUM INTO` takes the path as a bound value, so a folder named with `;`
+/// and `--` is an ordinary folder.
+#[tokio::test]
+async fn a_backup_into_a_folder_named_with_semicolons_and_dashes_succeeds() {
+    let (pool, db_path, _dir) = create_test_pool().await;
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+
+    let folder = db_path.parent().unwrap().join("backups").join("a;b--c");
+    fs::create_dir_all(&folder).unwrap();
+    let target = folder.join("my_backup.db");
+
+    let backup_path = adapter.create_backup(Some(target.clone())).await.unwrap();
+
+    assert_eq!(
+        PathBuf::from(&backup_path).canonicalize().unwrap(),
+        target.canonicalize().unwrap()
+    );
+    adapter.validate_backup(&target).await.unwrap();
+
+    pool.close().await;
+}
+
+/// Backup names that look like SQL are only names: the backup is written
+/// under exactly that name and the live database is untouched.
+#[tokio::test]
+async fn test_sql_looking_backup_names_are_plain_names() {
+    let (pool, db_path, _dir) = create_test_pool().await;
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+
+    let backup_dir = db_path.parent().unwrap().join("backups");
+    fs::create_dir_all(&backup_dir).unwrap();
+
+    let names = [
+        "backup.db'; DROP TABLE documents; --",
+        "backup.db--comment",
+        "backup' UNION SELECT id FROM documents; --",
+        "backup' DROP TABLE documents CASCADE; --",
+        "backup'; INSERT INTO documents VALUES ('evil', 'bad'); --",
+        "backup'; EXEC sp_executesql; --",
+        "backup'; EXECUTE ('DROP TABLE documents'); --",
+        "user's_backup.db",
+    ];
+
+    for name in names {
+        let target = backup_dir.join(name);
+        let backup_path = adapter
+            .create_backup(Some(target.clone()))
+            .await
+            .unwrap_or_else(|error| panic!("name '{name}' should be a plain name: {error:?}"));
+
+        assert_eq!(
+            PathBuf::from(&backup_path).file_name().unwrap(),
+            std::ffi::OsStr::new(name)
+        );
+        adapter.validate_backup(&target).await.unwrap();
+    }
+
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count.0, 1, "documents table should still have its data");
+
+    pool.close().await;
+}
+
+/// Comment markers that contain a path separator name a folder that is not
+/// there, so nothing is written.
+#[tokio::test]
+async fn test_backup_into_a_missing_folder_is_rejected() {
+    let (pool, db_path, _dir) = create_test_pool().await;
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+
+    let backup_dir = db_path.parent().unwrap().join("backups");
+    fs::create_dir_all(&backup_dir).unwrap();
+
+    for pattern in ["backup.db/* comment */", "backup/**/file.db"] {
+        let result = adapter.create_backup(Some(backup_dir.join(pattern))).await;
+
+        assert!(result.is_err(), "Pattern '{}' should be rejected", pattern);
+    }
+
+    pool.close().await;
+}

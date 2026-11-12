@@ -1002,3 +1002,31 @@ async fn a_snapshot_that_fails_while_clearing_keeps_the_tables_it_cleared_first(
     );
     snap.close().await;
 }
+
+#[tokio::test]
+async fn snapshot_refuses_an_existing_destination_and_takes_sql_looking_names() {
+    let dir = tempdir().unwrap();
+    let live = dir.path().join("lattice.db");
+    let pool = migrated_pool(&live).await;
+    let db = Database::from(pool.clone());
+
+    let taken = dir.path().join("taken.db");
+    std::fs::write(&taken, b"x").unwrap();
+    assert!(matches!(
+        snapshot_database(&db, &taken).await,
+        Err(ArchiveError::Other(_))
+    ));
+
+    let nasty = dir.path().join("evil'; DROP TABLE documents; --.db");
+    snapshot_database(&db, &nasty).await.unwrap();
+    assert!(nasty.is_file());
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'documents'"
+        )
+        .await,
+        1
+    );
+    pool.close().await;
+}

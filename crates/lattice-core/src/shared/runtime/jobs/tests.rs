@@ -1498,3 +1498,38 @@ async fn a_jobs_rank_is_saved_and_a_retry_keeps_it() -> Result<()> {
     assert_eq!(store.get(&plain.id).await?.rank, None);
     Ok(())
 }
+
+#[tokio::test]
+async fn a_heartbeat_recorded_behind_a_long_write_waits_its_turn_and_lands() -> Result<()> {
+    use crate::shared::persistence::Transactions;
+
+    let busy_timeout = Duration::from_millis(100);
+    let directory = tempfile::tempdir().unwrap();
+    let options = crate::shared::testing::sqlite::file_options(
+        directory.path().join("heartbeat-behind-writer.sqlite"),
+    )
+    .busy_timeout(busy_timeout);
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(2)
+        .connect_with(options)
+        .await
+        .unwrap();
+    sqlx::migrate!("../lattice-desktop/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let db = Database::from(pool.clone());
+    let store = JobStore::new(db.clone());
+    let id = store.submit(&new_job(KIND, "heartbeat", None)).await?.id;
+    store.claim(&id).await?;
+    let writer = db.begin_write().await.unwrap();
+    let beat = tokio::spawn({
+        let store = store.clone();
+        let id = id.clone();
+        async move { store.heartbeat(&id).await }
+    });
+    tokio::time::sleep(busy_timeout * 3).await;
+    writer.commit().await.unwrap();
+    assert!(beat.await.unwrap()?);
+    Ok(())
+}

@@ -480,3 +480,38 @@ async fn access_metadata_participates_in_the_callers_transaction() {
         .unwrap();
     assert_eq!(count, 0);
 }
+
+#[tokio::test]
+async fn a_delete_waiting_behind_a_held_write_lock_outlasts_the_busy_timeout() {
+    const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
+    let dir = tempfile::tempdir().unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(3)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(dir.path().join("documents.db"))
+                .create_if_missing(true)
+                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+                .busy_timeout(BUSY_TIMEOUT),
+        )
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let repo = DocumentRepository::new(pool.clone());
+    insert(&repo, "doc-1", "/lib/one.txt", &"a".repeat(64)).await;
+
+    let holder = pool.begin_write().await.unwrap();
+    let deleting = {
+        let repo = repo.clone();
+        tokio::spawn(async move { DocumentRepositoryPort::delete(&repo, "doc-1").await })
+    };
+    tokio::time::sleep(BUSY_TIMEOUT * 3).await;
+    holder.commit().await.unwrap();
+
+    deleting.await.unwrap().unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents WHERE id = 'doc-1'")
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+}
