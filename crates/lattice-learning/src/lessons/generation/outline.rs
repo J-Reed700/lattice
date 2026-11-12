@@ -17,7 +17,7 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::model_contract::{
     Contract, ContractCall, ContractId, PromptInput,
 };
-use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, ErrorClass, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -251,7 +251,7 @@ fn description_too_long(llm: &dyn LLMPort, error: AppError) -> AppError {
     if llm.max_context_tokens() < window_needed {
         return error;
     }
-    if matches!(error, AppError::WindowTooSmall(_)) {
+    if ErrorClass::of(&error) == ErrorClass::DoesNotFit {
         return AppError::InvalidInput(
             "Your course description is too long for the Learning model's context window. Shorten the course description and try again."
                 .into(),
