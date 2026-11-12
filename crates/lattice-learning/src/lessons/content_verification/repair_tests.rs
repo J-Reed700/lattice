@@ -33,14 +33,24 @@ fn a_section_patch_keeps_other_content_and_only_receives_its_evidence() -> Resul
     assert_eq!(result["blocks"][0], original["blocks"][0]);
     assert_eq!(result["questions"], original["questions"]);
     assert_eq!(result["blocks"][1]["body"], "Corrected");
-    assert!(merge(&mut result, original.clone(), 1).is_err());
-    assert!(merge(
-        &mut result,
-        json!({"blocks":[{"kind":"recap"}],"questions":[]}),
-        1
-    )
-    .is_err());
     Ok(())
+}
+
+#[test]
+fn an_edited_section_of_another_kind_or_number_is_refused() {
+    let original = json!({"blocks":[{"kind":"explanation","title":"Keep","body":"Keep this. Fix that."}],"questions":[]});
+    let schema = json!({"type":"object","properties":{"blocks":{"type":"array","items":{"type":"object"}},"questions":{"type":"array","items":{"type":"object"}}}});
+    let accept = |edit: Value| {
+        accept_edits(
+            &edit.to_string(),
+            (&original, &original, &Default::default()),
+            (&schema, "blocks"),
+            (&[], &[]),
+        )
+    };
+    let renamed =
+        json!({"edits":[{"path":"/blocks/0/kind","before":"explanation","after":"recap"}]});
+    assert!(accept(renamed).is_err());
 }
 
 /// Answers each request with the next of its answers and keeps every request.
@@ -82,16 +92,17 @@ fn messages(request: &CompletionRequest) -> Vec<(&str, &str)> {
 }
 
 #[tokio::test]
-async fn a_section_whose_edits_cannot_be_applied_is_asked_for_in_the_same_conversation(
+async fn a_section_whose_edits_cannot_be_applied_is_asked_again_in_the_same_conversation(
 ) -> Result<()> {
     let original = json!({"blocks":[{"kind":"explanation","title":"Keep","body":"Keep this. Keep that."}],"questions":[]});
     let local =
         json!({"candidate":original,"failedClaims":[{"unit":0,"statement":"Correct one fact."}]});
-    let replacement = json!({"blocks":[{"kind":"explanation","title":"Keep","body":"Keep this. Correct that."}],"questions":[]});
     let ambiguous =
         json!({"edits":[{"path":"/blocks/0/body","before":"Keep","after":"Correct"}]}).to_string();
+    let applies =
+        json!({"edits":[{"path":"/blocks/0/body","before":"Keep that.","after":"Correct that."}]});
     let model = Recording {
-        answers: Mutex::new([ambiguous.clone(), replacement.to_string()].into()),
+        answers: Mutex::new([ambiguous.clone(), applies.to_string()].into()),
         sent: Mutex::new(Vec::new()),
     };
     let schema = json!({"type":"object","properties":{"blocks":{"type":"array","items":{"type":"object"}},"questions":{"type":"array","items":{"type":"object"}}}});
@@ -113,17 +124,14 @@ async fn a_section_whose_edits_cannot_be_applied_is_asked_for_in_the_same_conver
     )
     .await?;
 
-    assert_eq!(repaired, replacement);
+    assert_eq!(repaired["blocks"][0]["body"], "Keep this. Correct that.");
     assert!(put_back.is_empty());
     let sent = model.sent.lock().unwrap().clone();
-    assert_eq!(sent.len(), 2, "the edits, then the section");
-    let (edits, section) = (messages(&sent[0]), messages(&sent[1]));
-    // The server has just read the edit request, so the section request
-    // continues it rather than opening another conversation.
-    assert_eq!(section.len(), edits.len() + 2, "{section:?}");
-    assert_eq!(section[..edits.len()], edits[..]);
-    assert_eq!(section[edits.len()], ("assistant", ambiguous.as_str()));
-    let (role, asked) = section[edits.len() + 1];
+    assert_eq!(sent.len(), 2, "the edits, then the correction");
+    let (first, second) = (messages(&sent[0]), messages(&sent[1]));
+    assert_eq!(second[..first.len()], first[..]);
+    assert_eq!(second[first.len()], ("assistant", ambiguous.as_str()));
+    let (role, asked) = second[first.len() + 1];
     assert_eq!(role, "user");
     assert!(asked.contains("occurs more than once"), "{asked}");
     Ok(())
@@ -1247,7 +1255,7 @@ async fn passage_wide_with(
 }
 
 #[tokio::test]
-async fn a_passage_wide_quote_is_cut_to_the_sentence_that_states_the_claim_and_every_copy_of_it_goes(
+async fn a_passage_wide_quote_is_cut_to_the_sentence_that_states_the_claim_in_its_first_place(
 ) -> Result<()> {
     let llm = SmallWindow {
         window: 4_000,
@@ -1271,11 +1279,11 @@ async fn a_passage_wide_quote_is_cut_to_the_sentence_that_states_the_claim_and_e
     .await?;
 
     // The first sentence of the passage stays; the stating one goes where the
-    // lesson writes it again too.
+    // quote first stands, and its second copy is kept.
     assert_eq!(handled, 1);
     assert_eq!(
         context["candidate"]["blocks"][0]["body"],
-        format!("{COLD} Middle line. Closing line.")
+        format!("{COLD} Middle line. {BISQUE} Closing line.")
     );
     Ok(())
 }
@@ -1560,6 +1568,244 @@ async fn a_statement_whose_narrowing_was_not_applied_keeps_its_sentence_and_is_p
             }
         )),
         "{events:?}"
+    );
+    Ok(())
+}
+
+/// Brings the Sourced statements `ids` to `s.rewrite`: their readings found
+/// nothing.
+async fn to_the_rewrite(ledger: &mut ClaimLedger, ids: &[&ClaimId]) -> Result<()> {
+    let policy = StandardPolicy::new();
+    for id in ids {
+        let sorted = ClaimEvent::Classified {
+            class: Class::Sourced,
+            by: ClassifiedBy::Writer,
+        };
+        ledger.append(id, sorted).await?;
+        for (step, outcome) in [
+            (Step::Read(Reading::Parts), Outcome::Unproven),
+            (Step::Research, Outcome::FoundNothing),
+            (Step::Read(Reading::Page), Outcome::Refuted),
+        ] {
+            assert!(ledger.record_step(&policy, id, step, outcome).await?);
+        }
+        assert_eq!(node_of(ledger, id), Some("s.rewrite"));
+    }
+    Ok(())
+}
+
+/// The `(attempt, escalated)` of a claim's repairs, in order.
+fn attempts(entry: &ClaimLedgerEntry) -> Vec<(u8, bool)> {
+    entry
+        .events()
+        .iter()
+        .filter_map(|record| match &record.event {
+            ClaimEvent::RepairAttempted {
+                attempt, escalated, ..
+            } => Some((*attempt, *escalated)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn missing_edit() -> String {
+    json!({"edits":[{"path":"/blocks/0/body","before":"Words the section never had.","after":"Anything."}]}).to_string()
+}
+
+#[tokio::test]
+async fn a_claim_repair_whose_edits_never_apply_charges_its_claims_and_the_lesson_goes_on(
+) -> Result<()> {
+    let body = format!("{FIRST_OLD} {STEADY} {THIRD_OLD} {CLOSING}");
+    let llm = Recording {
+        answers: Mutex::new((0..4).map(|_| missing_edit()).collect()),
+        sent: Mutex::new(Vec::new()),
+    };
+    let mut ledger = failed_ledger(
+        &llm,
+        &body,
+        &[("first", FIRST_OLD, 0), ("third", THIRD_OLD, 0)],
+    )
+    .await?;
+    let policy = StandardPolicy::new();
+    let (first, third) = (ClaimId("first".into()), ClaimId("third".into()));
+    to_the_rewrite(&mut ledger, &[&first, &third]).await?;
+    ledger
+        .begin_repairs(&policy, &lesson_of(&body), &[first.clone(), third.clone()])
+        .await?;
+    let context = json!({
+        "candidate": lesson_of(&body), "requirements": {}, "evidence": [],
+        "executions": [], "repairHistory": [],
+        "failedClaims": [
+            {"unit":0,"claimId":"first","sentence":FIRST_OLD,"evidence":[]},
+            {"unit":0,"claimId":"third","sentence":THIRD_OLD,"evidence":[]},
+        ],
+    });
+    let schema = json!({"type":"object","properties":{"blocks":{"type":"array","items":{"type":"object"}},"questions":{"type":"array","items":{"type":"object"}}}});
+    let references = ReferenceCollection::lexical(&[])?;
+
+    let repaired = repair_sections(
+        &llm,
+        &policy,
+        "{}",
+        &schema,
+        context,
+        4_000,
+        &references,
+        &mut ledger,
+    )
+    .await;
+
+    assert!(repaired.is_ok(), "{:?}", repaired.err());
+    for id in [&first, &third] {
+        let reasons = rejections(ledger.entry(id).unwrap());
+        assert!(
+            matches!(reasons.as_slice(), [reason] if reason.contains("does not occur")),
+            "one used attempt that quotes why the edits could not be applied: {reasons:?}"
+        );
+    }
+    let sent = llm.sent.lock().unwrap().clone();
+    assert!(sent.len() >= 2, "{} requests", sent.len());
+    let second = &sent[1];
+    assert!(
+        second
+            .json_schema
+            .as_ref()
+            .is_some_and(|schema| schema.pointer("/properties/edits").is_some()),
+        "the correction turn asks for edits again: {:?}",
+        second.json_schema
+    );
+    assert!(
+        messages(second).contains(&("assistant", missing_edit().as_str())),
+        "the correction turn carries the first answer: {:?}",
+        messages(second)
+    );
+    Ok(())
+}
+
+/// `Recording` with a window of its own.
+struct SmallWindowRecording(Recording, usize);
+
+#[async_trait::async_trait]
+impl LLMPort for SmallWindowRecording {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        self.0.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        "recording"
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.1
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+const ALPHA: &str = "Alpha runs first.";
+const BETA: &str = "Beta runs second.";
+const ALPHA_AND_BETA: &str = "Alpha and beta run together.";
+
+#[tokio::test]
+async fn a_correction_that_changes_another_groups_failed_sentence_is_put_back() -> Result<()> {
+    let body = format!("{ALPHA} {BETA} {STEADY}");
+    let merging = json!({"edits":[
+        {"path":"/blocks/0/body","before":format!("{ALPHA} {BETA}"),"after":ALPHA_AND_BETA},
+    ]});
+    let llm = SmallWindowRecording(
+        Recording {
+            answers: Mutex::new([merging.to_string(), json!({"edits":[]}).to_string()].into()),
+            sent: Mutex::new(Vec::new()),
+        },
+        4_000,
+    );
+    let mut ledger = failed_ledger(&llm, &body, &[("alpha", ALPHA, 0), ("beta", BETA, 0)]).await?;
+    let policy = StandardPolicy::new();
+    let (alpha, beta) = (ClaimId("alpha".into()), ClaimId("beta".into()));
+    to_the_rewrite(&mut ledger, &[&alpha, &beta]).await?;
+    ledger
+        .begin_repairs(&policy, &lesson_of(&body), &[alpha.clone(), beta.clone()])
+        .await?;
+    // Each claim's passage fills the request budget, so the groups are apart.
+    let passage = |id: &str| json!({"id":id,"sourceId":"s","startByte":0,"endByte":6000,"text":"x".repeat(6000)});
+    let context = json!({
+        "candidate": lesson_of(&body), "requirements": {},
+        "evidence": [passage("ev-a"), passage("ev-b")],
+        "executions": [], "repairHistory": [],
+        "failedClaims": [
+            {"unit":0,"claimId":"alpha","statement":"Alpha statement","evidence":["ev-a"]},
+            {"unit":0,"claimId":"beta","statement":"Beta statement","evidence":["ev-b"]},
+        ],
+    });
+    let schema = json!({"type":"object","properties":{"blocks":{"type":"array","items":{"type":"object"}},"questions":{"type":"array","items":{"type":"object"}}}});
+    let references = ReferenceCollection::lexical(&[])?;
+
+    let repaired = repair_sections(
+        &llm,
+        &policy,
+        "{}",
+        &schema,
+        context,
+        500,
+        &references,
+        &mut ledger,
+    )
+    .await?;
+
+    let after = repaired["blocks"][0]["body"].as_str().unwrap();
+    assert!(after.contains(BETA), "{after}");
+    assert!(!after.contains(ALPHA_AND_BETA), "{after}");
+    let reasons = rejections(ledger.entry(&alpha).unwrap());
+    assert!(
+        matches!(reasons.as_slice(), [reason] if reason.contains("a sentence it was not asked to change")),
+        "{reasons:?}"
+    );
+    let sent = llm.0.sent.lock().unwrap().clone();
+    assert!(sent.len() >= 2, "{} requests", sent.len());
+    assert!(
+        messages(&sent[1])
+            .iter()
+            .any(|(_, text)| text.contains(BETA)),
+        "the second group's request holds its sentence as it was"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_cut_after_two_rewrites_that_were_not_applied_records_its_third_repair_as_the_last(
+) -> Result<()> {
+    let body = format!("{FIRST_OLD} {STEADY}");
+    let llm = Recording {
+        answers: Mutex::new(Default::default()),
+        sent: Mutex::new(Vec::new()),
+    };
+    let mut ledger = failed_ledger(&llm, &body, &[("only", FIRST_OLD, 0)]).await?;
+    let policy = StandardPolicy::new();
+    let only = ClaimId("only".into());
+    to_the_rewrite(&mut ledger, &[&only]).await?;
+    let lesson = lesson_of(&body);
+
+    for next in ["s.rewrite.again", "s.cut"] {
+        ledger
+            .begin_repairs(&policy, &lesson, std::slice::from_ref(&only))
+            .await?;
+        ledger
+            .reject(&policy, std::slice::from_ref(&only), "Nothing usable.")
+            .await?;
+        assert_eq!(node_of(&ledger, &only), Some(next));
+    }
+    ledger
+        .begin_repairs(&policy, &lesson, std::slice::from_ref(&only))
+        .await?;
+    ledger
+        .cut(&policy, std::slice::from_ref(&only), Outcome::Cut)
+        .await?;
+
+    assert_eq!(
+        attempts(ledger.entry(&only).unwrap()),
+        [(1, false), (2, false), (3, true)]
     );
     Ok(())
 }

@@ -9,6 +9,7 @@
 use super::super::claim_ledger::ClaimLedger;
 use super::super::*;
 use crate::lessons::repeats;
+use crate::lessons::same_text::overlaps;
 use lattice_core::domain::learning::claim_review::{ClaimId, ClaimState};
 use lattice_core::shared::text::segmentation::common_subsequence;
 use lattice_core::shared::text::sentences;
@@ -86,8 +87,8 @@ impl Protected {
     }
 }
 
-/// A failed sentence whose correction shared a change with a sentence that
-/// passed its check, which was put back.
+/// A failed sentence whose correction shared a change with a sentence it was
+/// not asked to change, which was put back.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PutBack {
     pub(crate) target: Protected,
@@ -181,7 +182,7 @@ fn confine_at(
                     }
                 }
                 let reason = format!(
-                    "The correction also changed a sentence that passed its check (\"{}\"), so it was put back; change only this sentence.",
+                    "The correction also changed a sentence it was not asked to change (\"{}\"), so it was put back; change only this sentence.",
                     said.join("\", \"")
                 );
                 for target in back.targets.iter().filter_map(|&at| mine.get(at)) {
@@ -284,7 +285,7 @@ fn overlaps_any(text: &str, (start, end): (usize, usize), quotes: &[String]) -> 
         .filter(|quote| !quote.is_empty())
         .any(|quote| {
             text.match_indices(quote.as_str())
-                .any(|(at, found)| at < end && at + found.len() > start)
+                .any(|(at, found)| overlaps((at, at + found.len()), (start, end)))
         })
 }
 
@@ -427,7 +428,7 @@ fn confine_text(
         .find(|quote| before.contains(quote.as_str()) && !out.contains(quote.as_str()))
     {
         return Err(invalid(format!(
-            "The repair changed a sentence that already passed (\"{lost}\"); the draft is kept."
+            "The repair changed a sentence it was not asked to change (\"{lost}\"); change only the failed sentences."
         )));
     }
     if dropped && !before.ends_with(char::is_whitespace) {

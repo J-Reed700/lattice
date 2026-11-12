@@ -11,9 +11,11 @@ use super::super::sections::{
 };
 use super::super::*;
 use super::goal_words;
+use crate::lessons::same_text::{overlaps, stands};
 use crate::lessons::shape::ShapePolicy;
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal, Outcome};
 use lattice_core::domain::learning::claim_review::{ClaimId, CutPlace};
+use lattice_core::shared::text::segmentation::{code_fences, in_code_fence};
 use lattice_core::shared::text::{item_marker_end, sentences};
 
 /// What taking a claim's text out of its field comes to.
@@ -24,18 +26,6 @@ enum Cut {
     Absent,
     /// The field would be left empty, or a code block broken.
     Refused,
-}
-
-fn is_fence(line: &str) -> bool {
-    let line = line.trim_start();
-    line.starts_with("```") || line.starts_with("~~~")
-}
-
-/// Whether the byte `at` of `text` lies between a fence line and its closing
-/// one.
-fn inside_fence(text: &str, at: usize) -> bool {
-    text.get(..at)
-        .is_some_and(|before| before.lines().filter(|line| is_fence(line)).count() % 2 == 1)
 }
 
 /// The separator that keeps more line breaks, the first on a tie.
@@ -57,32 +47,42 @@ fn marker_of(text: &str, span: (usize, usize)) -> Option<&str> {
         .filter(|_| lead.trim().is_empty())
 }
 
-/// `text` without every sentence `quote` touches, wherever it occurs; the
+/// The sentences of `text` the first occurrence of `quote` touches, as indices
+/// into `spans`, with that occurrence; `None` when the quote is blank or absent.
+fn touched(
+    text: &str,
+    spans: &[(usize, usize)],
+    quote: &str,
+) -> Option<((usize, usize), Vec<usize>)> {
+    let at = text.find(quote).filter(|_| !quote.trim().is_empty())?;
+    let found = (at, at + quote.len());
+    let touching = spans
+        .iter()
+        .enumerate()
+        .filter(|(_, span)| overlaps(**span, found))
+        .map(|(index, _)| index)
+        .collect();
+    Some((found, touching))
+}
+
+/// `text` without the sentences the first occurrence of `quote` touches; the
 /// sentences left keep the separators a paragraph break needs, and the first
 /// sentence kept on the line of a cut list item takes the item's marker.
 fn sentence(text: &str, quote: &str) -> Cut {
-    let found: Vec<(usize, usize)> = text
-        .match_indices(quote)
-        .filter(|_| !quote.trim().is_empty())
-        .map(|(at, _)| (at, at + quote.len()))
-        .collect();
-    if found.is_empty() {
-        return Cut::Absent;
-    }
-    if quote.lines().any(is_fence) || found.iter().any(|&(at, _)| inside_fence(text, at)) {
-        return Cut::Refused;
-    }
     let spans = sentences(text);
-    let gone: Vec<bool> = spans
-        .iter()
-        .map(|&(start, end)| found.iter().any(|&(from, to)| start < to && end > from))
-        .collect();
-    if !gone.contains(&true) {
+    let Some((found, touching)) = touched(text, &spans, quote) else {
         return Cut::Absent;
-    }
-    if !gone.contains(&false) {
+    };
+    if !code_fences(quote).is_empty() || in_code_fence(text, found.0) {
         return Cut::Refused;
     }
+    if touching.is_empty() {
+        return Cut::Absent;
+    }
+    if touching.len() == spans.len() {
+        return Cut::Refused;
+    }
+    let gone = |index: usize| touching.contains(&index);
     let first = spans.first().map_or(0, |span| span.0);
     let mut out = text.get(..first).unwrap_or_default().to_owned();
     // The separator before the next sentence kept: the strongest of those
@@ -92,7 +92,7 @@ fn sentence(text: &str, quote: &str) -> Cut {
     for (index, &(start, end)) in spans.iter().enumerate() {
         let next = spans.get(index + 1).map_or(text.len(), |span| span.0);
         let separator = text.get(end..next).unwrap_or_default();
-        if gone.get(index) == Some(&true) {
+        if gone(index) {
             between = between.map(|kept| stronger(kept, separator));
             marker = marker_of(text, (start, end)).or(marker);
             if separator.contains('\n') {
@@ -112,16 +112,9 @@ fn sentence(text: &str, quote: &str) -> Cut {
 /// What cutting `quote` out of `text` takes, in the first place it occurs
 /// (every sentence it touches), and the sentences kept on either side.
 pub(super) fn cut_place(text: &str, quote: &str) -> Option<CutPlace> {
-    let at = text.find(quote).filter(|_| !quote.trim().is_empty())?;
-    let end = at + quote.len();
     let spans = sentences(text);
-    let touched: Vec<usize> = spans
-        .iter()
-        .enumerate()
-        .filter(|(_, span)| span.0 < end && span.1 > at)
-        .map(|(index, _)| index)
-        .collect();
-    let (first, last) = (*touched.first()?, *touched.last()?);
+    let (_, touching) = touched(text, &spans, quote)?;
+    let (first, last) = (*touching.first()?, *touching.last()?);
     let kept = |index: Option<usize>| {
         let &(start, stop) = spans.get(index?)?;
         text.get(start..stop).map(str::to_owned)
@@ -149,16 +142,12 @@ fn fence(text: &str, code: &str) -> Cut {
     let Some(at) = text.find(code).filter(|_| !code.trim().is_empty()) else {
         return Cut::Absent;
     };
-    let opened = text.get(..at).and_then(|before| {
-        let line = before.trim_end_matches('\n');
-        let start = line.rfind('\n').map_or(0, |newline| newline + 1);
-        is_fence(line.get(start..)?).then_some(start)
-    });
-    let closed = text.get(at + code.len()..).and_then(|after| {
-        let line = after.split_inclusive('\n').next()?;
-        is_fence(line).then_some(at + code.len() + line.len())
-    });
-    let (Some(start), Some(stop)) = (opened, closed) else {
+    let block = code_fences(text)
+        .into_iter()
+        .find(|block| block.text == (at..at + code.len()));
+    let Some((start, stop)) =
+        block.and_then(|block| Some((block.opening.start, block.closing?.end)))
+    else {
         return Cut::Refused;
     };
     let (Some(before), Some(after)) = (text.get(..start), text.get(stop..)) else {
@@ -226,8 +215,8 @@ fn ask_narrowing(context: &mut Value, narrowed: &[ClaimId]) {
 /// attempt, and those claims out of the work that remains: the code makes
 /// the cut, so the model is never asked to. What a statement's cut takes is
 /// the ledger's decision (`ClaimLedger::cut_of`), not the flag the request
-/// carried: the sentence that states it, wherever the lesson writes that
-/// sentence, when no other live statement stands on it. Otherwise nothing is
+/// carried: the sentence that states it, in the first place the lesson writes
+/// it, when no other live statement stands on it. Otherwise nothing is
 /// cut: the statement stays among the claims sent, without `lastAttempt` and
 /// with the narrowing goal, for the model to take it out of its sentence, and
 /// its pending repair is marked so; once that narrowing was not applied, the
@@ -390,7 +379,7 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
                 let place = entry.location();
                 let holds = |whole: &Value| {
                     field_text(whole, place.unit_index, &place.field)
-                        .is_some_and(|text| text.contains(&place.quote))
+                        .is_some_and(|text| stands(&text, &place.quote))
                 };
                 holds(&before) && !holds(lesson)
             })
@@ -436,9 +425,9 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
         );
         taken.retain(|id| !held.contains(id));
         withdraw(context, |id| held.contains(id));
-        ledger.drop_repairs(&held).await?;
+        ledger.cut(policy, &held, Outcome::CannotCut).await?;
         ledger.save_cuts().await?;
-        marked += ledger.publish_unverified(&held, None).await?;
+        marked += held.len();
         cut = cut_by(ledger, &lesson, &taken, &refused);
     }
     let statements: Vec<ClaimId> = taken
@@ -469,9 +458,9 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
             refused.retain(|id| !statements.contains(id));
             lesson = lesson_ex;
             withdraw(context, |id| statements.contains(id));
-            ledger.drop_repairs(&statements).await?;
+            ledger.cut(policy, &statements, Outcome::CannotCut).await?;
             ledger.save_cuts().await?;
-            marked += ledger.publish_unverified(&statements, None).await?;
+            marked += statements.len();
             cut = cut_by(ledger, &lesson, &taken, &refused);
         }
     }
