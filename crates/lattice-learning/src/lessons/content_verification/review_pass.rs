@@ -7,7 +7,7 @@
 use super::claim_ledger::ClaimLedger;
 use super::*;
 use lattice_core::domain::learning::claim_review::{
-    Actor, Anchor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, CutPlace, UserAction,
+    span_of, Actor, Anchor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, CutPlace, UserAction,
 };
 
 /// The user's research hint for a claim waiting for them, until a research
@@ -76,13 +76,11 @@ fn live(entry: &ClaimLedgerEntry, wanted: impl Fn(&UserAction) -> bool) -> Optio
     (!undone).then_some(action)
 }
 
-fn pointer(candidate: &Value, unit: usize, field: &str) -> Option<String> {
-    let blocks = candidate.get("blocks")?.as_array()?.len();
-    Some(if unit < blocks {
-        format!("/blocks/{unit}/{field}")
-    } else {
-        format!("/questions/{}/{field}", unit - blocks)
-    })
+/// `text` with the bytes at `span` replaced by `with`.
+fn replaced(text: &str, (start, end): (usize, usize), with: &str) -> String {
+    let mut out = text.to_owned();
+    out.replace_range(start..end, with);
+    out
 }
 
 /// One change the user asked for, located in the draft.
@@ -121,7 +119,7 @@ fn changes(entries: &[ClaimLedgerEntry], candidate: &Value) -> Vec<Change> {
             sentence, place, ..
         }) = put_back
         {
-            if let Some(pointer) = pointer(candidate, place.unit_index, &place.field) {
+            if let Some(pointer) = field_pointer(candidate, place.unit_index, &place.field) {
                 changes.push(Change::PutBack {
                     pointer,
                     anchor: place.anchor.clone(),
@@ -135,7 +133,7 @@ fn changes(entries: &[ClaimLedgerEntry], candidate: &Value) -> Vec<Change> {
             matches!(action, UserAction::RestoreOriginal { .. })
         });
         if let Some(UserAction::RestoreOriginal { original, rewrite }) = restore {
-            if let Some(pointer) = pointer(candidate, location.unit_index, &location.field) {
+            if let Some(pointer) = field_pointer(candidate, location.unit_index, &location.field) {
                 changes.push(Change::Replace {
                     pointer,
                     from: rewrite.clone(),
@@ -144,7 +142,7 @@ fn changes(entries: &[ClaimLedgerEntry], candidate: &Value) -> Vec<Change> {
             }
             continue;
         }
-        let Some(pointer) = pointer(candidate, location.unit_index, &location.field) else {
+        let Some(pointer) = field_pointer(candidate, location.unit_index, &location.field) else {
             continue;
         };
         match (entry.state(), ClaimLedger::user_change(entry)) {
@@ -209,8 +207,8 @@ fn apply(previous: Option<&Value>, candidate: &mut Value, changes: Vec<Change>) 
                 let Some(text) = candidate.pointer(&pointer).and_then(Value::as_str) else {
                     continue;
                 };
-                let text = if text.matches(before.as_str()).count() == 1 {
-                    text.replacen(before.as_str(), &after, 1)
+                let text = if let Some(span) = span_of(text, &before) {
+                    replaced(text, span, &after)
                 } else if !after.is_empty() && text.contains(after.as_str()) {
                     continue;
                 } else {
@@ -220,13 +218,13 @@ fn apply(previous: Option<&Value>, candidate: &mut Value, changes: Vec<Change>) 
                     let seen = previous
                         .and_then(|previous| previous.pointer(&pointer))
                         .and_then(Value::as_str)
-                        .filter(|seen| seen.matches(before.as_str()).count() == 1);
-                    let Some(seen) = seen else {
+                        .and_then(|seen| span_of(seen, &before).map(|span| (seen, span)));
+                    let Some((seen, span)) = seen else {
                         tracing::warn!(claim = %claim.0, "claim.user_action: the edited sentence is no longer in its section; the edit was not applied");
                         continue;
                     };
                     applied.superseded_units.push(unit);
-                    seen.replacen(before.as_str(), &after, 1)
+                    replaced(seen, span, &after)
                 };
                 if let Some(slot) = candidate.pointer_mut(&pointer) {
                     *slot = Value::String(text);
@@ -254,12 +252,13 @@ fn apply(previous: Option<&Value>, candidate: &mut Value, changes: Vec<Change>) 
                 let Some(text) = candidate.pointer(&pointer).and_then(Value::as_str) else {
                     continue;
                 };
-                if text.matches(from.as_str()).count() != 1 || text.contains(to.as_str()) {
+                let Some(span) = span_of(text, &from).filter(|_| !text.contains(to.as_str()))
+                else {
                     continue;
-                }
-                let replaced = text.replacen(from.as_str(), &to, 1);
+                };
+                let swapped = replaced(text, span, &to);
                 if let Some(slot) = candidate.pointer_mut(&pointer) {
-                    *slot = Value::String(replaced);
+                    *slot = Value::String(swapped);
                 }
             }
             Change::Remove { pointer, quote } => {

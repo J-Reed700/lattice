@@ -1,5 +1,6 @@
 //! Claim locations are selected from lossless, app-owned text passages.
 use super::*;
+use lattice_core::application::services::model_contract::{Contract, ContractId, PromptInput};
 use lattice_core::shared::text::segmentation::{
     partition, Chars, Overflow, Plan, Prose, Rung, Strength,
 };
@@ -24,11 +25,43 @@ struct ExtractedUnit {
     non_factual_reason: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
-struct ExtractionResponse {
+pub(crate) struct ExtractionResponse {
     #[serde(deserialize_with = "unique_units")]
     units: BTreeMap<String, Value>,
+}
+
+/// The call that reads a batch of sections for their claims.
+pub(crate) struct InventoryExtraction;
+
+impl Contract for InventoryExtraction {
+    const ID: ContractId = ContractId::new("inventory-extraction");
+    type Input = PromptInput;
+}
+
+impl InventoryExtraction {
+    /// The units of a reply, or what is wrong with its shape.
+    fn read(raw: &str) -> Result<ExtractionResponse> {
+        crate::generation::parse_json(raw).map_err(|error| {
+            AppError::InvalidInput(format!(
+                "Return a units object with unique requested unit-N keys: {error}"
+            ))
+        })
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for InventoryExtraction
+{
+    type Answer = ExtractionResponse;
+    fn render(answer: &ExtractionResponse) -> String {
+        serde_json::to_string(answer).unwrap_or_default()
+    }
+    fn read(text: &str) -> Result<ExtractionResponse> {
+        Self::read(text)
+    }
 }
 
 fn unique_units<'de, D: serde::Deserializer<'de>>(
@@ -210,7 +243,7 @@ fn resolve(unit: ExtractedUnit, input: &[Value]) -> std::result::Result<UnitClai
             return Err(format!("Section {} has an empty statement", unit.index));
         }
         claims.push(Claim {
-            quote: claim_ledger::clip(&sentence).into(),
+            quote: sentence,
             statement: claim.statement,
         });
     }
@@ -230,54 +263,6 @@ pub(crate) async fn extract(llm: &dyn LLMPort, content: &[Value]) -> Result<Inve
         BTreeMap::new(),
     )
     .await
-}
-
-/// The error for sections extraction could not complete after its correction
-/// attempt. A first failure defers the job, since the model may answer
-/// differently on a retry. The same sections failing again on the same model
-/// and content is not progress, so the job stops naming them instead of being
-/// deferred indefinitely. A different set of sections may defer again.
-async fn unfinished_sections(
-    llm: &dyn LLMPort,
-    content: &[Value],
-    missing: &[usize],
-    errors: &[String],
-) -> Result<AppError> {
-    let sections = missing
-        .iter()
-        .map(|index| (index + 1).to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let key = format!(
-        "inventory-unfinished-v1:{}",
-        sha256_hex(
-            json!({
-                "policy": INVENTORY_POLICY,
-                "model": llm.model_name(),
-                "sections": missing
-                    .iter()
-                    .map(|index| (index, content.get(*index).map(|unit| sha256_hex(unit.to_string()))))
-                    .collect::<Vec<_>>(),
-            })
-            .to_string()
-        )
-    );
-    if crate::lesson_drafts::checkpoint(&key).await?.is_some() {
-        return Ok(AppError::InvalidInput(format!(
-            "Statement extraction failed again on the same sections ({sections}) after a retry: {}. No lesson was published.",
-            errors.join("; ")
-        )));
-    }
-    crate::lesson_drafts::record_checkpoint(&key, json!(true)).await?;
-    let recovery = if crate::lesson_drafts::active() {
-        "The lesson draft is saved; retry resumes it."
-    } else {
-        "Retry the statement check."
-    };
-    Ok(AppError::ServiceNotAvailable(format!(
-        "Statement extraction could not complete sections {sections}: {}. {recovery} No lesson was published.",
-        errors.join("; ")
-    )))
 }
 
 pub(super) async fn extract_remaining(
@@ -365,46 +350,32 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_extraction_contract_reads_what_it_renders() {
+        let answer = ExtractionResponse {
+            units: BTreeMap::from([(
+                "unit-0".to_owned(),
+                json!({"claims":[],"nonFactualReason":"A label."}),
+            )]),
+        };
+        lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+            InventoryExtraction,
+        >(&answer);
+    }
+
     #[tokio::test]
-    async fn a_failed_section_defers_once_then_fails_and_completed_inventory_is_kept() -> Result<()>
-    {
+    async fn an_unreadable_inventory_fails_the_job_instead_of_deferring() -> Result<()> {
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
             crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
-        let content = vec![
-            json!({"body":"The first section states a fact."}),
-            json!({"body":"The second section states another fact."}),
-        ];
-        let broken = model(vec![
-            fixture_response(vec![answer(0, "unit-0-passage-0")]),
-            json!({"units":{}}),
-        ]);
-        let resumed = model(vec![fixture_response(vec![answer(1, "unit-1-passage-0")])]);
+        let content = vec![json!({"body":"The first section states a fact."})];
+        let unreadable = model(vec![json!({"units":{}}), json!({"units":{}})]);
         crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
-            crate::lesson_drafts::resume("inventory-retry-fixture".into()).await?;
-            // The first failure is deferred: a retry may answer differently.
-            let error = extract_remaining(&broken, &content, vec![])
+            let error = extract_remaining(&unreadable, &content, vec![])
                 .await
                 .err()
                 .unwrap();
-            assert!(matches!(error, AppError::ServiceNotAvailable(_)));
-            // The same sections failing again on a retry stop the job.
-            let again = model(vec![json!({"units":{}}), json!({"units":{}})]);
-            let error = extract_remaining(&again, &content, vec![])
-                .await
-                .err()
-                .unwrap();
-            assert!(matches!(error, AppError::InvalidInput(_)), "{error}");
-            assert!(error.to_string().contains("same sections (2)"), "{error}");
-            let result = extract_remaining(&resumed, &content, vec![]).await?;
-            assert_eq!(result.units.len(), 2);
-            let prompts = resumed.prompts.lock().unwrap();
-            assert_eq!(
-                prompts.len(),
-                1,
-                "Only the unfinished section calls the model"
-            );
-            assert!(prompts[0].contains("\"requestedIndices\":[1]"));
+            assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error}");
             Ok(())
         })
         .await
@@ -532,7 +503,10 @@ mod tests {
             &input,
         )
         .unwrap();
-        assert!(contains_text(&content[0], &valid.claims[0].quote));
+        assert!(claim_ledger::stands_in_part(
+            &content[0],
+            &valid.claims[0].quote
+        ));
     }
 
     /// A check's reveal names misconceptions as wrong; the extractor is told
@@ -869,7 +843,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sentence_longer_than_the_inventory_keeps_is_quoted_by_its_first_1600_characters() {
+    fn a_long_sentence_is_quoted_whole() {
         let long = format!("Alpha {}omega.", "beta gamma delta ".repeat(100));
         let content = vec![json!({"body":long})];
         let input =
@@ -882,9 +856,26 @@ mod tests {
             let unit =
                 resolve(extracted("unit-0-passage-0-sentence-0", statement), &input).unwrap();
             let quote = &unit.claims[0].quote;
-            assert_eq!(quote.chars().count(), 1_600, "{statement}");
-            assert!(long.starts_with(quote.as_str()), "{statement}");
+            assert_eq!(quote, &long, "{statement}");
             validate_inventory(&Inventory { units: vec![unit] }, &content).unwrap();
         }
+    }
+
+    #[test]
+    fn an_inventory_may_quote_a_long_contained_span() {
+        let long = format!("Alpha {}omega.", "beta gamma delta ".repeat(100));
+        let content = vec![json!({"body":long})];
+        let inventory = Inventory {
+            units: vec![UnitClaims {
+                index: 0,
+                claims: vec![Claim {
+                    quote: long.clone(),
+                    statement: "A scoped factual statement.".into(),
+                }],
+                non_factual_reason: String::new(),
+            }],
+        };
+        let validated = validate_inventory(&inventory, &content);
+        assert!(validated.is_ok(), "{:?}", validated.as_ref().err());
     }
 }
