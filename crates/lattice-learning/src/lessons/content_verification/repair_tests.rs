@@ -137,7 +137,8 @@ async fn a_section_whose_edits_cannot_be_applied_is_asked_again_in_the_same_conv
     Ok(())
 }
 
-/// A small window that records each request and edits the next marker.
+/// A small window that records each request and edits the markers of the
+/// claims it is sent.
 struct SmallWindow {
     window: usize,
     requests: Mutex<Vec<(String, String)>>,
@@ -151,12 +152,18 @@ impl LLMPort for SmallWindow {
     ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
         let (system, user) = crate::lessons::structured_call::task_messages(request);
         let mut requests = self.requests.lock().unwrap();
-        let marker = format!("[{}]", requests.len());
         requests.push((system.to_owned(), user.to_owned()));
+        let sent: Value = serde_json::from_str(user).unwrap_or(Value::Null);
+        let edits: Vec<Value> = sent["failedClaims"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|claim| claim["claimId"].as_str()?.strip_prefix("claim-"))
+            .map(|k| json!({"path":"/blocks/0/body","before":format!("[{k}]"),"after":format!("({k})")}))
+            .collect();
         Ok(
             lattice_core::application::ports::llm_port::CompletionResponse::from_text(
-                json!({"edits":[{"path":"/blocks/0/body","before":marker,"after":marker.replace('[', "(").replace(']', ")")}]})
-                    .to_string(),
+                json!({ "edits": edits }).to_string(),
             ),
         )
     }
@@ -182,7 +189,10 @@ async fn a_section_too_large_for_one_request_is_repaired_in_several_that_fit() -
     // Each failed claim is a ledger claim located on its own marker: a
     // repair may change only the failed claims' sentences (claim sources
     // design §10.2), so the edits must land on sentences it targets.
-    let body = "[0] [1] [2] [3] [4] [5]";
+    let body = (0..6)
+        .map(|k| format!("Claim [{k}] holds."))
+        .collect::<Vec<_>>()
+        .join(" ");
     let claims: Vec<_> = (0..6)
         .map(|k| json!({"unit":0,"claimId":format!("claim-{k}"),"statement":format!("Claim {k}"),"verdict":"unsupported","reason":"Unstated.","evidence":[format!("evidence-{}", 2 * k), format!("evidence-{}", 2 * k + 1)]}))
         .collect();
@@ -198,7 +208,7 @@ async fn a_section_too_large_for_one_request_is_repaired_in_several_that_fit() -
     // Open for repair, as a pass leaves its failed claims.
     for k in 0..6 {
         let id = ClaimId(format!("claim-{k}"));
-        let location = ClaimLocation::locate(0, UnitKind::Block, "body", format!("[{k}]"), body);
+        let location = ClaimLocation::locate(0, UnitKind::Block, "body", format!("[{k}]"), &body);
         ledger
             .append(
                 &id,
@@ -269,8 +279,9 @@ async fn a_section_too_large_for_one_request_is_repaired_in_several_that_fit() -
     }
     // Each request edited the section the previous one left.
     let body = repaired["blocks"][0]["body"].as_str().unwrap();
-    for part in 0..requests.len() {
-        assert!(body.contains(&format!("({part})")), "{body}");
+    for k in 0..6 {
+        assert!(body.contains(&format!("({k})")), "{body}");
+        assert!(!body.contains(&format!("[{k}]")), "{body}");
     }
     Ok(())
 }
