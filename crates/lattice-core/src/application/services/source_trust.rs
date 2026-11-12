@@ -175,7 +175,10 @@ pub(crate) async fn judge<T>(
                 input_tokens,
                 output_tokens,
             }),
-            ErrorClass::DoesNotFit | ErrorClass::Outage | ErrorClass::Unavailable | ErrorClass::Fault => Err(error),
+            ErrorClass::DoesNotFit
+            | ErrorClass::Outage
+            | ErrorClass::Unavailable
+            | ErrorClass::Fault => Err(error),
         },
     }
 }
