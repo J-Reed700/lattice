@@ -105,8 +105,9 @@ impl Transport for Planned {
         })
     }
 
-    fn correction(
+    async fn correction(
         &self,
+        _llm: &dyn LLMPort,
         request: &GroundedRequest,
         previous: &CompletionResponse,
         refusal: &str,
@@ -124,7 +125,11 @@ impl Transport for Planned {
         Ok(next)
     }
 
-    fn larger(&self, _request: &GroundedRequest) -> Option<GroundedRequest> {
+    async fn larger(
+        &self,
+        _llm: &dyn LLMPort,
+        _request: &GroundedRequest,
+    ) -> Option<GroundedRequest> {
         None
     }
 }

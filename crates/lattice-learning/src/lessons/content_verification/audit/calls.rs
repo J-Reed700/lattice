@@ -272,8 +272,9 @@ impl Transport for Audit<'_> {
         Ok(answer.response)
     }
 
-    fn correction(
+    async fn correction(
         &self,
+        _llm: &dyn LLMPort,
         request: &Rendered,
         previous: &CompletionResponse,
         refusal: &str,
@@ -291,7 +292,7 @@ Your previous answer:
         Ok(next)
     }
 
-    fn larger(&self, _: &Rendered) -> Option<Rendered> {
+    async fn larger(&self, _: &dyn LLMPort, _: &Rendered) -> Option<Rendered> {
         None
     }
 }

@@ -826,6 +826,30 @@ async fn a_correction_that_overflows_the_window_is_refused_for_its_size() {
 }
 
 #[tokio::test]
+async fn a_correction_only_the_exact_count_overflows_is_refused_with_that_count() {
+    let mut llm = Recorder::answering_first(4_000, &["first"]);
+    llm.exact = true;
+    let reason = "Too vague. ".repeat(550);
+    let error = refused_beyond_the_window(&llm, &reason).await;
+    let AppError::PromptExceedsWindow {
+        prompt_tokens,
+        counted_exactly,
+        ..
+    } = error
+    else {
+        panic!("expected a size refusal, got {error:?}");
+    };
+    let restated = restate(first_request(), &reason);
+    let measured = grounded_generation::measure(&llm, &restated).await.unwrap();
+    assert_eq!(
+        (prompt_tokens, measured.exact),
+        (measured.prompt_tokens, true)
+    );
+    assert!(counted_exactly);
+    assert_eq!(llm.sent().len(), 1, "no correction was sent");
+}
+
+#[tokio::test]
 async fn a_packed_request_whose_correction_does_not_fit_is_sent_again_with_less_material(
 ) -> Result<()> {
     let llm = Recorder::answering_first(8_000, &["first"]);

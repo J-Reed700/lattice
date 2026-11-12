@@ -209,7 +209,6 @@ pub(crate) async fn complete_checked_request<T>(
     let output_tokens = request.output_tokens;
     let one_step = || async {
         let direct = Learning {
-            llm,
             call,
             progress,
             step: Step::Direct,
@@ -278,7 +277,6 @@ pub(crate) async fn complete_checked_request<T>(
             lesson_progress::stage(format!("Working through {subject} in prose (step 1 of 2)"));
             let draft_call = call.draft();
             let writing = Learning {
-                llm,
                 call: &draft_call,
                 progress,
                 step: Step::Draft,
@@ -347,7 +345,6 @@ pub(crate) async fn complete_checked_request<T>(
         "Structuring {subject} from a {draft_tokens}-token draft (step 2 of 2)"
     ));
     let answering = Learning {
-        llm,
         call,
         progress,
         step: Step::Answer,
@@ -374,43 +371,49 @@ pub(crate) async fn complete_checked_request<T>(
 /// The learning side of one model call: sends a grounded request, streams its
 /// text to the running progress, and builds the request that asks again.
 struct Learning<'a> {
-    llm: &'a dyn LLMPort,
     call: &'a ContractCall,
     progress: Option<&'a OutlineProgress>,
     step: Step,
 }
 
 impl Learning<'_> {
-    /// Whether the model's window holds `request`, by the planner's estimate.
-    fn holds(&self, request: &GroundedRequest) -> bool {
-        grounded_generation::estimate(self.llm, request).is_ok_and(|measured| measured.fits())
-    }
-
     /// The refusal for a correction `restated` that the window cannot hold: for
-    /// a packer's call, with the size the planner estimated; otherwise the
+    /// a packer's call, with the size the planner measured; otherwise the
     /// answer's own refusal.
-    fn too_large(&self, restated: &GroundedRequest, reason: &str) -> AppError {
-        let size = match grounded_generation::estimate(self.llm, restated) {
-            Ok(measured) => Some(measured.prompt_tokens),
-            Err(error) => error.overflow().map(|overflow| overflow.required),
+    async fn too_large(
+        &self,
+        llm: &dyn LLMPort,
+        restated: &GroundedRequest,
+        reason: &str,
+    ) -> AppError {
+        let size = match grounded_generation::measure(llm, restated).await {
+            Ok(measured) => Some((measured.prompt_tokens, measured.exact)),
+            Err(error) => error.overflow().map(|overflow| (overflow.required, false)),
         };
-        let window = self.llm.max_context_tokens();
+        let window = llm.max_context_tokens();
         tracing::warn!(
             step = self.step.name(),
             reason,
-            prompt_tokens = size,
+            prompt_tokens = size.map(|(tokens, _)| tokens),
+            counted_exactly = size.map(|(_, exact)| exact),
             window,
             "A refused answer cannot be asked for again within the window"
         );
-        let Some(prompt_tokens) = size.filter(|_| model_call::sent_by_packer()) else {
+        let Some((prompt_tokens, counted_exactly)) = size.filter(|_| model_call::sent_by_packer())
+        else {
             return AppError::ModelAnswerUnusable(reason.to_owned());
+        };
+        let counted = if counted_exactly {
+            "counted exactly"
+        } else {
+            "estimated"
         };
         AppError::PromptExceedsWindow {
             prompt_tokens,
             window,
-            counted_exactly: false,
+            counted_exactly,
             message: format!(
-                "The model's answer could not be used: {reason} Asking again with that reason needs a prompt of {prompt_tokens} tokens (estimated), which does not fit the configured context window of {window}."
+                "The model's answer could not be used: {reason} Asking again with that reason needs a prompt of {prompt_tokens} tokens ({counted}), which does not fit the configured context window of {window}."
             ),
         }
     }
@@ -438,20 +441,21 @@ impl Transport for Learning<'_> {
     /// The refused answer continues the request, so the server reads the
     /// opening it has just read; a task that nearly fills the window is sent
     /// again with the reason instead.
-    fn correction(
+    async fn correction(
         &self,
+        llm: &dyn LLMPort,
         request: &GroundedRequest,
         previous: &CompletionResponse,
         refusal: &str,
     ) -> Result<GroundedRequest> {
         let continued = reask(request.clone(), &previous.text, refusal);
         let restated = restate(request.clone(), refusal);
-        let again = if self.holds(&continued) {
+        let again = if model_call::fits(llm, &continued).await {
             continued
-        } else if self.holds(&restated) {
+        } else if model_call::fits(llm, &restated).await {
             restated
         } else {
-            return Err(self.too_large(&restated, refusal));
+            return Err(self.too_large(llm, &restated, refusal).await);
         };
         tracing::warn!(
             step = self.step.name(),
@@ -465,13 +469,17 @@ impl Transport for Learning<'_> {
     /// An answer cut off at its output reservation is asked for once more with
     /// the reservation doubled, unless it already had the whole window or the
     /// doubled request does not fit.
-    fn larger(&self, request: &GroundedRequest) -> Option<GroundedRequest> {
+    async fn larger(
+        &self,
+        llm: &dyn LLMPort,
+        request: &GroundedRequest,
+    ) -> Option<GroundedRequest> {
         if fills_window(self.progress, self.step) {
             return None;
         }
         let mut larger = request.clone();
         larger.output_tokens = request.output_tokens.saturating_mul(2);
-        if !self.holds(&larger) {
+        if !model_call::fits(llm, &larger).await {
             return None;
         }
         tracing::warn!(
