@@ -6,10 +6,10 @@
 use std::collections::{BTreeSet, HashMap};
 
 use lattice_core::application::ports::SourceTrustStore;
+use lattice_core::application::services::claim_verification::quote_in;
 use lattice_core::domain::learning::claim_review::{
     ClaimLedgerEntry, ClaimState, Ledger, TrustAssessment,
 };
-use lattice_core::application::services::claim_verification::quote_in;
 use lattice_core::domain::provenance::{Decision, StandingAssessment, TrustLevel};
 use lattice_core::shared::error::Result;
 

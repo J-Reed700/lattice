@@ -9,8 +9,8 @@
 use std::collections::HashSet;
 
 use lattice_core::domain::learning::claim_review::{
-    span_of, Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation,
-    EventProvenance, HumanBinding, UnitKind, UnverifiedReason, UserAction,
+    span_of, Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, EventProvenance,
+    HumanBinding, UnitKind, UnverifiedReason, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::WriteTx;
@@ -60,7 +60,10 @@ pub(super) async fn user_sentence_in(
     };
     let statement = location.quote.clone();
     for event in [
-        ClaimEvent::Extracted { location, statement },
+        ClaimEvent::Extracted {
+            location,
+            statement,
+        },
         ClaimEvent::PublishedUnverified {
             reason: UnverifiedReason::Unchecked,
         },

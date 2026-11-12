@@ -6,8 +6,7 @@ use lattice_core::domain::learning::claim_review::{
     Actor, AttachOutcome, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLocation,
     ClaimState, Class, ClassifiedBy, EventProvenance, EvidenceFingerprint, EvidenceSeen,
     HumanBinding, Provenance, RecordedEvent, ReopenCause, RepairOutcome, RequestFacts, StopCode,
-    StopReason,
-    SupportedBy, TrustAssessment, TrustCause, UnitKind, UserAction, VerdictKind,
+    StopReason, SupportedBy, TrustAssessment, TrustCause, UnitKind, UserAction, VerdictKind,
 };
 use lattice_core::domain::provenance::{
     AddedBy, Bar, ClaimKind, ClaimProfile, ClusterId, CountedSupport, Decision, Missing,
@@ -525,13 +524,15 @@ fn a_claim_published_not_verified_is_a_state_with_its_reason_and_has_no_history_
 
 #[test]
 fn a_verifier_stop_is_an_audit_stop_and_a_model_stop_is_not() {
-    let stop = |code| StopReasonDto::from(&StopReason {
-        code,
-        message: String::new(),
-        fix: String::new(),
-        at: 1,
-        request: None,
-    });
+    let stop = |code| {
+        StopReasonDto::from(&StopReason {
+            code,
+            message: String::new(),
+            fix: String::new(),
+            at: 1,
+            request: None,
+        })
+    };
     let verifier = stop(StopCode::VerifierUnset);
     assert!(verifier.audit);
     assert_eq!(verifier.code, "verifier_unset");

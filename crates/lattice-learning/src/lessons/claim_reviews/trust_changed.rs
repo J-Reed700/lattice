@@ -7,9 +7,9 @@
 
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
-    end_state, Actor, Check, CheckResult, Checker, ClaimEvent, ClaimLedgerEntry, ClaimState,
-    EventProvenance, GateVerdict, Ledger, LessonReview, LessonReviewState, TrustAssessment,
-    TrustCause, TrustVerdict,
+    end_state, Actor, Checker, ClaimEvent, ClaimLedgerEntry, ClaimState, EventProvenance,
+    GateVerdict, Ledger, LessonReview, LessonReviewState, TrustAssessment, TrustCause,
+    TrustVerdict,
 };
 use lattice_core::domain::provenance::{ClaimKind, EffectiveBars};
 use lattice_core::shared::error::{AppError, Result};
@@ -204,11 +204,9 @@ pub async fn record_verifier_agreements(
             .any(|record| {
                 matches!(
                     &record.event,
-                    ClaimEvent::Checked(Check {
-                        checker: Checker::Verifier { .. },
-                        result: CheckResult::Supported { .. },
-                        ..
-                    })
+                    ClaimEvent::Checked(check)
+                        if matches!(check.checker, Checker::Verifier { .. })
+                            && check.result.passed()
                 )
             });
         if agreed {

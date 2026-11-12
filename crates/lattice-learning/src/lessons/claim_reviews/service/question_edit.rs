@@ -22,12 +22,12 @@ use crate::assessment_generation::StoredItem;
 use crate::assessment_repository::{content_hash, LearningAssessmentRepository};
 use crate::content_verification::Rewritten;
 use crate::lessons::claim_reviews::count;
-use crate::lessons::review_findings::FindingSite;
 use crate::lessons::claim_reviews::published_edit::update_report;
 use crate::lessons::claim_reviews::published_rewrite::{plan, FieldPlan, Written};
 use crate::lessons::claim_reviews::repository::{
     blocks, bump_revision, check_revision, questions, teaching_findings,
 };
+use crate::lessons::review_findings::FindingSite;
 use crate::persistence::{db, now};
 use crate::quiz_blueprints::parse_format;
 

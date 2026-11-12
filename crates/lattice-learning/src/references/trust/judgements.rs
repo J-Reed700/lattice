@@ -122,8 +122,11 @@ pub async fn reprofile_claim(
     // The same unit title and course topic the preparation job gives the
     // profile call (`provenance_gate::context`, `generation_jobs`).
     let unit_title = FindingSite::of_unit(
-        usize::try_from(unit_index).map_err(|_| AppError::InternalError("A statement's unit is out of range.".into()))?,
-        usize::try_from(sections).map_err(|_| AppError::InternalError("A lesson's section count is out of range.".into()))?,
+        usize::try_from(unit_index)
+            .map_err(|_| AppError::InternalError("A statement's unit is out of range.".into()))?,
+        usize::try_from(sections).map_err(|_| {
+            AppError::InternalError("A lesson's section count is out of range.".into())
+        })?,
     )
     .label();
     let topic = format!("{goal}: {lesson_title}");

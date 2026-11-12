@@ -12,8 +12,8 @@ use serde_json::Value;
 
 use super::super::dto::{ClaimPresentationDto, ResearchSummaryDto};
 use super::SourceFacts;
-use crate::lessons::claim_reviews::count;
 use crate::content_verification::{field_text, located_quote};
+use crate::lessons::claim_reviews::count;
 use crate::lessons::review_findings::FindingSite;
 
 /// Whether the machine took the statement's text out of the lesson: what

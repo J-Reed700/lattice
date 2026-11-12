@@ -9,9 +9,9 @@ use std::collections::HashSet;
 
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
-    Actor, ClaimActionKind, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry, EventProvenance,
-    HumanBinding, Ledger, LessonReview, LessonReviewState, Revision, TrustVerdict, UserAction,
-    span_of,
+    span_of, Actor, ClaimActionKind, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry,
+    EventProvenance, HumanBinding, Ledger, LessonReview, LessonReviewState, Revision, TrustVerdict,
+    UserAction,
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
@@ -366,8 +366,7 @@ impl ClaimReviewService {
             ));
         }
 
-        let (ended, moved, mut revision) =
-            self.remove_sentences(&review, &ledger, &chosen).await?;
+        let (ended, moved, mut revision) = self.remove_sentences(&review, &ledger, &chosen).await?;
         if self.redecide(lesson_id, moved).await? {
             revision = self.store.load(lesson_id).await?.revision;
         }

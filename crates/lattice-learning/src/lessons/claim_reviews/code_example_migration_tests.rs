@@ -2,7 +2,7 @@
 //! that run's claim.
 
 use lattice_core::domain::learning::claim_review::{
-    Actor, Class, ClassifiedBy, ClaimEvent, ClaimId, ClaimLocation, EventProvenance, LessonReview,
+    Actor, ClaimEvent, ClaimId, ClaimLocation, Class, ClassifiedBy, EventProvenance, LessonReview,
     LessonReviewState, UnitKind,
 };
 use sqlx::sqlite::SqlitePoolOptions;
