@@ -681,7 +681,6 @@ impl EvalLlm {
             AppError::Network(_)
                 | AppError::ServiceNotAvailable(_)
                 | AppError::RateLimitExceeded(_)
-                | AppError::QueueFull
                 // Ollama currently erases its transport error variant at the
                 // LLMPort boundary. Its `Other` failures therefore need the
                 // same eval-level treatment as explicit network failures.

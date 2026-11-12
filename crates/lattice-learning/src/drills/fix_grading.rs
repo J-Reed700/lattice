@@ -384,5 +384,5 @@ async fn run_suite(tools: Tools<'_>, case: &FixCase<'_>) -> Result<SuiteVerdict>
 /// What grading fails with when a run was cancelled: the job's token is cancelled then, and a job whose token is
 /// cancelled stops.
 fn cancelled() -> AppError {
-    AppError::InvalidState("The grading was cancelled.".into())
+    AppError::Cancelled("The grading was cancelled.".into())
 }

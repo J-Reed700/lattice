@@ -4589,10 +4589,6 @@ export type AppError =
  */
 { EmbeddingFailed: { reason: string } } |
 /**
- * Queue is full
- */
-"QueueFull" |
-/**
  * Unsupported file type
  */
 { UnsupportedFileType: { path: string; detected_type: string } } |
@@ -4749,10 +4745,6 @@ export type ApplicationError =
  * Required service is not available.
  */
 { ServiceNotAvailable: { service: string; reason: string } } |
-/**
- * Processing queue is full (backpressure).
- */
-{ QueueFull: { queue_name: string } } |
 /**
  * Serialization failed.
  */
@@ -6809,10 +6801,6 @@ export type ErrorCode =
  * Conflict detected (e.g. revision mismatch)
  */
 "CONFLICT" |
-/**
- * Processing queue is full
- */
-"QUEUE_FULL" |
 /**
  * Backup creation failed
  */

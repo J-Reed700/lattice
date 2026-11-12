@@ -308,7 +308,7 @@ async fn a_runtime_that_is_not_there_or_a_cancelled_run_is_never_blamed_on_the_a
             );
         } else {
             assert!(
-                matches!(&error, AppError::InvalidState(message) if message.contains("cancelled")),
+                matches!(&error, AppError::Cancelled(_)),
                 "{error:?}"
             );
         }

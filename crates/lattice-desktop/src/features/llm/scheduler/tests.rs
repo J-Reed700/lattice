@@ -230,7 +230,7 @@ async fn a_request_cancelled_while_queued_leaves_the_queue_with_an_error() {
         .unwrap()
         .unwrap();
     assert!(
-        matches!(result, Err(AppError::InvalidState(_))),
+        matches!(result, Err(AppError::Cancelled(_))),
         "{result:?}"
     );
     assert_eq!(
@@ -783,7 +783,7 @@ async fn a_request_cancelled_in_flight_is_aborted_and_frees_its_slot() {
         .unwrap()
         .unwrap();
     assert!(
-        matches!(result, Err(AppError::InvalidState(_))),
+        matches!(result, Err(AppError::Cancelled(_))),
         "{result:?}"
     );
 

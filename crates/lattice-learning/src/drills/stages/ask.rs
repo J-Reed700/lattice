@@ -110,7 +110,7 @@ fn did_not_finish(what_runs: &str, output: &str) -> String {
 /// What a stage fails with when a run was cancelled. The build's own token is cancelled then, and a stage whose
 /// token is cancelled is a stop, as the job runtime treats an error raised while stopping.
 pub(crate) fn cancelled() -> AppError {
-    AppError::InvalidState("The drill build was cancelled.".into())
+    AppError::Cancelled("The drill build was cancelled.".into())
 }
 
 /// A refusal the model is asked again with.

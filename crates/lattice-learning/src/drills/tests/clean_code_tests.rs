@@ -381,7 +381,7 @@ async fn a_cancelled_run_is_a_cancelled_build_and_the_answer_is_not_blamed() -> 
         .await
         .unwrap_err();
     assert!(
-        matches!(&error, AppError::InvalidState(message) if message.contains("cancelled")),
+        matches!(&error, AppError::Cancelled(_)),
         "{error:?}"
     );
     assert_eq!(model.requests().len(), 2, "nothing is asked again");
