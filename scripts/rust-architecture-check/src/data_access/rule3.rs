@@ -20,7 +20,7 @@ use syn::{
     Expr, FnArg, ImplItem, Item, Pat, TraitItem, Type,
 };
 
-const STATEMENTS: [&str; 7] = [
+pub(super) const STATEMENTS: [&str; 7] = [
     "execute",
     "execute_many",
     "fetch",
@@ -498,8 +498,6 @@ struct Collect {
     fields: HashMap<String, HashSet<String>>,
     /// The pool fields of the struct the current impl is for.
     current: HashSet<String>,
-    /// The generics of the current impl that are bounded by `DriverPool`.
-    bounds: HashSet<String>,
 }
 
 impl Collect {
@@ -531,13 +529,11 @@ impl Collect {
                 FnArg::Typed(typed) => Some(binding(&typed.pat).unwrap_or_else(|| "_".into())),
             })
             .collect();
-        let mut bounded = pool::bounded(&signature.generics);
-        bounded.extend(self.bounds.iter().cloned());
         let mut pool_names: HashSet<String> = signature
             .inputs
             .iter()
             .filter_map(|input| match input {
-                FnArg::Typed(typed) if pool::pool_type(&typed.ty, &bounded) => binding(&typed.pat),
+                FnArg::Typed(typed) if pool::pool_type(&typed.ty) => binding(&typed.pat),
                 _ => None,
             })
             .collect();
@@ -547,10 +543,7 @@ impl Collect {
             HashSet::new()
         };
         for each in &body.lets {
-            let pool = each
-                .ty
-                .as_ref()
-                .is_some_and(|ty| pool::pool_type(ty, &bounded))
+            let pool = each.ty.as_ref().is_some_and(pool::pool_type)
                 || each
                     .core
                     .as_ref()
@@ -604,10 +597,8 @@ impl<'ast> Visit<'ast> for Collect {
             _ => HashSet::new(),
         };
         let outer_fields = std::mem::replace(&mut self.current, fields);
-        let outer_bounds = std::mem::replace(&mut self.bounds, pool::bounded(&item.generics));
         visit::visit_item_impl(self, item);
         self.current = outer_fields;
-        self.bounds = outer_bounds;
         self.owner = outer;
     }
     fn visit_item_trait(&mut self, item: &'ast syn::ItemTrait) {
