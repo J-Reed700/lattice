@@ -1,12 +1,13 @@
 //! Where the ledger has a claim in its class's graph: read from the steps it
 //! records for it, from the entry of the class it was sorted into or from the
 //! post-rewrite node of the claim it succeeds (acceptance design §2.9).
+use super::acceptance_switch_tests::walk;
 use super::claim_ledger_tests::{identify_findings, pass_report, passage_finding, CELL};
 use super::*;
 use crate::lessons::call_plan::{Planned, PlannedAt};
 use lattice_core::domain::learning::acceptance::{
-    born, decide, AcceptancePolicy, End, Goal, Outcome, Position, Reading, Step, Taken, Then,
-    Walked,
+    born, decide, most_calls, AcceptancePolicy, End, Goal, Outcome, Position, Reading, Step, Taken,
+    Then, Walked,
 };
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimId, ClaimLocation, UnitKind,
@@ -708,6 +709,85 @@ async fn a_claim_born_of_a_repair_starts_at_the_post_rewrite_node_of_its_class_w
             "s.cut",
             0
         )))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_job_that_starts_over_ended_statements_plans_their_teaching_rewrites() -> Result<()> {
+    let policy = StandardPolicy::new();
+    let lesson = json!({"blocks":[{"kind":"explanation","title":"Rows","body":SENTENCE,"rubric":[]}],"questions":[]});
+    let mut ledger = open().await?;
+    // An earlier job ended this statement Consistent; a rewrite is left.
+    let ended = [
+        (Step::Read(Reading::Consistency), Outcome::Stands),
+        (Step::Read(Reading::Veto), Outcome::Stands),
+    ];
+    let id = super::acceptance_switch_tests::claim(
+        &mut ledger,
+        "ended",
+        (SENTENCE, SENTENCE),
+        SENTENCE,
+        (Class::Reasoning, ClassifiedBy::Model),
+    )
+    .await?;
+    walk(&mut ledger, &id, Class::Reasoning, &ended).await?;
+    let held = ledger.planned(&policy, &lesson, std::slice::from_ref(&id));
+    let Some(PlannedAt::Ended(Some(successor))) = held.first().map(|planned| planned.at) else {
+        panic!("the ended statement has no teaching successor: {held:?}");
+    };
+    let successor_calls = most_calls(&policy, successor);
+
+    // A new job extracts the same statement, which continues the claim.
+    let checks = ClaimChecks {
+        rewrites: ledger.rewrites(&policy),
+        ..ClaimChecks::default()
+    };
+    let extraction = passes::Extraction {
+        inventory: Inventory {
+            units: vec![UnitClaims {
+                index: 0,
+                claims: vec![Claim {
+                    quote: SENTENCE.into(),
+                    statement: SENTENCE.into(),
+                }],
+                non_factual_reason: String::new(),
+            }],
+        },
+        coverage: Coverage { units: vec![] },
+        executions: vec![],
+    };
+    let references = ReferenceCollection::lexical(&[])?;
+    let (done, trace) = crate::lesson_progress::traced(async {
+        let pass = crate::lesson_progress::checks(passes::identify(
+            &Model::new(),
+            &policy,
+            &mut ledger,
+            (&lesson, &references),
+            extraction,
+            &checks,
+        ))
+        .await?;
+        assert!(
+            pass.statements.iter().any(|known| known.id == id),
+            "the pass does not continue the ended claim"
+        );
+        repair_loop::plan_moved(&policy, &ledger, &lesson);
+        Ok::<(), AppError>(())
+    })
+    .await;
+    done?;
+
+    assert!(
+        trace.only_came_down(),
+        "the first move raised the ceiling: {:?}",
+        trace.ceilings
+    );
+    let first = trace.ceilings.first().copied().unwrap_or_default();
+    assert!(
+        first >= trace.calls + successor_calls,
+        "the plan's first ceiling {first} does not hold the {successor_calls} calls of the ended statement's teaching successor (ceilings {:?})",
+        trace.ceilings
     );
     Ok(())
 }
