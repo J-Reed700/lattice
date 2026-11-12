@@ -1,6 +1,9 @@
 //! Account for every lossless lesson passage, not just a section-level summary.
 use super::*;
 use crate::outline_progress::OutlineProgress;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::protocol;
 use lattice_core::shared::protocol::Protocol;
 use lattice_core::shared::text::same_text;
@@ -221,6 +224,14 @@ fn fidelity_request(unit: &Value, passage: &Value) -> Value {
     request
 }
 
+/// The call that lists the assertions of a passage its claims leave unrepresented.
+pub(super) struct FidelityAudit;
+
+impl Contract for FidelityAudit {
+    const ID: ContractId = ContractId::new("fidelity-audit");
+    type Input = PromptInput;
+}
+
 /// A malformed answer is asked for once more and otherwise fails the check,
 /// preserving the draft; it is never read as a representation gap.
 async fn judge(
@@ -228,10 +239,16 @@ async fn judge(
     request: &Value,
     sentences: &[String],
 ) -> Result<FidelityFinding> {
+    let prompt = PromptInput {
+        system: FIDELITY_SYSTEM.into(),
+        prompt: request.to_string(),
+    };
+    let call = ContractCall::of::<FidelityAudit>(&prompt)?;
     crate::generation::complete_checked(
         llm,
-        FIDELITY_SYSTEM,
-        request.to_string(),
+        &call,
+        &prompt.system,
+        prompt.prompt.clone(),
         fidelity_schema(sentences),
         1500,
         None,
