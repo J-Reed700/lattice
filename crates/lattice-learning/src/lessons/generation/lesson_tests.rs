@@ -1199,3 +1199,29 @@ fn a_candidate_with_no_sections_does_not_read_as_a_lesson() {
         &json!({"blocks": [], "questions": []})
     ));
 }
+
+#[test]
+fn a_practice_section_with_one_criterion_is_published_without_it() {
+    let mut lesson = sweep_baseline(false);
+    lesson["blocks"][7]["rubric"] = json!([
+        {"title":"Names the step","description":"Says which step comes next.","dimension":"recall"}
+    ]);
+    assert!(kept_rules(&lesson).contains(&Rule::PracticeRubric));
+    let generated: GeneratedLesson = serde_json::from_value(lesson).unwrap();
+
+    let (prepared, _) = assemble(generated, &[], &HashSet::new()).unwrap();
+
+    assert!(
+        prepared.blocks[7].rubric.is_empty(),
+        "{:?}",
+        prepared.blocks[7].rubric
+    );
+}
+
+#[test]
+fn lesson_drafts_are_keyed_by_versioned_protocols() {
+    assert_eq!(
+        json!({"policy": AUTHORING_POLICY})["policy"],
+        json!("lesson-authoring-v1")
+    );
+}
