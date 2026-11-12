@@ -6,9 +6,8 @@ use lattice_core::application::contracts::web::{
     FetchUrlContentOutput, ReferencePage, WebSearchInput, WebSearchOutput,
 };
 use lattice_core::application::ports::WebServiceTrait;
-use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, ErrorClass, Result};
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::shared::runtime::jobs::JobFailure;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -251,7 +250,7 @@ impl TracedWeb {
             Ok(output) => {
                 json!({"method":method,"key":key,"input":input,"ok":true,"output":output})
             }
-            Err(error) if JobFailure::is_transient(error) => {
+            Err(error) if ErrorClass::of(error) == ErrorClass::Outage => {
                 self.lock().transient += 1;
                 return result;
             }

@@ -32,8 +32,21 @@ pub enum AppError {
     /// Database errors
     Database(String),
 
+    /// Another connection kept the work out of the database; a later attempt
+    /// gets the lock.
+    DatabaseBusy(String),
+
     /// Configuration file errors
     InvalidConfig(String),
+
+    /// The configured context window cannot hold what the work needs.
+    WindowTooSmall(String),
+
+    /// The work was stopped on request.
+    Cancelled(String),
+
+    /// A lesson was held back for review; the text says why.
+    LessonHeld(String),
 
     /// No Learning model is set; the text says where to choose one
     LearningModelNotSet(String),
@@ -77,9 +90,6 @@ pub enum AppError {
 
     /// Embedding generation failed
     EmbeddingFailed { reason: String },
-
-    /// Queue is full
-    QueueFull,
 
     /// Unsupported file type
     UnsupportedFileType { path: String, detected_type: String },
@@ -273,7 +283,11 @@ impl AppError {
             AppError::Io { .. } => "IO_ERROR",
             AppError::Json { .. } => "JSON_ERROR",
             AppError::Database(_) => "DATABASE_ERROR",
+            AppError::DatabaseBusy(_) => "DATABASE_BUSY",
             AppError::InvalidConfig(_) => "INVALID_CONFIG",
+            AppError::WindowTooSmall(_) => "WINDOW_TOO_SMALL",
+            AppError::Cancelled(_) => "CANCELLED",
+            AppError::LessonHeld(_) => "LESSON_HELD",
             AppError::LearningModelNotSet(_) => "LEARNING_MODEL_NOT_SET",
             AppError::ModelServerCannotStart(_) => "MODEL_SERVER_CANNOT_START",
             AppError::NotFound(_) => "NOT_FOUND",
@@ -286,7 +300,6 @@ impl AppError {
             AppError::FileNotFound { .. } => "FILE_NOT_FOUND",
             AppError::FileRead { .. } => "FILE_READ_ERROR",
             AppError::EmbeddingFailed { .. } => "EMBEDDING_FAILED",
-            AppError::QueueFull => "QUEUE_FULL",
             AppError::UnsupportedFileType { .. } => "UNSUPPORTED_FILE_TYPE",
             AppError::ContentExtraction { .. } => "CONTENT_EXTRACTION_FAILED",
             AppError::TokenizationError { .. } => "TOKENIZATION_ERROR",
@@ -332,12 +345,13 @@ impl AppError {
             | AppError::InvalidUrl(_)
             | AppError::UnsupportedFileType { .. } => 400,
             AppError::RateLimitExceeded(_) => 429,
-            AppError::ServiceNotAvailable(_) | AppError::AiModelsNotInstalled(_) => 503,
+            AppError::ServiceNotAvailable(_)
+            | AppError::DatabaseBusy(_)
+            | AppError::AiModelsNotInstalled(_) => 503,
             AppError::ModelRejected(_) | AppError::ModelAnswerUnusable(_) => 502,
             AppError::FileTooLarge { .. } => 413,
             AppError::ConcurrentModification { .. } | AppError::Conflict(_) => 409,
             AppError::Domain(err) if err.is_not_found() => 404,
-            AppError::Domain(err) if err.is_business_rule_violation() => 400,
             AppError::Application(err) if err.is_config_error() => 400,
             _ => 500,
         }
@@ -346,9 +360,6 @@ impl AppError {
     /// Get a user-friendly error message
     pub fn to_user_friendly_message(&self) -> String {
         match self {
-            AppError::QueueFull => {
-                "The system is currently busy. Please try again in a moment.".to_string()
-            }
             AppError::FileTooLarge { .. } => {
                 "This file is too large to process. Try a smaller file.".to_string()
             }
@@ -360,62 +371,6 @@ impl AppError {
                 "Network connection issue. Please check your internet connection.".to_string()
             }
             _ => self.to_string(),
-        }
-    }
-
-    /// Whether another connection kept this attempt out of the database:
-    /// SQLite's busy and locked errors, or a connection pool that timed out.
-    pub fn is_database_busy(&self) -> bool {
-        match self {
-            AppError::Database(message) => {
-                message.contains("database is locked")
-                    || message.contains("database table is locked")
-            }
-            AppError::ServiceNotAvailable(message) => {
-                message.contains("database is temporarily busy")
-                    || message.contains("Passage index: busy")
-            }
-            _ => false,
-        }
-    }
-
-    /// Whether a web server's error status says to try again later: too many
-    /// requests, or a gateway or service that is down or busy. Any other
-    /// status is the server's settled answer.
-    pub fn is_retry_later_status(status: u16) -> bool {
-        matches!(status, 429 | 502 | 503 | 504)
-    }
-
-    /// Check if the error is recoverable (user can retry)
-    pub fn is_recoverable(&self) -> bool {
-        match self {
-            AppError::QueueFull
-            | AppError::Network(_)
-            | AppError::Io { .. }
-            | AppError::RateLimitExceeded(_)
-            | AppError::ConcurrentModification { .. }
-            | AppError::Conflict(_) => true,
-            AppError::HttpStatus { status, .. } => Self::is_retry_later_status(*status),
-            AppError::Domain(err) => err.is_retryable(),
-            AppError::Application(err) => err.is_recoverable(),
-            _ => false,
-        }
-    }
-
-    /// Check if the error is user-fixable (user action can resolve it)
-    pub fn is_user_fixable(&self) -> bool {
-        match self {
-            AppError::InvalidInput(_)
-            | AppError::PromptExceedsWindow { .. }
-            | AppError::InvalidConfig(_)
-            | AppError::LearningModelNotSet(_)
-            | AppError::ModelServerCannotStart(_)
-            | AppError::PermissionDenied(_)
-            | AppError::FileTooLarge { .. }
-            | AppError::UnsupportedFileType { .. }
-            | AppError::ValidationFailed(_) => true,
-            AppError::Domain(err) => err.is_business_rule_violation(),
-            _ => false,
         }
     }
 
@@ -501,10 +456,6 @@ impl AppError {
     /// Get recovery suggestions for the error
     pub fn get_suggestions(&self) -> Vec<String> {
         match self {
-            AppError::QueueFull => vec![
-                "Wait a few seconds and try again".to_string(),
-                "Process fewer items at once".to_string(),
-            ],
             AppError::FileTooLarge { max_size_bytes, .. } => vec![
                 format!(
                     "Split the file into chunks smaller than {} MB",
@@ -558,13 +509,15 @@ impl fmt::Display for AppError {
                 "Database error: {}. Try restarting the application.",
                 e
             ),
-            AppError::InvalidConfig(e) => write!(
+            AppError::InvalidConfig(e) | AppError::WindowTooSmall(e) => write!(
                 f,
                 "Configuration error: {}. Please check your settings.",
                 e
             ),
+            AppError::Cancelled(e) | AppError::LessonHeld(e) => write!(f, "{}", e),
             AppError::LearningModelNotSet(e) => write!(f, "{}", e),
             AppError::ModelServerCannotStart(e) => write!(f, "{}", e),
+            AppError::DatabaseBusy(e) => write!(f, "Database busy: {}", e),
             AppError::NotFound(e) => write!(f, "Not found: {}", e),
             AppError::PermissionDenied(e) => write!(
                 f,
@@ -600,10 +553,6 @@ impl fmt::Display for AppError {
                 f,
                 "Embedding generation failed: {}",
                 reason
-            ),
-            AppError::QueueFull => write!(
-                f,
-                "Processing queue is full. Please wait and try again."
             ),
             AppError::UnsupportedFileType { path, detected_type } => write!(
                 f,
@@ -688,7 +637,7 @@ impl std::error::Error for AppError {}
 ///
 /// This type allows structured error information to be sent to the frontend
 /// instead of plain strings. It includes error type discrimination, human-readable
-/// messages, optional context, and recoverability information.
+/// messages and optional context.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorResponse {
     /// Error code for programmatic handling (e.g., "NOT_FOUND", "DATABASE_ERROR")
@@ -704,10 +653,6 @@ pub struct ErrorResponse {
     /// Recovery suggestions
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub suggestions: Vec<String>,
-
-    /// Whether this error is recoverable
-    #[serde(default)]
-    pub recoverable: bool,
 
     /// HTTP status code (for API responses)
     pub status_code: u16,
@@ -725,7 +670,6 @@ impl From<AppError> for ErrorResponse {
             message: error.to_user_friendly_message(),
             context: error.get_context(),
             suggestions: error.get_suggestions(),
-            recoverable: error.is_recoverable(),
             status_code: error.http_status_code(),
             error_type: error.error_code().to_string(), // For backwards compatibility
         }

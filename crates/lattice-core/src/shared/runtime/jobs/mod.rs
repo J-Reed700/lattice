@@ -160,45 +160,11 @@ pub struct Deferral {
 }
 
 impl JobFailure {
-    /// Whether an error is a temporary outage of the network or a service,
-    /// rather than a failure of the work itself. A model's rejection
-    /// ([`AppError::ModelRejected`](crate::shared::error::AppError::ModelRejected))
-    /// is not: the same request would be refused again. Nor is a database
-    /// error in general, but SQLite's busy and locked errors are: another
-    /// connection held the lock past the busy timeout, the work is untouched,
-    /// and a later attempt gets the lock.
-    pub fn is_transient(error: &crate::shared::error::AppError) -> bool {
-        use crate::shared::error::AppError;
-        match error {
-            AppError::Network(_)
-            | AppError::ServiceNotAvailable(_)
-            | AppError::RateLimitExceeded(_) => true,
-            AppError::HttpStatus { status, .. } => AppError::is_retry_later_status(*status),
-            error => Self::is_database_busy(error),
-        }
-    }
-
-    /// Whether another connection kept this attempt out of the database:
-    /// SQLite's busy and locked errors, or a connection pool that timed out.
-    pub fn is_database_busy(error: &crate::shared::error::AppError) -> bool {
-        error.is_database_busy()
-    }
-
-    /// Whether an error says the service was not reached, or asked to be left
-    /// alone for a while, rather than answering about the work: a lost
-    /// connection, a gateway with nothing behind it, a rate limit, a database
-    /// another connection is holding. Seeing one twice says nothing about the
-    /// work, so it is retried for as long as the outage lasts.
-    pub fn is_outage(error: &crate::shared::error::AppError) -> bool {
-        use crate::shared::error::AppError;
-        matches!(error, AppError::Network(_) | AppError::RateLimitExceeded(_))
-            || Self::is_database_busy(error)
-    }
-
     /// Outages are deferred; anything else fails the attempt.
     pub fn classify(error: &crate::shared::error::AppError) -> Self {
-        if Self::is_transient(error) {
-            let progress_message = if Self::is_database_busy(error) {
+        use crate::shared::error::{AppError, ErrorClass};
+        if ErrorClass::of(error) == ErrorClass::Outage {
+            let progress_message = if matches!(error, AppError::DatabaseBusy(_)) {
                 "Waiting for another task to finish with the database"
             } else {
                 "Waiting to retry after a service outage"

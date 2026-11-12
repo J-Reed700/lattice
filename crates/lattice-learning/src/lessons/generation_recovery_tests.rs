@@ -6,6 +6,7 @@ use crate::{
     plan_dto::LearningGenerationJobActionRequestDto,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::ErrorClass;
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobStore, RecoveryPolicy};
 use serde_json::json;
@@ -89,9 +90,9 @@ async fn a_busy_database_is_waited_out_and_never_blamed_on_the_model() {
     let job = JobStore::new(pool).get(&job.id).await.unwrap();
     for busy in [
         crate::persistence::db(sqlx::Error::PoolTimedOut),
-        AppError::Database("error returned from database: (code: 5) database is locked".into()),
+        AppError::DatabaseBusy("error returned from database: (code: 5) database is locked".into()),
     ] {
-        assert!(JobFailure::is_outage(&busy), "{busy}");
+        assert_eq!(ErrorClass::of(&busy), ErrorClass::Outage, "{busy}");
         let JobFailure::Defer(deferral) = lesson_failure(&job, &busy) else {
             panic!("a busy database is deferred, not failed");
         };
@@ -719,7 +720,9 @@ async fn a_deferred_lesson_says_what_it_waits_on() {
     let job = JobStore::new(pool).get(&job.id).await.unwrap();
     for (error, code, progress) in [
         (
-            AppError::Database("error returned from database: (code: 5) database is locked".into()),
+            AppError::DatabaseBusy(
+                "error returned from database: (code: 5) database is locked".into(),
+            ),
             "temporarily_unavailable",
             "Another task is using the database; preparation will retry automatically",
         ),
