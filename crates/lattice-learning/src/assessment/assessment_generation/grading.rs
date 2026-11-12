@@ -1,7 +1,7 @@
 //! Grading written answers against their rubrics, and judging short answers
 //! that matched no accepted variant, in one rationale shape (section 4.3a).
 use super::*;
-use lattice_core::application::ports::llm_port::Finish;
+use crate::assessment::batched;
 
 /// The grader of written answers, and what a call is told about it.
 pub(crate) struct GradeWritten;
@@ -194,62 +194,51 @@ fn read_judged(text: &str) -> Result<Vec<RawJudgeItem>> {
 }
 
 /// Sends `values` in as many requests as the window needs, each holding as
-/// many items as fit, and collects each request's parsed `items`. A reply cut
-/// off at its output limit, or not JSON, goes again in halves; an item whose
-/// reply fails alone stays pending.
-async fn batched<C: Contract<Input = PromptInput>, T>(
+/// many items as fit, and collects each request's parsed `items`, matched to
+/// their values by item id (see [`batched::answers`]). A reply may leave items
+/// out, and an item whose reply fails alone stays pending.
+async fn graded_items<C: Contract<Input = PromptInput>, T: Send>(
     llm: &dyn LLMPort,
     system: &str,
     values: Vec<(String, Value)>,
     schema: impl Fn(&[String]) -> Value,
     tokens_per_item: usize,
     read: fn(&str) -> Result<Vec<T>>,
+    item_id: fn(&T) -> &str,
 ) -> Result<Vec<T>> {
-    let mut out = Vec::new();
-    let mut start = 0;
-    // The most items a request may take: every item, until a reply fails.
-    let mut most = values.len();
-    while start < values.len() {
-        let request_for = |size: usize| {
-            let slice: Vec<&(String, Value)> = values.iter().skip(start).take(size).collect();
+    let answered = batched::answers::<C, T>(
+        llm,
+        values.len(),
+        |indices| {
+            let slice: Vec<&(String, Value)> =
+                indices.iter().filter_map(|i| values.get(*i)).collect();
             let ids: Vec<String> = slice.iter().map(|(id, _)| id.clone()).collect();
             let prompt = json!({"items": slice.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>()})
                 .to_string();
-            model_call::structured(system, prompt, schema(&ids), tokens_per_item * size + 300)
-        };
-        let mut size = (values.len() - start).min(most);
-        while size > 1 && !model_call::fits(llm, &request_for(size)).await {
-            size = size.div_ceil(2);
-        }
-        let request = request_for(size);
-        let call = text_call::<C>(&request)?;
-        let response = model_call::send(
-            llm,
-            &call,
-            request,
-            None,
-            model_call::TooLarge::Window("one answer with its rubric"),
-        )
-        .await?;
-        let cut_off = Finish::of(&response.finish_reason) != Finish::Complete;
-        let parsed = (!cut_off).then(|| read(&response.text).ok()).flatten();
-        let Some(parsed) = parsed else {
-            if size > 1 {
-                most = size / 2;
-            } else {
-                tracing::warn!(
-                    item = values.get(start).map(|(id, _)| id.as_str()),
-                    cut_off,
-                    "The grader's answer for one item was unusable; it stays pending"
-                );
-                start += 1;
-            }
-            continue;
-        };
-        out.extend(parsed);
-        start += size;
-    }
-    Ok(out)
+            model_call::structured(
+                system,
+                prompt,
+                schema(&ids),
+                tokens_per_item * indices.len() + 300,
+            )
+        },
+        |text, indices| {
+            Ok(read(text)?
+                .into_iter()
+                .filter_map(|item| {
+                    let index = indices
+                        .iter()
+                        .copied()
+                        .find(|i| values.get(*i).is_some_and(|(id, _)| id == item_id(&item)))?;
+                    Some((index, item))
+                })
+                .collect())
+        },
+        "one answer with its rubric",
+        batched::Alone::Pending,
+    )
+    .await?;
+    Ok(answered.into_iter().flatten().collect())
 }
 
 /// Grade written answers against their rubrics. Items the grader omitted or
@@ -274,13 +263,14 @@ pub async fn grade_written(llm: &dyn LLMPort, answers: &[WrittenAnswer]) -> Resu
             )
         })
         .collect();
-    let graded = batched::<GradeWritten, _>(
+    let graded = graded_items::<GradeWritten, _>(
         llm,
         GRADE_SYSTEM,
         values,
         |ids| grade_schema(ids, &criteria, with_note),
         900,
         read_graded,
+        |item| item.item_id.as_str(),
     )
     .await?;
     Ok(graded
@@ -315,13 +305,14 @@ pub async fn judge_short_answers(
             )
         })
         .collect();
-    let judged = batched::<JudgeShort, _>(
+    let judged = graded_items::<JudgeShort, _>(
         llm,
         JUDGE_SYSTEM,
         values,
         |ids| judge_schema(ids, with_note),
         400,
         read_judged,
+        |item| item.item_id.as_str(),
     )
     .await?;
     Ok(judged
