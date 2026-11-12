@@ -41,7 +41,7 @@ engine/
    the client for each role (chat, router, utility).
 2. Local models go through `factory::create_llm(LLMConfig::Local { .. })`.
    `SidecarManager::start_with_fallback` preflights the bundled binary, picks a
-   free `127.0.0.1` port, spawns `llama-server` through `tauri-plugin-shell`,
+   free `127.0.0.1` port, spawns `llama-server` through `BoundCommand`,
    and waits for `GET /health`. `sidecar_pool` hands an identical request the
    already-running process, so roles pointing at one GGUF share one server; the
    process is killed when its last user drops it. Each role talks to it through

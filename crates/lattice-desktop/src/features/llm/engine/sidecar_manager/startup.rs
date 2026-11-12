@@ -224,13 +224,13 @@ impl SidecarManager {
             ));
         };
 
-        // 5. Spawn via tauri-plugin-shell. `.sidecar()` looks the binary
-        //    up next to the app executable. A failure here (missing file,
-        //    no execute permission, wrong executable format) means the
-        //    binary cannot run at all. The guard returned owns the child:
+        // 5. Spawn the installed binary next to the app executable. A
+        //    failure here (missing file, no execute permission, wrong
+        //    executable format) means the binary cannot run at all. The guard returned owns the child:
         //    every path out of this function from here on either kills it
         //    or converts it into a handle.
-        let (rx, spawned) = SpawnedChild::spawn(app, binary, args, &endpoint, &api_token, true)?;
+        let (rx, spawned) =
+            SpawnedChild::spawn(app, binary, args, &endpoint, &api_token, true).await?;
 
         // 6. Spawn the long-lived event drain task.
         //    The drain owns the receiver for the rest of the sidecar's

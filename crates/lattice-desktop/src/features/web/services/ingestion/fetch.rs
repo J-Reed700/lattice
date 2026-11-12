@@ -6,12 +6,12 @@ use super::WebIngestionService;
 use crate::features::web::services::web::validate_url_resolved;
 use lattice_core::application::contracts::web::CleanArticle;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::process::BoundCommand;
 use lattice_core::shared::text::normalize_whitespace;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::fs as async_fs;
-use tokio::process::Command;
 use tokio::time::timeout;
 use tracing::{debug, warn};
 use uuid::Uuid;
@@ -173,7 +173,7 @@ impl WebIngestionService {
 
     async fn download_audio_for_asr(&self, url: &str, directory: &Path) -> Result<PathBuf> {
         validate_url_resolved(url).await?;
-        let command_future = Command::new(&self.config.yt_dlp_binary)
+        let command_future = BoundCommand::new(&self.config.yt_dlp_binary)
             .arg("-f")
             .arg("bestaudio/best")
             .arg("--extract-audio")
@@ -188,7 +188,6 @@ impl WebIngestionService {
             .arg("--no-warnings")
             .arg("--")
             .arg(url)
-            .kill_on_drop(true)
             .output();
 
         let output = timeout(
@@ -284,18 +283,21 @@ impl WebIngestionService {
             AppError::FileSystem("Audio path missing parent directory".to_string())
         })?;
 
-        let mut command = Command::new(&self.config.asr_binary);
-        command.arg(audio_path);
-        command.arg("--model").arg(&self.config.asr_model);
-        command.arg("--output_format").arg("txt");
-        command.arg("--output_dir").arg(output_directory);
-        command.arg("--fp16").arg("False");
+        let mut command = BoundCommand::new(&self.config.asr_binary)
+            .arg(audio_path)
+            .arg("--model")
+            .arg(&self.config.asr_model)
+            .arg("--output_format")
+            .arg("txt")
+            .arg("--output_dir")
+            .arg(output_directory)
+            .arg("--fp16")
+            .arg("False");
         if let Some(language) = &self.config.asr_language {
             if !language.trim().is_empty() {
-                command.arg("--language").arg(language);
+                command = command.arg("--language").arg(language);
             }
         }
-        command.kill_on_drop(true);
 
         let output = timeout(
             Duration::from_secs(self.config.asr_timeout_secs),
@@ -373,7 +375,7 @@ impl WebIngestionService {
         validate_url_resolved(url).await?;
         let temp_dir = TempDirectoryGuard::new("lattice-ytdlp")?;
 
-        let command_future = Command::new(&self.config.yt_dlp_binary)
+        let command_future = BoundCommand::new(&self.config.yt_dlp_binary)
             .arg("--dump-single-json")
             .arg("--skip-download")
             .arg("--write-sub")
@@ -389,7 +391,6 @@ impl WebIngestionService {
             .arg("--no-warnings")
             .arg("--")
             .arg(url)
-            .kill_on_drop(true)
             .output();
 
         let output = timeout(
