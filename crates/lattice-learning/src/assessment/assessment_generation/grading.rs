@@ -11,12 +11,42 @@ impl Contract for GradeWritten {
     type Input = PromptInput;
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for GradeWritten
+{
+    type Answer = Value;
+
+    fn render(answer: &Value) -> String {
+        answer.to_string()
+    }
+
+    fn read(text: &str) -> Result<Value> {
+        crate::generation::parse_json::<Value>(text)
+    }
+}
+
 /// The judge of short answers, and what a call is told about it.
 pub(crate) struct JudgeShort;
 
 impl Contract for JudgeShort {
     const ID: ContractId = ContractId::new("quiz-judge-short");
     type Input = PromptInput;
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for JudgeShort
+{
+    type Answer = Value;
+
+    fn render(answer: &Value) -> String {
+        answer.to_string()
+    }
+
+    fn read(text: &str) -> Result<Value> {
+        crate::generation::parse_json::<Value>(text)
+    }
 }
 
 /// A written answer to grade against its rubric.

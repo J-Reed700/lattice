@@ -111,6 +111,21 @@ impl Contract for QuizKeySolve {
     type Input = PromptInput;
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for QuizKeySolve
+{
+    type Answer = Value;
+
+    fn render(answer: &Value) -> String {
+        answer.to_string()
+    }
+
+    fn read(text: &str) -> Result<Value> {
+        crate::generation::parse_json::<Value>(text)
+    }
+}
+
 /// Solve every item blind, whatever its format: one solution per item, in
 /// order. Items are sent in as many requests as the model's window needs; a
 /// malformed answer is asked for again once, then the solve fails rather than
@@ -285,5 +300,14 @@ mod tests {
         assert!(BANK_SYSTEM.contains(
             "from its premises and its quote, the lesson passage it rests on, when one is given"
         ));
+    }
+    #[test]
+    fn the_key_solve_contract_reads_what_it_renders() {
+        lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+            QuizKeySolve,
+        >(&json!({"answers":[{
+            "index":0,"reason":"It follows.","correctIndices":[1],"answer":"",
+            "blankAnswers":[],"matches":[],"orderedValues":[]
+        }]}));
     }
 }
