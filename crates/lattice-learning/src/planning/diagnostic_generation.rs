@@ -452,4 +452,27 @@ mod tests {
         );
         assert_eq!(findings[0].evidence_quote.as_deref(), Some(answer.as_str()));
     }
+
+    #[test]
+    fn a_quote_with_a_curly_apostrophe_stands_in_a_response_with_a_straight_one() {
+        let responses = [LearningDiagnosticResponseDto {
+            prompt_id: "p1".into(),
+            response: "I'd index the join column first because it skips a scan.".into(),
+        }];
+        let finding = LearningDiagnosticFindingDto {
+            prompt_id: "p1".into(),
+            outcome_id: "o1".into(),
+            signal: LearningDiagnosticSignal::ReadyForChallenge,
+            feedback: "You chose the right first step and said why.".into(),
+            evidence_quote: Some("I\u{2019}d index the join column first".into()),
+        };
+        assert!(validate_findings(&attempt(), &responses, &[finding.clone()]).is_ok());
+        let mut findings = [finding];
+        unquoted_are_uncertain(&responses, &mut findings);
+        assert_eq!(
+            findings[0].signal,
+            LearningDiagnosticSignal::ReadyForChallenge
+        );
+        assert!(findings[0].evidence_quote.is_some());
+    }
 }
