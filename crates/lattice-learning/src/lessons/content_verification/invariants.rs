@@ -190,7 +190,7 @@ fn faults(run: &PreparedRun, ledger: &ClaimLedger, found: &mut Vec<String>) {
 }
 
 /// 2. Every statement the published lesson holds stands on a claim a lesson
-/// can publish with, and none the ledger removed or cut is in it.
+///    can publish with, and none the ledger removed or cut is in it.
 fn published(run: &PreparedRun, found: &mut Vec<String>) {
     for entry in &run.ledger.claims {
         let place = entry.location();
@@ -257,7 +257,7 @@ fn carried_on(run: &PreparedRun, entry: &ClaimLedgerEntry) -> bool {
 }
 
 /// 3. Every label the learner reads and every count of them is what the
-/// ledger permits.
+///    ledger permits.
 fn labels(
     run: &PreparedRun,
     ledger: &ClaimLedger,
@@ -388,7 +388,7 @@ fn labels(
 }
 
 /// 4. The quotation a claim's latest check rests on is in the passage that
-/// check names.
+///    check names.
 fn quotes(run: &PreparedRun, found: &mut Vec<String>) {
     for entry in &run.ledger.claims {
         let latest = entry
@@ -421,7 +421,7 @@ fn quotes(run: &PreparedRun, found: &mut Vec<String>) {
 }
 
 /// 5. Each claim's last decision is where the acceptance policy sends a
-/// claim from the position its earlier steps left it.
+///    claim from the position its earlier steps left it.
 fn steps(
     run: &PreparedRun,
     ledger: &ClaimLedger,

@@ -2409,7 +2409,7 @@ async fn malformed_verdict_gets_one_format_correction_without_approving_missing_
 }
 
 #[tokio::test]
-async fn strict_checker_preserves_long_exact_quotes_and_rejects_reflowed_code() {
+async fn strict_checker_records_a_long_or_reflowed_quote_as_the_sources_exact_text() {
     let quote = format!(
         "{} The field contains two spaces: a  b.",
         "A factual reference sentence. ".repeat(20)
@@ -2418,7 +2418,7 @@ async fn strict_checker_preserves_long_exact_quotes_and_rejects_reflowed_code() 
         text: quote.clone(),
         quote: None,
     };
-    for (cited, valid) in [(quote.clone(), true), (quote.replace("a  b", "a b"), false)] {
+    for cited in [quote.clone(), quote.replace("a  b", "a b")] {
         let model=TypedModel {response:CompletionResponse {
             text:format!("supported\nReason: The exact reference contains the statement.\nSource quote: {cited}"),
             finish_reason:"stop".into(),..Default::default()
@@ -2432,13 +2432,9 @@ async fn strict_checker_preserves_long_exact_quotes_and_rejects_reflowed_code() 
         let result = checker
             .check("The field contains two spaces.", &evidence)
             .await;
-        if valid {
-            assert!(
-                matches!(result,ClaimJudgment::Judged(outcome) if outcome.quote.as_deref()==Some(quote.as_str()))
-            );
-        } else {
-            assert!(matches!(result, ClaimJudgment::Unusable));
-        }
+        assert!(
+            matches!(result,ClaimJudgment::Judged(outcome) if outcome.quote.as_deref()==Some(quote.as_str()))
+        );
     }
 }
 
