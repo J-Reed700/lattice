@@ -304,7 +304,7 @@ async fn candidate_in(
     program_id: &str,
     candidate_id: &str,
 ) -> Result<StoredCandidate> {
-    let row = sqlx::query(&format!("SELECT {CANDIDATE_COLUMNS} FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.id=? AND c.program_id=?"))
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {CANDIDATE_COLUMNS} FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.id=? AND c.program_id=?")))
         .bind(candidate_id)
         .bind(program_id)
         .fetch_optional(&mut *connection)
@@ -329,11 +329,11 @@ async fn candidates_in(
     candidate_ids: &[String],
 ) -> Result<HashMap<String, StoredCandidate>> {
     let scope = json(candidate_ids)?;
-    let rows = sqlx::query(&format!(
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {CANDIDATE_COLUMNS} FROM learning_assessment_candidates c
          JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id
          WHERE c.program_id=? AND c.id IN (SELECT value FROM json_each(?))",
-    ))
+    )))
     .bind(program_id)
     .bind(&scope)
     .fetch_all(&mut *connection)

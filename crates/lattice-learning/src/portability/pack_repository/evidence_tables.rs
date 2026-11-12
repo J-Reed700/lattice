@@ -137,7 +137,7 @@ pub(super) async fn snapshot_table(
     program_id: &str,
 ) -> Result<AggregateTableSnapshot> {
     let pragma = format!("PRAGMA table_info({})", spec.table);
-    let cols = sqlx::query(&pragma)
+    let cols = sqlx::query(sqlx::AssertSqlSafe(pragma.as_str()))
         .fetch_all(&mut *connection)
         .await
         .map_err(db)?;
@@ -156,7 +156,7 @@ pub(super) async fn snapshot_table(
         "SELECT * FROM {} WHERE {} ORDER BY rowid",
         spec.table, spec.filter
     );
-    let rows = sqlx::query(&query)
+    let rows = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
         .bind(program_id)
         .fetch_all(&mut *connection)
         .await
@@ -220,7 +220,10 @@ pub(super) async fn checked_rows(
         ));
     }
     let pragma = format!("PRAGMA table_info({})", spec.table);
-    let cols = sqlx::query(&pragma).fetch_all(&mut *tx).await.map_err(db)?;
+    let cols = sqlx::query(sqlx::AssertSqlSafe(pragma.as_str()))
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db)?;
     let expected: Vec<String> = cols
         .into_iter()
         .map(|row| row.get::<String, _>("name"))

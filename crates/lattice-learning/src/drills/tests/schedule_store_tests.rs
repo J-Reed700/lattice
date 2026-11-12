@@ -108,7 +108,10 @@ async fn lesson_schedule(
 }
 
 async fn count(pool: &SqlitePool, sql: &str) -> Result<i64> {
-    sqlx::query_scalar(sql).fetch_one(pool).await.map_err(db)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .fetch_one(pool)
+        .await
+        .map_err(db)
 }
 
 /// A course of two modules of two lessons, the first lesson current.

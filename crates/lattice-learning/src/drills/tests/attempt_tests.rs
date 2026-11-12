@@ -22,7 +22,10 @@ use serde_json::json;
 use sqlx::SqlitePool;
 
 async fn scalar(pool: &SqlitePool, sql: &str) -> Result<i64> {
-    sqlx::query_scalar(sql).fetch_one(pool).await.map_err(db)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .fetch_one(pool)
+        .await
+        .map_err(db)
 }
 
 fn on(path: &str, start: u32, end: u32) -> Option<LineSpan> {
@@ -116,7 +119,9 @@ async fn a_row_must_agree_with_its_status() -> Result<()> {
             .execute(&pool)
             .await
             .map_err(db)?;
-        let result = sqlx::query(&sql).execute(&pool).await;
+        let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .execute(&pool)
+            .await;
         assert_eq!(result.is_ok(), accepted, "{name}: {result:?}");
     }
     Ok(())

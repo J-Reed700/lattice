@@ -30,11 +30,11 @@ impl ConversationRepository {
         // than a guess from a full page.
         let fetch = limits.max_messages.saturating_add(1).min(4096) as i64;
         let mut read = self.db.begin_read().await?;
-        let rows = sqlx::query_as::<_, SourceMessageRow>(&format!(
+        let rows = sqlx::query_as::<_, SourceMessageRow>(sqlx::AssertSqlSafe(format!(
             "SELECT {SOURCE_COLUMNS} FROM conversation_messages \
              WHERE conversation_id = ? AND sequence > ? AND sequence <= ? \
              ORDER BY sequence ASC LIMIT ?"
-        ))
+        )))
         .bind(conversation_id)
         .bind(after_sequence)
         .bind(through_sequence)
@@ -66,11 +66,11 @@ impl ConversationRepository {
         }
         let fetch = limits.max_messages.saturating_add(1).min(4096) as i64;
         let mut read = self.db.begin_read().await?;
-        let rows = sqlx::query_as::<_, SourceMessageRow>(&format!(
+        let rows = sqlx::query_as::<_, SourceMessageRow>(sqlx::AssertSqlSafe(format!(
             "SELECT {SOURCE_COLUMNS} FROM conversation_messages \
              WHERE conversation_id = ? AND sequence > ? AND sequence <= ? \
              ORDER BY sequence DESC LIMIT ?"
-        ))
+        )))
         .bind(conversation_id)
         .bind(after_sequence)
         .bind(through_sequence)
@@ -284,7 +284,8 @@ impl ConversationRepository {
              WHERE conversation_id = ? AND id IN ({placeholders}) ORDER BY sequence ASC"
         );
         let mut read = self.db.begin_read().await?;
-        let mut query = sqlx::query_as::<_, SourceMessageRow>(&sql).bind(conversation_id);
+        let mut query = sqlx::query_as::<_, SourceMessageRow>(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(conversation_id);
         for id in wanted {
             query = query.bind(id);
         }
@@ -341,11 +342,11 @@ impl ConversationRepository {
         }
         let fetch = limits.max_messages.saturating_add(1).min(4096) as i64;
         let mut read = self.db.begin_read().await?;
-        let rows = sqlx::query_as::<_, SourceMessageRow>(&format!(
+        let rows = sqlx::query_as::<_, SourceMessageRow>(sqlx::AssertSqlSafe(format!(
             "SELECT {SOURCE_COLUMNS} FROM conversation_messages \
              WHERE conversation_id = ? AND sequence >= ? AND sequence <= ? \
              ORDER BY sequence ASC LIMIT ?"
-        ))
+        )))
         .bind(conversation_id)
         .bind(from_sequence)
         .bind(to_sequence)

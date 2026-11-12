@@ -91,7 +91,7 @@ impl LLMPort for Topics {
         assert_eq!(task["task"], CHANGE_TASK, "not a request this model knows");
         let hook = self.meanwhile.lock().unwrap().take();
         if let Some((pool, sql, program_id)) = hook {
-            sqlx::query(&sql)
+            sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(program_id)
                 .execute(&pool)
                 .await

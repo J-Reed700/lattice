@@ -72,14 +72,15 @@ impl DownloadedModelRepository {
             .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
-        let record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
-            .bind(id)
-            .fetch_optional(&mut *read)
-            .await
-            .map_err(|e| {
-                error!(error = %e, id = %id, "Failed to find downloaded model by id");
-                AppError::Database(format!("Failed to find downloaded model: {}", e))
-            })?;
+        let record =
+            sqlx::query_as::<_, DownloadedModelRecord>(sqlx::AssertSqlSafe(query.as_str()))
+                .bind(id)
+                .fetch_optional(&mut *read)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, id = %id, "Failed to find downloaded model by id");
+                    AppError::Database(format!("Failed to find downloaded model: {}", e))
+                })?;
         read.commit()
             .await
             .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
@@ -113,13 +114,14 @@ impl DownloadedModelRepository {
             .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
-        let records = sqlx::query_as::<_, DownloadedModelRecord>(&query)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(|e| {
-                error!(error = %e, "Failed to list downloaded models");
-                AppError::Database(format!("Failed to list downloaded models: {}", e))
-            })?;
+        let records =
+            sqlx::query_as::<_, DownloadedModelRecord>(sqlx::AssertSqlSafe(query.as_str()))
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, "Failed to list downloaded models");
+                    AppError::Database(format!("Failed to list downloaded models: {}", e))
+                })?;
 
         // A completed record can outlive its files (for example, after moving
         // to another computer). Use the same verification as model loading so
@@ -455,7 +457,7 @@ async fn model_by_model_id(
     model_id: &str,
 ) -> Result<Option<DownloadedModel>> {
     let query = build_model_select_query("WHERE m.model_id = ?1");
-    let record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
+    let record = sqlx::query_as::<_, DownloadedModelRecord>(sqlx::AssertSqlSafe(query.as_str()))
         .bind(model_id)
         .fetch_optional(connection)
         .await

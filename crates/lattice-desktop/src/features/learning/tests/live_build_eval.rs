@@ -1029,7 +1029,7 @@ async fn copied_database(path: &str) -> Result<Database> {
     let mut tx = database.begin_write().await?;
     reconcile_line_endings(&mut tx, &migrator).await?;
     migrator
-        .run_direct(&mut *tx)
+        .run_direct(None, &mut *tx, false)
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
     tx.commit().await?;
@@ -1061,7 +1061,7 @@ async fn a_copy_migrated_with_the_other_line_endings_still_opens() -> Result<()>
         .filter(|migration| !migration.migration_type.is_down_migration())
         .max_by_key(|migration| migration.version)
         .ok_or_else(|| AppError::InternalError("There is no migration.".into()))?;
-    let lf = migration.sql.replace("\r\n", "\n");
+    let lf = migration.sql.as_str().replace("\r\n", "\n");
     let crlf = lf.replace('\n', "\r\n");
     let other = [lf, crlf]
         .into_iter()

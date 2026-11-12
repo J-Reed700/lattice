@@ -134,13 +134,13 @@ impl ConversationRepository {
             )));
         }
 
-        sqlx::query(
-            &crate::infrastructure::storage::file_intents::record_releases_sql(
+        sqlx::query(sqlx::AssertSqlSafe(
+            crate::infrastructure::storage::file_intents::record_releases_sql(
                 crate::infrastructure::storage::FileStore::ChatImage,
                 "id || '.' || ext",
                 "chat_images WHERE message_id = ? AND conversation_id = ?",
             ),
-        )
+        ))
         .bind(crate::infrastructure::storage::file_intents::run_id())
         .bind(&request.message_id)
         .bind(&request.conversation_id)

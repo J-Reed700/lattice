@@ -64,9 +64,9 @@ impl ConversationRepository {
         )
         .await?;
         let mut read = self.db.begin_read().await?;
-        let tangent = sqlx::query_as::<_, ConversationTangentRow>(&format!(
+        let tangent = sqlx::query_as::<_, ConversationTangentRow>(sqlx::AssertSqlSafe(format!(
             "SELECT {TANGENT_COLUMNS} FROM conversations WHERE id = ?"
-        ))
+        )))
         .bind(&id)
         .fetch_one(&mut *read)
         .await
@@ -78,9 +78,9 @@ impl ConversationRepository {
 
     pub async fn list_tangents(&self, parent_id: &str) -> Result<Vec<ConversationTangentDto>> {
         let mut read = self.db.begin_read().await?;
-        let tangents = sqlx::query_as::<_, ConversationTangentRow>(&format!(
+        let tangents = sqlx::query_as::<_, ConversationTangentRow>(sqlx::AssertSqlSafe(format!(
             "SELECT {TANGENT_COLUMNS} FROM conversations WHERE tangent_parent_id = ? ORDER BY updated_at DESC, id"
-        )).bind(parent_id).fetch_all(&mut *read).await
+        ))).bind(parent_id).fetch_all(&mut *read).await
             .map(|rows| rows.into_iter().map(Into::into).collect())
             .map_err(|e| AppError::Database(format!("Failed to list tangents: {e}")))?;
         read.commit().await?;

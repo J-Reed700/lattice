@@ -589,10 +589,11 @@ async fn a_course_takes_its_trust_rows_with_it_and_leaves_shared_judgements() ->
         "source_trust_overrides",
         "source_trust_outcomes",
     ] {
-        let rows: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
-            .fetch_one(&course.pool)
-            .await
-            .unwrap();
+        let rows: i64 =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))
+                .fetch_one(&course.pool)
+                .await
+                .unwrap();
         assert_eq!(rows, 0, "{table}");
     }
     assert_eq!(course.store.standing(&standing.key).await?, Some(standing));

@@ -121,19 +121,19 @@ async fn read_counts(
     connection: &mut SqliteConnection,
     prefix: &str,
 ) -> std::result::Result<Counts, sqlx::Error> {
-    let documents = sqlx::query(&format!(
+    let documents = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT COUNT(*) AS total, COALESCE(SUM(embedded), 0) AS embedded FROM index_documents
          WHERE {}",
         under("key")
-    ))
+    )))
     .bind(prefix)
     .fetch_one(&mut *connection)
     .await?;
-    let passages = sqlx::query(&format!(
+    let passages = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT COUNT(*) AS total, COALESCE(SUM(d.embedded), 0) AS embedded
          FROM passages p JOIN index_documents d ON d.key = p.document WHERE {}",
         under("p.document")
-    ))
+    )))
     .bind(prefix)
     .fetch_one(&mut *connection)
     .await?;
@@ -452,10 +452,10 @@ impl PassageStore {
             .begin_read()
             .await
             .map_err(db_error("read documents"))?;
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT key, stamp, content_hash, embedded FROM index_documents WHERE {}",
             under("key")
-        ))
+        )))
         .bind(prefix)
         .fetch_all(&mut *read)
         .await
@@ -484,10 +484,10 @@ impl PassageStore {
             .begin_read()
             .await
             .map_err(db_error("read documents"))?;
-        let keys = sqlx::query_scalar(&format!(
+        let keys = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT key FROM index_documents WHERE {} ORDER BY key",
             under("key")
-        ))
+        )))
         .bind(prefix)
         .fetch_all(&mut *read)
         .await
@@ -595,10 +595,10 @@ impl PassageStore {
             .begin_read()
             .await
             .map_err(db_error("read pending documents"))?;
-        let keys = sqlx::query_scalar(&format!(
+        let keys = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT key FROM index_documents WHERE embedded = 0 AND {} ORDER BY key",
             under("key")
-        ))
+        )))
         .bind(prefix)
         .fetch_all(&mut *read)
         .await
@@ -735,10 +735,10 @@ impl PassageStore {
             .begin_read()
             .await
             .map_err(db_error("read passages"))?;
-        let exists = sqlx::query_scalar::<_, i64>(&format!(
+        let exists = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!(
             "SELECT EXISTS (SELECT 1 FROM passages WHERE {})",
             under("document")
-        ))
+        )))
         .bind(prefix)
         .fetch_one(&mut *read)
         .await

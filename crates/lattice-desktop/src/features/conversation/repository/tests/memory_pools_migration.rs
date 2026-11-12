@@ -21,19 +21,25 @@ async fn before_pools() -> (SqlitePool, Migrator) {
     let migrator: Migrator = sqlx::migrate!("./migrations");
     {
         let mut connection = pool.acquire().await.unwrap();
-        connection.ensure_migrations_table().await.unwrap();
+        connection
+            .ensure_migrations_table("_sqlx_migrations")
+            .await
+            .unwrap();
         for migration in migrator
             .iter()
             .filter(|m| m.version < MEMORY_POOLS && !m.migration_type.is_down_migration())
         {
-            connection.apply(migration).await.unwrap();
+            connection
+                .apply("_sqlx_migrations", migration)
+                .await
+                .unwrap();
         }
     }
     (pool, migrator)
 }
 
 async fn exec(pool: &SqlitePool, statement: &str) {
-    sqlx::query(statement)
+    sqlx::query(sqlx::AssertSqlSafe(statement))
         .execute(pool)
         .await
         .unwrap_or_else(|e| panic!("{statement}: {e}"));

@@ -53,7 +53,7 @@ async fn pruning_failure_rolls_back_and_allows_retry() {
         seed_pruning_bookmarks(&pool).await;
         let db = Database::new(pool.clone());
         let repo = ConversationRepository::new(db.clone());
-        sqlx::query(&format!("CREATE TRIGGER reject_pruning BEFORE {operation} BEGIN SELECT RAISE(ABORT, 'injected pruning failure'); END"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE TRIGGER reject_pruning BEFORE {operation} BEGIN SELECT RAISE(ABORT, 'injected pruning failure'); END")))
                 .execute(&pool).await.unwrap();
         let result = repo.delete_messages(&id, &["m1".into(), "m2".into()]).await;
         assert!(

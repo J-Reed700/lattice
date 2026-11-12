@@ -60,9 +60,9 @@ pub(in crate::references::trust) async fn all_overrides(
     database: &Database,
 ) -> Result<Vec<TrustOverride>> {
     let mut read = database.begin_read().await.map_err(db)?;
-    let rows = sqlx::query(&format!(
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {OVERRIDE_COLUMNS} FROM source_trust_overrides ORDER BY scope, registrable_domain, class_key, program_id, source_id"
-    ))
+    )))
     .fetch_all(&mut *read)
     .await
     .map_err(db)?;

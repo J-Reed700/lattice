@@ -52,7 +52,7 @@ pub(super) async fn chunk_metadata(
         placeholders
     );
 
-    let mut query_builder = sqlx::query(&query);
+    let mut query_builder = sqlx::query(sqlx::AssertSqlSafe(query.as_str()));
     for id in batch {
         query_builder = query_builder.bind(id);
     }

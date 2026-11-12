@@ -202,7 +202,7 @@ pub(crate) async fn quiz_jobs(
 }
 
 async fn count(pool: &SqlitePool, sql: &str, binds: &[&str]) -> i64 {
-    let mut query = sqlx::query_scalar(sql);
+    let mut query = sqlx::query_scalar(sqlx::AssertSqlSafe(sql));
     for bind in binds {
         query = query.bind(*bind);
     }

@@ -16,7 +16,7 @@ use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobOutcome, JobStatus};
 
 async fn count(harness: &Harness, table: &str) -> Result<i64> {
-    sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))
         .fetch_one(&harness.pool)
         .await
         .map_err(db)

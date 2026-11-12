@@ -122,7 +122,7 @@ impl SourceTrustStore for SqliteSourceTrustStore {
         let sql =
             format!("SELECT {PROVENANCE_COLUMNS} FROM source_provenance WHERE source_version_id=?");
         let mut read = self.db.begin_read().await.map_err(db)?;
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(source_version_id)
             .fetch_optional(&mut *read)
             .await
@@ -141,7 +141,7 @@ impl SourceTrustStore for SqliteSourceTrustStore {
                 .join(",")
         );
         let mut read = self.db.begin_read().await.map_err(db)?;
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(program_id)
             .fetch_all(&mut *read)
             .await
@@ -307,7 +307,7 @@ impl SourceTrustStore for SqliteSourceTrustStore {
             "SELECT {RELATION_COLUMNS} FROM source_relations WHERE program_id=? ORDER BY from_version_id,kind,COALESCE(to_version_id,to_url)"
         );
         let mut read = self.db.begin_read().await.map_err(db)?;
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(program_id)
             .fetch_all(&mut *read)
             .await
@@ -327,7 +327,7 @@ impl SourceTrustStore for SqliteSourceTrustStore {
             "SELECT {OVERRIDE_COLUMNS} FROM source_trust_overrides WHERE (scope='source' AND program_id=?) OR scope IN ('site','site_subject') ORDER BY scope,registrable_domain,class_key,source_id"
         );
         let mut read = self.db.begin_read().await.map_err(db)?;
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(program_id)
             .fetch_all(&mut *read)
             .await
@@ -345,7 +345,10 @@ impl SourceTrustStore for SqliteSourceTrustStore {
             "SELECT {OVERRIDE_COLUMNS} FROM source_trust_overrides WHERE scope IN ('site','site_subject') ORDER BY registrable_domain,scope,class_key"
         );
         let mut read = self.db.begin_read().await.map_err(db)?;
-        let rows = sqlx::query(&sql).fetch_all(&mut *read).await.map_err(db)?;
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .fetch_all(&mut *read)
+            .await
+            .map_err(db)?;
         read.commit().await.map_err(db)?;
         rows.iter().map(override_from_row).collect()
     }

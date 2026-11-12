@@ -20,11 +20,11 @@ pub async fn save(tx: &mut WriteTx, entity: &DocumentEntity) -> Result<()> {
 /// [`delete`], recording first, in the same transaction, that the document's
 /// library blob was let go of.
 pub async fn delete_and_release_blob(tx: &mut WriteTx, id: &str) -> Result<()> {
-    sqlx::query(&record_releases_sql(
+    sqlx::query(sqlx::AssertSqlSafe(record_releases_sql(
         FileStore::Library,
         "checksum",
         "documents WHERE id = ?",
-    ))
+    )))
     .bind(run_id())
     .bind(id)
     .execute(&mut **tx)
@@ -181,7 +181,7 @@ pub async fn delete_batch_optimized(tx: &mut WriteTx, ids: &[&str]) -> Result<()
         let placeholders = batch.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let query = format!("DELETE FROM documents WHERE id IN ({})", placeholders);
 
-        let mut query_builder = sqlx::query(&query);
+        let mut query_builder = sqlx::query(sqlx::AssertSqlSafe(query.as_str()));
         for id in batch {
             query_builder = query_builder.bind(id);
         }

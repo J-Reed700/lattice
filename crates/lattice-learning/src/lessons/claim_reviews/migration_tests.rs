@@ -38,7 +38,7 @@ async fn memory_pool() -> SqlitePool {
 
 async fn exec(pool: &SqlitePool, statements: &[&str]) {
     for statement in statements {
-        sqlx::query(statement)
+        sqlx::query(sqlx::AssertSqlSafe(*statement))
             .execute(pool)
             .await
             .unwrap_or_else(|e| panic!("{statement}: {e}"));
@@ -46,7 +46,7 @@ async fn exec(pool: &SqlitePool, statements: &[&str]) {
 }
 
 async fn count(pool: &SqlitePool, table: &str) -> i64 {
-    sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))
         .fetch_one(pool)
         .await
         .unwrap()
@@ -145,12 +145,14 @@ async fn the_migration_keeps_a_populated_database_and_adds_the_defaults() {
     let migrator = migrator();
     {
         let mut conn = pool.acquire().await.unwrap();
-        conn.ensure_migrations_table().await.unwrap();
+        conn.ensure_migrations_table("_sqlx_migrations")
+            .await
+            .unwrap();
         for migration in migrator
             .iter()
             .filter(|m| m.version < CLAIM_REVIEWS && !m.migration_type.is_down_migration())
         {
-            conn.apply(migration).await.unwrap();
+            conn.apply("_sqlx_migrations", migration).await.unwrap();
         }
     }
     exec(&pool, COURSE).await;
@@ -231,12 +233,14 @@ async fn a_teaching_finding_gets_a_summary_column_and_an_old_one_keeps_its_data(
     let pool = memory_pool().await;
     {
         let mut conn = pool.acquire().await.unwrap();
-        conn.ensure_migrations_table().await.unwrap();
+        conn.ensure_migrations_table("_sqlx_migrations")
+            .await
+            .unwrap();
         for migration in migrator
             .iter()
             .filter(|m| m.version < TEACHING_SUMMARY && !m.migration_type.is_down_migration())
         {
-            conn.apply(migration).await.unwrap();
+            conn.apply("_sqlx_migrations", migration).await.unwrap();
         }
     }
     exec(&pool, COURSE).await;
@@ -270,12 +274,14 @@ async fn a_teaching_finding_gets_a_sentence_and_a_resolution_and_an_old_one_keep
     let pool = memory_pool().await;
     {
         let mut conn = pool.acquire().await.unwrap();
-        conn.ensure_migrations_table().await.unwrap();
+        conn.ensure_migrations_table("_sqlx_migrations")
+            .await
+            .unwrap();
         for migration in migrator
             .iter()
             .filter(|m| m.version < TEACHING_RESOLUTION && !m.migration_type.is_down_migration())
         {
-            conn.apply(migration).await.unwrap();
+            conn.apply("_sqlx_migrations", migration).await.unwrap();
         }
     }
     exec(&pool, COURSE).await;
@@ -377,12 +383,14 @@ async fn a_teaching_finding_gets_a_part_changed_column_and_an_old_one_keeps_its_
     let pool = memory_pool().await;
     {
         let mut conn = pool.acquire().await.unwrap();
-        conn.ensure_migrations_table().await.unwrap();
+        conn.ensure_migrations_table("_sqlx_migrations")
+            .await
+            .unwrap();
         for migration in migrator
             .iter()
             .filter(|m| m.version < PART_CHANGED && !m.migration_type.is_down_migration())
         {
-            conn.apply(migration).await.unwrap();
+            conn.apply("_sqlx_migrations", migration).await.unwrap();
         }
     }
     exec(&pool, COURSE).await;
@@ -424,12 +432,14 @@ async fn a_teaching_finding_gets_an_identity_and_an_old_one_is_by_place() {
     let pool = memory_pool().await;
     {
         let mut conn = pool.acquire().await.unwrap();
-        conn.ensure_migrations_table().await.unwrap();
+        conn.ensure_migrations_table("_sqlx_migrations")
+            .await
+            .unwrap();
         for migration in migrator
             .iter()
             .filter(|m| m.version < IDENTITY && !m.migration_type.is_down_migration())
         {
-            conn.apply(migration).await.unwrap();
+            conn.apply("_sqlx_migrations", migration).await.unwrap();
         }
     }
     exec(&pool, COURSE).await;

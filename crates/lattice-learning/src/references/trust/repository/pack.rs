@@ -15,9 +15,9 @@ pub(in crate::references::trust) async fn provenance(
     conn: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<Vec<ProvenanceRecord>> {
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {PROVENANCE_COLUMNS} FROM source_provenance WHERE program_id=? ORDER BY source_version_id"
-    ))
+    )))
     .bind(program_id)
     .fetch_all(&mut *conn)
     .await
@@ -32,9 +32,9 @@ pub(in crate::references::trust) async fn relations(
     conn: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<Vec<(SourceRelation, i64)>> {
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {RELATION_COLUMNS},detected_at FROM source_relations WHERE program_id=? ORDER BY from_version_id,kind,COALESCE(to_version_id,to_url)"
-    ))
+    )))
     .bind(program_id)
     .fetch_all(&mut *conn)
     .await
@@ -48,9 +48,9 @@ pub(in crate::references::trust) async fn source_overrides(
     conn: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<Vec<TrustOverride>> {
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {OVERRIDE_COLUMNS} FROM source_trust_overrides WHERE scope='source' AND program_id=? ORDER BY source_id"
-    ))
+    )))
     .bind(program_id)
     .fetch_all(&mut *conn)
     .await

@@ -52,7 +52,10 @@ async fn add(database: &Database, id: &str, program_id: Option<&str>) -> Result<
 }
 
 async fn scalar(pool: &SqlitePool, sql: &str) -> Result<i64> {
-    sqlx::query_scalar(sql).fetch_one(pool).await.map_err(db)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .fetch_one(pool)
+        .await
+        .map_err(db)
 }
 
 #[tokio::test]
@@ -257,15 +260,15 @@ async fn the_banks_queries_use_their_indexes() -> Result<()> {
     let any = format!("EXPLAIN QUERY PLAN {}", repository::ANY_READY_IN);
     for (query, index) in [
         (
-            sqlx::query(&oldest).bind("p").bind("code").bind("python").bind(None::<&str>),
+            sqlx::query(sqlx::AssertSqlSafe(oldest.as_str())).bind("p").bind("code").bind("python").bind(None::<&str>),
             "learning_drills_shelf",
         ),
         (
-            sqlx::query(&oldest).bind("p").bind("code").bind("python").bind(Some("l")),
+            sqlx::query(sqlx::AssertSqlSafe(oldest.as_str())).bind("p").bind("code").bind("python").bind(Some("l")),
             "learning_drills_shelf",
         ),
         (
-            sqlx::query(&any).bind("p").bind("code").bind("python"),
+            sqlx::query(sqlx::AssertSqlSafe(any.as_str())).bind("p").bind("code").bind("python"),
             "learning_drills_shelf",
         ),
         (

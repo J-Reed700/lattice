@@ -268,7 +268,7 @@ impl ImportHarness {
 
     async fn count(&self, sql: &str) -> anyhow::Result<i64> {
         let mut read = self.db.database().begin_read().await?;
-        let count = sqlx::query_scalar::<_, i64>(sql)
+        let count = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql))
             .fetch_one(&mut *read)
             .await?;
         read.commit().await?;
@@ -277,7 +277,9 @@ impl ImportHarness {
 
     async fn execute(&self, sql: &str) -> anyhow::Result<()> {
         let mut tx = self.db.database().begin_write().await?;
-        sqlx::raw_sql(sql).execute(&mut *tx).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         Ok(())
     }

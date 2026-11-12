@@ -87,10 +87,11 @@ pub async fn column_exists(
     // `pragma_table_info` is a table-valued function, so its argument is a
     // string literal rather than a bind parameter.
     let escaped = table.replace('\'', "''");
-    let names: Vec<String> =
-        sqlx::query_scalar(&format!("SELECT name FROM pragma_table_info('{escaped}')"))
-            .fetch_all(connection)
-            .await?;
+    let names: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT name FROM pragma_table_info('{escaped}')"
+    )))
+    .fetch_all(connection)
+    .await?;
     Ok(names.iter().any(|name| name == column))
 }
 
@@ -102,14 +103,16 @@ pub async fn table_count(connection: &mut SqliteConnection) -> Result<i64> {
 
 pub async fn count_rows(connection: &mut SqliteConnection, table: &str) -> Result<i64> {
     let escaped = table.replace('"', "\"\"");
-    sqlx::query_scalar(&format!("SELECT COUNT(*) FROM \"{escaped}\""))
-        .fetch_one(connection)
-        .await
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT COUNT(*) FROM \"{escaped}\""
+    )))
+    .fetch_one(connection)
+    .await
 }
 
 pub async fn clear_table(tx: &mut WriteTx, table: &str) -> Result<()> {
     let escaped = table.replace('"', "\"\"");
-    sqlx::query(&format!("DELETE FROM \"{escaped}\""))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM \"{escaped}\"")))
         .execute(&mut **tx)
         .await?;
     Ok(())
@@ -129,9 +132,9 @@ pub async fn fts5_tables(
 
 pub async fn rebuild_fts5_index(tx: &mut WriteTx, table: &str) -> Result<()> {
     let escaped = table.replace('"', "\"\"");
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO \"{escaped}\"(\"{escaped}\") VALUES('rebuild')"
-    ))
+    )))
     .execute(&mut **tx)
     .await?;
     Ok(())

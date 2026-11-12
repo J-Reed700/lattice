@@ -44,7 +44,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 sha2 = "0.10"
 specta = { version = "=2.0.0-rc.20", features = ["derive", "serde", "chrono", "uuid", "serde_json"] }
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "uuid", "chrono", "macros", "migrate"], default-features = false }
+sqlx = { git = "https://github.com/transact-rs/sqlx", rev = "10462fa4414c6c7f1ed1d39bb31678e3b726878c", features = ["runtime-tokio", "tls-rustls-ring-webpki", "sqlite", "uuid", "chrono", "macros", "migrate"], default-features = false }
 tempfile = "3.8"
 thiserror = "1.0"
 tokio = { version = "1.35", features = ["full"] }

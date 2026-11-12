@@ -126,7 +126,10 @@ async fn audit_on(pool: &SqlitePool, program_id: &str) -> Result<()> {
 }
 
 async fn count(pool: &SqlitePool, sql: &str, bind: &str) -> Result<i64> {
-    Ok(sqlx::query_scalar(sql).bind(bind).fetch_one(pool).await?)
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .bind(bind)
+        .fetch_one(pool)
+        .await?)
 }
 
 /// A course with a published lesson's review, a failed lesson's unfinished

@@ -180,7 +180,7 @@ pub(in crate::references::trust) async fn delete_override(
 ) -> Result<bool> {
     let (filter, binds) = scope_filter(scope);
     let sql = format!("DELETE FROM source_trust_overrides WHERE {filter}");
-    let mut query = sqlx::query(&sql);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
     for bind in &binds {
         query = query.bind(bind);
     }

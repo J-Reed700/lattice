@@ -188,7 +188,7 @@ impl LearningAssessmentRepository {
         program_id: &str,
     ) -> Result<Vec<StoredCandidate>> {
         let outcomes = candidate_outcomes_in(connection, program_id).await?;
-        let rows = sqlx::query(&format!("SELECT {CANDIDATE_COLUMNS} FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.program_id=? AND c.review_status='agreed' ORDER BY c.id"))
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {CANDIDATE_COLUMNS} FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.program_id=? AND c.review_status='agreed' ORDER BY c.id")))
             .bind(program_id)
             .fetch_all(&mut *connection)
             .await
@@ -262,7 +262,7 @@ impl LearningAssessmentRepository {
         program_id: &str,
         lesson_id: &str,
     ) -> Result<Vec<StoredItem>> {
-        let rows = sqlx::query(&format!("SELECT {CANDIDATE_COLUMNS} FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.program_id=? AND c.lesson_id=? AND c.origin='lesson' AND c.review_status='agreed' ORDER BY c.id"))
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {CANDIDATE_COLUMNS} FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.program_id=? AND c.lesson_id=? AND c.origin='lesson' AND c.review_status='agreed' ORDER BY c.id")))
             .bind(program_id)
             .bind(lesson_id)
             .fetch_all(&mut *connection)

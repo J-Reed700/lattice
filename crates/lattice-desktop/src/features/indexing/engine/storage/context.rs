@@ -376,7 +376,7 @@ mod tests {
     }
 
     async fn count(pool: &SqlitePool, sql: &str) -> i64 {
-        sqlx::query_scalar::<_, i64>(sql)
+        sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql))
             .fetch_one(pool)
             .await
             .expect("count query")

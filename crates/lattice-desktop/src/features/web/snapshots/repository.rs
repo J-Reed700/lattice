@@ -72,10 +72,10 @@ async fn snapshot_for_url(
     conversation_id: &str,
     normalized_url: &str,
 ) -> Result<Option<SnapshotRow>> {
-    sqlx::query_as::<_, SnapshotRow>(&format!(
+    sqlx::query_as::<_, SnapshotRow>(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM web_page_snapshots \
          WHERE conversation_id = ? AND normalized_url = ?"
-    ))
+    )))
     .bind(conversation_id)
     .bind(normalized_url)
     .fetch_optional(connection)
@@ -94,7 +94,7 @@ async fn viewer_in(
             return Ok(Some(row));
         }
     }
-    sqlx::query_as::<_, SnapshotRow>(&format!(
+    sqlx::query_as::<_, SnapshotRow>(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM web_page_snapshots \
          WHERE normalized_url = ? \
             OR LOWER(TRIM(requested_url)) = LOWER(TRIM(?)) \
@@ -105,7 +105,7 @@ async fn viewer_in(
                   created_at DESC, \
                   id DESC \
          LIMIT 1"
-    ))
+    )))
     .bind(normalized_url)
     .bind(normalized_url)
     .bind(normalized_url)
@@ -229,9 +229,9 @@ impl SnapshotRepository {
 
     pub async fn get(&self, id: &str) -> Result<Option<SnapshotRow>> {
         let mut read = self.db.begin_read().await.map_err(db)?;
-        let row = sqlx::query_as::<_, SnapshotRow>(&format!(
+        let row = sqlx::query_as::<_, SnapshotRow>(sqlx::AssertSqlSafe(format!(
             "SELECT {COLUMNS} FROM web_page_snapshots WHERE id = ?"
-        ))
+        )))
         .bind(id)
         .fetch_optional(&mut *read)
         .await
@@ -400,10 +400,10 @@ impl SnapshotRepository {
 
     pub async fn list(&self, conversation_id: &str) -> Result<Vec<SnapshotRow>> {
         let mut read = self.db.begin_read().await.map_err(db)?;
-        let rows = sqlx::query_as::<_, SnapshotRow>(&format!(
+        let rows = sqlx::query_as::<_, SnapshotRow>(sqlx::AssertSqlSafe(format!(
             "SELECT {COLUMNS} FROM web_page_snapshots WHERE conversation_id = ? \
              ORDER BY created_at, id"
-        ))
+        )))
         .bind(conversation_id)
         .fetch_all(&mut *read)
         .await

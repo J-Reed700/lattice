@@ -620,9 +620,9 @@ async fn each_explorer_scope_filter_lists_only_its_own_conversations() {
         ("In space", "space_id", space.id.as_str()),
         ("In program", "program_id", "program-1"),
     ] {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE conversations SET {column} = ? WHERE id = ?"
-        ))
+        )))
         .bind(value)
         .bind(&ids[title])
         .execute(&pool)
@@ -634,9 +634,9 @@ async fn each_explorer_scope_filter_lists_only_its_own_conversations() {
         ("Bookmarked", "is_bookmarked"),
         ("Pinned", "is_pinned"),
     ] {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE conversations SET {column} = 1 WHERE id = ?"
-        ))
+        )))
         .bind(&ids[title])
         .execute(&pool)
         .await

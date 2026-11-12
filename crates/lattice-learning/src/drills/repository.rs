@@ -178,17 +178,19 @@ pub(crate) async fn oldest_ready_on(
     shelf: Shelf<'_>,
     lesson: Option<&str>,
 ) -> Result<Option<StoredDrill>> {
-    sqlx::query(&format!("SELECT {COLUMNS} {OLDEST_READY_ON}"))
-        .bind(shelf.program_id)
-        .bind(material_name(shelf.material))
-        .bind(shelf.material.language())
-        .bind(lesson)
-        .fetch_optional(connection)
-        .await
-        .map_err(db)?
-        .as_ref()
-        .map(read)
-        .transpose()
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLUMNS} {OLDEST_READY_ON}"
+    )))
+    .bind(shelf.program_id)
+    .bind(material_name(shelf.material))
+    .bind(shelf.material.language())
+    .bind(lesson)
+    .fetch_optional(connection)
+    .await
+    .map_err(db)?
+    .as_ref()
+    .map(read)
+    .transpose()
 }
 
 /// Whether a drill of `shelf` built from a lesson is ready.
@@ -240,14 +242,16 @@ pub(crate) async fn source_owners(
 
 /// A drill by its id, ready or taken.
 pub async fn find_in(connection: &mut SqliteConnection, id: &str) -> Result<Option<StoredDrill>> {
-    sqlx::query(&format!("SELECT {COLUMNS} FROM learning_drills WHERE id=?"))
-        .bind(id)
-        .fetch_optional(connection)
-        .await
-        .map_err(db)?
-        .as_ref()
-        .map(read)
-        .transpose()
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLUMNS} FROM learning_drills WHERE id=?"
+    )))
+    .bind(id)
+    .fetch_optional(connection)
+    .await
+    .map_err(db)?
+    .as_ref()
+    .map(read)
+    .transpose()
 }
 
 /// Marks a ready drill taken. False when it was not ready, so a drill is never given to two learners.

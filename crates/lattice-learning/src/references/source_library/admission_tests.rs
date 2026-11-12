@@ -369,7 +369,7 @@ async fn a_sweep_that_cannot_mark_every_page_marks_none() -> Result<()> {
         .map_err(db)
     };
     let before = marked().await?;
-    sqlx::query(&format!("CREATE TRIGGER refuse_for_test BEFORE UPDATE ON learning_source_versions WHEN (SELECT COUNT(*) FROM learning_source_versions WHERE admission_policy IS NOT NULL)>={} BEGIN SELECT RAISE(ABORT, 'refused for the test'); END", before + 1))
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE TRIGGER refuse_for_test BEFORE UPDATE ON learning_source_versions WHEN (SELECT COUNT(*) FROM learning_source_versions WHERE admission_policy IS NOT NULL)>={} BEGIN SELECT RAISE(ABORT, 'refused for the test'); END", before + 1)))
         .execute(&pool)
         .await
         .map_err(db)?;

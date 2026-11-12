@@ -123,7 +123,7 @@ impl IdClaim {
         connection: &mut SqliteConnection,
         program_id: &str,
     ) -> Result<Option<LearningPackConflictDto>> {
-        let Some(row) = sqlx::query(&self.owner_sql)
+        let Some(row) = sqlx::query(sqlx::AssertSqlSafe(&*self.owner_sql))
             .bind(&self.id)
             .fetch_optional(connection)
             .await

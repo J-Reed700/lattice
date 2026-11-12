@@ -44,7 +44,7 @@ pub(in crate::references::trust) async fn provenance_in(
 ) -> Result<Option<ProvenanceRecord>> {
     let sql =
         format!("SELECT {PROVENANCE_COLUMNS} FROM source_provenance WHERE source_version_id=?");
-    sqlx::query(&sql)
+    sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(source_version_id)
         .fetch_optional(&mut *conn)
         .await

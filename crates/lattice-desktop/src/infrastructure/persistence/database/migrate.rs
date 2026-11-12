@@ -21,11 +21,14 @@ pub async fn run_migrations(db: &Database) -> Result<()> {
     let migrator = sqlx::migrate!("./migrations");
     let mut tx = db.begin_write().await?;
     let reconciled = reconcile_line_endings(&mut tx, &migrator).await?;
-    migrator.run_direct(&mut *tx).await.map_err(|error| {
-        let error_text = error.to_string();
-        tracing::error!("Migration failed: {}", error_text);
-        AppError::Database(format!("Migration failed: {}", error_text))
-    })?;
+    migrator
+        .run_direct(None, &mut *tx, false)
+        .await
+        .map_err(|error| {
+            let error_text = error.to_string();
+            tracing::error!("Migration failed: {}", error_text);
+            AppError::Database(format!("Migration failed: {}", error_text))
+        })?;
 
     // Migrations may create or change indexes; let SQLite refresh only the
     // planner statistics that its bounded optimizer considers useful.
@@ -75,7 +78,7 @@ pub(crate) async fn reconcile_line_endings(
             continue;
         };
         if checksum.as_slice() == &*migration.checksum
-            || !is_line_ending_variant(checksum, &migration.sql)
+            || !is_line_ending_variant(checksum, migration.sql.as_str())
         {
             continue;
         }

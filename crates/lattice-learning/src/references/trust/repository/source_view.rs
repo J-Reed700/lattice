@@ -76,7 +76,7 @@ async fn latest<T: serde::de::DeserializeOwned>(
     binds: &[&str],
     column: &str,
 ) -> Result<Option<T>> {
-    let mut query = sqlx::query(sql);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
     for value in binds {
         query = query.bind(*value);
     }

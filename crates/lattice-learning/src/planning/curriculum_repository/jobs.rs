@@ -159,9 +159,9 @@ impl LearningCurriculumRepository {
         .fetch_one(&mut *tx)
         .await
         .map_err(db)?;
-        let candidates: Vec<String> = sqlx::query_scalar(&format!(
+        let candidates: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND m.ordinal IN (?,?) AND {PREPARABLE_LESSON} AND {NOT_HELD_FOR_REVIEW} ORDER BY m.ordinal,l.ordinal"
-        ))
+        )))
         .bind(program_id)
         .bind(module_ordinal)
         .bind(next_ordinal)
@@ -207,9 +207,9 @@ impl LearningCurriculumRepository {
     ) -> Result<Vec<LearningGenerationJob>> {
         validate_operation_id(operation_id)?;
         let mut tx = self.db.begin_write().await.map_err(db)?;
-        let lessons: Vec<String> = sqlx::query_scalar(&format!(
+        let lessons: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND l.module_id=? AND {PREPARABLE_LESSON} AND {NOT_HELD_FOR_REVIEW} ORDER BY m.ordinal,l.ordinal"
-        ))
+        )))
         .bind(program_id)
         .bind(module_id)
         .fetch_all(&mut *tx)
@@ -601,7 +601,8 @@ pub(super) async fn preparable_in(
     let sql = format!(
         "SELECT id FROM learning_lessons WHERE program_id=? AND id IN ({marks}) AND {PREPARABLE_LESSON}"
     );
-    let mut query = sqlx::query_scalar::<_, String>(&sql).bind(program_id);
+    let mut query =
+        sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str())).bind(program_id);
     for id in lesson_ids {
         query = query.bind(id);
     }

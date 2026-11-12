@@ -315,7 +315,7 @@ impl Course {
     }
 
     async fn run(&self, sql: &str, id: &str) -> Result<()> {
-        sqlx::query(sql)
+        sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(id)
             .execute(&self.pool)
             .await

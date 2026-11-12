@@ -192,7 +192,7 @@ impl ConversationRepository {
             "id || '.' || ext",
             &format!("chat_images WHERE conversation_id = ? AND message_id IN ({placeholders})"),
         );
-        let mut record = sqlx::query(&record_sql)
+        let mut record = sqlx::query(sqlx::AssertSqlSafe(record_sql.as_str()))
             .bind(run_id())
             .bind(conversation_id);
         for id in message_ids {
@@ -209,7 +209,8 @@ impl ConversationRepository {
             "DELETE FROM conversation_message_bookmarks WHERE conversation_id = ? AND message_id IN ({})",
             placeholders
         );
-        let mut bookmark_query = sqlx::query(&bookmark_sql).bind(conversation_id);
+        let mut bookmark_query =
+            sqlx::query(sqlx::AssertSqlSafe(bookmark_sql.as_str())).bind(conversation_id);
         for id in message_ids {
             bookmark_query = bookmark_query.bind(id);
         }
@@ -222,7 +223,7 @@ impl ConversationRepository {
             "DELETE FROM conversation_messages WHERE conversation_id = ? AND id IN ({})",
             placeholders
         );
-        let mut query = sqlx::query(&sql).bind(conversation_id);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str())).bind(conversation_id);
         for id in message_ids {
             query = query.bind(id);
         }

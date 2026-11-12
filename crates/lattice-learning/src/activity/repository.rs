@@ -34,7 +34,7 @@ async fn titles(db: &Database, sql: &str, ids: &[String]) -> Result<HashMap<Stri
     }
     let ids = serde_json::to_string(ids).map_err(|e| AppError::Serialization(e.to_string()))?;
     let mut read = db.begin_read().await?;
-    let rows = sqlx::query(sql)
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(ids)
         .fetch_all(&mut *read)
         .await

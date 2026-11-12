@@ -219,7 +219,7 @@ impl TagRepository {
                 placeholders
             );
 
-            let mut query_builder = sqlx::query(&query);
+            let mut query_builder = sqlx::query(sqlx::AssertSqlSafe(query.as_str()));
             for id in chunk {
                 query_builder = query_builder.bind(id);
             }

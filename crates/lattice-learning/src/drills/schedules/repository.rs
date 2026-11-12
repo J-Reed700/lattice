@@ -60,10 +60,10 @@ pub(super) async fn schedule_in(
     table: &Table,
     key: (&str, &str),
 ) -> Result<Option<CardSchedule>> {
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {SCHEDULE_COLUMNS} FROM {} WHERE ({}) = (?,?)",
         table.name, table.keys
-    ))
+    )))
     .bind(key.0)
     .bind(key.1)
     .fetch_optional(&mut *connection)
@@ -80,11 +80,11 @@ pub(super) async fn write_schedule_in(
     memory: &Memory,
     schedule: &CardSchedule,
 ) -> Result<()> {
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO {name}({keys},{SCHEDULE_COLUMNS}) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT({keys}) DO UPDATE SET stability=excluded.stability,difficulty=excluded.difficulty,last_reviewed_at=excluded.last_reviewed_at,due_at=excluded.due_at,interval_days=excluded.interval_days,review_count=excluded.review_count,lapses=excluded.lapses",
         name = table.name,
         keys = table.keys
-    ))
+    )))
     .bind(key.0)
     .bind(key.1)
     .bind(memory.stability)

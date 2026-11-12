@@ -437,7 +437,7 @@ impl ConversationRepository {
                     purpose FROM conversation_memory_evidence \
              WHERE item_id IN ({placeholders}) ORDER BY item_id ASC, ordinal ASC"
         );
-        let mut query = sqlx::query_as::<_, EvidenceRow>(&sql);
+        let mut query = sqlx::query_as::<_, EvidenceRow>(sqlx::AssertSqlSafe(sql.as_str()));
         for row in &item_rows {
             query = query.bind(&row.id);
         }
