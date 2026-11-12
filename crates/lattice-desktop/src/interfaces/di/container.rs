@@ -183,8 +183,8 @@ pub struct Container {
 
     /// Tauri AppHandle, populated at app boot via
     /// `with_app_handle()`. Required by the LLM factory's sidecar
-    /// dispatch — `tauri-plugin-shell` needs it to spawn the bundled
-    /// `llama-server` child process. `None` only in test fixtures
+    /// dispatch, which registers the bundled `llama-server` child
+    /// process with the shutdown sweep. `None` only in test fixtures
     /// (MockAppContainer covers most test paths); LLM-load-time
     /// `InvalidConfig` errors fire if a real path tries to use the
     /// LLM with no handle attached.

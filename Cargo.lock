@@ -4461,6 +4461,7 @@ dependencies = [
  "dirs 5.0.1",
  "futures",
  "hex",
+ "libc",
  "mockall",
  "objc",
  "once_cell",

@@ -1,5 +1,5 @@
+use super::child::ExitReport;
 use super::*;
-use tauri_plugin_shell::process::TerminatedPayload;
 
 #[test]
 fn reserve_free_port_returns_nonzero_loopback_port() {
@@ -561,7 +561,7 @@ fn normal_vulkan_banner_is_not_a_gpu_failure() {
 
 #[test]
 fn spawn_failures_are_binary_unusable_and_name_the_path() {
-    let not_found = tauri_plugin_shell::Error::Io(std::io::ErrorKind::NotFound.into());
+    let not_found = std::io::Error::from(std::io::ErrorKind::NotFound);
     let err = spawn_failure(SidecarBinary::Cpu, &not_found);
     assert_eq!(err.kind, BROKEN);
     let expected = resolved_sidecar_path(SidecarBinary::Cpu);
@@ -579,7 +579,7 @@ fn spawn_failures_are_binary_unusable_and_name_the_path() {
         LLMError::SidecarBinaryUnusable(_)
     ));
 
-    let denied = tauri_plugin_shell::Error::Io(std::io::ErrorKind::PermissionDenied.into());
+    let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
     let err = spawn_failure(SidecarBinary::Primary, &denied);
     assert_eq!(err.kind, BROKEN);
     assert!(err.message.contains("can't run on this machine: starting "));
@@ -607,6 +607,8 @@ fn resolved_sidecar_path_is_the_installed_name_next_to_the_executable() {
         .parent()
         .expect("exe dir")
         .to_path_buf();
+    let canonical =
+        |path: &std::path::Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let suffix = if cfg!(windows) { ".exe" } else { "" };
     for (binary, name) in [
         (SidecarBinary::Primary, format!("llama-server{suffix}")),
@@ -621,8 +623,8 @@ fn resolved_sidecar_path_is_the_installed_name_next_to_the_executable() {
         // question the test cares about — is this the *same* directory the
         // test binary is in.
         assert_eq!(
-            canonical_or_raw(path.parent().expect("sidecar dir")),
-            canonical_or_raw(&exe_dir),
+            canonical(path.parent().expect("sidecar dir")),
+            canonical(&exe_dir),
             "{}",
             path.display()
         );
@@ -850,79 +852,6 @@ fn describe_exit_formats_ntstatus_as_hex() {
 }
 
 #[test]
-fn reaper_matches_only_installed_sidecars_next_to_lattice() {
-    let dir = std::path::Path::new("/Applications/Lattice.app/Contents/MacOS");
-    for name in [
-        "llama-server",
-        "llama-server.exe",
-        "LLAMA-SERVER.EXE",
-        "llama-server-cpu",
-        "llama-server-cpu.exe",
-    ] {
-        assert!(is_installed_sidecar(&dir.join(name), dir), "{name}");
-    }
-    for name in [
-        "llama-cli",
-        "llama-server-gpu",
-        "llama-server-cp",
-        "lattice-desktop",
-    ] {
-        assert!(!is_installed_sidecar(&dir.join(name), dir), "{name}");
-    }
-    // A developer's own build, or another app's bundled copy, elsewhere.
-    for path in [
-        "/Users/dev/code/llama.cpp/build/bin/llama-server",
-        "/Applications/Other.app/Contents/MacOS/llama-server",
-        "/Applications/Lattice.app/Contents/MacOS/binaries/llama-server",
-        "llama-server",
-    ] {
-        assert!(
-            !is_installed_sidecar(std::path::Path::new(path), dir),
-            "{path}"
-        );
-    }
-}
-
-#[test]
-fn reaper_spares_sidecars_whose_lattice_is_still_running() {
-    let lattice = std::path::Path::new("/Applications/Lattice.app/Contents/MacOS/lattice-desktop");
-    assert!(has_live_lattice_parent(Some(lattice), lattice));
-    // Crashed Lattice: re-parented to launchd/init, or the parent is gone.
-    assert!(!has_live_lattice_parent(
-        Some(std::path::Path::new("/sbin/launchd")),
-        lattice
-    ));
-    assert!(!has_live_lattice_parent(None, lattice));
-    // A reused PID now running something unrelated.
-    assert!(!has_live_lattice_parent(
-        Some(std::path::Path::new("/usr/bin/zsh")),
-        lattice
-    ));
-}
-
-#[test]
-fn reaper_reaps_orphans_adopted_by_programs_beside_a_deb_install() {
-    // The .deb puts Lattice and its sidecars in /usr/bin. An orphan adopted by
-    // another program there (a container's `sleep` as PID 1, `tini`) is not
-    // running under Lattice, and must be reaped.
-    let lattice = std::path::Path::new("/usr/bin/lattice-desktop");
-    assert!(!has_live_lattice_parent(
-        Some(std::path::Path::new("/usr/bin/sleep")),
-        lattice
-    ));
-    assert!(!has_live_lattice_parent(
-        Some(std::path::Path::new("/usr/bin/tini")),
-        lattice
-    ));
-    assert!(has_live_lattice_parent(Some(lattice), lattice));
-    // After a package upgrade replaced the file, the old window still counts.
-    assert!(has_live_lattice_parent(
-        Some(std::path::Path::new("/usr/bin/lattice-desktop (deleted)")),
-        lattice
-    ));
-}
-
-#[test]
 fn bundled_binaries_follow_the_platform() {
     let bundled = SidecarBinary::bundled();
     assert_eq!(bundled.first(), Some(&SidecarBinary::Primary));
@@ -1106,13 +1035,13 @@ const B8981_STARTUP: &[&str] = &[
 ];
 
 struct DrainHarness {
-    tx: tokio::sync::mpsc::Sender<CommandEvent>,
+    tx: tokio::sync::mpsc::Sender<ServerEvent>,
     ready: tokio::sync::oneshot::Receiver<Result<(), StartupEnd>>,
     tail: Arc<SyncMutex<OutputTail>>,
     signals: Arc<StartupSignals>,
 }
 
-/// The drain takes a `Receiver<CommandEvent>`, so a test can play a
+/// The drain takes a `Receiver<ServerEvent>`, so a test can play a
 /// sidecar's whole life through a channel — no binary, no process.
 fn drain_harness() -> DrainHarness {
     let (tx, rx) = tokio::sync::mpsc::channel(32);
@@ -1135,12 +1064,12 @@ fn drain_harness() -> DrainHarness {
     }
 }
 
-async fn send(tx: &tokio::sync::mpsc::Sender<CommandEvent>, event: CommandEvent) {
+async fn send(tx: &tokio::sync::mpsc::Sender<ServerEvent>, event: ServerEvent) {
     tx.send(event).await.expect("drain is listening");
 }
 
-fn stderr(line: &str) -> CommandEvent {
-    CommandEvent::Stderr(line.as_bytes().to_vec())
+fn stderr(line: &str) -> ServerEvent {
+    ServerEvent::Stderr(line.as_bytes().to_vec())
 }
 
 async fn startup_end(harness: DrainHarness) -> Result<(), StartupEnd> {
@@ -1203,7 +1132,7 @@ async fn drain_reports_an_exit_before_readiness_and_keeps_the_bind_signal() {
     .await;
     send(
         &harness.tx,
-        CommandEvent::Terminated(TerminatedPayload {
+        ServerEvent::Terminated(ExitReport {
             code: Some(1),
             signal: None,
         }),
@@ -1242,7 +1171,7 @@ async fn drain_reports_a_closed_stream_before_readiness() {
 #[tokio::test]
 async fn drain_reports_an_error_event_before_readiness() {
     let harness = drain_harness();
-    send(&harness.tx, CommandEvent::Error("pipe closed".to_string())).await;
+    send(&harness.tx, ServerEvent::Error("pipe closed".to_string())).await;
     assert_eq!(
         startup_end(harness).await,
         Err(StartupEnd::EventError("pipe closed".to_string()))
