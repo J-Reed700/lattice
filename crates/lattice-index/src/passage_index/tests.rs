@@ -112,7 +112,7 @@ mod store {
             "a busy store is waited out"
         );
         let broken = super::super::store::db_error("read documents")(sqlx::Error::RowNotFound);
-        assert_ne!(ErrorClass::of(&broken), ErrorClass::Outage);
+        assert!(!ErrorClass::of(&broken).is_temporary());
     }
 
     #[tokio::test]

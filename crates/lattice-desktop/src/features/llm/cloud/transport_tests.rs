@@ -179,7 +179,7 @@ async fn authentication_failure_is_not_retried_or_echoed() {
     assert!(!error.to_string().contains("sensitive-provider-body"));
     // A rejected key is a setting to fix, never an outage a job waits out.
     assert!(matches!(error, AppError::InvalidConfig(_)), "{error:?}");
-    assert!(ErrorClass::of(&error) != ErrorClass::Outage);
+    assert!(!ErrorClass::of(&error).is_temporary());
     assert!(error.to_string().contains("API key"), "{error}");
 }
 
@@ -203,7 +203,7 @@ async fn refusals_are_typed_by_what_waiting_can_change() {
             .await
             .unwrap_err();
         assert_eq!(
-            ErrorClass::of(&error) == ErrorClass::Outage,
+            ErrorClass::of(&error).is_temporary(),
             transient,
             "HTTP {status}: {error:?}"
         );
@@ -234,7 +234,7 @@ fn an_account_out_of_quota_is_a_setting_to_fix_not_an_outage() {
             text,
             "OpenAI says the account has no credit or quota left (HTTP 429): add credit to the account, or choose another model in Settings → AI"
         );
-        assert!(ErrorClass::of(&error) != ErrorClass::Outage, "{body}");
+        assert!(!ErrorClass::of(&error).is_temporary(), "{body}");
     }
 }
 
@@ -254,7 +254,7 @@ fn a_payment_required_refusal_says_the_accounts_billing_needs_fixing() {
         };
         assert!(text.contains("HTTP 402"), "{text}");
         assert!(text.contains("billing"), "{text}");
-        assert!(ErrorClass::of(&error) != ErrorClass::Outage);
+        assert!(!ErrorClass::of(&error).is_temporary());
     }
 }
 
@@ -312,7 +312,7 @@ async fn a_request_refused_for_quota_is_sent_once_and_reaches_the_caller_as_a_se
         .await
         .unwrap_err();
     assert!(matches!(error, AppError::InvalidConfig(_)), "{error:?}");
-    assert!(ErrorClass::of(&error) != ErrorClass::Outage);
+    assert!(!ErrorClass::of(&error).is_temporary());
     assert!(!error.to_string().contains("sensitive-provider-reason"));
 }
 
@@ -497,7 +497,7 @@ async fn an_account_out_of_credit_is_a_setting_to_fix() {
             .await
             .unwrap_err();
         assert!(matches!(error, AppError::InvalidConfig(_)), "{error:?}");
-        assert!(ErrorClass::of(&error) != ErrorClass::Outage);
+        assert!(!ErrorClass::of(&error).is_temporary());
         assert!(error.to_string().contains("credit balance"), "{error}");
         assert!(!error.to_string().contains("Plans & Billing"), "{error}");
     }

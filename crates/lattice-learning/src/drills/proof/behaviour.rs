@@ -112,7 +112,7 @@ impl<'a> BehaviourKept<'a> {
         trail.call("new edit (asked again)", self.tools.llm.model_name());
         match asked {
             Ok(asked) => Ok(Some(asked.value)),
-            Err(AppError::ModelAnswerUnusable(_)) => Ok(None),
+            Err(AppError::ModelAnswerUnusable(_) | AppError::AnswerCutOff(_)) => Ok(None),
             Err(error) => Err(error),
         }
     }

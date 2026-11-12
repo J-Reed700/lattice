@@ -625,7 +625,7 @@ fn a_bundled_server_that_cannot_run_is_an_install_problem_the_learner_can_act_on
     for error in [mapped, converted] {
         assert!(error.to_string().contains(expected), "{error}");
         assert!(
-            ErrorClass::of(&error) != ErrorClass::Outage,
+            !ErrorClass::of(&error).is_temporary(),
             "waiting does not bring a missing server back: {error}"
         );
     }

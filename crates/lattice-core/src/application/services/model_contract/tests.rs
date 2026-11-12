@@ -148,13 +148,59 @@ async fn a_reply_that_stays_refused_is_unusable_after_one_correction() {
 }
 
 #[tokio::test]
-async fn a_cut_off_reply_is_unusable_without_a_correction() {
-    let llm = Recorder::new(vec![Ok(reply("12", "length")), Ok(reply("12", "stop"))]);
+async fn a_cut_off_reply_with_no_larger_send_gets_one_correction_saying_so() {
+    let llm = Recorder::new(vec![Ok(reply("1", "length")), Ok(reply("12", "stop"))]);
+    assert_eq!(ask(&llm).await.unwrap(), 12);
+    let sent = llm.sent();
+    assert_eq!(sent.len(), 2);
+    let correction = last_user_turn(&sent[1]);
+    assert!(correction.contains(CORRECTION_LEAD), "{correction}");
+    assert!(correction.contains(CUT_OFF_REFUSAL), "{correction}");
+}
+
+#[tokio::test]
+async fn a_reply_cut_off_again_after_its_correction_is_a_cut_off_answer() {
+    let llm = Recorder::new(vec![
+        Ok(reply("1", "length")),
+        Ok(reply("1", "length")),
+        Ok(reply("12", "stop")),
+    ]);
     let error = ask(&llm).await.unwrap_err();
-    assert!(
-        matches!(error, AppError::ModelAnswerUnusable(_)),
-        "{error:?}"
-    );
+    assert!(matches!(error, AppError::AnswerCutOff(_)), "{error:?}");
+    assert_eq!(llm.sent().len(), 2);
+}
+
+#[tokio::test]
+async fn a_cut_off_reply_of_a_call_that_splits_is_a_cut_off_answer_after_one_send() {
+    let llm = Recorder::new(vec![Ok(reply("1", "length")), Ok(reply("12", "stop"))]);
+    let transport = plain();
+    let request = transport.request.clone();
+    let error = answer(
+        &llm,
+        &call().splitting(true),
+        &transport,
+        request,
+        TestContract::read,
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(error, AppError::AnswerCutOff(_)), "{error:?}");
+    assert_eq!(llm.sent().len(), 1);
+}
+
+#[tokio::test]
+async fn a_cut_off_reply_of_a_call_that_splits_is_not_sent_larger() {
+    let llm = Recorder::new(vec![Ok(reply("1", "length")), Ok(reply("9", "stop"))]);
+    let error = answer(
+        &llm,
+        &call().splitting(true),
+        &Growing,
+        CompletionRequest::default(),
+        TestContract::read,
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(error, AppError::AnswerCutOff(_)), "{error:?}");
     assert_eq!(llm.sent().len(), 1);
 }
 
@@ -201,18 +247,18 @@ impl Transport for Growing {
         Ok(request.clone())
     }
 
-    async fn larger(
+    async fn cut_off(
         &self,
         _llm: &dyn LLMPort,
         request: &CompletionRequest,
-    ) -> Option<CompletionRequest> {
-        request
-            .max_output_tokens
-            .is_none()
-            .then(|| CompletionRequest {
-                max_output_tokens: Some(2048),
-                ..request.clone()
-            })
+    ) -> CutOffRemedy<CompletionRequest> {
+        if request.max_output_tokens.is_some() {
+            return CutOffRemedy::Stop;
+        }
+        CutOffRemedy::Larger(CompletionRequest {
+            max_output_tokens: Some(2048),
+            ..request.clone()
+        })
     }
 }
 
@@ -235,7 +281,7 @@ async fn a_cut_off_reply_is_sent_once_more_with_a_larger_allowance() {
 }
 
 #[tokio::test]
-async fn a_reply_still_cut_off_after_the_larger_send_is_unusable() {
+async fn a_reply_still_cut_off_after_the_larger_send_is_a_cut_off_answer() {
     let llm = Recorder::new(vec![Ok(reply("1", "length")), Ok(reply("1", "length"))]);
     let error = answer(
         &llm,
@@ -246,10 +292,7 @@ async fn a_reply_still_cut_off_after_the_larger_send_is_unusable() {
     )
     .await
     .unwrap_err();
-    assert!(
-        matches!(error, AppError::ModelAnswerUnusable(_)),
-        "{error:?}"
-    );
+    assert!(matches!(error, AppError::AnswerCutOff(_)), "{error:?}");
     assert_eq!(llm.sent().len(), 2);
 }
 
@@ -285,4 +328,5 @@ fn the_test_contract_reads_what_it_renders() {
 fn a_refusal_is_the_errors_own_text() {
     assert_eq!(refusal(&AppError::InvalidInput("why".into())), "why");
     assert_eq!(refusal(&AppError::ModelAnswerUnusable("why".into())), "why");
+    assert_eq!(refusal(&AppError::AnswerCutOff("why".into())), "why");
 }

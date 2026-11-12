@@ -17,7 +17,7 @@ mod application;
 mod class;
 mod domain;
 pub use application::ApplicationError;
-pub use class::ErrorClass;
+pub use class::{smaller_parts_may_succeed, ErrorClass};
 pub use domain::DomainError;
 
 // Main error definitions

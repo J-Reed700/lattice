@@ -29,7 +29,7 @@ use lattice_core::application::services::model_contract::{
 };
 use lattice_core::{
     application::ports::LLMPort,
-    shared::error::{AppError, Result},
+    shared::error::{smaller_parts_may_succeed, AppError, Result},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -353,6 +353,7 @@ impl Batch<'_> {
                     } else {
                         text_call::<QuizAuthor>(&request)?
                     };
+                    let call = call.splitting(self.count > 1);
                     let items =
                         complete_checked_request(llm, &call, request, None, None, read_batch)
                             .await?;
@@ -366,17 +367,15 @@ impl Batch<'_> {
 
     /// The items the model wrote, each built or refused with every fault it
     /// has; `None` when these many cannot come from one request: the window
-    /// holds no request for them (see [`Batch::send`]), or the batch stayed
-    /// unusable after its correction. The caller then asks for fewer items.
+    /// holds no request for them (see [`Batch::send`]), or the answer was cut
+    /// off. The caller then asks for fewer items.
     async fn author(
         &self,
         llm: &dyn LLMPort,
         collection: &ReferenceCollection<'_>,
     ) -> Result<Option<Written>> {
         let sent = match self.send(llm, collection).await {
-            Err(error) if self.count > 1 && ErrorClass::of(&error) == ErrorClass::Unusable => {
-                return Ok(None)
-            }
+            Err(error) if self.count > 1 && smaller_parts_may_succeed(&error) => return Ok(None),
             sent => sent?,
         };
         let Some((raw, chosen)) = sent else {

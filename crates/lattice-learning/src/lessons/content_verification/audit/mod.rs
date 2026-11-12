@@ -29,7 +29,7 @@ use lattice_core::application::services::model_contract::{
 };
 use lattice_core::domain::learning::claim_review::{ClaimId, StopCode, StopReason};
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
-use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::error::{smaller_parts_may_succeed, AppError, Result};
 
 use crate::model_call::ErrorClass;
 use batches::Item;
@@ -492,8 +492,9 @@ impl<'a> Judge<'a> {
             let call = ContractCall::of::<VerifierAudit>(&PromptInput {
                 system: policy::SYSTEM_PROMPT.into(),
                 prompt: rendered.task.clone(),
-            })?;
-            let transport = Audit::new(self.sizer.reserve(items.len()), self.web, items.len());
+            })?
+            .splitting(items.len() > 1);
+            let transport = Audit::new(self.sizer.reserve(items.len()), self.web);
             let read =
                 model_contract::answer(self.llm, &call, &transport, rendered.clone(), |text| {
                     policy::verdicts(text, &rendered, &transport.fetched())
@@ -511,8 +512,10 @@ impl<'a> Judge<'a> {
                     judged.verdicts = verdicts;
                     Ok(judged)
                 }
+                Err(error) if items.len() > 1 && smaller_parts_may_succeed(&error) => {
+                    self.halves(items, judged).await
+                }
                 Err(error) => match ErrorClass::of(&error) {
-                    ErrorClass::DoesNotFit if items.len() > 1 => self.halves(items, judged).await,
                     ErrorClass::Unusable | ErrorClass::DoesNotFit => {
                         judged.verdicts = vec![
                             Judged::could_not_verify(format!(
