@@ -2,6 +2,7 @@
 //! report, the learner's view and the lesson itself, each read through the
 //! owner of its rule.
 use super::super::claim_ledger::{self, ClaimLedger};
+use super::super::learner_view::{resolved, told, unverified_sentences};
 use super::super::resolution::{standing, Resolution, Standing};
 use super::super::{ClaimStates, Finding, LessonVerificationReport};
 use crate::dto::{LearningBlockDto, LearningLessonDto};
@@ -20,7 +21,7 @@ use lattice_core::domain::learning::claim_review::{
 use lattice_core::shared::error::Result;
 use lattice_core::shared::hash::sha256_hex;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// What a whole-lesson test has at its end.
 pub(in crate::lessons::content_verification) struct PreparedRun {
@@ -256,63 +257,58 @@ fn carried_on(run: &PreparedRun, entry: &ClaimLedgerEntry) -> bool {
     })
 }
 
-/// What the learner is told of a claim, from the ledger alone: its label and
-/// the reasons it may give.
-fn expected(
+/// What the production mapping tells of each claim finding from the ledger the
+/// store loaded: its label and the reason it gives.
+fn told_of(
     run: &PreparedRun,
-    entry: &ClaimLedgerEntry,
-    (unit, quote): (usize, &str),
-) -> Option<(LearningClaimResolutionDto, Vec<UnverifiedReasonDto>)> {
-    use LearningClaimResolutionDto::{ConfirmedByYou, NotVerified, SourceRemoved, Verified};
-    if matches!(
-        entry.state(),
-        ClaimState::Reopened {
-            cause: ReopenCause::SourceDeleted(_),
-            ..
-        }
-    ) {
-        return Some((SourceRemoved, Vec::new()));
-    }
-    match standing_of(run, entry.state()) {
-        Standing::Resolved(Resolution::Confirmed { .. }) => Some((ConfirmedByYou, Vec::new())),
-        Standing::Resolved(Resolution::Unverified { reason }) => {
-            Some((NotVerified, vec![reason.into()]))
-        }
-        Standing::Unsettled => Some((NotVerified, vec![UnverifiedReasonDto::Unchecked])),
-        Standing::Gone => None,
-        Standing::Verified => {
-            let beside = unverified_beside(run, entry, (unit, quote));
-            Some(if beside.is_empty() {
-                (Verified, beside)
-            } else {
-                (NotVerified, beside)
-            })
-        }
-    }
-}
-
-/// Why each other claim a lesson tells as claims, on the same sentence, was
-/// published not verified.
-fn unverified_beside(
-    run: &PreparedRun,
-    entry: &ClaimLedgerEntry,
-    (unit, quote): (usize, &str),
-) -> Vec<UnverifiedReasonDto> {
-    let listed = |other: &ClaimLedgerEntry| {
+) -> Vec<(
+    &Finding,
+    LearningClaimResolutionDto,
+    Option<UnverifiedReasonDto>,
+)> {
+    let states = ClaimStates::of(&run.ledger);
+    let claims = || {
         run.report
             .findings
             .iter()
-            .filter(|finding| finding.claim_id.as_deref() == Some(other.claim_id().0.as_str()))
-            .all(Finding::is_claim)
+            .filter(|finding| finding.is_claim())
     };
-    run.ledger
-        .claims
+    let finding_claims: HashSet<&str> = run
+        .report
+        .findings
         .iter()
-        .filter(|other| other.claim_id() != entry.claim_id() && listed(*other))
-        .filter(|other| other.location().unit_index == unit && other.location().quote == quote)
-        .filter_map(|other| match other.state() {
-            ClaimState::Unverified { reason, .. } => Some((*reason).into()),
-            _ => None,
+        .filter_map(|finding| finding.claim_id.as_deref())
+        .collect();
+    let unverified = unverified_sentences(
+        claims().map(|finding| (finding, resolved(finding, &states, &finding_claims).0)),
+    );
+    claims()
+        .map(|finding| {
+            let (stood, verified) = resolved(finding, &states, &finding_claims);
+            let state = finding
+                .claim_id
+                .as_deref()
+                .and_then(|id| entry_of(run, id))
+                .map(ClaimLedgerEntry::state);
+            let source_removed = state.is_some_and(|state| {
+                matches!(
+                    state,
+                    ClaimState::Reopened {
+                        cause: ReopenCause::SourceDeleted(_),
+                        ..
+                    }
+                )
+            });
+            let (label, _, reason) = told(
+                stood.as_ref(),
+                verified,
+                finding.verdict,
+                (source_removed, state.is_some()),
+                unverified
+                    .get(&(finding.unit, finding.quote.as_str()))
+                    .copied(),
+            );
+            (finding, label, reason)
         })
         .collect()
 }
@@ -344,40 +340,43 @@ fn labels(
             listed
         ));
     }
+    let told_all = told_of(run);
+    let teaching: Vec<_> = told_all
+        .iter()
+        .filter(|(finding, ..)| finding.unit < sections)
+        .collect();
+    if teaching.len() != run.view.teaching_claims.len() {
+        found.push(format!(
+            "the learner's view lists {} claims, the production mapping tells {}",
+            run.view.teaching_claims.len(),
+            teaching.len()
+        ));
+    }
     let mut confirmed = 0;
-    for told in &run.view.teaching_claims {
-        let Some(entry) = told.claim_id.as_deref().and_then(|id| entry_of(run, id)) else {
+    for ((finding, label, reason), shown) in teaching.iter().zip(&run.view.teaching_claims) {
+        confirmed += usize::from(*label == LearningClaimResolutionDto::ConfirmedByYou);
+        let Some(entry) = finding.claim_id.as_deref().and_then(|id| entry_of(run, id)) else {
             found.push(format!(
                 "the learner's view lists {:?} (section {}) for a claim the ledger does not hold ({:?})",
-                told.claim, told.section_index, told.claim_id
+                shown.claim, shown.section_index, finding.claim_id
             ));
             continue;
         };
-        let Some((label, reasons)) =
-            expected(run, entry, (told.section_index, &told.content_quote))
-        else {
-            continue;
-        };
-        confirmed += usize::from(label == LearningClaimResolutionDto::ConfirmedByYou);
-        if told.resolution != label {
+        if shown.resolution != *label {
             found.push(format!(
                 "{}: the learner reads it as {:?}, the ledger says {:?} ({:?})",
                 about(entry),
-                told.resolution,
+                shown.resolution,
                 label,
                 entry.state()
             ));
         }
-        let reason_fits = match told.unverified_reason {
-            Some(reason) => reasons.contains(&reason),
-            None => reasons.is_empty(),
-        };
-        if !reason_fits {
+        if shown.unverified_reason != *reason {
             found.push(format!(
-                "{}: the learner is given the reason {:?}, the ledger allows {:?}",
+                "{}: the learner is given the reason {:?}, the ledger says {:?}",
                 about(entry),
-                told.unverified_reason,
-                reasons
+                shown.unverified_reason,
+                reason
             ));
         }
     }
@@ -387,19 +386,9 @@ fn labels(
             run.view.confirmed_count, confirmed
         ));
     }
-    let not_verified = run
-        .report
-        .findings
+    let not_verified = told_all
         .iter()
-        .filter(|finding| finding.is_claim())
-        .filter(|finding| {
-            finding
-                .claim_id
-                .as_deref()
-                .and_then(|id| entry_of(run, id))
-                .and_then(|entry| expected(run, entry, (finding.unit, &finding.quote)))
-                .is_some_and(|(label, _)| label == LearningClaimResolutionDto::NotVerified)
-        })
+        .filter(|(_, label, _)| *label == LearningClaimResolutionDto::NotVerified)
         .count();
     if run.report.unverified_count() != not_verified {
         found.push(format!(
