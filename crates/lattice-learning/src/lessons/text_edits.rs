@@ -106,6 +106,13 @@ pub(crate) struct Patch {
     pub(crate) uncite: Vec<Uncite>,
 }
 
+impl Patch {
+    /// Whether the patch asks for no change at all.
+    pub(crate) fn asks_nothing(&self) -> bool {
+        self.edits.is_empty() && self.citations.is_empty() && self.uncite.is_empty()
+    }
+}
+
 /// A citation to take back, as a path alone or with the finding it is for.
 #[derive(Deserialize)]
 #[cfg_attr(
@@ -948,7 +955,7 @@ pub(super) fn apply_for(
         ))
     };
     let patch = read_patch(patch)?;
-    if patch.edits.is_empty() && patch.citations.is_empty() && patch.uncite.is_empty() {
+    if patch.asks_nothing() {
         return Err(fail("it gave no edits.".into()));
     }
     let mut accepted = accept(

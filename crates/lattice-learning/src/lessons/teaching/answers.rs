@@ -109,9 +109,11 @@ fn flatten(entries: Vec<Entry>) -> Answered {
         );
         plans.insert(entry.finding, entry.plan);
     }
+    let patch = json!({"edits":edits,"citations":citations,"uncite":uncite}).to_string();
     Answered {
-        changed: !(edits.is_empty() && citations.is_empty() && uncite.is_empty()),
-        patch: json!({"edits":edits,"citations":citations,"uncite":uncite}).to_string(),
+        changed: !crate::lessons::text_edits::read_patch(&patch)
+            .is_ok_and(|read| read.asks_nothing()),
+        patch,
         plans,
     }
 }

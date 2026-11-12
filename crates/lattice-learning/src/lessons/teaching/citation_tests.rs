@@ -363,7 +363,7 @@ async fn a_repair_that_goes_wrong_in_one_block_still_applies_the_edits_of_the_ot
         {"path":"/blocks/2/citations/0/quote","before":chained,"after":EXCERPT}
     ]});
     let model = ScriptedModel {
-        outputs: Mutex::new(vec![approved(), patch.to_string(), clean_review(&[0, 1], &[])].into()),
+        outputs: Mutex::new(vec![approved(), patch.to_string(), clean_review(&[0], &[])].into()),
         prompts: Mutex::new(Vec::new()),
     };
 
@@ -377,9 +377,10 @@ async fn a_repair_that_goes_wrong_in_one_block_still_applies_the_edits_of_the_ot
     )
     .await?;
 
+    // Block 1's title is no finding's to change and block 2's edits undo
+    // each other: both are left out, and block 0's edit applies.
     let mut expected = original.clone();
     expected["blocks"][0]["quote"] = json!(EXCERPT);
-    expected["blocks"][1]["title"] = json!("Corrected example");
     assert_eq!(serde_json::from_str::<Value>(&result)?, expected);
     let prompts = model.prompts.lock().unwrap();
     assert_eq!(

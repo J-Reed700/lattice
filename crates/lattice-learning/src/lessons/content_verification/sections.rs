@@ -570,6 +570,9 @@ async fn mend_section(
         None,
         None,
         |raw| {
+            if text_edits::read_patch(raw)?.asks_nothing() {
+                return Ok((original.clone(), Vec::new()));
+            }
             accept_edits(
                 raw,
                 (&original, lesson, wording),
