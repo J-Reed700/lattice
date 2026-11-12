@@ -168,6 +168,16 @@ class ScoreLessonAcceptance(unittest.TestCase):
         self.assertFalse(any("claim j" in f or "claim k" in f for f in failures), failures)
         self.assertTrue(any("claim l" in f and "queued" in f for f in failures), failures)
 
+    def test_a_recorded_statement_fault_fails_the_lesson_and_names_no_message(self):
+        fault = {"kind": "statement_fault", "stage": "take", "message": "SECRET breach"}
+        faulted = ("q", 3, "sourced", "writer", BY_EVIDENCE, [checked(SUPPORTED), fault])
+        build(self.path, claims=CLAIMS + [faulted])
+
+        result = sla.score(self.path)
+
+        self.assertTrue(any("claim q" in f and "take" in f for f in result["failures"]), result["failures"])
+        self.assertNotIn("SECRET", sla.render(result))
+
     def test_a_removal_by_the_user_is_not_the_machines_to_claim(self):
         by_you = ("g", 3, "sourced", "writer", {"state": "removed", "at": 1, "by": "user"}, [])
         failures = self.failures(claims=CLAIMS + [by_you])

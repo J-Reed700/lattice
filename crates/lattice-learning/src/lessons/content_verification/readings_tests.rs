@@ -823,7 +823,7 @@ async fn no_passage_of_the_section_leaves_the_veto_standing_and_nothing_is_asked
 }
 
 #[tokio::test]
-async fn ground_reads_the_sections_passages_and_parts_the_sentences() -> Result<()> {
+async fn ground_reads_the_passages_of_the_sentence_its_statement_restates() -> Result<()> {
     const SECOND: &str = "A parser consumes the tokens a lexer emits.";
     const SENTENCE: &str = "Quillet feeds a parser the tokens it lexes.";
     let sources = vec![
@@ -846,10 +846,10 @@ async fn ground_reads_the_sections_passages_and_parts_the_sentences() -> Result<
         )
     };
 
-    let model = ScriptedBridge::new(vec![stated_by("passage-1")]);
+    let model = ScriptedBridge::new(vec![stated_by("passage-0")]);
     let ground = read_one(Reading::Ground, &model, &world, SENTENCE).await?;
     assert_eq!(ground.outcome, Outcome::Stands);
-    assert_eq!(sources_of(&ground.finding.evidence), vec!["alpha", "beta"]);
+    assert_eq!(sources_of(&ground.finding.evidence), vec!["beta"]);
 
     let model = ScriptedBridge::new(vec![stated_by("passage-0")]);
     let parts = read_one(Reading::Parts, &model, &world, SENTENCE).await?;
@@ -1866,5 +1866,112 @@ async fn knowledge_asks_two_statements_that_both_need_a_call_at_once() -> Result
 
     assert_eq!(reads.len(), 2);
     assert_eq!(model.most(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn ground_reads_the_sections_passed_example_runs_as_parts_does() -> Result<()> {
+    let sources = sources();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let mut world = world_of(&references, Citations::default());
+    world.runs = vec![run_printing(&format!(
+        "{MARKER}
+"
+    ))];
+    let model = PagingModel::new(32_000);
+
+    let read = read_one(Reading::Ground, &model, &world, CLAIM).await?;
+
+    assert_eq!(read.outcome, Outcome::Stands);
+    assert_eq!(read.finding.evidence[0].retrieval_kind, "execution");
+    assert_eq!(model.requests.load(std::sync::atomic::Ordering::SeqCst), 1);
+    Ok(())
+}
+
+/// A model with a window of its own that finds every statement consistent
+/// and keeps what each request asked.
+struct Recording {
+    window: usize,
+    asked: Mutex<Vec<String>>,
+}
+
+impl Recording {
+    fn new(window: usize) -> Self {
+        Self {
+            window,
+            asked: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Recording {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let (_, user) = fixture_messages(request);
+        self.asked.lock().unwrap().push(user.to_owned());
+        Ok(CompletionResponse::from_text(
+            json!({"verdict": "consistent", "reason": "Nothing says otherwise."}).to_string(),
+        ))
+    }
+    fn model_name(&self) -> &str {
+        "recording-fixture"
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len().div_ceil(4)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.window
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn consistency_reads_the_sections_passed_example_runs() -> Result<()> {
+    let sources = sources();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let mut world = world_of(&references, Citations::default());
+    world.runs = vec![run_printing(&format!(
+        "{MARKER}
+"
+    ))];
+    let model = Recording::new(32_000);
+
+    read_one(Reading::Consistency, &model, &world, CLAIM).await?;
+
+    let asked = model.asked.lock().unwrap();
+    assert!(asked.iter().any(|user| user.contains(MARKER)), "{asked:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn consistency_shows_every_passage_its_judge_holds() -> Result<()> {
+    let three = three_passages();
+    let texts = texts_of(&three);
+    let window = (1..)
+        .find(|&window| {
+            ClaimChecker::new(
+                &Windowed::new(window, Vec::new()),
+                SamplingOverride::deterministic(),
+                CHECKER_OUTPUT_TOKENS,
+                CheckPolicy::Consistency,
+            )
+            .consistency_fits(FEEDS, &texts)
+        })
+        .unwrap_or_default();
+    let references = ReferenceCollection::lexical(&sources())?;
+    let citations = Citations::new(HashMap::from([(0, three)]), HashMap::new());
+    let world = world_of(&references, citations);
+    let model = Recording::new(window);
+
+    read_one(Reading::Consistency, &model, &world, FEEDS).await?;
+
+    let asked = model.asked.lock().unwrap();
+    let shown: usize = asked
+        .iter()
+        .map(|user| user.matches("[passage-").count())
+        .sum();
+    assert_eq!(shown, 3, "{asked:?}");
     Ok(())
 }
