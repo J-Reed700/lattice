@@ -177,26 +177,44 @@ async fn identifying_a_repaired_claim_that_continues_records_its_repair_and_no_c
 
     let ids = identify_findings(&mut ledger, &lesson, &report).await?;
 
-    assert_eq!(ids, vec![verified.clone(), failed.clone()]);
+    assert_eq!(ids.len(), 2);
+    assert_eq!(ids[1], failed);
+    assert_ne!(ids[0], verified);
     assert_eq!(ledger.finding_claims(), ids.as_slice());
-    for (id, from) in [&verified, &failed].into_iter().zip(from) {
-        let events = added(ledger.entry(id).unwrap(), from);
-        assert!(
-            matches!(
-                events.as_slice(),
-                [
-                    ClaimEvent::Extracted { .. },
-                    ClaimEvent::RepairAttempted {
-                        attempt: 1,
-                        escalated: false,
-                        outcome: RepairOutcome::Rewritten,
-                        ..
-                    }
-                ]
-            ),
-            "{events:?}"
-        );
-    }
+    // The verified claim shares the rewritten sentence: a machine successor
+    // replaces it, and the failed target continues.
+    assert!(matches!(
+        ledger.entry(&verified).unwrap().state(),
+        ClaimState::Edited {
+            successor: Some(next),
+            by: Actor::Machine,
+            ..
+        } if *next == ids[0]
+    ));
+    let events = added(ledger.entry(&failed).unwrap(), from[1]);
+    assert!(
+        matches!(
+            events.as_slice(),
+            [
+                ClaimEvent::Extracted { .. },
+                ClaimEvent::RepairAttempted {
+                    attempt: 1,
+                    escalated: false,
+                    outcome: RepairOutcome::Rewritten,
+                    ..
+                }
+            ]
+        ),
+        "{events:?}"
+    );
+    let checked = |entry: &ClaimLedgerEntry, from: usize| {
+        added(entry, from)
+            .iter()
+            .any(|event| matches!(event, ClaimEvent::Checked(_)))
+    };
+    assert!(!checked(ledger.entry(&verified).unwrap(), from[0]));
+    assert!(!checked(ledger.entry(&failed).unwrap(), from[1]));
+    assert!(!checked(ledger.entry(&ids[0]).unwrap(), 0));
     // The pass took the repairs it decided, and the lesson before them.
     assert!(ledger.pending.repairs.is_empty());
     assert!(ledger.pending.previous.is_none());
