@@ -39,7 +39,7 @@ pub struct BatchRecord {
     pub output_tokens: u64,
     /// The provider's error, sanitized, for a failed batch.
     pub error: Option<String>,
-    /// The failure's kind (`AppError::error_code`): what two failures are
+    /// The failure's kind (`ErrorCode`): what two failures are
     /// compared by, since an error's words may carry an id that changes.
     pub error_code: Option<String>,
     /// Why web search could not be used in this batch.

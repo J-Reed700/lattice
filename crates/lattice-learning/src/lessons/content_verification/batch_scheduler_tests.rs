@@ -278,7 +278,10 @@ async fn connection_loss_rate_limits_and_invalid_requests_do_not_fan_out() -> Re
                 paged(&model, &references, &inventory(8), &measured()).await
             })
             .await;
-        assert_eq!(result.unwrap_err().error_code(), error.error_code());
+        assert_eq!(
+            lattice_core::shared::ErrorCode::from(&result.unwrap_err()),
+            lattice_core::shared::ErrorCode::from(&error)
+        );
         assert_eq!(*model.batch_sizes.lock().unwrap(), vec![8]);
     }
     Ok(())

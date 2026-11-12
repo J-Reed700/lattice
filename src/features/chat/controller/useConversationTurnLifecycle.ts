@@ -39,7 +39,7 @@ const setUiError = (error: unknown): void => {
 
 const isUserInitiatedCancellation = (requestId: string, errorCode?: string): boolean =>
   pendingCancellationRequests.has(requestId)
-  && (errorCode === ErrorCode.INVALID_STATE || errorCode === ErrorCode.INTERNAL_ERROR);
+  && errorCode === ErrorCode.CANCELLED;
 
 /**
  * A turn from an Explorer thread carries what the Explorer shows: the open
