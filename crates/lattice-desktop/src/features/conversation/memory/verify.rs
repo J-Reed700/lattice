@@ -5,6 +5,9 @@
 //! passages. When review cannot run, or answers unparseably or without a reason,
 //! the verdict is [`SemanticVerdict::Ambiguous`], never `Supported`.
 
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use std::collections::HashMap;
 
 use serde::Deserialize;
@@ -234,6 +237,12 @@ pub async fn review_patch(
     Ok(outcome)
 }
 
+struct MemoryReview;
+impl Contract for MemoryReview {
+    const ID: ContractId = ContractId::new("memory-review");
+    type Input = PromptInput;
+}
+
 /// Ask for `reviews` once and record what the reply read in `outcome`. Returns
 /// the reviews it gave no reading of, or `None` when no reply came.
 async fn ask_for_reviews<'r>(
@@ -275,8 +284,13 @@ async fn ask_for_reviews<'r>(
 
     let prompt = render_verifier_prompt(&rendered);
     outcome.calls += 1;
+    let call = ContractCall::of::<MemoryReview>(&PromptInput {
+        system: VERIFIER_SYSTEM.to_owned(),
+        prompt: prompt.clone(),
+    })?;
     let raw = match complete_json(
         llm,
+        &call,
         deadline,
         VERIFIER_SYSTEM,
         prompt,

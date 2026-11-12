@@ -60,7 +60,7 @@ pub(crate) async fn answers<T>(
                 model_call::TooLarge::Window(window),
             )
             .await?;
-            if Finish::of(Some(&response.finish_reason)) == Finish::CutOff {
+            if Finish::of(&response.finish_reason) == Finish::CutOff {
                 if size == 1 {
                     return Err(unusable());
                 }

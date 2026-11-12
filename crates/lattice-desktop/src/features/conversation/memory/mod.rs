@@ -37,9 +37,7 @@ use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, InferencePriority, SamplingOverride,
 };
 use lattice_core::application::ports::LLMPort;
-use lattice_core::application::services::model_contract::{
-    tagged, Contract, ContractCall, ContractId, PromptInput,
-};
+use lattice_core::application::services::model_contract::{tagged, ContractCall};
 use lattice_core::domain::conversation::memory::{
     MemoryCommit, MemorySnapshot, MemoryValidationError, SummaryRefold,
 };
@@ -263,46 +261,6 @@ impl Deadline {
     }
 }
 
-struct MemoryExtractor;
-impl Contract for MemoryExtractor {
-    const ID: ContractId = ContractId::new("memory-extractor");
-    type Input = PromptInput;
-}
-
-struct MemoryVerifier;
-impl Contract for MemoryVerifier {
-    const ID: ContractId = ContractId::new("memory-verifier");
-    type Input = PromptInput;
-}
-
-struct MemorySummarizer;
-impl Contract for MemorySummarizer {
-    const ID: ContractId = ContractId::new("memory-summarizer");
-    type Input = PromptInput;
-}
-
-struct MemoryUtility;
-impl Contract for MemoryUtility {
-    const ID: ContractId = ContractId::new("memory-utility");
-    type Input = PromptInput;
-}
-
-fn contract_call(system: &str, prompt: &str) -> std::result::Result<ContractCall, AppError> {
-    let input = PromptInput {
-        system: system.to_string(),
-        prompt: prompt.to_string(),
-    };
-    if system == prompts::EXTRACTOR_SYSTEM {
-        ContractCall::of::<MemoryExtractor>(&input)
-    } else if system == prompts::VERIFIER_SYSTEM {
-        ContractCall::of::<MemoryVerifier>(&input)
-    } else if system == prompts::SUMMARIZER_SYSTEM {
-        ContractCall::of::<MemorySummarizer>(&input)
-    } else {
-        ContractCall::of::<MemoryUtility>(&input)
-    }
-}
-
 /// Run one prompt against the utility model inside the shared deadline.
 ///
 /// The request carries the JSON schema, which lets a provider reject a
@@ -310,12 +268,13 @@ fn contract_call(system: &str, prompt: &str) -> std::result::Result<ContractCall
 /// deterministic validator is what actually enforces it.
 async fn complete_json(
     llm: &dyn LLMPort,
+    call: &ContractCall,
     deadline: &Deadline,
     system: &str,
     prompt: String,
     schema: Option<serde_json::Value>,
 ) -> std::result::Result<String, CompactionError> {
-    complete_json_within(llm, deadline, system, prompt, schema, 0).await
+    complete_json_within(llm, call, deadline, system, prompt, schema, 0).await
 }
 
 /// [`complete_json`] with room for at least `min_output_tokens` of answer:
@@ -323,6 +282,7 @@ async fn complete_json(
 /// cap that stops a runaway response.
 async fn complete_json_within(
     llm: &dyn LLMPort,
+    call: &ContractCall,
     deadline: &Deadline,
     system: &str,
     prompt: String,
@@ -345,7 +305,6 @@ async fn complete_json_within(
     } else {
         "other_model_call"
     };
-    let contract = contract_call(system, &prompt)?;
     let started = std::time::Instant::now();
     tracing::info!(
         phase,
@@ -381,7 +340,7 @@ async fn complete_json_within(
         cache_key: deadline.cache_key.clone(),
         ..Default::default()
     };
-    let tagged_llm = tagged(llm, &contract);
+    let tagged_llm = tagged(llm, call);
     let call = tagged_llm.complete(&request);
 
     let bounded = async {
