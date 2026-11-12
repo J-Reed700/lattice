@@ -138,15 +138,14 @@ impl LearningAssessmentRepository {
             hash,
             "Operation ID was reused with different questions.",
         );
-        let mut replay = self.db.begin_read().await.map_err(db)?;
-        let replayed = operation
-            .replay::<LearningQuizMissesToRecallDto>(&mut replay)
-            .await?;
-        replay.commit().await.map_err(db)?;
-        if let Some(done) = replayed {
+        let mut read = self.db.begin_read().await.map_err(db)?;
+        if let Some(done) = operation
+            .replay::<LearningQuizMissesToRecallDto>(&mut read)
+            .await?
+        {
+            read.commit().await.map_err(db)?;
             return Ok(done);
         }
-        let mut read = self.db.begin_read().await.map_err(db)?;
         let status: Option<String> = sqlx::query_scalar(
             "SELECT status FROM learning_assessment_forms WHERE id=? AND program_id=?",
         )

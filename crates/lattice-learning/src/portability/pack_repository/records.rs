@@ -105,18 +105,18 @@ pub(super) async fn replayed_export(
     req: &ExportLearningPackRequestDto,
     payload: &str,
 ) -> Result<Option<LearningPackExportDto>> {
-    let Some(path) = replay(database, &req.operation_id, "export", payload).await? else {
-        return Ok(None);
-    };
-    if !Path::new(&path).exists() {
-        return Ok(None);
-    }
     let mut read = database.begin_read().await?;
-    let row = sqlx::query("SELECT manifest_json,destination_path,created_at,id,program_id FROM learning_pack_exports WHERE operation_id=?")
-        .bind(&req.operation_id)
-        .fetch_optional(&mut *read)
-        .await
-        .map_err(db)?;
+    let replayed = pack_operation(&req.operation_id, "export", payload)
+        .replay::<String>(&mut read)
+        .await?;
+    let row = match replayed {
+        Some(path) if Path::new(&path).exists() => sqlx::query("SELECT manifest_json,destination_path,created_at,id,program_id FROM learning_pack_exports WHERE operation_id=?")
+            .bind(&req.operation_id)
+            .fetch_optional(&mut *read)
+            .await
+            .map_err(db)?,
+        _ => None,
+    };
     read.commit().await?;
     row.as_ref().map(export_dto).transpose()
 }
