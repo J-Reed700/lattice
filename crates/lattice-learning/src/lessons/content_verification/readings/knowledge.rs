@@ -93,11 +93,11 @@ impl Knowledge {
             classed,
         } = *statement;
         match judged {
-            None => Read {
-                outcome: Outcome::Unjudged,
-                finding: unjudged_finding(unit, claim, classed, &[]),
-                reused: false,
-            },
+            None => Read::new(
+                Outcome::Unjudged,
+                unjudged_finding(unit, claim, classed, &[]),
+                false,
+            ),
             Some((knowledge, reused)) => {
                 let outcome = match self.rule {
                     Rule::Knowledge => knowledge.knowledge_outcome(),
@@ -115,11 +115,11 @@ impl Knowledge {
                     }
                     _ => (ClaimVerdict::Unsupported, not_common(&knowledge)),
                 };
-                Read {
+                Read::new(
                     outcome,
-                    finding: finding_of((unit, claim, classed), verdict, reason, &[], None),
+                    finding_of((unit, claim, classed), verdict, reason, &[], None),
                     reused,
-                }
+                )
             }
         }
     }
