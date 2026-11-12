@@ -898,6 +898,9 @@ mod apparatus_tests;
 #[path = "sentence_naming_tests.rs"]
 mod sentence_naming_tests;
 
+#[path = "invariants.rs"]
+pub(in crate::lessons::content_verification) mod invariants;
+
 #[tokio::test]
 async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_do_not() -> Result<()>
 {
