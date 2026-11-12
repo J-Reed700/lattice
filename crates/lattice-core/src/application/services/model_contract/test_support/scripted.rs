@@ -355,9 +355,10 @@ mod tests {
         prompt: &str,
     ) -> Result<CompletionResponse> {
         let call = ContractCall::of::<C>(&input(prompt)).unwrap();
-        tagged(model, &call)
+        let response = tagged(model, &call)
             .complete(&CompletionRequest::default())
-            .await
+            .await;
+        response
     }
 
     #[tokio::test]
