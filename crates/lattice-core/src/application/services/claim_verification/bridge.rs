@@ -77,11 +77,18 @@ pub struct BridgeOutcome {
 }
 
 /// The model call of the part-wise judge.
-pub(crate) struct ClaimParts;
+pub struct ClaimParts;
+
+/// What the part-wise judge is asked: a statement and the passages it is shown, in order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PartsInput {
+    pub statement: String,
+    pub passages: Vec<String>,
+}
 
 impl Contract for ClaimParts {
     const ID: ContractId = ContractId::new("claim-parts");
-    type Input = PromptInput;
+    type Input = PartsInput;
 }
 
 impl BridgeOutcome {
@@ -255,6 +262,10 @@ impl ClaimChecker<'_> {
         let shown = passages.len();
         let (judgments, output_tokens) = self
             .class_judged_counted::<ClaimParts, _>(
+                &PartsInput {
+                    statement: statement.to_owned(),
+                    passages: passages.to_vec(),
+                },
                 BRIDGE_SYSTEM,
                 &bridge_prompt(statement, passages),
                 &bridge_schema(),

@@ -8,7 +8,7 @@ use crate::application::ports::LLMPort;
 #[cfg(any(test, feature = "test-support"))]
 use crate::application::services::model_contract::test_support::RenderAnswer;
 use crate::application::services::model_contract::{
-    answer, refusal, Contract, ContractCall, ContractId, Plain, PromptInput, Transport,
+    answer, refusal, Contract, ContractCall, ContractId, Plain, Transport,
 };
 use crate::domain::learning::acceptance::Outcome;
 use crate::domain::learning::claim_review::{CheckResult, VerdictKind};
@@ -47,12 +47,16 @@ mod field_emphasis_tests;
 #[cfg(test)]
 mod judgment_tests;
 
-pub use batch::{render_batch_evidence, LocatedClaim};
-pub use bridge::{BridgeOutcome, BridgePart, PartKind, BRIDGE_SYSTEM};
+#[cfg(any(test, feature = "test-support"))]
+pub use batch::BatchReply;
+pub use batch::{
+    render_batch_evidence, BatchClaim, BatchInput, BatchPassage, ClaimBatch, LocatedClaim,
+};
+pub use bridge::{BridgeOutcome, BridgePart, ClaimParts, PartKind, PartsInput, BRIDGE_SYSTEM};
 pub use classes::{
-    ClassJudgment, ConsistencyOutcome, ConsistencyVerdict, KnowledgeOutcome, KnowledgeSample,
-    KnowledgeVerdict, CONSISTENCY_POLICY, CONSISTENCY_SYSTEM, KNOWLEDGE_CASE, KNOWLEDGE_POLICY,
-    KNOWLEDGE_SYSTEM,
+    ClassJudgment, Consistency, ConsistencyInput, ConsistencyOutcome, ConsistencyVerdict,
+    Knowledge, KnowledgeInput, KnowledgeOutcome, KnowledgeSample, KnowledgeVerdict,
+    CONSISTENCY_POLICY, CONSISTENCY_SYSTEM, KNOWLEDGE_CASE, KNOWLEDGE_POLICY, KNOWLEDGE_SYSTEM,
 };
 
 /// Judgments and the output tokens the model spent writing them, across
@@ -330,11 +334,21 @@ impl Transport for Judging<'_> {
 }
 
 /// The model call of a claim check, single or located.
-pub(crate) struct ClaimCheck;
+pub struct ClaimCheck;
+
+/// What a claim check is asked: the claim, the passages it is shown, and how the reply is laid out.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckInput {
+    pub claim: String,
+    /// The passages shown, in order; the one evidence text when the check is not located.
+    pub passages: Vec<String>,
+    pub located: bool,
+    pub reasoned: bool,
+}
 
 impl Contract for ClaimCheck {
     const ID: ContractId = ContractId::new("claim-check");
-    type Input = PromptInput;
+    type Input = CheckInput;
 }
 
 /// A reply the judge cannot use, as the correction quotes it.
@@ -513,7 +527,12 @@ impl<'a> ClaimChecker<'a> {
         let prompt = self.compose_prompt(claim, evidence, reasoned, locations.is_some(), context);
         let system = self.system_prompt(locations.is_some(), reasoned);
         let request = self.request(&system, &prompt, reasoned);
-        let call = ContractCall::of::<ClaimCheck>(&PromptInput { system, prompt })?;
+        let call = ContractCall::of::<ClaimCheck>(&CheckInput {
+            claim: claim.to_owned(),
+            passages: locations.map_or_else(|| vec![evidence.text.clone()], <[String]>::to_vec),
+            located: locations.is_some(),
+            reasoned,
+        })?;
         let judging = Judging::default();
         let outcome = answer(self.llm, &call, &judging, request, |text| {
             self.read_judgment(text, judging.logprobs(), evidence, locations)
@@ -531,25 +550,12 @@ impl<'a> ClaimChecker<'a> {
         evidence: &ClaimEvidence,
         locations: Option<&[String]>,
     ) -> Result<JudgeOutcome> {
-        let reasoned = locations.is_some() && self.policy.strict();
+        if let Some(passages) = locations.filter(|_| self.policy.strict()) {
+            return read_reasoned(text, passages);
+        }
         let strict = self.policy.strict();
         let text = without_field_emphasis(text);
-        let text = if reasoned {
-            normalize_reasoned_fields(&text).unwrap_or(text)
-        } else {
-            text
-        };
-        let verdict_of = |text: &str| {
-            if reasoned {
-                final_verdict(text)
-            } else {
-                parse_verdict_word(text)
-            }
-        };
-        let written = verdict_of(&text);
-        // First-token probabilities concern the comparison (or hidden model
-        // reasoning), not the final verdict in this protocol.
-        let logprobs = if reasoned { None } else { logprobs };
+        let written = parse_verdict_word(&text);
         let decided = logprobs
             .as_deref()
             .and_then(verdict_from_logprobs)
@@ -753,9 +759,39 @@ fn final_verdict(text: &str) -> Option<ClaimVerdict> {
     }
 }
 
+/// The outcome of a located, reasoned reply: its parse is [`CheckReply::read`],
+/// the rest looks its source line up among the `passages` shown.
+fn read_reasoned(text: &str, passages: &[String]) -> Result<JudgeOutcome> {
+    let reply = CheckReply::read(text).ok_or_else(|| unreadable("the reply holds no verdict"))?;
+    if reply.reason.trim().is_empty() {
+        return Err(unreadable("the reply gives no reason"));
+    }
+    let cites = matches!(
+        reply.verdict,
+        ClaimVerdict::Supported | ClaimVerdict::Contradicted
+    );
+    let quote = located_passage(&reply.source, passages);
+    if cites && quote.is_none() {
+        return Err(unreadable(
+            "the reply names no valid supporting evidence location",
+        ));
+    }
+    Ok(JudgeOutcome {
+        verdict: reply.verdict,
+        quote: quote.filter(|_| cites),
+        reason: Some(reply.reason),
+        confidence: None,
+        uncertain: false,
+    })
+}
+
 fn located_quote(text: &str, passages: &[String]) -> Option<String> {
-    let value = labeled_value(text, &["Source passage"])?;
-    let value = strip_wrapping_quotes(&value);
+    located_passage(&labeled_value(text, &["Source passage"])?, passages)
+}
+
+/// The passage a `Source passage:` value names among those shown.
+fn located_passage(value: &str, passages: &[String]) -> Option<String> {
+    let value = strip_wrapping_quotes(value);
     let index: usize = value
         .trim_matches(['[', ']'])
         .strip_prefix("passage-")?
@@ -924,13 +960,26 @@ fn truncate_chars(text: &str, limit: usize) -> String {
 }
 
 /// The three labelled lines a located, reasoned claim check answers.
-#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckReply {
     pub verdict: ClaimVerdict,
     pub reason: String,
     /// The `Source passage:` line as written: `passage-N` or `none`.
     pub source: String,
+}
+
+impl CheckReply {
+    /// The reply a located, reasoned check reads, before its passage is looked up.
+    pub fn read(text: &str) -> Option<Self> {
+        let text = without_field_emphasis(text);
+        let text = normalize_reasoned_fields(&text).unwrap_or(text);
+        Some(Self {
+            verdict: final_verdict(&text)?,
+            reason: labeled_value(&text, &["Reason", "Explanation"])
+                .map(|reason| strip_wrapping_quotes(&reason))?,
+            source: labeled_value(&text, &["Source passage"])?,
+        })
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -946,25 +995,11 @@ impl CheckReply {
 
     pub fn render(&self) -> String {
         format!(
-            "Reason: {}
-Source passage: {}
-Verdict: {}",
+            "Reason: {}\nSource passage: {}\nVerdict: {}",
             self.reason,
             self.source,
             self.verdict.as_str()
         )
-    }
-
-    /// The reply a located, reasoned check reads, before its passage is looked up.
-    pub fn read(text: &str) -> Option<Self> {
-        let text = without_field_emphasis(text);
-        let text = normalize_reasoned_fields(&text).unwrap_or(text);
-        Some(Self {
-            verdict: final_verdict(&text)?,
-            reason: labeled_value(&text, &["Reason", "Explanation"])
-                .map(|reason| strip_wrapping_quotes(&reason))?,
-            source: labeled_value(&text, &["Source passage"])?,
-        })
     }
 }
 

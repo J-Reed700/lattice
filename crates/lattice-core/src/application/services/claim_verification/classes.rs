@@ -47,19 +47,33 @@ pub const CONSISTENCY_POLICY: Protocol = crate::protocol!("consistency", 2);
 pub const KNOWLEDGE_POLICY: Protocol = crate::protocol!("knowledge", 3);
 
 /// The model call of the consistency judge.
-pub(crate) struct Consistency;
+pub struct Consistency;
+
+/// What the consistency judge is asked: a statement and the passages it is shown, in order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsistencyInput {
+    pub statement: String,
+    pub passages: Vec<String>,
+}
 
 impl Contract for Consistency {
     const ID: ContractId = ContractId::new("consistency");
-    type Input = PromptInput;
+    type Input = ConsistencyInput;
 }
 
 /// The model call of the knowledge judge.
-pub(crate) struct Knowledge;
+pub struct Knowledge;
+
+/// What the knowledge judge is asked: a statement, and the case it comes from when it has one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgeInput {
+    pub statement: String,
+    pub case: Option<String>,
+}
 
 impl Contract for Knowledge {
     const ID: ContractId = ContractId::new("knowledge");
-    type Input = PromptInput;
+    type Input = KnowledgeInput;
 }
 
 /// The knowledge judge samples at the temperature the replay measured, so its
@@ -272,7 +286,12 @@ impl ClaimChecker<'_> {
             return ClassJudgment::Unusable;
         }
         let schema = verdict_schema(&["consistent", "contradicted", "unfounded_specific"]);
+        let input = ConsistencyInput {
+            statement: statement.to_owned(),
+            passages: passages.to_vec(),
+        };
         self.class_judged::<Consistency, _>(
+            &input,
             CONSISTENCY_SYSTEM,
             &consistency_prompt(statement, passages),
             &schema,
@@ -304,10 +323,15 @@ impl ClaimChecker<'_> {
                 format!("Statement: {statement}"),
             ),
         };
+        let input = KnowledgeInput {
+            statement: statement.to_owned(),
+            case: case.map(str::to_owned),
+        };
         let mut samples = Vec::new();
         for _ in 0..KNOWLEDGE_SAMPLES {
             let sample = self
                 .class_judged::<Knowledge, _>(
+                    &input,
                     &system,
                     &prompt,
                     &schema,
@@ -342,8 +366,9 @@ impl ClaimChecker<'_> {
     /// A judge's judgment: its reply read by `read`, and asked for once more,
     /// quoting what was wrong, when it cannot be read. An outage is left as
     /// the error it is.
-    async fn class_judged<C: Contract<Input = PromptInput>, T>(
+    async fn class_judged<C: Contract, T>(
         &self,
+        input: &C::Input,
         system: &str,
         prompt: &str,
         schema: &Value,
@@ -351,6 +376,7 @@ impl ClaimChecker<'_> {
         read: impl Fn(&str) -> Option<T> + Send + Sync,
     ) -> ClassJudgment<T> {
         self.class_judged_counted::<C, T>(
+            input,
             system,
             prompt,
             schema,
@@ -364,8 +390,9 @@ impl ClaimChecker<'_> {
 
     /// [`Self::class_judged`] for a reply of another shape, which `expected`
     /// describes, with the output tokens the replies took.
-    pub(super) async fn class_judged_counted<C: Contract<Input = PromptInput>, T>(
+    pub(super) async fn class_judged_counted<C: Contract, T>(
         &self,
+        input: &C::Input,
         system: &str,
         prompt: &str,
         schema: &Value,
@@ -373,11 +400,7 @@ impl ClaimChecker<'_> {
         expected: &str,
         read: impl Fn(&str) -> Option<T> + Send + Sync,
     ) -> (ClassJudgment<T>, u64) {
-        let input = PromptInput {
-            system: system.to_owned(),
-            prompt: prompt.to_owned(),
-        };
-        let call = match ContractCall::of::<C>(&input) {
+        let call = match ContractCall::of::<C>(input) {
             Ok(call) => call,
             Err(error) => return (Judgment::of_error(error), 0),
         };

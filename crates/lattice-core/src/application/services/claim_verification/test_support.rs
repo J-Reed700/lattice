@@ -1,9 +1,6 @@
 //! What a scripted model that knows exactly some facts answers every judge.
-use super::batch::{BatchReply, ClaimBatch};
-use super::bridge::ClaimParts;
-use super::classes::{Consistency, Knowledge};
 use super::*;
-use crate::application::services::model_contract::test_support::{Reply, ScriptedModel, Sent};
+use crate::application::services::model_contract::test_support::{Reply, ScriptedModel};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -58,19 +55,8 @@ impl Truth {
 
     fn fact(&self, statement: &str) -> std::result::Result<&Fact, String> {
         self.facts
-            .get(statement.trim())
+            .get(statement)
             .ok_or_else(|| format!("the statement is not in the truth: {statement}"))
-    }
-
-    fn question(&self, prompt: &str, label: &str) -> std::result::Result<Question<'_>, String> {
-        let (passages, statement) = shown_passages_and_statement(prompt, label)
-            .ok_or_else(|| format!("the prompt holds no {label}: {prompt}"))?;
-        let fact = self.fact(&statement)?;
-        Ok(Question {
-            fact,
-            statement,
-            passages,
-        })
     }
 }
 
@@ -80,18 +66,6 @@ fn quoted(passage: &str, quote: &str) -> String {
         "the quote {quote:?} is not in its passage {passage:?}"
     );
     quote.to_owned()
-}
-
-struct Question<'t> {
-    fact: &'t Fact,
-    statement: String,
-    passages: Vec<String>,
-}
-
-impl Question<'_> {
-    fn parts(&self) -> Vec<BridgePart> {
-        self.fact.read(&self.statement, &self.passages)
-    }
 }
 
 impl Fact {
@@ -183,59 +157,13 @@ fn page(parts: &[BridgePart]) -> (ClaimVerdict, Option<usize>) {
     }
 }
 
-/// The passages a judge prompt shows and the statement it asks about, in the
-/// layout `[passage-N]` blocks under `Source passages:` and `label: statement`.
-fn shown_passages_and_statement(prompt: &str, label: &str) -> Option<(Vec<String>, String)> {
-    let rest = prompt.split_once("Source passages:\n")?.1;
-    let (block, after) = rest.split_once(&format!("\n\n{label}: "))?;
-    let statement = after.split("\n\n").next()?.trim().to_owned();
-    let passages = match block.strip_prefix("[passage-") {
-        _ if block.is_empty() => Vec::new(),
-        None => vec![block.to_owned()],
-        Some(first) => first
-            .split("\n\n[passage-")
-            .filter_map(|chunk| chunk.split_once("]\n").map(|(_, text)| text.to_owned()))
-            .collect(),
-    };
-    Some((passages, statement))
-}
-
-fn statement_of_knowledge_prompt(prompt: &str) -> Option<&str> {
-    prompt
-        .rsplit_once("\n\nStatement: ")
-        .map(|(_, statement)| statement)
-        .or_else(|| prompt.strip_prefix("Statement: "))
-        .map(str::trim)
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Bank {
-    source_passages: Vec<BankPassage>,
-    claims: Vec<BankClaim>,
-}
-
-#[derive(Deserialize)]
-struct BankPassage {
-    id: String,
-    text: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct BankClaim {
-    id: String,
-    claim: String,
-    evidence_ids: Vec<String>,
-}
-
-fn answer_check(truth: &Truth, sent: &Sent, input: &PromptInput) -> Reply<CheckReply> {
-    if sent.request.want_logprobs {
+fn answer_check(truth: &Truth, input: &CheckInput) -> Reply<CheckReply> {
+    if !input.reasoned {
         return Reply::Miss("a claim check that is not reasoned over located passages".into());
     }
-    match truth.question(&input.prompt, "Claim") {
-        Ok(question) => {
-            let parts = question.parts();
+    match truth.fact(&input.claim) {
+        Ok(fact) => {
+            let parts = fact.read(&input.claim, &input.passages);
             let (verdict, at) = page(&parts);
             Reply::Answer(CheckReply::on(verdict, why(&parts), at))
         }
@@ -243,33 +171,18 @@ fn answer_check(truth: &Truth, sent: &Sent, input: &PromptInput) -> Reply<CheckR
     }
 }
 
-fn answer_batch(truth: &Truth, input: &PromptInput) -> Reply<BatchReply> {
-    let Ok(bank) = serde_json::from_str::<Bank>(&input.prompt) else {
-        return Reply::Miss(format!(
-            "the batch prompt is no evidence bank: {}",
-            input.prompt
-        ));
-    };
+fn answer_batch(truth: &Truth, input: &BatchInput) -> Reply<BatchReply> {
     let mut checks = Vec::new();
-    for claim in &bank.claims {
+    for claim in &input.claims {
         let fact = match truth.fact(&claim.claim) {
             Ok(fact) => fact,
             Err(what) => return Reply::Miss(what),
         };
-        let shown: Vec<&BankPassage> = claim
-            .evidence_ids
-            .iter()
-            .filter_map(|id| {
-                bank.source_passages
-                    .iter()
-                    .find(|passage| &passage.id == id)
-            })
-            .collect();
-        let texts: Vec<String> = shown.iter().map(|passage| passage.text.clone()).collect();
+        let texts: Vec<String> = claim.passages.iter().map(|p| p.text.clone()).collect();
         let parts = fact.read(&claim.claim, &texts);
         let (verdict, at) = page(&parts);
         let source = at
-            .and_then(|at| shown.get(at))
+            .and_then(|at| claim.passages.get(at))
             .map_or_else(|| "none".to_owned(), |passage| passage.id.clone());
         let reason = why(&parts).to_owned();
         checks.push((
@@ -284,10 +197,10 @@ fn answer_batch(truth: &Truth, input: &PromptInput) -> Reply<BatchReply> {
     Reply::Answer(BatchReply { checks })
 }
 
-fn answer_parts(truth: &Truth, input: &PromptInput) -> Reply<BridgeOutcome> {
-    match truth.question(&input.prompt, "Claim") {
-        Ok(question) => {
-            let parts = question.parts();
+fn answer_parts(truth: &Truth, input: &PartsInput) -> Reply<BridgeOutcome> {
+    match truth.fact(&input.statement) {
+        Ok(fact) => {
+            let parts = fact.read(&input.statement, &input.passages);
             Reply::Answer(BridgeOutcome {
                 reason: why(&parts).to_owned(),
                 parts,
@@ -297,10 +210,10 @@ fn answer_parts(truth: &Truth, input: &PromptInput) -> Reply<BridgeOutcome> {
     }
 }
 
-fn answer_consistency(truth: &Truth, input: &PromptInput) -> Reply<ConsistencyOutcome> {
-    match truth.question(&input.prompt, "Explanatory statement") {
-        Ok(question) => {
-            let parts = question.parts();
+fn answer_consistency(truth: &Truth, input: &ConsistencyInput) -> Reply<ConsistencyOutcome> {
+    match truth.fact(&input.statement) {
+        Ok(fact) => {
+            let parts = fact.read(&input.statement, &input.passages);
             let verdict = if has(&parts, PartKind::Contradicted) {
                 ConsistencyVerdict::Contradicted
             } else if has(&parts, PartKind::SpecificMissing) {
@@ -317,11 +230,8 @@ fn answer_consistency(truth: &Truth, input: &PromptInput) -> Reply<ConsistencyOu
     }
 }
 
-fn answer_knowledge(truth: &Truth, input: &PromptInput) -> Reply<KnowledgeSample> {
-    let Some(statement) = statement_of_knowledge_prompt(&input.prompt) else {
-        return Reply::Miss(format!("the prompt holds no statement: {}", input.prompt));
-    };
-    match truth.fact(statement) {
+fn answer_knowledge(truth: &Truth, input: &KnowledgeInput) -> Reply<KnowledgeSample> {
+    match truth.fact(&input.statement) {
         Ok(fact) => {
             let verdict = fact.known();
             let reason = match verdict {
@@ -350,7 +260,7 @@ impl ScriptedModel {
             truth,
         );
         Self::new()
-            .on_sent::<ClaimCheck>(move |sent, input, _| answer_check(&check, sent, input))
+            .on_nth::<ClaimCheck>(move |input, _| answer_check(&check, input))
             .on_nth::<ClaimBatch>(move |input, _| answer_batch(&batch, input))
             .on_nth::<ClaimParts>(move |input, _| answer_parts(&parts, input))
             .on_nth::<Consistency>(move |input, _| answer_consistency(&consistency, input))

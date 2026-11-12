@@ -119,31 +119,21 @@ impl ScriptedModel {
 
     /// Answer a call of `C` by how many calls of `C` came before it.
     pub fn on_nth<C: RenderAnswer + 'static>(
-        self,
+        mut self,
         reply: impl Fn(&C::Input, usize) -> Reply<C::Answer> + Send + Sync + 'static,
     ) -> Self {
-        self.on_sent::<C>(move |_, input, nth| reply(input, nth))
-    }
-
-    /// [`Self::on_nth`], with the whole request the call was sent as.
-    pub fn on_sent<C: RenderAnswer + 'static>(
-        mut self,
-        reply: impl Fn(&Sent, &C::Input, usize) -> Reply<C::Answer> + Send + Sync + 'static,
-    ) -> Self {
-        self.handlers.insert(
-            C::ID,
-            Box::new(move |sent, nth| {
-                let handled = match sent.call.input_as::<C>() {
-                    Some(input) => reply(sent, &input, nth).into_handled::<C>(),
-                    None => Handled::Response(Err(AppError::InternalError(format!(
-                        "the {} input could not be read back: {}",
-                        C::ID.as_str(),
-                        sent.call.input
-                    )))),
-                };
-                Box::pin(std::future::ready(handled))
-            }),
-        );
+        let handler: Handler = Box::new(move |sent, nth| {
+            let handled = match sent.call.input_as::<C>() {
+                Some(input) => reply(&input, nth).into_handled::<C>(),
+                None => Handled::Miss(format!(
+                    "the {} input could not be read back: {}",
+                    C::ID.as_str(),
+                    sent.call.input
+                )),
+            };
+            Box::pin(std::future::ready(handled))
+        });
+        self.register(C::ID, handler);
         self
     }
 
@@ -155,13 +145,11 @@ impl ScriptedModel {
             + Sync
             + 'static,
     ) -> Self {
-        self.handlers.insert(
-            C::ID,
-            Box::new(move |sent, nth| {
-                let response = handler(sent, nth);
-                Box::pin(async move { Handled::Response(response.await) })
-            }),
-        );
+        let handler: Handler = Box::new(move |sent, nth| {
+            let response = handler(sent, nth);
+            Box::pin(async move { Handled::Response(response.await) })
+        });
+        self.register(C::ID, handler);
         self
     }
 
@@ -172,6 +160,15 @@ impl ScriptedModel {
     ) -> Self {
         self.outage = Some(Box::new(error));
         self
+    }
+
+    fn register(&mut self, id: ContractId, handler: Handler) {
+        let before = self.handlers.insert(id, handler);
+        assert!(
+            before.is_none(),
+            "the scripted model has two handlers for {}",
+            id.as_str()
+        );
     }
 
     pub fn sent(&self) -> Vec<Sent> {
@@ -304,7 +301,7 @@ impl LLMPort for ScriptedModel {
 mod tests {
     use super::*;
     use crate::application::ports::llm_port::Finish;
-    use crate::application::services::model_contract::{tagged, PromptInput};
+    use crate::application::services::model_contract::{tagged, PromptInput, Step};
 
     struct Number;
 
@@ -416,12 +413,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_handler_can_report_a_miss_and_see_the_request() {
-        let model = ScriptedModel::new().on_sent::<Number>(|sent, _, _| {
-            Reply::Miss(format!("{} messages", sent.request.input.len()))
-        });
+    async fn a_handler_can_report_a_miss() {
+        let model = ScriptedModel::new().on_nth::<Number>(|_, _| Reply::Miss("no script".into()));
         let error = ask::<Number>(&model, "a").await.unwrap_err();
-        assert!(error.to_string().contains("0 messages"), "{error}");
+        assert!(error.to_string().contains("no script"), "{error}");
+        assert_eq!(model.record().misses.len(), 1);
+        model.record().misses.clear();
+    }
+
+    #[test]
+    #[should_panic(expected = "two handlers for scripted-number")]
+    fn a_second_handler_for_a_contract_fails_loudly() {
+        let _ = ScriptedModel::new()
+            .on::<Number>(|_| 1)
+            .on_nth::<Number>(|_, _| Reply::Answer(2));
+    }
+
+    #[tokio::test]
+    async fn an_input_the_contract_cannot_read_back_is_a_miss() {
+        let model = ScriptedModel::new().on::<Number>(|_| 1);
+        let call = ContractCall {
+            id: Number::ID,
+            step: Step::Answer,
+            input: serde_json::json!(5),
+        };
+        let request = CompletionRequest {
+            contract: Some(call),
+            ..Default::default()
+        };
+        let error = model.complete(&request).await.unwrap_err();
+        assert!(
+            error.to_string().contains("could not be read back"),
+            "{error}"
+        );
         assert_eq!(model.record().misses.len(), 1);
         model.record().misses.clear();
     }
