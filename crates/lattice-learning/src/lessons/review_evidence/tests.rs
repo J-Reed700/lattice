@@ -220,6 +220,28 @@ async fn a_decision_broken_only_when_asked_again_keeps_the_grounded_one_the_firs
     Ok(())
 }
 
+#[tokio::test]
+async fn a_review_evidence_statement_the_model_never_reads_is_not_established() -> Result<()> {
+    let decision = |ids: Value| json!({"verdict":"actionable","basis":"lesson_contract","evidenceIds":ids,"requirementId":"requirements","partId":"blocks-0","reason":"The exercise does not ask for what the contract requires."});
+    let issues = [
+        proposal("The exercise omitted its required deliverable."),
+        proposal("The exercise never asks for the recorded state."),
+    ]
+    .concat();
+    // The first answer rules issue-0 established but leaves issue-1 uncited;
+    // the correction leaves both uncited.
+    let first = reply(&[
+        ("issue-0", decision(json!(["blocks-0"]))),
+        ("issue-1", decision(json!([]))),
+    ]);
+    let second = reply(&[
+        ("issue-0", decision(json!([]))),
+        ("issue-1", decision(json!([]))),
+    ]);
+    assert!(established_from(&first, &second, &issues).await?.is_empty());
+    Ok(())
+}
+
 #[test]
 fn flat_responses_still_require_the_right_evidence_for_internal_conflicts() -> Result<()> {
     let issues = proposal("The two statements in the candidate are incompatible.");
