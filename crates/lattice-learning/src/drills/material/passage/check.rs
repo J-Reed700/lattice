@@ -11,8 +11,7 @@ use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::SamplingOverride;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::claim_verification::{
-    CheckPolicy, ClaimChecker, ClaimJudgment, ClaimVerdict, ANSWER_ROOM_TOKENS,
-    MIN_VERDICT_CONFIDENCE,
+    CheckPolicy, ClaimChecker, ClaimJudgment, ClaimVerdict, MIN_VERDICT_CONFIDENCE,
 };
 use lattice_core::shared::error::Result;
 use lattice_core::shared::text::segmentation::flowed_sentences;
@@ -86,10 +85,9 @@ impl<'a> ClaimSourceCheck<'a> {
 #[async_trait]
 impl SourceCheck for ClaimSourceCheck<'_> {
     async fn check(&self, sentence: &str, passage: &str) -> Result<SourceFinding> {
-        let checker = ClaimChecker::new(
+        let checker = ClaimChecker::for_policy(
             self.llm,
             SamplingOverride::deterministic(),
-            u32::try_from(ANSWER_ROOM_TOKENS).unwrap_or(u32::MAX),
             CheckPolicy::Strict,
         );
         let passages = source_sentences(passage);

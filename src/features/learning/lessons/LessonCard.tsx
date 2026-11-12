@@ -7,7 +7,6 @@ import { ResizableColumns } from '@/components/ui/ResizableColumns';
 import { useLearningLessonEvidence } from '@/features/learning/api/evidenceQueries';
 import { OutlineCitation } from '@/features/learning/curriculum/OutlineEvidence';
 import { useCancelLearningGenerationJob, useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
-import { splitCheck } from '@/features/learning/lessons/active/checkReveal';
 import { LessonCheck } from '@/features/learning/lessons/active/LessonCheck';
 import { LessonFromMemory } from '@/features/learning/lessons/active/LessonFromMemory';
 import { LessonWarmUp } from '@/features/learning/lessons/active/LessonWarmUp';
@@ -199,7 +198,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
               <div className="studio-lesson-sections">
                 {lesson.blocks.map((block, index) => {
                   const prose = (content: string) => <StudyTangentSelection moduleId={moduleId} lessonId={lesson.id} sectionIndex={index} sectionTitle={block.title}><MarkdownViewer content={content} /></StudyTangentSelection>;
-                  const check = block.kind === 'check' ? splitCheck(block.body) : null;
+                  const check = block.check ?? null;
                   const heldRecap = block.kind === 'recap' && recallFirst && !compared;
                   return <section id={`lesson-${lesson.id}-section-${index}`} key={`${lesson.id}-${index}`} className="studio-lesson-section">
                   <div className="flex items-center justify-between gap-2">

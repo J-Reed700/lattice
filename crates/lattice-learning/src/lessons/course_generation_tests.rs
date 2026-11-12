@@ -1240,6 +1240,9 @@ async fn a_written_quiz_item_is_authored_from_lesson_text_without_sources() -> R
 #[tokio::test]
 async fn outline_model_streams_without_a_deadline_and_rejects_truncated_output() -> Result<()> {
     use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+    use lattice_core::application::services::model_contract::{
+        Contract, ContractCall, ContractId, PromptInput,
+    };
     struct StreamingModel;
     #[async_trait::async_trait]
     impl LLMPort for StreamingModel {
@@ -1281,10 +1284,20 @@ async fn outline_model_streams_without_a_deadline_and_rejects_truncated_output()
             Ok(true)
         }
     }
+    struct StreamedOutline;
+    impl Contract for StreamedOutline {
+        const ID: ContractId = ContractId::new("streamed-outline");
+        type Input = PromptInput;
+    }
+    let call = ContractCall::of::<StreamedOutline>(&PromptInput {
+        system: "Generate".into(),
+        prompt: "An outline".into(),
+    })?;
     let progress = crate::outline_progress::OutlineProgress::default();
     progress.stage(crate::outline_progress::OutlineStage::Drafting);
     let error = generation::complete_json_with_progress(
         &StreamingModel,
+        &call,
         "Generate",
         "An outline".into(),
         json!({"type":"object"}),

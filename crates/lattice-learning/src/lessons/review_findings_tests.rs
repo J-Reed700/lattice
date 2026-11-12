@@ -183,9 +183,9 @@ fn a_list_reads_as_plain_words() {
 
 #[test]
 fn a_part_is_named_by_its_place_in_the_lesson_counted_from_one() {
-    assert_eq!(plain_part(FindingSite::Section(2)), "section 3");
-    assert_eq!(plain_part(FindingSite::Question(1)), "question 2");
-    assert_eq!(plain_part(FindingSite::Lesson), "the lesson");
+    assert_eq!(FindingSite::Section(2).plain(), "section 3");
+    assert_eq!(FindingSite::Question(1).plain(), "question 2");
+    assert_eq!(FindingSite::Lesson.plain(), "the lesson");
 }
 
 #[test]
@@ -211,7 +211,7 @@ fn a_unit_s_hash_changes_with_its_text_only() {
     let candidate = json!({"blocks":[{"title":"Sums","body":"Add."},{"title":"Other","body":"B"}],"questions":[{"prompt":"What is 2+2?"}]});
     let finding = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "x");
     let before = unit(&candidate, &finding);
-    assert_eq!(before.title, "Section 1: Sums");
+    assert_eq!(before.title, "Section 1 \u{b7} Sums");
     let mut other_changed = candidate.clone();
     other_changed["blocks"][1]["body"] = json!("C");
     assert_eq!(unit(&other_changed, &finding).sha256, before.sha256);
@@ -276,4 +276,105 @@ fn a_finding_that_is_not_a_broken_rule_is_corrected_by_edits() {
     for finding in [reviewer, key, plan] {
         assert_eq!(finding.remedy(), Remedy::Edits);
     }
+}
+
+#[test]
+fn a_non_canonical_index_names_no_section() {
+    assert_eq!(
+        FindingSite::of_pointer("/blocks/+0/body"),
+        FindingSite::Lesson
+    );
+    assert_eq!(FindingSite::of_pointer("/blocks/00"), FindingSite::Lesson);
+    assert_eq!(FindingSite::of_part("blocks-03"), None);
+}
+
+#[test]
+fn a_site_is_written_the_way_each_reader_needs_it() {
+    let section = FindingSite::Section(3);
+    assert_eq!(section.array(), Some(("blocks", 3)));
+    assert_eq!(
+        section.field_pointer("body").as_deref(),
+        Some("/blocks/3/body")
+    );
+    assert_eq!(section.part_id().as_deref(), Some("blocks-3"));
+    assert_eq!(section.path().as_deref(), Some("blocks[3]"));
+    assert_eq!(section.id_text(), "section-3");
+    assert_eq!(section.label(), "Section 4");
+    assert_eq!(section.note_label(), "Section 4 (candidate blocks-3)");
+    let question = FindingSite::Question(1);
+    assert_eq!(question.id_text(), "question-1");
+    assert_eq!(question.note_label(), "Question 2 (candidate questions-1)");
+    let lesson = FindingSite::Lesson;
+    assert_eq!(lesson.array(), None);
+    assert_eq!(lesson.field_pointer("body"), None);
+    assert_eq!(lesson.id_text(), "lesson");
+    assert_eq!(lesson.note_label(), "The whole lesson");
+}
+
+#[test]
+fn a_flat_unit_index_is_a_section_first_and_then_a_question() {
+    assert_eq!(FindingSite::of_unit(1, 3), FindingSite::Section(1));
+    assert_eq!(FindingSite::of_unit(3, 3), FindingSite::Question(0));
+    let candidate = json!({"blocks":[{},{}],"questions":[{}]});
+    assert_eq!(
+        FindingSite::in_candidate(&candidate, 2),
+        FindingSite::Question(0)
+    );
+    assert_eq!(FindingSite::Question(1).unit(2), Some(3));
+    assert_eq!(FindingSite::Section(1).unit(2), Some(1));
+    assert_eq!(FindingSite::Lesson.unit(2), None);
+}
+
+#[test]
+fn a_title_is_shown_numbered_and_plain() {
+    let section = FindingSite::Section(0);
+    assert_eq!(
+        section.titled("**Ownership**"),
+        "Section 1 \u{b7} Ownership"
+    );
+    assert_eq!(section.titled("  "), "Section 1");
+    assert_eq!(FindingSite::Question(0).titled("Ignored"), "Question 1");
+}
+
+#[test]
+fn an_array_index_is_zero_or_a_nonzero_digit_then_digits() {
+    for (segment, index) in [("0", Some(0)), ("7", Some(7)), ("10", Some(10))] {
+        assert_eq!(index_segment(segment), index, "{segment}");
+    }
+    for segment in ["", "00", "01", "+0", "-1", "1a", " 1"] {
+        assert_eq!(index_segment(segment), None, "{segment:?}");
+    }
+}
+
+#[test]
+fn every_string_of_a_value_is_listed_with_its_path() {
+    let value = json!({"body":"a","rubric":[{"description":"b"}],"n":1});
+    let mut found = leaves(&value);
+    found.sort();
+    assert_eq!(
+        found,
+        [
+            ("body".to_owned(), "a"),
+            ("rubric/0/description".to_owned(), "b")
+        ]
+    );
+    assert_eq!(leaves(&json!("x")), [(String::new(), "x")]);
+}
+
+#[test]
+fn a_verdict_quote_is_located_as_the_lesson_bytes() {
+    let candidate =
+        json!({"blocks":[{"body":"The borrow checker\u{2019}s rule holds."}],"questions":[]});
+    assert_eq!(
+        part_quote(
+            &candidate,
+            FindingSite::Section(0),
+            "the borrow checker's rule"
+        ),
+        Some("The borrow checker\u{2019}s rule")
+    );
+    assert_eq!(
+        part_quote(&candidate, FindingSite::Question(0), "rule"),
+        None
+    );
 }

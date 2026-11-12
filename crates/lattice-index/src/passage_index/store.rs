@@ -76,7 +76,7 @@ pub(super) fn db_error<E: Into<PersistenceError>>(action: &str) -> impl Fn(E) ->
     move |error| {
         let error = error.into();
         match error.kind() {
-            PersistenceErrorKind::Busy => AppError::ServiceNotAvailable(format!(
+            PersistenceErrorKind::Busy => AppError::DatabaseBusy(format!(
                 "Passage index: busy, could not {action}; saved work is retained"
             )),
             _ => AppError::Database(format!("Passage index: failed to {action}: {error}")),

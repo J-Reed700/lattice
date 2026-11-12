@@ -17,8 +17,8 @@ use lattice_core::application::ports::{
     ClaimReviewStore, LLMPort, LibraryPassagesPort, ReferenceSnapshotPort, WebServiceTrait,
 };
 use lattice_core::domain::learning::claim_review::{
-    Actor, AttachOutcome, Check, CheckResult, ClaimActionKind, ClaimEvent, ClaimId,
-    ClaimLedgerEntry, ClaimState, EventProvenance, Ledger, Revision, TrustVerdict,
+    Actor, AttachOutcome, Check, ClaimActionKind, ClaimEvent, ClaimId, ClaimLedgerEntry,
+    ClaimState, EventProvenance, Ledger, Revision, TrustVerdict,
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
@@ -32,6 +32,7 @@ use self::report::{
     ClaimAttachProgressDto, ClaimAttachReportDto, OtherClaimsCheckedDto, PutBackOutcomeDto,
 };
 use super::checker_examples::CheckerExamples;
+use super::count;
 use super::dto::AttachEvidenceDto;
 use super::repository::{ClaimReviewRepository, ShownPassage};
 use super::trust_changed::{redecide_kinds, Redecided};
@@ -277,7 +278,7 @@ async fn write_check(
     let mut tx = database.begin_write().await.map_err(db)?;
     ClaimReviewRepository::show_passages_in(&mut tx, lesson_id, flagged.claim_id(), shown).await?;
     let mut moved = Vec::new();
-    if matches!(check.result, CheckResult::Supported { .. }) {
+    if check.result.passed() {
         CheckerExamples::record_evidence_added_in(
             &mut tx,
             program_id,
@@ -575,7 +576,7 @@ async fn put_back_for(
 ) -> Result<PutBackOutcomeDto> {
     let supported = matches!(
         outcome,
-        AttachOutcome::Checked(check) if matches!(check.result, CheckResult::Supported { .. })
+        AttachOutcome::Checked(check) if check.result.passed()
     );
     if !supported {
         return Ok(PutBackOutcomeDto::StaysOut);
@@ -630,7 +631,7 @@ pub(super) async fn check_others(
             tally.no_passage += 1;
             continue;
         };
-        let supported = matches!(check.result, CheckResult::Supported { .. });
+        let supported = check.result.passed();
         let appended = append_current(
             deps.store,
             lesson_id,
@@ -664,8 +665,4 @@ pub(super) async fn check_others(
         }
     }
     Ok((tally, revision))
-}
-
-fn count(value: usize) -> u32 {
-    u32::try_from(value).unwrap_or(u32::MAX)
 }

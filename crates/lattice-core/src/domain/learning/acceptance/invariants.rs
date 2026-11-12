@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use super::ceiling::Ceiling;
-use super::walk::{follow, next_rewrite, start, stepped, Moved};
+use super::walk::{follow, next_rewrite, onward, start, Moved};
 use super::{
     AcceptancePolicy, End, Graph, Next, Node, NodeId, Otherwise, Outcome, Position, Reading, Step,
     Target, CLASSES,
@@ -125,16 +125,10 @@ fn reachable(policy: &dyn AcceptancePolicy) -> Vec<Position> {
             continue;
         }
         found.push(at);
-        let Some(node) = policy.graph(at.class).node(at.node) else {
+        if policy.graph(at.class).node(at.node).is_none() {
             continue;
-        };
-        for &(_, next) in node.edges() {
-            match follow(policy, at, next) {
-                Moved::To(to) => stack.push(to),
-                Moved::Ended(End::Removed { .. }) | Moved::Illegal => {}
-                Moved::Ended(_) => stack.extend(next_rewrite(policy, stepped(policy, at))),
-            }
         }
+        stack.extend(onward(policy, at));
         stack.extend(next_rewrite(policy, at));
     }
     found
@@ -294,8 +288,8 @@ fn reads_the_passages(policy: &dyn AcceptancePolicy, at: Position, next: Next) -
             Step::Rewrite(_) | Step::Cut => return false,
             _ => {}
         }
-        for &(_, onward) in node.edges() {
-            match follow(policy, here, onward) {
+        for &(_, edge) in node.edges() {
+            match follow(policy, here, edge) {
                 Moved::To(to) => stack.push(to),
                 Moved::Ended(_) | Moved::Illegal => return false,
             }
@@ -559,17 +553,11 @@ pub(super) fn ceiling_rises(
             };
             let here = most(at);
             let mut ways: Vec<u32> = Vec::new();
-            for &(_, next) in node.edges() {
-                match follow(policy, at, next) {
-                    Moved::To(to) => ways.push(node.calls.saturating_add(most(to))),
-                    Moved::Ended(End::Removed { .. }) | Moved::Illegal => {}
-                    Moved::Ended(_) => {
-                        if let Some(rewritten) = next_rewrite(policy, stepped(policy, at)) {
-                            ways.push(node.calls.saturating_add(most(rewritten)));
-                        }
-                    }
-                }
-            }
+            ways.extend(
+                onward(policy, at)
+                    .into_iter()
+                    .map(|to| node.calls.saturating_add(most(to))),
+            );
             if let Some(rewritten) = next_rewrite(policy, at) {
                 ways.push(most(rewritten));
             }

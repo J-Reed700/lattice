@@ -3,16 +3,14 @@
 //! course's sources are unchanged. For a research target, what research found
 //! leads its page.
 use super::*;
-use crate::reference_collection::Scope;
+use crate::reference_collection::{PassageKind, Scope};
 
-/// The retrieval kind of a passage research found for the claim it serves.
-pub(super) const RESEARCHED: &str = "researched";
-
-const RESEARCH_SCOPE_POLICY: &str = "claim-research-scope-v1";
+const RESEARCH_SCOPE_POLICY: Protocol = lattice_core::protocol!("claim-research-scope", 1);
+const EVIDENCE_KEYS: Protocol = lattice_core::protocol!("claim-evidence", 2);
 /// How the first page of the course is ranked: one hybrid list over the
 /// course, without what the claim's citation shows, sliced by the page budget.
 /// A selection saved under another ranking is retrieved anew, once.
-const RANKING: &str = "two-pass-hybrid-v1";
+const RANKING: Protocol = lattice_core::protocol!("two-pass-hybrid", 2);
 
 /// Automatic research is requested for specific failed comparisons. Bind the
 /// resulting source snapshot to those claims so adding a broadly relevant page
@@ -60,8 +58,7 @@ pub(super) fn selection_of(sources: &[SourceBinding], evidence: &[EvidencePassag
                 start: p.start_byte,
                 end: p.end_byte,
                 sha256: sha256_hex(&p.text),
-                kind: [CITED, RESEARCHED]
-                    .contains(&p.retrieval_kind.as_str())
+                kind: matches!(p.kind(), PassageKind::Cited | PassageKind::Researched)
                     .then(|| p.retrieval_kind.clone()),
             })
             .collect(),
@@ -77,7 +74,7 @@ fn selection_key(
     (unit, statement): (usize, &str),
     ranking: &str,
 ) -> String {
-    format!("claim-evidence-v2:{}", sha256_hex(json!({
+    EVIDENCE_KEYS.key(sha256_hex(json!({
         "policy":POLICY, "model":llm.model_name(), "context":llm.max_context_tokens(),
         "unit":unit, "statement":statement, "retrieval":references.mode().label(), "embedding":references.embedding_model(),
         "ranking":ranking,
@@ -121,10 +118,9 @@ pub(super) fn sources(references: &ReferenceCollection<'_>) -> Vec<SourceBinding
 }
 
 fn research_scope_key(current: &[SourceBinding]) -> String {
-    format!(
-        "claim-research-scope-v1:{}",
-        sha256_hex(json!({"policy":RESEARCH_SCOPE_POLICY,"sources":current}).to_string())
-    )
+    RESEARCH_SCOPE_POLICY.key(sha256_hex(
+        json!({"policy":RESEARCH_SCOPE_POLICY,"sources":current}).to_string(),
+    ))
 }
 
 /// Saves that what research added to `references` is for the claims of
@@ -162,7 +158,7 @@ pub(super) async fn record_research_scope(
     crate::lesson_drafts::record_checkpoint(
         &key,
         serde_json::to_value(ResearchScope {
-            policy: RESEARCH_SCOPE_POLICY.into(),
+            policy: RESEARCH_SCOPE_POLICY.to_string(),
             sources: current,
             targets,
         })?,
@@ -190,7 +186,7 @@ async fn research_scope(
     else {
         return Ok(None);
     };
-    if scope.policy != RESEARCH_SCOPE_POLICY
+    if !RESEARCH_SCOPE_POLICY.names(&scope.policy)
         || scope.sources != current
         || scope
             .targets
@@ -238,17 +234,11 @@ impl Selection {
                 if sha256_hex(text) != passage.sha256 {
                     return None;
                 }
-                Some(EvidencePassage {
-                    source_id: source.id.clone(),
-                    text: text.into(),
-                    start_byte: passage.start,
-                    end_byte: passage.end,
-                    retrieval_kind: passage
-                        .kind
-                        .clone()
-                        .unwrap_or_else(|| references.mode().label().into()),
-                    score: 0.0,
-                })
+                let kind = passage
+                    .kind
+                    .as_deref()
+                    .map_or(PassageKind::Retrieved(references.mode()), PassageKind::of);
+                EvidencePassage::of(source, passage.start..passage.end, kind, 0.0)
             })
             .collect()
     }
@@ -280,7 +270,7 @@ pub(super) async fn is_saved(
     current: &[SourceBinding],
     retained: &ClaimChecks,
 ) -> Result<bool> {
-    let key = selection_key(llm, references, (unit, &claim.statement), RANKING);
+    let key = selection_key(llm, references, (unit, &claim.statement), RANKING.as_str());
     let Some(saved) = saved_selection(retained, &key).await? else {
         return Ok(false);
     };
@@ -308,7 +298,7 @@ pub(super) async fn select(
     retained: &ClaimChecks,
     (attribution, budget): (&[EvidencePassage], &evidence_checks::PageBudget),
 ) -> Result<Selected> {
-    let selection_key = selection_key(llm, references, (unit, &claim.statement), RANKING);
+    let selection_key = selection_key(llm, references, (unit, &claim.statement), RANKING.as_str());
     let saved = saved_selection(retained, &selection_key).await?;
     let restored = saved
         .as_ref()
@@ -356,16 +346,11 @@ pub(super) async fn select(
         };
     // The page never shows what the citation does, even when the section's
     // citation moved onto a passage the saved page holds.
-    evidence.retain(|passage| !attribution.iter().any(|shown| overlaps(shown, passage)));
+    evidence.retain(|passage| !attribution.iter().any(|shown| shown.overlaps(passage)));
     evidence.sort_by(|a, b| {
         (&a.source_id, a.start_byte, a.end_byte).cmp(&(&b.source_id, b.start_byte, b.end_byte))
     });
-    evidence.dedup_by(|a, b| {
-        a.source_id == b.source_id
-            && a.start_byte == b.start_byte
-            && a.end_byte == b.end_byte
-            && a.text == b.text
-    });
+    evidence.dedup_by(|a, b| a.same_place(b));
     if changed || saved.is_none() {
         let mut selection = selection_of(current, &evidence);
         selection.reach = reach;
@@ -407,13 +392,13 @@ async fn research_led(
     let mut page: Vec<EvidencePassage> = found
         .into_iter()
         .map(|passage| EvidencePassage {
-            retrieval_kind: RESEARCHED.into(),
+            retrieval_kind: PassageKind::Researched.label().into(),
             ..passage
         })
         .collect();
     canonicalize_evidence(&mut earlier);
     for passage in earlier {
-        if page.iter().any(|shown| overlaps(shown, &passage)) {
+        if page.iter().any(|shown| shown.overlaps(&passage)) {
             continue;
         }
         let mut grown = page.clone();

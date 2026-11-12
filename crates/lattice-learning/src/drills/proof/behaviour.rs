@@ -90,7 +90,7 @@ impl<'a> BehaviourKept<'a> {
                 "explanation": text_schema()
             }
         });
-        let request = model_call::structured(SYSTEM, task, schema, budget::one_mutation(), "low");
+        let request = model_call::structured(SYSTEM, task, schema, budget::one_mutation());
         let previous = json!({
             "path": old.edit.path,
             "before": old.edit.before,

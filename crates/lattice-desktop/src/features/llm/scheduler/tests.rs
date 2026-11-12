@@ -229,10 +229,7 @@ async fn a_request_cancelled_while_queued_leaves_the_queue_with_an_error() {
         .await
         .unwrap()
         .unwrap();
-    assert!(
-        matches!(result, Err(AppError::InvalidState(_))),
-        "{result:?}"
-    );
+    assert!(matches!(result, Err(AppError::Cancelled(_))), "{result:?}");
     assert_eq!(
         scheduler.queued(),
         0,
@@ -782,10 +779,7 @@ async fn a_request_cancelled_in_flight_is_aborted_and_frees_its_slot() {
         .await
         .unwrap()
         .unwrap();
-    assert!(
-        matches!(result, Err(AppError::InvalidState(_))),
-        "{result:?}"
-    );
+    assert!(matches!(result, Err(AppError::Cancelled(_))), "{result:?}");
 
     // The aborted call gave its only slot back.
     model.gate.add_permits(1);

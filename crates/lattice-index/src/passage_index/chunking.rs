@@ -1,14 +1,9 @@
-//! How a document becomes passages.
-//!
-//! Two chunkers sit side by side, and the feature that owns an index picks
-//! one: [`lines`] cuts a text file at structure (a folder's files, numbered
-//! by line), and [`spans`] cuts prose into overlapping windows of whole
-//! sentences (a captured source, addressed by byte). Both hand the store the
-//! same [`NewPassage`], so the store, the embedding loop and the search never
-//! know which made a passage.
+//! How a document becomes passages: [`lines`] cuts a text file at structure
+//! (a folder's files, numbered by line). Other owners cut their own text and
+//! hand the store the same [`NewPassage`], so the store, the embedding loop
+//! and the search never know which made a passage.
 
 pub mod lines;
-pub mod spans;
 
 /// One passage of a document, before it is stored.
 ///

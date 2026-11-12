@@ -3,32 +3,32 @@
 //! assertions as well as the original section. A section whose audit found a gap
 //! keeps its receipt: the gap is a finding, not an addition to the inventory.
 use super::*;
+use lattice_core::protocol;
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::shared::protocol::Protocol;
+
+const UNIT_KEYS: Protocol = protocol!("coverage-unit", 2);
+const MAPPING_KEYS: Protocol = protocol!("coverage-mapping", 2);
+const FIDELITY_KEYS: Protocol = protocol!("coverage-fidelity", 2);
 
 fn key(llm: &dyn LLMPort, input: &Value) -> String {
-    format!(
-        "coverage-unit-v2:{}",
-        sha256_hex(
-            json!({
-                "inventoryPolicy": INVENTORY_POLICY,
-                "coveragePolicy": POLICY,
-                "model": llm.model_name(), "context": llm.max_context_tokens(),
-                "unit": input,
-            })
-            .to_string()
-        )
-    )
+    UNIT_KEYS.key(sha256_hex(
+        json!({
+            "inventoryPolicy": INVENTORY_POLICY,
+            "coveragePolicy": POLICY,
+            "model": llm.model_name(), "context": llm.max_context_tokens(),
+            "unit": input,
+        })
+        .to_string(),
+    ))
 }
 
 pub(super) fn mapping_key(llm: &dyn LLMPort, inputs: &[Value]) -> String {
-    format!("coverage-mapping-v2:{}", key(llm, &json!(inputs)))
+    MAPPING_KEYS.key(key(llm, &json!(inputs)))
 }
 
 pub(super) fn fidelity_key(llm: &dyn LLMPort, unit: &Value, passage: &Value) -> String {
-    format!(
-        "coverage-fidelity-v2:{}",
-        key(llm, &json!({"unit":unit,"passage":passage}))
-    )
+    FIDELITY_KEYS.key(key(llm, &json!({"unit":unit,"passage":passage})))
 }
 
 pub(super) async fn load_fidelity(key: &str) -> Result<Option<FidelityFinding>> {

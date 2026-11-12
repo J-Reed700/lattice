@@ -1,6 +1,23 @@
 //! Grading written answers against their rubrics, and judging short answers
 //! that matched no accepted variant, in one rationale shape (section 4.3a).
 use super::*;
+use lattice_core::application::ports::llm_port::Finish;
+
+/// The grader of written answers, and what a call is told about it.
+pub(crate) struct GradeWritten;
+
+impl Contract for GradeWritten {
+    const ID: ContractId = ContractId::new("quiz-grade-written");
+    type Input = PromptInput;
+}
+
+/// The judge of short answers, and what a call is told about it.
+pub(crate) struct JudgeShort;
+
+impl Contract for JudgeShort {
+    const ID: ContractId = ContractId::new("quiz-judge-short");
+    type Input = PromptInput;
+}
 
 /// A written answer to grade against its rubric.
 #[derive(Debug, Clone)]
@@ -121,7 +138,7 @@ struct RawJudgeItem {
 /// many items as fit, and collects each request's parsed `items`. A reply cut
 /// off at its output limit, or not JSON, goes again in halves; an item whose
 /// reply fails alone stays pending.
-async fn batched(
+async fn batched<C: Contract<Input = PromptInput>>(
     llm: &dyn LLMPort,
     system: &str,
     values: Vec<(String, Value)>,
@@ -138,28 +155,23 @@ async fn batched(
             let ids: Vec<String> = slice.iter().map(|(id, _)| id.clone()).collect();
             let prompt = json!({"items": slice.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>()})
                 .to_string();
-            model_call::structured(
-                system,
-                prompt,
-                schema(&ids),
-                tokens_per_item * size + 300,
-                "low",
-            )
+            model_call::structured(system, prompt, schema(&ids), tokens_per_item * size + 300)
         };
         let mut size = (values.len() - start).min(most);
         while size > 1 && !model_call::fits(llm, &request_for(size)).await {
             size = size.div_ceil(2);
         }
+        let request = request_for(size);
+        let call = text_call::<C>(&request)?;
         let response = model_call::send(
             llm,
-            request_for(size),
+            &call,
+            request,
             None,
             model_call::TooLarge::Window("one answer with its rubric"),
         )
         .await?;
-        let cut_off = ["length", "max_tokens", "incomplete", "content_filter"]
-            .iter()
-            .any(|s| response.finish_reason.to_ascii_lowercase().contains(s));
+        let cut_off = Finish::of(&response.finish_reason) != Finish::Complete;
         let parsed = (!cut_off)
             .then(|| crate::generation::parse_json::<Value>(&response.text).ok())
             .flatten();
@@ -210,7 +222,7 @@ pub async fn grade_written(llm: &dyn LLMPort, answers: &[WrittenAnswer]) -> Resu
             )
         })
         .collect();
-    let raw = batched(
+    let raw = batched::<GradeWritten>(
         llm,
         GRADE_SYSTEM,
         values,
@@ -251,7 +263,7 @@ pub async fn judge_short_answers(
             )
         })
         .collect();
-    let raw = batched(
+    let raw = batched::<JudgeShort>(
         llm,
         JUDGE_SYSTEM,
         values,

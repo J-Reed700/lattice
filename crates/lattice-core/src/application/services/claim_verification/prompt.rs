@@ -2,15 +2,6 @@
 //! policy, and the request that carries it.
 use super::*;
 
-/// One model reply to a single-claim check.
-pub(super) struct Reply {
-    pub(super) text: String,
-    /// The first token's alternatives, when reported.
-    pub(super) logprobs: Option<Vec<(String, f32)>>,
-    /// Output tokens the backend reports it generated for the reply.
-    pub(super) output_tokens: u64,
-}
-
 /// The texts of [`CLAIM_CHECK_SYSTEM`] that a check's variant rewrites.
 const QUOTE_LINE: &str =
     "Source quote: an exact contiguous quote from a passage that supports that comparison, or none.";
@@ -67,70 +58,46 @@ impl ClaimChecker<'_> {
         }
     }
 
-    /// The model's reply to `prompt`. A strict check's reply that did not
-    /// finish on its own comes back empty, its output tokens still counted.
-    pub(super) async fn request(&self, prompt: &str, located: bool) -> Result<Reply> {
-        let reasoned = located && self.policy.strict();
-        let system = self.system_prompt(located, reasoned);
-        self.llm
-            .complete(&CompletionRequest {
-                input: vec![
-                    CompletionInput::Message {
-                        role: "system".into(),
-                        content: system.clone(),
-                    },
-                    CompletionInput::Message {
-                        role: "user".into(),
-                        content: prompt.to_string(),
-                    },
-                ],
-                // Keep the model's reasoning enabled. Durable publication
-                // checks ask for deliberation; chat uses the model default.
-                reasoning_effort: self.policy.strict().then(|| "low".into()),
-                sampling: Some(self.sampling),
-                // A durable lesson check must not fail merely because a
-                // reasoning provider needs more than the chat-sized reply
-                // allowance. Its configured provider/context limit still
-                // applies, and incomplete output can never approve a claim.
-                max_output_tokens: Some(if self.policy.strict() {
-                    self.llm
-                        .max_context_tokens()
-                        .saturating_sub(self.llm.count_tokens(&system))
-                        .saturating_sub(self.llm.count_tokens(prompt))
-                        .min(u32::MAX as usize) as u32
-                } else {
-                    self.max_output_tokens
-                }),
-                want_logprobs: !reasoned,
-                // A slow model is not a failed one: stall detection and the
-                // caller's cancellation end a call that will not finish.
-                no_time_limit: true,
-                // Checking what an answer or a lesson already says: behind
-                // whoever is waiting on the model, ahead of upkeep.
-                priority: InferencePriority::Verification,
-                ..Default::default()
-            })
-            .await
-            .map(|response| {
-                let output_tokens = response.output_tokens;
-                if self.policy.strict()
-                    && !matches!(
-                        response.finish_reason.as_str(),
-                        "stop" | "end_turn" | "completed"
-                    )
-                {
-                    return Reply {
-                        text: String::new(),
-                        logprobs: None,
-                        output_tokens,
-                    };
-                }
-                Reply {
-                    text: response.text,
-                    logprobs: response.first_token_logprobs,
-                    output_tokens,
-                }
-            })
+    /// The request that asks `system` and `prompt`. `reasoned`: the check
+    /// reasons before it answers, so no first-token probabilities are asked.
+    pub(super) fn request(&self, system: &str, prompt: &str, reasoned: bool) -> CompletionRequest {
+        CompletionRequest {
+            input: vec![
+                CompletionInput::Message {
+                    role: "system".into(),
+                    content: system.to_owned(),
+                },
+                CompletionInput::Message {
+                    role: "user".into(),
+                    content: prompt.to_owned(),
+                },
+            ],
+            // Keep the model's reasoning enabled. Durable publication
+            // checks ask for deliberation; chat uses the model default.
+            reasoning_effort: self.policy.strict().then(|| ANSWER_EFFORT.into()),
+            sampling: Some(self.sampling),
+            // A durable lesson check must not fail merely because a
+            // reasoning provider needs more than the chat-sized reply
+            // allowance. Its configured provider/context limit still
+            // applies, and incomplete output can never approve a claim.
+            max_output_tokens: Some(if self.policy.strict() {
+                self.llm
+                    .max_context_tokens()
+                    .saturating_sub(self.llm.count_tokens(system))
+                    .saturating_sub(self.llm.count_tokens(prompt))
+                    .min(u32::MAX as usize) as u32
+            } else {
+                self.max_output_tokens
+            }),
+            want_logprobs: !reasoned,
+            // A slow model is not a failed one: stall detection and the
+            // caller's cancellation end a call that will not finish.
+            no_time_limit: true,
+            // Checking what an answer or a lesson already says: behind
+            // whoever is waiting on the model, ahead of upkeep.
+            priority: InferencePriority::Verification,
+            ..Default::default()
+        }
     }
 }
 

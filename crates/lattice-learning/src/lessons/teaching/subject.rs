@@ -2,11 +2,12 @@
 //! differs between a lesson, a curriculum outline and other material.
 mod closed;
 mod lesson;
-use super::quotes::{authored, reanchor_quotes_in, restore_quotes_in, Table};
+use super::quotes::{authored, reanchor_quotes_in, restore_quotes_in, QuoteCheck, Table};
 use super::repair::Repaired;
 use super::standing::Round;
 use super::ReviewSchema;
 use crate::lessons::copied_wording::Wording;
+use crate::model_call::ErrorClass;
 use crate::outline_progress::OutlineProgress;
 use crate::review_findings::{ReviewFinding, SetAside};
 pub(super) use closed::{MaterialSubject, OutlineSubject};
@@ -161,7 +162,7 @@ pub(super) struct Pass<'a> {
     pub candidate: &'a str,
     pub value: &'a Value,
     pub authoring: &'a Value,
-    pub quote_checks: &'a [Value],
+    pub quote_checks: &'a [QuoteCheck],
     pub schema: ReviewSchema<'a>,
 }
 
@@ -201,13 +202,8 @@ pub(super) trait Subject: Send + Sync {
     ) -> Result<()> {
         Ok(())
     }
-    /// The quotations that match no saved reference; an error where a revision may have none.
-    fn quote_checks(
-        &self,
-        candidate: &Value,
-        authoring: &Value,
-        attempt: usize,
-    ) -> Result<Vec<Value>>;
+    /// The quotations that match no saved reference.
+    fn quote_checks(&self, candidate: &Value, authoring: &Value) -> Vec<QuoteCheck>;
     /// Every check of one pass.
     async fn find(&mut self, llm: &dyn LLMPort, pass: &Pass<'_>) -> Result<Found>;
     /// What to do with a pass's findings, raised on `candidate`.
@@ -221,14 +217,19 @@ pub(super) trait Subject: Send + Sync {
     fn last_attempt(&self, _finding: &ReviewFinding) -> Option<String> {
         None
     }
-    /// Takes one repair call's result into the candidate, or says how to send its findings
-    /// again. `edits` is how the repair was asked: for edits, or for the whole material.
+    /// Takes one repair call's answer into the candidate.
     fn settle_repair(
         &mut self,
         previous: &Value,
         send: &[ReviewFinding],
-        edits: bool,
-        result: Result<Repaired>,
+        repaired: Repaired,
+    ) -> Result<Settled>;
+    /// A repair that could not be made for `send`: what the material does with them.
+    fn unmade(
+        &mut self,
+        send: &[ReviewFinding],
+        class: ErrorClass,
+        reason: String,
     ) -> Result<Settled>;
 }
 

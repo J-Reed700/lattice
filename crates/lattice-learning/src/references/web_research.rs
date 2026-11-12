@@ -11,6 +11,9 @@ use lattice_core::application::contracts::web::{
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::ports::WebServiceTrait;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::domain::sourcing::{lift_sites, Ecosystem, NeedKind, Origin};
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
@@ -260,6 +263,12 @@ pub(crate) struct GapNeed {
     pub need: PlannedNeed,
 }
 
+struct ReferenceNeeds;
+impl Contract for ReferenceNeeds {
+    const ID: ContractId = ContractId::new("reference-needs");
+    type Input = PromptInput;
+}
+
 /// One model call that plans the public source-finding needs on `topic`
 /// for `gaps` (`{"claim", "missingEvidence", ...}` values). `existing_sources`
 /// is the reference catalog and `already_searched` what earlier passes
@@ -338,15 +347,14 @@ pub(crate) async fn plan_needs(
         }
         Ok(planned)
     };
+    let system = format!("{PLAN_SYSTEM} {NEED_GUIDE}");
+    let prompt = json!({"topic":topic,"gaps":numbered,"existingSources":existing_sources,"alreadySearched":already_searched}).to_string();
+    let call = ContractCall::of::<ReferenceNeeds>(&PromptInput {
+        system: system.clone(),
+        prompt: prompt.clone(),
+    })?;
     crate::generation::complete_checked(
-        llm,
-        &format!("{PLAN_SYSTEM} {NEED_GUIDE}"),
-        json!({"topic":topic,"gaps":numbered,"existingSources":existing_sources,"alreadySearched":already_searched}).to_string(),
-        schema,
-        1200,
-        None,
-        None,
-        accept,
+        llm, &call, &system, prompt, schema, 1200, None, None, accept,
     )
     .await
 }

@@ -1,9 +1,9 @@
 //! Questions put to a model in as many requests as its window needs, shared
 //! by the blind solver.
-use crate::lessons::structured_call::cut_off;
 use crate::model_call;
+use lattice_core::application::services::model_contract::ContractCall;
 use lattice_core::{
-    application::ports::LLMPort,
+    application::ports::{llm_port::Finish, LLMPort},
     application::services::grounded_generation::GroundedRequest,
     shared::error::{AppError, Result},
 };
@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 /// then the call fails with `unusable` rather than approve anything.
 pub(crate) async fn answers<T>(
     llm: &dyn LLMPort,
+    call: &ContractCall,
     count: usize,
     request_for: impl Fn(&[usize]) -> GroundedRequest,
     read: impl Fn(&Value, &[usize]) -> BTreeMap<usize, T>,
@@ -39,14 +40,16 @@ pub(crate) async fn answers<T>(
         let indices = indices_for(size);
         let mut read_so_far: BTreeMap<usize, T> = BTreeMap::new();
         for attempt in 0..2 {
+            let request = request_for(indices.as_slice());
             let response = model_call::send(
                 llm,
-                request_for(indices.as_slice()),
+                call,
+                request,
                 None,
                 model_call::TooLarge::Window(window),
             )
             .await?;
-            if cut_off(&response.finish_reason) {
+            if Finish::of(&response.finish_reason) == Finish::CutOff {
                 if size == 1 {
                     return Err(unusable());
                 }

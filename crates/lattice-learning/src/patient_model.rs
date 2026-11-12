@@ -10,8 +10,8 @@ use std::time::Duration;
 use crate::outline_progress::OutlineProgress;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
-use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::runtime::jobs::{Backoff, JobFailure};
+use lattice_core::shared::error::{AppError, ErrorClass, Result};
+use lattice_core::shared::runtime::jobs::Backoff;
 
 /// Where a wait is reported, and how it learns that the work was cancelled.
 pub trait WaitObserver: Send + Sync {
@@ -52,7 +52,7 @@ where
     let mut retries = 0usize;
     loop {
         match attempt(retries).await {
-            Err(error) if JobFailure::is_transient(&error) => {
+            Err(error) if ErrorClass::of(&error) == ErrorClass::Outage => {
                 let delay = backoff.delay(u32::try_from(retries).unwrap_or(u32::MAX));
                 tracing::warn!(%error, retries, delay_seconds = delay.as_secs(), "The model server is temporarily unavailable; waiting to retry");
                 let until = tokio::time::Instant::now() + delay;

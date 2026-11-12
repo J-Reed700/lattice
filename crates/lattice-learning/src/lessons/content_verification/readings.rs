@@ -6,11 +6,10 @@
 //! `lattice-core`, beside the judge. The reading driver asks them along the
 //! policy's graphs, and the pass reads the statements that wait for a reading
 //! through it.
-use super::class_checks::finding_of;
 use super::classify::{markers, Case};
 use super::evidence_checks::{
     alone, applies, bridge_checker, compare, group, labelled_passages, pack, part_wise, AnswerSize,
-    CheckedPart, Comparison, Labels, Pass, PendingClaim, NO_PASSAGES,
+    CheckedPart, Comparison, Labels, Pass, PendingClaim,
 };
 use super::*;
 use async_trait::async_trait;
@@ -26,6 +25,8 @@ mod ground;
 mod knowledge;
 mod page;
 mod parts;
+mod read;
+pub(super) use read::Read;
 
 /// A statement to read: where it stands, what it says and the class it is
 /// checked as.
@@ -34,15 +35,6 @@ pub(super) struct Statement<'s> {
     pub(super) unit: usize,
     pub(super) claim: &'s Claim,
     pub(super) classed: Classed,
-}
-
-/// What a reading made of a statement, and the finding it leaves.
-#[derive(Debug)]
-pub(super) struct Read {
-    pub(super) outcome: Outcome,
-    pub(super) finding: Finding,
-    /// The finding was restored from a saved check, so no call was made for it.
-    pub(super) reused: bool,
 }
 
 /// Told of a statement's reading as soon as its reader knows it: the place of
@@ -226,7 +218,7 @@ enum Restored {
 }
 
 async fn restored(at: &ReadContext<'_>, pending: PendingClaim) -> Result<Restored> {
-    match compare(at.llm, pending).await? {
+    match compare(pending).await? {
         Comparison::Done(finding, reused) => Ok(Restored::Receipt(finding, reused)),
         Comparison::Pending(pending) => Ok(Restored::Ask(pending)),
     }
@@ -327,18 +319,6 @@ impl Made {
             })
             .collect()
     }
-}
-
-/// The finding of a statement with no passage to read, which no judge is
-/// asked about.
-fn no_passages(statement: &Statement<'_>) -> Finding {
-    finding_of(
-        (statement.unit, statement.claim, statement.classed),
-        ClaimVerdict::Unsupported,
-        NO_PASSAGES.into(),
-        &[],
-        None,
-    )
 }
 
 /// What the job's judge answers have cost so far, which sizes a page.

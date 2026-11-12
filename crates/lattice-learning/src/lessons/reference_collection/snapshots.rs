@@ -53,13 +53,10 @@ pub(crate) async fn snapshot_passages(
             passages
                 .iter()
                 .map(|passage| {
-                    llm.count_tokens(&serde_json::json!(passage.text).to_string())
-                        + 2
+                    item_tokens(llm, &serde_json::json!(passage.text))
                         + snapshot(passage)
                             .filter(|source| seen.insert(source.version.id.as_str()))
-                            .map_or(0, |source| {
-                                llm.count_tokens(&entry(source, &[]).to_string()) + 2
-                            })
+                            .map_or(0, |source| item_tokens(llm, &entry(source, &[])))
                 })
                 .sum::<usize>()
                 <= room

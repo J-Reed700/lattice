@@ -79,7 +79,7 @@ fn confinement_reverts_changes_outside_the_failed_sentences_and_keeps_protected_
 /// What a correction is told when it was put back for a change it shared with
 /// the sentences `passed`.
 fn put_back_for(passed: &str) -> String {
-    format!("The correction also changed a sentence that passed its check (\"{passed}\"), so it was put back; change only this sentence.")
+    format!("The correction also changed a sentence it was not asked to change (\"{passed}\"), so it was put back; change only this sentence.")
 }
 
 #[test]

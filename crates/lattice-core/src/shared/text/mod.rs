@@ -1,6 +1,7 @@
 mod claim_sentence;
 mod line_refs;
 mod salience;
+pub mod same_text;
 pub mod segmentation;
 mod sentences;
 mod value_terms;

@@ -5,7 +5,8 @@
 //! reads, under the prompts the replay measured
 //! (evals/grounding/claim-classes/replay_classes.py).
 use super::*;
-use crate::shared::error::AppError;
+use crate::domain::learning::acceptance::KNOWLEDGE_SAMPLES;
+use crate::shared::protocol::Protocol;
 use serde_json::{json, Value};
 
 /// The consistency judge's instructions: the text the replay of record
@@ -38,13 +39,26 @@ pub const KNOWLEDGE_CASE: &str = " Case is the example, scenario or exercise the
 
 /// Part of a consistency receipt's key: a change to the judge starts its
 /// receipts afresh.
-pub const CONSISTENCY_POLICY: &str = "consistency-v2";
+pub const CONSISTENCY_POLICY: Protocol = crate::protocol!("consistency", 2);
 
 /// Part of a knowledge receipt's key, as [`CONSISTENCY_POLICY`] is.
-pub const KNOWLEDGE_POLICY: &str = "knowledge-v3";
+pub const KNOWLEDGE_POLICY: Protocol = crate::protocol!("knowledge", 3);
 
-/// How many times the knowledge judge is asked about one statement.
-pub const KNOWLEDGE_SAMPLES: usize = 3;
+/// The model call of the consistency judge.
+pub(crate) struct Consistency;
+
+impl Contract for Consistency {
+    const ID: ContractId = ContractId::new("consistency");
+    type Input = PromptInput;
+}
+
+/// The model call of the knowledge judge.
+pub(crate) struct Knowledge;
+
+impl Contract for Knowledge {
+    const ID: ContractId = ContractId::new("knowledge");
+    type Input = PromptInput;
+}
 
 /// The knowledge judge samples at the temperature the replay measured, so its
 /// samples can differ.
@@ -55,26 +69,8 @@ const KNOWLEDGE_SAMPLING: SamplingOverride = SamplingOverride {
     presence_penalty: None,
 };
 
-/// How one consistency or knowledge check ended. As with [`ClaimJudgment`],
-/// an outage stays an error the caller can defer on, and anything else leaves
-/// the statement unchecked.
-#[derive(Debug, Clone)]
-pub enum ClassJudgment<T> {
-    Judged(T),
-    Failed(AppError),
-    Unusable,
-}
-
-impl<T> ClassJudgment<T> {
-    fn from_request_error(error: AppError) -> Self {
-        match error {
-            AppError::Network(_)
-            | AppError::ServiceNotAvailable(_)
-            | AppError::RateLimitExceeded(_) => Self::Failed(error),
-            _ => Self::Unusable,
-        }
-    }
-}
+/// How one consistency or knowledge check ended.
+pub type ClassJudgment<T> = Judgment<T>;
 
 /// What the consistency judge found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,6 +230,24 @@ fn read_reply(text: &str) -> Option<(String, String)> {
     (!reason.is_empty()).then(|| (reply.verdict.trim().to_ascii_lowercase(), reason))
 }
 
+/// The consistency verdict a reply holds.
+pub(super) fn read_consistency(text: &str) -> Option<ConsistencyOutcome> {
+    let (word, reason) = read_reply(text)?;
+    Some(ConsistencyOutcome {
+        verdict: ConsistencyVerdict::from_word(&word)?,
+        reason,
+    })
+}
+
+/// The knowledge sample a reply holds.
+pub(super) fn read_sample(text: &str) -> Option<KnowledgeSample> {
+    let (word, reason) = read_reply(text)?;
+    Some(KnowledgeSample {
+        verdict: KnowledgeVerdict::from_word(&word)?,
+        reason,
+    })
+}
+
 /// The consistency judge's user message: the passages, then the statement.
 fn consistency_prompt(statement: &str, passages: &[String]) -> String {
     let evidence = passages
@@ -256,18 +270,12 @@ impl ClaimChecker<'_> {
             return ClassJudgment::Unusable;
         }
         let schema = verdict_schema(&["consistent", "contradicted", "unfounded_specific"]);
-        self.class_judged(
+        self.class_judged::<Consistency, _>(
             CONSISTENCY_SYSTEM,
             &consistency_prompt(statement, passages),
             &schema,
             self.sampling,
-            |text| {
-                let (word, reason) = read_reply(text)?;
-                Some(ConsistencyOutcome {
-                    verdict: ConsistencyVerdict::from_word(&word)?,
-                    reason,
-                })
-            },
+            read_consistency,
         )
         .await
     }
@@ -294,33 +302,24 @@ impl ClaimChecker<'_> {
                 format!("Statement: {statement}"),
             ),
         };
-        let mut samples = Vec::with_capacity(KNOWLEDGE_SAMPLES);
+        let mut samples = Vec::new();
         for _ in 0..KNOWLEDGE_SAMPLES {
             let sample = self
-                .class_judged(&system, &prompt, &schema, KNOWLEDGE_SAMPLING, |text| {
-                    let (word, reason) = read_reply(text)?;
-                    Some(KnowledgeSample {
-                        verdict: KnowledgeVerdict::from_word(&word)?,
-                        reason,
-                    })
-                })
+                .class_judged::<Knowledge, _>(
+                    &system,
+                    &prompt,
+                    &schema,
+                    KNOWLEDGE_SAMPLING,
+                    read_sample,
+                )
                 .await;
             match sample {
-                ClassJudgment::Judged(sample) => samples.push(sample),
-                ClassJudgment::Failed(error) => return ClassJudgment::Failed(error),
-                ClassJudgment::Unusable => return ClassJudgment::Unusable,
+                Judgment::Judged(sample) => samples.push(sample),
+                Judgment::Failed(error) => return Judgment::Failed(error),
+                Judgment::Unusable => return Judgment::Unusable,
             }
         }
         ClassJudgment::Judged(KnowledgeOutcome { samples })
-    }
-
-    /// The tokens a consistency check of `statement` leaves for passages once
-    /// its instructions, the statement and its answer are paid.
-    pub fn consistency_evidence_room(&self, statement: &str) -> usize {
-        self.llm
-            .max_context_tokens()
-            .saturating_sub(self.consistency_tokens(statement, &[]))
-            .saturating_sub(self.max_output_tokens as usize)
     }
 
     /// Whether a consistency check of `statement` against `passages` fits the
@@ -339,17 +338,17 @@ impl ClaimChecker<'_> {
     }
 
     /// A judge's judgment: its reply read by `read`, and asked for once more,
-    /// saying what was wrong, when it cannot be read. An outage is left as
+    /// quoting what was wrong, when it cannot be read. An outage is left as
     /// the error it is.
-    async fn class_judged<T>(
+    async fn class_judged<C: Contract<Input = PromptInput>, T>(
         &self,
         system: &str,
         prompt: &str,
         schema: &Value,
         sampling: SamplingOverride,
-        read: impl Fn(&str) -> Option<T>,
+        read: impl Fn(&str) -> Option<T> + Send + Sync,
     ) -> ClassJudgment<T> {
-        self.class_judged_counted(
+        self.class_judged_counted::<C, T>(
             system,
             prompt,
             schema,
@@ -361,81 +360,63 @@ impl ClaimChecker<'_> {
         .0
     }
 
-    /// [`Self::class_judged`] for a reply of another shape, which `asked_again`
+    /// [`Self::class_judged`] for a reply of another shape, which `expected`
     /// describes, with the output tokens the replies took.
-    pub(super) async fn class_judged_counted<T>(
+    pub(super) async fn class_judged_counted<C: Contract<Input = PromptInput>, T>(
         &self,
         system: &str,
         prompt: &str,
         schema: &Value,
         sampling: SamplingOverride,
-        asked_again: &str,
-        read: impl Fn(&str) -> Option<T>,
+        expected: &str,
+        read: impl Fn(&str) -> Option<T> + Send + Sync,
     ) -> (ClassJudgment<T>, u64) {
-        let mut asked = prompt.to_owned();
-        let mut spent = 0_u64;
-        for attempt in 0..2 {
-            let (text, tokens) = match self.class_reply(system, &asked, schema, sampling).await {
-                Ok(reply) => reply,
-                Err(error) => {
-                    warn!(%error, "Class judge call failed — leaving this statement unchecked");
-                    return (ClassJudgment::from_request_error(error), spent);
-                }
-            };
-            spent = spent.saturating_add(tokens);
-            if let Some(value) = read(&text) {
-                return (ClassJudgment::Judged(value), spent);
-            }
-            if attempt == 0 {
-                asked = format!("{prompt}\n\nYour previous reply could not be read: {asked_again}. Previous reply (untrusted JSON string): {}", json!(text));
-            }
-        }
-        warn!("Class judge reply could not be read twice — leaving this statement unchecked");
-        (ClassJudgment::Unusable, spent)
+        let input = PromptInput {
+            system: system.to_owned(),
+            prompt: prompt.to_owned(),
+        };
+        let call = match ContractCall::of::<C>(&input) {
+            Ok(call) => call,
+            Err(error) => return (Judgment::of_error(error), 0),
+        };
+        let judging = Judging::default();
+        let outcome = answer(
+            self.llm,
+            &call,
+            &judging,
+            self.class_request(system, prompt, schema, sampling),
+            |text| read(text).ok_or_else(|| unreadable(expected)),
+        )
+        .await;
+        let judgment = outcome.map_or_else(Judgment::of_error, Judgment::Judged);
+        (judgment, judging.spent())
     }
 
-    /// The model's reply to `prompt` under `system`, shaped by `schema`, and
-    /// the output tokens it took. A reply that did not finish on its own comes
-    /// back empty.
-    async fn class_reply(
+    /// The request that asks `prompt` under `system`, its reply shaped by `schema`.
+    fn class_request(
         &self,
         system: &str,
         prompt: &str,
         schema: &Value,
         sampling: SamplingOverride,
-    ) -> Result<(String, u64)> {
-        let response = self
-            .llm
-            .complete(&CompletionRequest {
-                input: vec![
-                    CompletionInput::Message {
-                        role: "system".into(),
-                        content: system.to_owned(),
-                    },
-                    CompletionInput::Message {
-                        role: "user".into(),
-                        content: prompt.to_owned(),
-                    },
-                ],
-                json_schema: Some(schema.clone()),
-                sampling: Some(sampling),
-                max_output_tokens: Some(self.max_output_tokens),
-                no_time_limit: true,
-                priority: InferencePriority::Verification,
-                ..Default::default()
-            })
-            .await?;
-        let tokens = response.output_tokens;
-        Ok((
-            if matches!(
-                response.finish_reason.as_str(),
-                "stop" | "end_turn" | "completed"
-            ) {
-                response.text
-            } else {
-                String::new()
-            },
-            tokens,
-        ))
+    ) -> CompletionRequest {
+        CompletionRequest {
+            input: vec![
+                CompletionInput::Message {
+                    role: "system".into(),
+                    content: system.to_owned(),
+                },
+                CompletionInput::Message {
+                    role: "user".into(),
+                    content: prompt.to_owned(),
+                },
+            ],
+            json_schema: Some(schema.clone()),
+            sampling: Some(sampling),
+            max_output_tokens: Some(self.max_output_tokens),
+            no_time_limit: true,
+            priority: InferencePriority::Verification,
+            ..Default::default()
+        }
     }
 }

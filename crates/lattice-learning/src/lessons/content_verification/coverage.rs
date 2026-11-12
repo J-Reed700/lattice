@@ -1,12 +1,18 @@
 //! Account for every lossless lesson passage, not just a section-level summary.
 use super::*;
 use crate::outline_progress::OutlineProgress;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
+use lattice_core::protocol;
+use lattice_core::shared::protocol::Protocol;
+use lattice_core::shared::text::same_text;
 use std::collections::BTreeMap;
 
 mod checkpoints;
 mod mapping;
 
-pub(crate) const POLICY: &str = "passage-coverage-v10";
+pub(crate) const POLICY: Protocol = protocol!("passage-coverage", 10);
 
 /// The fidelity judge answers one question: which factual assertions of this
 /// original passage does the extracted inventory fail to represent? It never
@@ -186,15 +192,6 @@ impl CoverageUnit {
     }
 }
 
-fn normalized(statement: &str) -> String {
-    statement
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .trim_end_matches('.')
-        .to_lowercase()
-}
-
 fn fidelity_request(unit: &Value, passage: &Value) -> Value {
     let inventory: Vec<_> = unit["claims"]
         .as_array()
@@ -227,6 +224,14 @@ fn fidelity_request(unit: &Value, passage: &Value) -> Value {
     request
 }
 
+/// The call that lists the assertions of a passage its claims leave unrepresented.
+pub(super) struct FidelityAudit;
+
+impl Contract for FidelityAudit {
+    const ID: ContractId = ContractId::new("fidelity-audit");
+    type Input = PromptInput;
+}
+
 /// A malformed answer is asked for once more and otherwise fails the check,
 /// preserving the draft; it is never read as a representation gap.
 async fn judge(
@@ -234,10 +239,16 @@ async fn judge(
     request: &Value,
     sentences: &[String],
 ) -> Result<FidelityFinding> {
+    let prompt = PromptInput {
+        system: FIDELITY_SYSTEM.into(),
+        prompt: request.to_string(),
+    };
+    let call = ContractCall::of::<FidelityAudit>(&prompt)?;
     crate::generation::complete_checked(
         llm,
-        FIDELITY_SYSTEM,
-        request.to_string(),
+        &call,
+        &prompt.system,
+        prompt.prompt.clone(),
         fidelity_schema(sentences),
         1500,
         None,
@@ -275,6 +286,7 @@ async fn check_fidelity(
     coverage: &mut [CoverageUnit],
 ) -> Result<()> {
     let decisions: BTreeMap<String, PassageCheck> = crate::generation::parse_json(raw)?;
+    let normalized = |statement: &str| same_text::fold(statement.trim_end().trim_end_matches('.'));
     let mut checks = Vec::new();
     for unit in units {
         let index = unit["index"]
@@ -381,7 +393,7 @@ pub(crate) async fn audit(
     };
     reviewed(audited.len());
     let mut batches: futures::stream::FuturesUnordered<_> = pending
-        .chunks(4)
+        .chunks(mapping::UNITS_PER_MAPPING)
         .map(|batch| async move {
             let mapping_key = checkpoints::mapping_key(llm, batch);
             let saved = crate::lesson_drafts::checkpoint(&mapping_key)

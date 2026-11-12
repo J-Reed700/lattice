@@ -127,6 +127,31 @@ async fn snapshot_passages_reach_text_past_the_former_prefixes() -> Result<()> {
 }
 
 #[tokio::test]
+async fn snapshot_passages_charge_one_separator_token_per_item() -> Result<()> {
+    let texts = [
+        "Borrowing gives access without moving ownership.",
+        "Borrowing lets code read data it does not own.",
+    ];
+    let sources: Vec<_> = texts
+        .iter()
+        .enumerate()
+        .map(|(at, text)| version(&format!("v{at}"), (*text).into()))
+        .collect();
+    let llm = scripted(vec![]);
+    let cost = |value: Value| llm.count_tokens(&value.to_string()) + 1;
+    let room: usize = sources
+        .iter()
+        .map(|source| {
+            cost(json!(source.full_text))
+                + cost(json!({"sourceId":source.source_id,"versionId":source.version.id,"title":source.version.title,"passages":[]}))
+        })
+        .sum();
+    let found = snapshot_passages(&llm, &sources, "borrowing", room).await?;
+    assert_eq!(found.as_array().map(Vec::len), Some(2), "{found}");
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_need_search_pages_while_new_results_appear_and_search_need_reads_one_page() -> Result<()>
 {
     use lattice_core::application::contracts::web::WebSearchResult;

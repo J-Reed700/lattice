@@ -19,21 +19,13 @@ fn proposal(text: &str) -> Vec<ReviewFinding> {
     vec![ReviewFinding::reviewer(1, None, text)]
 }
 
-/// The check of a first answer, which a broken decision fails.
+/// The check of an answer, which a broken decision fails.
 fn first(
     raw: &str,
     issues: &[ReviewFinding],
     evidence: &HashMap<String, EvidenceKind>,
 ) -> Result<Vec<ReviewFinding>> {
-    accepted(
-        raw,
-        issues,
-        Beside::NONE,
-        evidence,
-        false,
-        &mut HashMap::new(),
-    )
-    .map(|checked| checked.established)
+    accepted(raw, issues, Beside::NONE, evidence).map(|checked| checked.established)
 }
 
 fn placed(findings: Vec<ReviewFinding>) -> Vec<(String, Option<FindingSite>)> {
@@ -152,10 +144,7 @@ async fn a_decision_broken_again_leaves_its_finding_not_established() -> Result<
     )
     .await?
     .established;
-    assert_eq!(
-        placed(established),
-        vec![(issues[1].note.clone(), Some(FindingSite::Section(0)))]
-    );
+    assert!(established.is_empty());
     assert_eq!(model.prompts.lock().unwrap().len(), 2);
     Ok(())
 }
@@ -192,31 +181,24 @@ async fn established_from(
 }
 
 #[tokio::test]
-async fn a_decision_broken_only_when_asked_again_keeps_the_grounded_one_the_first_answer_gave(
-) -> Result<()> {
-    let decision = |verdict: &str, ids: Value, requirement: Value| json!({"verdict":verdict,"basis":"lesson_contract","evidenceIds":ids,"requirementId":requirement,"partId":"blocks-0","reason":"The exercise does not ask for what the contract requires."});
-    let grounded = decision("actionable", json!(["blocks-0"]), json!("requirements"));
-    let uncited = decision("actionable", json!([]), json!("requirements"));
+async fn a_review_evidence_statement_the_model_never_reads_is_not_established() -> Result<()> {
+    let decision = |ids: Value| json!({"verdict":"actionable","basis":"lesson_contract","evidenceIds":ids,"requirementId":"requirements","partId":"blocks-0","reason":"The exercise does not ask for what the contract requires."});
     let issues = [
         proposal("The exercise omitted its required deliverable."),
         proposal("The exercise never asks for the recorded state."),
     ]
     .concat();
-    let notes: Vec<String> = issues.iter().map(|issue| issue.note.clone()).collect();
-    // The first answer cites nothing for issue-0, so it is asked for
-    // again; asked again, it cites nothing for issue-1, which the first
-    // answer grounded.
-    let first = reply(&[("issue-0", uncited.clone()), ("issue-1", grounded.clone())]);
-    let second = reply(&[("issue-0", grounded.clone()), ("issue-1", uncited)]);
-    assert_eq!(established_from(&first, &second, &issues).await?, notes);
-    // An answer asked for again that breaks the protocol on another
-    // verdict does not take the first answer's.
-    let withdrawn = decision("not_established", json!([]), json!("requirements"));
-    let second = reply(&[("issue-0", grounded), ("issue-1", withdrawn)]);
-    assert_eq!(
-        established_from(&first, &second, &issues).await?,
-        notes[..1].to_vec()
-    );
+    // The first answer rules issue-0 established but leaves issue-1 uncited;
+    // the correction leaves both uncited.
+    let first = reply(&[
+        ("issue-0", decision(json!(["blocks-0"]))),
+        ("issue-1", decision(json!([]))),
+    ]);
+    let second = reply(&[
+        ("issue-0", decision(json!([]))),
+        ("issue-1", decision(json!([]))),
+    ]);
+    assert!(established_from(&first, &second, &issues).await?.is_empty());
     Ok(())
 }
 
@@ -983,20 +965,61 @@ async fn a_proposal_left_to_a_recorded_finding_or_to_none_is_not_handed_back() -
 }
 
 #[test]
-fn a_proposal_asked_for_a_second_time_is_handed_back_once() -> Result<()> {
-    let issues = proposal("The kettle is described twice.");
-    let evidence = HashMap::from([("blocks-0".to_owned(), EvidenceKind::Candidate)]);
-    let beside = Beside {
-        decides: &DECIDES,
-        recorded: &[],
+fn a_finding_may_cite_nine_evidence_ids() -> Result<()> {
+    let issues = proposal("The nine sections contradict one another.");
+    let ids: Vec<String> = (0..9).map(|at| format!("blocks-{at}")).collect();
+    let evidence: HashMap<String, EvidenceKind> = ids
+        .iter()
+        .map(|id| (id.clone(), EvidenceKind::Candidate))
+        .collect();
+    let response = part_decision(
+        "actionable",
+        "internal_conflict",
+        json!(ids),
+        Some("blocks-0"),
+    );
+    assert_eq!(first(&response, &issues, &evidence)?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn the_answer_schema_does_not_cap_evidence_ids() {
+    let ids = vec!["blocks-0".to_string(), "reference-0".to_string()];
+    let answer = schema(&["issue-0".to_string()], &ids, &[], &[]);
+    let cited = &answer["properties"]["decisions"]["items"]["properties"]["evidenceIds"];
+    assert!(cited.get("maxItems").is_none(), "{cited}");
+}
+
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for ReviewEvidence
+{
+    type Answer = Decisions;
+
+    fn render(answer: &Decisions) -> String {
+        serde_json::to_string(answer).unwrap_or_default()
+    }
+
+    fn read(text: &str) -> Result<Decisions> {
+        generation::parse_json(text)
+    }
+}
+
+#[test]
+fn a_review_evidence_answer_reads_back_as_rendered() -> Result<()> {
+    let answer = Decisions {
+        decisions: vec![Finding {
+            issue_id: "issue-0".into(),
+            verdict: Verdict::Actionable,
+            basis: Basis::LessonContract,
+            evidence_ids: vec!["blocks-0".into()],
+            requirement_id: Some("requirements".into()),
+            reason: "The exercise omits the deliverable.".into(),
+            part_id: Some("blocks-0".into()),
+            left_to: None,
+        }],
     };
-    let raw = gate_decision("actionable", "check-1");
-    let mut kept = HashMap::new();
-    let first = accepted(&raw, &issues, beside, &evidence, false, &mut kept)?;
-    assert_eq!(first.left.len(), 1);
-    // The second answer breaks the protocol for this issue; the first one's ruling stands.
-    let broken = gate_decision("actionable", "check-9");
-    let second = accepted(&broken, &issues, beside, &evidence, true, &mut kept)?;
-    assert_eq!(second.left, first.left);
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        ReviewEvidence,
+    >(&answer);
     Ok(())
 }

@@ -7,7 +7,7 @@
 use super::super::classify::figures;
 use super::super::*;
 use crate::generation::{validate_excerpt_quote, MAX_CITATIONS, MAX_QUOTE_CHARS};
-use crate::reference_collection::{checked_span, shared_terms};
+use crate::reference_collection::{shared_terms, verification_window};
 use lattice_core::domain::learning::claim_review::ClaimEvent;
 use lattice_core::shared::text::{claim_sentence, sentences};
 use std::collections::BTreeSet;
@@ -30,7 +30,7 @@ struct Run<'s> {
 /// `source` that supports it: a contiguous run of the passage's whole
 /// sentences, no longer than a lesson quotation may be. The check that
 /// decides the repair reads the citation as verification widens it
-/// ([`checked_span`]), so the run is the one whose checked passage shows most
+/// ([`verification_window`]), so the run is the one whose checked passage shows most
 /// of the claim's figures, then most of its terms, read as the course index
 /// reads words ([`shared_terms`]). Of those, the run holding most of the
 /// terms itself, then the shortest, since a longer one only adds words the
@@ -54,8 +54,8 @@ pub(in crate::lessons::content_verification) fn quotation<'s>(
             if chars > MAX_QUOTE_CHARS {
                 break;
             }
-            let (from, to) = checked_span(source, within.start + start, within.start + end);
-            let read = source.get(from..to).unwrap_or(text);
+            let window = verification_window(source, within.start + start..within.start + end);
+            let read = source.get(window).unwrap_or(text);
             let shown: BTreeSet<&str> = figures(read).collect();
             runs.push(Run {
                 figures: stated.intersection(&shown).count(),
@@ -239,7 +239,7 @@ pub(in crate::lessons::content_verification) fn cite_where_supported(
             repairs.push(Cited::Cannot);
             continue;
         }
-        let (field, item) = super::location(candidate, finding.unit)?;
+        let (field, item) = super::section_of(candidate, finding.unit)?;
         let numbered_at = numbered.iter().position(|known| known.id == source.id);
         let index = numbered_at.unwrap_or(numbered.len());
         let added = candidate
@@ -362,7 +362,7 @@ pub(in crate::lessons::content_verification) fn uncite(
             dropped.push(sources.clone());
             continue;
         }
-        let (field, item) = super::location(candidate, *unit)?;
+        let (field, item) = super::section_of(candidate, *unit)?;
         let cited = candidate
             .get_mut(field)
             .and_then(Value::as_array_mut)

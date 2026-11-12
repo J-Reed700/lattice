@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
 use crate::lessons::course_generation_tests::length_bounds;
+use crate::review_findings::{FindingSite, Rule};
 use serde_json::{json, Value};
 
 const STEPS_IN_ORDER: &str = "The learner does the lesson's steps in order, with their own tools and materials, so each step starts from what the steps before it left: a later step uses what an earlier one made or set up, and never has the learner make or set it up again.";
@@ -74,15 +75,10 @@ fn off_shape_value(cited: bool) -> Value {
     json!({"blocks":blocks,"questions":questions})
 }
 
-fn off_shape(cited: bool) -> GeneratedLesson {
-    serde_json::from_value(off_shape_value(cited)).unwrap()
-}
-
 #[test]
 fn a_lesson_off_its_shape_is_saved_and_its_rules_are_findings_not_refusals() {
     let sources = [source()];
-    let owned = HashSet::from(["source-a"]);
-    let (prepared, citations) = assemble(off_shape(true), &sources, &owned).unwrap();
+    let (prepared, citations) = assemble(&off_shape_value(true), &sources).unwrap();
     assert_eq!((prepared.blocks.len(), prepared.questions.len()), (7, 5));
     assert_eq!(prepared.keys.len(), 5);
     assert!(citations.is_empty());
@@ -111,10 +107,10 @@ fn a_lesson_off_its_shape_is_saved_and_its_rules_are_findings_not_refusals() {
 
 #[test]
 fn a_quotation_that_does_not_match_keeps_its_source_and_waits_for_the_user() {
-    let mut lesson = off_shape(true);
-    lesson.blocks[2].quote = "Water boils at exactly one hundred degrees in every kitchen.".into();
-    let sources = [source()];
-    let (prepared, citations) = assemble(lesson, &sources, &HashSet::from(["source-a"])).unwrap();
+    let mut lesson = off_shape_value(true);
+    lesson["blocks"][2]["quote"] =
+        json!("Water boils at exactly one hundred degrees in every kitchen.");
+    let (prepared, citations) = assemble(&lesson, &[source()]).unwrap();
     assert_eq!(prepared.blocks[2].source_ids, ["source-a"]);
     assert_eq!(citations.len(), 1);
     assert_eq!(citations[0].place().id(), "quotation:section-2");
@@ -140,39 +136,22 @@ fn a_cited_sentence_adds_its_source_and_one_that_cannot_be_confirmed_is_a_findin
         excerpt: KETTLE.into(),
         acquired_at: 2,
     };
-    let mut lesson = off_shape(true);
-    lesson.blocks[2].citations = vec![
-        GeneratedCitation {
-            sentence: "A kettle whistles when it runs dry.".into(),
-            source_index: Some(1),
-            quote: KETTLE.into(),
-        },
-        GeneratedCitation {
-            sentence: "Water boils at 50 degrees Celsius.".into(),
-            source_index: Some(0),
-            quote: "Water boils at exactly fifty degrees in every kitchen.".into(),
-        },
-    ];
-    let owned = HashSet::from(["source-a", "source-b"]);
+    let mut lesson = off_shape_value(true);
+    lesson["blocks"][2]["citations"] = json!([
+        {"sentence":"A kettle whistles when it runs dry.","sourceIndex":1,"quote":KETTLE},
+        {"sentence":"Water boils at 50 degrees Celsius.","sourceIndex":0,
+         "quote":"Water boils at exactly fifty degrees in every kitchen."}
+    ]);
 
-    let (prepared, findings) = assemble(lesson, &[source(), kettle], &owned).unwrap();
+    let (prepared, findings) = assemble(&lesson, &[source(), kettle]).unwrap();
 
     assert_eq!(prepared.blocks[2].source_ids, ["source-a", "source-b"]);
     assert_eq!(prepared.blocks[3].source_ids, ["source-a"]);
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].place().id(), "quotation:section-2");
-    assert!(findings[0].note.contains("Water boils at 50 degrees"));
-    assert_eq!(
-        findings[0].summary,
-        "The quotation cited for this sentence could not be found in its source: \u{201c}Water boils at 50 degrees Celsius.\u{201d}"
-    );
     assert_eq!(
         findings[0].passage.as_deref(),
         Some("Water boils at exactly fifty degrees in every kitchen.")
-    );
-    assert_eq!(
-        findings[0].sentence.as_deref(),
-        Some("Water boils at 50 degrees Celsius.")
     );
 }
 
@@ -193,15 +172,12 @@ fn curly_source() -> LearningSourceDto {
 
 #[test]
 fn a_sentence_citation_differing_from_its_source_only_in_typography_is_confirmed() {
-    let mut lesson = off_shape(true);
-    lesson.blocks[2].citations = vec![GeneratedCitation {
-        sentence: "The file reader shows which file is open.".into(),
-        source_index: Some(1),
-        quote: STRAIGHT.into(),
-    }];
-    let owned = HashSet::from(["source-a", "source-b"]);
+    let mut lesson = off_shape_value(true);
+    lesson["blocks"][2]["citations"] = json!([
+        {"sentence":"The file reader shows which file is open.","sourceIndex":1,"quote":STRAIGHT}
+    ]);
 
-    let (prepared, findings) = assemble(lesson, &[source(), curly_source()], &owned).unwrap();
+    let (prepared, findings) = assemble(&lesson, &[source(), curly_source()]).unwrap();
 
     assert!(findings.is_empty(), "{findings:?}");
     assert_eq!(prepared.blocks[2].source_ids, ["source-a", "source-b"]);
@@ -209,14 +185,13 @@ fn a_sentence_citation_differing_from_its_source_only_in_typography_is_confirmed
 
 #[test]
 fn a_part_quotation_differing_from_its_source_only_in_typography_is_confirmed() {
-    let mut lesson = off_shape(true);
-    lesson.blocks[2].source_index = Some(1);
-    lesson.blocks[2].quote = STRAIGHT.into();
-    lesson.questions[1].source_index = Some(1);
-    lesson.questions[1].quote = STRAIGHT.into();
-    let owned = HashSet::from(["source-a", "source-b"]);
+    let mut lesson = off_shape_value(true);
+    lesson["blocks"][2]["sourceIndex"] = json!(1);
+    lesson["blocks"][2]["quote"] = json!(STRAIGHT);
+    lesson["questions"][1]["sourceIndex"] = json!(1);
+    lesson["questions"][1]["quote"] = json!(STRAIGHT);
 
-    let (prepared, findings) = assemble(lesson, &[source(), curly_source()], &owned).unwrap();
+    let (prepared, findings) = assemble(&lesson, &[source(), curly_source()]).unwrap();
 
     assert!(findings.is_empty(), "{findings:?}");
     assert_eq!(prepared.blocks[2].source_ids, ["source-b"]);
@@ -225,16 +200,13 @@ fn a_part_quotation_differing_from_its_source_only_in_typography_is_confirmed() 
 
 #[test]
 fn a_quotation_with_different_words_is_still_a_finding_beside_a_curly_source() {
-    let mut lesson = off_shape(true);
-    lesson.blocks[2].citations = vec![GeneratedCitation {
-        sentence: "The file reader closes files.".into(),
-        source_index: Some(1),
-        quote: "If you're ever unsure, the file reader will close exactly which file is open."
-            .into(),
-    }];
-    let owned = HashSet::from(["source-a", "source-b"]);
+    let mut lesson = off_shape_value(true);
+    lesson["blocks"][2]["citations"] = json!([
+        {"sentence":"The file reader closes files.","sourceIndex":1,
+         "quote":"If you're ever unsure, the file reader will close exactly which file is open."}
+    ]);
 
-    let (prepared, findings) = assemble(lesson, &[source(), curly_source()], &owned).unwrap();
+    let (prepared, findings) = assemble(&lesson, &[source(), curly_source()]).unwrap();
 
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].place().id(), "quotation:section-2");
@@ -257,23 +229,19 @@ fn source_b(excerpt: &str) -> LearningSourceDto {
 }
 
 fn confirmed_as_part_quote(excerpt: &str, quote: &str) {
-    let mut lesson = off_shape(true);
-    lesson.blocks[2].source_index = Some(1);
-    lesson.blocks[2].quote = quote.into();
-    let owned = HashSet::from(["source-a", "source-b"]);
-    let (_, findings) = assemble(lesson, &[source(), source_b(excerpt)], &owned).unwrap();
+    let mut lesson = off_shape_value(true);
+    lesson["blocks"][2]["sourceIndex"] = json!(1);
+    lesson["blocks"][2]["quote"] = json!(quote);
+    let (_, findings) = assemble(&lesson, &[source(), source_b(excerpt)]).unwrap();
     assert!(findings.is_empty(), "{findings:?}");
 }
 
 fn confirmed_as_sentence_citation(excerpt: &str, quote: &str) {
-    let mut lesson = off_shape(true);
-    lesson.blocks[2].citations = vec![GeneratedCitation {
-        sentence: "The file reader behaves as described.".into(),
-        source_index: Some(1),
-        quote: quote.into(),
-    }];
-    let owned = HashSet::from(["source-a", "source-b"]);
-    let (prepared, findings) = assemble(lesson, &[source(), source_b(excerpt)], &owned).unwrap();
+    let mut lesson = off_shape_value(true);
+    lesson["blocks"][2]["citations"] = json!([
+        {"sentence":"The file reader behaves as described.","sourceIndex":1,"quote":quote}
+    ]);
+    let (prepared, findings) = assemble(&lesson, &[source(), source_b(excerpt)]).unwrap();
     assert!(findings.is_empty(), "{findings:?}");
     assert_eq!(prepared.blocks[2].source_ids, ["source-a", "source-b"]);
 }
@@ -304,63 +272,14 @@ fn a_quotation_with_a_different_word_is_still_a_finding_beside_a_marked_source()
             "The reader - unlike the writer - always changes a file on disk.".to_owned(),
         ),
     ] {
-        let mut lesson = off_shape(true);
-        lesson.blocks[2].citations = vec![GeneratedCitation {
-            sentence: "The file reader behaves as described.".into(),
-            source_index: Some(1),
-            quote,
-        }];
-        let owned = HashSet::from(["source-a", "source-b"]);
-        let (prepared, findings) =
-            assemble(lesson, &[source(), source_b(excerpt)], &owned).unwrap();
+        let mut lesson = off_shape_value(true);
+        lesson["blocks"][2]["citations"] = json!([
+            {"sentence":"The file reader behaves as described.","sourceIndex":1,"quote":quote}
+        ]);
+        let (prepared, findings) = assemble(&lesson, &[source(), source_b(excerpt)]).unwrap();
         assert_eq!(findings.len(), 1);
         assert_eq!(prepared.blocks[2].source_ids, ["source-a"]);
     }
-}
-
-#[test]
-fn a_long_cited_sentence_that_cannot_be_confirmed_is_shown_whole() {
-    const LONG: &str = "Water boils at 50 degrees Celsius in every kitchen on every day of the year, whatever the pressure of the air around the pan.";
-    let mut lesson = off_shape(true);
-    lesson.blocks[2].citations = vec![GeneratedCitation {
-        sentence: LONG.into(),
-        source_index: Some(0),
-        quote: "Water boils at exactly fifty degrees in every kitchen.".into(),
-    }];
-
-    let (_, findings) = assemble(lesson, &[source()], &HashSet::from(["source-a"])).unwrap();
-
-    assert_eq!(findings.len(), 1);
-    assert_eq!(
-        findings[0].summary,
-        format!("The quotation cited for this sentence could not be found in its source: \u{201c}{LONG}\u{201d}")
-    );
-}
-
-#[test]
-fn a_question_citing_a_numbered_source_the_program_does_not_own_is_refused() {
-    const KETTLE: &str = "The kettle whistles once the water inside it has boiled away.";
-    let kettle = LearningSourceDto {
-        id: "source-b".into(),
-        title: "Kettle notes".into(),
-        url: None,
-        excerpt: KETTLE.into(),
-        acquired_at: 2,
-    };
-    let mut lesson = off_shape(true);
-    lesson.questions[1].citations = vec![GeneratedCitation {
-        sentence: "A kettle whistles when it runs dry.".into(),
-        source_index: Some(1),
-        quote: KETTLE.into(),
-    }];
-
-    let error = assemble(lesson, &[source(), kettle], &HashSet::from(["source-a"])).unwrap_err();
-
-    assert!(
-        matches!(&error, AppError::ModelAnswerUnusable(message)
-            if message == "A question referred to a source outside this program."),
-        "{error:?}"
-    );
 }
 
 #[test]
@@ -379,10 +298,10 @@ fn the_schema_asks_for_a_citation_list_per_part_and_none_without_sources() {
 
 #[test]
 fn an_invented_citation_in_a_course_without_sources_is_dropped_and_reported() {
-    let mut lesson = off_shape(false);
-    lesson.questions[0].source_index = Some(0);
-    lesson.questions[0].quote = "An imaginary textbook says this is true.".into();
-    let (prepared, citations) = assemble(lesson, &[], &HashSet::new()).unwrap();
+    let mut lesson = off_shape_value(false);
+    lesson["questions"][0]["sourceIndex"] = json!(0);
+    lesson["questions"][0]["quote"] = json!("An imaginary textbook says this is true.");
+    let (prepared, citations) = assemble(&lesson, &[]).unwrap();
     assert!(prepared.questions[0].source_ids.is_empty());
     assert_eq!(citations[0].place().id(), "quotation:question-0");
 }
@@ -761,9 +680,8 @@ fn a_questions_reasons_are_trimmed_and_kept_with_its_key_in_the_writers_order() 
         .as_object_mut()
         .unwrap()
         .remove("rationales");
-    let lesson: GeneratedLesson = serde_json::from_value(value).unwrap();
 
-    let (prepared, _) = assemble(lesson, &[source()], &HashSet::from(["source-a"])).unwrap();
+    let (prepared, _) = assemble(&value, &[source()]).unwrap();
 
     assert_eq!(
         prepared.keys[0].rationales,
@@ -1061,8 +979,7 @@ fn a_lesson_whose_findings_wait_is_still_saved_and_passes_the_save_gate() {
             kept_rules(&lesson).contains(&rule),
             "{name}: {rule:?} is not reported"
         );
-        let generated: GeneratedLesson = serde_json::from_value(lesson).unwrap();
-        let (prepared, _) = match assemble(generated, &[], &HashSet::new()) {
+        let (prepared, _) = match assemble(&lesson, &[]) {
             Ok(assembled) => assembled,
             Err(error) => panic!("{name}: the lesson is not saved: {error:?}"),
         };
@@ -1154,14 +1071,12 @@ fn a_part_of_a_sourced_course_naming_no_source_is_saved_with_none_and_waits() {
         ),
     ];
     let sources = [source()];
-    let owned = HashSet::from(["source-a"]);
     let mut program = crate::test_support::fixture();
     program.sources = vec![source()];
     for (name, mutate, site) in rows {
         let mut lesson = sweep_baseline(true);
         mutate(&mut lesson);
-        let generated: GeneratedLesson = serde_json::from_value(lesson).unwrap();
-        let (prepared, findings) = match assemble(generated, &sources, &owned) {
+        let (prepared, findings) = match assemble(&lesson, &sources) {
             Ok(assembled) => assembled,
             Err(error) => panic!("{name}: the lesson is not saved: {error:?}"),
         };
@@ -1170,7 +1085,7 @@ fn a_part_of_a_sourced_course_naming_no_source_is_saved_with_none_and_waits() {
                 && matches!(
                     finding.origin,
                     crate::review_findings::Origin::Rule {
-                        rule: Rule::PartCitation,
+                        rule: Rule::Quotation,
                         ..
                     }
                 )),
@@ -1198,4 +1113,33 @@ fn a_candidate_with_no_sections_does_not_read_as_a_lesson() {
     assert!(!crate::generation::reads_as_lesson(
         &json!({"blocks": [], "questions": []})
     ));
+}
+
+#[test]
+fn a_practice_section_with_one_criterion_is_published_without_it() {
+    let mut lesson = sweep_baseline(false);
+    lesson["blocks"][7]["rubric"] = json!([
+        {"title":"Names the step","description":"Says which step comes next.","dimension":"recall"}
+    ]);
+    assert!(kept_rules(&lesson).contains(&Rule::PracticeRubric));
+
+    let (prepared, _) = assemble(&lesson, &[]).unwrap();
+
+    assert!(
+        prepared.blocks[7].rubric.is_empty(),
+        "{:?}",
+        prepared.blocks[7].rubric
+    );
+}
+
+#[test]
+fn lesson_drafts_are_keyed_by_versioned_protocols() {
+    assert_eq!(
+        json!({"policy": AUTHORING_POLICY})["policy"],
+        json!("lesson-authoring-v1")
+    );
+    assert_eq!(
+        json!({"policy": DRAFT_POLICY})["policy"],
+        json!("lesson-draft-v1")
+    );
 }

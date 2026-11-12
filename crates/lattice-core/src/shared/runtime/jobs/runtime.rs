@@ -6,7 +6,7 @@ use super::{
     JobRecord, JobStatus, JobStore, NewJob, RecoveryPolicy,
 };
 use crate::shared::{
-    error::{AppError, Result},
+    error::{AppError, ErrorClass, Result},
     persistence::Database,
     runtime::background::BackgroundTasks,
 };
@@ -620,7 +620,7 @@ impl JobRuntime {
         let mut retries = 0;
         loop {
             match write().await {
-                Err(error) if JobFailure::is_transient(&error) => {
+                Err(error) if ErrorClass::of(&error) == ErrorClass::Outage => {
                     tracing::warn!(job_id = id, retries, %error, "Could not record the end of a job; retrying");
                     let wait = tokio::time::sleep(backoff.delay(retries));
                     if until_cancelled(&shutdown, wait).await.is_none() {
@@ -712,7 +712,7 @@ impl JobRuntime {
         error: &AppError,
         backoff: Backoff,
     ) -> Result<bool> {
-        if JobFailure::is_outage(error) {
+        if ErrorClass::of(error) == ErrorClass::Outage {
             return Ok(false);
         }
         let latest = LastFailure {

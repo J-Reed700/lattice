@@ -129,9 +129,9 @@ async fn a_set_aside_finding_waits_with_its_note_and_the_part_it_is_about() {
             .collect::<Vec<_>>(),
         ["rule/schema/lesson", "reviewer/1", "key/question-0"]
     );
-    assert_eq!(listed[0].unit_title, "Whole lesson");
+    assert_eq!(listed[0].unit_title, "The whole lesson");
     assert_eq!(listed[0].unit_index, None);
-    assert_eq!(listed[1].unit_title, "Section 1: Sums");
+    assert_eq!(listed[1].unit_title, "Section 1 · Sums");
     assert_eq!(
         listed[1].passage.as_deref(),
         Some("The function returns the number 4.")
@@ -146,6 +146,37 @@ async fn a_set_aside_finding_waits_with_its_note_and_the_part_it_is_about() {
     assert_eq!(listed[2].passage.as_deref(), Some("What is 2 + 2?"));
     assert_eq!(listed[2].site, TeachingFindingSiteDto::Question);
     assert_eq!(store.held("l1", &lesson()).await.unwrap().ids.len(), 3);
+}
+
+#[tokio::test]
+async fn a_section_title_is_shown_numbered_and_plain() {
+    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let emphasised = json!({"blocks":[
+        {"title":"**Ownership**","body":"The function returns the number 4.","quote":""}
+    ],"questions":[]});
+    store
+        .record("l1", "j1", &emphasised, &[example_finding()], true)
+        .await
+        .unwrap();
+    let listed = store.list("l1").await.unwrap();
+    assert_eq!(listed[0].unit_title, "Section 1 · Ownership");
+}
+
+#[tokio::test]
+async fn a_whole_lesson_finding_is_shown_as_the_whole_lesson() {
+    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let finding = set_aside(
+        FindingKind::Structure,
+        FindingSite::Lesson,
+        "The lesson needs a recap.",
+        0,
+    );
+    store
+        .record("l1", "j1", &lesson(), &[finding], true)
+        .await
+        .unwrap();
+    let listed = store.list("l1").await.unwrap();
+    assert_eq!(listed[0].unit_title, "The whole lesson");
 }
 
 #[tokio::test]

@@ -3,7 +3,7 @@
 //! in the lesson unchanged, the item is not asked about again, so a later
 //! pass cannot unsay it and spend a repair.
 use super::{Hit, Item, Part};
-use crate::lessons::same_text;
+use lattice_core::shared::text::same_text;
 use serde_json::Value;
 use std::collections::BTreeMap;
 

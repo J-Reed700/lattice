@@ -2,9 +2,7 @@
 //! was checked against, the check, the other claims checked, the frozen
 //! copy, and the card's sentences.
 
-use lattice_core::domain::learning::claim_review::{
-    AttachOutcome, CheckResult, Revision, VerdictKind,
-};
+use lattice_core::domain::learning::claim_review::{AttachOutcome, Revision, VerdictKind};
 use serde::{Deserialize, Serialize};
 
 use super::failures::AttachFailureDto;
@@ -110,15 +108,9 @@ pub(super) fn outcome_line(title: &str, outcome: &AttachOutcome) -> String {
         AttachOutcome::NoPassage => format!(
             "No passage in {title} mentions this statement's terms. The source is in your references; the statement is unchanged."
         ),
-        AttachOutcome::Checked(check) => match &check.result {
-            CheckResult::Supported { .. }
-            | CheckResult::SupportedElsewhere { .. }
-            | CheckResult::Consistent
-            | CheckResult::KnownCommon
-            | CheckResult::NotFalse => {
-                format!("Verified against {title}.")
-            }
-            CheckResult::Failed { kind } => {
+        AttachOutcome::Checked(check) => match check.result.failure() {
+            None => format!("Verified against {title}."),
+            Some(kind) => {
                 let verdict = match kind {
                     VerdictKind::Contradicted => "says otherwise",
                     VerdictKind::CouldNotJudge => "could not be judged",

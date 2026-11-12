@@ -9,6 +9,9 @@ use crate::{
     reference_collection::ReferenceCollection,
 };
 use lattice_core::application::services::claim_verification::ClaimVerdict;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::{application::ports::LLMPort, shared::error::Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -421,6 +424,12 @@ fn apply(
     Ok(())
 }
 
+struct OutlineReview;
+impl Contract for OutlineReview {
+    const ID: ContractId = ContractId::new("outline-review");
+    type Input = PromptInput;
+}
+
 /// One review pass over `scope`. Open findings get verdicts, new findings are
 /// recorded, and the scope's receipt is kept so unchanged modules are not
 /// reviewed again while their inputs match.
@@ -488,10 +497,16 @@ pub(crate) async fn review(
         verified_assertions = verified.len(),
         "Reviewing outline with completed checks retained where valid"
     );
+    let prompt = payload.to_string();
+    let call = ContractCall::of::<OutlineReview>(&PromptInput {
+        system: REVIEW_SYSTEM.to_owned(),
+        prompt: prompt.clone(),
+    })?;
     let review: Review = generation::complete_checked(
         llm,
+        &call,
         REVIEW_SYSTEM,
-        payload.to_string(),
+        prompt,
         review_schema(&open_ids, &allowed),
         6000 + 200 * open_ids.len(),
         Some(progress),

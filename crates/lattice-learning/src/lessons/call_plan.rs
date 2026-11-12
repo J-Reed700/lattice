@@ -11,14 +11,10 @@
 //! would be. A rise, beyond a reserve or for a statement taken in, is shown. A
 //! statement whose path is over still holds the readings of the successor the
 //! teaching review may give it, while a rewrite is left.
-use lattice_core::application::services::claim_verification::KNOWLEDGE_SAMPLES;
 use lattice_core::domain::learning::acceptance::{
     most_calls, start, AcceptancePolicy, Position, Walked,
 };
 use lattice_core::domain::learning::claim_review::Class;
-
-/// The calls of one knowledge check: its samples.
-pub(crate) const SAMPLES: u32 = KNOWLEDGE_SAMPLES as u32;
 
 /// Where a statement is in its class's graph.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

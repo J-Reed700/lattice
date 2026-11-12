@@ -132,27 +132,32 @@ impl ClaimReviewService {
             return Ok(None);
         };
         let published = review.state == LessonReviewState::Ready;
-        let offered = ledger
+        let Some(entry) = ledger
             .claims
             .iter()
             .find(|entry| entry.claim_id() == claim_id)
             .filter(|entry| entry.allows(ClaimActionKind::PutBack))
-            .is_some_and(|entry| !published || in_section_body(entry));
-        if !offered {
+            .filter(|entry| !published || in_section_body(entry))
+        else {
+            return Ok(None);
+        };
+        let units = self
+            .put_back_units(&review, lesson_id, &ledger.claims)
+            .await?;
+        let lesson = Lesson {
+            units: &units,
+            published,
+        };
+        if put_back::place(&lesson, &ledger.claims, entry).is_none() {
             return Ok(None);
         }
         let action = ClaimActionRequestDto::PutBack {
             text: None,
             section: None,
         };
-        match self
-            .resolve(lesson_id, &claim_id.0, action, ledger.revision.0)
+        self.resolve(lesson_id, &claim_id.0, action, ledger.revision.0)
             .await
-        {
-            Ok(revision) => Ok(Some(Revision(revision))),
-            Err(AppError::InvalidInput(message)) if message == put_back::CHOOSE => Ok(None),
-            Err(error) => Err(error),
-        }
+            .map(|revision| Some(Revision(revision)))
     }
 
     /// Whether a pass already wrote the user's put back or restore into the

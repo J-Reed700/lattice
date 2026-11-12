@@ -3,7 +3,7 @@
 //! is about. A sentence the note cut short is completed only when exactly one
 //! sentence of that text begins with it, and left out otherwise.
 use crate::generation::prose_sentences;
-use crate::review_findings::{plain_part, FindingKind, FindingSite};
+use crate::review_findings::{FindingKind, FindingSite};
 
 /// How long the notes of the old rows let a sentence run before cutting it.
 const UNCITED_CUT: usize = 90;
@@ -146,7 +146,7 @@ fn quotation(row: &Stored) -> Option<String> {
     names_a_part(note).then(|| {
         format!(
             "The quotation cited in {} could not be found in its source.",
-            plain_part(row.site)
+            row.site.plain()
         )
     })
 }

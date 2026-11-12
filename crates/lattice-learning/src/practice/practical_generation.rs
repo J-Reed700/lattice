@@ -13,6 +13,9 @@ use crate::{
         LearningSimulationSessionDto, LearningSimulationSpeaker,
     },
 };
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::{
     application::ports::LLMPort,
@@ -290,6 +293,12 @@ pub async fn generate_activity(
     .await
 }
 
+struct PracticalActivity;
+impl Contract for PracticalActivity {
+    const ID: ContractId = ContractId::new("practical-activity");
+    type Input = PromptInput;
+}
+
 pub async fn generate_activity_with_plan(
     llm: &dyn LLMPort,
     kind: LearningPracticalActivityKind,
@@ -360,8 +369,12 @@ pub async fn generate_activity_with_plan(
         });
         let query = format!("{learner_brief} {} {}", lesson.title, lesson.objective);
         let prompt = with_snapshots(llm, ACTIVITY_SYSTEM, context, sources, &query, 4_000).await?;
+        let call = ContractCall::of::<PracticalActivity>(&PromptInput {
+            system: ACTIVITY_SYSTEM.to_owned(),
+            prompt: prompt.clone(),
+        })?;
         crate::generation::complete_checked(
-            llm, ACTIVITY_SYSTEM, prompt, activity_schema(sources), 4_000, None, None,
+            llm, &call, ACTIVITY_SYSTEM, prompt, activity_schema(sources), 4_000, None, None,
             |raw| {
                 let activity: ActivityJson = serde_json::from_str(raw)
                     .map_err(|_| invalid("The model returned malformed practical activity JSON."))?;
@@ -525,6 +538,12 @@ fn with_transcript(
     Ok(prompt)
 }
 
+struct SimulationTurn;
+impl Contract for SimulationTurn {
+    const ID: ContractId = ContractId::new("simulation-turn");
+    type Input = PromptInput;
+}
+
 pub async fn generate_simulation_turn(
     llm: &dyn LLMPort,
     activity: &SimulationActivityContext,
@@ -668,8 +687,12 @@ pub async fn generate_simulation_turn(
     )?;
     let prompt =
         with_snapshots(llm, &system, prompt, prompt_sources, &query, output_tokens).await?;
+    let call = ContractCall::of::<SimulationTurn>(&PromptInput {
+        system: system.clone(),
+        prompt: prompt.clone(),
+    })?;
     crate::generation::complete_checked(
-        llm, &system, prompt, schema, output_tokens, None, None, |raw| {
+        llm, &call, &system, prompt, schema, output_tokens, None, None, |raw| {
             let parsed = if let Some(evidence) = &closing_evidence {
                 evidence.read(raw, session)?
             } else {

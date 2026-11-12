@@ -232,7 +232,9 @@ impl ClaimEventPayloadDto {
             | ClaimEvent::PublishedUnverified { .. }
             | ClaimEvent::SentenceCut { .. }
             | ClaimEvent::TextRemoved { .. }
-            | ClaimEvent::SectionEdited { .. } => return None,
+            | ClaimEvent::SectionEdited { .. }
+            | ClaimEvent::CodeExample { .. }
+            | ClaimEvent::Faulted { .. } => return None,
         })
     }
 }

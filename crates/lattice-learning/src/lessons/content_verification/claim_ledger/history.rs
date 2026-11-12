@@ -4,7 +4,9 @@
 //! statement could not be applied.
 
 use super::{is_example, ClaimLedger};
-use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal, Reading, Step};
+use lattice_core::domain::learning::acceptance::{
+    AcceptancePolicy, Goal, Outcome, Reading, Step, Taken,
+};
 use lattice_core::domain::learning::claim_review::{
     Actor, CheckResult, ClaimEvent, ClaimId, RepairOutcome,
 };
@@ -57,14 +59,22 @@ impl ClaimLedger {
         policy: &dyn AcceptancePolicy,
         id: &ClaimId,
     ) -> Option<(Goal, Option<String>)> {
-        let (at, step) = self.waits_at(policy, id)?;
+        let (_, step) = self.waits_at(policy, id)?;
         let Step::Rewrite(goal) = step else {
             return None;
         };
-        let retry = policy
-            .graph(at.class)
-            .node(at.node)
-            .is_some_and(|node| node.name.ends_with(".again"));
+        let retry = self.entry(id).is_some_and(|entry| {
+            matches!(
+                entry.steps().last(),
+                Some((
+                    Taken {
+                        step: Step::Rewrite(_),
+                        outcome: Outcome::NotApplied
+                    },
+                    _
+                ))
+            )
+        });
         let why = if retry { self.not_applied(id) } else { None };
         Some((goal, why))
     }

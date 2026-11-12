@@ -8,7 +8,8 @@ use super::claim_ledger_tests::{
 use super::*;
 use lattice_core::domain::learning::acceptance::Step;
 use lattice_core::domain::learning::claim_review::{
-    Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, RepairOutcome,
+    Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState, RepairOutcome,
+    UnitKind, UnverifiedReason,
 };
 
 const ATP_SENTENCE: &str =
@@ -32,6 +33,35 @@ fn added(entry: &ClaimLedgerEntry, from: usize) -> Vec<&ClaimEvent> {
         .iter()
         .map(|record| &record.event)
         .collect()
+}
+
+#[tokio::test]
+async fn a_statement_the_user_wrote_that_no_pass_continues_is_not_ended_while_its_sentence_stands(
+) -> Result<()> {
+    let mut ledger = claim_ledger::ClaimLedger::open(&Model::new(), "{}").await?;
+    let lesson = cell_lesson(CELL);
+    let id = ClaimId("written".into());
+    let extracted = ClaimEvent::Extracted {
+        location: ClaimLocation::locate(0, UnitKind::Block, "body", ATP_SENTENCE, CELL),
+        statement: ATP_SENTENCE.into(),
+    };
+    ledger.append(&id, extracted).await?;
+    let published = ClaimEvent::PublishedUnverified {
+        reason: UnverifiedReason::Unchecked,
+    };
+    ledger.append(&id, published).await?;
+    let from = ledger.entry(&id).unwrap().events().len();
+
+    identify_findings(&mut ledger, &lesson, &pass_report(vec![])).await?;
+
+    let entry = ledger.entry(&id).unwrap();
+    assert!(added(entry, from).is_empty(), "{:?}", added(entry, from));
+    assert!(
+        matches!(entry.state(), ClaimState::Unverified { .. }),
+        "{:?}",
+        entry.state()
+    );
+    Ok(())
 }
 
 /// A ledger that found a verified claim and a failed one on the first

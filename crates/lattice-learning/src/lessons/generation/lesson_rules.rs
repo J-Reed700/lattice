@@ -6,12 +6,16 @@
 //! repairs cannot settle waits for the user. It never stops the lesson from
 //! publishing.
 use super::validate_text;
-use crate::assessment_engine::repeated_option;
-use crate::content_verification::{fences, names_a_source, quoted_wording, CITED_KINDS};
+use crate::assessment::assessment_engine::checks::{
+    answer_in_prompt, answer_in_prompt_message, choice_faults, ChoiceFault, CHOICES_PER_QUESTION,
+};
+use crate::content_verification::{names_a_source, quoted_wording};
+use crate::dto::LearningBlockKind;
 use crate::lessons::repeats;
-use crate::lessons::same_text::{fold, overlap};
 use crate::lessons::shape;
 use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding, Rule};
+use lattice_core::shared::text::same_text::{fold, overlap};
+use lattice_core::shared::text::segmentation::code_fences;
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -22,8 +26,9 @@ use std::collections::{HashMap, HashSet};
 pub(crate) const CHECK_REVEAL: &str = "### Check your thinking";
 
 /// A check's case and its reveal, split at its `CHECK_REVEAL` line: `None`
-/// unless exactly one line is that heading (at level two to four). Claim
-/// extraction uses it to know a reveal's misconceptions are named as wrong.
+/// unless exactly one line is that heading (at level two to four) and both
+/// halves hold text. Claim extraction uses it to know a reveal's
+/// misconceptions are named as wrong, and the lesson serves the halves.
 pub(crate) fn split_check(body: &str) -> Option<(&str, &str)> {
     let is_reveal = |line: &str| {
         let line = line.trim();
@@ -45,7 +50,8 @@ pub(crate) fn split_check(body: &str) -> Option<(&str, &str)> {
         offset += line.len();
     }
     let (start, end) = found?;
-    Some((body.get(..start)?, body.get(end..)?))
+    let (case, reveal) = (body.get(..start)?, body.get(end..)?);
+    (!case.trim().is_empty() && !reveal.trim().is_empty()).then_some((case, reveal))
 }
 
 fn text<'a>(item: &'a Value, field: &str) -> &'a str {
@@ -104,14 +110,14 @@ fn without_marker(sentence: &str) -> &str {
 
 /// `text` without its code fences.
 fn prose(text: &str) -> String {
+    let fences = code_fences(text);
     let mut prose = String::new();
-    let mut fenced = false;
+    let mut offset = 0;
     for line in text.split_inclusive('\n') {
-        if line.trim_start().starts_with("```") {
-            fenced = !fenced;
-        } else if !fenced {
+        if !fences.iter().any(|fence| fence.whole().contains(&offset)) {
             prose.push_str(line);
         }
+        offset += line.len();
     }
     prose
 }
@@ -149,14 +155,13 @@ pub(crate) fn prose_sentences(text: &str) -> Vec<String> {
 fn uncited_quotations(
     item: &Value,
     body: &str,
-    (site, label): (FindingSite, &str),
+    site: FindingSite,
     findings: &mut Vec<ReviewFinding>,
 ) {
-    let path = match site {
-        FindingSite::Section(index) => format!("/blocks/{index}"),
-        FindingSite::Question(index) => format!("/questions/{index}"),
-        FindingSite::Lesson => return,
+    let Some(path) = site.pointer() else {
+        return;
     };
+    let label = site.note_label();
     let cited: Vec<(&str, &str)> = item
         .get("citations")
         .and_then(Value::as_array)
@@ -231,14 +236,13 @@ fn is_citation_label(line: &str) -> bool {
 fn scaffolding(
     item: &Value,
     fields: &[&str],
-    (site, label): (FindingSite, &str),
+    site: FindingSite,
     findings: &mut Vec<ReviewFinding>,
 ) {
-    let path = match site {
-        FindingSite::Section(index) => format!("/blocks/{index}"),
-        FindingSite::Question(index) => format!("/questions/{index}"),
-        FindingSite::Lesson => return,
+    let Some(path) = site.pointer() else {
+        return;
     };
+    let label = site.note_label();
     let mut texts: Vec<&str> = Vec::new();
     for field in fields {
         match item.get(*field) {
@@ -315,34 +319,41 @@ pub(crate) fn lesson_rules(
     let mut findings = Vec::new();
     let mut titles = HashMap::new();
     for (index, block) in blocks.iter().enumerate() {
-        let section = format!("Section {} (candidate blocks-{index})", index + 1);
-        let plain = format!("Section {}", index + 1);
+        let site = FindingSite::Section(index);
+        let (section, plain) = (site.note_label(), site.label());
         let title = text(block, "title");
         if !validate_text(title) {
             findings.push(structure(
                 Rule::TitleMissing,
-                FindingSite::Section(index),
+                site,
                 format!("{plain} needs a title."),
                 format!("{section} needs a title."),
             ));
         } else if let Some(first) = titles.get(&fold(title)) {
+            let first = FindingSite::Section(*first).plain();
             findings.push(structure(
                 Rule::TitleRepeated,
-                FindingSite::Section(index),
-                format!("{plain} has the same title as section {}.", first + 1),
-                format!("{section} repeats the title of section {}; give each section a distinct title.", first + 1),
+                site,
+                format!("{plain} has the same title as {first}."),
+                format!(
+                    "{section} repeats the title of {first}; give each section a distinct title."
+                ),
             ));
         } else {
             titles.insert(fold(title), index);
         }
     }
     for (index, block) in blocks.iter().enumerate() {
-        if fences(text(block, "body")).unclosed {
+        if code_fences(text(block, "body"))
+            .iter()
+            .any(|fence| fence.closing.is_none())
+        {
+            let site = FindingSite::Section(index);
             findings.push(structure(
                 Rule::FenceUnclosed,
-                FindingSite::Section(index),
-                format!("Section {} opens a code fence it never closes.", index + 1),
-                format!("Section {} (candidate blocks-{index}) opens a code fence it never closes, so everything after its opening marks is shown as code. Close the fence with a line of the same marks after the example's last line.", index + 1),
+                site,
+                format!("{} opens a code fence it never closes.", site.label()),
+                format!("{} opens a code fence it never closes, so everything after its opening marks is shown as code. Close the fence with a line of the same marks after the example's last line.", site.note_label()),
             ));
         }
     }
@@ -352,15 +363,16 @@ pub(crate) fn lesson_rules(
         for sentence in repeats::comparable(text(block, "body")) {
             let key = repeats::key(&sentence);
             if !seen.insert(key.clone()) && reported.insert(key) {
+                let site = FindingSite::Section(index);
                 findings.push(
                     ReviewFinding::rule_about(
                         Rule::SentenceRepeated,
                         FindingKind::Teaching,
-                        FindingSite::Section(index),
+                        site,
                         &sentence,
-                        format!("Section {} (candidate blocks-{index}) says \"{sentence}\" when the lesson has said it already; say it once, in the section it belongs to, and take it out or reword it here.", index + 1),
+                        format!("{} says \"{sentence}\" when the lesson has said it already; say it once, in the section it belongs to, and take it out or reword it here.", site.note_label()),
                     )
-                    .with_summary(format!("Section {} repeats a sentence the lesson already has: \u{201c}{sentence}\u{201d}", index + 1))
+                    .with_summary(format!("{} repeats a sentence the lesson already has: \u{201c}{sentence}\u{201d}", site.label()))
                     .with_passage(&sentence),
                 );
             }
@@ -371,14 +383,12 @@ pub(crate) fn lesson_rules(
         if text(block, "kind") != "check" {
             continue;
         }
-        let section = format!("Section {} (candidate blocks-{index})", index + 1);
-        let plain = format!("Section {}", index + 1);
-        let held_back = split_check(text(block, "body"))
-            .is_some_and(|(case, reveal)| !case.trim().is_empty() && !reveal.trim().is_empty());
-        if !held_back {
+        let site = FindingSite::Section(index);
+        let (section, plain) = (site.note_label(), site.label());
+        if split_check(text(block, "body")).is_none() {
             findings.push(structure(
                 Rule::CheckHoldback,
-                FindingSite::Section(index),
+                site,
                 format!("{plain} is a check, but it does not hold its answer back until the learner has tried."),
                 format!("{section} is a check: write the case to reason through first, then one line `{CHECK_REVEAL}`, then the answer, the reasoning and the misconception each plausible wrong answer reveals. Nothing above that line may give the answer away."),
             ));
@@ -386,25 +396,23 @@ pub(crate) fn lesson_rules(
     }
     let mut prompts = HashMap::new();
     for (index, question) in questions.iter().enumerate() {
-        let label = format!("Question {}", index + 1);
         let site = FindingSite::Question(index);
+        let (label, note_label) = (site.label(), site.note_label());
         let prompt = text(question, "prompt");
         if !validate_text(prompt) {
             findings.push(structure(
                 Rule::PromptMissing,
                 site,
                 format!("{label} needs a prompt."),
-                format!("{label} needs a prompt."),
+                format!("{note_label} needs a prompt."),
             ));
         } else if let Some(first) = prompts.get(&fold(prompt)) {
+            let first = FindingSite::Question(*first).plain();
             findings.push(structure(
                 Rule::PromptRepeated,
                 site,
-                format!("{label} asks the same thing as question {}.", first + 1),
-                format!(
-                    "{label} repeats question {}; ask something distinct.",
-                    first + 1
-                ),
+                format!("{label} asks the same thing as {first}."),
+                format!("{note_label} repeats {first}; ask something distinct."),
             ));
         } else {
             prompts.insert(fold(prompt), index);
@@ -414,49 +422,28 @@ pub(crate) fn lesson_rules(
                 Rule::ExplanationMissing,
                 site,
                 format!("{label} needs an answer explanation."),
-                format!("{label} needs an answer explanation."),
+                format!("{note_label} needs an answer explanation."),
             ));
         }
-        let options: Vec<_> = question
+        let options: Vec<String> = question
             .get("options")
             .and_then(Value::as_array)
-            .map(|options| {
-                options
-                    .iter()
-                    .map(|o| o.as_str().unwrap_or_default())
-                    .collect()
-            })
-            .unwrap_or_default();
-        let choice_texts: Vec<String> = options.iter().map(|o| (*o).to_owned()).collect();
+            .into_iter()
+            .flatten()
+            .map(|option| option.as_str().unwrap_or_default().to_owned())
+            .collect();
         let right = question
             .get("correctIndex")
             .and_then(Value::as_u64)
             .and_then(|right| usize::try_from(right).ok());
-        let choices_fault = if options.len() != 4 {
-            Some(format!(
-                "{label} needs four answer choices; it has {}.",
-                options.len()
-            ))
-        } else if options.iter().any(|option| !validate_text(option)) {
-            Some(format!("{label} has a blank answer choice."))
-        } else {
-            repeated_option(&choice_texts).map(|choice| {
-                format!(
-                    "{label} repeats the answer choice \"{}\"; each choice must differ.",
-                    choice.trim()
-                )
-            })
-        };
-        if let Some(note) = choices_fault {
-            findings.push(structure(Rule::Choices, site, note.clone(), note));
-        }
+        findings.extend(choice_findings(question, (&options, right), site));
         let reasons = reasons(question);
         if reasons.len() != options.len() {
             findings.push(structure(
                 Rule::RationaleCount,
                 site,
                 format!("{label} needs a reason for each of its choices."),
-                format!("{label} needs one entry in rationales for each answer choice, in the order of the choices: empty for the right choice, and for each wrong choice the misconception it reflects and why it fails."),
+                format!("{note_label} needs one entry in rationales for each answer choice, in the order of the choices: empty for the right choice, and for each wrong choice the misconception it reflects and why it fails."),
             ));
         } else {
             let lacking: Vec<String> = reasons
@@ -470,52 +457,88 @@ pub(crate) fn lesson_rules(
                     Rule::RationaleMissing,
                     site,
                     format!("{label} needs a reason for each wrong choice: {}.", join_plain(&lacking)),
-                    format!("{label} gives no reason in rationales for {}: for each wrong choice, name the misconception it reflects and why it fails.", join_plain(&lacking)),
+                    format!("{note_label} gives no reason in rationales for {}: for each wrong choice, name the misconception it reflects and why it fails.", join_plain(&lacking)),
                 ));
             }
         }
     }
     for (index, block) in blocks.iter().enumerate() {
-        let label = format!("Section {} (candidate blocks-{index})", index + 1);
-        scaffolding(
-            block,
-            &["body"],
-            (FindingSite::Section(index), &label),
-            &mut findings,
-        );
-        if CITED_KINDS.contains(&text(block, "kind")) {
-            uncited_quotations(
-                block,
-                text(block, "body"),
-                (FindingSite::Section(index), &label),
-                &mut findings,
-            );
+        let site = FindingSite::Section(index);
+        scaffolding(block, &["body"], site, &mut findings);
+        if LearningBlockKind::parse(text(block, "kind")).is_some_and(|kind| kind.cites()) {
+            uncited_quotations(block, text(block, "body"), site, &mut findings);
         }
     }
     for (index, question) in questions.iter().enumerate() {
-        let label = format!("Question {}", index + 1);
+        let site = FindingSite::Question(index);
         scaffolding(
             question,
             &["prompt", "options", "explanation"],
-            (FindingSite::Question(index), &label),
+            site,
             &mut findings,
         );
-        uncited_quotations(
-            question,
-            text(question, "explanation"),
-            (FindingSite::Question(index), &label),
-            &mut findings,
-        );
+        uncited_quotations(question, text(question, "explanation"), site, &mut findings);
         for reason in reasons(question) {
-            uncited_quotations(
-                question,
-                reason,
-                (FindingSite::Question(index), &label),
-                &mut findings,
-            );
+            uncited_quotations(question, reason, site, &mut findings);
         }
     }
     findings
+}
+
+/// The findings about a question's answer choices: the first of the count, a
+/// blank choice, a repeated choice and a missing key (one finding, as they are
+/// mended together), a right choice much longer than the others, and a prompt
+/// that contains the right choice.
+fn choice_findings(
+    question: &Value,
+    (options, right): (&[String], Option<usize>),
+    site: FindingSite,
+) -> Vec<ReviewFinding> {
+    let (label, note_label) = (site.label(), site.note_label());
+    let faults = choice_faults(options, right, CHOICES_PER_QUESTION..=CHOICES_PER_QUESTION);
+    let mut found = Vec::new();
+    if let Some(fault) = faults
+        .iter()
+        .find(|fault| **fault != ChoiceFault::LengthBiased)
+    {
+        let message = fault.message();
+        found.push(structure(
+            Rule::Choices,
+            site,
+            format!("{label}: {message}"),
+            format!("{note_label}: {message}"),
+        ));
+    }
+    if faults.contains(&ChoiceFault::LengthBiased) {
+        let message = ChoiceFault::LengthBiased.message();
+        found.push(structure(
+            Rule::KeyLongest,
+            site,
+            format!("{label}: {message}"),
+            format!("{note_label}: {message}"),
+        ));
+    }
+    let key = right.and_then(|right| options.get(right));
+    let others: Vec<&str> = options
+        .iter()
+        .enumerate()
+        .filter(|(at, _)| Some(*at) != right)
+        .map(|(_, option)| option.as_str())
+        .collect();
+    let words =
+        key.and_then(|key| answer_in_prompt(text(question, "prompt"), &[key.as_str()], &others));
+    if let Some(words) = words {
+        let message = answer_in_prompt_message(&words);
+        found.push(structure(
+            Rule::AnswerInPrompt,
+            site,
+            format!("{label}: {message}"),
+            format!(
+                "{note_label}: {message} Reword the prompt so it does not state the right choice."
+            ),
+        ));
+    }
+    found
 }
 
 #[cfg(test)]

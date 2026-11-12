@@ -506,13 +506,13 @@ async fn a_rubric_without_a_missing_assertion_reports_nothing() -> Result<()> {
 #[test]
 fn a_report_whose_audit_names_a_gap_is_still_a_complete_report() {
     let lesson = PreparedLearningLesson {
-        blocks: vec![LearningBlockDto {
-            kind: LearningBlockKind::Explanation,
-            title: "CSV header names".into(),
-            body: GOOD.into(),
-            rubric: vec![],
-            source_ids: vec![],
-        }],
+        blocks: vec![LearningBlockDto::new(
+            LearningBlockKind::Explanation,
+            "CSV header names".into(),
+            GOOD.into(),
+            vec![],
+            vec![],
+        )],
         questions: vec![],
         keys: vec![],
         verification: None,
@@ -545,4 +545,48 @@ fn a_gap_that_opens_the_sources_is_adopted_for_the_model_to_sort() {
         adopt_one(remark, &claim_ledger::Rewrites::default()),
         (1, 1, true)
     );
+}
+
+#[tokio::test]
+async fn a_typographic_variant_of_a_represented_statement_is_no_gap() -> Result<()> {
+    const BODY: &str = "The borrow checker\u{2019}s rule holds.";
+    let pool = crate::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let model = JudgingModel::new(BODY, &["The borrow checker's rule holds"], BODY);
+    let content = units(&lesson(BODY))?;
+    let inventory = Inventory {
+        units: vec![
+            UnitClaims {
+                index: 0,
+                claims: vec![],
+                non_factual_reason: "A section.".into(),
+            },
+            UnitClaims {
+                index: 1,
+                claims: vec![Claim {
+                    quote: BODY.into(),
+                    statement: BODY.into(),
+                }],
+                non_factual_reason: String::new(),
+            },
+        ],
+    };
+
+    lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &repo,
+        &job,
+        &lesson_id,
+        async {
+            lesson_drafts::resume("gaps-fixture".into()).await?;
+            let audited = coverage::audit(&model, &content, &inventory, None).await?;
+            assert!(
+                audited.units[1].missing_assertions.is_empty(),
+                "{:?}",
+                audited.units[1].missing_assertions
+            );
+            Ok(())
+        },
+    )
+    .await
 }

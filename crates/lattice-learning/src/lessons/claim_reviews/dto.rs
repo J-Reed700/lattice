@@ -616,6 +616,8 @@ pub enum ClaimActionRequestDto {
 #[serde(rename_all = "camelCase")]
 pub struct StopReasonDto {
     pub code: String,
+    /// A stop of the Verifier audit, which holds a lesson its checks passed.
+    pub audit: bool,
     pub message: String,
     pub fix: String,
     pub at: i64,
@@ -638,7 +640,8 @@ pub struct RequestFactsDto {
 impl From<&StopReason> for StopReasonDto {
     fn from(reason: &StopReason) -> Self {
         Self {
-            code: reason.code.clone(),
+            code: reason.code.as_str().to_owned(),
+            audit: reason.code.is_audit(),
             message: reason.message.clone(),
             fix: reason.fix.clone(),
             at: reason.at,

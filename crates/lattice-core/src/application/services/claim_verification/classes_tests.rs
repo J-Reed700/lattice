@@ -1,6 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+use super::classes::{read_consistency, read_sample, Consistency, Knowledge};
 use super::*;
 use crate::application::ports::llm_port::CompletionResponse;
+use crate::application::services::model_contract::test_support::{assert_round_trip, RenderAnswer};
+use crate::application::services::model_contract::CORRECTION_LEAD;
+use crate::domain::learning::acceptance::KNOWLEDGE_SAMPLES;
 use crate::shared::error::AppError;
 use async_trait::async_trait;
 use serde_json::json;
@@ -86,6 +90,22 @@ fn judged<T: std::fmt::Debug>(judgment: ClassJudgment<T>) -> T {
     }
 }
 
+/// Every message of a request, in order, as one text.
+pub(super) fn conversation(request: &CompletionRequest) -> String {
+    request
+        .input
+        .iter()
+        .filter_map(|item| match item {
+            CompletionInput::Message { content, .. } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        )
+}
+
 /// The system and the user message of a request.
 pub(super) fn messages(request: &CompletionRequest) -> (String, String) {
     let content = |wanted: &str| {
@@ -150,23 +170,23 @@ async fn an_unreadable_answer_is_asked_for_once_more_and_then_left_unchecked() {
     assert_eq!(outcome.verdict, ConsistencyVerdict::Consistent);
     let sent = llm.sent();
     assert_eq!(sent.len(), 2);
-    let (_, again) = messages(&sent[1]);
-    assert!(again.contains("could not be read") && again.contains("not json"));
+    let again = conversation(&sent[1]);
+    assert!(again.contains(CORRECTION_LEAD) && again.contains("not json"));
 
     let unreadable = || Reply::Text("{}".into());
     let unknown = || answer("maybe");
     let cut = || Reply::Cut(r#"{"verdict": "consistent", "reason": "Fine."}"#.into());
-    for replies in [
-        vec![unreadable(), unreadable()],
-        vec![unknown(), unknown()],
-        vec![cut(), cut()],
+    for (replies, sends) in [
+        (vec![unreadable(), unreadable()], 2),
+        (vec![unknown(), unknown()], 2),
+        (vec![cut(), cut()], 1),
     ] {
         let llm = Scripted::new(replies);
         let judgment = checker(&llm, CheckPolicy::Consistency)
             .check_consistency("S.", &passages())
             .await;
         assert!(matches!(judgment, ClassJudgment::Unusable), "{judgment:?}");
-        assert_eq!(llm.sent().len(), 2);
+        assert_eq!(llm.sent().len(), sends);
     }
 }
 
@@ -213,7 +233,7 @@ async fn the_knowledge_judge_asks_three_times_at_temperature_and_keeps_every_sam
         ]
     );
     let sent = llm.sent();
-    assert_eq!(sent.len(), KNOWLEDGE_SAMPLES);
+    assert_eq!(sent.len(), usize::try_from(KNOWLEDGE_SAMPLES).unwrap());
     for request in &sent {
         let (system, user) = messages(request);
         assert_eq!(system, KNOWLEDGE_SYSTEM);
@@ -236,7 +256,7 @@ async fn a_knowledge_check_with_a_case_sends_the_case_before_the_statement_and_s
             .await,
     );
     let sent = llm.sent();
-    assert_eq!(sent.len(), KNOWLEDGE_SAMPLES);
+    assert_eq!(sent.len(), usize::try_from(KNOWLEDGE_SAMPLES).unwrap());
     for request in &sent {
         let (system, user) = messages(request);
         assert_eq!(system, format!("{KNOWLEDGE_SYSTEM}{KNOWLEDGE_CASE}"));
@@ -355,8 +375,6 @@ fn a_consistency_check_fits_the_window_only_beside_its_answer() {
     let checker = checker(&llm, CheckPolicy::Consistency);
     assert!(checker.consistency_fits("S.", &passages()));
     assert!(!checker.consistency_fits("S.", &["word ".repeat(40_000)]));
-    let room = checker.consistency_evidence_room("S.");
-    assert!(room > 0 && room < 8_192, "{room}");
 }
 
 #[test]
@@ -382,4 +400,36 @@ async fn a_reason_past_600_characters_is_kept_whole() {
             .await,
     );
     assert_eq!(outcome.reason, reason);
+}
+
+impl RenderAnswer for Consistency {
+    type Answer = ConsistencyOutcome;
+    fn render(answer: &ConsistencyOutcome) -> String {
+        json!({"verdict": answer.verdict, "reason": answer.reason}).to_string()
+    }
+    fn read(text: &str) -> Result<ConsistencyOutcome> {
+        read_consistency(text).ok_or_else(|| AppError::InvalidInput("unreadable".into()))
+    }
+}
+
+impl RenderAnswer for Knowledge {
+    type Answer = KnowledgeSample;
+    fn render(answer: &KnowledgeSample) -> String {
+        json!({"verdict": answer.verdict, "reason": answer.reason}).to_string()
+    }
+    fn read(text: &str) -> Result<KnowledgeSample> {
+        read_sample(text).ok_or_else(|| AppError::InvalidInput("unreadable".into()))
+    }
+}
+
+#[test]
+fn the_class_contracts_read_what_they_render() {
+    assert_round_trip::<Consistency>(&ConsistencyOutcome {
+        verdict: ConsistencyVerdict::UnfoundedSpecific,
+        reason: "A figure no passage gives.".into(),
+    });
+    assert_round_trip::<Knowledge>(&KnowledgeSample {
+        verdict: KnowledgeVerdict::NeedsSource,
+        reason: "A textbook would cite it.".into(),
+    });
 }

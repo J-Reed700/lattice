@@ -29,13 +29,13 @@ pub(super) fn prepared(lesson_id: &str) -> PreparedLearningLesson {
     }
     let mut prepared = PreparedLearningLesson {
         verification: None,
-        blocks: vec![LearningBlockDto {
-            rubric: vec![],
-            kind: LearningBlockKind::Explanation,
-            title: "Core idea".into(),
-            body: "A concise explanation.".into(),
-            source_ids: vec![],
-        }],
+        blocks: vec![LearningBlockDto::new(
+            LearningBlockKind::Explanation,
+            "Core idea".into(),
+            "A concise explanation.".into(),
+            vec![],
+            vec![],
+        )],
         questions,
         keys,
     };
@@ -1462,4 +1462,38 @@ pub(crate) fn assert_conflict<T: std::fmt::Debug>(result: Result<T>) {
         }
         other => panic!("expected Conflict, got {other:?}"),
     }
+}
+
+#[test]
+fn a_served_check_block_carries_its_case_and_reveal() {
+    let check = LearningBlockDto::new(
+        LearningBlockKind::Check,
+        "Check".into(),
+        "Why does the kettle whistle?
+
+### Check your thinking
+Steam forces through the spout."
+            .into(),
+        vec![],
+        vec![],
+    );
+    assert_eq!(
+        check.check,
+        Some(LearningCheckDto {
+            question: "Why does the kettle whistle?
+
+"
+            .into(),
+            reveal: "Steam forces through the spout.".into(),
+        })
+    );
+    let other = LearningBlockDto::new(
+        LearningBlockKind::Explanation,
+        "Idea".into(),
+        "Plain.".into(),
+        vec![],
+        vec![],
+    );
+    assert_eq!(other.check, None);
+    assert!(serde_json::to_value(&check).unwrap()["check"]["reveal"].is_string());
 }

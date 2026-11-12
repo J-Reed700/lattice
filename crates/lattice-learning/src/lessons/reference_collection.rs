@@ -2,27 +2,77 @@
 //! collection reads its course index (`references::course_index`), ranked by
 //! the library's hybrid search, or by words alone without an embedding model
 //! ([`ReferenceCollection::mode`] says which). A collection without an index
-//! is ranked by an in-memory FTS5 store. Every hit is widened to paragraph
+//! is ranked by an in-memory FTS5 store. Every hit is widened to sentence
 //! edges of the snapshot's own bytes, so evidence is always an exact substring.
 use crate::dto::LearningSourceDto;
 use crate::references::course_index::{
     CourseProgress, CourseSearch, IndexMode, IndexView, CHUNK_CHARS,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::text::same_text;
+use lattice_core::shared::text::segmentation::{widen, Prose, Span, Strength};
 use lattice_index::passage_index::PassageStore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
 
-/// How far `retrieve` widens a ranked passage on each side, toward
-/// paragraph edges.
-const WIDEN_BYTES: usize = 300;
+/// How much context a retrieved passage gains on each side.
+const WIDEN_CHARS: usize = 300;
+/// How far verification reads around a passage for nearby conditions.
+const VERIFICATION_REACH_CHARS: usize = 1700;
+/// The breaks a passage starts and ends on, strongest first.
+const LADDER: [Strength; 2] = [Strength::Sentence, Strength::Word];
 /// About the longest passage `retrieve` returns: one indexed passage widened
 /// on both sides. Callers size retrieval to a token budget with it.
-pub(crate) const PASSAGE_CHARS: usize = CHUNK_CHARS + 2 * WIDEN_BYTES;
+pub(crate) const PASSAGE_CHARS: usize = CHUNK_CHARS + 2 * WIDEN_CHARS;
 /// How many passages a filled retrieval asks for first; it pages deeper,
 /// doubling, while everything found still fits.
 const FIRST_PAGE: usize = 16;
+
+/// How a passage came to be evidence; decided from the label it is saved under.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PassageKind {
+    Cited,
+    Researched,
+    UserSelected,
+    UserAttached,
+    SavedVersion,
+    Run,
+    Retrieved(IndexMode),
+}
+
+impl PassageKind {
+    /// The label a passage of this kind is saved under.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Cited => "cited",
+            Self::Researched => "researched",
+            Self::UserSelected => "user_selected",
+            Self::UserAttached => "user_attached",
+            Self::SavedVersion => "source_version",
+            Self::Run => "execution",
+            Self::Retrieved(mode) => mode.label(),
+        }
+    }
+
+    /// The kind `label` names; a search mode's label, or any other, is a retrieved passage.
+    pub fn of(label: &str) -> Self {
+        match label {
+            "cited" => Self::Cited,
+            "researched" => Self::Researched,
+            "user_selected" => Self::UserSelected,
+            "user_attached" => Self::UserAttached,
+            "source_version" => Self::SavedVersion,
+            "execution" => Self::Run,
+            "hybrid" => Self::Retrieved(IndexMode::Hybrid),
+            "partial" => Self::Retrieved(IndexMode::Partial {
+                embedded: 0,
+                total: 0,
+            }),
+            _ => Self::Retrieved(IndexMode::Lexical),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReferencePassage {
@@ -33,6 +83,58 @@ pub struct ReferencePassage {
     pub end_byte: usize,
     pub retrieval_kind: String,
     pub score: f64,
+}
+
+impl ReferencePassage {
+    /// The passage of `source` at `span`, its text read from the source's bytes; `None` when `span` is not a char range of the source.
+    pub fn of(
+        source: &LearningSourceDto,
+        span: Span,
+        kind: PassageKind,
+        score: f64,
+    ) -> Option<ReferencePassage> {
+        Some(ReferencePassage {
+            source_id: source.id.clone(),
+            text: source.excerpt.get(span.clone())?.to_owned(),
+            start_byte: span.start,
+            end_byte: span.end,
+            retrieval_kind: kind.label().into(),
+            score,
+        })
+    }
+
+    pub fn kind(&self) -> PassageKind {
+        PassageKind::of(&self.retrieval_kind)
+    }
+
+    /// Whether the passage is an example's run, not a source.
+    pub fn is_run(&self) -> bool {
+        self.kind() == PassageKind::Run
+    }
+
+    /// Whether `other` is this passage: the same bytes of the same source version.
+    pub fn same_place(&self, other: &ReferencePassage) -> bool {
+        self.source_id == other.source_id
+            && self.start_byte == other.start_byte
+            && self.end_byte == other.end_byte
+    }
+
+    /// Whether `other` shares a byte of the same source version.
+    pub fn overlaps(&self, other: &ReferencePassage) -> bool {
+        self.source_id == other.source_id
+            && same_text::overlaps(
+                (self.start_byte, self.end_byte),
+                (other.start_byte, other.end_byte),
+            )
+    }
+}
+
+/// What `item` adds to a JSON list in a prompt: its tokens and one separator.
+pub(crate) fn item_tokens(
+    llm: &dyn lattice_core::application::ports::LLMPort,
+    item: &serde_json::Value,
+) -> usize {
+    llm.count_tokens(&item.to_string()) + 1
 }
 
 /// A ranked passage, with what the fusion recorded about where it came from.
@@ -96,44 +198,10 @@ fn longest_fitting_prefix(
     low
 }
 
-/// The bytes verification reads for the passage at `start..end` of `text`:
-/// the passage and up to 1,700 characters either side, cut back to a line
-/// break that falls within 300 bytes of either end.
-pub(crate) fn checked_span(text: &str, start: usize, end: usize) -> (usize, usize) {
-    const SURROUNDING_CHARS: usize = 1700;
-    let (Some(before), Some(after)) = (text.get(..start), text.get(end..)) else {
-        return (start, end);
-    };
-    let mut from = before
-        .char_indices()
-        .rev()
-        .nth(SURROUNDING_CHARS - 1)
-        .map_or(0, |(index, _)| index);
-    let mut to = after
-        .char_indices()
-        .nth(SURROUNDING_CHARS)
-        .map_or(text.len(), |(index, _)| end + index);
-    if let Some(index) = before
-        .get(from..)
-        .and_then(|lead| lead.find('\n'))
-        .filter(|index| *index <= 300)
-    {
-        // Preserve the start of a short source instead of trimming its
-        // first line merely because the entire prefix fits.
-        if from != 0 {
-            from += index + 1;
-        }
-    }
-    if let Some(index) = after
-        .get(..to - end)
-        .and_then(|trail| trail.rfind('\n'))
-        .filter(|index| to - (end + *index) <= 300)
-    {
-        if to != text.len() {
-            to = end + index;
-        }
-    }
-    (from, to)
+/// The span verification reads for the passage at `span` of `text`: the
+/// passage and its surroundings, whole sentences.
+pub(crate) fn verification_window(text: &str, span: Span) -> Span {
+    widen(text, &Prose, span, VERIFICATION_REACH_CHARS, &LADDER)
 }
 
 /// A lesson job's stage text while a course's index is brought up to date.
@@ -286,7 +354,7 @@ impl<'a> ReferenceCollection<'a> {
         }
     }
 
-    /// `query`'s best passages, at most `limit`, widened to paragraph edges
+    /// `query`'s best passages, at most `limit`, widened to sentence edges
     /// and never overlapping. Scores rank evidence only; they are never a
     /// factual-correctness confidence.
     pub async fn retrieve(&self, query: &str, limit: usize) -> Result<Vec<ReferencePassage>> {
@@ -358,13 +426,7 @@ impl<'a> ReferenceCollection<'a> {
             let mut page: Vec<_> = self
                 .verification_context(hits.iter().filter(|hit| within(hit)).cloned().collect())?
                 .into_iter()
-                .filter(|passage| {
-                    !shown.iter().any(|seen| {
-                        seen.source_id == passage.source_id
-                            && seen.start_byte < passage.end_byte
-                            && passage.start_byte < seen.end_byte
-                    })
-                })
+                .filter(|passage| !shown.iter().any(|seen| seen.overlaps(passage)))
                 .collect();
             let fitting = longest_fitting_prefix(&page, &fits);
             if fitting < page.len() || exhausted {
@@ -419,41 +481,20 @@ impl<'a> ReferenceCollection<'a> {
     }
 
     /// The source passages `quotes` copy, in quote order: each quote's span
-    /// in the first snapshot that contains it, exactly or apart from
-    /// typography and spacing, widened as verification widens a retrieved
-    /// passage. A quote no snapshot contains is skipped.
+    /// in the first snapshot that contains it, apart from typography, spacing
+    /// and letter case, widened as verification widens a retrieved passage. A
+    /// quote no snapshot contains is skipped.
     pub(crate) fn cited_passages(&self, quotes: &[&str]) -> Result<Vec<ReferencePassage>> {
-        let span = |source: &LearningSourceDto, start: usize, end: usize| ReferencePassage {
-            source_id: source.id.clone(),
-            text: source
-                .excerpt
-                .get(start..end)
-                .unwrap_or_default()
-                .to_owned(),
-            start_byte: start,
-            end_byte: end,
-            retrieval_kind: "cited".into(),
-            score: 0.0,
-        };
         let mut found = Vec::new();
         for quote in quotes
             .iter()
             .map(|quote| quote.trim())
             .filter(|q| !q.is_empty())
         {
-            let exact = self.sources.iter().find_map(|source| {
-                let start = source.excerpt.find(quote)?;
-                Some(span(source, start, start + quote.len()))
-            });
-            let restored = || {
-                self.sources.iter().find_map(|source| {
-                    let copied =
-                        crate::outline_citations::exact_source_quote(&source.excerpt, quote)?;
-                    let start = source.excerpt.find(copied)?;
-                    Some(span(source, start, start + copied.len()))
-                })
-            };
-            found.extend(exact.or_else(restored));
+            found.extend(self.sources.iter().find_map(|source| {
+                let (start, end) = same_text::find(&source.excerpt, quote)?;
+                ReferencePassage::of(source, start..end, PassageKind::Cited, 0.0)
+            }));
         }
         self.verification_context(found)
     }
@@ -473,14 +514,7 @@ impl<'a> ReferenceCollection<'a> {
         let passages = spans
             .iter()
             .filter_map(|&(start, end)| {
-                Some(ReferencePassage {
-                    source_id: source.id.clone(),
-                    text: source.excerpt.get(start..end)?.to_owned(),
-                    start_byte: start,
-                    end_byte: end,
-                    retrieval_kind: "cited".into(),
-                    score: 0.0,
-                })
+                ReferencePassage::of(source, start..end, PassageKind::Cited, 0.0)
             })
             .collect();
         self.verification_context(passages)
@@ -494,33 +528,33 @@ impl<'a> ReferenceCollection<'a> {
         passages: Vec<ReferencePassage>,
     ) -> Result<Vec<ReferencePassage>> {
         let mut selected: Vec<ReferencePassage> = Vec::new();
-        for mut passage in passages {
+        for passage in passages {
             let source = self
                 .sources
                 .iter()
                 .find(|source| source.id == passage.source_id)
                 .ok_or_else(|| invalid("Unknown verification source."))?;
-            let text = &source.excerpt;
-            if text.get(passage.start_byte..passage.end_byte) != Some(passage.text.as_str()) {
-                return Err(invalid("Verification passage does not match its source."));
-            }
-            let (start, end) = checked_span(text, passage.start_byte, passage.end_byte);
-            if let Some(previous) = selected.iter_mut().find(|previous| {
-                previous.source_id == passage.source_id
-                    && previous.start_byte < end
-                    && start < previous.end_byte
-            }) {
+            let window = verification_window(&source.excerpt, passage.start_byte..passage.end_byte);
+            let Some(widened) = ReferencePassage::of(source, window, passage.kind(), passage.score)
+            else {
+                continue;
+            };
+            if let Some(previous) = selected
+                .iter_mut()
+                .find(|previous| previous.overlaps(&widened))
+            {
                 // Retain both original hits when their expanded windows only
                 // partly overlap; dropping the later hit could lose a caveat.
-                previous.start_byte = previous.start_byte.min(start);
-                previous.end_byte = previous.end_byte.max(end);
-                previous.text = text[previous.start_byte..previous.end_byte].to_owned();
+                let union = previous.start_byte.min(widened.start_byte)
+                    ..previous.end_byte.max(widened.end_byte);
+                if let Some(merged) =
+                    ReferencePassage::of(source, union, previous.kind(), previous.score)
+                {
+                    *previous = merged;
+                }
                 continue;
             }
-            passage.start_byte = start;
-            passage.end_byte = end;
-            passage.text = text[start..end].to_owned();
-            selected.push(passage);
+            selected.push(widened);
         }
         Ok(selected)
     }
@@ -540,7 +574,7 @@ impl<'a> ReferenceCollection<'a> {
                 "characters":source.excerpt.chars().count(),
                 "headings":[],"additionalHeadingsOmitted":false,
             });
-            let base = llm.count_tokens(&entry.to_string()) + 1;
+            let base = item_tokens(llm, &entry);
             if used + base > budget {
                 continue;
             }
@@ -553,7 +587,7 @@ impl<'a> ReferenceCollection<'a> {
             {
                 // Whole headings, as many as the catalog's share of the window holds.
                 let title = line.trim().to_owned();
-                let cost = llm.count_tokens(&serde_json::json!(title).to_string()) + 1;
+                let cost = item_tokens(llm, &serde_json::json!(title));
                 if used + base + cost > budget {
                     omitted = true;
                     continue;

@@ -37,18 +37,6 @@ fn prep(v: LearningPreparation) -> &'static str {
         LearningPreparation::Ready => "ready",
     }
 }
-pub(super) fn block_kind(v: LearningBlockKind) -> &'static str {
-    match v {
-        LearningBlockKind::Explanation => "explanation",
-        LearningBlockKind::WorkedExample => "worked_example",
-        LearningBlockKind::Contrast => "contrast",
-        LearningBlockKind::Check => "check",
-        LearningBlockKind::Reflection => "reflection",
-        LearningBlockKind::GuidedPractice => "guided_practice",
-        LearningBlockKind::IndependentPractice => "independent_practice",
-        LearningBlockKind::Recap => "recap",
-    }
-}
 fn parse_status(s: &str) -> Result<LearningProgramStatus> {
     match s {
         "draft" => Ok(LearningProgramStatus::Draft),
@@ -66,17 +54,8 @@ fn parse_prep(s: &str) -> Result<LearningPreparation> {
     }
 }
 fn parse_block(s: &str) -> Result<LearningBlockKind> {
-    match s {
-        "explanation" => Ok(LearningBlockKind::Explanation),
-        "worked_example" => Ok(LearningBlockKind::WorkedExample),
-        "contrast" => Ok(LearningBlockKind::Contrast),
-        "check" => Ok(LearningBlockKind::Check),
-        "reflection" => Ok(LearningBlockKind::Reflection),
-        "guided_practice" => Ok(LearningBlockKind::GuidedPractice),
-        "independent_practice" => Ok(LearningBlockKind::IndependentPractice),
-        "recap" => Ok(LearningBlockKind::Recap),
-        _ => Err(AppError::Database("Invalid learning block kind".into())),
-    }
+    LearningBlockKind::parse(s)
+        .ok_or_else(|| AppError::Database("Invalid learning block kind".into()))
 }
 
 #[derive(Clone)]
@@ -211,13 +190,13 @@ impl LearningRepository {
         let mut blocks_by_lesson: HashMap<String, Vec<LearningBlockDto>> = HashMap::new();
         for b in sqlx::query("SELECT b.* FROM learning_blocks b JOIN learning_lessons l ON l.id=b.lesson_id WHERE l.program_id=? ORDER BY b.lesson_id,b.ordinal")
             .bind(id).fetch_all(&mut *connection).await.map_err(db)? {
-            blocks_by_lesson.entry(b.get("lesson_id")).or_default().push(LearningBlockDto {
-                kind: parse_block(b.get("kind"))?,
-                title: b.get("title"),
-                body: b.get("body"),
-                source_ids: decode(b.get("source_ids_json"))?,
-                rubric: decode(b.get("rubric_json"))?,
-            });
+            blocks_by_lesson.entry(b.get("lesson_id")).or_default().push(LearningBlockDto::new(
+                parse_block(b.get("kind"))?,
+                b.get("title"),
+                b.get("body"),
+                decode(b.get("source_ids_json"))?,
+                decode(b.get("rubric_json"))?,
+            ));
         }
         let mut modules = Vec::new();
         for m in sqlx::query("SELECT * FROM learning_modules WHERE program_id=? ORDER BY ordinal")

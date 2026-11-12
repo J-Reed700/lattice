@@ -1,5 +1,4 @@
 use super::build::{self, Embedding, Progress};
-use super::chunking::spans::span_chunks;
 use super::chunking::NewPassage;
 use super::live::LiveIndexes;
 use super::registry;
@@ -101,15 +100,19 @@ fn set(keys: &[&str]) -> HashSet<String> {
 
 mod store {
     use super::*;
-    use lattice_core::shared::runtime::jobs::JobFailure;
+    use lattice_core::shared::error::{AppError, ErrorClass};
 
     #[test]
     fn a_busy_store_makes_its_job_wait_rather_than_fail() {
         let busy = super::super::store::db_error("read documents")(sqlx::Error::PoolTimedOut);
-        assert!(JobFailure::is_transient(&busy));
-        assert!(JobFailure::is_outage(&busy), "a busy store is waited out");
+        assert!(matches!(busy, AppError::DatabaseBusy(_)));
+        assert_eq!(
+            ErrorClass::of(&busy),
+            ErrorClass::Outage,
+            "a busy store is waited out"
+        );
         let broken = super::super::store::db_error("read documents")(sqlx::Error::RowNotFound);
-        assert!(!JobFailure::is_transient(&broken));
+        assert_ne!(ErrorClass::of(&broken), ErrorClass::Outage);
     }
 
     #[tokio::test]
@@ -335,89 +338,6 @@ mod store {
         assert!(!vectors_path(&dir, "model-a").exists());
         assert!(dir.join("kept").is_dir(), "only files directly in it go");
         store.close().await;
-    }
-}
-
-mod chunking {
-    use super::*;
-
-    /// Every passage is its text's bytes, starts on a sentence, and
-    /// consecutive passages leave nothing but whitespace between them.
-    fn assert_spans(text: &str, passages: &[NewPassage], chunk_chars: usize) {
-        assert!(!passages.is_empty());
-        let mut covered = vec![false; text.len()];
-        for passage in passages {
-            assert_eq!(&text[passage.start..passage.end], passage.text);
-            assert!(
-                passage.text.chars().count() <= chunk_chars,
-                "{:?}",
-                passage.text
-            );
-            assert_eq!(passage.text.trim(), passage.text);
-            covered[passage.start..passage.end].fill(true);
-        }
-        for pair in passages.windows(2) {
-            assert!(pair[1].start > pair[0].start);
-            assert!(text[pair[0].end..pair[1].start.max(pair[0].end)]
-                .trim()
-                .is_empty());
-        }
-        for (at, c) in text.char_indices() {
-            assert!(c.is_whitespace() || covered[at], "byte {at} left out");
-        }
-    }
-
-    #[test]
-    fn passages_are_whole_sentences_that_overlap_and_cover_the_text() {
-        let text = "The first sentence is here. A second one follows it! Is this the third? \
-                    Yes, and a fourth. Then a fifth sentence closes the paragraph.\n\
-                    A heading line\nAnd the last sentence of all.";
-        let passages = span_chunks(text, 60, 40);
-        assert_spans(text, &passages, 60);
-        for passage in &passages {
-            let last = passage.text.chars().last().unwrap();
-            assert!(matches!(last, '.' | '!' | '?' | 'e'), "{:?}", passage.text);
-            let before = text[..passage.start].trim_end();
-            assert!(
-                before.is_empty() || before.ends_with(['.', '!', '?', 'e']),
-                "starts mid-sentence: {:?}",
-                passage.text
-            );
-        }
-        assert!(
-            passages.windows(2).any(|pair| pair[1].start < pair[0].end),
-            "neighbours overlap by whole sentences"
-        );
-    }
-
-    #[test]
-    fn a_full_stop_inside_a_number_ends_nothing() {
-        let passages = span_chunks("Pi is 3.14 today. Next one.", 20, 10);
-        let texts: Vec<&str> = passages.iter().map(|p| p.text.as_str()).collect();
-        assert_eq!(texts, vec!["Pi is 3.14 today.", "Next one."]);
-    }
-
-    #[test]
-    fn a_run_on_longer_than_the_window_is_cut_at_its_edge() {
-        let text = format!("{}. Tail.", "x".repeat(100));
-        let passages = span_chunks(&text, 40, 30);
-        assert_spans(&text, &passages, 40);
-        assert_eq!(passages[0].text.len(), 40);
-        assert!(passages.last().unwrap().text.ends_with("x. Tail."));
-    }
-
-    #[test]
-    fn offsets_are_bytes_on_character_boundaries() {
-        let text = "Ça va très bien. Où est-il? 日本語の文。次の文。終わり。";
-        let passages = span_chunks(text, 12, 8);
-        assert_spans(text, &passages, 12);
-        assert!(
-            passages
-                .iter()
-                .any(|passage| passage.text == "次の文。終わり。"),
-            "a full-width stop ends a sentence with no space after it: {passages:?}"
-        );
-        assert!(span_chunks("   \n  ", 10, 5).is_empty());
     }
 }
 

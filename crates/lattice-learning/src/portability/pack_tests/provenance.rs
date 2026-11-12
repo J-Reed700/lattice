@@ -41,13 +41,13 @@ async fn ready_course(pool: &sqlx::SqlitePool) -> Result<LearningProgramDto> {
     let lesson = &program.modules[0].lessons[0];
     let question_id = id();
     let mut prepared = PreparedLearningLesson {
-        blocks: vec![LearningBlockDto {
-            kind: LearningBlockKind::Explanation,
-            title: "Traceable teaching".into(),
-            body: QUOTE.into(),
-            source_ids: vec![program.sources[0].id.clone()],
-            rubric: vec![],
-        }],
+        blocks: vec![LearningBlockDto::new(
+            LearningBlockKind::Explanation,
+            "Traceable teaching".into(),
+            QUOTE.into(),
+            vec![program.sources[0].id.clone()],
+            vec![],
+        )],
         questions: vec![LessonQuestion {
             id: question_id.clone(),
             kind: LessonQuestionKind::Quiz,

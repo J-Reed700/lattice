@@ -4,7 +4,7 @@
 //! (`citation::cite_where_supported`), with no model call.
 use super::claim_ledger::ClaimLedger;
 use super::repair_work::{
-    claim_ids, context_claims, drop_group, ledger_targets, rejected, section_examples,
+    claim_ids, context_claims, drop_group, ledger_targets, section_examples, unmade,
     withdraw_resolved,
 };
 use super::*;
@@ -12,7 +12,11 @@ use crate::dto::LearningSourceDto;
 use crate::lessons::copied_wording::Wording;
 use crate::lessons::shape::LessonShape;
 use crate::lessons::text_edits;
-use lattice_core::application::services::grounded_generation::{GroundedRequest, HistoryItem};
+use crate::review_findings::FindingSite;
+use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal};
 use std::collections::{BTreeSet, VecDeque};
 
@@ -27,22 +31,10 @@ pub(crate) use confine::{confine, Protected};
 #[cfg(test)]
 pub(super) use cut::last_attempts;
 
-fn location(candidate: &Value, unit: usize) -> Result<(&'static str, usize)> {
-    let blocks = candidate
-        .get("blocks")
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid("Repair needs lesson blocks."))?;
-    let (field, index) = if unit < blocks.len() {
-        ("blocks", unit)
-    } else {
-        ("questions", unit - blocks.len())
-    };
-    candidate
-        .get(field)
-        .and_then(Value::as_array)
-        .and_then(|items| items.get(index))
-        .ok_or_else(|| invalid("Repair referred to an unknown lesson section."))?;
-    Ok((field, index))
+fn section_of(candidate: &Value, unit: usize) -> Result<(&'static str, usize)> {
+    FindingSite::in_candidate(candidate, unit)
+        .array()
+        .ok_or_else(|| invalid("Repair referred to an unknown lesson section."))
 }
 
 fn observations(context: &Value) -> Result<Vec<execution::Observation>> {
@@ -116,7 +108,7 @@ fn section_context(context: &Value, unit: usize, failures: &[Value]) -> Result<V
     let candidate = context
         .get("candidate")
         .ok_or_else(|| invalid("Missing repair candidate."))?;
-    let (field, index) = location(candidate, unit)?;
+    let (field, index) = section_of(candidate, unit)?;
     let section = candidate
         .get(field)
         .and_then(Value::as_array)
@@ -182,8 +174,8 @@ fn repair_system(schema: &Value) -> String {
 }
 
 /// A repair request as the window sees it. Its answer is reserved twice: an
-/// edit the protocol rejects is carried, with this context, by the one
-/// validated-section call that replaces it.
+/// answer the check refuses is carried, with this context, by its one
+/// correction.
 fn repair_request(system: &str, local: &Value, output_tokens: usize) -> GroundedRequest {
     let mut request = GroundedRequest::new(system, local.to_string());
     request.output_tokens = 2 * output_tokens;
@@ -266,8 +258,9 @@ fn claim_groups(
     );
     // The section and its instructions alone: no claim can be repaired here.
     if room == 0 {
-        return Err(invalid(
-            "A section repair does not fit in this model's context window.",
+        return Err(crate::model_call::window_too_small(
+            llm,
+            "A section repair does not fit",
         ));
     }
     let table: HashMap<&str, usize> = context
@@ -325,15 +318,9 @@ fn section_schema(schema: &Value, field: &str) -> Value {
     json!({"type":"object","additionalProperties":false,"required":["blocks","questions"],"properties":{"blocks":array("blocks"),"questions":array("questions")}})
 }
 
+/// Puts the repaired section `patch` in place of the lesson's section `unit`.
 fn merge(candidate: &mut Value, patch: Value, unit: usize) -> Result<()> {
-    let (field, index) = location(candidate, unit)?;
-    for name in ["blocks", "questions"] {
-        if patch.get(name).and_then(Value::as_array).map(Vec::len)
-            != Some(usize::from(name == field))
-        {
-            return Err(invalid("The section repair returned the wrong number of sections. Its prior draft is saved."));
-        }
-    }
+    let (field, index) = section_of(candidate, unit)?;
     let repaired = patch
         .get(field)
         .and_then(Value::as_array)
@@ -344,70 +331,53 @@ fn merge(candidate: &mut Value, patch: Value, unit: usize) -> Result<()> {
         .and_then(Value::as_array_mut)
         .and_then(|items| items.get_mut(index))
         .ok_or_else(|| invalid("Missing original repair section."))?;
-    if repaired.get("kind") != original.get("kind") {
-        return Err(invalid(
-            "A section repair changed its teaching or assessment role.",
-        ));
-    }
     *original = repaired.clone();
     Ok(())
 }
 
-/// What a section repair is asked next, after why its edits cannot be applied.
-const WHOLE_SECTION: &str = "Give the corrected section itself instead: correct exactly this one section, applying only the listed factual corrections. Preserve every unaffected field and every unaffected byte of teaching text. Do not change the section kind, add new claims, or revise style.";
-
-/// `edit_response` applied to `original`, or, when its edits cannot be, the
-/// section itself asked for in the conversation `local` opened under
-/// `system`: the server has just read that context, so it reads only what
-/// follows it.
-async fn apply_or_replace_section(
-    llm: &dyn LLMPort,
-    (system, local): (&str, &Value),
+/// A model's answer to a section repair or a flow repair as the one edited
+/// section: its edits applied to `original`, a citation the rewrite appended
+/// among the sentences kept removed, the changes outside the `targets`
+/// reverted, and the section checked against the lesson schema and for its
+/// kind. Gives the section and the targets whose correction was put back,
+/// because it shared a change with a `protected` sentence.
+pub(super) fn accept_edits(
+    raw: &str,
     (original, lesson, wording): (&Value, &Value, &Wording),
-    schema: &Value,
-    field: &str,
-    output_tokens: usize,
-    edit_response: &str,
-) -> Result<Value> {
-    let error = match text_edits::apply_in(original, edit_response, lesson, wording) {
-        Ok(repaired) => return Ok(repaired),
-        Err(error) => error,
+    (schema, field): (&Value, &str),
+    (targets, protected): (&[Protected], &[Protected]),
+) -> Result<(Value, Vec<PutBack>)> {
+    let mut repaired = text_edits::apply_in(original, raw, lesson, wording)?;
+    let pointer = format!("/{field}/0");
+    let mut put_back = Vec::new();
+    if let (Some(before), Some(after)) =
+        (original.pointer(&pointer), repaired.pointer_mut(&pointer))
+    {
+        let appended = citation::appended(before, after);
+        let confined = confine(before, after, targets, protected)?;
+        *after = confined.section;
+        put_back = confined.put_back;
+        citation::restore_appended(after, appended, field);
+    }
+    let validator = jsonschema::JSONSchema::compile(&section_schema(schema, field))
+        .map_err(|error| invalid(format!("Invalid repair schema: {error}")))?;
+    if !validator.is_valid(&repaired) {
+        return Err(invalid(
+            "The edited section does not match the lesson schema. Its prior draft is saved.",
+        ));
+    }
+    let kind = |section: &Value| {
+        section
+            .pointer(&pointer)
+            .and_then(|item| item.get("kind"))
+            .cloned()
     };
-    let reason = crate::lessons::structured_call::refusal(&error)
-        .map_or_else(|| error.to_string(), str::to_owned);
-    tracing::warn!(
-        %reason,
-        "A section repair's edits cannot be applied; asking for the section"
-    );
-    crate::lesson_progress::stage(format!(
-        "The model's edits could not be applied; asking it for the corrected section. {reason}"
-    ));
-    let mut request = crate::model_call::structured(
-        system,
-        format!("{reason} {WHOLE_SECTION}"),
-        section_schema(schema, field),
-        output_tokens,
-        "low",
-    );
-    request.history = vec![
-        HistoryItem {
-            role: "user".into(),
-            content: local.to_string(),
-        },
-        HistoryItem {
-            role: "assistant".into(),
-            content: edit_response.to_owned(),
-        },
-    ];
-    let _model_call = crate::lesson_progress::model_call(crate::lesson_progress::Term::Rewrite);
-    crate::lessons::structured_call::complete_checked_request(
-        llm,
-        request,
-        None,
-        None,
-        crate::generation::parse_json,
-    )
-    .await
+    if kind(&repaired) != kind(original) {
+        return Err(invalid(
+            "A section repair changed its teaching or assessment role.",
+        ));
+    }
+    Ok((repaired, put_back))
 }
 
 /// The sentences the teaching review after a claim repair or a user edit leaves
@@ -480,7 +450,7 @@ pub(crate) async fn candidate(
 /// on the section as the previous left it, saving every patch. A claim the
 /// user resolved meanwhile is not sent (§9); an unusable answer costs its
 /// claims an attempt and leaves the section as it was. A correction that
-/// shared a change with a sentence that passed is put back and costs its own
+/// shared a change with a sentence it was not asked to change is put back and costs its own
 /// claim alone, which is asked again, told why.
 async fn repair_sections(
     llm: &dyn LLMPort,
@@ -497,17 +467,13 @@ async fn repair_sections(
         return Err(invalid("No affected sections were recorded for repair."));
     }
     let wording = Wording::of(references);
-    // Every claim this repair was sent for, and those standing on their
-    // sentences, which it changes with them; the ledger's other live claims
-    // are what it leaves as it is (claim sources design §18.5).
-    let sent_claims = ledger.with_cotenants(&context_claims(&context));
     let mut candidate = context
         .get("candidate")
         .cloned()
         .ok_or_else(|| invalid("Missing repair candidate."))?;
     let system = repair_system(schema);
     for (position, unit) in pending.iter().copied().enumerate() {
-        let (field, _) = location(&candidate, unit)?;
+        let (field, _) = section_of(&candidate, unit)?;
         ledger.sync().await?;
         let dropped = withdraw_resolved(&mut context, ledger, policy);
         if !dropped.is_empty() {
@@ -520,7 +486,7 @@ async fn repair_sections(
         let mut groups: VecDeque<Vec<Value>> =
             match claim_groups(llm, &system, &context, unit, output_tokens) {
                 Ok(groups) => groups.into(),
-                Err(error) if rejected(&error) => {
+                Err(error) if unmade(&error) => {
                     let mut claims = claim_ids(&section_failures(&context, unit));
                     claims.extend(examples);
                     ledger.reject(policy, &claims, &error.to_string()).await?;
@@ -593,7 +559,7 @@ async fn repair_sections(
             };
             let confined = (
                 of_unit(Protected::of_claims(ledger, &sent)),
-                of_unit(Protected::of_ledger(ledger, &sent_claims)),
+                of_unit(Protected::of_ledger(ledger, &sent)),
             );
             let (repaired, put_back) = match repair_group(
                 llm,
@@ -610,13 +576,13 @@ async fn repair_sections(
                 Err(error) => (Err(error), Vec::new()),
             };
             if let Err(error) = repaired {
-                if !rejected(&error) {
+                if !unmade(&error) {
                     return Err(error);
                 }
                 ledger.reject(policy, &claims, &error.to_string()).await?;
             }
-            // A target whose correction shared a change with a sentence that
-            // passed was put back: it alone is charged and told why, and the
+            // A target whose correction shared a change with a sentence it was
+            // not asked to change was put back: it alone is charged and told why, and the
             // group's other targets keep their rewrites.
             for back in &put_back {
                 for id in &claims {
@@ -650,6 +616,14 @@ async fn repair_sections(
     Ok(candidate)
 }
 
+/// What a section repair is asked: the edits of its failed sentences.
+struct SectionRepair;
+
+impl Contract for SectionRepair {
+    const ID: ContractId = ContractId::new("section-repair");
+    type Input = PromptInput;
+}
+
 /// One request's edit of one section, confined to the failed sentences
 /// (`targets`; `protected` must come back byte-identical) and validated
 /// against the lesson schema. Gives the section and the targets whose
@@ -662,51 +636,29 @@ async fn repair_group(
     schema: &Value,
     field: &str,
     output_tokens: usize,
-    (targets, protected): (&[Protected], &[Protected]),
+    confined: (&[Protected], &[Protected]),
 ) -> Result<(Value, Vec<PutBack>)> {
-    let raw = {
-        let _model_call = crate::lesson_progress::model_call(crate::lesson_progress::Term::Rewrite);
-        crate::generation::complete_json(
-            llm,
-            system,
-            local.to_string(),
-            text_edits::schema_for(original, schema),
-            output_tokens,
-        )
-        .await?
-    };
-    let mut repaired = apply_or_replace_section(
-        llm,
-        (system, local),
-        (original, lesson, wording),
-        schema,
-        field,
+    let prompt = local.to_string();
+    let call = ContractCall::of::<SectionRepair>(&PromptInput {
+        system: system.to_owned(),
+        prompt: prompt.clone(),
+    })?;
+    let request = crate::model_call::structured(
+        system,
+        prompt,
+        text_edits::schema_for(original, schema),
         output_tokens,
-        &raw,
+    );
+    let _model_call = crate::lesson_progress::model_call(crate::lesson_progress::Term::Rewrite);
+    crate::lessons::structured_call::complete_checked_request(
+        llm,
+        &call,
+        request,
+        None,
+        None,
+        |raw| accept_edits(raw, (original, lesson, wording), (schema, field), confined),
     )
-    .await?;
-    let pointer = format!("/{field}/0");
-    let mut put_back = Vec::new();
-    if let (Some(before), Some(after)) =
-        (original.pointer(&pointer), repaired.pointer_mut(&pointer))
-    {
-        // Confinement takes back what changed outside the failed sentences,
-        // a citation the rewrite appended among it; the ones whose sentence
-        // stands in the confined text are put back.
-        let appended = citation::appended(before, after);
-        let confined = confine(before, after, targets, protected)?;
-        *after = confined.section;
-        put_back = confined.put_back;
-        citation::restore_appended(after, appended, field);
-    }
-    let validator = jsonschema::JSONSchema::compile(&section_schema(schema, field))
-        .map_err(|error| invalid(format!("Invalid repair schema: {error}")))?;
-    if !validator.is_valid(&repaired) {
-        return Err(invalid(
-            "The edited section does not match the lesson schema. Its prior draft is saved.",
-        ));
-    }
-    Ok((repaired, put_back))
+    .await
 }
 
 #[cfg(test)]

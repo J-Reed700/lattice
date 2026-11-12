@@ -33,9 +33,12 @@ fn a_sentence_taken_out_leaves_the_rest_as_written() {
 }
 
 #[test]
-fn every_place_a_sentence_is_written_goes_with_it() {
+fn the_first_place_a_sentence_is_written_goes_with_it() {
     let cut = |text: &str, quote: &str| done(sentence(text, quote));
-    assert_eq!(cut("Dup. Keep. Dup.", "Dup.").as_deref(), Some("Keep."));
+    assert_eq!(
+        cut("Dup. Keep. Dup.", "Dup.").as_deref(),
+        Some("Keep. Dup.")
+    );
     // A quote over several sentences takes them all; one inside a sentence
     // takes the sentence it is in.
     assert_eq!(
@@ -56,7 +59,7 @@ fn every_place_a_sentence_is_written_goes_with_it() {
 fn text_already_out_needs_no_cut_and_the_whole_of_a_field_or_a_code_block_stays() {
     assert!(matches!(sentence("A one.", "B two."), Cut::Absent));
     assert!(matches!(sentence("A one.", ""), Cut::Absent));
-    assert!(matches!(sentence("Only. Only.", "Only."), Cut::Refused));
+    assert!(matches!(sentence("Only.", "Only."), Cut::Refused));
     assert!(matches!(
         sentence("Text.\n```py\nx = 1. y = 2\n```\n", "x = 1."),
         Cut::Refused
@@ -175,4 +178,22 @@ fn a_dash_that_opens_a_sentence_inside_a_line_is_not_a_list_marker() {
     .unwrap();
     assert!(out.ends_with("Gamma holds."), "{out}");
     assert!(!out.contains("- Gamma"), "{out}");
+}
+
+#[test]
+fn a_cut_takes_only_the_place_it_records() {
+    let text = "Dup. Keep. Dup.";
+    assert_eq!(done(sentence(text, "Dup.")).as_deref(), Some("Keep. Dup."));
+    assert_eq!(cut_place(text, "Dup.").unwrap().sentence, "Dup.");
+}
+
+#[test]
+fn a_quote_after_a_longer_fence_closes_is_cut() {
+    let text = "````\n```\nlet x = 1;\n````\nRust is fast.";
+    let out = done(sentence(text, "Rust is fast."));
+    assert!(
+        out.as_deref()
+            .is_some_and(|out| out.contains("let x = 1;") && !out.contains("Rust is fast.")),
+        "{out:?}"
+    );
 }

@@ -69,7 +69,6 @@ const USER_MESSAGES: Record<ErrorCode, string> = {
   // Concurrency Errors
   [ErrorCode.CONCURRENT_MODIFICATION]: 'Resource was modified by another process.',
   [ErrorCode.CONFLICT]: 'This resource was updated elsewhere. Reload and try again.',
-  [ErrorCode.QUEUE_FULL]: 'Processing queue is full. Please try again later.',
 
   // Backup & Recovery Errors
   [ErrorCode.BACKUP_CREATION_FAILED]: 'Failed to create backup.',

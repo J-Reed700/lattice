@@ -113,7 +113,6 @@ impl Author for ProgramAuthor {
             prompt(&request, runner.contract()),
             schema(),
             PROBLEM_ANSWER_TOKENS,
-            "low",
         );
         for failed in commission.failed {
             asking = reask(asking, &failed.raw, &failed.reason);

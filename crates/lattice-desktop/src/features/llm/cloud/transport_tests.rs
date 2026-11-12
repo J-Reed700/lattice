@@ -4,6 +4,7 @@ use crate::features::llm::fitting::SendUnscheduled;
 use lattice_core::application::contracts::settings::LLMProvider;
 use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::domain::models::model_ref::CloudProvider;
+use lattice_core::shared::error::ErrorClass;
 use serde_json::json;
 use wiremock::{
     matchers::{body_string_contains, header, method, path},
@@ -178,13 +179,12 @@ async fn authentication_failure_is_not_retried_or_echoed() {
     assert!(!error.to_string().contains("sensitive-provider-body"));
     // A rejected key is a setting to fix, never an outage a job waits out.
     assert!(matches!(error, AppError::InvalidConfig(_)), "{error:?}");
-    assert!(!lattice_core::shared::runtime::jobs::JobFailure::is_transient(&error));
+    assert!(ErrorClass::of(&error) != ErrorClass::Outage);
     assert!(error.to_string().contains("API key"), "{error}");
 }
 
 #[tokio::test]
 async fn refusals_are_typed_by_what_waiting_can_change() {
-    use lattice_core::shared::runtime::jobs::JobFailure;
     for (status, transient) in [
         (403, false),
         (404, false),
@@ -203,7 +203,7 @@ async fn refusals_are_typed_by_what_waiting_can_change() {
             .await
             .unwrap_err();
         assert_eq!(
-            JobFailure::is_transient(&error),
+            ErrorClass::of(&error) == ErrorClass::Outage,
             transient,
             "HTTP {status}: {error:?}"
         );
@@ -221,7 +221,6 @@ fn openai_status(status: u16, body: &str) -> AppError {
 /// amount of waiting refills an account, so it is a setting to fix.
 #[test]
 fn an_account_out_of_quota_is_a_setting_to_fix_not_an_outage() {
-    use lattice_core::shared::runtime::jobs::JobFailure;
     for body in [
         r#"{"error":{"message":"You exceeded your current quota.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}"#,
         r#"{"error":{"type":"insufficient_quota"}}"#,
@@ -235,13 +234,12 @@ fn an_account_out_of_quota_is_a_setting_to_fix_not_an_outage() {
             text,
             "OpenAI says the account has no credit or quota left (HTTP 429): add credit to the account, or choose another model in Settings → AI"
         );
-        assert!(!JobFailure::is_transient(&error), "{body}");
+        assert!(ErrorClass::of(&error) != ErrorClass::Outage, "{body}");
     }
 }
 
 #[test]
 fn a_payment_required_refusal_says_the_accounts_billing_needs_fixing() {
-    use lattice_core::shared::runtime::jobs::JobFailure;
     for protocol in [
         protocols(CloudProvider::Openai).completion,
         protocols(CloudProvider::Anthropic).completion,
@@ -256,13 +254,12 @@ fn a_payment_required_refusal_says_the_accounts_billing_needs_fixing() {
         };
         assert!(text.contains("HTTP 402"), "{text}");
         assert!(text.contains("billing"), "{text}");
-        assert!(!JobFailure::is_transient(&error));
+        assert!(ErrorClass::of(&error) != ErrorClass::Outage);
     }
 }
 
 #[test]
 fn any_other_rate_limit_is_a_transient_rate_limit() {
-    use lattice_core::shared::runtime::jobs::JobFailure;
     for body in [
         "",
         "not json",
@@ -274,14 +271,12 @@ fn any_other_rate_limit_is_a_transient_rate_limit() {
             matches!(error, AppError::RateLimitExceeded(_)),
             "{body}: {error:?}"
         );
-        assert!(JobFailure::is_transient(&error), "{body}");
-        assert!(JobFailure::is_outage(&error), "{body}");
+        assert!(ErrorClass::of(&error) == ErrorClass::Outage, "{body}");
     }
 }
 
 #[test]
 fn a_timeout_and_a_server_error_stay_network_outages() {
-    use lattice_core::shared::runtime::jobs::JobFailure;
     for status in [408, 500, 502, 503, 529] {
         for body in ["", r#"{"error":{"type":"insufficient_quota"}}"#] {
             let error = openai_status(status, body);
@@ -289,7 +284,7 @@ fn a_timeout_and_a_server_error_stay_network_outages() {
                 matches!(error, AppError::Network(_)),
                 "HTTP {status}: {error:?}"
             );
-            assert!(JobFailure::is_transient(&error));
+            assert!(ErrorClass::of(&error) == ErrorClass::Outage);
         }
     }
 }
@@ -298,7 +293,6 @@ fn a_timeout_and_a_server_error_stay_network_outages() {
 /// refused, and nothing waits for it.
 #[tokio::test]
 async fn a_request_refused_for_quota_is_sent_once_and_reaches_the_caller_as_a_setting() {
-    use lattice_core::shared::runtime::jobs::JobFailure;
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .respond_with(
@@ -318,7 +312,7 @@ async fn a_request_refused_for_quota_is_sent_once_and_reaches_the_caller_as_a_se
         .await
         .unwrap_err();
     assert!(matches!(error, AppError::InvalidConfig(_)), "{error:?}");
-    assert!(!JobFailure::is_transient(&error));
+    assert!(ErrorClass::of(&error) != ErrorClass::Outage);
     assert!(!error.to_string().contains("sensitive-provider-reason"));
 }
 
@@ -483,7 +477,6 @@ async fn any_other_bad_request_is_not_resent() {
 /// reworded, with or without a schema.
 #[tokio::test]
 async fn an_account_out_of_credit_is_a_setting_to_fix() {
-    use lattice_core::shared::runtime::jobs::JobFailure;
     for request in [CompletionRequest::default(), structured()] {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -504,7 +497,7 @@ async fn an_account_out_of_credit_is_a_setting_to_fix() {
             .await
             .unwrap_err();
         assert!(matches!(error, AppError::InvalidConfig(_)), "{error:?}");
-        assert!(!JobFailure::is_transient(&error));
+        assert!(ErrorClass::of(&error) != ErrorClass::Outage);
         assert!(error.to_string().contains("credit balance"), "{error}");
         assert!(!error.to_string().contains("Plans & Billing"), "{error}");
     }

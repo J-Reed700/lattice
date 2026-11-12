@@ -1,7 +1,7 @@
 //! How pieces are chosen under a budget: an exact tiling, or overlapping
 //! windows.
 
-use super::{Boundaries, Break, Measure, Span, Strength};
+use super::{Boundaries, Break, Chars, Measure, Span, Strength};
 
 /// One step of a ladder: cut at the latest break of at least `at_least`
 /// that leaves a piece of at least `floor` of the plan's `max`.
@@ -49,10 +49,10 @@ pub fn partition<B: Boundaries + ?Sized, M: Measure + ?Sized>(
 }
 
 /// Overlapping windows of `text`, each cut as `partition` cuts and trimmed
-/// of surrounding whitespace. The next one starts about `step` further on,
-/// at the latest break of the ladder's weakest strength up to there, or at
-/// the first one after it within the window. Starts increase, and every
-/// non-whitespace byte is in some window.
+/// of surrounding whitespace. The next one starts about `step` further on:
+/// at the latest break up to there of the first ladder rung that has one, or
+/// failing that at the rung's first break after it within the window. Starts
+/// increase, and every non-whitespace byte is in some window.
 pub fn windows<B: Boundaries + ?Sized, M: Measure + ?Sized>(
     text: &str,
     boundaries: &B,
@@ -61,7 +61,6 @@ pub fn windows<B: Boundaries + ?Sized, M: Measure + ?Sized>(
     step: usize,
 ) -> Vec<Span> {
     let cuts = Cuts::new(text, boundaries);
-    let weakest = plan.ladder.iter().map(|rung| rung.at_least).min();
     let mut spans = Vec::new();
     let mut start = skip_space(text, 0);
     while start < text.len() {
@@ -74,15 +73,78 @@ pub fn windows<B: Boundaries + ?Sized, M: Measure + ?Sized>(
             break;
         }
         let step_at = measure.reach(text, start, step).clamp(start, end);
-        let next = weakest
-            .and_then(|weakest| {
-                cuts.latest(start, step_at, weakest)
-                    .or_else(|| cuts.first(step_at, end, weakest))
+        let next = plan
+            .ladder
+            .iter()
+            .find_map(|rung| {
+                cuts.latest(start, step_at, rung.at_least)
+                    .or_else(|| cuts.first(step_at, end, rung.at_least))
             })
             .unwrap_or(step_at);
         start = skip_space(text, if next > start { next } else { end });
     }
     spans
+}
+
+/// `span` of `text` widened by up to `chars` chars on each side, each side to
+/// the farthest break of the first strength in `ladder` with one in reach; a
+/// side whose reach meets the text's edge takes the edge. Trimmed of
+/// surrounding whitespace.
+pub fn widen<B: Boundaries + ?Sized>(
+    text: &str,
+    boundaries: &B,
+    span: Span,
+    chars: usize,
+    ladder: &[Strength],
+) -> Span {
+    let from = text
+        .get(..span.start)
+        .and_then(|before| before.char_indices().rev().take(chars).last())
+        .map_or(span.start, |(at, _)| at);
+    let to = Chars.reach(text, span.end, chars);
+    let breaks: Vec<Break> = text
+        .get(from..to)
+        .map(|piece| boundaries.breaks(piece))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|cut| Break {
+            at: from + cut.at,
+            strength: cut.strength,
+        })
+        .collect();
+    let start = if from == 0 {
+        0
+    } else {
+        ladder
+            .iter()
+            .find_map(|&at_least| {
+                breaks
+                    .iter()
+                    .find(|cut| cut.at <= span.start && cut.strength >= at_least)
+                    .map(|cut| cut.at)
+            })
+            .unwrap_or(span.start)
+    };
+    let end = if to == text.len() {
+        to
+    } else {
+        ladder
+            .iter()
+            .find_map(|&at_least| {
+                breaks
+                    .iter()
+                    .rev()
+                    .find(|cut| cut.at >= span.end && cut.strength >= at_least)
+                    .map(|cut| cut.at)
+            })
+            .unwrap_or(span.end)
+    };
+    let start = skip_space(text, start);
+    let end = start
+        + text
+            .get(start..end)
+            .map_or(0, |piece| piece.trim_end().len());
+    start..end
 }
 
 /// The breaks of one text, searched by offset.

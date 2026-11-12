@@ -1,6 +1,7 @@
 //! One claim judged alone, and which of its page's passages the judge was
 //! shown when the whole page did not fit its window.
 use super::*;
+use crate::reference_collection::PassageKind;
 use lattice_core::application::services::claim_verification::ANSWER_ROOM_TOKENS;
 
 /// The order a claim's check needs `page`'s passages in, most first, as
@@ -8,11 +9,11 @@ use lattice_core::application::services::claim_verification::ANSWER_ROOM_TOKENS;
 /// runs) lead, then retrieved ones by score. A page too long for the judge
 /// loses passages from the end of this order.
 pub(crate) fn ranking(page: &[EvidencePassage]) -> Vec<usize> {
-    let placed = |passage: &EvidencePassage| match passage.retrieval_kind.as_str() {
-        CITED => 0,
-        evidence_selection::RESEARCHED => 1,
-        "user_selected" => 2,
-        "execution" => 3,
+    let placed = |passage: &EvidencePassage| match passage.kind() {
+        PassageKind::Cited => 0,
+        PassageKind::Researched => 1,
+        PassageKind::UserSelected => 2,
+        PassageKind::Run => 3,
         _ => 4,
     };
     let mut order: Vec<(usize, &EvidencePassage)> = page.iter().enumerate().collect();
@@ -83,12 +84,8 @@ pub(crate) async fn judge_in_order(
 ) -> Judged {
     const TOO_LONG: &str =
         "The statement and its first passage do not fit the statement check in this model's context window.";
-    let checker = ClaimChecker::new(
-        llm,
-        SamplingOverride::deterministic(),
-        CHECKER_OUTPUT_TOKENS,
-        CheckPolicy::Strict,
-    );
+    let checker =
+        ClaimChecker::for_policy(llm, SamplingOverride::deterministic(), CheckPolicy::Strict);
     // The positions shown when the `kept` most needed passages are, in page
     // order, and those passages' texts in reading order.
     let shown = |kept: usize| {
@@ -159,7 +156,7 @@ pub(crate) async fn judge_in_order(
             ..
         } = refusal
         else {
-            return Judged::unanswered(ClaimJudgment::from_request_error(refusal), positions);
+            return Judged::unanswered(ClaimJudgment::of_error(refusal), positions);
         };
         if kept == 0 {
             return Judged::unanswered(unchecked(TOO_LONG), Vec::new());

@@ -9,7 +9,8 @@
 //! the checks keep per unit stays valid, and the last step takes them out in
 //! code and moves the report and the ledger to the lesson's new numbering.
 use super::claim_ledger::ClaimLedger;
-use super::repair_work::rejected;
+use super::repair::accept_edits;
+use super::repair_work::unmade;
 use super::*;
 use crate::dto::LearningSourceDto;
 use crate::generation::{parse_json, split_check, teaching_sentences};
@@ -17,6 +18,9 @@ use crate::lessons::copied_wording::Wording;
 use crate::lessons::shape::{LessonShape, ShapePolicy};
 use crate::lessons::text_edits;
 use crate::review_findings::{site_sha256, FindingSite};
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::domain::learning::claim_review::ClaimId;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -238,22 +242,12 @@ impl LessonVerificationReport {
     }
 }
 
-/// The pointer to a unit of a lesson: a section, or a question after them.
-fn unit_pointer(lesson: &Value, unit: usize) -> Option<String> {
-    let blocks = lesson.get("blocks")?.as_array()?.len();
-    Some(if unit < blocks {
-        format!("/blocks/{unit}")
-    } else {
-        format!("/questions/{}", unit - blocks)
-    })
-}
-
 fn unit_at(lesson: &Value, unit: usize) -> Option<&Value> {
-    lesson.pointer(&unit_pointer(lesson, unit)?)
+    lesson.pointer(&FindingSite::in_candidate(lesson, unit).pointer()?)
 }
 
 fn set_unit(lesson: &mut Value, unit: usize, section: Value) -> bool {
-    let Some(pointer) = unit_pointer(lesson, unit) else {
+    let Some(pointer) = FindingSite::in_candidate(lesson, unit).pointer() else {
         return false;
     };
     match lesson.pointer_mut(&pointer) {
@@ -268,8 +262,8 @@ fn set_unit(lesson: &mut Value, unit: usize, section: Value) -> bool {
 /// A section's title, or a question's prompt: what a record of it is checked
 /// against.
 pub(super) fn unit_label(lesson: &Value, unit: usize) -> Option<String> {
-    let blocks = lesson.get("blocks")?.as_array()?.len();
-    let field = if unit < blocks { "title" } else { "prompt" };
+    let (list, _) = FindingSite::in_candidate(lesson, unit).array()?;
+    let field = if list == "blocks" { "title" } else { "prompt" };
     unit_at(lesson, unit)?
         .get(field)?
         .as_str()
@@ -309,21 +303,18 @@ pub(super) fn restore_units(
 /// The sections that took cuts and are left with too little to teach, by the
 /// shape policy's measure.
 fn too_little(lesson: &Value, cuts: &Cuts, shape: &dyn ShapePolicy) -> Vec<usize> {
-    let blocks = lesson
-        .get("blocks")
-        .and_then(Value::as_array)
-        .map_or(0, Vec::len);
     cuts.taken
         .iter()
-        .filter(|(unit, _)| **unit < blocks)
         .filter(|(unit, taken)| {
-            shape.too_little(
-                lesson
-                    .pointer(&format!("/blocks/{unit}/body"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-                taken.answer_lost,
-            )
+            let site = FindingSite::in_candidate(lesson, **unit);
+            site.array().is_some_and(|(list, _)| list == "blocks")
+                && shape.too_little(
+                    site.field_pointer("body")
+                        .and_then(|pointer| lesson.pointer(&pointer))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                    taken.answer_lost,
+                )
         })
         .map(|(unit, _)| *unit)
         .collect()
@@ -469,12 +460,7 @@ pub(super) fn gaps(field: &str, before: &str, after: &str) -> Vec<Gap> {
 /// The place `after` lost a code block `before` held at, with the sentences
 /// kept beside it.
 pub(super) fn gap_around_code(field: &str, before: &str, after: &str) -> Vec<Gap> {
-    let shared: usize = before
-        .chars()
-        .zip(after.chars())
-        .take_while(|(a, b)| a == b)
-        .map(|(a, _)| a.len_utf8())
-        .sum();
+    let shared = lattice_core::shared::text::same_text::common_prefix(before, after);
     let before_it = before
         .get(..shared)
         .and_then(|head| teaching_sentences(head).pop());
@@ -489,6 +475,14 @@ pub(super) fn gap_around_code(field: &str, before: &str, after: &str) -> Vec<Gap
         before: before_it,
         after: after_it,
     }]
+}
+
+/// What a flow repair is asked: the edits of the sentences beside a gap.
+struct FlowRepair;
+
+impl Contract for FlowRepair {
+    const ID: ContractId = ContractId::new("flow-repair");
+    type Input = PromptInput;
 }
 
 /// One section's flow repair: the section with the edits the model gave for
@@ -542,57 +536,48 @@ async fn mend_section(
         ("questions", json!({"blocks":[],"questions":[section]}))
     };
     let system = format!("{FLOW} {}", text_edits::INSTRUCTIONS);
-    let raw = {
-        let _model_call =
-            crate::lesson_progress::model_call(crate::lesson_progress::Term::FlowRepair);
-        crate::generation::complete_json(
-            llm,
-            &system,
-            local.to_string(),
-            text_edits::schema_for(&original, schema),
-            output_tokens,
-        )
-        .await?
-    };
-    let reply: Value = parse_json(&raw)?;
-    let asked = |key: &str| {
-        reply
-            .get(key)
-            .and_then(Value::as_array)
-            .is_some_and(|items| !items.is_empty())
-    };
-    if !asked("edits") && !asked("citations") {
-        return Ok(None);
-    }
-    let repaired = match text_edits::apply_in(&original, &raw, lesson, wording) {
-        Ok(repaired) => repaired,
-        Err(error) if rejected(&error) => {
-            tracing::info!(%error, "claim.state: a flow repair's edits could not stand; the section keeps the text as cut");
-            return Ok(None);
-        }
-        Err(error) => return Err(error),
-    };
+    let prompt = local.to_string();
+    let call = ContractCall::of::<FlowRepair>(&PromptInput {
+        system: system.clone(),
+        prompt: prompt.clone(),
+    })?;
+    let request = crate::model_call::structured(
+        &system,
+        prompt,
+        text_edits::schema_for(&original, schema),
+        output_tokens,
+    );
+    let _model_call = crate::lesson_progress::model_call(crate::lesson_progress::Term::FlowRepair);
+    let (repaired, _) = crate::lessons::structured_call::complete_checked_request(
+        llm,
+        &call,
+        request,
+        None,
+        None,
+        |raw| {
+            accept_edits(
+                raw,
+                (&original, lesson, wording),
+                (schema, list),
+                (&targets, protected),
+            )
+        },
+    )
+    .await?;
     let pointer = format!("/{list}/0");
-    let (Some(before), Some(after)) = (original.pointer(&pointer), repaired.pointer(&pointer))
+    let (Some(before), Some(confined)) = (original.pointer(&pointer), repaired.pointer(&pointer))
     else {
         return Ok(None);
     };
-    let confined = confine(before, after, &targets, protected)?.section;
     if crate::generation::reads_as_part(before, block)
-        && !crate::generation::reads_as_part(&confined, block)
+        && !crate::generation::reads_as_part(confined, block)
     {
         tracing::info!(
             "claim.state: a flow repair left the section no lesson; it keeps the text as cut"
         );
         return Ok(None);
     }
-    Ok((confined != *before).then_some(confined))
-}
-
-/// Whether a flow repair failed in what the model answered, so that the
-/// section keeps its text as cut, rather than in an outage or a cancellation.
-fn unusable(error: &AppError) -> bool {
-    rejected(error) || matches!(error, AppError::ModelAnswerUnusable(_))
+    Ok((confined != before).then(|| confined.clone()))
 }
 
 /// What the lesson needs once nothing is left for the checks.
@@ -687,7 +672,7 @@ pub(super) async fn settle(
         .await
         {
             Ok(outcome) => outcome,
-            Err(error) if unusable(&error) => {
+            Err(error) if unmade(&error) => {
                 tracing::info!(unit, %error, "claim.state: a flow repair could not be used; the section keeps the text as cut");
                 None
             }

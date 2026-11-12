@@ -107,7 +107,7 @@ pub struct TeachingFindingDto {
     pub site: TeachingFindingSiteDto,
     /// Zero-based section or question index; null for the whole lesson.
     pub unit_index: Option<u32>,
-    /// "Section 3: Loops", "Question 2" or "Whole lesson".
+    /// "Section 3 · Loops", "Question 2" or "The whole lesson".
     pub unit_title: String,
     /// What is wrong, in plain words.
     pub summary: String,

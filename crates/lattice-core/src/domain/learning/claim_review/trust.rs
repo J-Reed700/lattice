@@ -13,7 +13,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{ClaimLedgerEntry, ClaimState, ReopenCause, VerdictKind};
+use super::{ClaimLedgerEntry, VerdictKind};
 use crate::domain::provenance::{
     decide, overturn, resolve_all, AddedBy, Available, ClaimKind, ClaimProfile, ClusterId,
     Contrary, Decision, EffectiveBars, LabelSource, Outcome, Overturn, Support, TrustLevel,
@@ -194,7 +194,7 @@ pub fn trust_outcomes(
     }
     let label_source = match verdict {
         TrustVerdict::Confirm => LabelSource::UserConfirm,
-        TrustVerdict::Remove | TrustVerdict::Edit if verifier_disputed(entry.state()) => {
+        TrustVerdict::Remove | TrustVerdict::Edit if entry.state().verifier_disputed() => {
             LabelSource::VerifierDisagree
         }
         TrustVerdict::Remove => LabelSource::UserRemove,
@@ -216,23 +216,6 @@ pub fn trust_outcomes(
             label_source,
         })
         .collect()
-}
-
-/// The Verifier disputed the claim and the user has not resolved it since.
-fn verifier_disputed(state: &ClaimState) -> bool {
-    matches!(
-        state,
-        ClaimState::Open {
-            kind: VerdictKind::Disputed { .. },
-            ..
-        } | ClaimState::Queued {
-            kind: VerdictKind::Disputed { .. },
-            ..
-        } | ClaimState::Reopened {
-            cause: ReopenCause::VerifierDispute,
-            ..
-        }
-    )
 }
 
 /// Each supporting cluster's best support and the level the gate counted

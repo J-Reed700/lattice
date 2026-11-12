@@ -18,10 +18,20 @@ use crate::persistence::db;
 use crate::repository::LearningRepository;
 use lattice_core::application::ports::llm_port::InferencePriority;
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::{Database, Transactions};
 use serde_json::json;
 use std::collections::HashSet;
+
+struct ChangeEntries;
+
+impl Contract for ChangeEntries {
+    const ID: ContractId = ContractId::new("course-plan-change");
+    type Input = PromptInput;
+}
 
 /// The `task` of a request to change planned topics.
 pub(crate) const CHANGE_TASK: &str =
@@ -211,15 +221,19 @@ pub async fn change_entries(
         .iter()
         .map(|lesson| lesson.lesson_id.as_str())
         .collect();
-    let mut call = model_call::structured(
+    let prompt = change_prompt(&program, &plan, &request)?;
+    let call = ContractCall::of::<ChangeEntries>(&PromptInput {
+        system: CHANGE_SYSTEM.to_owned(),
+        prompt: prompt.clone(),
+    })?;
+    let mut asked = model_call::structured(
         CHANGE_SYSTEM,
-        change_prompt(&program, &plan, &request)?,
+        prompt,
         entries_schema(&ids),
         PLAN_BASE_TOKENS + PLAN_TOKENS_PER_LESSON * ids.len(),
-        "low",
     );
-    call.call.priority = InferencePriority::Interactive;
-    let changed = complete_checked_request(llm, call, None, None, |raw| {
+    asked.call.priority = InferencePriority::Interactive;
+    let changed = complete_checked_request(llm, &call, asked, None, None, |raw| {
         let answer = parse_entries(raw, &ids, "each lesson to change")?;
         answer.lessons.iter().try_for_each(check_topics)?;
         Ok(answer)

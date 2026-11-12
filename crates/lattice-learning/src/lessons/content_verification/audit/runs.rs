@@ -91,17 +91,6 @@ pub struct AuditRun {
     pub finished_at: Option<i64>,
 }
 
-impl AuditRun {
-    /// The kind of error the last batch failed with, when the last batch
-    /// failed: no batch has completed since.
-    pub(crate) fn last_failure(&self) -> Option<&str> {
-        self.batches
-            .last()
-            .filter(|batch| batch.outcome == BatchOutcome::Failed)
-            .and_then(|batch| batch.error_code.as_deref())
-    }
-}
-
 #[async_trait]
 pub(crate) trait AuditRunStore: Send + Sync {
     /// Opens the run for `key` (or reopens it, keeping its batches) as running.
