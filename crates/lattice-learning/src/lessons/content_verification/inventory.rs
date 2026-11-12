@@ -680,7 +680,7 @@ mod tests {
             ]),
             fixture_response(vec![answer(1, "unit-1-passage-0")]),
         ]);
-        let error = extract(&model, &two_sections()).await.unwrap_err();
+        let error = extract(&model, &two_sections()).await.err().unwrap();
         assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error}");
         assert!(error.to_string().contains("Unit 0 needs an inventory"));
         assert!(!error.to_string().contains("Unit 1"), "{error}");
