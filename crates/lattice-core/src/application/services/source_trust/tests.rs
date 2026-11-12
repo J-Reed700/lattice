@@ -427,3 +427,30 @@ fn every_schema_names_only_wire_values() {
         .iter()
         .any(|n| n == "documentation"));
 }
+
+#[tokio::test]
+async fn a_source_trust_retry_quotes_why_the_reply_failed() {
+    let llm = Scripted::new(WINDOW, &["not json", PSF]);
+    judge_standing(
+        &llm,
+        &page("asyncio"),
+        &ContentEvidence::default(),
+        TrackRecord::default(),
+    )
+    .await
+    .unwrap();
+    let sent = llm.sent.lock().unwrap();
+    assert_eq!(sent.len(), 2);
+    let asked_again = sent[1]
+        .input
+        .iter()
+        .map(|item| match item {
+            crate::application::ports::llm_port::CompletionInput::Message { content, .. } => {
+                content.as_str()
+            }
+            _ => "",
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(asked_again.contains("not the schema"), "{asked_again}");
+}
