@@ -4,6 +4,7 @@
 //! not. A match is support, with the passages around it as evidence. Anything
 //! else, including a quotation that is not found, goes to the model's check.
 use super::*;
+use crate::lessons::same_text;
 
 /// Marks a quotation uses for words it leaves out.
 const ELLIPSES: &[&str] = &["[\u{2026}]", "[...]", "\u{2026}", "..."];
@@ -83,8 +84,11 @@ pub(super) fn settle(
     let mut spans = Vec::new();
     let mut from = 0;
     for part in parts {
-        let Some((start, end)) =
-            crate::outline_citations::caseless_quote_span(&source.excerpt, part, from)
+        let Some((start, end)) = source
+            .excerpt
+            .get(from..)
+            .and_then(|rest| same_text::find(rest, part))
+            .map(|(start, end)| (from + start, from + end))
         else {
             return Ok(None);
         };

@@ -2,23 +2,26 @@
 //! Ground model findings before they can drive a lesson rewrite.
 use crate::generation;
 use crate::lessons::structured_call::{complete_checked_request, CallKind, ReasonFirst};
+use crate::model_call::ErrorClass;
 use crate::reference_collection::{item_tokens, ReferenceCollection, ReferencePassage};
 use crate::review_findings::{FindingSite, ReviewFinding};
 use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::protocol;
 use lattice_core::shared::protocol::Protocol;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 /// The answer's reservation; inside a job the answer may take what the
 /// window leaves.
 const OUTPUT_TOKENS: usize = 6000;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 mod answer_schema;
@@ -36,7 +39,15 @@ const DRAFT_BRIEF: &str = "For each proposed finding, say what it claims, which 
 // that this protocol ran, even though the intended citation rules are the same.
 pub(super) const POLICY: Protocol = protocol!("review-finding-protocol", 6);
 
-#[derive(Deserialize)]
+/// The model call that decides which review findings the evidence establishes.
+pub(crate) struct ReviewEvidence;
+
+impl Contract for ReviewEvidence {
+    const ID: ContractId = ContractId::new("review-evidence");
+    type Input = PromptInput;
+}
+
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Finding {
     issue_id: String,
@@ -51,20 +62,20 @@ struct Finding {
     left_to: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Decisions {
     decisions: Vec<Finding>,
 }
 
-#[derive(Deserialize, PartialEq, Clone, Copy)]
+#[derive(Debug, Deserialize, PartialEq, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum Verdict {
     Actionable,
     NotEstablished,
 }
 
-#[derive(Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum Basis {
     ExternalFact,
@@ -176,22 +187,13 @@ impl Checked {
     }
 }
 
-/// A decision that kept the protocol: its verdict and what it made of its
-/// finding.
-type Kept = (Verdict, Ruling);
-
-/// What `raw` makes of the findings. A decision that breaks the protocol fails
-/// the answer, so it is asked for again; on the `last` answer such a decision
-/// gives way to one an earlier answer reached on the same verdict within the
-/// protocol (`kept`), or else leaves its finding not established, as the
-/// factual gate still runs.
+/// What `raw` makes of the findings. A decision that breaks the protocol
+/// fails the answer, which is asked for once more.
 fn accepted(
     raw: &str,
     issues: &[ReviewFinding],
     beside: Beside<'_>,
     evidence: &HashMap<String, EvidenceKind>,
-    last: bool,
-    kept: &mut HashMap<usize, Kept>,
 ) -> Result<Checked> {
     let Decisions { decisions } = generation::parse_json(raw)?;
     let mut answers: HashMap<&str, Vec<&Finding>> = HashMap::new();
@@ -202,56 +204,34 @@ fn accepted(
             .push(decision);
     }
     let keys: Vec<String> = (0..issues.len()).map(|i| format!("issue-{i}")).collect();
-    if !last {
-        let mut problems: Vec<String> = keys
-            .iter()
-            .filter_map(|key| match answers.get(key.as_str()).map_or(0, Vec::len) {
-                1 => None,
-                0 => Some(format!("{key} has no decision.")),
-                count => Some(format!("{key} has {count} decisions.")),
-            })
-            .collect();
-        let mut unknown: Vec<&str> = answers
-            .keys()
-            .copied()
-            .filter(|id| !keys.iter().any(|key| key == id))
-            .collect();
-        unknown.sort_unstable();
-        problems.extend(unknown.iter().map(|id| format!("{id} is not an issue.")));
-        if !problems.is_empty() {
-            return Err(invalid_answer(&problems));
-        }
+    let mut problems: Vec<String> = keys
+        .iter()
+        .filter_map(|key| match answers.get(key.as_str()).map_or(0, Vec::len) {
+            1 => None,
+            0 => Some(format!("{key} has no decision.")),
+            count => Some(format!("{key} has {count} decisions.")),
+        })
+        .collect();
+    let mut unknown: Vec<&str> = answers
+        .keys()
+        .copied()
+        .filter(|id| !keys.iter().any(|key| key == id))
+        .collect();
+    unknown.sort_unstable();
+    problems.extend(unknown.iter().map(|id| format!("{id} is not an issue.")));
+    if !problems.is_empty() {
+        return Err(invalid_answer(&problems));
     }
     let mut checked = Checked::default();
     let mut broken = None;
     for (index, (issue, key)) in issues.iter().zip(&keys).enumerate() {
-        let finding = match answers.get(key.as_str()).map(|found| found.as_slice()) {
-            Some([only]) => Some(*only),
-            _ => None,
-        };
-        let decided = finding.ok_or_else(invalid).and_then(|finding| {
-            decided(index, issue, finding, beside, evidence)
-                .map(|established| (finding.verdict, established))
-        });
-        match decided {
-            Ok((verdict, ruling)) => {
-                checked.add(ruling.clone());
-                kept.insert(index, (verdict, ruling));
-            }
-            Err(error) if last => {
-                let earlier = kept.get(&index).filter(|(verdict, _)| {
-                    finding.is_some_and(|finding| finding.verdict == *verdict)
-                });
-                match earlier {
-                    Some((_, ruling)) => {
-                        tracing::info!(index, %error, "A review decision broke the protocol when asked again; the first answer's on the same verdict stands");
-                        checked.add(ruling.clone());
-                    }
-                    None => {
-                        tracing::warn!(index, %error, "A review decision broke the protocol twice; its finding is not established");
-                    }
-                }
-            }
+        let ruling = answers
+            .get(key.as_str())
+            .and_then(|found| found.first())
+            .ok_or_else(invalid)
+            .and_then(|finding| decided(index, issue, finding, beside, evidence));
+        match ruling {
+            Ok(ruling) => checked.add(ruling),
             Err(error) => {
                 broken.get_or_insert(error);
             }
@@ -511,6 +491,19 @@ pub async fn check(
         .enumerate()
         .map(|(i, issue)| json!({"id":format!("issue-{i}"),"proposal":issue}))
         .collect();
+    let prompt_with = |reference_parts: &[Value]| {
+        with_recorded(
+            json!({"proposals":proposals,"requirements":{"id":"requirements","content":requirements},"candidateParts":candidate_parts,"referencePassages":reference_parts}),
+            &check_list,
+            &recorded_list,
+        )
+        .to_string()
+    };
+    let call = ContractCall::of::<ReviewEvidence>(&PromptInput {
+        system: system.to_string(),
+        prompt: prompt_with(&[]),
+    })?;
+    let call = &call;
     // The evidence ids of the request last built, which is the one sent.
     let built = Mutex::new(HashMap::new());
     let build = |room: usize| {
@@ -533,14 +526,9 @@ pub async fn check(
             .collect();
         let mut ids: Vec<_> = evidence.keys().cloned().collect();
         ids.sort();
-        let prompt = with_recorded(
-            json!({"proposals":proposals,"requirements":{"id":"requirements","content":requirements},"candidateParts":candidate_parts,"referencePassages":reference_parts}),
-            &check_list,
-            &recorded_list,
-        );
         let request = crate::model_call::structured(
             &system,
-            prompt.to_string(),
+            prompt_with(&reference_parts),
             schema(&keys, &ids, &recorded_ids, &check_ids),
             OUTPUT_TOKENS,
         );
@@ -549,19 +537,17 @@ pub async fn check(
     };
     // Off by default: a verdict and one sentence gain little from a prose
     // step.
-    let accepted = generation::send_packed(
+    let sent = generation::send_packed(
         llm,
+        call,
         room,
         build,
         |request| {
             let evidence = built.lock().unwrap_or_else(PoisonError::into_inner).clone();
             async move {
-                // The answer asked for again is the last; `kept` holds the
-                // decisions before it that kept the protocol.
-                let answers = AtomicUsize::new(0);
-                let kept = Mutex::new(HashMap::new());
                 complete_checked_request(
                     llm,
+                    call,
                     request,
                     progress,
                     Some(ReasonFirst {
@@ -569,11 +555,7 @@ pub async fn check(
                         subject: "the review-finding check",
                         brief: DRAFT_BRIEF,
                     }),
-                    |raw| {
-                        let last = answers.fetch_add(1, Ordering::Relaxed) > 0;
-                        let mut kept = kept.lock().unwrap_or_else(PoisonError::into_inner);
-                        accepted(raw, issues, beside, &evidence, last, &mut kept)
-                    },
+                    |raw| accepted(raw, issues, beside, &evidence),
                 )
                 .await
             }
@@ -581,7 +563,15 @@ pub async fn check(
         "the review-finding check",
         "The review findings and the lesson they are about do not fit",
     )
-    .await?;
+    .await;
+    let accepted = match sent {
+        Ok(checked) => checked,
+        Err(error) if ErrorClass::of(&error) == ErrorClass::Unusable => {
+            tracing::warn!(%error, "The review-finding check was unreadable after its correction; no finding is established");
+            Checked::default()
+        }
+        Err(error) => return Err(error),
+    };
     crate::lesson_progress::stage(format!(
         "Checked review findings: {} need repairs; {} were not established",
         accepted.established.len(),

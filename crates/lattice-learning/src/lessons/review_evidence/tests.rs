@@ -19,21 +19,13 @@ fn proposal(text: &str) -> Vec<ReviewFinding> {
     vec![ReviewFinding::reviewer(1, None, text)]
 }
 
-/// The check of a first answer, which a broken decision fails.
+/// The check of an answer, which a broken decision fails.
 fn first(
     raw: &str,
     issues: &[ReviewFinding],
     evidence: &HashMap<String, EvidenceKind>,
 ) -> Result<Vec<ReviewFinding>> {
-    accepted(
-        raw,
-        issues,
-        Beside::NONE,
-        evidence,
-        false,
-        &mut HashMap::new(),
-    )
-    .map(|checked| checked.established)
+    accepted(raw, issues, Beside::NONE, evidence).map(|checked| checked.established)
 }
 
 fn placed(findings: Vec<ReviewFinding>) -> Vec<(String, Option<FindingSite>)> {
@@ -152,10 +144,7 @@ async fn a_decision_broken_again_leaves_its_finding_not_established() -> Result<
     )
     .await?
     .established;
-    assert_eq!(
-        placed(established),
-        vec![(issues[1].note.clone(), Some(FindingSite::Section(0)))]
-    );
+    assert!(established.is_empty());
     assert_eq!(model.prompts.lock().unwrap().len(), 2);
     Ok(())
 }
@@ -189,35 +178,6 @@ async fn established_from(
         .into_iter()
         .map(|finding| finding.note)
         .collect())
-}
-
-#[tokio::test]
-async fn a_decision_broken_only_when_asked_again_keeps_the_grounded_one_the_first_answer_gave(
-) -> Result<()> {
-    let decision = |verdict: &str, ids: Value, requirement: Value| json!({"verdict":verdict,"basis":"lesson_contract","evidenceIds":ids,"requirementId":requirement,"partId":"blocks-0","reason":"The exercise does not ask for what the contract requires."});
-    let grounded = decision("actionable", json!(["blocks-0"]), json!("requirements"));
-    let uncited = decision("actionable", json!([]), json!("requirements"));
-    let issues = [
-        proposal("The exercise omitted its required deliverable."),
-        proposal("The exercise never asks for the recorded state."),
-    ]
-    .concat();
-    let notes: Vec<String> = issues.iter().map(|issue| issue.note.clone()).collect();
-    // The first answer cites nothing for issue-0, so it is asked for
-    // again; asked again, it cites nothing for issue-1, which the first
-    // answer grounded.
-    let first = reply(&[("issue-0", uncited.clone()), ("issue-1", grounded.clone())]);
-    let second = reply(&[("issue-0", grounded.clone()), ("issue-1", uncited)]);
-    assert_eq!(established_from(&first, &second, &issues).await?, notes);
-    // An answer asked for again that breaks the protocol on another
-    // verdict does not take the first answer's.
-    let withdrawn = decision("not_established", json!([]), json!("requirements"));
-    let second = reply(&[("issue-0", grounded), ("issue-1", withdrawn)]);
-    assert_eq!(
-        established_from(&first, &second, &issues).await?,
-        notes[..1].to_vec()
-    );
-    Ok(())
 }
 
 #[tokio::test]
@@ -1047,4 +1007,38 @@ fn the_answer_schema_does_not_cap_evidence_ids() {
     let answer = schema(&["issue-0".to_string()], &ids, &[], &[]);
     let cited = &answer["properties"]["decisions"]["items"]["properties"]["evidenceIds"];
     assert!(cited.get("maxItems").is_none(), "{cited}");
+}
+
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for ReviewEvidence
+{
+    type Answer = Decisions;
+
+    fn render(answer: &Decisions) -> String {
+        serde_json::to_string(answer).unwrap_or_default()
+    }
+
+    fn read(text: &str) -> Result<Decisions> {
+        generation::parse_json(text)
+    }
+}
+
+#[test]
+fn a_review_evidence_answer_reads_back_as_rendered() -> Result<()> {
+    let answer = Decisions {
+        decisions: vec![Finding {
+            issue_id: "issue-0".into(),
+            verdict: Verdict::Actionable,
+            basis: Basis::LessonContract,
+            evidence_ids: vec!["blocks-0".into()],
+            requirement_id: Some("requirements".into()),
+            reason: "The exercise omits the deliverable.".into(),
+            part_id: Some("blocks-0".into()),
+            left_to: None,
+        }],
+    };
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        ReviewEvidence,
+    >(&answer);
+    Ok(())
 }
