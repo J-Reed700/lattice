@@ -320,6 +320,20 @@ fn a_claim_the_answer_leaves_out_has_no_verdict_and_prose_is_unreadable() {
 }
 
 #[test]
+fn a_verifier_quotation_spelled_differently_is_recorded_in_the_passages_words() {
+    let judged = read_one(json!({"verdict": "supported", "reason": "says so",
+        "passagesUsed": [{"passage": "P1", "quote": "PURE  water BOILS at 100 °C at sea level."}]}));
+
+    assert_eq!(
+        judged.result,
+        CheckResult::Supported {
+            source_version_id: "v1".into(),
+            supporting_quote: "Pure water boils at 100 °C at sea level.".into()
+        }
+    );
+}
+
+#[test]
 fn quotes_match_ignoring_case_spacing_and_typography_but_never_when_empty() {
     let text = "It is \u{201C}boiling\u{201D} \u{2014} at 100\n°C.";
     assert!(occurs(text, "it is \"BOILING\" - at 100 °C."));
