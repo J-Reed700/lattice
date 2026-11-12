@@ -1,5 +1,6 @@
 //! Lessons capabilities owned by Learning Studio.
 
+mod block_kinds;
 pub(crate) mod call_plan;
 pub mod claim_reviews;
 pub mod content_verification;
