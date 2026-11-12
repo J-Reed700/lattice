@@ -7,7 +7,7 @@
 //! publishing.
 use super::validate_text;
 use crate::assessment::assessment_engine::checks::{
-    answer_in_prompt, choice_faults, ChoiceFault, CHOICES_PER_QUESTION,
+    answer_in_prompt, answer_in_prompt_message, choice_faults, ChoiceFault, CHOICES_PER_QUESTION,
 };
 use crate::content_verification::{names_a_source, quoted_wording};
 use crate::dto::LearningBlockKind;
@@ -528,7 +528,7 @@ fn choice_findings(
     let words =
         key.and_then(|key| answer_in_prompt(text(question, "prompt"), &[key.as_str()], &others));
     if let Some(words) = words {
-        let message = format!("The question contains its answer: \u{201c}{words}\u{201d}.");
+        let message = answer_in_prompt_message(&words);
         found.push(structure(
             Rule::AnswerInPrompt,
             site,
