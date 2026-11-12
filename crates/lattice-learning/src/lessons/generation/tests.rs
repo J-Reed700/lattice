@@ -762,7 +762,7 @@ fn a_rendered_outline_meets_the_outline_schema() {
     let outline: outline::GeneratedOutline =
         serde_json::from_value(json!({"modules":(0..modules).map(module).collect::<Vec<_>>()}))
             .unwrap();
-    let rendered: Value = serde_json::from_str(
+    let rendered: serde_json::Value = serde_json::from_str(
         &<outline::OutlineDescription as lattice_core::application::services::model_contract::test_support::RenderAnswer>::render(&outline),
     )
     .unwrap();
