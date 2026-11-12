@@ -176,3 +176,21 @@ fn a_dash_that_opens_a_sentence_inside_a_line_is_not_a_list_marker() {
     assert!(out.ends_with("Gamma holds."), "{out}");
     assert!(!out.contains("- Gamma"), "{out}");
 }
+
+#[test]
+fn a_cut_takes_only_the_place_it_records() {
+    let text = "Dup. Keep. Dup.";
+    assert_eq!(done(sentence(text, "Dup.")).as_deref(), Some("Keep. Dup."));
+    assert_eq!(cut_place(text, "Dup.").unwrap().sentence, "Dup.");
+}
+
+#[test]
+fn a_quote_after_a_longer_fence_closes_is_cut() {
+    let text = "````\n```\nlet x = 1;\n````\nRust is fast.";
+    let out = done(sentence(text, "Rust is fast."));
+    assert!(
+        out.as_deref()
+            .is_some_and(|out| out.contains("let x = 1;") && !out.contains("Rust is fast.")),
+        "{out:?}"
+    );
+}
