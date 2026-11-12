@@ -18,11 +18,7 @@ use tracing::warn;
 use super::model::OcrModel;
 use super::server::{RunningServer, ServerLauncher, ServerProcess};
 use lattice_core::application::ports::OcrError;
-
-/// Installed name of the bundled server (tauri `externalBin`, triple
-/// stripped), and of the CPU-only build bundled on Windows and Linux.
-const BUNDLED_BIN: &str = "llama-server";
-const BUNDLED_CPU_BIN: &str = "llama-server-cpu";
+use lattice_core::shared::process::BoundCommand;
 
 /// Context per request: the page image costs about 1,250 tokens at the
 /// projector's default pixel cap, and a dense page reads back in about 900.
@@ -44,25 +40,13 @@ pub struct LlamaServerLauncher {
 }
 
 impl LlamaServerLauncher {
-    /// The builds bundled next to the app executable.
-    pub fn bundled() -> Self {
-        let dir = std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(Path::to_path_buf))
-            .unwrap_or_default();
-        let binaries = [BUNDLED_BIN, BUNDLED_CPU_BIN]
-            .into_iter()
-            .map(|name| dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)))
-            .collect();
-        Self::with_binaries(binaries)
-    }
-
     /// One explicit binary.
     pub fn with_binary(binary: PathBuf) -> Self {
         Self::with_binaries(vec![binary])
     }
 
-    fn with_binaries(binaries: Vec<PathBuf>) -> Self {
+    /// Builds to try in order: the first with GPU offload, the rest without.
+    pub fn with_binaries(binaries: Vec<PathBuf>) -> Self {
         Self {
             binaries,
             port: None,
@@ -91,7 +75,7 @@ impl LlamaServerLauncher {
         let api_key = new_api_key();
         let log = std::fs::File::create(&self.log_path)
             .map_err(|error| format!("cannot write {}: {error}", self.log_path.display()))?;
-        let mut child = tokio::process::Command::new(binary)
+        let mut child = BoundCommand::new(binary)
             .args(server_args(model, port, gpu_layers))
             // The key goes in the environment, not argv: argv is readable by
             // every process on the machine.
@@ -101,8 +85,8 @@ impl LlamaServerLauncher {
             // A file rather than a pipe: llama-server logs every request, and
             // an undrained pipe would eventually block it mid-page.
             .stderr(Stdio::from(log))
-            .kill_on_drop(true)
             .spawn()
+            .await
             .map_err(|error| format!("could not start {}: {error}", binary.display()))?;
         let endpoint = format!("http://127.0.0.1:{port}");
         match wait_ready(&mut child, &endpoint, &api_key).await {

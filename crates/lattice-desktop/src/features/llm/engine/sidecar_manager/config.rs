@@ -18,13 +18,30 @@ impl SidecarBinary {
     /// Whether this platform bundles [`SidecarBinary::Cpu`].
     pub const CPU_BUILD_BUNDLED: bool = cfg!(any(target_os = "windows", target_os = "linux"));
 
-    /// Installed sidecar name: what `sidecar()` spawns, and what logs,
-    /// diagnostics and error messages call this build.
+    /// Installed sidecar name: the file stem beside the app executable, and
+    /// what logs, diagnostics and error messages call this build.
     pub fn label(self) -> &'static str {
         match self {
             Self::Primary => SIDECAR_BIN,
             Self::Cpu => SIDECAR_CPU_BIN,
         }
+    }
+
+    /// The installed file's name: the label plus the platform's suffix.
+    pub fn file_name(self) -> String {
+        format!("{}{}", self.label(), std::env::consts::EXE_SUFFIX)
+    }
+
+    /// The installed file, beside the app executable.
+    pub fn installed_path(self) -> std::io::Result<PathBuf> {
+        let exe = tauri::utils::platform::current_exe()?;
+        let dir = exe.parent().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "the Lattice executable has no parent directory",
+            )
+        })?;
+        Ok(dir.join(self.file_name()))
     }
 
     pub(super) fn bundled() -> &'static [SidecarBinary] {
@@ -33,6 +50,14 @@ impl SidecarBinary {
         } else {
             &[Self::Primary]
         }
+    }
+
+    /// Where this platform's bundled builds are installed, the accelerated one first.
+    pub fn installed_paths() -> Vec<PathBuf> {
+        Self::bundled()
+            .iter()
+            .filter_map(|binary| binary.installed_path().ok())
+            .collect()
     }
 }
 

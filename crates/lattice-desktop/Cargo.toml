@@ -210,11 +210,6 @@ png = "0.18"
 windows = { version = "0.52", features = [
     "Win32_Storage_FileSystem",
     "Win32_Foundation",
-    # Job Objects provide cascading sidecar termination.
-    # Without this, a hard-killed Lattice main process leaves
-    # orphaned llama-server children running. The Job Object kernel
-    # primitive guarantees they die with us — even on segfault.
-    "Win32_System_JobObjects",
     "Win32_System_Threading",
 ] }
 winreg = "0.52"

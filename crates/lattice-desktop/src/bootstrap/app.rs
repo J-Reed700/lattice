@@ -79,7 +79,7 @@ async fn create_container(
 
     // Create container (always succeeds, AI optional). Builder-style
     // `with_app_handle` attaches the Tauri AppHandle so the sidecar
-    // dispatch path can spawn `llama-server` via tauri-plugin-shell.
+    // dispatch path can reach the sidecar registry it manages.
     Container::new(
         database,
         Some(app_handle.clone()),
