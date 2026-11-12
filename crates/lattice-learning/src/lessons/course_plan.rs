@@ -366,7 +366,7 @@ pub(crate) fn parse_entries(raw: &str, order: &[&str], subject: &str) -> Result<
 /// request as the fixtures render it: the system text, then the task.
 #[cfg(test)]
 pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
-    let request: Value = serde_json::from_str(prompt.rsplit("\n\n").next()?).ok()?;
+    let request = crate::lessons::content_verification::tests::fixture_task(prompt)?;
     if request["task"] != PLAN_TASK {
         return None;
     }

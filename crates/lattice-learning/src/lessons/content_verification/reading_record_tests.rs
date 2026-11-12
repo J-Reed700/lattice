@@ -16,7 +16,7 @@ use lattice_core::application::services::claim_verification::{
 };
 use lattice_core::domain::learning::acceptance::{
     decide, rewrite_ahead, start, AcceptancePolicy, End, Outcome, Position, Reading, Step, Taken,
-    Then, Walked,
+    Then, Walked, STANDARD_POLICY,
 };
 use lattice_core::domain::learning::claim_review::{
     text_sha256, Actor, Check, CheckResult, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation,
@@ -170,7 +170,7 @@ fn stepped(
     rewrite_ahead: bool,
 ) -> ClaimEvent {
     ClaimEvent::Stepped {
-        policy: "acceptance-v2".into(),
+        policy: STANDARD_POLICY.as_str().into(),
         step,
         outcome,
         then,

@@ -8,6 +8,7 @@ use lattice_core::application::contracts::web::{
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::shared::error::{AppError, ErrorClass, Result};
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::shared::ErrorCode;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -255,7 +256,7 @@ impl TracedWeb {
                 return result;
             }
             Err(error) => {
-                json!({"method":method,"key":key,"input":input,"ok":false,"error":error.to_string(),"variant":error.error_code()})
+                json!({"method":method,"key":key,"input":input,"ok":false,"error":error.to_string(),"variant":ErrorCode::from(error).to_string()})
             }
         };
         self.store(method, &key, summary, entry)?;

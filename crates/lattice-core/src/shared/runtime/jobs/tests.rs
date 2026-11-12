@@ -533,6 +533,81 @@ async fn the_same_failure_in_changing_words_still_ends_the_job() -> Result<()> {
     Ok(())
 }
 
+/// Fails attempt `n` with `errors[n]` (the last one from then on), deferring
+/// every failure.
+struct Sequence {
+    errors: Vec<AppError>,
+    attempts: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl JobHandler for Sequence {
+    async fn run(&self, _: &JobContext) -> Result<JobOutcome> {
+        let attempt = self
+            .attempts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(self.errors[attempt.min(self.errors.len() - 1)].clone())
+    }
+
+    fn failure(&self, _: &JobRecord, error: &AppError) -> JobFailure {
+        JobFailure::Defer(Deferral {
+            code: "deferred".into(),
+            message: error.to_string(),
+            progress_message: "Waiting".into(),
+            activity: None,
+        })
+    }
+}
+
+/// The finished job after deferring each failure of `errors` in turn.
+async fn deferred_through(errors: Vec<AppError>) -> Result<JobRecord> {
+    let runtime =
+        JobRuntime::with_poll_interval(Database::from(pool().await), Duration::from_millis(10));
+    runtime
+        .register(
+            KIND,
+            Arc::new(Sequence {
+                errors,
+                attempts: Default::default(),
+            }),
+            JobKindConfig::new(RecoveryPolicy::Requeue).backoff(Backoff {
+                initial: Duration::ZERO,
+                max: Duration::ZERO,
+            }),
+        )
+        .await?;
+    let id = runtime.submit(&new_job(KIND, "sequence", None)).await?.id;
+    let job = saved_once(&runtime, &id, |job| job.status.is_finished()).await;
+    runtime.close();
+    runtime.drain().await;
+    Ok(job)
+}
+
+#[tokio::test]
+async fn two_different_failures_with_nothing_saved_are_not_a_repeat() -> Result<()> {
+    let job = deferred_through(vec![
+        AppError::ModelAnswerUnusable("no json".into()),
+        AppError::AnswerCutOff("length".into()),
+        AppError::AnswerCutOff("length".into()),
+    ])
+    .await?;
+    assert_eq!(job.error_code.as_deref(), Some(REPEATED_FAILURE));
+    assert_eq!(job.retry_count, 2, "the third attempt repeated the second");
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_same_deferred_failure_twice_with_nothing_saved_is_a_repeat() -> Result<()> {
+    let job = deferred_through(vec![
+        AppError::ModelAnswerUnusable("no json".into()),
+        AppError::ModelAnswerUnusable("no json".into()),
+    ])
+    .await?;
+    assert_eq!(job.error_code.as_deref(), Some(REPEATED_FAILURE));
+    assert_eq!(job.retry_count, 1);
+    Ok(())
+}
+
 #[tokio::test]
 async fn cancelling_a_deferred_job_forgets_its_last_failure() -> Result<()> {
     let runtime =

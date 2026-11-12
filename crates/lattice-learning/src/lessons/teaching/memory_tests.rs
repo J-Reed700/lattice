@@ -5,6 +5,7 @@ use super::loop_tests::{
     context, part_a_is_wrong, parts_lesson, references, retitled, ByRequest, EXCERPT, INPUT,
 };
 use super::*;
+use crate::content_verification::tests::fixture_task;
 use crate::dto::LearningSourceDto;
 use crate::lesson_drafts;
 use crate::lessons::structured_call::{is_draft_request, task_messages};
@@ -151,11 +152,7 @@ impl LLMPort for Planning<'_> {
         if !system.starts_with(contract::SYSTEM) || is_draft_request(request) {
             return self.inner.complete(request).await;
         }
-        let sent: Value = user
-            .rsplit("\n\n")
-            .next()
-            .and_then(|text| serde_json::from_str(text).ok())
-            .unwrap_or(Value::Null);
+        let sent = fixture_task(user).unwrap_or(Value::Null);
         let ids: Vec<String> = sent
             .pointer("/thisLesson/planned")
             .and_then(Value::as_array)

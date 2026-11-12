@@ -22,6 +22,6 @@ pub use domain::DomainError;
 
 // Main error definitions
 mod types;
-pub use types::{server_cannot_start, AppError, ErrorResponse, Result};
+pub use types::{server_cannot_start, AppError, Result};
 mod context;
 pub use context::ResultExt;

@@ -119,7 +119,7 @@ for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'
           const turn = args as { conversationId: string; message: string; cancelOnly?: boolean };
           if (turn.conversationId !== 'tangent-1') throw new Error('Tangent question was sent to the main conversation');
           if (turn.cancelOnly) {
-            cancelPending?.({ code: 'INVALID_STATE', message: 'Generation cancelled' });
+            cancelPending?.({ code: 'CANCELLED', message: 'Generation cancelled by user.' });
             cancelPending = null;
             return { conversationId: turn.conversationId, messages: state.messages, contextUsed: 2 };
           }

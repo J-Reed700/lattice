@@ -837,7 +837,7 @@ fn a_restored_receipt_names_only_the_passages_its_judge_was_shown() {
         shown: Some(vec![0]),
         parts: Vec::new(),
     }
-    .finding(0, &claim, page.clone())
+    .restored(0, &claim, &page)
     .unwrap();
     assert_eq!(finding.evidence.len(), 1);
     assert_eq!(finding.evidence[0].text, "shown");

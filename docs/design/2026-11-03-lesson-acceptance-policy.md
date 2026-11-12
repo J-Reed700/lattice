@@ -78,7 +78,7 @@ A graph is nodes; a node is one step and its cost in model calls; its edges map 
 
 Outcomes of a reading, interpreted once per reading in `lattice-core` (§2.6): `Stands`, `StandsElsewhere` (on a passage it does not cite), `AllCommon` (the part-wise judge found every part common, none stated, guarded by the specifics test), `Unproven` (a specific nothing states; nothing supports it), `Refuted` (a passage, or every sample, says otherwise), `NeedsSource` (Common: a `needs_source` or a split with a `false`; Reasoning: an unfounded specific), `Unjudged`. Outcomes of a remedy: `Done`, `Saved`/`FoundNothing` (research), `Rewritten`/`NotApplied` (rewrite), `Cut`/`CannotCut`.
 
-Only `Refuted` shows a statement false, so only it leads to a `Rewrite` or a `Cut`. A reading that finds the sources silent (`Unproven`, `NeedsSource`) removes the citation it cannot confirm, or when nothing more can be tried ends the statement `Unverified`: it stays in the lesson as written, published not verified (policy `acceptance-v2`; `v1` rewrote and cut these).
+Only `Refuted` shows a statement false, so only it leads to a `Rewrite` or a `Cut`. A reading that finds the sources silent (`Unproven`, `NeedsSource`) removes the citation it cannot confirm, or when nothing more can be tried ends the statement `Unverified`: it stays in the lesson as written, published not verified (policy `acceptance-v2`; `v1` rewrote and cut these). A contradiction the statement's own citation names goes straight to its rewrite (policy `acceptance-v3`): `v2` sent it to research first, where a page without the cited passage read silent and dropped the citation, so the named contradiction was overruled by silence (6 of the 8 statements refuted at `s.read` in the 2026-11-12 Haiku round, 3 of them then passed as general knowledge).
 
 `Unjudged` is no edge of any graph: a reading whose answer cannot be read (after the judge's own second asking) leaves the statement where it is, to be read once more; a second unanswered reading of the same statement, at that node or any later one, stops the lesson with the honest reason the classes design gives (§3.2 there). One re-ask per statement in its life, not one per reading: the code today allows one per reading (`ClaimLedgerEntry::unjudged` counts a run), which the ceiling's `U` never counted. A rewrite the confinement could not apply is asked once more, told why, by its own node (`*.again`), and then takes the next rung.
 
@@ -88,7 +88,7 @@ The four graphs (`→ end X` is a terminal state; `⇒ Class` enters that class'
 
 | Node | Step | Calls | Outcomes |
 |---|---|---|---|
-| `s.read` | `Read(Parts)` on the passages of the cited sentence it restates, else its section's quote (every block carries one) | 1 | Stands → end Resolved · AllCommon → `s.uncite` the first time the statement changes class, `s.research` once it has · Unproven, Refuted → `s.research` |
+| `s.read` | `Read(Parts)` on the passages of the cited sentence it restates, else its section's quote (every block carries one) | 1 | Stands → end Resolved · AllCommon → `s.uncite` the first time the statement changes class, `s.research` once it has · Unproven → `s.research` · Refuted → `s.rewrite` |
 | `s.uncite` | `Uncite` | 0 | Done ⇒ Common |
 | `s.research` | `Research` | 0 | Saved, FoundNothing → `s.reread` |
 | `s.reread` | `Read(Page)` with what research saved | 1 | Stands → end Resolved · StandsElsewhere → `s.recite` · Refuted → `s.rewrite` · Unproven → `s.uncite` the first time the statement changes class, end Unverified once it has |

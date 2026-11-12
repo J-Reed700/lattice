@@ -90,7 +90,7 @@ impl Classes {
 
     pub(super) async fn respond(&self, prompt: &str) -> Result<String> {
         if prompt.starts_with("Extract lesson claims.") {
-            let data = context(prompt);
+            let data = fixture_task(prompt).unwrap();
             let units = data["units"].as_array().unwrap();
             return Ok(inventory::fixture_response(
                 units
@@ -117,8 +117,9 @@ impl Classes {
         }
         if prompt.starts_with("You sort statements extracted from a lesson") {
             self.asked.lock().unwrap().push("sort");
-            let statements: serde_json::Map<String, Value> =
-                serde_json::from_str(prompt.rsplit("\n\n").next().unwrap())?;
+            let Some(Value::Object(statements)) = fixture_task(prompt) else {
+                panic!("a JSON task");
+            };
             let answer: serde_json::Map<String, Value> = statements
                 .iter()
                 .map(|(id, statement)| {
@@ -166,7 +167,7 @@ impl Classes {
             self.rewrite,
         ) {
             self.asked.lock().unwrap().push("repair");
-            let data = context(prompt);
+            let data = fixture_task(prompt).unwrap();
             let body = data["candidate"]["blocks"][0]["body"].as_str().unwrap();
             return Ok(json!({"edits":[{"path":"/blocks/0/body","before":body,"after":body.replace(from, to)}]}).to_string());
         }

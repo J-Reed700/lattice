@@ -87,7 +87,7 @@ export async function installChatFixture(page: Page) {
         state.stopped = gate();
         // Stopped while searching, before the backend saved the question. Tauri
         // rejects with the serialized ApiError.
-        throw new Error(JSON.stringify({ code: 'INVALID_STATE', message: 'Generation was cancelled.' }));
+        throw new Error(JSON.stringify({ code: 'CANCELLED', message: 'Generation cancelled by user.' }));
       }
       state.messages = [
         { id: 'msg-question', conversationId: CONVERSATION.id, role: 'user', content: String(args.message), tokens: 14, status: 'completed', createdAt: STAMP, metadata: null },

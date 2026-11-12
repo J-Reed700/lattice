@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::test_support::candidate;
 use super::*;
+use crate::content_verification::tests::fixture_task;
 use crate::lessons::course_generation_tests::{ScriptedModel, Windowed};
 
 /// A first review of everything: what it reported.
@@ -414,7 +415,7 @@ fn verdict_entry(number: u32, verdict: &str, quote: &str) -> Value {
 
 fn sent(model: &ScriptedModel, call: usize) -> Value {
     let prompts = model.prompts.lock().unwrap();
-    serde_json::from_str(prompts[call].rsplit("\n\n").next().unwrap()).unwrap()
+    fixture_task(&prompts[call]).unwrap()
 }
 
 #[test]
@@ -473,11 +474,12 @@ async fn an_answer_that_leaves_an_id_out_is_corrected_by_a_complete_one() -> Res
 }
 
 #[tokio::test]
-async fn a_second_verdict_for_one_id_is_refused() {
+async fn a_second_verdict_for_one_id_is_refused_then_leaves_its_finding_as_it_stood() -> Result<()>
+{
     let asked = [asked(1, 0)];
-    let twice = |checks| json!({"openFindings":[verdict_entry(1, "resolved", ""), verdict_entry(1, "present", "compiler is rustc.")],"issues":[],"blockChecks":fixture_checks(checks)});
-    let model = model(vec![twice(vec![check(0)]), twice(vec![check(0)])]);
-    let error = super::review(
+    let twice = || json!({"openFindings":[verdict_entry(1, "resolved", ""), verdict_entry(1, "present", "compiler is rustc.")],"issues":[],"blockChecks":fixture_checks(vec![check(0)])});
+    let model = model(vec![twice(), twice()]);
+    let judged = super::review(
         &model,
         "Review instructional quality.",
         json!({}),
@@ -488,18 +490,20 @@ async fn a_second_verdict_for_one_id_is_refused() {
         },
         None,
     )
-    .await
-    .unwrap_err();
-    assert!(error.to_string().contains("reviewer/1 needs one verdict."));
-    assert_eq!(model.prompts.lock().unwrap().len(), 2);
+    .await?;
+    assert!(judged.verdicts.is_empty());
+    let prompts = model.prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 2);
+    assert!(prompts[1].contains("reviewer/1 needs one verdict."));
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_verdict_on_an_id_nobody_asked_about_is_refused() {
+async fn a_verdict_on_an_id_nobody_asked_about_is_refused_then_dropped() -> Result<()> {
     let asked = [asked(1, 0)];
-    let stray = |checks| json!({"openFindings":[verdict_entry(1, "resolved", ""), verdict_entry(9, "resolved", "")],"issues":[],"blockChecks":fixture_checks(checks)});
-    let model = model(vec![stray(vec![check(0)]), stray(vec![])]);
-    let error = super::review(
+    let stray = || json!({"openFindings":[verdict_entry(1, "resolved", ""), verdict_entry(9, "resolved", "")],"issues":[],"blockChecks":fixture_checks(vec![check(0)])});
+    let model = model(vec![stray(), stray()]);
+    let judged = super::review(
         &model,
         "Review instructional quality.",
         json!({}),
@@ -510,9 +514,14 @@ async fn a_verdict_on_an_id_nobody_asked_about_is_refused() {
         },
         None,
     )
-    .await
-    .unwrap_err();
-    assert!(error.to_string().contains("reviewer/9 was not asked about"));
+    .await?;
+    assert_eq!(judged.verdicts.len(), 1);
+    assert_eq!(judged.verdicts[0].id, asked[0].id);
+    assert!(!judged.verdicts[0].present);
+    let prompts = model.prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 2);
+    assert!(prompts[1].contains("reviewer/9 was not asked about"));
+    Ok(())
 }
 
 #[tokio::test]
@@ -796,29 +805,28 @@ fn answer_of(verdicts: Vec<Value>, checks: Vec<Value>) -> Value {
 }
 
 #[tokio::test]
-async fn a_present_verdict_whose_quote_is_not_in_its_part_is_asked_for_again_once_then_fails() {
-    let asked = [asked_at(1, FindingSite::Section(0))];
+async fn a_present_verdict_whose_quote_is_not_in_its_part_is_asked_for_again_once_then_leaves_its_finding_as_it_stood(
+) {
+    let asked = [
+        asked_at(1, FindingSite::Section(0)),
+        asked_at(2, FindingSite::Section(0)),
+    ];
     let bad = quoted(1, "present", "Gamma is absent here.");
-    let model = model(vec![
-        answer_of(vec![bad.clone()], vec![check(0)]),
-        answer_of(vec![bad], vec![check(0)]),
-    ]);
-    let error = super::review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &two_parts(),
-        Scope {
-            sections: Some(&[0]),
-            asked: Some(&asked),
-        },
-        None,
+    let resolved = quoted(2, "resolved", "");
+    let (verdicts, model) = judge(
+        &asked,
+        vec![
+            answer_of(vec![bad.clone(), resolved.clone()], vec![check(0)]),
+            answer_of(vec![bad, resolved], vec![check(0)]),
+        ],
     )
-    .await
-    .unwrap_err();
-    assert!(matches!(error, AppError::ModelAnswerUnusable(_)));
-    assert!(error.to_string().contains("reviewer/1"));
-    assert_eq!(model.prompts.lock().unwrap().len(), 2);
+    .await;
+    assert_eq!(verdicts.len(), 1);
+    assert_eq!(verdicts[0].id, asked[1].id);
+    assert!(!verdicts[0].present);
+    let prompts = model.prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 2);
+    assert!(prompts[1].contains("reviewer/1: the quote is not in"));
 }
 
 #[tokio::test]

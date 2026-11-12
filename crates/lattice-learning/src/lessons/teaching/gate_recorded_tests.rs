@@ -2,7 +2,7 @@
 //! reviewer's finding of it.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
-use crate::content_verification::tests::{fixture_completion, CONTRACT_NOTHING};
+use crate::content_verification::tests::{fixture_completion, fixture_task, CONTRACT_NOTHING};
 use crate::lessons::course_generation_tests::{review_reply, ScriptedModel};
 use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::Held;
@@ -190,7 +190,7 @@ fn repair_requests(model: &Routed) -> Vec<Value> {
         .lock()
         .unwrap()
         .iter()
-        .filter_map(|prompt| serde_json::from_str::<Value>(prompt.rsplit("\n\n").next()?).ok())
+        .filter_map(|prompt| fixture_task(prompt))
         .filter(|request| request.get("issuesToFix").is_some())
         .collect()
 }

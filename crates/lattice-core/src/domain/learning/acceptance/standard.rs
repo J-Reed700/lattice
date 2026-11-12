@@ -11,7 +11,7 @@ use crate::shared::protocol::Protocol;
 
 /// The standard policy's version: part of every receipt's and checkpoint's
 /// key, so a change to any of its graphs changes it.
-pub const STANDARD_POLICY: Protocol = protocol!("acceptance", 2);
+pub const STANDARD_POLICY: Protocol = protocol!("acceptance", 3);
 
 /// Samples one knowledge or veto read asks the model alone; the read holds
 /// only when every sample agrees.
@@ -110,7 +110,8 @@ fn sourced() -> Graph {
                     &[AllCommon],
                     Next::first_change(Target::node("s.uncite"), "s.research"),
                 )
-                .otherwise(Next::to("s.research")),
+                .on(&[Unproven], Next::to("s.research"))
+                .on(&[Refuted], Next::to("s.rewrite")),
         )
         .with(Node::new("s.uncite", Step::Uncite, 0).on(&[Done], Next::enter(Class::Common)))
         .with(

@@ -115,7 +115,7 @@ impl Script {
 
     async fn respond(&self, prompt: &str) -> Result<String> {
         if prompt.starts_with("Extract lesson claims.") {
-            let data = context(prompt);
+            let data = fixture_task(prompt).unwrap();
             let units: Vec<Value> = data["units"]
                 .as_array()
                 .unwrap()
@@ -125,8 +125,9 @@ impl Script {
             return Ok(inventory::fixture_response(units).to_string());
         }
         if prompt.starts_with("You sort statements extracted from a lesson") {
-            let statements: serde_json::Map<String, Value> =
-                serde_json::from_str(prompt.rsplit("\n\n").next().unwrap())?;
+            let Some(Value::Object(statements)) = fixture_task(prompt) else {
+                panic!("a JSON task");
+            };
             self.sorted.lock().unwrap().extend(
                 statements
                     .values()
@@ -135,7 +136,7 @@ impl Script {
             );
         }
         if prompt.starts_with("Repair verified lesson defects.") {
-            return self.repair(context(prompt));
+            return self.repair(fixture_task(prompt).unwrap());
         }
         if prompt.starts_with("Source passages:") {
             let claim = prompt

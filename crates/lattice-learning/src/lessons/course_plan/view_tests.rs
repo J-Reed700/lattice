@@ -107,7 +107,7 @@ async fn a_plan_for_an_earlier_outline_does_not_make_the_current_one_planned() {
 }
 
 #[tokio::test]
-async fn a_queued_lesson_job_locks_its_lesson_and_so_does_a_running_one() {
+async fn a_queued_lesson_stays_editable_and_a_running_one_is_locked() {
     let pool = crate::tests::pool().await.unwrap();
     let (program, _) = planned_program(&pool, &Topics::new()).await;
     let order = ids(&program);
@@ -119,8 +119,8 @@ async fn a_queued_lesson_job_locks_its_lesson_and_so_does_a_running_one() {
     let queued: Vec<_> = pending.entries.iter().map(|entry| entry.editable).collect();
     assert_eq!(
         queued,
-        vec![true, false, true, true],
-        "a queued job locks its lesson"
+        vec![true, true, true, true],
+        "a queued job leaves its lesson editable"
     );
 
     assert!(JobStore::new(pool.clone())

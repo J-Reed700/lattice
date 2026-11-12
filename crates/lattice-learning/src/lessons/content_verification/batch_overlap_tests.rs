@@ -53,7 +53,7 @@ impl LLMPort for Flaky {
         let mut replies = Vec::new();
         for prompt in fixture_prompts(request) {
             let only_last = prompt.starts_with("Extract lesson claims.")
-                && context(&prompt)["requestedIndices"] == json!([4]);
+                && fixture_task(&prompt).unwrap()["requestedIndices"] == json!([4]);
             let reply = self.inner.respond(&prompt).await?;
             if only_last && self.asked.fetch_add(1, Ordering::SeqCst) < self.bad {
                 replies.push(json!({"units":{}}).to_string());

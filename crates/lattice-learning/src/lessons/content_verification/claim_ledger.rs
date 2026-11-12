@@ -202,8 +202,7 @@ pub(super) struct ClaimLedger {
     pub(super) cuts: Cuts,
 }
 
-/// A code example's claim: the ledger holds no class for it, which every
-/// statement has.
+/// Whether the claim is a code example: it carries a code example.
 fn is_example(entry: &ClaimLedgerEntry) -> bool {
     entry.code_example().is_some()
 }

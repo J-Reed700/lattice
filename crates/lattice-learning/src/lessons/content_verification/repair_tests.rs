@@ -137,7 +137,8 @@ async fn a_section_whose_edits_cannot_be_applied_is_asked_again_in_the_same_conv
     Ok(())
 }
 
-/// A small window that records each request and edits the next marker.
+/// A small window that records each request and edits the markers of the
+/// claims it is sent.
 struct SmallWindow {
     window: usize,
     requests: Mutex<Vec<(String, String)>>,
@@ -151,12 +152,18 @@ impl LLMPort for SmallWindow {
     ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
         let (system, user) = crate::lessons::structured_call::task_messages(request);
         let mut requests = self.requests.lock().unwrap();
-        let marker = format!("[{}]", requests.len());
         requests.push((system.to_owned(), user.to_owned()));
+        let sent: Value = serde_json::from_str(user).unwrap_or(Value::Null);
+        let edits: Vec<Value> = sent["failedClaims"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|claim| claim["claimId"].as_str()?.strip_prefix("claim-"))
+            .map(|k| json!({"path":"/blocks/0/body","before":format!("[{k}]"),"after":format!("({k})")}))
+            .collect();
         Ok(
             lattice_core::application::ports::llm_port::CompletionResponse::from_text(
-                json!({"edits":[{"path":"/blocks/0/body","before":marker,"after":marker.replace('[', "(").replace(']', ")")}]})
-                    .to_string(),
+                json!({ "edits": edits }).to_string(),
             ),
         )
     }
@@ -182,7 +189,10 @@ async fn a_section_too_large_for_one_request_is_repaired_in_several_that_fit() -
     // Each failed claim is a ledger claim located on its own marker: a
     // repair may change only the failed claims' sentences (claim sources
     // design §10.2), so the edits must land on sentences it targets.
-    let body = "[0] [1] [2] [3] [4] [5]";
+    let body = (0..6)
+        .map(|k| format!("Claim [{k}] holds."))
+        .collect::<Vec<_>>()
+        .join(" ");
     let claims: Vec<_> = (0..6)
         .map(|k| json!({"unit":0,"claimId":format!("claim-{k}"),"statement":format!("Claim {k}"),"verdict":"unsupported","reason":"Unstated.","evidence":[format!("evidence-{}", 2 * k), format!("evidence-{}", 2 * k + 1)]}))
         .collect();
@@ -198,7 +208,7 @@ async fn a_section_too_large_for_one_request_is_repaired_in_several_that_fit() -
     // Open for repair, as a pass leaves its failed claims.
     for k in 0..6 {
         let id = ClaimId(format!("claim-{k}"));
-        let location = ClaimLocation::locate(0, UnitKind::Block, "body", format!("[{k}]"), body);
+        let location = ClaimLocation::locate(0, UnitKind::Block, "body", format!("[{k}]"), &body);
         ledger
             .append(
                 &id,
@@ -269,8 +279,9 @@ async fn a_section_too_large_for_one_request_is_repaired_in_several_that_fit() -
     }
     // Each request edited the section the previous one left.
     let body = repaired["blocks"][0]["body"].as_str().unwrap();
-    for part in 0..requests.len() {
-        assert!(body.contains(&format!("({part})")), "{body}");
+    for k in 0..6 {
+        assert!(body.contains(&format!("({k})")), "{body}");
+        assert!(!body.contains(&format!("[{k}]")), "{body}");
     }
     Ok(())
 }
@@ -373,7 +384,27 @@ async fn the_last_attempt_takes_the_sentence_out_and_leaves_the_rest_to_the_mode
         "Keep this. Fix this."
     );
     assert_eq!(claim_ids(&section_failures(&context, 0)), vec![first]);
-    assert!(ledger
+    let entry = ledger.entry(&last).unwrap();
+    assert!(
+        matches!(
+            entry.state(),
+            ClaimState::Removed {
+                by: Actor::Machine,
+                ..
+            }
+        ),
+        "{:?}",
+        entry.state()
+    );
+    assert!(entry.events().iter().any(|record| matches!(
+        record.event,
+        ClaimEvent::Stepped {
+            step: Step::Cut,
+            outcome: Outcome::Cut,
+            ..
+        }
+    )));
+    assert!(!ledger
         .pending
         .repairs
         .iter()
@@ -392,67 +423,6 @@ async fn the_last_attempt_takes_the_sentence_out_and_leaves_the_rest_to_the_mode
     );
     assert!(!taken.answer_lost);
     assert!(ledger.cuts.going.is_empty());
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_last_attempt_that_cannot_take_the_sentence_out_ends_the_claim_removed_with_its_section(
-) -> Result<()> {
-    let body = "Cut this.";
-    let llm = SmallWindow {
-        window: 4_000,
-        requests: Mutex::new(Vec::new()),
-    };
-    let mut ledger = failed_ledger(&llm, body, &[("last", "Cut this.", 1)]).await?;
-    let last = ClaimId("last".into());
-    at_the_cut(&mut ledger, &last).await?;
-    ledger
-        .begin_repairs(
-            &StandardPolicy::new(),
-            &lesson_of(body),
-            std::slice::from_ref(&last),
-        )
-        .await?;
-    let mut context = json!({
-        "candidate": lesson_of(body), "requirements": {}, "evidence": [],
-        "executions": [], "repairHistory": [],
-        "failedClaims": [
-            {"unit":0,"claimId":"last","sentence":"Cut this.","evidence":[],"lastAttempt":true},
-        ],
-    });
-
-    assert_eq!(
-        cut::last_attempts(
-            &StandardPolicy::new(),
-            crate::lessons::shape::policy(),
-            &mut context,
-            &mut ledger
-        )
-        .await?,
-        1
-    );
-
-    // The sentence stays where it is; its section is the one that goes.
-    assert_eq!(context["candidate"]["blocks"][0]["body"], body);
-    assert!(section_failures(&context, 0).is_empty());
-    assert_eq!(ledger.cuts.going.get(&0).map(String::as_str), Some("T"));
-    // The claim is terminal, and nothing waits for the user.
-    let entry = ledger.entry(&last).unwrap();
-    assert!(
-        matches!(
-            entry.state(),
-            ClaimState::Removed {
-                by: Actor::Machine,
-                ..
-            }
-        ),
-        "{:?}",
-        entry.state()
-    );
-    assert!(ledger.entries().iter().all(|entry| {
-        !entry.state().awaits_user() && !matches!(entry.state(), ClaimState::Open { .. })
-    }));
-    assert!(ledger.pending.repairs.is_empty());
     Ok(())
 }
 
@@ -552,141 +522,6 @@ async fn a_failed_example_on_its_last_attempt_is_taken_out_with_its_fences() -> 
         "Intro.\n\nAfter."
     );
     assert!(section_examples(&context, 0).is_empty());
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_claim_on_a_sentence_cut_for_another_is_no_work_for_the_model() -> Result<()> {
-    let body = "Keep this. Cut this. Fix this.";
-    let llm = SmallWindow {
-        window: 4_000,
-        requests: Mutex::new(Vec::new()),
-    };
-    let mut ledger = failed_ledger(
-        &llm,
-        body,
-        &[
-            ("last", "Cut this.", 0),
-            ("mate", "Cut this.", 0),
-            ("kept", "Keep this.", 0),
-        ],
-    )
-    .await?;
-    // The narrowing that would keep what `mate` says was asked and not applied.
-    let (last, mate) = (ClaimId("last".into()), ClaimId("mate".into()));
-    at_the_cut(&mut ledger, &last).await?;
-    to_the_rewrite(&mut ledger, &[&mate]).await?;
-    narrowing_spent(&mut ledger, "last", "Cut this.").await?;
-    ledger
-        .begin_repairs(
-            &StandardPolicy::new(),
-            &lesson_of(body),
-            &[last.clone(), mate.clone()],
-        )
-        .await?;
-    let mut context = json!({
-        "candidate": lesson_of(body), "requirements": {}, "evidence": [],
-        "executions": [], "repairHistory": [],
-        "failedClaims": [
-            {"unit":0,"claimId":"last","sentence":"Cut this.","evidence":[],"lastAttempt":true},
-            {"unit":0,"claimId":"mate","sentence":"Cut this.","evidence":[]},
-        ],
-    });
-
-    assert_eq!(
-        cut::last_attempts(
-            &StandardPolicy::new(),
-            crate::lessons::shape::policy(),
-            &mut context,
-            &mut ledger
-        )
-        .await?,
-        1
-    );
-
-    assert_eq!(
-        context["candidate"]["blocks"][0]["body"],
-        "Keep this. Fix this."
-    );
-    assert!(
-        section_failures(&context, 0).is_empty(),
-        "the other claim's sentence is gone with the cut"
-    );
-    // Its record stays: the pass after finds the claim gone and removes it.
-    assert!(ledger
-        .pending
-        .repairs
-        .iter()
-        .any(|record| record.claim_id == mate));
-    Ok(())
-}
-
-#[tokio::test]
-async fn last_attempts_that_leave_the_lesson_no_claim_stop_it_and_end_every_claim_they_cut_removed(
-) -> Result<()> {
-    let body = "Keep this. Cut this. Fix this.";
-    let llm = SmallWindow {
-        window: 4_000,
-        requests: Mutex::new(Vec::new()),
-    };
-    // Every claim the ledger holds stands on the sentence the last attempt
-    // takes out: the one it was sent for, and one that went with it.
-    let mut ledger = failed_ledger(
-        &llm,
-        body,
-        &[("last", "Cut this.", 0), ("mate", "Cut this.", 0)],
-    )
-    .await?;
-    // The narrowing that would keep what `mate` says was asked and not applied.
-    let (last, mate) = (ClaimId("last".into()), ClaimId("mate".into()));
-    at_the_cut(&mut ledger, &last).await?;
-    to_the_rewrite(&mut ledger, &[&mate]).await?;
-    narrowing_spent(&mut ledger, "last", "Cut this.").await?;
-    ledger
-        .begin_repairs(
-            &StandardPolicy::new(),
-            &lesson_of(body),
-            &[last.clone(), mate.clone()],
-        )
-        .await?;
-    let mut context = json!({
-        "candidate": lesson_of(body), "requirements": {}, "evidence": [],
-        "executions": [], "repairHistory": [],
-        "failedClaims": [
-            {"unit":0,"claimId":"last","sentence":"Cut this.","evidence":[],"lastAttempt":true},
-            {"unit":0,"claimId":"mate","sentence":"Cut this.","evidence":[]},
-        ],
-    });
-
-    let error = cut::last_attempts(
-        &StandardPolicy::new(),
-        crate::lessons::shape::policy(),
-        &mut context,
-        &mut ledger,
-    )
-    .await
-    .unwrap_err();
-
-    assert_eq!(
-        error.to_string(),
-        "The sources do not support enough of this lesson: every statement in it would have to be taken out."
-    );
-    for id in [&last, &mate] {
-        let entry = ledger.entry(id).unwrap();
-        assert!(
-            matches!(
-                entry.state(),
-                ClaimState::Removed {
-                    by: Actor::Machine,
-                    ..
-                }
-            ),
-            "{:?}",
-            entry.state()
-        );
-    }
-    assert!(ledger.pending.repairs.is_empty());
-    assert!(llm.requests.lock().unwrap().is_empty());
     Ok(())
 }
 
@@ -1300,75 +1135,6 @@ async fn a_passage_wide_quote_is_cut_to_the_sentence_that_states_the_claim_in_it
         context["candidate"]["blocks"][0]["body"],
         format!("{COLD} Middle line. {BISQUE} Closing line.")
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_cut_whose_sentence_another_live_statement_stands_on_takes_everything_its_quote_touches(
-) -> Result<()> {
-    let llm = SmallWindow {
-        window: 4_000,
-        requests: Mutex::new(Vec::new()),
-    };
-    let body = format!("{COLD} {BISQUE} Closing line.");
-    let passage = format!("{COLD} {BISQUE}");
-    let (mut ledger, mut context) = passage_wide_with(
-        &llm,
-        &body,
-        (passage.as_str(), "A bisque firing reaches cone 04"),
-        true,
-    )
-    .await?;
-    // A statement of the ledger's states the same sentence.
-    let mate = ClaimId("mate".into());
-    let extracted = ClaimEvent::Extracted {
-        location: ClaimLocation::locate(0, UnitKind::Block, "body", BISQUE, &body),
-        statement: "A bisque firing is taken to cone 04".to_owned(),
-    };
-    ledger.append(&mate, extracted).await?;
-    let sorted = ClaimEvent::Classified {
-        class: Class::Sourced,
-        by: ClassifiedBy::Writer,
-    };
-    ledger.append(&mate, sorted).await?;
-
-    cut::last_attempts(
-        &StandardPolicy::new(),
-        crate::lessons::shape::policy(),
-        &mut context,
-        &mut ledger,
-    )
-    .await?;
-
-    // Once its narrowing was not applied, the quote is cut whole.
-    assert_eq!(context["candidate"]["blocks"][0]["body"], "Closing line.");
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_claim_that_draws_on_several_sentences_of_its_quote_is_cut_with_everything_the_quote_touches(
-) -> Result<()> {
-    let llm = SmallWindow {
-        window: 4_000,
-        requests: Mutex::new(Vec::new()),
-    };
-    // No sentence of this passage holds the greater part of the statement.
-    let passage = "The Peace of Westphalia was signed in 1648 in the cities of Osnabrück and Münster. It ended the Thirty Years' War in the Holy Roman Empire. It also closed the Eighty Years' War between Spain and the Dutch Republic. Historians often date the modern order of sovereign states from these treaties.";
-    let statement = "Signed in 1648, the Peace of Westphalia ended the Thirty Years' War and is often seen by historians as the start of the order of sovereign states.";
-    let body = format!("{passage} Closing line.");
-    let (mut ledger, mut context) =
-        passage_wide_with(&llm, &body, (passage, statement), true).await?;
-
-    cut::last_attempts(
-        &StandardPolicy::new(),
-        crate::lessons::shape::policy(),
-        &mut context,
-        &mut ledger,
-    )
-    .await?;
-
-    // Once its narrowing was not applied, the whole quote goes.
-    assert_eq!(context["candidate"]["blocks"][0]["body"], "Closing line.");
     Ok(())
 }
 

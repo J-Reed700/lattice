@@ -67,7 +67,7 @@ impl Rounds {
         }
         if prompt.starts_with("Repair verified lesson defects.") {
             self.repairs.fetch_add(1, Ordering::Relaxed);
-            let data = context(prompt);
+            let data = fixture_task(prompt).unwrap();
             let body = data["candidate"]["blocks"][0]["body"].as_str().unwrap();
             let (from, to) = self
                 .rewrites
@@ -87,7 +87,7 @@ impl Rounds {
 /// A teaching review that finds a defect in the passage of section `section`
 /// holding `sentence`, and none elsewhere.
 fn fault(prompt: &str, section: usize, sentence: &str) -> String {
-    let data = context(prompt);
+    let data = fixture_task(prompt).unwrap();
     let checks: Vec<Value> = data["candidate"]["blocks"]
         .as_array()
         .unwrap()

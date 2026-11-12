@@ -697,7 +697,7 @@ mod loop_bound {
 
     #[tokio::test]
     async fn a_repair_pass_touches_only_the_failed_sentences() -> Result<()> {
-        use super::super::acceptance_switch_tests::{walk, REWRITING};
+        use super::super::acceptance_switch_tests::{node_of, walk, REWRITING};
         use super::super::claim_ledger_tests::{
             check_findings, identify_findings, only_passage, pass_report, passage_finding, sourced,
         };
@@ -793,8 +793,8 @@ mod loop_bound {
         check_findings(&mut ledger, &ids_after[2..], &report.findings[2..]).await?;
 
         // The verified claims keep their ids, states and bases, and nothing
-        // is recorded for them; the target continues with one attempt fewer,
-        // and its check is the pass's only one.
+        // is recorded for them; the target continues at its class's post-rewrite
+        // node, and its check is the pass's only one.
         assert_eq!(ledger.finding_claims(), ids.as_slice());
         for entry in &verified {
             assert_eq!(ledger.entry(entry.claim_id()).unwrap(), entry);
@@ -802,7 +802,7 @@ mod loop_bound {
         assert_eq!(checks(&ledger), checked + 1, "one model check in the pass");
         let target = ledger.entry(&target).unwrap();
         assert_eq!(target.location().quote, FIXED);
-        assert_eq!(left(target), MACHINE_ATTEMPTS - 1);
+        assert_eq!(node_of(&ledger, &ids[2]), Some("s.final"));
         Ok(())
     }
 

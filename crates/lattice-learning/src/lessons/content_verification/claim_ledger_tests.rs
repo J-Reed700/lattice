@@ -4,9 +4,7 @@
 //! cannot be taken out; the user's
 //! verdicts are never re-litigated and are labelled examples of the checker's
 //! accuracy (§15).
-use super::acceptance_switch_tests::{
-    claim, local_check, open, stood, walk, CUTTING, REWRITING, SOURCED,
-};
+use super::acceptance_switch_tests::{claim, local_check, open, stood, walk, REWRITING, SOURCED};
 use super::class_checks_tests::Classes;
 use super::*;
 use crate::dto::{
@@ -136,7 +134,7 @@ impl Figures {
             return Ok(plan.clone());
         }
         if prompt.starts_with("Extract lesson claims.") {
-            let data = self::context(prompt);
+            let data = fixture_task(prompt).unwrap();
             let units = data["units"].as_array().unwrap();
             self.extracted
                 .lock()
@@ -166,7 +164,7 @@ impl Figures {
             return Ok(reply);
         }
         if prompt.starts_with("Repair verified lesson defects.") {
-            let data = self::context(prompt);
+            let data = fixture_task(prompt).unwrap();
             assert!(
                 !prompt.contains("lastAttempt"),
                 "a last attempt is cut in code, never sent"
@@ -1673,86 +1671,6 @@ async fn a_failed_claim_sharing_its_sentence_with_a_verified_one_tells_its_rewri
 }
 
 #[tokio::test]
-async fn a_claim_that_passed_on_a_sentence_cut_for_another_is_removed_by_the_machine() -> Result<()>
-{
-    let model = Model::new();
-    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
-    let overstated = "Mitochondria produce all of a cell's ATP.";
-    let before = cell_lesson(CELL);
-    let report = pass_report(sourced(vec![
-        passage_finding(CELL, ATP, true, CELL_SOURCE),
-        passage_finding(CELL, overstated, false, CELL_SOURCE),
-    ]));
-    let ids = identify_findings(&mut ledger, &before, &report).await?;
-    check_findings(&mut ledger, &ids, &report.findings).await?;
-    let (verified, shared) = (ids[0].clone(), ids[1].clone());
-    // The failed claim has had its rewrite and stands at its cut.
-    walk(&mut ledger, &shared, Class::Sourced, &CUTTING).await?;
-    ledger
-        .append(
-            &shared,
-            ClaimEvent::RepairAttempted {
-                attempt: 1,
-                escalated: false,
-                before: ATP_SENTENCE.into(),
-                after: None,
-                outcome: RepairOutcome::Rejected {
-                    reason: "unusable".into(),
-                },
-                goal: None,
-            },
-        )
-        .await?;
-    let claim_ledger::Decision::Repair(targets) = ledger.decide(&StandardPolicy::new(), &[]) else {
-        panic!("the failed claim is repaired");
-    };
-    assert_eq!(targets, std::slice::from_ref(&shared));
-    assert!(ledger
-        .entry(&shared)
-        .unwrap()
-        .next_machine_repair()
-        .is_some_and(|repair| repair.last));
-
-    // Its last attempt cuts the sentence: no repair record rides on it, and
-    // the claim that passed goes with the sentence.
-    ledger
-        .begin_repairs(&StandardPolicy::new(), &before, &targets)
-        .await?;
-    assert_eq!(ledger.pending.repairs.len(), 1);
-    let cut = CELL.replace(&format!("{ATP_SENTENCE} "), "");
-    identify_findings(&mut ledger, &cell_lesson(&cut), &pass_report(vec![])).await?;
-
-    for id in [&shared, &verified] {
-        assert!(
-            matches!(
-                ledger.entry(id).unwrap().state(),
-                ClaimState::Removed {
-                    by: Actor::Machine,
-                    ..
-                }
-            ),
-            "{:?}",
-            ledger.entry(id).unwrap().state()
-        );
-    }
-    assert_eq!(
-        repairs(ledger.entry(&shared).unwrap()),
-        vec![
-            (
-                1,
-                false,
-                RepairOutcome::Rejected {
-                    reason: "unusable".into()
-                }
-            ),
-            (2, true, RepairOutcome::Removed)
-        ]
-    );
-    assert!(repairs(ledger.entry(&verified).unwrap()).is_empty());
-    Ok(())
-}
-
-#[tokio::test]
 async fn remove_and_edit_act_on_the_located_sentence() -> Result<()> {
     use lattice_core::domain::learning::claim_review::UserAction;
     let pool = crate::tests::pool().await?;
@@ -2641,6 +2559,23 @@ impl Course {
         Ok(())
     }
 
+    /// Each claim's statement and the events it went through, so a failed
+    /// assertion shows where each walk ended.
+    pub(super) async fn trail(&self) -> Result<String> {
+        let ledger = ClaimReviewRepository::new(self.pool.clone())
+            .load(&self.lesson_id)
+            .await?;
+        Ok(ledger
+            .claims
+            .iter()
+            .map(|entry| {
+                let events: Vec<_> = entry.events().iter().map(|record| &record.event).collect();
+                format!("{}: {events:?}", entry.statement())
+            })
+            .collect::<Vec<_>>()
+            .join("\n"))
+    }
+
     pub(super) async fn new() -> Result<Self> {
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
@@ -3063,7 +2998,13 @@ async fn a_lesson_whose_cuts_would_take_all_of_its_questions_is_published_with_t
     let course = Course::new().await?;
     let draft = with_questions(vec![quiz("quiz", &figure(5)), quiz("quiz", &figure(6))]);
     let (raw, report) = course
-        .prepare(&Figures::contradicting(), &draft)
+        .prepare(
+            &Figures {
+                contradicted: true,
+                ..Figures::planning("csv dictreader buffer size")
+            },
+            &draft,
+        )
         .await
         .expect("the lesson publishes, two statements not verified");
 
@@ -3077,9 +3018,10 @@ async fn a_lesson_whose_cuts_would_take_all_of_its_questions_is_published_with_t
     .is_none());
     let published: Value = serde_json::from_str(&raw)?;
     let questions = published["questions"].as_array().unwrap();
-    assert_eq!(questions.len(), 2, "{questions:?}");
+    let trail = course.trail().await?;
+    assert_eq!(questions.len(), 2, "{questions:?}\n{trail}");
     for (index, sentence) in [figure(0), figure(1)].iter().enumerate() {
-        assert_eq!(questions[index]["explanation"], json!(sentence));
+        assert_eq!(questions[index]["explanation"], json!(sentence), "{trail}");
     }
     course.assert_invariants(&raw, &report).await?;
     Ok(())
@@ -3091,7 +3033,13 @@ async fn a_lesson_whose_cuts_take_every_question_of_a_kind_it_asks_is_published_
     let course = Course::new().await?;
     let draft = with_questions(vec![quiz("practice", &figure(5)), quiz("quiz", GOOD)]);
     let (raw, report) = course
-        .prepare(&Figures::contradicting(), &draft)
+        .prepare(
+            &Figures {
+                contradicted: true,
+                ..Figures::planning("csv dictreader buffer size")
+            },
+            &draft,
+        )
         .await
         .expect("the lesson publishes, one question cut");
 
@@ -3105,7 +3053,8 @@ async fn a_lesson_whose_cuts_take_every_question_of_a_kind_it_asks_is_published_
     .is_none());
     let published: Value = serde_json::from_str(&raw)?;
     let questions = published["questions"].as_array().unwrap();
-    assert_eq!(questions.len(), 1, "{questions:?}");
+    let trail = course.trail().await?;
+    assert_eq!(questions.len(), 1, "{questions:?}\n{trail}");
     assert_eq!(questions[0]["kind"], json!("quiz"));
     assert_eq!(questions[0]["explanation"], json!(GOOD));
     course.assert_invariants(&raw, &report).await?;

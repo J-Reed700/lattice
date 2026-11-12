@@ -49,13 +49,7 @@ pub(in crate::lessons::content_verification) async fn compare(
     if let Some(value) = crate::lesson_drafts::checkpoint(&pending.receipt_key).await? {
         let restored = serde_json::from_value::<ClaimReceipt>(value)
             .ok()
-            .and_then(|receipt| {
-                let shown = match &receipt.shown {
-                    Some(shown) => shown_of(evidence, shown),
-                    None => evidence.clone(),
-                };
-                receipt.finding(unit, claim, shown)
-            });
+            .and_then(|receipt| receipt.restored(unit, claim, evidence));
         if let Some(finding) = restored {
             return Ok(Comparison::Done(Box::new(finding), true));
         }
