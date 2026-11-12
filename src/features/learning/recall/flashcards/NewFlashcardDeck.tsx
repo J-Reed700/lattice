@@ -28,26 +28,26 @@ export function NewFlashcardDeck({ onCreated, onCancel }: { onCreated: (id: stri
     }}>
       <div>
         <label htmlFor="study-title" className="mb-2 block text-sm text-text-primary">Deck title</label>
-        <input id="study-title" className={`${settingsFieldClass} w-full`} required maxLength={120} value={title} onChange={e => setTitle(e.target.value)} disabled={generate.isPending} />
+        <input id="study-title" className={`${settingsFieldClass} w-full`} required value={title} onChange={e => setTitle(e.target.value)} disabled={generate.isPending} />
       </div>
       <div>
         <label htmlFor="study-focus" className="mb-2 block text-sm text-text-primary">Topic or section <span className="text-text-muted">· optional</span></label>
-        <input id="study-focus" className={`${settingsFieldClass} w-full`} placeholder="e.g. photosynthesis, chapter 3, project planning" maxLength={200} value={focus} onChange={e => setFocus(e.target.value)} disabled={generate.isPending} />
+        <input id="study-focus" className={`${settingsFieldClass} w-full`} placeholder="e.g. photosynthesis, chapter 3, project planning" value={focus} onChange={e => setFocus(e.target.value)} disabled={generate.isPending} />
       </div>
       <div>
         <label htmlFor="study-goal" className="mb-2 block text-sm text-text-primary">Learning goal <span className="text-text-muted">· optional</span></label>
-        <input id="study-goal" className={`${settingsFieldClass} w-full`} placeholder="e.g. exam preparation, professional training, general understanding" maxLength={300} value={studyGoal} onChange={e => setStudyGoal(e.target.value)} disabled={generate.isPending} />
+        <input id="study-goal" className={`${settingsFieldClass} w-full`} placeholder="e.g. exam preparation, professional training, general understanding" value={studyGoal} onChange={e => setStudyGoal(e.target.value)} disabled={generate.isPending} />
         <p className="mt-2 text-xs text-text-muted">Guides the question style and difficulty. Answers still come from your documents.</p>
       </div>
       <fieldset disabled={generate.isPending}>
-        <legend className="mb-2 text-sm text-text-primary">Source documents · {selected.length} of 3 selected</legend>
-        <p className="mb-3 text-xs text-text-muted">Choose up to three documents per deck. Documents appear as their imports finish.</p>
+        <legend className="mb-2 text-sm text-text-primary">Source documents · {selected.length} selected</legend>
+        <p className="mb-3 text-xs text-text-muted">Choose the documents for this deck. Documents appear as their imports finish.</p>
         <input aria-label="Search source documents" className={`${settingsFieldClass} mb-3 w-full`} placeholder="Search documents" value={search} onChange={e => setSearch(e.target.value)} />
         {documents.isPending && <p className="py-4 text-sm text-text-muted">Loading documents…</p>}
         {documents.isError && <p role="alert" className="text-sm text-danger-fg">{documents.error.message}</p>}
         <div className="max-h-64 overflow-y-auto border-t border-border-subtle">
           {available.map(doc => <label key={doc.id} className="flex cursor-pointer items-center gap-3 border-b border-border-subtle py-3 text-sm text-text-primary">
-            <input type="checkbox" className="h-4 w-4 accent-accent" checked={selected.includes(doc.id)} disabled={!selected.includes(doc.id) && selected.length >= 3} onChange={e => setSelected(prev => e.target.checked ? [...prev, doc.id] : prev.filter(id => id !== doc.id))} />
+            <input type="checkbox" className="h-4 w-4 accent-accent" checked={selected.includes(doc.id)} onChange={e => setSelected(prev => e.target.checked ? [...prev, doc.id] : prev.filter(id => id !== doc.id))} />
             <span className="min-w-0 truncate">{doc.fileName}</span>
           </label>)}
           {!documents.isPending && !available.length && <p className="py-4 text-sm text-text-muted">{search ? 'No matching documents.' : 'No indexed documents yet.'}</p>}

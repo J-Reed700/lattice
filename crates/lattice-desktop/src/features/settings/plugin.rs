@@ -254,7 +254,7 @@ pub async fn test_custom_tool(
     }
 
     let requested_max = request.max_results.unwrap_or(request.default_max_results);
-    let clamped_max = requested_max.clamp(1, 100);
+    let clamped_max = requested_max.max(1);
 
     {
         let mut pairs = url.query_pairs_mut();

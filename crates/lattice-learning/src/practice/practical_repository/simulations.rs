@@ -341,12 +341,9 @@ impl LearningPracticalRepository {
                 "Simulation changed; reload and retry.".into(),
             ));
         }
-        let quote = learner_turns.first().map(|row| {
-            row.get::<String, _>("content")
-                .chars()
-                .take(500)
-                .collect::<String>()
-        });
+        let quote = learner_turns
+            .first()
+            .map(|row| row.get::<String, _>("content"));
         for outcome_id in &activity.outcome_ids {
             sqlx::query("INSERT INTO learning_evidence_events(id,program_id,outcome_id,source_kind,source_id,dimension,result,score,observation,evidence_quote,assistance_json,observed_at) VALUES(?,?,?,'simulation',?,'transfer','uncertain',NULL,?,?,?,?)")
                 .bind(uuid::Uuid::new_v4().to_string()).bind(&request.program_id).bind(outcome_id)

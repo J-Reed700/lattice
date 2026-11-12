@@ -82,10 +82,10 @@ describe('SearchTab fields', () => {
     expect(last()[0]).toEqual({ category: 'search', updates: { summaryIndexEnabled: true } });
   });
 
-  it('saves numbers on blur, clamped, and drops the draft once settled', () => {
+  it('saves numbers on blur, held to their range, and drops the draft once settled', () => {
     render(<SearchTab />);
     edit('Maximum results', '500');
-    expect(last()[0]).toEqual({ category: 'search', updates: { maxResults: 128 } });
+    expect(last()[0]).toEqual({ category: 'search', updates: { maxResults: 500 } });
     expect(screen.getByLabelText('Maximum results')).toHaveValue(500);
     act(() => last()[1].onSettled?.());
     expect(screen.getByLabelText('Maximum results')).toHaveValue(10);
@@ -107,8 +107,8 @@ describe('SearchTab fields', () => {
   it('configures truncated vector storage', () => {
     h.query = { data: { search: search({ vectorIndexCompression: { mode: 'truncated', dims: 256, quantization: 'f32' } }) }, isPending: false, refetch: vi.fn() };
     render(<SearchTab />);
-    edit('Stored dimensions', '10');
-    expect(last()[0]).toEqual({ category: 'search', updates: { vectorIndexCompression: { mode: 'truncated', dims: 32, quantization: 'f32' } } });
+    edit('Stored dimensions', '0');
+    expect(last()[0]).toEqual({ category: 'search', updates: { vectorIndexCompression: { mode: 'truncated', dims: 1, quantization: 'f32' } } });
     fireEvent.change(screen.getByLabelText('Stored precision'), { target: { value: 'i8' } });
     expect(last()[0]).toEqual({ category: 'search', updates: { vectorIndexCompression: { mode: 'truncated', dims: 256, quantization: 'i8' } } });
     fireEvent.change(screen.getByLabelText('Vector storage'), { target: { value: 'none' } });

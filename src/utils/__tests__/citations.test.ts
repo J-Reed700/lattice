@@ -226,7 +226,6 @@ describe('createCitationMap', () => {
 
 describe('parseCitations - Performance & DoS Protection', () => {
   it('should handle very long text efficiently', () => {
-    // Keep under 100KB limit (100,000 chars)
     const longText = `${'x'.repeat(49_000)  }[1]${  'y'.repeat(49_000)}`;
 
     const start = Date.now();
@@ -237,14 +236,15 @@ describe('parseCitations - Performance & DoS Protection', () => {
     expect(result).toHaveLength(3); // text + citation + text
   });
 
-  it('should reject text over 100KB', () => {
-    const oversized = 'x'.repeat(150_000);
+  it('should parse the citations of an answer over 100KB', () => {
+    const answer = `${'x'.repeat(150_000)}[1]${'y'.repeat(150_000)}`;
 
-    const result = parseCitations(oversized);
+    const result = parseCitations(answer);
 
-    expect(result).toHaveLength(1);
-    expect(result[0].citationNumber).toBeUndefined();
-    expect(result[0].text).toContain('truncated');
+    expect(result).toHaveLength(3);
+    expect(result[0].text).toBe('x'.repeat(150_000));
+    expect(result[1].citationNumber).toBe(1);
+    expect(result[2].text).toBe('y'.repeat(150_000));
   });
 
   it('should timeout on excessive citations', () => {

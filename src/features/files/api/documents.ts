@@ -342,13 +342,13 @@ export const documentApi = {
    * Unlike getRecentDocuments which only returns tracked documents, this returns ALL documents
    * including newly imported web archives, PDFs, etc. that haven't been accessed yet.
    *
-   * @param limit - Maximum number of documents to return (capped at 10000)
-   * @returns Array of all documents with metadata
+   * @param limit - Newest-indexed documents to return; omitted, every document
+   * @returns Array of the documents with metadata
    */
   listAllDocuments: async (
-    limit: number,
+    limit?: number,
   ): Promise<ApiResult<DocumentMetadata[]>> =>
-    apiCall('list_all_documents', { limit }),
+    apiCall('list_all_documents', { limit: limit ?? null }),
 
   /**
    * Retrieves document metadata by ID.
@@ -432,7 +432,7 @@ export const documentApi = {
    * Conversations that have this document among their linked documents.
    *
    * @param documentId - The document to look up
-   * @param limit - Maximum conversations to return (default 10, max 50)
+   * @param limit - Maximum conversations to return; omitted returns every one
    */
   listConversationsCitingDocument: async (
     documentId: string,

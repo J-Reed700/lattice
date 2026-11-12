@@ -712,3 +712,140 @@ async fn each_explorer_scope_filter_lists_only_its_own_conversations() {
         ["Message bookmark"]
     );
 }
+
+async fn many_conversations(repo: &ConversationRepository, count: usize) -> Vec<String> {
+    let mut ids = Vec::new();
+    for index in 0..count {
+        let conversation = repo.create(&format!("Chat {index}"), None).await.unwrap();
+        ids.push(conversation.id.to_string());
+    }
+    ids
+}
+
+#[tokio::test]
+async fn the_explorer_listing_without_a_limit_returns_every_conversation() {
+    let (_directory, _, repo) = repository().await;
+    many_conversations(&repo, 101).await;
+
+    let all = repo
+        .list_conversations_explorer(explorer_query(None, false, None, None))
+        .await
+        .unwrap();
+    assert_eq!(all.conversations.len(), 101);
+
+    let past_the_first_hundred = repo
+        .list_conversations_explorer(explorer_query(None, false, None, Some(100)))
+        .await
+        .unwrap();
+    assert_eq!(past_the_first_hundred.conversations.len(), 1);
+}
+
+#[tokio::test]
+async fn an_explicit_listing_limit_returns_at_most_that_many_and_offset_pages() {
+    let (_directory, _, repo) = repository().await;
+    many_conversations(&repo, 5).await;
+
+    let first = repo
+        .list_conversations_explorer(explorer_query(None, false, Some(2), None))
+        .await
+        .unwrap();
+    let second = repo
+        .list_conversations_explorer(explorer_query(None, false, Some(2), Some(2)))
+        .await
+        .unwrap();
+    let rest = repo
+        .list_conversations_explorer(explorer_query(None, false, None, Some(2)))
+        .await
+        .unwrap();
+    assert_eq!(
+        (first.conversations.len(), second.conversations.len()),
+        (2, 2)
+    );
+    assert_eq!(rest.conversations.len(), 3);
+    assert_ne!(first.conversations[0].id, second.conversations[0].id);
+}
+
+#[tokio::test]
+async fn a_listing_limit_below_one_or_a_negative_offset_is_invalid_input() {
+    let (_directory, _, repo) = repository().await;
+    let journal_id = repo.create_journal(journal("Reading")).await.unwrap().id;
+
+    for (limit, offset) in [(Some(0), None), (Some(-5), None), (None, Some(-1))] {
+        assert!(matches!(
+            repo.list_conversations_explorer(explorer_query(None, false, limit, offset))
+                .await,
+            Err(AppError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            repo.list_journal_conversations(journal_query(&journal_id, None, false, limit, offset))
+                .await,
+            Err(AppError::InvalidInput(_))
+        ));
+        let mut bookmarks = bookmark_query(None);
+        bookmarks.limit = limit;
+        bookmarks.offset = offset;
+        assert!(matches!(
+            repo.list_message_bookmarks(bookmarks).await,
+            Err(AppError::InvalidInput(_))
+        ));
+    }
+}
+
+#[tokio::test]
+async fn the_journal_listing_without_a_limit_returns_every_entry() {
+    let (_directory, _, repo) = repository().await;
+    let reading = repo.create_journal(journal("Reading")).await.unwrap();
+    for id in many_conversations(&repo, 121).await {
+        repo.add_conversation_to_journal(AddConversationToJournalRequestDto {
+            journal_space_id: reading.id.clone(),
+            conversation_id: id,
+        })
+        .await
+        .unwrap();
+    }
+
+    let all = repo
+        .list_journal_conversations(journal_query(&reading.id, None, false, None, None))
+        .await
+        .unwrap();
+    assert_eq!(all.conversations.len(), 121);
+}
+
+#[tokio::test]
+async fn the_bookmark_listing_returns_every_bookmark_without_a_limit_and_honours_a_large_one() {
+    let (_directory, pool, repo) = repository().await;
+    let conversation = repo.create("Notes", None).await.unwrap().id.to_string();
+    for index in 0..201 {
+        bookmarked_message(
+            &pool,
+            &repo,
+            &conversation,
+            &format!("note {index}"),
+            "2026-01-01T00:00:00Z",
+        )
+        .await;
+    }
+
+    let all = repo
+        .list_message_bookmarks(bookmark_query(None))
+        .await
+        .unwrap();
+    assert_eq!(all.bookmarks.len(), 201);
+
+    let mut large = bookmark_query(None);
+    large.limit = Some(250);
+    let listed = repo.list_message_bookmarks(large).await.unwrap();
+    assert_eq!(listed.bookmarks.len(), 201);
+
+    let mut tail = bookmark_query(None);
+    tail.limit = Some(2);
+    tail.offset = Some(200);
+    assert_eq!(
+        repo.list_message_bookmarks(tail)
+            .await
+            .unwrap()
+            .bookmarks
+            .len(),
+        1
+    );
+}

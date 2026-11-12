@@ -113,6 +113,11 @@ describe('loadNeighborhood', () => {
     expect(data.citedIn).toEqual([{ conversationId: 'conv-1', title: 'Where it came up' }]);
   });
 
+  it('asks for the ten conversations the panel shows', async () => {
+    await loadNeighborhood(subject.id, subject.fileName, documentsById);
+    expect(listConversationsCitingDocument).toHaveBeenCalledWith(subject.id, 10);
+  });
+
   it('looks backlinks up by the title, not the file name', async () => {
     await loadNeighborhood(subject.id, subject.fileName, documentsById);
     expect(getBacklinksForMention).toHaveBeenCalledWith('Subject');

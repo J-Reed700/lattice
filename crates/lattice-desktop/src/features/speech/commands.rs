@@ -19,8 +19,6 @@ use lattice_core::domain::models::curated::{
 use lattice_core::domain::models::selection::ModelMetadata;
 use lattice_core::shared::error::{AppError, Result};
 
-/// Longest text one call reads; the renderer sends a sentence or two.
-const MAX_TEXT_CHARS: usize = 4_000;
 const SPEEDS: std::ops::RangeInclusive<f32> = 0.5..=2.0;
 
 fn catalog_entry(id: &str) -> Result<ModelMetadata> {
@@ -93,11 +91,6 @@ pub async fn synthesize_speech_impl(
             "Speed must be between {} and {}.",
             SPEEDS.start(),
             SPEEDS.end()
-        )));
-    }
-    if text.chars().count() > MAX_TEXT_CHARS {
-        return Err(AppError::InvalidInput(format!(
-            "Read at most {MAX_TEXT_CHARS} characters at a time."
         )));
     }
     let clip = container.speech().synthesize(text, voice, speed).await?;

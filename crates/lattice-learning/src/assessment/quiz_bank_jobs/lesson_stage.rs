@@ -1,7 +1,6 @@
 //! A published lesson's quiz bank stage (section 5.4), run by its quiz job,
 //! and the lesson's own reviewed questions as bank items.
 use super::*;
-use crate::assessment::assessment_engine::checks::MAX_SOURCE_VERSIONS;
 
 fn seed_difficulty(kind: &LessonQuestionKind) -> u8 {
     match kind {
@@ -30,7 +29,6 @@ pub(crate) fn lesson_question_item(
             .source_ids
             .iter()
             .filter(|id| uuid::Uuid::parse_str(id).is_ok())
-            .take(MAX_SOURCE_VERSIONS)
             .cloned()
             .collect(),
         rubric: vec![],

@@ -350,7 +350,6 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                           <input
                             autoFocus
                             value={renameDraft}
-                            maxLength={120}
                             onChange={(e) => setRenameDraft(e.target.value)}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') {
@@ -496,7 +495,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                                 onClick={() => {
                                   setOpenActionsId(null);
                                   generateStudyDeck.mutate(
-                                    { conversationId: conversation.id, title: `${conversation.title} · Verified claims`.slice(0, 120) },
+                                    { conversationId: conversation.id, title: `${conversation.title} · Verified claims` },
                                     { onError: (error) => toast.error("Couldn't create flashcards", { message: error.message }) },
                                   );
                                 }}

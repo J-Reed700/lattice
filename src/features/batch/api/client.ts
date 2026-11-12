@@ -51,7 +51,7 @@ export const batchApi = {
    * Lists all batch jobs with pagination support.
    * Returns batch job history ordered by creation date (newest first).
    *
-   * @param limit - Max jobs to return (default: 20)
+   * @param limit - Max jobs to return; omitted returns every job
    * @param offset - Skip N jobs for pagination (default: 0)
    * @returns Array of batch job summaries
    */

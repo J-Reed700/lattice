@@ -116,15 +116,9 @@ pub fn repeated_option(options: &[String]) -> Option<&str> {
 /// The answer choices every single-choice question is written with.
 pub(crate) const CHOICES_PER_QUESTION: usize = 4;
 
-/// The grading criteria a written item or practice task is written with.
-pub const RUBRIC_CRITERIA: RangeInclusive<usize> = 2..=4;
-
 /// How many options, and how many of them correct, a multi-select item has.
 pub const MULTI_SELECT_OPTIONS: RangeInclusive<usize> = 4..=6;
 pub const MULTI_SELECT_CORRECT: RangeInclusive<usize> = 2..=3;
-
-/// The most frozen source versions a bank item cites.
-pub const MAX_SOURCE_VERSIONS: usize = 24;
 
 /// How many pairs a matching item has.
 pub const MATCHING_PAIRS: RangeInclusive<usize> = 3..=5;
@@ -238,14 +232,11 @@ pub fn item_faults(candidate: &LearningAssessmentCandidate) -> Vec<String> {
 
 fn text_key_valid(key: &LearningTextKey) -> bool {
     !key.variants.is_empty()
-        && key.variants.len() <= 12
         && key.variants.iter().all(|v| !v.trim().is_empty())
-        && key.numeric.as_ref().is_none_or(|n| {
-            n.value.is_finite()
-                && n.tolerance.is_finite()
-                && n.tolerance >= 0.0
-                && n.unit_variants.len() <= 12
-        })
+        && key
+            .numeric
+            .as_ref()
+            .is_none_or(|n| n.value.is_finite() && n.tolerance.is_finite() && n.tolerance >= 0.0)
 }
 
 pub const TRUE_FALSE: [&str; 2] = ["True", "False"];
@@ -256,8 +247,8 @@ pub const SINGLE_CHOICE_OPTIONS: RangeInclusive<usize> = 2..=8;
 pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()> {
     id(&candidate.id, "assessment item")?;
     present(&candidate.prompt, "Assessment prompt")?;
-    if candidate.outcome_ids.is_empty() || candidate.outcome_ids.len() > 8 {
-        return Err(invalid("An assessment item must address 1–8 outcomes."));
+    if candidate.outcome_ids.is_empty() {
+        return Err(invalid("An assessment item must address an outcome."));
     }
     let mut outcomes = HashSet::new();
     for outcome in &candidate.outcome_ids {
@@ -271,15 +262,10 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
             "Assessment item difficulty must use the 1–5 scale.",
         ));
     }
-    if candidate.source_version_ids.len() > MAX_SOURCE_VERSIONS {
-        return Err(AppError::InvalidInput(format!(
-            "Assessment items support at most {MAX_SOURCE_VERSIONS} frozen source versions."
-        )));
-    }
     for source in &candidate.source_version_ids {
         id(source, "source version")?;
     }
-    if candidate.distractor_rationales.len() > candidate.options.len().max(8) {
+    if candidate.distractor_rationales.len() > candidate.options.len() {
         return Err(invalid(
             "An assessment item has more distractor rationales than options.",
         ));
@@ -316,7 +302,7 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
         (LearningItemFormat::ShortAnswer, LearningAssessmentKey::Text(key)) => {
             if !text_key_valid(key) || !candidate.options.is_empty() || !no_left {
                 return Err(invalid(
-                    "Short-answer items need 1–12 accepted answers and no choices.",
+                    "Short-answer items need accepted answers and no choices.",
                 ));
             }
         }
@@ -324,7 +310,6 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
             let found = cloze_blanks(&candidate.prompt);
             let expected: Vec<usize> = (1..=blanks.len()).collect();
             if blanks.is_empty()
-                || blanks.len() > 8
                 || found != expected
                 || !blanks.iter().all(text_key_valid)
                 || !candidate.options.is_empty()
@@ -369,18 +354,16 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
             LearningItemFormat::Explanation | LearningItemFormat::Artifact,
             LearningAssessmentKey::Rubric,
         ) => {
-            if candidate.rubric.is_empty() || candidate.rubric.len() > 12 || !no_left {
-                return Err(invalid("Written items need 1–12 visible rubric criteria."));
+            if candidate.rubric.is_empty() || !no_left {
+                return Err(invalid("Written items need visible rubric criteria."));
             }
             let mut criteria = HashSet::new();
             for criterion in &candidate.rubric {
                 id(&criterion.id, "rubric criterion")?;
                 present(&criterion.title, "Rubric criterion title")?;
                 present(&criterion.description, "Rubric criterion description")?;
-                if criterion.max_points == 0 || criterion.max_points > 100 {
-                    return Err(invalid(
-                        "Rubric criterion points must be between 1 and 100.",
-                    ));
+                if criterion.max_points == 0 {
+                    return Err(invalid("Rubric criterion points must be at least 1."));
                 }
                 if !criteria.insert(&criterion.id) {
                     return Err(invalid("Rubric criterion IDs must be unique."));

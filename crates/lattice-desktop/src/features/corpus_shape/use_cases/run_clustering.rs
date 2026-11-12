@@ -35,6 +35,7 @@ const MARKED_REPRESENTATIVES: usize = 5;
 use crate::features::corpus_shape::repository::ClusterRepositoryPort;
 use lattice_core::application::ports::{DocumentRepositoryPort, EmbeddingRepositoryPort, LLMPort};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Page;
 
 /// Port that yields "give me the title + short content preview for doc X."
 /// Kept generic so tests can fake it without dragging the whole chunking
@@ -133,7 +134,7 @@ impl RunClusteringUseCase {
         //    stage is O(n²·d), so an unbounded vault would wedge the run.
         let documents = self
             .document_repo
-            .find_all_paginated(MAX_CLUSTERING_DOCS)
+            .find_all_paginated(Page::first(MAX_CLUSTERING_DOCS)?)
             .await
             .map_err(|e| AppError::Database(format!("corpus_shape: list documents: {}", e)))?;
 

@@ -7,7 +7,7 @@ import { IconButton } from '@/components/ui/IconButton';
 import { EntryActionRail } from '@/features/journal/components/EntryActionRail';
 import { EntryFromConversation } from '@/features/journal/components/EntryFromConversation';
 import { EntryHeader } from '@/features/journal/components/EntryHeader';
-import { EntryHighlightsStrip, HIGHLIGHT_CHAR_LIMIT } from '@/features/journal/components/EntryHighlightsStrip';
+import { EntryHighlightsStrip } from '@/features/journal/components/EntryHighlightsStrip';
 import { JournalContextRail } from '@/features/journal/components/JournalContextRail';
 import type { SynthesisScope, WeekCandidateCounts } from '@/features/journal/components/SynthesizePopover';
 import type { JournalEntrySummary } from '@/features/journal/hooks/useJournalEntries';
@@ -219,7 +219,7 @@ export function EntryEditor({
       {
         id: 'journal.highlight',
         label: 'Save highlight',
-        onSelect: (text) => onAddHighlight(text.slice(0, HIGHLIGHT_CHAR_LIMIT)),
+        onSelect: (text) => onAddHighlight(text),
       },
     ],
     [onAddHighlight],

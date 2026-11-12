@@ -32,7 +32,7 @@ type VerificationFieldConfig = {
   label: string;
   inputId: string;
   min: number;
-  max: number;
+  max?: number;
   step: number;
 };
 
@@ -46,11 +46,11 @@ const VERIFICATION_FIELDS: VerificationFieldConfig[] = [
     step: 0.05,
   },
   { key: 'topP', label: 'Top P', inputId: 'verification-top-p', min: 0, max: 1, step: 0.05 },
-  { key: 'topK', label: 'Top K', inputId: 'verification-top-k', min: 1, max: 500, step: 1 },
+  { key: 'topK', label: 'Top K', inputId: 'verification-top-k', min: 0, step: 1 },
 ];
 
 function normalizeVerificationValue(field: VerificationFieldConfig, value: number): number {
-  const clamped = clamp(value, field.min, field.max);
+  const clamped = clamp(value, field.min, field.max ?? Infinity);
   return field.step >= 1 ? Math.round(clamped) : Number(clamped.toFixed(2));
 }
 

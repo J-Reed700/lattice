@@ -7,15 +7,11 @@ import type { DownloadedModel } from '@/types/downloadedModels';
 
 import { NUMBER_FIELD_CLASS, clamp } from '../AITab/shared';
 
-// The floor still holds a turn; the ceiling is the largest window any model on
-// this computer is trained for, so a typo cannot ask for what none supports.
-const MIN_WINDOW = 512;
-const CEILING_WHEN_UNREPORTED = 262_144;
+const MIN_WINDOW = 1;
 
 /** The window every model on this computer loads with, unless it sets its own. */
 export function LocalContextWindowRow({ models }: { models: DownloadedModel[] }) {
-  const ceiling = Math.max(0, ...models.map((model) => model.trained_context_length ?? 0))
-    || CEILING_WHEN_UNREPORTED;
+  const ceiling = Math.max(0, ...models.map((model) => model.trained_context_length ?? 0)) || null;
   const { data: settings } = useSettingsQuery();
   const { mutateAsync: updateSettings } = useUpdateSettingsMutation();
   // What the user is typing, from when they untick "Fit each model to this
@@ -46,7 +42,7 @@ export function LocalContextWindowRow({ models }: { models: DownloadedModel[] })
     const typed = entry.trim();
     const value = typed === '' ? null : Number(typed);
     if (value !== null && !Number.isFinite(value)) return;
-    const next = value === null ? null : Math.round(clamp(value, MIN_WINDOW, ceiling));
+    const next = value === null ? null : Math.round(clamp(value, MIN_WINDOW, ceiling ?? Infinity));
     if (next !== shown) void save(next);
   };
 
@@ -76,7 +72,7 @@ export function LocalContextWindowRow({ models }: { models: DownloadedModel[] })
           id="local-context-window"
           type="number"
           min={MIN_WINDOW}
-          max={ceiling}
+          max={ceiling ?? undefined}
           step={1}
           disabled={usesDefault}
           placeholder={usesDefault ? undefined : 'Tokens'}

@@ -49,13 +49,11 @@ impl EmbeddingReadiness for ContainerEmbedding<'_> {
 
 /// Chunk size used when the user's indexing settings cannot be read.
 pub(crate) const DEFAULT_CHUNK_TOKENS: usize = 800;
-const MIN_CHUNK_TOKENS: usize = 64;
-const MAX_CHUNK_TOKENS: usize = 4096;
 
-/// The chunk-size policy every index path applies to the user's setting:
-/// clamped into the range the chunker supports.
+/// The chunk-size policy every index path applies to the user's setting: the
+/// setting as given, never below one.
 pub(crate) fn chunk_tokens_for(chunk_size: u32) -> usize {
-    (chunk_size as usize).clamp(MIN_CHUNK_TOKENS, MAX_CHUNK_TOKENS)
+    (chunk_size as usize).max(1)
 }
 
 /// The chunk size and file-type filter the user's indexing settings ask for,

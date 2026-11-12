@@ -178,7 +178,6 @@ impl CheckPolicy {
 }
 pub const MIN_VERDICT_CONFIDENCE: f32 = 0.75;
 
-const MAX_QUOTE_CHARS: usize = 400;
 /// The tokens a durable check keeps for each claim's answer: the reason, the
 /// passage it cites and the verdict. Evidence fills what the window leaves
 /// past it, alone or in a batch.

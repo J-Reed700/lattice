@@ -7,7 +7,7 @@ use super::{
     fits, generated_source_ids, grounding_instructions, invalid, parse_json, source_index_schema,
     validate_source_snapshot_ids, validate_text, CITATION_DRAFT_BRIEF, LESSON_OUTPUT_RESERVE,
 };
-use crate::assessment::assessment_engine::checks::{span, CHOICES_PER_QUESTION, RUBRIC_CRITERIA};
+use crate::assessment::assessment_engine::checks::CHOICES_PER_QUESTION;
 use crate::dto::{
     LearningBlockDto, LearningBlockKind, LearningLessonDto, LearningProgramDto, LearningSourceDto,
     LessonAnswerKey, LessonQuestion, LessonQuestionKind, PreparedLearningLesson,
@@ -238,21 +238,22 @@ pub(crate) fn lesson_schema_counting(
     })
 }
 
-/// The most sentences a block or question lists in its citations.
-pub(crate) const MAX_CITATIONS: usize = 24;
-
 /// The sentences of a block or question the writer cites, each with its own
 /// source and the words of that source that contain what it states (claim
 /// classes design §3.5): a sentence that states a specific is listed, and no
-/// other. The array is bounded, as llama.cpp drops a grammar whose repetition
-/// bounds run high, and empty for a course without sources.
+/// other. The array is empty for a course without sources.
 fn citations_schema(source_count: usize) -> serde_json::Value {
-    let most = if source_count == 0 { 0 } else { MAX_CITATIONS };
-    json!({"type":"array","maxItems":most,"items":{
+    let mut list = json!({"type":"array","items":{
         "type":"object","additionalProperties":false,"required":["sentence","sourceIndex","quote"],"properties":{
             "sentence":{"type":"string","minLength":1},"sourceIndex":source_index_schema(source_count),"quote":{"type":"string"}
         }
-    }})
+    }});
+    if source_count == 0 {
+        if let Some(object) = list.as_object_mut() {
+            object.insert("maxItems".into(), json!(0));
+        }
+    }
+    list
 }
 
 fn lesson_system(grounded: bool) -> String {
@@ -296,7 +297,7 @@ fn lesson_prompt(
             "The length comes from new substance, never from restating: a section never says the same thing twice, and each sentence adds something the ones before it have not said.",
             // The chat's own line, so a lesson's formulas are drawn as an answer's are.
             lattice_core::shared::markdown_math::MATH_GUIDANCE,
-            format!("For guided_practice and independent_practice supply {} rubric entries, each with a specific title, dimension and observable description of a successful response. State what distinguishes incomplete, adequate and strong work without disclosing the answer. All other blocks use an empty rubric array.", span(&RUBRIC_CRITERIA)),
+            "For guided_practice and independent_practice supply rubric entries, each with a specific title, dimension and observable description of a successful response. State what distinguishes incomplete, adequate and strong work without disclosing the answer. All other blocks use an empty rubric array.",
             "Reuse the course vocabulary and build on the ideas coursePlan lists for earlier lessons. When this lesson builds on one of them, open the first explanation with a short question asking the learner to recall it before reading on. Explicitly connect this lesson to the module project milestone; do not re-teach an earlier lesson's planned ideas.",
             "Do not describe how practice is reviewed. Never promise automatic code execution, external peer review or expert certification. A learner may run code in a lab after starting a supported runtime.",
             "Teach for the learner's own situation, systems and tools as programGoal and priorKnowledge describe them. When a source describes another system, version or setting, name that system instead of presenting what it says as the learner's.",

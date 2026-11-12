@@ -277,7 +277,7 @@ describe('PromptsTab verification', () => {
     });
   });
 
-  it('clamps an out-of-range value to the field bounds before saving', async () => {
+  it('saves a large value as typed', async () => {
     render(<PromptsTab />);
 
     const topK = screen.getByLabelText('Top K');
@@ -286,7 +286,7 @@ describe('PromptsTab verification', () => {
 
     await waitFor(() => {
       expect(mockLlmSettings.saveLlmUpdates).toHaveBeenCalledWith({
-        verification: { enabled: true, temperature: 0, topP: 1, topK: 500 },
+        verification: { enabled: true, temperature: 0, topP: 1, topK: 9999 },
       });
     });
   });

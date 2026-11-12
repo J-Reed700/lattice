@@ -163,10 +163,10 @@ export type ChatImage = z.infer<typeof ChatImageSchema>;
  * wanting, it was not checked strongly enough.
  */
 export const ClaimVerdictSchema = z.object({
-  sentence: z.string().max(2000),
-  citationIds: z.array(z.number().int().min(1).max(1000)).max(24),
+  sentence: z.string(),
+  citationIds: z.array(z.number().int().min(1)),
   verdict: z.enum(['supported', 'contradicted', 'unsupported', 'unverified']),
-  evidenceQuote: z.string().max(1000).nullable().optional(),
+  evidenceQuote: z.string().nullable().optional(),
   /** The judge's short factual comparison, especially useful for negatives. */
   reason: z.string().nullable().optional(),
   method: z.enum(['lexical', 'judge', 'quote']),
@@ -185,14 +185,14 @@ export const MessageVerificationSummarySchema = z.object({
   interrupted: z.boolean().optional(),
   claimsEvaluated: z.number().min(0).optional(),
   supportedClaims: z.number().min(0).optional(),
-  supportedClaimNotes: z.array(z.string().max(2000)).max(40).optional(),
-  unsupportedClaims: z.array(z.string().max(2000)).max(20).optional(),
+  supportedClaimNotes: z.array(z.string()).optional(),
+  unsupportedClaims: z.array(z.string()).optional(),
   groundedRatio: z.number().min(0).max(1).optional(),
   // Added alongside the LLM claim judge. Absent on messages verified before it
   // existed, so every consumer must tolerate `undefined` rather than read a
   // missing count as zero.
   /** Claims a passage actively refutes. Also present in `unsupportedClaims`. */
-  contradictedClaims: z.array(z.string().max(2000)).max(20).optional(),
+  contradictedClaims: z.array(z.string()).optional(),
   verdictCounts: z.object({
     supported: z.number().min(0),
     contradicted: z.number().min(0),
@@ -200,7 +200,7 @@ export const MessageVerificationSummarySchema = z.object({
     /** Claims nothing checked. Not counted in `unsupported`. */
     unverified: z.number().min(0),
   }).strict().optional(),
-  claimVerdicts: z.array(ClaimVerdictSchema).max(60).optional(),
+  claimVerdicts: z.array(ClaimVerdictSchema).optional(),
   /** Whether any claim in this turn was judged by a model rather than by overlap. */
   judgeUsed: z.boolean().optional(),
 }).strict();
@@ -401,19 +401,17 @@ export interface RetrievalTrace {
 }
 
 export const RetrievalTraceSchema = z.object({
-  searchedDocuments: z.number().int().min(0).max(100_000_000),
-  passages: z.number().int().min(0).max(1000),
-  files: z.number().int().min(0).max(1000),
-  webPages: z.number().int().min(0).max(1000).optional(),
+  searchedDocuments: z.number().int().min(0),
+  passages: z.number().int().min(0),
+  files: z.number().int().min(0),
+  webPages: z.number().int().min(0).optional(),
   scope: z.enum(['vault', 'linked']),
-  // Clipped rather than rejected: a search failure is exactly when the trace
-  // matters, and a long error must not fail the strict object and drop it.
-  unavailableReason: z.string().transform((reason) => reason.slice(0, 400)).optional(),
+  unavailableReason: z.string().optional(),
   kbSufficient: z.boolean().optional(),
-  kbCorrectiveRetries: z.number().int().min(0).max(8).optional(),
+  kbCorrectiveRetries: z.number().int().min(0).optional(),
   kbPlannerSkipped: z.boolean().optional(),
-  sufficiencyReasons: z.array(z.string().max(64)).max(8).optional(),
-  focusedDocuments: z.number().int().min(0).max(1000).optional(),
+  sufficiencyReasons: z.array(z.string()).optional(),
+  focusedDocuments: z.number().int().min(0).optional(),
 }).strict();
 
 /**
@@ -446,27 +444,27 @@ export const TurnStepKindSchema = z.enum([
 export type TurnStepKind = z.infer<typeof TurnStepKindSchema>;
 
 export const TurnStepLinkSchema = z.object({
-  url: z.string().min(1).max(2048),
-  title: z.string().max(400).nullable().optional(),
+  url: z.string().min(1),
+  title: z.string().nullable().optional(),
 }).strict();
 
 export type TurnStepLink = z.infer<typeof TurnStepLinkSchema>;
 
 export const TurnStepSchema = z.object({
   /** Stable within the turn; a finish event carries the id of its start. */
-  id: z.string().min(1).max(64),
+  id: z.string().min(1),
   kind: TurnStepKindSchema,
   /** A human sentence, as the activity labels were: "Searching your documents". */
   label: z.string(),
   /** The query, the host, a tool's argument summary. */
-  detail: z.string().max(400).nullable().optional(),
+  detail: z.string().nullable().optional(),
   state: z.enum(['running', 'done', 'failed']),
   /** Offset from the start of the turn, not a wall clock. */
   startedAtMs: z.number().int().min(0),
   /** Absent while the step is still running. Absent is not zero. */
   durationMs: z.number().int().min(0).nullable().optional(),
   /** What it produced: "8 passages from 3 files", "not enough support: …". */
-  result: z.string().max(400).nullable().optional(),
+  result: z.string().nullable().optional(),
   /** The backend caps Unicode characters, not JavaScript UTF-16 code units. */
   reasoning: z.string().max(48_000).refine(text => [...text].length <= 24_000).nullable().optional(),
   /**
@@ -474,20 +472,20 @@ export const TurnStepSchema = z.object({
    * its address from the start and a search only at the end, so either event
    * may carry it. Absent on every step that went nowhere on the web.
    */
-  links: z.array(TurnStepLinkSchema).max(12).optional(),
+  links: z.array(TurnStepLinkSchema).optional(),
 }).strict();
 
 export type TurnStep = z.infer<typeof TurnStepSchema>;
 
 /** A model a chat or a role names; mirrors the generated `ModelRef`. */
 export const ModelRefSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('local'), model_id: z.string().max(400) }).strict(),
-  z.object({ kind: z.literal('ollama'), model: z.string().max(400) }).strict(),
-  z.object({ kind: z.literal('llama_cpp'), model: z.string().max(400) }).strict(),
+  z.object({ kind: z.literal('local'), model_id: z.string() }).strict(),
+  z.object({ kind: z.literal('ollama'), model: z.string() }).strict(),
+  z.object({ kind: z.literal('llama_cpp'), model: z.string() }).strict(),
   z.object({
     kind: z.literal('cloud'),
     provider: z.enum(['openai', 'anthropic', 'google']),
-    model: z.string().max(400),
+    model: z.string(),
   }).strict(),
 ]);
 
@@ -497,13 +495,13 @@ export const ModelRefSchema = z.discriminatedUnion('kind', [
  * named its model, and `degraded` is set only when it ran on the CPU.
  */
 export const TurnModelSchema = z.object({
-  id: z.string().max(400),
-  name: z.string().max(400),
+  id: z.string(),
+  name: z.string(),
   model: ModelRefSchema.nullable().optional(),
   origin: z.enum(['default', 'chat_override', 'request_override', 'learning_role']).nullable().optional(),
-  provider: z.string().max(64).nullable().optional(),
+  provider: z.string().nullable().optional(),
   contextTokens: z.number().int().min(0).nullable().optional(),
-  degraded: z.string().max(4000).nullable().optional(),
+  degraded: z.string().nullable().optional(),
   /** Whether the model was shown the turn's pictures; absent on older records. */
   seesImages: z.boolean().optional(),
 }).strict();
@@ -513,7 +511,7 @@ export type TurnModel = z.infer<typeof TurnModelSchema>;
 export const TurnRecordSchema = z.object({
   /** The model that answered **this** turn, which the conversation's may not be. */
   model: TurnModelSchema.nullable(),
-  steps: z.array(TurnStepSchema).max(200),
+  steps: z.array(TurnStepSchema),
   timing: z.object({
     /** Time to the persisted answer, not to the last token. */
     totalMs: z.number().int().min(0),
@@ -534,7 +532,7 @@ export const TurnRecordSchema = z.object({
    * to route.
    */
   router: z.object({
-    action: z.string().max(64),
+    action: z.string(),
     confidence: z.number().min(0).max(1),
     rationale: z.string().nullable(),
   }).strict().nullable(),

@@ -241,7 +241,7 @@ async fn plan_with(
                 "type":"object", "additionalProperties":false,
                 "properties":{
                     "queries":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":3},
-                    "opening_document_ids":{"type":"array","items":{"type":"string"},"maxItems":4},
+                    "opening_document_ids":{"type":"array","items":{"type":"string"}},
                     "start_at_beginning":{"type":"boolean"}
                 }, "required":["queries","opening_document_ids","start_at_beginning"]
             })),

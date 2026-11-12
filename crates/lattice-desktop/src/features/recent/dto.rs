@@ -15,16 +15,6 @@ pub struct TrackAccessResponseDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GetRecentDocumentsRequestDto {
-    #[serde(default = "default_limit")]
-    pub limit: usize,
-}
-
-fn default_limit() -> usize {
-    20
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetRecentDocumentsResponseDto {
     pub documents: Vec<RecentDocumentDto>,
     pub total: usize,

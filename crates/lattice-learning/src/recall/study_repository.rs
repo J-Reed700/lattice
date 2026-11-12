@@ -181,7 +181,7 @@ fn study_source(source: &StoredSource) -> StudySourceDto {
         document_id: source.document_id.clone(),
         file_name: source.file_name.clone(),
         file_path: source.file_path.clone(),
-        excerpt: excerpt.chars().take(2400).collect(),
+        excerpt: excerpt.to_owned(),
         url: None,
     }
 }

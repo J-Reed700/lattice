@@ -161,29 +161,15 @@ fn validate_privacy(privacy: &LearningPackPrivacyManifest) -> Result<()> {
             "Full source bodies require explicit redistribution confirmation.",
         ));
     }
-    if privacy.omitted_items.len() > 1_000
-        || privacy
-            .omitted_items
-            .iter()
-            .any(|item| item.chars().count() > 500)
-    {
-        return Err(invalid("The pack privacy summary is too large."));
-    }
     Ok(())
 }
 
 fn validate_manifest_metadata(manifest: &LearningPackManifest) -> Result<()> {
-    if manifest.title.trim().is_empty() || manifest.title.chars().count() > 160 {
-        return Err(invalid(
-            "A learning-pack title must contain 1–160 characters.",
-        ));
+    if manifest.title.trim().is_empty() {
+        return Err(invalid("A learning-pack title must not be empty."));
     }
-    if manifest.application_version.trim().is_empty()
-        || manifest.application_version.chars().count() > 80
-    {
-        return Err(invalid(
-            "A learning pack needs a bounded application version.",
-        ));
+    if manifest.application_version.trim().is_empty() {
+        return Err(invalid("A learning pack needs an application version."));
     }
     if manifest.created_at < 0
         || manifest.created_at
@@ -385,16 +371,11 @@ pub fn encode_learning_pack(mut input: LearningPackInput) -> Result<Vec<u8>> {
             "A learning-pack creation time is outside its allowed range.",
         ));
     }
-    if input.title.trim().is_empty() || input.title.chars().count() > 160 {
-        return Err(invalid(
-            "A learning-pack title must contain 1–160 characters.",
-        ));
+    if input.title.trim().is_empty() {
+        return Err(invalid("A learning-pack title must not be empty."));
     }
-    if input.application_version.trim().is_empty() || input.application_version.chars().count() > 80
-    {
-        return Err(invalid(
-            "A learning pack needs a bounded application version.",
-        ));
+    if input.application_version.trim().is_empty() {
+        return Err(invalid("A learning pack needs an application version."));
     }
     validate_schema_version(input.schema_version)?;
     validate_privacy(&input.privacy)?;

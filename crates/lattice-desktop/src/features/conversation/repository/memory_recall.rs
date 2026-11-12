@@ -10,7 +10,7 @@ use super::ConversationRepository;
 use lattice_core::application::ports::conversation_memory::{
     RecallCandidate, RecallCandidates, TermHolders,
 };
-use lattice_core::domain::conversation::memory::{MemoryId, SourceRole};
+use lattice_core::domain::conversation::memory::SourceRole;
 use lattice_core::shared::error::{AppError, Result};
 use std::str::FromStr;
 
@@ -252,41 +252,6 @@ impl ConversationRepository {
             messages: messages as usize,
             holders,
         })
-    }
-
-    /// Generated item labels matching free text, for the details view.
-    ///
-    /// Labels help someone find a memory they half-remember. They are never a
-    /// substitute for evidence, and no mandatory item depends on this search
-    /// reaching it — mandatory items are loaded wholesale (§9.4).
-    pub async fn search_memory_item_labels(
-        &self,
-        conversation_id: &str,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<MemoryId>> {
-        let needle = query.trim();
-        if needle.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut read = self.db.begin_read().await?;
-        let ids: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM conversation_memory_items \
-             WHERE conversation_id = ? AND instr(lower(label), lower(?)) > 0 \
-             ORDER BY state = 'active' DESC, changed_at_sequence DESC LIMIT ?",
-        )
-        .bind(conversation_id)
-        .bind(needle)
-        .bind(limit.clamp(1, 64) as i64)
-        .fetch_all(&mut *read)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to search memory labels: {}", e)))?;
-        read.commit().await?;
-
-        Ok(ids
-            .into_iter()
-            .filter_map(|id| MemoryId::from_string(id).ok())
-            .collect())
     }
 }
 

@@ -99,11 +99,11 @@ impl LearningSourceLibraryRepository {
         if full_text.trim().is_empty() {
             return Err(invalid("Source text must not be empty"));
         }
-        let title = shown(captured.title.trim());
+        let title = captured.title.trim();
         if title.is_empty() {
             return Err(invalid("Source title must not be empty"));
         }
-        let publisher = captured.publisher.as_deref().map(shown);
+        let publisher = captured.publisher.as_deref();
         if origin.trim().is_empty() || origin.chars().count() > 2048 {
             return Err(invalid("Source origin must contain 1–2048 characters"));
         }
@@ -384,8 +384,8 @@ impl LearningSourceLibraryRepository {
                     Some("The page did not contain valid source metadata and text.".into()),
                 )
             } else {
-                let title = shown(captured.title.trim());
-                let publisher = captured.publisher.as_deref().map(shown);
+                let title = captured.title.trim();
+                let publisher = captured.publisher.as_deref();
                 let new_digest = sha256_hex(&text);
                 if active_digest.as_deref() == Some(new_digest.as_str()) {
                     (LearningSourceCheckStatus::Unchanged, None, None)

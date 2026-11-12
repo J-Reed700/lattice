@@ -67,10 +67,8 @@ impl LearningPracticalRepository {
         uuid(&request.program_id, "program")?;
         uuid(&request.profile_id, "runtime profile")?;
         let name = request.name.trim();
-        if name.is_empty() || name.chars().count() > 120 {
-            return Err(invalid(
-                "Runtime profile names must contain 1–120 characters.",
-            ));
+        if name.is_empty() {
+            return Err(invalid("Runtime profile names must not be empty."));
         }
         // Reuse the execution boundary to validate immutable image IDs, trusted
         // argv, and bounded limits. The placeholder file is never executed.
@@ -224,13 +222,8 @@ impl LearningPracticalRepository {
         ] {
             uuid(value, label)?;
         }
-        if request.allowed_aids.len() > 24
-            || request
-                .allowed_aids
-                .iter()
-                .any(|aid| aid.trim().is_empty() || aid.chars().count() > 160)
-        {
-            return Err(invalid("Practical aid descriptions must be bounded."));
+        if request.allowed_aids.iter().any(|aid| aid.trim().is_empty()) {
+            return Err(invalid("Practical aid descriptions must not be empty."));
         }
         if generator_model.trim().is_empty() {
             return Err(invalid(

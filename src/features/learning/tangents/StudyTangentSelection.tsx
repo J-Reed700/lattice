@@ -309,7 +309,7 @@ export function SectionTangentBar({
     if (Array.from(trimmed).length <= MAX_STUDY_TANGENT_PASSAGE_LENGTH) {
       startFromText(trimmed);
     } else {
-      setTrimPassage(trimmed.slice(0, 4000));
+      setTrimPassage(trimmed);
     }
   };
 

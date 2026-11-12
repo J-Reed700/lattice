@@ -778,7 +778,6 @@ async fn research<'a>(
             .iter()
             .filter_map(|candidate| candidate.owner.as_ref())
             .map(|owner| owner.domain.clone())
-            .take(1)
             .collect();
         let selected = select_noted(llm, &context.topic, &need.query, gaps, candidates).await?;
         for (result, note) in selected {

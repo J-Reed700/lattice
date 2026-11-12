@@ -189,7 +189,7 @@ export function FlashcardSession({ cards, mode, title, onClose, targetAt }: { ca
     {mode === 'flashcard' && !revealed && seconds > 0 && <AnswerClock key={`${card.id}:${attemptNumber}`} seconds={seconds} />}
     {mode === 'flashcard' && !revealed && <label className="mt-6 block text-xs text-text-muted">
       Your answer <span className="text-text-muted">· committing to one before you look is what makes it stick</span>
-      <textarea value={attemptText} onChange={event => setAttemptText(event.target.value)} rows={seconds > 0 ? 6 : 3} maxLength={6000} placeholder={seconds > 0 ? 'Say it aloud, or type the outline of your answer…' : 'Type what you remember…'} className="mt-2 w-full resize-y rounded-md border border-border-subtle bg-background px-3 py-2.5 text-sm leading-6 text-text-primary outline-hidden focus:border-accent" />
+      <textarea value={attemptText} onChange={event => setAttemptText(event.target.value)} rows={seconds > 0 ? 6 : 3} placeholder={seconds > 0 ? 'Say it aloud, or type the outline of your answer…' : 'Type what you remember…'} className="mt-2 w-full resize-y rounded-md border border-border-subtle bg-background px-3 py-2.5 text-sm leading-6 text-text-primary outline-hidden focus:border-accent" />
     </label>}
     {mode === 'quiz' && <fieldset className="mt-8 space-y-2" disabled={review.isPending || revealed}>
       <legend className="sr-only">Choose an answer</legend>

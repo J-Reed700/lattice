@@ -399,7 +399,8 @@ impl ConversationRepository {
             .semantic_scores_on(&mut tx, conversation, vector.as_deref())
             .await;
         tx.commit().await?;
-        let terms: Vec<_> = informative_terms(query).into_iter().take(32).collect();
+        let terms = informative_terms(query);
+        let finder = aho_corasick::AhoCorasick::new(&terms).ok();
         let mut prepared =
             lattice_core::application::ports::conversation_memory::PreparedMemory::default();
         let mut optional = Vec::new();
@@ -422,10 +423,7 @@ impl ConversationRepository {
                         .join(" ")
                 )
                 .to_lowercase();
-                let matches = terms
-                    .iter()
-                    .filter(|term| haystack.contains(term.as_str()))
-                    .count();
+                let matches = terms_contained(finder.as_ref(), &terms, &haystack);
                 let meaning = semantic.get(&item.id).copied().unwrap_or(0.0);
                 if own || words_shared(&terms, &haystack) > 0 || meaning >= SHARED_RELEVANCE_FLOOR {
                     optional.push((matches as f32 + meaning, item.label.to_lowercase(), text));
@@ -443,6 +441,28 @@ impl ConversationRepository {
         prepared.revisions = Some(revisions);
         Ok(prepared)
     }
+}
+
+/// How many distinct `terms` the lowercased `text` contains as substrings, in
+/// one pass over `text` whatever the number of terms.
+fn terms_contained(
+    finder: Option<&aho_corasick::AhoCorasick>,
+    terms: &[String],
+    text: &str,
+) -> usize {
+    let Some(finder) = finder else {
+        return terms
+            .iter()
+            .filter(|term| text.contains(term.as_str()))
+            .count();
+    };
+    let mut found = vec![false; terms.len()];
+    for hit in finder.find_overlapping_iter(text) {
+        if let Some(slot) = found.get_mut(hit.pattern().as_usize()) {
+            *slot = true;
+        }
+    }
+    found.into_iter().filter(|seen| *seen).count()
 }
 
 /// How many of `terms` are whole words of the lowercased `text`.
@@ -515,11 +535,7 @@ impl ConversationRepository {
         history: bool,
         max_bytes: usize,
     ) -> Result<serde_json::Value> {
-        let terms: Vec<_> = query
-            .split_whitespace()
-            .take(32)
-            .map(str::to_lowercase)
-            .collect();
+        let terms: Vec<_> = query.split_whitespace().map(str::to_lowercase).collect();
         let mut ranked = Vec::new();
         let mut more = false;
         for page in 0..20 {

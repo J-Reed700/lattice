@@ -122,11 +122,8 @@ pub(super) fn validate_program(p: &LearningProgramDto) -> Result<()> {
             "Pack current lesson is missing from its curriculum.",
         ));
     }
-    if p.modules.is_empty()
-        || p.modules.len() > 100
-        || p.modules.iter().map(|m| m.lessons.len()).sum::<usize>() > 1000
-    {
-        return Err(invalid("Pack curriculum exceeds import limits."));
+    if p.modules.is_empty() {
+        return Err(invalid("Pack curriculum has no modules."));
     }
     Ok(())
 }

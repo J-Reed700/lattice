@@ -100,14 +100,14 @@ export function EntryFromConversation({
 
   const startNewChatFromEntrySources = async () => {
     if (!entry) return;
-    const sources = entrySources.slice(0, 24);
+    const sources = entrySources;
     if (sources.length === 0) {
       onNotify('error', 'No citation sources found for this journal entry yet.');
       return;
     }
     try {
       const titleBase = entry.title.trim() || 'Journal Entry';
-      const conversationTitle = `Sources · ${titleBase}`.slice(0, 90);
+      const conversationTitle = `Sources · ${titleBase}`;
       // A chat about this entry's sources searches what the entry searched.
       // Read from the saved row, not the sidebar's list, which may be showing
       // another space and would hand back nothing.

@@ -14,7 +14,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 
 import { NUMBER_FIELD_CLASS, toFinite } from '../AITab/shared';
 
-export const MIN_CONTEXT_LENGTH = 512;
+export const MIN_CONTEXT_LENGTH = 1;
 
 export function HelpTooltip({ content }: { content: string }) {
   return (
@@ -107,7 +107,7 @@ export function TokenLimitField({ label, help, min, max, value, placeholder, onC
           <input
             aria-label={`${label} Slider`}
             type="range"
-            min={min}
+            min={0}
             max={max}
             step={512}
             value={Math.min(Math.max(value ?? min, min), max)}

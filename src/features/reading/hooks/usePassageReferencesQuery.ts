@@ -21,7 +21,7 @@ export function usePassageReferencesQuery() {
   return useQuery<PassageReferenceDto[]>({
     queryKey: PASSAGE_REFERENCES_QUERY_KEY,
     queryFn: async () => {
-      const result = await api.listPassageReferences(200);
+      const result = await api.listPassageReferences();
       if (!result.ok) throw new Error(result.error);
       return result.data;
     },
