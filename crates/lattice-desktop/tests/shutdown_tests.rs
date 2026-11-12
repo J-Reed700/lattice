@@ -240,7 +240,7 @@ mod shutdown_tests {
             .unwrap();
 
         // Acquire a connection
-        let _conn = pool.acquire().await.unwrap();
+        let conn = pool.acquire().await.unwrap();
 
         // Get connection count (simulates logging in graceful_shutdown)
         let conn_count = pool.size();
@@ -250,7 +250,8 @@ mod shutdown_tests {
             "Pool size should be at least 1 with active connection"
         );
 
-        // Close pool
+        // Close waits for every borrowed connection to come back.
+        drop(conn);
         pool.close().await;
     }
 
