@@ -1,5 +1,6 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, type InvokeArgs } from '@tauri-apps/api/core';
 
+import type { CommandArgs, CommandResults } from '@/lib/bindings';
 import { parseApiError } from '@/lib/errorHandling';
 import type { ApiResult } from '@/types';
 import { diagnostics } from '@/utils/diagnostics';
@@ -8,18 +9,23 @@ import { COMMAND_PLUGINS, type CommandName } from './routes.generated';
 
 export type { CommandName } from './routes.generated';
 
+/** A command's argument list: optional when every argument may be left out. */
+export type CommandArgList<C extends CommandName> = undefined extends CommandArgs[C]
+  ? [args?: CommandArgs[C]]
+  : [args: CommandArgs[C]];
+
 /**
  * Invoke a command through the plugin that registers it and wrap the outcome
  * in an ApiResult. Failures are recorded in diagnostics, never thrown.
  */
-export async function apiCall<T>(
-  command: CommandName,
-  args?: Record<string, unknown>,
-): Promise<ApiResult<T>> {
+export async function apiCall<C extends CommandName>(
+  command: C,
+  ...[args]: CommandArgList<C>
+): Promise<ApiResult<CommandResults[C]>> {
   try {
-    const data = await invoke<T>(
+    const data = await invoke<CommandResults[C]>(
       `plugin:${COMMAND_PLUGINS[command]}|${command}`,
-      args ?? {},
+      (args ?? {}) as InvokeArgs,
     );
     return { ok: true, data };
   } catch (error) {

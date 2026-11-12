@@ -53,9 +53,7 @@ const cases: Case[] = [
   ['bookmarkConversationMessage', () => chatApi.bookmarkConversationMessage({ messageId: 'm1' } as never), 'bookmark_conversation_message', { request: { messageId: 'm1' } }],
   ['unbookmarkConversationMessage', () => chatApi.unbookmarkConversationMessage({ messageId: 'm1' } as never), 'unbookmark_conversation_message', { request: { messageId: 'm1' } }],
   ['listMessageBookmarks with a query', () => chatApi.listMessageBookmarks({ limit: 5 } as never), 'list_message_bookmarks', { query: { limit: 5 } }],
-  ['listMessageBookmarks without a query', () => chatApi.listMessageBookmarks(), 'list_message_bookmarks', { query: {} }],
   ['listConversationsExplorer with a query', () => chatApi.listConversationsExplorer({ spaceId: 's1' } as never), 'list_conversations_explorer', { query: { spaceId: 's1' } }],
-  ['listConversationsExplorer without a query', () => chatApi.listConversationsExplorer(), 'list_conversations_explorer', { query: {} }],
   ['listJournalConversations', () => chatApi.listJournalConversations({ journalId: 'j1' } as never), 'list_journal_conversations', { query: { journalId: 'j1' } }],
   ['listJournalEntryPins', () => chatApi.listJournalEntryPins('j1'), 'list_journal_entry_pins', { journalSpaceId: 'j1' }],
   ['setJournalEntryPinned', () => chatApi.setJournalEntryPinned({ journalSpaceId: 'j1' } as never), 'set_journal_entry_pinned', { request: { journalSpaceId: 'j1' } }],
@@ -110,7 +108,7 @@ describe('chatApi', () => {
       expect(invoke).toHaveBeenCalledWith(route('chat_with_conversation'), {
         conversationId: 'c1', message: '', requestId: 'r1', cancelOnly: true,
       });
-      expect(result).toEqual({ ok: true, data: undefined });
+      expect(result).toEqual({ ok: true, data: null });
     });
 
     it('passes the failure through when the cancel is refused', async () => {

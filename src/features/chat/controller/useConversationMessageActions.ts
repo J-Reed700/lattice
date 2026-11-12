@@ -26,7 +26,7 @@ export function useConversationMessageActions({
     note?: string | null
   ) => {
     try {
-      await saveBookmark(queryClient, { conversationId, messageId, title, note }, api);
+      await saveBookmark(queryClient, { conversationId, messageId, title: title ?? null, note: note ?? null }, api);
       return true;
     } catch (error) {
       setUiError(error);

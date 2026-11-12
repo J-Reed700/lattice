@@ -4,7 +4,6 @@ import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query';
 import { listen } from '@tauri-apps/api/event';
 
 import { onJobStatus } from '@/features/jobs/api';
-import type { ActivitySnapshotDto } from '@/lib/bindings';
 import { apiCall } from '@/shared/ipc/transport';
 import { unwrapApiResult } from '@/types/api/result';
 
@@ -33,7 +32,7 @@ export const activityKeys = {
 export const activitySnapshotQueryOptions = () =>
   queryOptions({
     queryKey: activityKeys.snapshot,
-    queryFn: async () => unwrapApiResult(await apiCall<ActivitySnapshotDto>('activity_snapshot')),
+    queryFn: async () => unwrapApiResult(await apiCall('activity_snapshot')),
     // Kept current by the events below, not by refetching on a clock.
     staleTime: Infinity,
     // Nothing listens while Iris is hidden, so a snapshot cached before she is shown again may be old.

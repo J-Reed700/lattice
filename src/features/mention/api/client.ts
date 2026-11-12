@@ -1,4 +1,3 @@
-import type * as Wire from '@/lib/bindings';
 import { apiCall } from '@/shared/ipc/transport';
 import type {
   ApiResult,
@@ -22,7 +21,7 @@ export const mentionApi = {
     documentId: string,
     content: string,
   ): Promise<ApiResult<ExtractMentionsResponse>> =>
-    apiCall<Wire.ExtractMentionsResultDto>('extract_mentions', {
+    apiCall('extract_mentions', {
       documentId,
       content,
     }),
@@ -39,7 +38,7 @@ export const mentionApi = {
     query: string,
     limit?: number,
   ): Promise<ApiResult<SearchMentionsResponse>> =>
-    apiCall<Wire.SearchMentionsResultDto>('search_mentions', { query, limit }),
+    apiCall('search_mentions', { query, limit }),
 
   /**
    * Gets all mentions found in a specific document.
@@ -51,7 +50,7 @@ export const mentionApi = {
   getMentionsForDocument: async (
     documentId: string,
   ): Promise<ApiResult<GetMentionsForDocumentResult>> =>
-    apiCall<Wire.GetMentionsForDocumentResultDto>('get_mentions_for_document', {
+    apiCall('get_mentions_for_document', {
       documentId,
     }),
 
@@ -65,7 +64,7 @@ export const mentionApi = {
   getBacklinksForMention: async (
     mentionName: string,
   ): Promise<ApiResult<BacklinksResponse>> =>
-    apiCall<Wire.BacklinksResultDto>('get_backlinks_for_mention', {
+    apiCall('get_backlinks_for_mention', {
       mentionName,
     }),
 
@@ -79,7 +78,7 @@ export const mentionApi = {
   getMentionsByType: async (
     mentionType: string,
   ): Promise<ApiResult<Mention[]>> =>
-    apiCall<Wire.MentionDto[]>('get_mentions_by_type', { mentionType }),
+    apiCall('get_mentions_by_type', { mentionType }),
 
   /**
    * Creates a new mention entity.
@@ -93,7 +92,7 @@ export const mentionApi = {
     name: string,
     mentionType: string,
   ): Promise<ApiResult<Mention>> =>
-    apiCall<Wire.MentionDto>('create_mention', { name, mentionType }),
+    apiCall('create_mention', { name, mentionType }),
 
   /**
    * Deletes a mention entity.
@@ -102,6 +101,6 @@ export const mentionApi = {
    * @param mentionId - Internal mention identifier
    * @returns Void on success
    */
-  deleteMention: async (mentionId: string): Promise<ApiResult<void>> =>
-    apiCall<void>('delete_mention', { mentionId }),
+  deleteMention: async (mentionId: string): Promise<ApiResult<null>> =>
+    apiCall('delete_mention', { mentionId }),
 };

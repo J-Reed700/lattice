@@ -55,7 +55,7 @@ export function useJobStatus(onJob: JobSubscriber): void {
 export const jobsQueryOptions = (kinds: readonly string[]) =>
   queryOptions({
     queryKey: jobKeys.list(kinds),
-    queryFn: async () => unwrapApiResult(await apiCall<JobDto[]>('list_jobs', { kinds: [...kinds] })),
+    queryFn: async () => unwrapApiResult(await apiCall('list_jobs', { kinds: [...kinds] })),
     // Kept current by the status event, not by refetching.
     staleTime: Infinity,
   });

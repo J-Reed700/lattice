@@ -118,6 +118,7 @@ describe('useSpaceEditor', () => {
     expect(api.updateConversationSpace).toHaveBeenCalledWith({
       spaceId: 'botany', name: 'Botany', description: null, icon: '🌵', accentColor: null, spacePrompt: 'Prefer herbarium records.',
       toolPreferencesJson: JSON.stringify({ knowledgeBase: false, webSearch: false, deepResearchMode: false, enabledTools: [] }),
+      isArchived: null, sortOrder: null,
     });
   });
 

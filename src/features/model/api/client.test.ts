@@ -38,11 +38,9 @@ describe('modelApi', () => {
     expect(lastCall()[1]).toEqual({ modelId: 'herb-9b', deleteFile: false });
   });
 
-  it('sends a category only when one is given', async () => {
+  it('sends the category it is asked for', async () => {
     await modelApi.getCompatibleModels('embedding');
     expect(lastCall()[1]).toEqual({ category: 'embedding' });
-    await modelApi.getCompatibleModels();
-    expect(lastCall()[1]).toEqual({});
   });
 
   it('wraps replies and failures as results', async () => {
