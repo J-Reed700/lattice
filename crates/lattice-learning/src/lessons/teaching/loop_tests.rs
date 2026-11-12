@@ -3612,7 +3612,7 @@ async fn material_that_fails_closed_whose_repair_changes_nothing_twice_fails_wit
 ) {
     let model = ByRequest::new(
         |_| false,
-        |_, _| vec![json!({"path":"/wrong","before":true,"after":true})],
+        |_, _| vec![json!({"path":"/wrong","before":"true","after":"true"})],
     )
     .about_the_whole(|_, _| vec![WRONG_COMPARISON]);
     let result = review_and_repair(
