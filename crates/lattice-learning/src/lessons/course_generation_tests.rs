@@ -1295,7 +1295,7 @@ async fn outline_model_streams_without_a_deadline_and_rejects_truncated_output()
     })?;
     let progress = crate::outline_progress::OutlineProgress::default();
     progress.stage(crate::outline_progress::OutlineStage::Drafting);
-    let error = generation::complete_json_with_progress(
+    let error = crate::lessons::structured_call::complete_json_with_progress(
         &StreamingModel,
         &call,
         "Generate",

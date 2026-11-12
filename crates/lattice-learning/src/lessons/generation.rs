@@ -6,7 +6,7 @@
 
 use crate::dto::{GenerateLearningProgramRequestDto, LearningSourceDto};
 pub(crate) use crate::lessons::structured_call::complete_checked;
-pub(crate) use crate::lessons::structured_call::{complete_json, complete_json_with_progress};
+pub(crate) use crate::lessons::structured_call::complete_json;
 use crate::model_call;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;

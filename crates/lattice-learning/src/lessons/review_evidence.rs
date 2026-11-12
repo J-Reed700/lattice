@@ -64,7 +64,7 @@ struct Finding {
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Decisions {
+pub(crate) struct Decisions {
     decisions: Vec<Finding>,
 }
 

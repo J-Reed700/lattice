@@ -217,7 +217,7 @@ enum Restored {
     Ask(PendingClaim),
 }
 
-async fn restored(at: &ReadContext<'_>, pending: PendingClaim) -> Result<Restored> {
+async fn restored(pending: PendingClaim) -> Result<Restored> {
     match compare(pending).await? {
         Comparison::Done(finding, reused) => Ok(Restored::Receipt(finding, reused)),
         Comparison::Pending(pending) => Ok(Restored::Ask(pending)),
@@ -257,7 +257,7 @@ async fn restore_parts(
     evidence: Vec<EvidencePassage>,
 ) -> Result<Restored> {
     let pending = comparison(at, ordinal, statement, checked, evidence, Pass::Attribution);
-    Ok(match restored(at, pending).await? {
+    Ok(match restored(pending).await? {
         Restored::Receipt(finding, reused) => Restored::Receipt(Box::new(alone(*finding)), reused),
         asked => asked,
     })

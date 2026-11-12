@@ -4,7 +4,7 @@ use super::claim_ledger::{self, ClaimLedger, StepKind};
 use super::passes;
 use super::readings::Readers;
 use super::repair::Cited;
-use super::repair_request::{repair_context, repair_fingerprint, restart, PendingRepair, Restart};
+use super::repair_request::{repair_context, repair_fingerprint, PendingRepair, Restart};
 use super::round::{self, Audit, Researched, Review, Settled, Unsettled, Verdict};
 use super::*;
 use crate::lessons::shape::{LessonSchema, LessonShape, Phase, ShapePolicy};

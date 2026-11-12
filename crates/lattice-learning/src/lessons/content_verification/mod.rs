@@ -39,7 +39,7 @@ pub(crate) use claim_ledger::{
 };
 mod class_checks;
 mod classify;
-pub(crate) use classify::{quoted_wording, QUOTE_MARKS};
+pub(crate) use classify::quoted_wording;
 mod coverage;
 #[cfg(any(test, feature = "test-support"))]
 pub use coverage::live_mapping_fixture;
@@ -118,8 +118,8 @@ pub(crate) use repair_loop::verify_and_repair;
 pub(crate) use repair_loop::verify_and_repair_with_references;
 #[cfg(test)]
 use repair_request::repair_context;
+pub(crate) use repair_request::restart;
 use repair_request::{repair_fingerprint, PendingRepair};
-pub(crate) use repair_request::{restart, Restart};
 #[cfg(test)]
 use report::content_hash;
 pub(crate) use report::{not_verified_line, persist_report, sources_changed};
