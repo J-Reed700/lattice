@@ -221,6 +221,7 @@ async fn a_section_too_large_for_one_request_is_repaired_in_several_that_fit() -
             window_tokens: 4_000,
         };
         ledger.append(&id, ClaimEvent::Checked(check)).await?;
+        to_the_rewrite(&mut ledger, &[&id]).await?;
         assert!(ledger.may_repair(&StandardPolicy::new(), &id));
     }
 
@@ -338,6 +339,8 @@ async fn the_last_attempt_takes_the_sentence_out_and_leaves_the_rest_to_the_mode
     )
     .await?;
     let (last, first) = (ClaimId("last".into()), ClaimId("first".into()));
+    at_the_cut(&mut ledger, &last).await?;
+    to_the_rewrite(&mut ledger, &[&first]).await?;
     ledger
         .begin_repairs(
             &StandardPolicy::new(),
@@ -402,6 +405,7 @@ async fn a_last_attempt_that_cannot_take_the_sentence_out_ends_the_claim_removed
     };
     let mut ledger = failed_ledger(&llm, body, &[("last", "Cut this.", 1)]).await?;
     let last = ClaimId("last".into());
+    at_the_cut(&mut ledger, &last).await?;
     ledger
         .begin_repairs(
             &StandardPolicy::new(),
@@ -515,6 +519,10 @@ async fn a_failed_example_on_its_last_attempt_is_taken_out_with_its_fences() -> 
     )
     .await?;
     let example = ClaimId("example".into());
+    let run = ClaimEvent::CodeExample {
+        observation: "example-0".into(),
+    };
+    assert!(ledger.append(&example, run).await?);
     ledger
         .begin_repairs(
             &StandardPolicy::new(),
@@ -565,8 +573,10 @@ async fn a_claim_on_a_sentence_cut_for_another_is_no_work_for_the_model() -> Res
     )
     .await?;
     // The narrowing that would keep what `mate` says was asked and not applied.
-    narrowing_spent(&mut ledger, "last", "Cut this.").await?;
     let (last, mate) = (ClaimId("last".into()), ClaimId("mate".into()));
+    at_the_cut(&mut ledger, &last).await?;
+    to_the_rewrite(&mut ledger, &[&mate]).await?;
+    narrowing_spent(&mut ledger, "last", "Cut this.").await?;
     ledger
         .begin_repairs(
             &StandardPolicy::new(),
@@ -628,8 +638,10 @@ async fn last_attempts_that_leave_the_lesson_no_claim_stop_it_and_end_every_clai
     )
     .await?;
     // The narrowing that would keep what `mate` says was asked and not applied.
-    narrowing_spent(&mut ledger, "last", "Cut this.").await?;
     let (last, mate) = (ClaimId("last".into()), ClaimId("mate".into()));
+    at_the_cut(&mut ledger, &last).await?;
+    to_the_rewrite(&mut ledger, &[&mate]).await?;
+    narrowing_spent(&mut ledger, "last", "Cut this.").await?;
     ledger
         .begin_repairs(
             &StandardPolicy::new(),
@@ -868,6 +880,7 @@ async fn a_hunk_that_mixes_a_target_with_a_passed_sentence_costs_only_that_targe
     .await?;
     passed(&mut ledger, &llm, "passed", (PASSED, PASSED), &body).await?;
     let (first, third) = (ClaimId("first".into()), ClaimId("third".into()));
+    to_the_rewrite(&mut ledger, &[&first, &third]).await?;
     ledger
         .begin_repairs(
             &StandardPolicy::new(),
@@ -1125,6 +1138,7 @@ async fn the_last_attempt_takes_out_the_sentence_that_states_the_claim_not_the_r
         statement: STATEMENT.to_owned(),
     };
     ledger.append(&stating, extracted).await?;
+    at_the_cut(&mut ledger, &stating).await?;
     // The locator reads the statement as the passage's second sentence.
     let located = lattice_core::shared::text::claim_sentence(&body, (0, passage.len()), STATEMENT);
     assert_eq!(
@@ -1227,9 +1241,6 @@ async fn passage_wide_with(
         ],
     )
     .await?;
-    if spent {
-        narrowing_spent(&mut ledger, "stating", passage).await?;
-    }
     let stating = ClaimId("stating".into());
     let location = ClaimLocation::locate(0, UnitKind::Block, "body", passage, body);
     let extracted = ClaimEvent::Extracted {
@@ -1237,6 +1248,10 @@ async fn passage_wide_with(
         statement: statement.to_owned(),
     };
     ledger.append(&stating, extracted).await?;
+    at_the_cut(&mut ledger, &stating).await?;
+    if spent {
+        narrowing_spent(&mut ledger, "stating", passage).await?;
+    }
     ledger
         .begin_repairs(
             &StandardPolicy::new(),

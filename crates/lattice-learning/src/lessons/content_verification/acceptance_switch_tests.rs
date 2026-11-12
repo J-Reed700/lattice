@@ -42,7 +42,7 @@ const REWRITE: Step = Step::Rewrite(Goal::WhatThePassageStates);
 /// Steps that leave a Sourced statement at `s.research`, `s.rewrite`,
 /// `s.recite`, `s.cut`.
 pub(super) const RESEARCHING: [(Step, Outcome); 1] = [(PARTS, Outcome::Unproven)];
-const REWRITING: [(Step, Outcome); 3] = [
+pub(super) const REWRITING: [(Step, Outcome); 3] = [
     (PARTS, Outcome::Unproven),
     (Step::Research, Outcome::FoundNothing),
     (PAGE, Outcome::Refuted),
@@ -2242,6 +2242,10 @@ async fn failed_example_as(
     body: &str,
 ) -> Result<ClaimId> {
     let id = claim_in(ledger, name, unit, (CODE, CODE), body, None).await?;
+    let run = ClaimEvent::CodeExample {
+        observation: format!("{name}-0"),
+    };
+    ledger.append(&id, run).await?;
     let failed = local_check(
         CheckResult::Failed {
             kind: VerdictKind::Unsupported,

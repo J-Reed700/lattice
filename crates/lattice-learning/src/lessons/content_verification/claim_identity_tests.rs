@@ -1,9 +1,9 @@
 //! A pass identified with the ledger: `identify` records which claim each
 //! statement is and what is new about it, and records no check (acceptance
 //! design §2.10).
-use super::acceptance_switch_tests::{claim, walk, SOURCED};
+use super::acceptance_switch_tests::{claim, walk, REWRITING, SOURCED};
 use super::claim_ledger_tests::{
-    check_findings, identify_findings, pass_report, passage_finding, CELL,
+    check_findings, identify_findings, pass_report, passage_finding, sourced, CELL,
 };
 use super::*;
 use lattice_core::domain::learning::acceptance::Step;
@@ -70,13 +70,14 @@ async fn a_statement_the_user_wrote_that_no_pass_continues_is_not_ended_while_it
 async fn repair_sent() -> Result<(claim_ledger::ClaimLedger, ClaimId, ClaimId)> {
     let mut ledger = claim_ledger::ClaimLedger::open(&Model::new(), "{}").await?;
     let before = cell_lesson(CELL);
-    let report = pass_report(vec![
+    let report = pass_report(sourced(vec![
         passage_finding(CELL, ATP, true, CELL_SOURCE),
         passage_finding(CELL, OVERSTATED, false, CELL_SOURCE),
-    ]);
+    ]));
     let claims = identify_findings(&mut ledger, &before, &report).await?;
     check_findings(&mut ledger, &claims, &report.findings).await?;
     let (verified, failed) = (claims[0].clone(), claims[1].clone());
+    walk(&mut ledger, &failed, Class::Sourced, &REWRITING).await?;
     ledger
         .begin_repairs(
             &StandardPolicy::new(),

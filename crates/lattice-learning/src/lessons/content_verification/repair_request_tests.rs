@@ -627,6 +627,10 @@ async fn the_history_is_the_statements_that_failed_a_reading_and_were_rewritten_
         statement: "The code example example-0 runs to completion with the output it shows.".into(),
     };
     assert!(ledger.append(&example, extracted).await?);
+    let run = ClaimEvent::CodeExample {
+        observation: "example-0".into(),
+    };
+    assert!(ledger.append(&example, run).await?);
     let check = local_check(failed, "It did not run.", vec![]);
     assert!(ledger.append(&example, ClaimEvent::Checked(check)).await?);
     let removed = repair(EXAMPLE, RepairOutcome::Removed);

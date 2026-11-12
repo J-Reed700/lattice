@@ -4,7 +4,9 @@
 //! cannot be taken out; the user's
 //! verdicts are never re-litigated and are labelled examples of the checker's
 //! accuracy (§15).
-use super::acceptance_switch_tests::{claim, local_check, open, stood, walk, SOURCED};
+use super::acceptance_switch_tests::{
+    claim, local_check, open, stood, walk, CUTTING, REWRITING, SOURCED,
+};
 use super::class_checks_tests::Classes;
 use super::*;
 use crate::dto::{
@@ -1413,6 +1415,18 @@ pub(super) fn passage_finding(
     }
 }
 
+/// `findings` as the classify step leaves them for statements the writer
+/// cited: sorted Sourced, so identifying them records the class.
+pub(super) fn sourced(mut findings: Vec<Finding>) -> Vec<Finding> {
+    for finding in &mut findings {
+        finding.class = Some(Classed {
+            class: Class::Sourced,
+            by: ClassifiedBy::Writer,
+        });
+    }
+    findings
+}
+
 /// A pass's report of `findings`, its one source active.
 pub(super) fn pass_report(findings: Vec<Finding>) -> LessonVerificationReport {
     LessonVerificationReport {
@@ -1599,13 +1613,14 @@ async fn a_failed_claim_sharing_its_sentence_with_a_verified_one_tells_its_rewri
     let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
     let overstated = "Mitochondria produce all of a cell's ATP.";
     let before = cell_lesson(CELL);
-    let report = pass_report(vec![
+    let report = pass_report(sourced(vec![
         passage_finding(CELL, ATP, true, CELL_SOURCE),
         passage_finding(CELL, overstated, false, CELL_SOURCE),
-    ]);
+    ]));
     let ids = identify_findings(&mut ledger, &before, &report).await?;
     check_findings(&mut ledger, &ids, &report.findings).await?;
     let (verified, shared) = (ids[0].clone(), ids[1].clone());
+    walk(&mut ledger, &shared, Class::Sourced, &REWRITING).await?;
     assert_eq!(ledger.cotenants(&shared), std::slice::from_ref(&verified));
     assert_eq!(ledger.cotenants(&verified), std::slice::from_ref(&shared));
 
@@ -1648,14 +1663,15 @@ async fn a_claim_that_passed_on_a_sentence_cut_for_another_is_removed_by_the_mac
     let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
     let overstated = "Mitochondria produce all of a cell's ATP.";
     let before = cell_lesson(CELL);
-    let report = pass_report(vec![
+    let report = pass_report(sourced(vec![
         passage_finding(CELL, ATP, true, CELL_SOURCE),
         passage_finding(CELL, overstated, false, CELL_SOURCE),
-    ]);
+    ]));
     let ids = identify_findings(&mut ledger, &before, &report).await?;
     check_findings(&mut ledger, &ids, &report.findings).await?;
     let (verified, shared) = (ids[0].clone(), ids[1].clone());
-    // The failed claim has had its rewrite.
+    // The failed claim has had its rewrite and stands at its cut.
+    walk(&mut ledger, &shared, Class::Sourced, &CUTTING).await?;
     ledger
         .append(
             &shared,
