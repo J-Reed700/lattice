@@ -18,7 +18,13 @@ fn a_claim_that_fails_twice_on_the_same_evidence_is_queued_after_two_repairs() {
         .append(machine(2), checked(Some(VerdictKind::Contradicted), "v1"))
         .unwrap();
     assert_eq!(entry.state(), &open(VerdictKind::Contradicted, 2));
-    assert!(entry.may_repair() && !entry.next_repair_escalates());
+    assert_eq!(
+        entry.next_machine_repair(),
+        Some(MachineRepair {
+            attempt: 1,
+            last: false
+        })
+    );
 
     entry
         .append(machine(3), rewrite(1, false, RepairOutcome::Rewritten))
@@ -28,7 +34,13 @@ fn a_claim_that_fails_twice_on_the_same_evidence_is_queued_after_two_repairs() {
         .append(machine(4), checked(Some(VerdictKind::Contradicted), "v1"))
         .unwrap();
     assert_eq!(entry.state(), &open(VerdictKind::Contradicted, 1));
-    assert!(entry.next_repair_escalates());
+    assert_eq!(
+        entry.next_machine_repair(),
+        Some(MachineRepair {
+            attempt: 2,
+            last: true
+        })
+    );
 
     entry
         .append(machine(5), rewrite(2, true, RepairOutcome::Rewritten))
@@ -185,7 +197,13 @@ fn a_repair_rejected_uses_its_attempt_and_the_last_one_takes_the_claim_out() {
         )
         .unwrap();
     assert_eq!(entry.state(), &open(VerdictKind::Unsupported, 1));
-    assert!(entry.may_repair() && entry.next_repair_escalates());
+    assert_eq!(
+        entry.next_machine_repair(),
+        Some(MachineRepair {
+            attempt: 2,
+            last: true
+        })
+    );
     entry
         .append(machine(4), rewrite(2, true, RepairOutcome::Removed))
         .unwrap();
@@ -1139,7 +1157,13 @@ fn a_passed_claim_on_a_rewritten_sentence_is_checked_again_with_the_lower_attemp
         },
         "it resumes from the attempts the claim whose repair it was has left"
     );
-    assert!(passed.next_repair_escalates());
+    assert_eq!(
+        passed.next_machine_repair(),
+        Some(MachineRepair {
+            attempt: 2,
+            last: true
+        })
+    );
 
     // A rewrite that still passes leaves it verified.
     let mut still = verified_claim("c2");
@@ -1464,4 +1488,39 @@ fn a_claim_the_machine_ended_is_published_not_verified_when_its_sentence_stands_
         }
     );
     assert_eq!(end_state([&ended]), LessonReviewState::Ready);
+}
+
+#[test]
+fn a_code_example_event_records_its_run_in_any_state_and_moves_nothing() {
+    let mut entry = claim("c1");
+    entry
+        .append(
+            machine(2),
+            ClaimEvent::CodeExample {
+                observation: "run-1".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(entry.code_example(), Some("run-1"));
+    assert_eq!(entry.classified(), None);
+    assert_eq!(entry.state(), &ClaimState::Unchecked);
+
+    entry
+        .append(
+            machine(3),
+            ClaimEvent::PublishedUnverified {
+                reason: UnverifiedReason::Unchecked,
+            },
+        )
+        .unwrap();
+    entry
+        .append(
+            machine(4),
+            ClaimEvent::CodeExample {
+                observation: "run-1".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(entry.code_example(), Some("run-1"));
+    assert!(matches!(entry.state(), ClaimState::Unverified { .. }));
 }

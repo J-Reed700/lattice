@@ -120,6 +120,53 @@ pub fn next_rewrite(policy: &dyn AcceptancePolicy, left: Position) -> Option<Pos
     (left.rewrites_left > 0).then(|| successor(policy, left))
 }
 
+/// The repair a statement at a `Rewrite` or `Cut` node is given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RepairStep {
+    pub step: Step,
+    /// One more than the rewrites its sentence has been given.
+    pub attempt: u8,
+    /// The cut: a statement's last repair.
+    pub last: bool,
+}
+
+/// The number of the repair a statement at `at` is given: one more than the
+/// rewrites its sentence has already been given.
+pub fn repair_attempt(policy: &dyn AcceptancePolicy, at: Position) -> u8 {
+    rewrites_given(policy, at.class)
+        .saturating_sub(at.rewrites_left)
+        .saturating_add(1)
+}
+
+/// The repair the node of `at` asks for: a rewrite, or the cut, which is the
+/// last. `None` at any other step.
+pub fn repair_at(policy: &dyn AcceptancePolicy, at: Position) -> Option<RepairStep> {
+    let step = policy.graph(at.class).node(at.node)?.step;
+    matches!(step, Step::Rewrite(_) | Step::Cut).then(|| RepairStep {
+        step,
+        attempt: repair_attempt(policy, at),
+        last: step == Step::Cut,
+    })
+}
+
+/// The positions one step from `at` along its node's edges: where each edge
+/// leads, and for an edge that ends the statement other than removed, the
+/// successor a further rewrite of its sentence gives. A removal and an edge
+/// the class may not take lead nowhere.
+pub(super) fn onward(policy: &dyn AcceptancePolicy, at: Position) -> Vec<Position> {
+    let Some(node) = policy.graph(at.class).node(at.node) else {
+        return Vec::new();
+    };
+    node.edges()
+        .iter()
+        .filter_map(|&(_, next)| match follow(policy, at, next) {
+            Moved::To(to) => Some(to),
+            Moved::Ended(End::Removed { .. }) | Moved::Illegal => None,
+            Moved::Ended(_) => next_rewrite(policy, stepped(policy, at)),
+        })
+        .collect()
+}
+
 /// Where `next` leads from `at`.
 pub(super) fn follow(policy: &dyn AcceptancePolicy, at: Position, next: Next) -> Moved {
     let at = stepped(policy, at);

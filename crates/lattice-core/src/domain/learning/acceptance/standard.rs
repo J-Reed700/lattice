@@ -6,10 +6,16 @@ use super::Outcome::{
 };
 use super::{AcceptancePolicy, End, Goal, Graph, Next, Node, Outcome, Reading, Step, Target};
 use crate::domain::learning::claim_review::Class;
+use crate::protocol;
+use crate::shared::protocol::Protocol;
 
 /// The standard policy's version: part of every receipt's and checkpoint's
 /// key, so a change to any of its graphs changes it.
-pub const STANDARD_POLICY: &str = "acceptance-v2";
+pub const STANDARD_POLICY: Protocol = protocol!("acceptance", 2);
+
+/// Samples one knowledge or veto read asks the model alone; the read holds
+/// only when every sample agrees.
+pub const KNOWLEDGE_SAMPLES: u32 = 3;
 
 const PARTS: Step = Step::Read(Reading::Parts);
 const GROUND: Step = Step::Read(Reading::Ground);
@@ -47,7 +53,7 @@ impl Default for StandardPolicy {
 
 impl AcceptancePolicy for StandardPolicy {
     fn version(&self) -> &str {
-        STANDARD_POLICY
+        STANDARD_POLICY.as_str()
     }
 
     fn graph(&self, class: Class) -> &Graph {
@@ -170,7 +176,7 @@ fn reasoning() -> Graph {
                 ),
         )
         .with(
-            Node::new("r.veto", VETO, 3)
+            Node::new("r.veto", VETO, KNOWLEDGE_SAMPLES)
                 .on(&[Stands], Next::End(End::Consistent))
                 .on(&[Refuted], Next::to("r.ground")),
         )
@@ -206,7 +212,7 @@ fn reasoning() -> Graph {
                 .on(&[NeedsSource], Next::End(End::Unverified)),
         )
         .with(
-            Node::new("r.reveto", VETO, 3)
+            Node::new("r.reveto", VETO, KNOWLEDGE_SAMPLES)
                 .on(&[Stands], Next::End(End::Consistent))
                 .on(&[Refuted], Next::to("r.reground")),
         )
@@ -219,7 +225,7 @@ fn reasoning() -> Graph {
 fn common() -> Graph {
     Graph::new(Class::Common, "c.read", "c.final")
         .with(
-            Node::new("c.read", KNOWLEDGE, 3)
+            Node::new("c.read", KNOWLEDGE, KNOWLEDGE_SAMPLES)
                 .on(&[Stands], Next::End(End::GeneralKnowledge))
                 .on(
                     &[NeedsSource],
@@ -241,7 +247,7 @@ fn common() -> Graph {
             "c.cut",
         ))
         .with(
-            Node::new("c.final", KNOWLEDGE, 3)
+            Node::new("c.final", KNOWLEDGE, KNOWLEDGE_SAMPLES)
                 .on(&[Stands], Next::End(End::GeneralKnowledge))
                 .on(&[Refuted], Next::to("c.reground"))
                 .on(&[NeedsSource], Next::End(End::Unverified)),
@@ -254,7 +260,7 @@ fn common() -> Graph {
 fn internal() -> Graph {
     Graph::new(Class::Internal, "i.veto", "i.final")
         .with(
-            Node::new("i.veto", VETO, 3)
+            Node::new("i.veto", VETO, KNOWLEDGE_SAMPLES)
                 .on(&[Stands], Next::End(End::NotAClaim))
                 .on(&[Refuted], Next::to("i.ground")),
         )
@@ -272,7 +278,7 @@ fn internal() -> Graph {
             "i.cut",
         ))
         .with(
-            Node::new("i.final", VETO, 3)
+            Node::new("i.final", VETO, KNOWLEDGE_SAMPLES)
                 .on(&[Stands], Next::End(End::NotAClaim))
                 .on(&[Refuted], Next::to("i.reground")),
         )

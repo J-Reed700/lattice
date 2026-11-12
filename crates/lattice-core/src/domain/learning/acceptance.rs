@@ -13,13 +13,13 @@ mod standard;
 mod tests;
 mod walk;
 
-pub use ceiling::{after_rewrite_calls, most_calls};
+pub use ceiling::most_calls;
 pub use graph::{Graph, Node};
 pub use invariants::{violations, Violation};
-pub use standard::{StandardPolicy, STANDARD_POLICY};
+pub use standard::{StandardPolicy, KNOWLEDGE_SAMPLES, STANDARD_POLICY};
 pub use walk::{
-    born, check_record, decide, next_rewrite, rewrite_ahead, rewrites_given, start, stepped,
-    successor, walk, walk_from, RecordFault,
+    born, check_record, decide, next_rewrite, repair_at, repair_attempt, rewrite_ahead,
+    rewrites_given, start, stepped, successor, walk, walk_from, RecordFault, RepairStep,
 };
 
 use serde::{Deserialize, Serialize};
