@@ -1,5 +1,5 @@
 //! Short performance tasks with private keys and evidence-bound placement advice.
-use crate::reference_collection::ReferenceCollection;
+use crate::reference_collection::{item_tokens, ReferenceCollection};
 use crate::{dto::*, plan_dto::*};
 use lattice_core::{
     application::ports::LLMPort,
@@ -104,7 +104,7 @@ async fn author_group(
         .retrieve_within(&query, |passages| {
             passages
                 .iter()
-                .map(|p| llm.count_tokens(&json!({"title":"","text":p.text}).to_string()) + 2)
+                .map(|p| item_tokens(llm, &json!({"title":"","text":p.text})))
                 .sum::<usize>()
                 <= room
         })

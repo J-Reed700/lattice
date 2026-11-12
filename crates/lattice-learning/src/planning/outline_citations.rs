@@ -1,91 +1,14 @@
-//! Restore exact source typography without treating a fuzzy match as evidence.
+//! Restore a cited source's own bytes over a quote that is the same words apart
+//! from typography, emphasis, spacing and letter case ([`same_text::find`]).
+use crate::lessons::same_text;
 use crate::{dto::LearningSourceDto, generation, outline_evidence};
 use serde_json::{json, Value};
-
-fn typography(character: char) -> char {
-    match character {
-        '\u{2018}' | '\u{2019}' => '\'',
-        '\u{201c}' | '\u{201d}' => '"',
-        '\u{2013}' | '\u{2014}' => '-',
-        c if c.is_whitespace() => ' ',
-        c => c,
-    }
-}
-
-fn markdown_marker(character: char) -> bool {
-    matches!(character, '*' | '`')
-}
-
-struct SourceText {
-    comparable: String,
-    // Character positions in comparable map back to complete original UTF-8 spans.
-    spans: Vec<(usize, usize)>,
-}
-impl SourceText {
-    fn new(text: &str) -> Self {
-        Self::folded(text, |c| (!markdown_marker(c)).then(|| typography(c)))
-    }
-
-    fn folded(text: &str, fold: impl Fn(char) -> Option<char>) -> Self {
-        let mut comparable = String::new();
-        let mut spans: Vec<(usize, usize)> = Vec::new();
-        for (start, character) in text.char_indices() {
-            let end = start + character.len_utf8();
-            let Some(folded) = fold(character) else {
-                continue;
-            };
-            if folded == ' ' && comparable.ends_with(' ') {
-                if let Some(span) = spans.last_mut() {
-                    span.1 = end;
-                }
-            } else {
-                comparable.push(folded);
-                spans.push((start, end));
-            }
-        }
-        Self { comparable, spans }
-    }
-
-    fn exact_span<'a>(&self, source: &'a str, quote: &str) -> Option<&'a str> {
-        let needle = Self::new(quote.trim()).comparable;
-        if needle.is_empty() {
-            return None;
-        }
-        let offset = self.comparable.find(&needle)?;
-        let start = self.comparable.get(..offset)?.chars().count();
-        let end = start + needle.chars().count() - 1;
-        source.get(self.spans.get(start)?.0..self.spans.get(end)?.1)
-    }
-}
-
-/// Where `quote` is in `source` at or after byte `from`, apart from
-/// typography, spacing and letter case: its byte span in `source`.
-pub(crate) fn caseless_quote_span(
-    source: &str,
-    quote: &str,
-    from: usize,
-) -> Option<(usize, usize)> {
-    let caseless = |character: char| {
-        let folded = typography(character);
-        Some(folded.to_lowercase().next().unwrap_or(folded))
-    };
-    let text = SourceText::folded(source, caseless);
-    let needle = SourceText::folded(quote.trim(), caseless).comparable;
-    if needle.is_empty() {
-        return None;
-    }
-    let skip = text.spans.iter().position(|(start, _)| *start >= from)?;
-    let skip = text.comparable.char_indices().nth(skip)?.0;
-    let offset = skip + text.comparable.get(skip..)?.find(&needle)?;
-    let start = text.comparable.get(..offset)?.chars().count();
-    let end = start + needle.chars().count() - 1;
-    Some((text.spans.get(start)?.0, text.spans.get(end)?.1))
-}
 
 /// Recover original source bytes for a typography-only mismatch. The copied
 /// span must pass the same quote validator used for publication.
 pub(crate) fn exact_source_quote<'a>(source: &'a str, quote: &str) -> Option<&'a str> {
-    let exact = SourceText::new(source).exact_span(source, quote)?;
+    let (start, end) = same_text::find(source, quote.trim())?;
+    let exact = source.get(start..end)?;
     generation::validate_excerpt_quote(exact, source).ok()?;
     Some(exact)
 }
@@ -96,7 +19,6 @@ pub(crate) fn exact_source_quote<'a>(source: &'a str, quote: &str) -> Option<&'a
 /// Claims and source indices never change; the full semantic review is still
 /// required before acceptance.
 pub(crate) fn restore_source_quotes(candidate: &mut Value, sources: &[LearningSourceDto]) -> usize {
-    let mut texts = std::collections::HashMap::<usize, SourceText>::new();
     let mut restored = Vec::new();
     for (path, field) in outline_evidence::citable_fields(candidate) {
         let Some(index) = field["sourceIndex"]
@@ -108,10 +30,9 @@ pub(crate) fn restore_source_quotes(candidate: &mut Value, sources: &[LearningSo
         let (Some(source), Some(quote)) = (sources.get(index), field["quote"].as_str()) else {
             continue;
         };
-        let text = texts
-            .entry(index)
-            .or_insert_with(|| SourceText::new(&source.excerpt));
-        let Some(exact) = text.exact_span(&source.excerpt, quote) else {
+        let Some(exact) = same_text::find(&source.excerpt, quote.trim())
+            .and_then(|(start, end)| source.excerpt.get(start..end))
+        else {
             continue;
         };
         if exact != quote && generation::optional_citation(sources, Some(index), exact).is_ok() {

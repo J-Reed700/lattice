@@ -26,7 +26,7 @@ pub(super) fn schema(
         "issueId":{"type":"string","enum":keys},
         "verdict":{"type":"string","enum":["actionable","not_established"]},
         "basis":{"type":"string","enum":["external_fact","lesson_contract","internal_conflict"]},
-        "evidenceIds":{"type":"array","minItems":0,"maxItems":8,"uniqueItems":true,"items":{"type":"string","enum":ids}},
+        "evidenceIds":{"type":"array","minItems":0,"uniqueItems":true,"items":{"type":"string","enum":ids}},
         "requirementId":{"enum":["requirements",null]},
         "reason":{"type":"string","minLength":1},
         "partId":{"type":"string","enum":parts}}});

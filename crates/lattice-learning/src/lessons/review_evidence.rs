@@ -1,9 +1,12 @@
 //! A reviewer's criticism is a hypothesis, not an authoritative correction.
 //! Ground model findings before they can drive a lesson rewrite.
+use crate::generation;
 use crate::lessons::structured_call::{complete_checked_request, CallKind, ReasonFirst};
+use crate::reference_collection::{item_tokens, ReferenceCollection, ReferencePassage};
 use crate::review_findings::{FindingSite, ReviewFinding};
-use crate::{generation, reference_collection::ReferenceCollection};
 use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::protocol;
+use lattice_core::shared::protocol::Protocol;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -31,7 +34,7 @@ const DRAFT_BRIEF: &str = "For each proposed finding, say what it claims, which 
 
 // An approval produced through the old branch-coupled schema cannot certify
 // that this protocol ran, even though the intended citation rules are the same.
-pub(super) const POLICY: &str = "review-finding-protocol-v6";
+pub(super) const POLICY: Protocol = protocol!("review-finding-protocol", 6);
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -307,13 +310,10 @@ fn established_on_evidence(
     evidence: &HashMap<String, EvidenceKind>,
 ) -> Result<Option<ReviewFinding>> {
     let ids: HashSet<_> = finding.evidence_ids.iter().collect();
-    if ids.len() != finding.evidence_ids.len()
-        || ids.len() > 8
-        || ids.iter().any(|id| !evidence.contains_key(*id))
-    {
+    if ids.len() != finding.evidence_ids.len() || ids.iter().any(|id| !evidence.contains_key(*id)) {
         return Err(invalid_finding(
             index,
-            "evidenceIds must contain at most eight unique IDs from the supplied evidence bank.",
+            "evidenceIds must contain unique IDs from the supplied evidence bank.",
         ));
     }
     if finding.reason.trim().is_empty() {
@@ -414,11 +414,12 @@ pub async fn check(
         {
             let id = format!("{field}-{index}");
             evidence.insert(id.clone(), EvidenceKind::Candidate);
-            let label = if field == "blocks" {
-                format!("Section {}", index + 1)
+            let site = if field == "blocks" {
+                FindingSite::Section(index)
             } else {
-                format!("Question {}", index + 1)
+                FindingSite::Question(index)
             };
+            let label = site.label();
             candidate_parts.push(json!({"id":id,"label":label,"content":item}));
         }
     }
@@ -439,7 +440,7 @@ pub async fn check(
         .iter()
         .zip(&recorded_ids)
         .map(|(finding, id)| {
-            let part = crate::teaching_review::label(finding.site.unwrap_or(FindingSite::Lesson));
+            let part = finding.site.unwrap_or(FindingSite::Lesson).label();
             let defect = if finding.summary.is_empty() {
                 &finding.note
             } else {
@@ -462,22 +463,22 @@ pub async fn check(
     request.output_tokens = 2 * OUTPUT_TOKENS;
     let room = crate::model_call::source_room(llm, &request, usize::MAX);
     let share = room / issues.len().max(1);
-    let part = |passage: &crate::reference_collection::ReferencePassage| {
+    let part = |passage: &ReferencePassage| {
         let source = references
             .sources
             .iter()
             .find(|source| source.id == passage.source_id);
         json!({"sourceVersionId":passage.source_id,"title":source.map(|s|&s.title),"url":source.and_then(|s|s.url.as_ref()),"text":passage.text})
     };
-    let part_tokens = |passage: &crate::reference_collection::ReferencePassage| {
+    let part_tokens = |passage: &ReferencePassage| {
         let mut part = part(passage);
         if let Some(fields) = part.as_object_mut() {
             fields.insert("id".into(), json!("reference-0000"));
         }
-        llm.count_tokens(&part.to_string()) + 1
+        item_tokens(llm, &part)
     };
     let mut found_for = Vec::new();
-    let mut seen = HashSet::new();
+    let mut shown: Vec<ReferencePassage> = Vec::new();
     for issue in &notes {
         let found = references
             .retrieve_within(issue, |passages| {
@@ -486,13 +487,9 @@ pub async fn check(
             .await?;
         let mut own = Vec::new();
         for passage in found {
-            if seen.insert((
-                passage.source_id.clone(),
-                passage.start_byte,
-                passage.end_byte,
-                passage.text.clone(),
-            )) {
+            if !shown.iter().any(|held| held.same_place(&passage)) {
                 own.push((part(&passage), part_tokens(&passage)));
+                shown.push(passage);
             }
         }
         found_for.push(own);
@@ -546,7 +543,6 @@ pub async fn check(
             prompt.to_string(),
             schema(&keys, &ids, &recorded_ids, &check_ids),
             OUTPUT_TOKENS,
-            "low",
         );
         *built.lock().unwrap_or_else(PoisonError::into_inner) = evidence;
         request

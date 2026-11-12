@@ -46,7 +46,11 @@ fn verification_windows_restore_conditions_without_changing_source_bytes() -> Re
     assert_eq!(expanded[0].score, hit.score);
     let mut invented = hit;
     invented.text = "A fabricated quotation".into();
-    assert!(collection.verification_context(vec![invented]).is_err());
+    let rebuilt = collection.verification_context(vec![invented])?;
+    assert_eq!(
+        &text[rebuilt[0].start_byte..rebuilt[0].end_byte],
+        rebuilt[0].text
+    );
     Ok(())
 }
 
@@ -157,10 +161,9 @@ async fn large_collection_keeps_evidence_after_the_former_twenty_million_charact
 
 #[test]
 fn unicode_passage_offsets_remain_lossless_without_a_whole_document_offset_array() {
-    use crate::references::course_index::{CHUNK_CHARS, STEP_CHARS};
-    use lattice_index::passage_index::chunking::spans::span_chunks;
+    use crate::references::course_index::{chunks, CHUNK_CHARS};
     let text = "🧪é中sample\n".repeat(400);
-    let passages = span_chunks(&text, CHUNK_CHARS, STEP_CHARS);
+    let passages = chunks(&text);
     assert!(passages.len() > 1);
     for passage in &passages {
         assert_eq!(
