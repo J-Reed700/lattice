@@ -190,7 +190,7 @@ fn answer_batch(truth: &Truth, input: &BatchInput) -> Reply<BatchReply> {
             CheckReply {
                 verdict,
                 reason,
-                source,
+                source: Some(source),
             },
         ));
     }

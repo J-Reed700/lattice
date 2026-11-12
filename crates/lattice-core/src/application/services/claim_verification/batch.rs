@@ -102,8 +102,10 @@ pub fn render_batch_evidence(claims: &[LocatedClaim]) -> (String, Vec<String>) {
     )
 }
 
-/// The reply's checks, each under its id, with the reading of its response when it has one.
-fn read_checks(raw: &str) -> Option<Vec<(String, Option<CheckReply>)>> {
+type Reading = std::result::Result<CheckReply, &'static str>;
+
+/// The reply's checks, each under its id, with the reading of its response.
+fn read_checks(raw: &str) -> Option<Vec<(String, Reading)>> {
     let reply: BatchResponse = serde_json::from_str(raw).ok()?;
     Some(
         reply
@@ -130,34 +132,10 @@ fn resolve(raw: &str, claims: &[LocatedClaim], passages: &[String]) -> Option<Ve
         if id != format!("claim-{index}") || !seen.insert(index) {
             return None;
         }
-        let judgment = (|| {
-            let reply = reading?;
-            if reply.reason.trim().is_empty() {
-                return None;
-            }
-            let quote = located_passage(&reply.source, passages);
-            if matches!(
-                reply.verdict,
-                ClaimVerdict::Supported | ClaimVerdict::Contradicted
-            ) && quote
-                .as_ref()
-                .is_none_or(|quote| !target.passages.contains(quote))
-            {
-                return None;
-            }
-            Some(ClaimJudgment::Judged(JudgeOutcome {
-                verdict: reply.verdict,
-                reason: Some(reply.reason),
-                quote: if reply.verdict == ClaimVerdict::Unsupported {
-                    None
-                } else {
-                    quote
-                },
-                confidence: None,
-                uncertain: false,
-            }))
-        })()
-        .unwrap_or(ClaimJudgment::Unusable);
+        let permitted = |quote: &str| target.passages.iter().any(|shown| shown == quote);
+        let judgment = reading
+            .and_then(|reply| judge_reply(reply, passages, permitted))
+            .map_or(ClaimJudgment::Unusable, ClaimJudgment::Judged);
         *results.get_mut(index)? = judgment;
     }
     Some(results)
@@ -285,15 +263,13 @@ impl RenderAnswer for ClaimBatch {
     }
 
     fn read(text: &str) -> Result<BatchReply> {
-        let unread = || unreadable("the reply must hold one readable response per claim id");
         let checks = read_checks(text)
-            .and_then(|checks| {
-                checks
-                    .into_iter()
-                    .map(|(id, reading)| Some((id, reading?)))
-                    .collect::<Option<Vec<_>>>()
-            })
-            .ok_or_else(unread)?;
+            .ok_or_else(|| unreadable("the reply must hold one check per claim id"))?;
+        let checks = checks
+            .into_iter()
+            .map(|(id, reading)| reading.map(|reply| (id, reply)))
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(unreadable)?;
         Ok(BatchReply { checks })
     }
 }
@@ -334,6 +310,33 @@ mod tests {
         ] {
             assert!(resolve(&json!({"checks":checks}).to_string(), &claims, &bank).is_none());
         }
+    }
+
+    fn resolved(responses: [&str; 2]) -> Vec<ClaimJudgment> {
+        let claims = targets();
+        let (_, bank) = render_batch_evidence(&claims);
+        let checks: Vec<_> = responses
+            .iter()
+            .enumerate()
+            .map(|(index, response)| json!({"id": format!("claim-{index}"), "response": response}))
+            .collect();
+        resolve(&json!({"checks": checks}).to_string(), &claims, &bank).unwrap()
+    }
+
+    #[test]
+    fn an_entry_is_unusable_when_it_cites_outside_its_claims_passages_or_lacks_a_line() {
+        let own = "Reason: Stated.\nSource passage: passage-0\nVerdict: supported";
+        let other = "Reason: Stated.\nSource passage: passage-1\nVerdict: supported";
+        let results = resolved([own, other]);
+        assert!(matches!(&results[0], ClaimJudgment::Judged(_)));
+        assert!(matches!(&results[1], ClaimJudgment::Unusable));
+        let blank = "Reason: Not stated.\nSource passage: ``\nVerdict: unsupported";
+        let missing = "Reason: Not stated.\nVerdict: unsupported";
+        let results = resolved([blank, missing]);
+        assert!(
+            matches!(&results[0], ClaimJudgment::Judged(f) if f.verdict == ClaimVerdict::Unsupported && f.quote.is_none())
+        );
+        assert!(matches!(&results[1], ClaimJudgment::Unusable));
     }
 
     #[test]
