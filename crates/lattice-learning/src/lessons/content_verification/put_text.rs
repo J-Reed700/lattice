@@ -30,13 +30,14 @@ pub(crate) fn insert_sentence(text: &str, anchor: &Anchor, sentence: &str) -> Op
 /// `text` without the one occurrence of `sentence` and a space beside it;
 /// `None` when it is not in `text` exactly once.
 pub(crate) fn remove_sentence(text: &str, sentence: &str) -> Option<String> {
-    span_of(text, sentence)?;
-    for pattern in [format!(" {sentence}"), format!("{sentence} ")] {
-        if text.matches(pattern.as_str()).count() == 1 {
-            return Some(text.replacen(pattern.as_str(), "", 1));
-        }
-    }
-    Some(text.replacen(sentence, "", 1))
+    let own = span_of(text, sentence)?;
+    let (start, end) = [format!(" {sentence}"), format!("{sentence} ")]
+        .iter()
+        .find_map(|pattern| span_of(text, pattern))
+        .unwrap_or(own);
+    let mut out = text.to_owned();
+    out.replace_range(start..end, "");
+    Some(out)
 }
 
 /// Where the placing of a sentence a machine cut ended: a place, no place the

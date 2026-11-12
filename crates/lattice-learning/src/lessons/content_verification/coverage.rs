@@ -1,12 +1,15 @@
 //! Account for every lossless lesson passage, not just a section-level summary.
 use super::*;
 use crate::outline_progress::OutlineProgress;
+use lattice_core::protocol;
+use lattice_core::shared::protocol::Protocol;
+use lattice_core::shared::text::same_text;
 use std::collections::BTreeMap;
 
 mod checkpoints;
 mod mapping;
 
-pub(crate) const POLICY: &str = "passage-coverage-v10";
+pub(crate) const POLICY: Protocol = protocol!("passage-coverage", 10);
 
 /// The fidelity judge answers one question: which factual assertions of this
 /// original passage does the extracted inventory fail to represent? It never
@@ -186,15 +189,6 @@ impl CoverageUnit {
     }
 }
 
-fn normalized(statement: &str) -> String {
-    statement
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .trim_end_matches('.')
-        .to_lowercase()
-}
-
 fn fidelity_request(unit: &Value, passage: &Value) -> Value {
     let inventory: Vec<_> = unit["claims"]
         .as_array()
@@ -275,6 +269,7 @@ async fn check_fidelity(
     coverage: &mut [CoverageUnit],
 ) -> Result<()> {
     let decisions: BTreeMap<String, PassageCheck> = crate::generation::parse_json(raw)?;
+    let normalized = |statement: &str| same_text::fold(statement.trim_end().trim_end_matches('.'));
     let mut checks = Vec::new();
     for unit in units {
         let index = unit["index"]
@@ -381,7 +376,7 @@ pub(crate) async fn audit(
     };
     reviewed(audited.len());
     let mut batches: futures::stream::FuturesUnordered<_> = pending
-        .chunks(4)
+        .chunks(mapping::UNITS_PER_MAPPING)
         .map(|batch| async move {
             let mapping_key = checkpoints::mapping_key(llm, batch);
             let saved = crate::lesson_drafts::checkpoint(&mapping_key)

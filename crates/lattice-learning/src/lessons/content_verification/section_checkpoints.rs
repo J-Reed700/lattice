@@ -2,6 +2,10 @@
 //! repairs and restarts. These are not factual approvals: current references,
 //! execution, teaching review, and the final publication gate still apply.
 use super::*;
+use lattice_core::protocol;
+use lattice_core::shared::protocol::Protocol;
+
+const SECTION_KEYS: Protocol = protocol!("inventory-section", 1);
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -11,18 +15,15 @@ struct SectionCheckpoint {
 }
 
 fn key(llm: &dyn LLMPort, content: &Value, index: usize) -> String {
-    format!(
-        "inventory-section-v1:{}",
-        sha256_hex(
-            json!({
-                "inventoryPolicy": INVENTORY_POLICY,
-                "coveragePolicy": coverage::POLICY,
-                "model": llm.model_name(), "context": llm.max_context_tokens(),
-                "index": index, "content": content,
-            })
-            .to_string()
-        )
-    )
+    SECTION_KEYS.key(sha256_hex(
+        json!({
+            "inventoryPolicy": INVENTORY_POLICY,
+            "coveragePolicy": coverage::POLICY,
+            "model": llm.model_name(), "context": llm.max_context_tokens(),
+            "index": index, "content": content,
+        })
+        .to_string(),
+    ))
 }
 
 impl SectionCheckpoint {
@@ -33,9 +34,7 @@ impl SectionCheckpoint {
             && self.coverage.complete == self.coverage.missing_assertions.is_empty()
             && (!unit.claims.is_empty() || !unit.non_factual_reason.trim().is_empty())
             && unit.claims.iter().all(|claim| {
-                !claim.quote.trim().is_empty()
-                    && claim.quote.chars().count() <= MAX_CLAIM_QUOTE_CHARS
-                    && contains_text(content, &claim.quote)
+                claim_ledger::stands_in_part(content, &claim.quote)
                     && !claim.statement.trim().is_empty()
             })
     }

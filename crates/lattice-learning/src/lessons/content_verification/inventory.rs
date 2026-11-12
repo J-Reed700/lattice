@@ -1,11 +1,15 @@
 //! Claim locations are selected from lossless, app-owned text passages.
 use super::*;
+use lattice_core::protocol;
+use lattice_core::shared::protocol::Protocol;
 use lattice_core::shared::text::segmentation::{
     partition, Chars, Overflow, Plan, Prose, Rung, Strength,
 };
 use std::collections::BTreeMap;
 
 pub(super) mod revisions;
+
+const UNFINISHED_KEYS: Protocol = protocol!("inventory-unfinished", 1);
 
 mod batches;
 use batches::ask;
@@ -210,7 +214,7 @@ fn resolve(unit: ExtractedUnit, input: &[Value]) -> std::result::Result<UnitClai
             return Err(format!("Section {} has an empty statement", unit.index));
         }
         claims.push(Claim {
-            quote: claim_ledger::clip(&sentence).into(),
+            quote: sentence,
             statement: claim.statement,
         });
     }
@@ -248,20 +252,17 @@ async fn unfinished_sections(
         .map(|index| (index + 1).to_string())
         .collect::<Vec<_>>()
         .join(", ");
-    let key = format!(
-        "inventory-unfinished-v1:{}",
-        sha256_hex(
-            json!({
-                "policy": INVENTORY_POLICY,
-                "model": llm.model_name(),
-                "sections": missing
-                    .iter()
-                    .map(|index| (index, content.get(*index).map(|unit| sha256_hex(unit.to_string()))))
-                    .collect::<Vec<_>>(),
-            })
-            .to_string()
-        )
-    );
+    let key = UNFINISHED_KEYS.key(sha256_hex(
+        json!({
+            "policy": INVENTORY_POLICY,
+            "model": llm.model_name(),
+            "sections": missing
+                .iter()
+                .map(|index| (index, content.get(*index).map(|unit| sha256_hex(unit.to_string()))))
+                .collect::<Vec<_>>(),
+        })
+        .to_string(),
+    ));
     if crate::lesson_drafts::checkpoint(&key).await?.is_some() {
         return Ok(AppError::InvalidInput(format!(
             "Statement extraction failed again on the same sections ({sections}) after a retry: {}. No lesson was published.",
@@ -532,7 +533,10 @@ mod tests {
             &input,
         )
         .unwrap();
-        assert!(contains_text(&content[0], &valid.claims[0].quote));
+        assert!(claim_ledger::stands_in_part(
+            &content[0],
+            &valid.claims[0].quote
+        ));
     }
 
     /// A check's reveal names misconceptions as wrong; the extractor is told

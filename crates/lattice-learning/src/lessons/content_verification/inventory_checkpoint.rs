@@ -10,13 +10,13 @@ async fn save_inventory(
     coverage: Option<&Coverage>,
 ) -> Result<()> {
     let checkpoint = InventoryCheckpoint {
-        policy: INVENTORY_POLICY.into(),
+        policy: INVENTORY_POLICY.to_string(),
         model: llm.model_name().into(),
         model_context: llm.max_context_tokens(),
         content_sha256: sha256_hex(candidate),
         inventory: inventory.clone(),
         coverage: coverage.cloned().unwrap_or(Coverage { units: Vec::new() }),
-        coverage_policy: coverage.map(|_| coverage::POLICY.into()),
+        coverage_policy: coverage.map(|_| coverage::POLICY.to_string()),
     };
     crate::lesson_drafts::record_claim_inventory(candidate, serde_json::to_string(&checkpoint)?)
         .await
@@ -109,7 +109,7 @@ pub(super) fn adopt_missing(
                 .and_then(|sentence| claim_sentences::quote(passages, sentence))
                 .filter(|(passage, _)| *passage == missing.passage_id)
                 .map(|(_, quote)| Claim {
-                    quote: claim_ledger::clip(&quote).to_owned(),
+                    quote,
                     statement: missing.statement.clone(),
                 })
                 .filter(|claim| {
@@ -191,11 +191,7 @@ fn keep_held(inventory: &mut Inventory, candidate: &Value, held: &[ClaimLedgerEn
     let mut kept = 0;
     for entry in held.iter().filter(|entry| left.contains(entry.claim_id())) {
         let at = entry.location();
-        let stands = !at.quote.trim().is_empty()
-            && at.quote.chars().count() <= MAX_CLAIM_QUOTE_CHARS
-            && texts
-                .get(&(at.unit_index, at.field.clone()))
-                .is_some_and(|text| text.contains(&at.quote));
+        let stands = claim_ledger::stands(candidate, at.unit_index, &at.field, &at.quote);
         let Some(unit) = inventory
             .units
             .iter_mut()
