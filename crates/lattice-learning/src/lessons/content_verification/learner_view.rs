@@ -471,6 +471,21 @@ mod tests {
         assert_eq!(view.claim_count, 1);
     }
 
+    #[test]
+    fn the_report_counts_the_claims_it_lists() {
+        let (lesson, mut report) = fixture();
+        let mut question = report.findings[0].clone();
+        question.unit = lesson.blocks.len();
+        report.findings.push(question);
+
+        let view = report
+            .learner_view(&lesson, &[], &ClaimStates::default())
+            .unwrap();
+
+        assert_eq!(view.claim_count, view.teaching_claims.len());
+        assert_eq!(view.claim_count, 1);
+    }
+
     fn not_verified(reason: UnverifiedReason) -> Option<Resolution> {
         Some(Resolution::Unverified { reason })
     }
