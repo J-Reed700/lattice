@@ -33,9 +33,12 @@ fn a_sentence_taken_out_leaves_the_rest_as_written() {
 }
 
 #[test]
-fn every_place_a_sentence_is_written_goes_with_it() {
+fn the_first_place_a_sentence_is_written_goes_with_it() {
     let cut = |text: &str, quote: &str| done(sentence(text, quote));
-    assert_eq!(cut("Dup. Keep. Dup.", "Dup.").as_deref(), Some("Keep."));
+    assert_eq!(
+        cut("Dup. Keep. Dup.", "Dup.").as_deref(),
+        Some("Keep. Dup.")
+    );
     // A quote over several sentences takes them all; one inside a sentence
     // takes the sentence it is in.
     assert_eq!(
@@ -56,7 +59,7 @@ fn every_place_a_sentence_is_written_goes_with_it() {
 fn text_already_out_needs_no_cut_and_the_whole_of_a_field_or_a_code_block_stays() {
     assert!(matches!(sentence("A one.", "B two."), Cut::Absent));
     assert!(matches!(sentence("A one.", ""), Cut::Absent));
-    assert!(matches!(sentence("Only. Only.", "Only."), Cut::Refused));
+    assert!(matches!(sentence("Only.", "Only."), Cut::Refused));
     assert!(matches!(
         sentence("Text.\n```py\nx = 1. y = 2\n```\n", "x = 1."),
         Cut::Refused

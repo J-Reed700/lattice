@@ -1,3 +1,4 @@
+use super::quotes::QuoteCheck;
 use super::*;
 use crate::dto::LearningProjectMilestoneDto;
 use crate::lessons::course_generation_tests::length_bounds;
@@ -5,6 +6,15 @@ use crate::lessons::course_generation_tests::length_bounds;
 const TITLE: &str = "Experiment project milestone";
 const BRIEF: &str = "Develop the next stage of the randomized experiment and revise it.";
 const ITEM: &str = "A written protocol identifying the treatment and control groups.";
+
+fn check(path: &str, quote: &str, error: &str) -> QuoteCheck {
+    QuoteCheck {
+        path: path.to_owned(),
+        source_index: None,
+        quote: quote.to_owned(),
+        error: error.to_owned(),
+    }
+}
 
 fn milestone(title: &str, brief: &str, item: &str) -> LearningProjectMilestoneDto {
     serde_json::from_value(json!({"title":title,"brief":brief,
@@ -143,7 +153,7 @@ fn a_block_without_a_body_is_a_finding_at_its_place() {
         [
             "Teaching block 2 has no body.",
             "Teaching block 3 has no body.",
-            "Practice block 3 needs two to four observable, task-specific rubric criteria."
+            "Practice block 3 needs 2 to 4 observable, task-specific rubric criteria."
         ]
     );
     let sites: Vec<_> = found.iter().map(|finding| finding.place().site).collect();
@@ -173,7 +183,7 @@ fn a_block_without_a_body_or_a_rubric_is_named_in_plain_words() {
         [
             "Section 2 has no text.",
             "Section 3 has no text.",
-            "Section 3 is a practice section and needs two to four clear criteria for judging an answer."
+            "Section 3 is a practice section and needs 2 to 4 clear criteria for judging an answer."
         ]
     );
 }
@@ -213,8 +223,12 @@ fn material_that_cannot_be_read_is_named_in_plain_words() {
 #[test]
 fn a_quotation_that_matches_no_saved_reference_shows_the_quote_that_failed() {
     let found = quotation_findings(&[
-        json!({"path":"blocks[2]","quote":"A span the source does not hold.","error":"it was not found."}),
-        json!({"path":"questions[0]","quote":"","error":"it was not found."}),
+        check(
+            "blocks[2]",
+            "A span the source does not hold.",
+            "it was not found.",
+        ),
+        check("questions[0]", "", "it was not found."),
     ]);
     let passages: Vec<_> = found
         .iter()
@@ -226,7 +240,7 @@ fn a_quotation_that_matches_no_saved_reference_shows_the_quote_that_failed() {
 #[test]
 fn a_quotation_note_is_whole() {
     let error = "Citation 12 of this part: The generated quotation does not match a valid passage in the saved reference. No material was published.";
-    let found = quotation_findings(&[json!({"path":"blocks[2]","quote":"","error":error})]);
+    let found = quotation_findings(&[check("blocks[2]", "", error)]);
     let note = &found[0].note;
     assert!(note.contains(error), "{note}");
     assert!(
@@ -240,9 +254,9 @@ fn a_quotation_note_is_whole() {
 #[test]
 fn a_quotation_that_matches_no_saved_reference_is_named_by_its_part() {
     let found = quotation_findings(&[
-        json!({"path":"blocks[2]","error":"it was not found."}),
-        json!({"path":"questions[0]","error":"it was not found."}),
-        json!({"path":"requirements","error":"it was not found."}),
+        check("blocks[2]", "", "it was not found."),
+        check("questions[0]", "", "it was not found."),
+        check("requirements", "", "it was not found."),
     ]);
     let summaries: Vec<_> = found
         .iter()

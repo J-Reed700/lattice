@@ -1,6 +1,7 @@
 //! The schema's citation apparatus is structured data. A writer that also
 //! types it into the prose leaves a learner reading it, and verification
 //! reading its quotations as the lesson's own statements.
+use lattice_core::shared::text::segmentation::code_fences;
 use regex::Regex;
 use serde_json::Value;
 use std::sync::LazyLock;
@@ -87,86 +88,6 @@ fn without_mentions(line: &str) -> (String, bool) {
     (out, found)
 }
 
-fn fence_of(line: &str) -> Option<(char, usize)> {
-    let trimmed = line.trim_start();
-    let mark = trimmed.chars().next().filter(|c| *c == '`' || *c == '~')?;
-    let run = trimmed.chars().take_while(|c| *c == mark).count();
-    let info = trimmed.trim_start_matches(mark);
-    (run >= 3 && !(mark == '`' && info.contains('`'))).then_some((mark, run))
-}
-
-fn closes(line: &str, mark: char, run: usize) -> bool {
-    let trimmed = line.trim();
-    trimmed.len() >= run && trimmed.chars().all(|c| c == mark)
-}
-
-/// A code fence of a body that a line of its own marks closes.
-pub(crate) struct ClosedFence {
-    /// Where the opening marks end: a language label is inserted here.
-    pub(crate) label_at: usize,
-    /// The fenced text: from the line after the opening to the closing line.
-    pub(crate) text: std::ops::Range<usize>,
-    /// The language the opening line names, lowercase; empty when it names none.
-    pub(crate) language: String,
-}
-
-pub(crate) struct Fences {
-    pub(crate) closed: Vec<ClosedFence>,
-    /// Whether a fence opens that the body never closes: everything after its
-    /// opening marks is code.
-    pub(crate) unclosed: bool,
-}
-
-struct OpenFence {
-    mark: char,
-    run: usize,
-    label_at: usize,
-    start: usize,
-    language: String,
-}
-
-/// The fences of a Markdown body: a run of three or more backticks or tildes
-/// opens one, and a line of at least as many of the same marks closes it. A
-/// fence inside another is the other's text.
-pub(crate) fn fences(body: &str) -> Fences {
-    let mut closed = Vec::new();
-    let mut open: Option<OpenFence> = None;
-    let mut offset = 0;
-    for line in body.split_inclusive('\n') {
-        match open.take() {
-            Some(fence) if closes(line, fence.mark, fence.run) => closed.push(ClosedFence {
-                label_at: fence.label_at,
-                text: fence.start..offset,
-                language: fence.language,
-            }),
-            Some(fence) => open = Some(fence),
-            None => {
-                if let Some((mark, run)) = fence_of(line) {
-                    let trimmed = line.trim_start();
-                    open = Some(OpenFence {
-                        mark,
-                        run,
-                        label_at: offset + line.len() - trimmed.len() + run,
-                        start: offset + line.len(),
-                        language: trimmed
-                            .get(run..)
-                            .unwrap_or_default()
-                            .split_whitespace()
-                            .next()
-                            .unwrap_or_default()
-                            .to_ascii_lowercase(),
-                    });
-                }
-            }
-        }
-        offset += line.len();
-    }
-    Fences {
-        closed,
-        unclosed: open.is_some(),
-    }
-}
-
 fn is_heading(line: &str) -> bool {
     let label = line
         .trim()
@@ -191,8 +112,9 @@ fn is_quotation(text: &str) -> bool {
 /// beside such a mention, and the heading left over a list that is gone.
 /// Code is left alone, and so is everything else, byte for byte.
 pub(crate) fn strip_citation_apparatus(text: &str) -> String {
+    let fences = code_fences(text);
     let mut lines = Vec::new();
-    let mut fence: Option<(char, usize)> = None;
+    let mut start = 0;
     for raw in text.split_inclusive('\n') {
         let ending = if raw.ends_with("\r\n") {
             "\r\n"
@@ -202,18 +124,8 @@ pub(crate) fn strip_citation_apparatus(text: &str) -> String {
             ""
         };
         let content = raw.strip_suffix(ending).unwrap_or(raw);
-        let in_code = match fence {
-            Some((mark, run)) => {
-                if closes(content, mark, run) {
-                    fence = None;
-                }
-                true
-            }
-            None => {
-                fence = fence_of(content);
-                fence.is_some()
-            }
-        };
+        let in_code = fences.iter().any(|fence| fence.whole().contains(&start));
+        start += raw.len();
         let mut line = Line {
             body: content.to_owned(),
             ending,

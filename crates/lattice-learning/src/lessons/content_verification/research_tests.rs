@@ -801,7 +801,7 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
     let candidate = json!({"blocks":[{"kind":"explanation","body":original},{"kind":"explanation","body":CAPTURE},{"kind":"explanation","body":SECOND_CAPTURE}],"questions":[]});
     let references = ReferenceCollection::lexical(&sources)?;
     let runtimes = crate::embedded_runtime::BuiltinRuntimes::for_tests();
-    let (_, report, owned) = run(
+    let (_, report) = run(
         Database::from(pool.clone()),
         program.summary.id,
         program.summary.goal,
@@ -809,21 +809,34 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
             first: web(false),
             second: web_capture(false, "https://example.org/concealment", SECOND_CAPTURE),
         })),
-        super::super::verify_and_repair_with_references(
-            &llm,
-            &runtimes,
-            "{}",
-            &crate::lessons::shape::FixedSchema(json!({"type":"object"})),
-            candidate.to_string(),
-            &references,
-            (3000, &mut sources.clone()),
-        ),
+        async {
+            let shape = crate::lessons::shape::FixedSchema(json!({"type":"object"}));
+            let mut numbered = sources.clone();
+            let started = super::super::restart(
+                &llm,
+                "{}",
+                &shape,
+                &candidate.to_string(),
+                &references,
+                &mut numbered,
+            )
+            .await?;
+            super::super::verify_and_repair_with_references(
+                &llm,
+                &runtimes,
+                "{}",
+                &shape,
+                candidate.to_string(),
+                &references,
+                (3000, &mut numbered),
+                started,
+            )
+            .await
+        },
     )
     .await?;
     assert!(report.issues.is_empty());
     assert_eq!(report.sources.len(), 3);
-    assert_eq!(owned.len(), sources.len() + 2);
-    assert!(sources.iter().all(|source| owned.contains(&source.id)));
     assert_eq!(*llm.plans.lock().unwrap(), 1);
     let checks = llm.claims.lock().unwrap();
     assert_eq!(
@@ -1499,4 +1512,17 @@ async fn a_claim_research_round_records_what_it_cost_a_claim_on_each_researched_
         assert_eq!(costs, vec![Some(ms)]);
     }
     Ok(())
+}
+
+#[test]
+fn a_selection_round_trips_through_its_contract() {
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        super::ResearchQuery,
+    >(&super::Selection {
+        decisions: vec![super::Selected {
+            id: "result-0".into(),
+            use_for_gap: true,
+            reason: "States the rule.".into(),
+        }],
+    });
 }

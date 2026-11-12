@@ -14,11 +14,19 @@ use crate::dto::{LearningLessonDto, LearningProgramDto, LearningSourceDto};
 use crate::lesson_drafts::{checkpoint, record_checkpoint};
 use crate::lessons::structured_call::{complete_reasoned_json, CallKind, ReasonFirst};
 use crate::model_call;
-use crate::reference_collection::{ReferenceCollection, ReferencePassage, PASSAGE_CHARS};
+use crate::model_call::ErrorClass;
+use crate::reference_collection::{
+    item_tokens, ReferenceCollection, ReferencePassage, PASSAGE_CHARS,
+};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
-use lattice_core::shared::error::{AppError, Result};
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
+use lattice_core::protocol;
+use lattice_core::shared::error::Result;
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::shared::protocol::Protocol;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -26,7 +34,7 @@ use std::collections::{HashMap, HashSet};
 /// Changes when the plan, the coverage question or their answers change.
 /// Distinct from content verification's `lesson-evidence` policy: these
 /// keys hold the lesson's topic plan and coverage judgements, not claims.
-const POLICY: &str = "lesson-topic-evidence";
+const POLICY: Protocol = protocol!("lesson-topic-evidence", 1);
 /// The plan answer's reservation; inside a lesson job an answer may take
 /// whatever its window leaves.
 const PLAN_OUTPUT_TOKENS: usize = 2000;
@@ -83,12 +91,12 @@ pub(super) async fn plan(
         .map(|module| json!({"title":module.title,"outcomes":module.outcomes,"lessonSequence":module.lessons.iter().map(|item| item.title.as_str()).collect::<Vec<_>>()}));
     let request =
         json!({"lesson":{"title":lesson.title,"objective":lesson.objective},"module":module});
-    let key = format!(
-        "{POLICY}:plan:{}",
+    let key = POLICY.key(format!(
+        "plan:{}",
         sha256_hex(
             json!({"model":llm.model_name(),"system":PLAN_SYSTEM,"request":request}).to_string()
         )
-    );
+    ));
     if let Some(topics) = checkpoint(&key)
         .await?
         .and_then(|saved| serde_json::from_value::<Vec<Topic>>(saved).ok())
@@ -100,17 +108,23 @@ pub(super) async fn plan(
     if let Some(fields) = prompt.as_object_mut() {
         fields.insert("referenceCatalog".into(), references.catalog(llm));
     }
+    let prompt = prompt.to_string();
+    let contract = ContractCall::of::<EvidencePlan>(&PromptInput {
+        system: PLAN_SYSTEM.to_owned(),
+        prompt: prompt.clone(),
+    })?;
     let planned = match complete_json(
         llm,
+        &contract,
         PLAN_SYSTEM,
-        prompt.to_string(),
+        prompt,
         plan_schema(),
         PLAN_OUTPUT_TOKENS,
     )
     .await
     {
         Ok(raw) => parse_plan(&raw),
-        Err(AppError::ModelAnswerUnusable(_)) => None,
+        Err(error) if ErrorClass::of(&error) == ErrorClass::Unusable => None,
         Err(error) => return Err(error),
     };
     let Some(topics) = planned else {
@@ -128,6 +142,22 @@ pub(super) async fn plan(
     record_checkpoint(&key, json!(topics)).await?;
     tracing::info!(topics = topics.len(), "Planned the lesson's evidence");
     Ok(topics)
+}
+
+/// The model call that plans the topics a lesson's evidence must cover.
+pub(crate) struct EvidencePlan;
+
+impl Contract for EvidencePlan {
+    const ID: ContractId = ContractId::new("evidence-plan");
+    type Input = PromptInput;
+}
+
+/// The model call that judges which gathered passages cover which topics.
+pub(crate) struct EvidenceCoverage;
+
+impl Contract for EvidenceCoverage {
+    const ID: ContractId = ContractId::new("evidence-coverage");
+    type Input = PromptInput;
 }
 
 /// The usable topics of a plan answer: each named, with at least one search,
@@ -198,11 +228,7 @@ fn passage_tokens(llm: &dyn LLMPort, references: &ReferenceCollection<'_>) -> us
 /// The index of `passage` in `store`, adding it unless a passage of the same
 /// source already spans any of its bytes.
 fn intern(store: &mut Vec<ReferencePassage>, passage: ReferencePassage) -> usize {
-    if let Some(index) = store.iter().position(|known| {
-        known.source_id == passage.source_id
-            && known.start_byte < passage.end_byte
-            && passage.start_byte < known.end_byte
-    }) {
+    if let Some(index) = store.iter().position(|known| known.overlaps(&passage)) {
         return index;
     }
     store.push(passage);
@@ -581,18 +607,23 @@ async fn judge(
             groups.push(group);
             continue;
         }
-        let key = format!(
-            "{POLICY}:coverage:{}",
+        let key = POLICY.key(format!(
+            "coverage:{}",
             sha256_hex(
                 json!({"model":llm.model_name(),"system":COVERAGE_SYSTEM,"prompt":call.prompt})
                     .to_string()
             )
-        );
+        ));
         let answer = match checkpoint(&key).await? {
             Some(saved) => saved,
             None => {
+                let contract = ContractCall::of::<EvidenceCoverage>(&PromptInput {
+                    system: COVERAGE_SYSTEM.to_owned(),
+                    prompt: call.prompt.clone(),
+                })?;
                 let raw = complete_reasoned_json(
                     llm,
+                    &contract,
                     COVERAGE_SYSTEM,
                     call.prompt.clone(),
                     call.schema.clone(),
@@ -607,7 +638,9 @@ async fn judge(
                 .await;
                 let answer = match raw {
                     Ok(raw) => parse_json::<Value>(&raw).map_err(|error| error.to_string()),
-                    Err(AppError::ModelAnswerUnusable(reason)) => Err(reason),
+                    Err(error) if ErrorClass::of(&error) == ErrorClass::Unusable => {
+                        Err(error.to_string())
+                    }
                     Err(error) => return Err(error),
                 };
                 match answer {
@@ -685,14 +718,17 @@ pub(super) fn pack(
             let Some(passage) = gathered.passages.get(index) else {
                 continue;
             };
-            let mut cost = llm.count_tokens(&json!(passage.text).to_string()) + 2;
+            let mut cost = item_tokens(llm, &json!(passage.text));
             let new_source = !sources.contains(passage.source_id.as_str());
             if new_source {
                 let source = references
                     .sources
                     .iter()
                     .find(|source| source.id == passage.source_id);
-                cost += llm.count_tokens(&json!({"sourceIndex":added.len(),"title":source.map(|s| s.title.as_str()),"url":source.and_then(|s| s.url.as_deref()),"excerpt":""}).to_string()) + 2;
+                cost += item_tokens(
+                    llm,
+                    &json!({"sourceIndex":added.len(),"title":source.map(|s| s.title.as_str()),"url":source.and_then(|s| s.url.as_deref()),"excerpt":""}),
+                );
             }
             if cost > remaining {
                 continue;

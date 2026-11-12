@@ -21,11 +21,20 @@ impl PersistenceError {
         match &self.0 {
             sqlx::Error::RowNotFound => PersistenceErrorKind::NotFound,
             sqlx::Error::PoolTimedOut => PersistenceErrorKind::Busy,
+            sqlx::Error::Database(driver) if is_busy_code(driver.code().as_deref()) => {
+                PersistenceErrorKind::Busy
+            }
             sqlx::Error::PoolClosed => PersistenceErrorKind::Closed,
             sqlx::Error::Configuration(_) => PersistenceErrorKind::Misconfigured,
             _ => PersistenceErrorKind::Other,
         }
     }
+}
+
+/// SQLITE_BUSY and SQLITE_LOCKED, with their extended results.
+fn is_busy_code(code: Option<&str>) -> bool {
+    code.and_then(|code| code.parse::<i32>().ok())
+        .is_some_and(|code| matches!(code & 0xff, 5 | 6))
 }
 
 impl std::fmt::Display for PersistenceError {
@@ -44,6 +53,9 @@ impl From<sqlx::Error> for PersistenceError {
 
 impl From<PersistenceError> for AppError {
     fn from(error: PersistenceError) -> Self {
-        AppError::Database(error.to_string())
+        match error.kind() {
+            PersistenceErrorKind::Busy => AppError::DatabaseBusy(error.to_string()),
+            _ => AppError::Database(error.to_string()),
+        }
     }
 }

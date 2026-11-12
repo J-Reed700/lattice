@@ -307,10 +307,7 @@ async fn a_runtime_that_is_not_there_or_a_cancelled_run_is_never_blamed_on_the_a
                 "{error:?}"
             );
         } else {
-            assert!(
-                matches!(&error, AppError::InvalidState(message) if message.contains("cancelled")),
-                "{error:?}"
-            );
+            assert!(matches!(&error, AppError::Cancelled(_)), "{error:?}");
         }
         assert_eq!(model.requests().len(), 1, "nothing is asked again");
     }

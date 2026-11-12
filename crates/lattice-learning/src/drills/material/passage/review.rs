@@ -147,7 +147,7 @@ async fn rewrite(
         "required": ["sentence"],
         "properties": {"sentence": text_schema()}
     });
-    let request = model_call::structured(REWRITE_SYSTEM, prompt, schema, budget::sentence(), "low");
+    let request = model_call::structured(REWRITE_SYSTEM, prompt, schema, budget::sentence());
     let asked = ask_request(llm, request, |raw| {
         let rewritten: Rewritten = parse_json(raw)?;
         let text = rewritten.sentence.as_str();

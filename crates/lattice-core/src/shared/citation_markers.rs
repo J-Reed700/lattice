@@ -2,20 +2,19 @@
 //! numbers its passages afresh.
 
 use super::markdown_math::map_prose;
+use super::text::segmentation::{code_fences, CodeFence};
 
 /// `text` without its `[n]` and `[n, m]` markers and the spaces before them.
 /// Code is left as written, a formula's brackets are its own (`$a[1]$`), and
 /// `[1](url)` is a link.
 pub fn without_citation_markers(text: &str) -> String {
-    let mut fenced = false;
+    let fences: Vec<_> = code_fences(text).iter().map(CodeFence::whole).collect();
+    let mut start = 0;
     text.split_inclusive('\n')
         .map(|line| {
-            let trimmed = line.trim_start();
-            let fence = trimmed.starts_with("```") || trimmed.starts_with("~~~");
-            if fence {
-                fenced = !fenced;
-            }
-            if fence || fenced {
+            let at = start;
+            start += line.len();
+            if fences.iter().any(|whole| whole.contains(&at)) {
                 line.to_owned()
             } else {
                 map_prose(line, outside_inline_code)

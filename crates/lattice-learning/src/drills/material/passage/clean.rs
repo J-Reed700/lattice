@@ -75,7 +75,6 @@ impl PassageMaterial<'_> {
             prompt(spec, &context, &source),
             schema(),
             budget::explanation(spec.lines),
-            "low",
         );
         let asked = ask_request(ctx.llm, request, |raw| read(raw, needed, spec.lines)).await?;
         trail.call("clean explanation", ctx.llm.model_name());

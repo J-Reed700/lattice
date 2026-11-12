@@ -38,7 +38,7 @@ use crate::review_findings::{
 
 /// Attempts one finding is given: a first, and one retry that is told what
 /// became of the first. The loop must end on a defect no repair fixes.
-const REPAIRS_PER_FINDING: u8 = 2;
+pub(in crate::lessons::teaching) const REPAIRS_PER_FINDING: u8 = 2;
 
 /// What became of one repair's attempt at a finding.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

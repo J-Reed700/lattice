@@ -2,7 +2,11 @@
 //! consent.
 
 use super::*;
+use crate::lessons::verifier_audit::calls::VerifierAudit;
 use crate::lessons::verifier_audit::tests::ScriptedVerifier;
+use lattice_core::application::services::model_contract::test_support::{
+    assert_round_trip, RenderAnswer,
+};
 use lattice_core::domain::learning::claim_review::ClaimId;
 
 const UNIT: &str = "Water is everywhere.\n\nWater boils at 100 °C at sea level.\n\nThen it cools.";
@@ -195,7 +199,7 @@ fn a_verdict_counts_only_when_it_quotes_a_passage_it_was_given() {
         supported.result,
         CheckResult::Supported {
             source_version_id: "v1".into(),
-            supporting_quote: "pure  WATER boils at 100 °C at sea level.".into()
+            supporting_quote: "Pure water boils at 100 °C at sea level.".into()
         }
     );
 
@@ -334,14 +338,6 @@ fn a_verifier_quotation_spelled_differently_is_recorded_in_the_passages_words() 
 }
 
 #[test]
-fn quotes_match_ignoring_case_spacing_and_typography_but_never_when_empty() {
-    let text = "It is \u{201C}boiling\u{201D} \u{2014} at 100\n°C.";
-    assert!(occurs(text, "it is \"BOILING\" - at 100 °C."));
-    assert!(!occurs(text, "at 90 °C"));
-    assert!(!occurs(text, "   "));
-}
-
-#[test]
 fn parts_of_a_split_claim_combine_with_the_strongest_verdict() {
     let failed = |kind| Judged {
         result: CheckResult::Failed { kind },
@@ -471,4 +467,31 @@ fn a_reason_and_quote_longer_than_the_planned_room_are_read_whole() {
             supporting_quote: quote
         }
     );
+}
+
+impl RenderAnswer for VerifierAudit {
+    type Answer = RawAnswer;
+
+    fn render(answer: &RawAnswer) -> String {
+        serde_json::to_string(answer).unwrap_or_default()
+    }
+
+    fn read(text: &str) -> Result<RawAnswer, AppError> {
+        parse_answer(text).map_err(AppError::InvalidInput)
+    }
+}
+
+#[test]
+fn the_audit_contract_reads_what_it_renders() {
+    assert_round_trip::<VerifierAudit>(&RawAnswer {
+        verdicts: vec![RawVerdict {
+            claim: "C1".into(),
+            passages_used: vec![RawQuote {
+                passage: "P1".into(),
+                quote: "Water boils at 100 °C at sea level.".into(),
+            }],
+            verdict: "supported".into(),
+            reason: "The passage states it.".into(),
+        }],
+    });
 }

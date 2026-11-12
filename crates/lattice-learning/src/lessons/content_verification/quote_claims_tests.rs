@@ -139,8 +139,8 @@ async fn a_quoted_claim_is_settled_without_a_model_call() -> Result<()> {
 
     let read = read_one(Reading::Parts, &offline, &world, statement).await?;
 
-    assert_eq!(read.outcome, Outcome::Stands);
-    assert_eq!(read.finding.verdict, ClaimVerdict::Supported);
+    assert_eq!(read.outcome(), Outcome::Stands);
+    assert_eq!(read.finding().verdict, ClaimVerdict::Supported);
     assert!(offline.prompts.lock().unwrap().is_empty());
     Ok(())
 }

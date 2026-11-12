@@ -3,13 +3,19 @@
 //! contradicts itself, or points the learner at what they cannot see. The
 //! model finds; code keeps only what the lesson's own words bear out.
 use super::protected;
+use crate::dto::LearningBlockKind;
 use crate::lessons::content_verification::{unit_fields, Protected};
-use crate::lessons::same_text;
-use crate::lessons::shape::TEACHING_KINDS;
 use crate::lessons::structured_call::{self, CallKind, ReasonFirst};
 use crate::review_findings::{subject_of, FindingSite, PlanCheck, ReviewFinding};
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::{application::ports::LLMPort, shared::error::Result};
+use lattice_core::shared::text::same_text;
+use lattice_core::{
+    application::ports::LLMPort,
+    application::services::model_contract::{Contract, ContractCall, ContractId, PromptInput},
+    protocol,
+    shared::error::Result,
+    shared::protocol::Protocol,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -73,7 +79,15 @@ const BRIEF: &str = concat!("Go through the lesson part by part in order. For ea
 /// The room the check's answer is given.
 const ANSWER_TOKENS: usize = 6000;
 
-const POLICY: &str = "lesson-contract-v6";
+const POLICY: Protocol = protocol!("lesson-contract", 6);
+
+/// The check of the lesson against its course plan.
+pub(crate) struct LessonContractCheck;
+
+impl Contract for LessonContractCheck {
+    const ID: ContractId = ContractId::new("lesson-contract-check");
+    type Input = PromptInput;
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -199,9 +213,15 @@ fn parts_of(lesson: &Value) -> Vec<Part> {
         let entries = lesson.get(list).and_then(Value::as_array);
         for (index, entry) in entries.into_iter().flatten().enumerate() {
             let (id, site) = if block {
-                (format!("section-{index}"), FindingSite::Section(index))
+                (
+                    FindingSite::Section(index).id_text(),
+                    FindingSite::Section(index),
+                )
             } else {
-                (format!("question-{index}"), FindingSite::Question(index))
+                (
+                    FindingSite::Question(index).id_text(),
+                    FindingSite::Question(index),
+                )
             };
             let mut shown = serde_json::Map::from_iter([("id".to_owned(), json!(id))]);
             for key in wanted {
@@ -296,14 +316,6 @@ pub(crate) fn at_position<'a>(
         .filter(move |entry| entry.get("position").and_then(Value::as_str) == Some(name))
 }
 
-fn label(site: FindingSite) -> String {
-    match site {
-        FindingSite::Section(index) => format!("Section {}", index + 1),
-        FindingSite::Question(index) => format!("Question {}", index + 1),
-        FindingSite::Lesson => "The lesson".into(),
-    }
-}
-
 /// The last teaching block before a part that sets a task or asks a question, when the part itself does not teach.
 fn teaching_before(candidate: &Value, site: FindingSite) -> Option<FindingSite> {
     let blocks = candidate.get("blocks").and_then(Value::as_array)?;
@@ -311,7 +323,8 @@ fn teaching_before(candidate: &Value, site: FindingSite) -> Option<FindingSite> 
         block
             .get("kind")
             .and_then(Value::as_str)
-            .is_some_and(|kind| TEACHING_KINDS.contains(&kind))
+            .and_then(LearningBlockKind::parse)
+            .is_some_and(|kind| kind.teaches())
     };
     let upto = match site {
         FindingSite::Section(index) => {
@@ -483,7 +496,7 @@ fn findings(
     for (item, belongs) in &settled.missing {
         let site = belongs.map_or(FindingSite::Lesson, |part| part.site);
         let fits = belongs.map_or_else(String::new, |part| {
-            format!(" It fits best in {}.", label(part.site).to_lowercase())
+            format!(" It fits best in {}.", part.site.label().to_lowercase())
         });
         let label = if item.kind == "term" {
             ""
@@ -535,11 +548,11 @@ fn findings(
             None => match before {
                 Some(site) if in_guarded => format!(
                     concat!("Teach it in {place}, the last part before this one that teaches (", each_shown!(), "), in sentences added there; the quoted words stay exactly as they are."),
-                    place = label(site)
+                    place = site.label()
                 ),
                 Some(site) => format!(
                     concat!("Teach it in {place}, the last part before this one that teaches (", each_shown!(), "), in sentences added there, and do not teach it inside this step: a step that sets a task does not give away what it asks for. Or change this step to use only what the lesson has taught (a record asked for in the learner's own notes needs nothing taught)."),
-                    place = label(site)
+                    place = site.label()
                 ),
                 None => teach.to_owned(),
             },
@@ -550,7 +563,7 @@ fn findings(
             ),
             Some(later) => format!(
                 concat!("The lesson teaches it only afterwards, in {place} (\"{words}\"). Move that teaching to this step, where it is first used (", each_shown!(), "), so that the lesson teaches it once.{keep}"),
-                place = label(later.part.site).to_lowercase(),
+                place = later.part.site.label().to_lowercase(),
                 words = later.found.exact,
                 keep = keep
             ),
@@ -558,9 +571,9 @@ fn findings(
         let labels: Vec<String> = unmet
             .elsewhere
             .iter()
-            .map(|other| label(other.site))
+            .map(|other| other.site.label())
             .collect();
-        let one_place = before.map_or_else(|| "this step".to_owned(), label);
+        let one_place = before.map_or_else(|| "this step".to_owned(), FindingSite::label);
         let too = match labels.split_last() {
             None => String::new(),
             Some((only, [])) => {
@@ -577,12 +590,12 @@ fn findings(
             part.site,
             format!(
                 "{} asks the learner to use {} (\"{passage}\"), and nothing before this point in the lesson, the earlier lessons or the learner's prior knowledge has taught it. {how}{too}",
-                label(part.site),
+                part.site.label(),
                 unmet.what,
                 passage = passage
             ),
         )
-        .with_summary(format!("{} uses {} before the lesson teaches it.", label(part.site), unmet.what))
+        .with_summary(format!("{} uses {} before the lesson teaches it.", part.site.label(), unmet.what))
         .with_passage(passage);
         found.push(
             match (later.filter(|later| later.part.id != part.id), before) {
@@ -608,8 +621,8 @@ fn findings(
         let both_open = !guarded(first.part, one) && !guarded(second.part, other);
         let described = format!(
             "The lesson contradicts itself: {} says \"{one}\" and {} says \"{other}\". Correct the one that is wrong so the lesson says one thing.",
-            label(first.part.site),
-            label(second.part.site)
+            first.part.site.label(),
+            second.part.site.label()
         );
         let case = upheld.case.trim();
         let finding = ReviewFinding::plan(
@@ -624,8 +637,8 @@ fn findings(
         )
         .with_summary(format!(
             "{} and {} contradict each other.",
-            label(first.part.site),
-            label(second.part.site)
+            first.part.site.label(),
+            second.part.site.label()
         ))
         .with_passage(passage);
         found.push(if both_open {
@@ -644,13 +657,13 @@ fn findings(
                     part.site,
                     format!(
                         "{} points the learner at something the lesson does not contain (\"{passage}\": {}). Put what is meant in the lesson's own words, or remove the reference.",
-                        label(part.site),
+                        part.site.label(),
                         pointer.what
                     ),
                 )
                 .with_summary(format!(
                     "{} refers to something the learner is never shown.",
-                    label(part.site)
+                    part.site.label()
                 ))
                 .with_passage(passage),
             );
@@ -703,7 +716,7 @@ fn with_reported(mut prompt: Value, reported: &[&ReviewFinding]) -> Value {
             let mut entry = serde_json::Map::new();
             entry.insert("id".into(), json!(report_id(index)));
             if let Some(site) = finding.site.filter(|site| *site != FindingSite::Lesson) {
-                entry.insert("part".into(), json!(label(site)));
+                entry.insert("part".into(), json!(site.label()));
             }
             entry.insert("defect".into(), json!(finding.note));
             if let Some(words) = &finding.passage {
@@ -815,8 +828,13 @@ pub(super) async fn check(
             } else {
                 "Checking what the review reported against the course plan"
             });
+            let call = ContractCall::of::<LessonContractCheck>(&PromptInput {
+                system: system.clone(),
+                prompt: prompt.clone(),
+            })?;
             let answer = structured_call::complete_checked(
                 llm,
+                &call,
                 &system,
                 prompt,
                 schema,

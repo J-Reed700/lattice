@@ -27,9 +27,6 @@ import type {
   VerdictKindDto,
 } from '@/lib/bindings';
 
-/** The job's result reference for lessons held for review (§6.1). */
-export const NEEDS_REVIEW_RESULT_PREFIX = 'needs_review:';
-
 /** Where a claim stands for the user: theirs to act on, the machine's, or settled. */
 export function claimFilterOf(item: ClaimReviewItemDto): 'needs_you' | 'repairing' | 'machine' | 'confirmed' | 'changed' {
   const state = item.state;
@@ -444,9 +441,6 @@ export function checkerColumns(item: ClaimReviewItemDto): { local: CheckerSide |
 
 // ── Holds and jobs ──────────────────────────────────────────────────────────
 
-/** The code every Verifier audit stop starts with (`verifier_unset`, `verifier_turned_off`…). */
-export const AUDIT_STOP_PREFIX = 'verifier_';
-
 /** What holds a waiting lesson besides its claims: the audit stop, if any. */
 export type ReviewHold = 'claims' | 'audit_stop' | 'audit' | 'resolved';
 
@@ -457,16 +451,15 @@ export type ReviewHold = 'claims' | 'audit_stop' | 'audit' | 'resolved';
  */
 export function reviewHold(review: LessonClaimReviewDto, waiting: number): ReviewHold {
   if (waiting > 0) return 'claims';
-  if (review.stopReason?.code.startsWith(AUDIT_STOP_PREFIX)) return 'audit_stop';
+  if (review.stopReason?.audit) return 'audit_stop';
   return review.changedSinceStop ? 'resolved' : 'audit';
 }
 
 export const NOTHING_CHANGED = 'Nothing changed since the last check. Resolve a statement or add a source first.';
 
-/** Lessons a completed job held for review, from its result reference. */
-export function heldLessonIds(job: Pick<LearningGenerationJob, 'status' | 'resultId'> | null | undefined): string[] {
-  if (job?.status !== 'completed' || !job.resultId?.startsWith(NEEDS_REVIEW_RESULT_PREFIX)) return [];
-  return job.resultId.slice(NEEDS_REVIEW_RESULT_PREFIX.length).split(',').filter(Boolean);
+/** The lessons a job holds for review (§6.1). */
+export function heldLessonIds(job: Pick<LearningGenerationJob, 'heldLessonIds'> | null | undefined): string[] {
+  return job?.heldLessonIds ?? [];
 }
 
 /** The latest attempt of each lesson preparation job (a retry supersedes its parent). */

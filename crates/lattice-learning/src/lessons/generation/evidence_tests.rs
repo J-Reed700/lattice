@@ -236,7 +236,7 @@ fn the_pack_goes_round_robin_across_topics_within_the_room_without_cutting_passa
     };
     let topics = vec![topic("First"), topic("Second"), topic("Third")];
     let llm = scripted(Vec::new());
-    let passage_tokens = llm.count_tokens(&json!(texts[0]).to_string()) + 2;
+    let passage_tokens = llm.count_tokens(&json!(texts[0]).to_string()) + 1;
 
     // Room for four passages and their sources, not five.
     let added = pack(&llm, &gathered, &references, 4 * passage_tokens + 100);

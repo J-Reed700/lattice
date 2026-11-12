@@ -1,8 +1,18 @@
 #![allow(clippy::unwrap_used, clippy::panic)]
 use super::*;
 use crate::lessons::call_plan::PlannedAt;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::domain::learning::acceptance::StandardPolicy;
 use lattice_core::shared::runtime::jobs::{current_observer, QueueExit};
+
+struct Probe;
+
+impl Contract for Probe {
+    const ID: ContractId = ContractId::new("progress-probe");
+    type Input = PromptInput;
+}
 
 #[tokio::test]
 async fn structured_progress_tracks_repeated_phases_and_concurrent_model_requests() {
@@ -118,7 +128,8 @@ async fn lesson_model_can_run_past_old_deadlines_and_reports_stream_activity() -
     let progress = Progress::default();
     CURRENT.scope(progress.clone(), async {
         stage("Writing lesson");
-        crate::generation::complete_json(&SlowModel, "Teach", "Lesson".into(), serde_json::json!({"type":"object"}), 4000).await?;
+        let call = ContractCall::of::<Probe>(&PromptInput { system: "Teach".into(), prompt: "Lesson".into() })?;
+        crate::generation::complete_json(&SlowModel, &call, "Teach", "Lesson".into(), serde_json::json!({"type":"object"}), 4000).await?;
         assert!(progress.snapshot().2.response_characters > 0);
         assert!(!progress.snapshot().2.model_running);
         use lattice_core::application::services::claim_verification::{CheckPolicy, ClaimChecker, ClaimEvidence, ClaimJudgment, ClaimVerdict};

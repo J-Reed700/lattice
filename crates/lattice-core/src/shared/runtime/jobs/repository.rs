@@ -24,7 +24,7 @@ const STOPPED_THE_APP_MESSAGE: &str =
 fn db(error: impl Into<PersistenceError>) -> AppError {
     let error = error.into();
     match error.kind() {
-        PersistenceErrorKind::Busy => AppError::ServiceNotAvailable(
+        PersistenceErrorKind::Busy => AppError::DatabaseBusy(
             "The database is temporarily busy. Saved work is retained.".into(),
         ),
         _ => AppError::Database(error.to_string()),

@@ -8,6 +8,11 @@ use lattice_core::application::contracts::web::WebSearchInput;
 use lattice_core::application::contracts::web::WebSearchResult;
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
+#[cfg(any(test, feature = "test-support"))]
+use lattice_core::application::services::model_contract::test_support::RenderAnswer;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::shared::http::url_identity::identity;
 use lattice_core::shared::persistence::Database;
 use std::sync::{Arc, Mutex};
@@ -16,6 +21,8 @@ use std::time::{Duration, Instant};
 #[cfg(test)]
 #[path = "research_tests.rs"]
 pub(crate) mod tests;
+
+const RESEARCH_KEYS: Protocol = lattice_core::protocol!("research", 1);
 
 mod saving;
 use saving::Saving;
@@ -65,6 +72,15 @@ fn selection_schema(ids: &[Value]) -> Value {
     json!({"type":"object","additionalProperties":false,"required":["decisions"],"properties":{"decisions":{"type":"array","maxItems":ids.len(),"items":{"type":"object","additionalProperties":false,"required":["id","useForGap","reason"],"properties":{"id":{"type":"string","enum":ids},"useForGap":{"type":"boolean","description":"True only when this result is directly relevant and credible for the scoped evidence gap. False for a rejected candidate, even if its rejection is explained in reason."},"reason":{"type":"string","minLength":1}}}}}})
 }
 
+/// The reference selection call: its input is the system text and the
+/// candidates prompt.
+pub(crate) struct ResearchQuery;
+
+impl Contract for ResearchQuery {
+    const ID: ContractId = ContractId::new("research-query");
+    type Input = PromptInput;
+}
+
 fn selection_prompt(topic: &str, query: &str, gaps: &[Value], shown: &[Value]) -> String {
     json!({"topic":topic,"query":query,"gaps":gaps,"results":shown}).to_string()
 }
@@ -76,7 +92,6 @@ fn selection_request(topic: &str, query: &str, gaps: &[Value], shown: &[Value]) 
         selection_prompt(topic, query, gaps, shown),
         selection_schema(&ids),
         SELECTION_ANSWER_TOKENS,
-        "low",
     )
 }
 
@@ -177,9 +192,8 @@ async fn select_noted(
         selection_room(llm, topic, query, gaps),
         build,
         |request| {
-            let results = results
-                .get(..read.load(std::sync::atomic::Ordering::Relaxed))
-                .unwrap_or_default();
+            let read = read.load(std::sync::atomic::Ordering::Relaxed);
+            let results = results.get(..read).unwrap_or_default();
             if results.len() < found {
                 tracing::info!(
                     read = results.len(),
@@ -187,13 +201,23 @@ async fn select_noted(
                     "Choosing among the search results the window holds"
                 );
             }
-            crate::lessons::structured_call::complete_checked_request(
-                llm,
-                request,
-                None,
-                None,
-                move |raw| selection(raw, results),
-            )
+            let prompt =
+                selection_prompt(topic, query, gaps, shown.get(..read).unwrap_or_default());
+            async move {
+                let call = ContractCall::of::<ResearchQuery>(&PromptInput {
+                    system: SELECT_SYSTEM.into(),
+                    prompt,
+                })?;
+                crate::lessons::structured_call::complete_checked_request(
+                    llm,
+                    &call,
+                    request,
+                    None,
+                    None,
+                    move |raw| selection(raw, results),
+                )
+                .await
+            }
         },
     )
     .await?;
@@ -206,21 +230,38 @@ async fn select_noted(
     }))
 }
 
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(Debug, PartialEq))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct Selection {
+    decisions: Vec<Selected>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(Debug, PartialEq))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Selected {
+    id: String,
+    use_for_gap: bool,
+    reason: String,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl RenderAnswer for ResearchQuery {
+    type Answer = Selection;
+
+    fn render(answer: &Selection) -> String {
+        json!(answer).to_string()
+    }
+
+    fn read(text: &str) -> Result<Selection> {
+        crate::generation::parse_json(text)
+    }
+}
+
 /// The selector's answer over `results`, the candidates it was shown: the
 /// ones it keeps, each with its reason.
 fn selection(raw: &str, results: &[WebSearchResult]) -> Result<Vec<(WebSearchResult, String)>> {
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase", deny_unknown_fields)]
-    struct Selection {
-        decisions: Vec<Selected>,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase", deny_unknown_fields)]
-    struct Selected {
-        id: String,
-        use_for_gap: bool,
-        reason: String,
-    }
     let selection: Selection = crate::generation::parse_json(raw)?;
     let mut seen = HashSet::new();
     let mut selected = Vec::new();
@@ -417,14 +458,7 @@ pub(super) async fn expand<'a>(
     let (expanded, searched) = match research(llm, references, &context, round).await {
         Ok(Expansion::Saved(expanded, searched)) => (*expanded, searched),
         Ok(unresearched) => return Ok(unresearched.timed(started.elapsed().checked_div(claims))),
-        Err(
-            error @ (AppError::InvalidInput(_)
-            | AppError::PromptExceedsWindow { .. }
-            | AppError::ModelAnswerUnusable(_)
-            | AppError::ModelRejected(_)
-            | AppError::InvalidConfig(_)
-            | AppError::Other(_)),
-        ) => {
+        Err(error) if leaves_held(&error) => {
             tracing::warn!(%error, claims, "Claim research gave no usable answer; the claims stay held");
             return Ok(Expansion::Unchanged(Searched {
                 unreached: true,
@@ -439,6 +473,15 @@ pub(super) async fn expand<'a>(
     // comparisons that requested these automatically captured references.
     evidence_selection::record_research_scope(&expanded, &looked_for, checks).await?;
     Ok(Expansion::Saved(Box::new(expanded), searched).timed(started.elapsed().checked_div(claims)))
+}
+
+/// Whether a failed research round only leaves its gaps open: its answer
+/// was unusable or its prompt does not fit; an outage or a fault fails the job.
+fn leaves_held(error: &AppError) -> bool {
+    matches!(
+        model_call::ErrorClass::of(error),
+        model_call::ErrorClass::Unusable | model_call::ErrorClass::DoesNotFit
+    )
 }
 
 /// What a claim a hint names lacks when its latest check found it supported.
@@ -469,14 +512,7 @@ pub(crate) async fn research_topics<'a>(
         kind: Gaps::Topics,
     };
     match research(llm, references, &context, round).await {
-        Err(
-            error @ (AppError::InvalidInput(_)
-            | AppError::PromptExceedsWindow { .. }
-            | AppError::ModelAnswerUnusable(_)
-            | AppError::ModelRejected(_)
-            | AppError::InvalidConfig(_)
-            | AppError::Other(_)),
-        ) => {
+        Err(error) if leaves_held(&error) => {
             tracing::warn!(%error, topics = gaps.len(), "Lesson topic research gave no usable answer; the topics stay uncovered");
             Ok(None)
         }
@@ -586,14 +622,11 @@ async fn research<'a>(
             Gaps::Topics => "Finding references for lesson topics no saved reference covers",
         },
     );
-    let search_key = format!(
-        "research-v1:{}",
-        sha256_hex(
-            json!({"topic":context.topic,
+    let search_key = RESEARCH_KEYS.key(sha256_hex(
+        json!({"topic":context.topic,
         "model":llm.model_name(),"policy":POLICY})
-            .to_string()
-        )
-    );
+        .to_string(),
+    ));
     let mut completed_queries: HashSet<String> = crate::lesson_drafts::checkpoint(&search_key)
         .await?
         .and_then(|saved| serde_json::from_value(saved).ok())

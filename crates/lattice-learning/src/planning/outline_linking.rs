@@ -14,8 +14,15 @@ use crate::{
     reference_collection::{ReferenceCollection, ReferencePassage},
 };
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::shared::protocol::Protocol;
 use lattice_core::{
-    application::{ports::LLMPort, services::grounded_generation::GroundedRequest},
+    application::{
+        ports::LLMPort,
+        services::{
+            grounded_generation::GroundedRequest,
+            model_contract::{Contract, ContractCall, ContractId, PromptInput},
+        },
+    },
     shared::error::Result,
 };
 use serde::{Deserialize, Serialize};
@@ -25,7 +32,14 @@ use std::collections::BTreeMap;
 mod spans;
 use spans::{citable_span, is_prose};
 
-const POLICY: &str = "outline-evidence-link-v2";
+pub(crate) struct OutlineLinking;
+
+impl Contract for OutlineLinking {
+    const ID: ContractId = ContractId::new("outline-linking");
+    type Input = PromptInput;
+}
+
+const POLICY: Protocol = lattice_core::protocol!("outline-evidence-link", 2);
 /// Items per chooser call. Batching drops nothing: every item is asked, and
 /// one unusable answer leaves only its own batch unlinked.
 const BATCH_SIZE: usize = 8;
@@ -684,8 +698,13 @@ pub(crate) async fn link(
             }
             (prompt, schema, _, listed) = request(&group, sources);
         }
+        let call = ContractCall::of::<OutlineLinking>(&PromptInput {
+            system: LINK_SYSTEM.into(),
+            prompt: prompt.clone(),
+        })?;
         let raw = complete_reasoned_json(
             llm,
+            &call,
             LINK_SYSTEM,
             prompt,
             schema,

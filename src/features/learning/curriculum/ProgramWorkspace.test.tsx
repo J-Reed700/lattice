@@ -118,7 +118,7 @@ function twoModules(): LearningProgramDto {
 const job = (overrides: Partial<LearningGenerationJob>): LearningGenerationJob => ({
   id: 'job-1', programId: 'program-1', operationId: 'op', kind: 'lesson_preparation', payloadSha256: 'hash', baseRevisionNumber: 9,
   status: 'running', progressCompleted: 0, progressTotal: 1, progressMessage: 'Writing the draft', activity: null,
-  resultId: null, error: null, retryOfJobId: null, createdAt: Date.now() - 60_000, startedAt: Date.now() - 60_000, finishedAt: null,
+  resultId: null, heldLessonIds: [], error: null, retryOfJobId: null, createdAt: Date.now() - 60_000, startedAt: Date.now() - 60_000, finishedAt: null,
   ...overrides,
 });
 
@@ -138,7 +138,7 @@ describe('Course page', () => {
     // One lesson held for review by a finished attempt, another being prepared now.
     api.plan.mockResolvedValue({ ok: true, data: { programId: 'program-1', jobs: [
       job({ id: 'job-2', createdAt: Date.now() }),
-      job({ status: 'completed', resultId: 'needs_review:lesson-1', finishedAt: Date.now() - 120_000, createdAt: Date.now() - 600_000 }),
+      job({ status: 'completed', heldLessonIds: ['lesson-1'], finishedAt: Date.now() - 120_000, createdAt: Date.now() - 600_000 }),
     ] } });
     api.review.mockImplementation(async (_programId: string, lessonId: string) => ({ ok: true, data: lessonId === 'lesson-1'
       ? review([unsupportedItem(1), unsupportedItem(2)], { lessonId })
@@ -507,7 +507,7 @@ describe('The course progress line', () => {
 
   it('counts a lesson held for review as needing attention, and says need for several', async () => {
     showCourse(course(), [
-      lessonJob('lesson-1', { status: 'completed', resultId: 'needs_review:lesson-1', finishedAt: 5 }),
+      lessonJob('lesson-1', { status: 'completed', heldLessonIds: ['lesson-1'], finishedAt: 5 }),
       lessonJob('lesson-2', { status: 'failed', error: 'The model stopped.' }),
     ]);
     expect(await screen.findByText('1 of 4 lessons ready · 2 need attention')).toBeVisible();
@@ -555,7 +555,7 @@ describe('The course progress line', () => {
 
   it('shows no pace before two lessons have finished, or when a finished job only held its lesson for review', async () => {
     showCourse(course(), [
-      finished('lesson-1', 0), finished('lesson-2', 4, { resultId: 'needs_review:lesson-2' }),
+      finished('lesson-1', 0), finished('lesson-2', 4, { heldLessonIds: ['lesson-2'] }),
       lessonJob('lesson-4', { status: 'pending' }),
     ]);
     expect(await screen.findByText(/lessons ready/)).toBeVisible();

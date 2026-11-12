@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use once_cell::sync::Lazy;
 use unicode_segmentation::UnicodeSegmentation;
 
+use super::fences::{code_fences, CodeFence};
 use super::suppressions::{CLDR_EN, HONORIFICS};
 use super::{Boundaries, Break, Span, Strength};
 use crate::shared::markdown_math::inline_math_spans;
@@ -159,31 +160,12 @@ impl Layout {
             protected: Vec::new(),
             markers: Vec::new(),
         };
-        let mut fence: Option<char> = None;
+        let fences: Vec<Span> = code_fences(text).iter().map(CodeFence::whole).collect();
         let mut start = 0;
         for line in text.split_inclusive('\n') {
             let end = start + line.len();
-            let trimmed = line.trim_start();
-            let marker = if trimmed.starts_with("```") {
-                Some('`')
-            } else if trimmed.starts_with("~~~") {
-                Some('~')
-            } else {
-                None
-            };
-            let code = match (fence, marker) {
-                (Some(open), found) => {
-                    if found == Some(open) {
-                        fence = None;
-                    }
-                    true
-                }
-                (None, Some(open)) => {
-                    fence = Some(open);
-                    true
-                }
-                (None, None) => trimmed.starts_with('|'),
-            };
+            let code = fences.iter().any(|whole| whole.contains(&start))
+                || line.trim_start().starts_with('|');
             if code {
                 match layout.code.last_mut() {
                     Some(last) if last.end == start => last.end = end,

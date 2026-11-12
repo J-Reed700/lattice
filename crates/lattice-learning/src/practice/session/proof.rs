@@ -192,5 +192,5 @@ fn ensure_running(cancel: &CancellationToken) -> Result<()> {
 }
 
 fn cancelled() -> AppError {
-    AppError::InvalidState("The practice build was cancelled.".into())
+    AppError::Cancelled("The practice build was cancelled.".into())
 }

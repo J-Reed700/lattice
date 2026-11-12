@@ -246,8 +246,6 @@ pub enum ErrorCode {
     ConcurrentModification,
     /// Conflict detected (e.g. revision mismatch)
     Conflict,
-    /// Processing queue is full
-    QueueFull,
 
     // Backup & Recovery Errors
     /// Backup creation failed

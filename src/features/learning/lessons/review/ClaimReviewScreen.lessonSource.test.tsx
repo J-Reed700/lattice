@@ -74,7 +74,7 @@ describe('Claim review screen, adding a source to the whole lesson', () => {
     ['waiting statements', () => twoWaiting()],
     ['every statement resolved', () => review([])],
     ['a published lesson', () => review([], { state: 'ready' })],
-    ['a stopped review', () => review([], { state: 'stopped', stopReason: { code: 'model_rejected', message: 'The model server rejected the request twice.', fix: 'lower the context window in Settings', at: 1, request: null } })],
+    ['a stopped review', () => review([], { state: 'stopped', stopReason: { code: 'model_rejected', audit: false, message: 'The model server rejected the request twice.', fix: 'lower the context window in Settings', at: 1, request: null } })],
   ])('is there for a review with %s', async (_name, data) => {
     show(data());
     expect(await screen.findByRole('button', { name: BUTTON })).toBeVisible();
@@ -88,7 +88,7 @@ describe('Claim review screen, adding a source to the whole lesson', () => {
 
   it('opens the sheet on a stopped review too', async () => {
     const user = userEvent.setup();
-    show(review([], { state: 'stopped', stopReason: { code: 'model_rejected', message: 'The model server rejected the request twice.', fix: 'lower the context window in Settings', at: 1, request: null } }));
+    show(review([], { state: 'stopped', stopReason: { code: 'model_rejected', audit: false, message: 'The model server rejected the request twice.', fix: 'lower the context window in Settings', at: 1, request: null } }));
     await user.click(await screen.findByRole('button', { name: BUTTON }));
     expect(screen.getByRole('heading', { name: BUTTON })).toBeVisible();
   });

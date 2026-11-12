@@ -24,12 +24,16 @@ use async_trait::async_trait;
 
 use lattice_core::application::ports::{ClaimReviewStore, LLMPort};
 use lattice_core::application::services::chat_model_resolution::cloud_provider_name;
-use lattice_core::domain::learning::claim_review::{ClaimId, StopReason};
+use lattice_core::application::services::model_contract::{
+    self, refusal, ContractCall, PromptInput,
+};
+use lattice_core::domain::learning::claim_review::{ClaimId, StopCode, StopReason};
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
 use lattice_core::shared::error::{AppError, Result};
 
+use crate::model_call::ErrorClass;
 use batches::Item;
-use calls::{AskError, WindowSizer};
+use calls::{Audit, VerifierAudit, WindowSizer};
 use ledger::LedgerWriter;
 use policy::{Consent, Judged, AUDIT_POLICY_ID};
 use runs::{AuditRunStore, BatchOutcome, BatchRecord, RunKey, RunState};
@@ -100,15 +104,14 @@ impl AuditStop {
         }
     }
 
-    /// Every code starts with `verifier_`: the review panel tells an audit
-    /// stop from the claims' hold by it.
-    pub(crate) fn code(&self) -> &'static str {
+    /// The stop's code: every one is an audit stop (`StopCode::is_audit`).
+    pub(crate) fn code(&self) -> StopCode {
         match self {
-            Self::TurnedOff => "verifier_turned_off",
-            Self::NoVerifier => "verifier_unset",
-            Self::Unavailable { .. } => "verifier_unavailable",
-            Self::ConsentMissing { .. } => "verifier_consent_missing",
-            Self::ConsentForOtherProvider { .. } => "verifier_consent_changed",
+            Self::TurnedOff => StopCode::VerifierTurnedOff,
+            Self::NoVerifier => StopCode::VerifierUnset,
+            Self::Unavailable { .. } => StopCode::VerifierUnavailable,
+            Self::ConsentMissing { .. } => StopCode::VerifierConsentMissing,
+            Self::ConsentForOtherProvider { .. } => StopCode::VerifierConsentChanged,
         }
     }
 
@@ -162,7 +165,7 @@ impl AuditStop {
     /// The review row's `stop_reason` for this stop.
     pub fn stop_reason(&self, progress: Option<(usize, usize)>, at: i64) -> StopReason {
         StopReason {
-            code: self.code().into(),
+            code: self.code(),
             message: self.message(progress),
             fix: self.fix(),
             at,
@@ -297,9 +300,8 @@ pub(crate) struct AuditDeps<'a> {
 ///
 /// # Errors
 ///
-/// Storage failures; `AppError::ModelRejected` when the Verifier rejects a
-/// request, or a batch fails with the same kind of error, not an outage, as
-/// the attempt before it with no batch completed in between (§8.1, §8.3).
+/// Storage failures; the Verifier's error when a batch fails for a reason
+/// other than an outage (§8.1, §8.3).
 pub(crate) async fn run(
     llm: &dyn LLMPort,
     request: &AuditRequest<'_>,
@@ -328,12 +330,9 @@ pub(crate) async fn run(
         draft_sha256: request.draft_sha256.to_owned(),
         verifier_model: model.clone(),
     };
-    let previous_failure = deps
-        .runs
-        .begin(&key, AUDIT_POLICY_ID, (deps.clock)())
-        .await?
-        .last_failure()
-        .map(str::to_owned);
+    deps.runs
+        .begin(&key, AUDIT_POLICY_ID.as_str(), (deps.clock)())
+        .await?;
     let sizer = WindowSizer::new(llm, &claims, request.units, deps.web.is_some());
     let planned = batches::plan(&claims, &sizer);
     summary.batches_planned = planned.batches.len();
@@ -398,7 +397,7 @@ pub(crate) async fn run(
                     .finish(&key, RunState::Stopped, (deps.clock)())
                     .await?;
                 summary.disputes = writer.disputes().await?;
-                return failed(error, previous_failure.as_deref(), summary);
+                return failed(error, summary);
             }
         };
         record.input_tokens = judged.input_tokens;
@@ -440,30 +439,13 @@ pub(crate) async fn run(
     Ok(AuditOutcome::Completed(summary))
 }
 
-/// How a failed batch ends the run (§8.1, §8.3): an outage (network, rate
-/// limit, provider unavailable) is deferred, however often it recurs; a
-/// rejection is final; any other error is deferred once and final when the
-/// next attempt fails with the same kind before any batch completes.
-fn failed(error: AppError, previous: Option<&str>, summary: AuditSummary) -> Result<AuditOutcome> {
-    let outage = matches!(
-        error,
-        AppError::Network(_)
-            | AppError::RateLimitExceeded(_)
-            | AppError::ServiceNotAvailable(_)
-            | AppError::QueueFull
-    );
-    if outage {
-        return Ok(AuditOutcome::Deferred { error, summary });
+/// How a failed batch ends the run (§8.1, §8.3): an outage is deferred,
+/// however often it recurs; any other error is final.
+fn failed(error: AppError, summary: AuditSummary) -> Result<AuditOutcome> {
+    match ErrorClass::of(&error) {
+        ErrorClass::Outage => Ok(AuditOutcome::Deferred { error, summary }),
+        _ => Err(error),
     }
-    if matches!(error, AppError::ModelRejected(_)) {
-        return Err(error);
-    }
-    if previous == Some(error.error_code()) {
-        return Err(AppError::ModelRejected(format!(
-            "The Verifier failed the same way twice: {error}"
-        )));
-    }
-    Ok(AuditOutcome::Deferred { error, summary })
 }
 
 /// A batch's verdicts, one per item, and what they cost.
@@ -498,89 +480,56 @@ type Judging<'a> =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<BatchJudged>> + Send + 'a>>;
 
 impl<'a> Judge<'a> {
-    /// One verdict per item. An answer cut off at its output limit, or a
-    /// request the planner refuses, is sent again as two halves; a single
-    /// item that still cannot be answered is "could not verify". An answer
-    /// that cannot be read is asked for once more (as `structured_call`
-    /// does), then every item it left without a verdict is "could not
-    /// verify", with the cause.
+    /// One verdict per item, from one contract call with its one correction.
+    /// A request the planner or the backend refuses, or an answer cut off at
+    /// its output limit, is sent again as two halves; a single item that
+    /// still cannot be answered, or an answer unusable after its correction,
+    /// leaves every item it covers "could not verify", with the cause.
     fn items(&'a self, items: &'a [Item]) -> Judging<'a> {
         Box::pin(async move {
             let rendered = policy::render(self.claims, self.units, items);
-            let reserve = self.sizer.reserve(items.len());
-            let mut judged = BatchJudged::default();
-            let mut best: Vec<Option<Judged>> = vec![None; items.len()];
-            let mut why = String::new();
-            for _attempt in 0..2 {
-                let answer = match calls::ask(self.llm, &rendered, reserve, self.web).await {
-                    Ok(answer) => answer,
-                    Err(AskError::Model(error)) => return Err(error),
-                    Err(AskError::TooLarge) => {
-                        return self
-                            .halves(items, judged, || {
-                                format!(
-                                    "The Verifier's window of {} tokens cannot hold this statement's \
-                                     section and passages with its answer.",
-                                    self.sizer.llm.max_context_tokens()
-                                )
-                            })
-                            .await;
-                    }
-                };
-                judged.input_tokens += answer.input_tokens;
-                judged.output_tokens += answer.output_tokens;
-                if answer.web_note.is_some() {
-                    judged.web_note = answer.web_note.clone();
-                }
-                if answer.cut_off && items.len() > 1 {
-                    return self
-                        .halves(items, judged, || {
-                            String::from("The Verifier's answer was cut off at its output limit.")
-                        })
-                        .await;
-                }
-                match policy::read(&answer.text, &rendered, &answer.fetched) {
-                    Ok(read) if read.iter().all(Option::is_some) => {
-                        judged.verdicts = read.into_iter().flatten().collect();
-                        return Ok(judged);
-                    }
-                    Ok(read) => {
-                        why = if answer.cut_off {
-                            "the answer was cut off at its output limit".into()
-                        } else {
-                            "the answer left out some statements".into()
-                        };
-                        best = read;
-                    }
-                    Err(error) => why = error,
-                }
-            }
-            judged.verdicts = best
-                .into_iter()
-                .map(|verdict| {
-                    verdict.unwrap_or_else(|| {
-                        Judged::could_not_verify(format!(
-                            "The Verifier's answer could not be used twice: {why}."
-                        ))
-                    })
+            let call = ContractCall::of::<VerifierAudit>(&PromptInput {
+                system: policy::SYSTEM_PROMPT.into(),
+                prompt: rendered.task.clone(),
+            })?;
+            let transport = Audit::new(self.sizer.reserve(items.len()), self.web, items.len());
+            let read =
+                model_contract::answer(self.llm, &call, &transport, rendered.clone(), |text| {
+                    policy::verdicts(text, &rendered, &transport.fetched())
                 })
-                .collect();
-            Ok(judged)
+                .await;
+            let spent = transport.into_spent();
+            let mut judged = BatchJudged {
+                input_tokens: spent.input_tokens,
+                output_tokens: spent.output_tokens,
+                web_note: spent.web_note,
+                ..BatchJudged::default()
+            };
+            match read {
+                Ok(verdicts) => {
+                    judged.verdicts = verdicts;
+                    Ok(judged)
+                }
+                Err(error) => match ErrorClass::of(&error) {
+                    ErrorClass::DoesNotFit if items.len() > 1 => self.halves(items, judged).await,
+                    ErrorClass::Unusable | ErrorClass::DoesNotFit => {
+                        judged.verdicts = vec![
+                            Judged::could_not_verify(format!(
+                                "The Verifier's answer could not be used: {}.",
+                                refusal(&error)
+                            ));
+                            items.len()
+                        ];
+                        Ok(judged)
+                    }
+                    ErrorClass::Outage | ErrorClass::Fault => Err(error),
+                },
+            }
         })
     }
 
-    /// `items` sent as two halves; a single item gets `single()` as its
-    /// "could not verify" reason instead.
-    async fn halves(
-        &'a self,
-        items: &'a [Item],
-        mut judged: BatchJudged,
-        single: impl FnOnce() -> String,
-    ) -> Result<BatchJudged> {
-        if items.len() <= 1 {
-            judged.verdicts = vec![Judged::could_not_verify(single()); items.len()];
-            return Ok(judged);
-        }
+    /// `items` sent as two halves.
+    async fn halves(&'a self, items: &'a [Item], mut judged: BatchJudged) -> Result<BatchJudged> {
         let (first, second) = items.split_at(items.len() / 2);
         judged.absorb(self.items(first).await?);
         judged.absorb(self.items(second).await?);

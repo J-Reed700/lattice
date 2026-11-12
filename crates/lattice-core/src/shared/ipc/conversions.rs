@@ -25,13 +25,6 @@ impl From<ApplicationError> for ApiError {
                 details: Some(reason.clone()),
             },
 
-            // Queue full
-            ApplicationError::QueueFull { ref queue_name } => ApiError {
-                code: ErrorCode::QueueFull,
-                message: format!("Queue '{}' is full", queue_name),
-                details: Some("Please retry later".to_string()),
-            },
-
             // Serialization errors
             ApplicationError::SerializationFailed {
                 ref context,
@@ -98,7 +91,6 @@ impl From<ApplicationError> for ApiError {
 /// Convert AppError (shared layer) to ApiError
 impl From<AppError> for ApiError {
     fn from(err: AppError) -> Self {
-        let busy = err.is_database_busy();
         match err {
             // Domain errors
             AppError::Domain(domain_err) => (*domain_err).into(),
@@ -107,11 +99,13 @@ impl From<AppError> for ApiError {
             AppError::Application(app_err) => (*app_err).into(),
 
             // Configuration errors
-            AppError::InvalidConfig(ref details) => ApiError {
-                code: ErrorCode::InvalidConfig,
-                message: "Invalid configuration".to_string(),
-                details: Some(details.clone()),
-            },
+            AppError::InvalidConfig(ref details) | AppError::WindowTooSmall(ref details) => {
+                ApiError {
+                    code: ErrorCode::InvalidConfig,
+                    message: "Invalid configuration".to_string(),
+                    details: Some(details.clone()),
+                }
+            }
 
             AppError::LearningModelNotSet(ref details) => ApiError {
                 code: ErrorCode::LearningModelNotSet,
@@ -158,7 +152,7 @@ impl From<AppError> for ApiError {
                 message: msg.clone(),
                 details: None,
             },
-            AppError::InvalidState(ref msg) => ApiError {
+            AppError::InvalidState(ref msg) | AppError::Cancelled(ref msg) => ApiError {
                 code: ErrorCode::InvalidState,
                 message: msg.clone(),
                 details: None,
@@ -205,7 +199,7 @@ impl From<AppError> for ApiError {
             },
 
             // Database errors
-            AppError::Database(ref msg) if busy => ApiError {
+            AppError::DatabaseBusy(ref msg) => ApiError {
                 code: ErrorCode::DatabaseBusy,
                 message: "Database busy".to_string(),
                 details: Some(sanitize_database_error(msg)),
@@ -244,11 +238,6 @@ impl From<AppError> for ApiError {
             },
 
             // Service errors
-            AppError::ServiceNotAvailable(ref msg) if busy => ApiError {
-                code: ErrorCode::DatabaseBusy,
-                message: "Database busy".to_string(),
-                details: Some(msg.clone()),
-            },
             AppError::ServiceNotAvailable(ref msg) => ApiError {
                 code: ErrorCode::ServiceNotAvailable,
                 message: "Service not available".to_string(),
@@ -311,11 +300,6 @@ impl From<AppError> for ApiError {
                 message: format!("Concurrent modification: {}", resource),
                 details: Some(details.clone()),
             },
-            AppError::QueueFull => ApiError {
-                code: ErrorCode::QueueFull,
-                message: "Processing queue is full".to_string(),
-                details: Some("Please retry later".to_string()),
-            },
 
             // Backup errors
             AppError::BackupCreationFailed(ref msg) => ApiError {
@@ -370,7 +354,9 @@ impl From<AppError> for ApiError {
                 message: "Storage error".to_string(),
                 details: Some(msg.clone()),
             },
-            AppError::InternalError(ref msg) | AppError::Other(ref msg) => ApiError {
+            AppError::InternalError(ref msg)
+            | AppError::Other(ref msg)
+            | AppError::LessonHeld(ref msg) => ApiError {
                 code: ErrorCode::InternalError,
                 message: "Internal error".to_string(),
                 details: Some(msg.clone()),

@@ -1,32 +1,11 @@
-/**
- * A check section's two halves and the review card it becomes (learning
- * science lessons §3.3). The split mirrors `split_check` in
- * `lessons/generation/lesson_rules.rs`: exactly one line that is the heading
- * "Check your thinking" (level two to four) separates the case the learner
- * reasons through from the answer and reasoning revealed after they commit.
- */
-import type { LearningRecallContentDto } from '@/lib/bindings';
-
-export type CheckParts = { question: string; reveal: string };
-
-const REVEAL_LINE = /^\s*#{2,4}\s*check your thinking\s*$/i;
-
-/** The case and its reveal, or `null` when the body is not a well-formed check. */
-export function splitCheck(body: string): CheckParts | null {
-  const lines = body.split('\n');
-  const reveals = lines.flatMap((line, index) => (REVEAL_LINE.test(line) ? [index] : []));
-  if (reveals.length !== 1) return null;
-  const at = reveals[0];
-  const question = lines.slice(0, at).join('\n').trim();
-  const reveal = lines.slice(at + 1).join('\n').trim();
-  return question && reveal ? { question, reveal } : null;
-}
+/** The review card a check becomes, and the id that names it (learning science lessons §3.3). */
+import type { LearningCheckDto, LearningRecallContentDto } from '@/lib/bindings';
 
 /**
  * The review card a check becomes: the case is the prompt, the reveal's first
  * paragraph the answer, and the rest of the reasoning the explanation.
  */
-export function checkCardContent({ question, reveal }: CheckParts): LearningRecallContentDto {
+export function checkCardContent({ question, reveal }: LearningCheckDto): LearningRecallContentDto {
   const [first = '', ...rest] = reveal.split(/\n\s*\n/);
   return {
     prompt: question.trim(),

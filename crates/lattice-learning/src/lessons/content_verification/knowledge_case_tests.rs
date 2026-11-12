@@ -210,9 +210,9 @@ async fn a_statement_the_model_calls_false_says_whether_it_saw_the_case() -> Res
             let reads = read_all(reading, &model, &world, &[(0, claim(BEADS_WRONG))]).await?;
 
             assert!(
-                reads[0].finding.reason.starts_with(own_words),
+                reads[0].finding().reason.starts_with(own_words),
                 "{reading:?}: {}",
-                reads[0].finding.reason
+                reads[0].finding().reason
             );
         }
     }

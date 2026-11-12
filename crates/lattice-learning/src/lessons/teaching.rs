@@ -1,9 +1,12 @@
 //! Instructional review and task-specific teaching contracts.
 use super::copied_wording::{self, Wording};
-use crate::dto::{LearningPracticeCriterionDto, LearningPracticeEvidenceDimension};
+use crate::assessment::assessment_engine::RUBRIC_CRITERIA;
+use crate::dto::{
+    LearningBlockKind, LearningPracticeCriterionDto, LearningPracticeEvidenceDimension,
+};
 use crate::generation::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use crate::lessons::shape::LessonShape;
-use crate::review_findings::{plain_part, FindingKind, FindingSite, Remedy, ReviewFinding, Rule};
+use crate::review_findings::{FindingKind, FindingSite, Remedy, ReviewFinding, Rule};
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
     application::ports::LLMPort,
@@ -16,14 +19,16 @@ mod answers;
 pub(crate) mod contract;
 mod passes;
 mod protected;
-mod quotes;
+pub(crate) mod quotes;
 mod repair;
 mod review_loop;
 mod standing;
 mod subject;
 mod waiting;
 use passes::Passes;
+use quotes::QuoteCheck;
 use review_loop::{review_material, Reviewed};
+pub(crate) use standing::{references_hold, versions, Versions};
 use subject::{LessonSubject, MaterialSubject, OutlineSubject};
 pub(crate) use waiting::question_texts;
 pub(crate) use waiting::record as record_waiting;
@@ -55,17 +60,21 @@ pub struct GeneratedCriterion {
 }
 
 pub fn rubric_schema() -> Value {
-    json!({"type":"array","maxItems":4,"items":{"type":"object","additionalProperties":false,"required":["title","description","dimension"],"properties":{"title":{"type":"string","minLength":1},"description":{"type":"string","minLength":1},"dimension":{"enum":["recall","explanation","application","transfer"]}}}})
+    json!({"type":"array","maxItems":RUBRIC_CRITERIA.end(),"items":{"type":"object","additionalProperties":false,"required":["title","description","dimension"],"properties":{"title":{"type":"string","minLength":1},"description":{"type":"string","minLength":1},"dimension":{"enum":["recall","explanation","application","transfer"]}}}})
 }
 
 pub fn rubric(
     criteria: Vec<GeneratedCriterion>,
-    required: bool,
+    needed: bool,
 ) -> Result<Vec<LearningPracticeCriterionDto>> {
-    if criteria.len() > 4 || (required && criteria.len() < 2) {
-        return Err(AppError::InvalidInput(
-            "Practice needs two to four task-specific criteria.".into(),
-        ));
+    if criteria.len() > *RUBRIC_CRITERIA.end()
+        || (needed && criteria.len() < *RUBRIC_CRITERIA.start())
+    {
+        return Err(AppError::InvalidInput(format!(
+            "Practice needs {} to {} task-specific criteria.",
+            RUBRIC_CRITERIA.start(),
+            RUBRIC_CRITERIA.end()
+        )));
     }
     let mut titles = std::collections::HashSet::new();
     criteria
@@ -102,7 +111,7 @@ fn rubric_is_kept(written: &Value) -> bool {
 
 pub fn validate_saved_rubric(criteria: &[LearningPracticeCriterionDto]) -> Result<()> {
     let mut ids = std::collections::HashSet::new();
-    if criteria.len() > 4
+    if criteria.len() > *RUBRIC_CRITERIA.end()
         || criteria.iter().any(|c| {
             uuid::Uuid::parse_str(&c.id).is_err()
                 || !ids.insert(&c.id)
@@ -170,24 +179,25 @@ pub(crate) fn structural_findings(
     }
     if let Some(blocks) = value.get("blocks").and_then(Value::as_array) {
         for (index, block) in blocks.iter().enumerate() {
+            let site = FindingSite::Section(index);
             let kind = block["kind"].as_str().unwrap_or_default();
             if block["body"].as_str().unwrap_or_default().trim().is_empty() {
                 issues.push(
                     ReviewFinding::rule(
                         Rule::BlockBody,
                         FindingKind::Structure,
-                        FindingSite::Section(index),
-                        format!("Teaching block {} has no body.", index + 1),
+                        site,
+                        format!("{} has no body.", site.note_label()),
                     )
-                    .with_summary(format!("Section {} has no text.", index + 1)),
+                    .with_summary(format!("{} has no text.", site.label())),
                 );
             }
-            if ["guided_practice", "independent_practice"].contains(&kind)
+            if LearningBlockKind::parse(kind).is_some_and(|kind| kind.sets_practice())
                 && !rubric_is_kept(&block["rubric"])
             {
                 issues.push(
-                    ReviewFinding::rule(Rule::PracticeRubric, FindingKind::Structure, FindingSite::Section(index), format!("Practice block {} needs two to four observable, task-specific rubric criteria.", index + 1))
-                        .with_summary(format!("Section {} is a practice section and needs two to four clear criteria for judging an answer.", index + 1)),
+                    ReviewFinding::rule(Rule::PracticeRubric, FindingKind::Structure, site, format!("{} needs {} to {} observable, task-specific rubric criteria.", site.note_label(), RUBRIC_CRITERIA.start(), RUBRIC_CRITERIA.end()))
+                        .with_summary(format!("{} is a practice section and needs {} to {} clear criteria for judging an answer.", site.label(), RUBRIC_CRITERIA.start(), RUBRIC_CRITERIA.end())),
                 );
             }
         }
@@ -241,28 +251,26 @@ impl<'a> ReviewSchema<'a> {
 
 /// Findings for a source quotation that matches no saved reference, placed
 /// at the part that cites it.
-fn quotation_findings(quote_checks: &[Value]) -> Vec<ReviewFinding> {
-    quote_checks
+pub(crate) fn quotation_findings(checks: &[QuoteCheck]) -> Vec<ReviewFinding> {
+    checks
         .iter()
         .map(|check| {
-            let path = check["path"].as_str().unwrap_or_default();
-            let site = FindingSite::of_part(path).unwrap_or(FindingSite::Lesson);
-            let quote = check["quote"].as_str().unwrap_or_default();
+            let site = FindingSite::of_part(&check.path).unwrap_or(FindingSite::Lesson);
             ReviewFinding::rule_about(
                 Rule::Quotation,
                 FindingKind::Quotation,
                 site,
-                quote,
+                &check.quote,
                 format!(
-                    "The source quotation at {path} does not match its saved reference: {} Copy a relevant exact span from the cited source, including its punctuation and formatting; quotes contain at least {MIN_QUOTE_CHARS} characters and {MIN_QUOTE_WORDS} words.",
-                    check["error"].as_str().unwrap_or("it was not found.")
+                    "The source quotation at {} does not match its saved reference: {} Copy a relevant exact span from the cited source, including its punctuation and formatting; quotes contain at least {MIN_QUOTE_CHARS} characters and {MIN_QUOTE_WORDS} words.",
+                    check.path, check.error
                 ),
             )
             .with_summary(format!(
                 "The quotation cited in {} could not be found in its source.",
-                plain_part(site)
+                site.plain()
             ))
-            .with_passage(quote)
+            .with_passage(&check.quote)
         })
         .collect()
 }
@@ -380,12 +388,7 @@ pub(crate) async fn review_lesson<'s>(
 ) -> Result<String> {
     let review_schema = review_schema.into();
     let schema = review_schema.value();
-    let mut sources: Vec<(String, String)> = references
-        .sources
-        .iter()
-        .map(|source| (source.id.clone(), sha256_hex(&source.excerpt)))
-        .collect();
-    sources.sort();
+    let sources = versions(&references.sources);
     // Teaching structure is bound to the candidate and authoring inputs. New
     // references are evaluated by the factual gate; they do not invalidate an
     // already completed pedagogical review. Changed/removed snapshots still do.
@@ -400,12 +403,7 @@ pub(crate) async fn review_lesson<'s>(
         .await?
         .and_then(|value| serde_json::from_value::<Vec<(String, String)>>(value).ok())
         .is_some_and(|saved| standing::references_hold(&saved, &sources));
-    let receipt = sha256_hex(json!({"policy":"lesson-teaching-review","findingPolicy":crate::review_evidence::POLICY,"sectionReviewPolicy":crate::teaching_review::POLICY,"model":llm.model_name(),"system":system,"prompt":prompt,"schema":schema,"reviewReferenceHashes":sources}).to_string());
-    if unchanged_review || crate::lesson_drafts::teaching_completed(&candidate, &receipt).await? {
-        if !unchanged_review {
-            crate::lesson_drafts::record_checkpoint(&source_key(&candidate), json!(sources))
-                .await?;
-        }
+    if unchanged_review {
         crate::lesson_progress::phase(
             crate::lesson_progress::Phase::Review,
             "Reusing completed teaching and answer-key checks for the unchanged draft",
@@ -427,7 +425,6 @@ pub(crate) async fn review_lesson<'s>(
     )
     .await?;
     waiting::settle(&json_or_text(&candidate), &set_aside).await?;
-    crate::lesson_drafts::record_teaching(&candidate, receipt).await?;
     crate::lesson_drafts::record_checkpoint(&source_key(&candidate), json!(sources)).await?;
     Ok(candidate)
 }

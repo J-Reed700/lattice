@@ -226,7 +226,7 @@ impl RankWatcher for InferenceScheduler {
 
 /// The error a cancelled request ends with, queued or in flight.
 pub(crate) fn cancelled_error() -> AppError {
-    AppError::InvalidState("The model request was cancelled.".into())
+    AppError::Cancelled("The model request was cancelled.".into())
 }
 
 impl InferenceScheduler {

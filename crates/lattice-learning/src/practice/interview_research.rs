@@ -12,6 +12,9 @@ use crate::{
         web_research::{self, Candidate, PlannedNeed, Room, NEED_GUIDE},
     },
 };
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
@@ -243,6 +246,12 @@ async fn save_capture(
     Ok(Some(version_id))
 }
 
+struct InterviewCompanySearches;
+impl Contract for InterviewCompanySearches {
+    const ID: ContractId = ContractId::new("interview-company-searches");
+    type Input = PromptInput;
+}
+
 /// Returns newly captured and reused active versions. Search snippets never count
 /// as evidence. Prompt-only intake can identify a company via research planning.
 pub async fn research_interview_target(
@@ -373,10 +382,16 @@ pub async fn research_interview_target(
         target.company_context.as_deref().unwrap_or_default(),
         lesson_title,
     ];
+    let prompt = payload.to_string();
+    let call = ContractCall::of::<InterviewCompanySearches>(&PromptInput {
+        system: system.clone(),
+        prompt: prompt.clone(),
+    })?;
     let planned = crate::generation::complete_checked(
         llm,
+        &call,
         &system,
-        payload.to_string(),
+        prompt,
         schema,
         1_200,
         None,
@@ -410,6 +425,12 @@ pub async fn research_interview_target(
     versions
         .extend(capture_needs(web, library, program_id, operation_id, &request_hash, needs).await?);
     Ok(versions.into_iter().collect())
+}
+
+struct InterviewAnswerSearches;
+impl Contract for InterviewAnswerSearches {
+    const ID: ContractId = ContractId::new("interview-answer-searches");
+    type Input = PromptInput;
 }
 
 /// Research underlying answer concepts after the exact questions exist. The
@@ -446,8 +467,13 @@ pub async fn research_interview_answers(
     let has_non_behavioral = plan.questions.iter().any(|question| {
         question.round != crate::practical_dto::LearningInterviewRoundKind::Behavioral
     });
+    let prompt = payload.to_string();
+    let call = ContractCall::of::<InterviewAnswerSearches>(&PromptInput {
+        system: system.clone(),
+        prompt: prompt.clone(),
+    })?;
     let needs = crate::generation::complete_checked(
-        llm, &system, payload.to_string(),
+        llm, &call, &system, prompt,
         serde_json::json!({"type":"object","additionalProperties":false,"required":["needs"],"properties":{
             "needs":{"type":"array","maxItems":6,"items":web_research::need_schema(None)}
         }}), 1_600, None, None,

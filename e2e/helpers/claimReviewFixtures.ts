@@ -70,7 +70,7 @@ export async function holdLessonForReview(page: Page, claims: ReturnType<typeof 
     state.planWorkspace.jobs = [{
       id: 'held-job', programId: state.planWorkspace.programId, operationId: 'operation', kind: 'lesson_preparation', payloadSha256: 'fixture',
       baseRevisionNumber: state.planWorkspace.programRevision, status: 'completed', progressCompleted: 1, progressTotal: 1,
-      progressMessage: `Needs your review: ${held.length} statements`, activity: null, resultId: `needs_review:${lesson.id}`, error: null, retryOfJobId: null,
+      progressMessage: `Needs your review: ${held.length} statements`, activity: null, resultId: `needs_review:${lesson.id}`, heldLessonIds: [lesson.id], error: null, retryOfJobId: null,
       createdAt: finishedAt - 3_600_000, startedAt: finishedAt - 3_600_000, finishedAt,
     }];
     state.claimReviews[lesson.id] = {

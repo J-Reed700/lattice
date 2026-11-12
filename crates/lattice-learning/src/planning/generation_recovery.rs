@@ -2,6 +2,7 @@
 //! resumption after a restart, and durable redelivery after a temporary
 //! service or connection outage.
 use super::*;
+use lattice_core::shared::error::ErrorClass;
 use lattice_core::shared::runtime::jobs::{
     Backoff, Deferral, JobFailure, JobKindConfig, JobRecord, RecoveryPolicy,
 };
@@ -27,7 +28,7 @@ pub fn lesson_job_config() -> JobKindConfig {
 /// and the job runtime ends a job whose other failure comes back with nothing
 /// saved in between, so a lesson never retries forever unseen.
 pub(crate) fn lesson_failure(job: &JobRecord, error: &AppError) -> JobFailure {
-    if !JobFailure::is_transient(error) {
+    if ErrorClass::of(error) != ErrorClass::Outage {
         return JobFailure::Fail {
             code: "generation_failed".into(),
             message: error.to_string(),
@@ -54,7 +55,7 @@ pub(crate) fn lesson_failure(job: &JobRecord, error: &AppError) -> JobFailure {
         AppError::RateLimitExceeded(_) => {
             "The model service is rate limiting requests; preparation will retry automatically"
         }
-        error if JobFailure::is_database_busy(error) => {
+        AppError::DatabaseBusy(_) => {
             "Another task is using the database; preparation will retry automatically"
         }
         _ => "The model service could not finish the request; preparation will retry automatically",
@@ -73,7 +74,7 @@ pub(crate) fn lesson_failure(job: &JobRecord, error: &AppError) -> JobFailure {
 fn only_database_pool_admission_timeout_is_a_temporary_service_failure() {
     assert!(matches!(
         db(sqlx::Error::PoolTimedOut),
-        AppError::ServiceNotAvailable(_)
+        AppError::DatabaseBusy(_)
     ));
     assert!(matches!(
         db(sqlx::Error::RowNotFound),

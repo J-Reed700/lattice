@@ -50,7 +50,7 @@ impl Course<'_> {
     /// Takes `read`, the `reading` it was made by, to where the policy sends
     /// the statement.
     fn take(&mut self, policy: &dyn AcceptancePolicy, reading: Reading, read: Read) -> Result<()> {
-        let outcome = read.outcome;
+        let outcome = read.outcome();
         let taken = Taken {
             step: Step::Read(reading),
             outcome,
@@ -130,7 +130,12 @@ impl<'p> Counting<'p> {
             reading,
             standing: members
                 .iter()
-                .map(|course| (course.at, course.steps.iter().all(|step| step.read.reused)))
+                .map(|course| {
+                    (
+                        course.at,
+                        course.steps.iter().all(|step| step.read.reused()),
+                    )
+                })
                 .collect(),
             told: std::sync::Mutex::new(vec![false; members.len()]),
         }
@@ -151,7 +156,7 @@ impl<'p> Counting<'p> {
         };
         let taken = Taken {
             step: Step::Read(self.reading),
-            outcome: read.outcome,
+            outcome: read.outcome(),
         };
         let leaves = match decide(self.policy, at, taken) {
             Some((_, None)) => true,
@@ -159,7 +164,7 @@ impl<'p> Counting<'p> {
             None => false,
         };
         if leaves {
-            crate::lesson_progress::checked(reused && read.reused);
+            crate::lesson_progress::checked(reused && read.reused());
         }
     }
 }
@@ -276,7 +281,7 @@ pub(in super::super) async fn read_page(
     let unread: Vec<usize> = reads
         .iter()
         .enumerate()
-        .filter(|(_, read)| read.outcome == Outcome::Unjudged)
+        .filter(|(_, read)| read.outcome() == Outcome::Unjudged)
         .map(|(index, _)| index)
         .collect();
     if unread.is_empty() {
@@ -326,22 +331,26 @@ async fn weighed(
     let left_out = settled(at, statements)?;
     let (outcomes, findings): (Vec<(Outcome, bool)>, Vec<Finding>) = reads
         .into_iter()
-        .map(|read| ((read.outcome, read.reused), read.finding))
+        .map(|read| {
+            let (outcome, finding, reused) = read.into_parts();
+            ((outcome, reused), finding)
+        })
         .unzip();
     let mut results: Vec<CheckedClaim> = findings
         .into_iter()
         .enumerate()
         .map(|(ordinal, finding)| (ordinal, String::new(), finding, false))
         .collect();
-    crate::lesson_progress::outside_checks(provenance_gate::weigh(at.llm, &mut results, &left_out))
-        .await?;
+    crate::lesson_progress::outside_checks(provenance_gate::weigh(
+        at.llm,
+        at.candidate,
+        &mut results,
+        &left_out,
+    ))
+    .await?;
     Ok(outcomes
         .into_iter()
         .zip(results)
-        .map(|((outcome, reused), (_, _, finding, _))| Read {
-            outcome,
-            finding,
-            reused,
-        })
+        .map(|((outcome, reused), (_, _, finding, _))| Read::new(outcome, finding, reused))
         .collect())
 }

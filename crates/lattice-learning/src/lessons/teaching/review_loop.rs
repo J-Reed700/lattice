@@ -5,6 +5,8 @@ use std::collections::VecDeque;
 use super::repair;
 use super::subject::{Decision, Pass, Settled, Step, Subject};
 use super::{json_or_text, ReviewSchema};
+use crate::lessons::structured_call::refusal;
+use crate::model_call::ErrorClass;
 use crate::outline_progress::OutlineStage;
 use crate::review_findings::{ReviewFinding, SetAside};
 use lattice_core::{
@@ -57,7 +59,7 @@ pub(super) async fn review_material(
             subject.save(&candidate).await?;
         }
         subject.select_sources(llm, &mut authoring, &value).await?;
-        let quote_checks = subject.quote_checks(&value, &authoring, attempt)?;
+        let quote_checks = subject.quote_checks(&value, &authoring);
         // review
         let pass = Pass {
             attempt,
@@ -93,7 +95,6 @@ pub(super) async fn review_material(
                 authoring: &authoring,
                 edits,
                 output_tokens,
-                attempt,
             };
             if repairs.make(subject, &mut candidate, send).await? {
                 break;
@@ -113,7 +114,6 @@ struct Repairs<'a> {
     authoring: &'a Value,
     edits: bool,
     output_tokens: usize,
-    attempt: usize,
 }
 
 impl Repairs<'_> {
@@ -130,7 +130,7 @@ impl Repairs<'_> {
         let mut groups = VecDeque::from([send]);
         while let Some(group) = groups.pop_front() {
             let previous = json_or_text(candidate);
-            let quote_checks = subject.quote_checks(&previous, self.authoring, self.attempt)?;
+            let quote_checks = subject.quote_checks(&previous, self.authoring);
             let request = repair::Request {
                 system: self.system,
                 schema: self.schema.value(),
@@ -148,8 +148,22 @@ impl Repairs<'_> {
                 wording: subject.wording(),
                 output_tokens: self.output_tokens,
             };
-            let result = repair::ask(self.llm, &request, subject.progress()).await;
-            match subject.settle_repair(&previous, &group, self.edits, result)? {
+            let made = repair::ask(self.llm, &request, subject.progress())
+                .await
+                .and_then(|repaired| subject.settle_repair(&previous, &group, repaired));
+            let settled = match made {
+                Ok(settled) => settled,
+                Err(error) => match ErrorClass::of(&error) {
+                    ErrorClass::Outage | ErrorClass::Fault => return Err(error),
+                    _ if self.edits && group.len() > 1 => {
+                        let (first, second) = group.split_at(group.len() / 2);
+                        tracing::info!(%error, findings = group.len(), "The teaching repair could not be made for these findings together; each half is repaired on its own");
+                        Settled::Split(first.to_vec(), second.to_vec())
+                    }
+                    class => subject.unmade(&group, class, refusal(&error))?,
+                },
+            };
+            match settled {
                 Settled::Changed(text) => {
                     *candidate = text;
                     changed = true;

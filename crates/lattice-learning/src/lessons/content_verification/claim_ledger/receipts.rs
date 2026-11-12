@@ -6,14 +6,11 @@
 
 use super::super::*;
 use super::ClaimLedger;
+use crate::reference_collection::PassageKind;
 use lattice_core::domain::learning::claim_review::{
-    text_sha256, AttachOutcome, Check, ClaimEvent, ClaimLedgerEntry, ClaimState,
-    EvidenceFingerprint, EvidenceSeen,
+    AttachOutcome, Check, ClaimEvent, ClaimLedgerEntry, ClaimState, EvidenceFingerprint,
+    EvidenceSeen,
 };
-
-/// How a passage of evidence the user brought is labelled in the report:
-/// the learner view shows it, and the claim's unit cites its source.
-const USER_EVIDENCE: &str = "user_attached";
 
 impl ClaimLedger {
     /// The findings of claims resolved by a check against a source the user
@@ -50,7 +47,11 @@ impl ClaimLedger {
                 let check = deciding_check(entry, source_version_id)?;
                 let receipt = check.window_tokens == self.window_tokens
                     && check.fingerprint
-                        == EvidenceFingerprint::of(POLICY, &self.checker_model, &check.evidence)
+                        == EvidenceFingerprint::of(
+                            Judged::Passages.policy(),
+                            &self.checker_model,
+                            &check.evidence,
+                        )
                     && check
                         .evidence
                         .iter()
@@ -63,6 +64,9 @@ impl ClaimLedger {
                     .iter()
                     .map(|seen| passage(references, seen))
                     .collect::<Option<Vec<_>>>()?;
+                let (_, words) =
+                    supporting_passage(supporting_quote, &evidence, Some(source_version_id))?;
+                let words = words.to_owned();
                 let location = entry.location();
                 let statement = entry.statement().to_owned();
                 Some((
@@ -74,7 +78,7 @@ impl ClaimLedger {
                         verdict: ClaimVerdict::Supported,
                         reason: check.reason.clone(),
                         evidence,
-                        supporting_quote: Some(supporting_quote.clone()),
+                        supporting_quote: Some(words),
                         resolution: None,
                         claim_id: None,
                         two_pass: Default::default(),
@@ -115,15 +119,13 @@ fn passage(references: &ReferenceCollection<'_>, seen: &EvidenceSeen) -> Option<
         .sources
         .iter()
         .find(|source| source.id == seen.source_version_id)?;
-    let text = source.excerpt.get(seen.start_byte..seen.end_byte)?;
-    (text_sha256(text) == seen.text_sha256).then(|| EvidencePassage {
-        source_id: seen.source_version_id.clone(),
-        text: text.to_owned(),
-        start_byte: seen.start_byte,
-        end_byte: seen.end_byte,
-        retrieval_kind: USER_EVIDENCE.into(),
-        score: 0.0,
-    })
+    seen.text_in(&source.excerpt)?;
+    EvidencePassage::of(
+        source,
+        seen.start_byte..seen.end_byte,
+        PassageKind::UserAttached,
+        0.0,
+    )
 }
 
 impl ClaimChecks {
@@ -169,7 +171,7 @@ impl LessonVerificationReport {
             for passage in finding
                 .evidence
                 .iter()
-                .filter(|passage| passage.retrieval_kind == USER_EVIDENCE)
+                .filter(|passage| passage.kind() == PassageKind::UserAttached)
             {
                 if !cited.contains(&passage.source_id) {
                     cited.push(passage.source_id.clone());

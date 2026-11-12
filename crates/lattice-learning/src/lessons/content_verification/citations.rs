@@ -6,9 +6,6 @@
 use super::*;
 use lattice_core::shared::text::claim_sentence;
 
-/// The retrieval kind of a passage a claim's own section cites.
-pub(super) const CITED: &str = "cited";
-
 /// A sentence the writer cited, with the passages its quote resolves to.
 struct CitedSentence {
     unit: usize,
@@ -188,7 +185,7 @@ fn resolve(
 /// Add to `into` the `passages` that overlap none it holds.
 fn merge(into: &mut Vec<EvidencePassage>, passages: &[EvidencePassage]) {
     for passage in passages {
-        if !into.iter().any(|held| overlaps(held, passage)) {
+        if !into.iter().any(|held| held.overlaps(passage)) {
             into.push(passage.clone());
         }
     }
@@ -268,7 +265,7 @@ pub(super) fn take_cited(
     cited: &[EvidencePassage],
 ) -> Vec<EvidencePassage> {
     for passage in cited {
-        if evidence.iter().any(|shown| overlaps(shown, passage)) {
+        if evidence.iter().any(|shown| shown.overlaps(passage)) {
             continue;
         }
         evidence.push(passage.clone());
@@ -279,11 +276,7 @@ pub(super) fn take_cited(
     }
     evidence
         .iter()
-        .filter(|passage| passage.retrieval_kind != "execution")
+        .filter(|passage| !passage.is_run())
         .cloned()
         .collect()
-}
-
-pub(super) fn overlaps(a: &EvidencePassage, b: &EvidencePassage) -> bool {
-    a.source_id == b.source_id && a.start_byte < b.end_byte && b.start_byte < a.end_byte
 }

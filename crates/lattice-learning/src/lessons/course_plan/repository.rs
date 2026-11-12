@@ -6,9 +6,10 @@ use super::edit::{ENTRY_CHANGED, LESSON_LOCKED, LESSON_WRITTEN, REVISION_CHANGED
 use super::job::COURSE_PLAN;
 use super::view::OutlineLesson;
 use super::PlannedLesson;
+use crate::curriculum_repository::LearningCurriculumRepository;
 use crate::persistence::{db, now};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::runtime::jobs::{JobRecord, JobStatus, JobStore};
+use lattice_core::shared::runtime::jobs::{JobRecord, JobStore};
 use sqlx::SqliteConnection;
 use std::collections::{HashMap, HashSet};
 
@@ -258,33 +259,19 @@ pub(super) async fn outline_lessons(
         .collect())
 }
 
-/// The lessons a running `lesson_preparation` job covers. A pending job does
-/// not lock: the writer reads the plan only once its job is claimed.
+/// The lessons an unfinished `lesson_preparation` job of the current outline names.
 pub(super) async fn locked_lessons(
     connection: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<HashSet<String>> {
-    let jobs = JobStore::list_for_subject_in(
-        connection,
-        crate::curriculum_repository::LESSON_PREPARATION,
-        program_id,
+    let revision = content_revision(&mut *connection, program_id).await?;
+    Ok(
+        LearningCurriculumRepository::unfinished_preparations(connection, program_id, revision)
+            .await?
+            .into_iter()
+            .flat_map(|(_, request)| request.lesson_ids)
+            .collect(),
     )
-    .await?;
-    Ok(jobs
-        .into_iter()
-        .filter(|job| job.status == JobStatus::Running)
-        .flat_map(|job| {
-            job.requested
-                .get("lessonIds")
-                .and_then(serde_json::Value::as_array)
-                .map(|ids| {
-                    ids.iter()
-                        .filter_map(|id| id.as_str().map(str::to_owned))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default()
-        })
-        .collect())
 }
 
 /// The saved entries of a revision with their entry revisions, by lesson.
@@ -397,7 +384,6 @@ pub(super) async fn replace_in(
 mod tests {
     use super::*;
     use crate::curriculum::LearningGenerationJobKind;
-    use crate::curriculum_repository::LearningCurriculumRepository;
     use crate::dto::AcceptLearningProgramRequestDto;
     use crate::plan_dto::StartLearningGenerationJobRequestDto;
     use crate::repository::LearningRepository;

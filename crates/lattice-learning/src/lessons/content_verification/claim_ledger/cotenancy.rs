@@ -5,7 +5,7 @@
 
 use super::fields::field_text;
 use super::located::located_quote;
-use super::{is_gone, stand_together, ClaimLedger, Place};
+use super::{stand_together, ClaimLedger, Place};
 use lattice_core::domain::learning::acceptance::Goal;
 use lattice_core::domain::learning::claim_review::{
     span_of, ClaimEvent, ClaimId, ClaimLedgerEntry, RepairOutcome,
@@ -87,7 +87,7 @@ impl ClaimLedger {
         let here = Place::of(entry.location());
         self.entries
             .iter()
-            .filter(|other| other.claim_id() != claim_id && !is_gone(other.state()))
+            .filter(|other| other.claim_id() != claim_id && !other.state().is_gone())
             .filter(|other| stand_together(&here, &Place::of(other.location())))
             .map(|other| other.claim_id().clone())
             .collect()
@@ -112,7 +112,7 @@ impl ClaimLedger {
             .iter()
             .filter(|other| other.claim_id() != claim_id)
             .filter(|other| {
-                !is_gone(other.state())
+                !other.state().is_gone()
                     && !self
                         .examples
                         .values()
@@ -183,7 +183,7 @@ impl ClaimLedger {
     ) -> Vec<(usize, String)> {
         self.entries
             .iter()
-            .filter(|entry| !is_gone(entry.state()) && !claims.contains(entry.claim_id()))
+            .filter(|entry| !entry.state().is_gone() && !claims.contains(entry.claim_id()))
             .map(|entry| (entry.location().unit_index, entry.statement().to_owned()))
             .collect()
     }

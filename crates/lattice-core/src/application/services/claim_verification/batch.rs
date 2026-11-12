@@ -1,9 +1,16 @@
 //! Isolated decisions over a shared evidence bank. Batching changes transport,
 //! never permits one claim's evidence or verdict to approve another claim.
 use super::*;
-use crate::shared::error::AppError;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
+
+/// The model call of a batch of claim checks.
+pub(crate) struct ClaimBatch;
+
+impl Contract for ClaimBatch {
+    const ID: ContractId = ContractId::new("claim-batch");
+    type Input = PromptInput;
+}
 
 #[derive(Clone)]
 pub struct LocatedClaim {
@@ -161,26 +168,48 @@ impl ClaimChecker<'_> {
         let ids: Vec<_> = (0..claims.len())
             .map(|index| format!("claim-{index}"))
             .collect();
-        let response = self.llm.complete_with_retry_progress(&CompletionRequest {
-            input: vec![CompletionInput::Message { role: "system".into(), content: system }, CompletionInput::Message { role: "user".into(), content: prompt }],
-            json_schema: Some(json!({"type":"object","additionalProperties":false,"required":["checks"],"properties":{"checks":{"type":"array","minItems":claims.len(),"maxItems":claims.len(),"items":{"type":"object","additionalProperties":false,"required":["id","response"],"properties":{"id":{"type":"string","enum":ids},"response":{"type":"string","minLength":1}}}}}})),
-            sampling: Some(self.sampling), reasoning_effort: Some("low".into()),
-            max_output_tokens: Some(remaining.min(u32::MAX as usize) as u32), no_time_limit:true,
+        let request = CompletionRequest {
+            input: vec![
+                CompletionInput::Message {
+                    role: "system".into(),
+                    content: system.clone(),
+                },
+                CompletionInput::Message {
+                    role: "user".into(),
+                    content: prompt.clone(),
+                },
+            ],
+            json_schema: Some(
+                json!({"type":"object","additionalProperties":false,"required":["checks"],"properties":{"checks":{"type":"array","minItems":claims.len(),"maxItems":claims.len(),"items":{"type":"object","additionalProperties":false,"required":["id","response"],"properties":{"id":{"type":"string","enum":ids},"response":{"type":"string","minLength":1}}}}}}),
+            ),
+            sampling: Some(self.sampling),
+            reasoning_effort: Some(ANSWER_EFFORT.into()),
+            max_output_tokens: Some(remaining.min(u32::MAX as usize) as u32),
+            no_time_limit: true,
             priority: InferencePriority::Verification,
             ..Default::default()
-        }, on_text, on_retry).await?;
-        let judgments = if matches!(
-            response.finish_reason.as_str(),
-            "stop" | "end_turn" | "completed"
-        ) {
-            resolve(&response.text, claims, &passages)
-                .unwrap_or_else(|| vec![ClaimJudgment::Unusable; claims.len()])
-        } else {
-            vec![ClaimJudgment::Unusable; claims.len()]
+        };
+        let call = ContractCall::of::<ClaimBatch>(&PromptInput { system, prompt })?;
+        let judging = Judging::showing(on_text, on_retry);
+        let outcome = answer(self.llm, &call, &judging, request, |text| {
+            resolve(text, claims, &passages).ok_or_else(|| {
+                unreadable(
+                    "the reply must hold one check per claim id, each with a readable response",
+                )
+            })
+        })
+        .await;
+        let judgments = match outcome {
+            Ok(judgments) => judgments,
+            Err(error) if ErrorClass::of(&error) == ErrorClass::Unusable => {
+                warn!(reason = %refusal(&error), "Batch reply unusable, leaving its claims unjudged");
+                vec![ClaimJudgment::Unusable; claims.len()]
+            }
+            Err(error) => return Err(error),
         };
         Ok(Answered {
             judgments,
-            output_tokens: response.output_tokens,
+            output_tokens: judging.spent(),
         })
     }
 }

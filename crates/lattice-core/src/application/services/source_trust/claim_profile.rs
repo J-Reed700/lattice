@@ -10,12 +10,23 @@ use serde_json::{json, Value};
 
 use super::{data_prompt, judge, names, sanitised, CallOutcome};
 use crate::application::ports::LLMPort;
+use crate::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use crate::domain::provenance::{
     canonical_json, ClaimKind, ClaimProfile, ClaimSubject, Judged, JudgementKey, Reason,
     ReasonCode, SubjectKey, SubjectKind, TemporalScope,
 };
 use crate::shared::error::Result;
 use crate::shared::hash::sha256_hex;
+
+/// The model call of the claim-profile judgement.
+pub(crate) struct ProfileCall;
+
+impl Contract for ProfileCall {
+    const ID: ContractId = ContractId::new("claim-profile");
+    type Input = PromptInput;
+}
 
 pub const CLAIM_PROFILE_POLICY: &str = "claim-profile-v1";
 
@@ -276,8 +287,13 @@ pub async fn profile_claims(
             ..request.clone()
         };
         let prompt = data_prompt("Lesson unit and its claims", &profile_input(&part));
+        let call = ContractCall::of::<ProfileCall>(&PromptInput {
+            system: CLAIM_PROFILE_SYSTEM.to_owned(),
+            prompt: prompt.clone(),
+        })?;
         let outcome = judge(
             llm,
+            &call,
             CLAIM_PROFILE_SYSTEM,
             &prompt,
             &profile_schema(),

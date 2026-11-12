@@ -9,6 +9,7 @@ use super::RepairRecord;
 use crate::reference_collection::shared_terms;
 use lattice_core::domain::learning::acceptance::Walked;
 use lattice_core::domain::learning::claim_review::{ClaimId, ClaimLedgerEntry, ExtractedClaim};
+use lattice_core::shared::text::same_text::{common_prefix, overlaps, stands};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -28,12 +29,7 @@ pub(super) struct Heirs {
 /// common prefix and common suffix, on character boundaries. Empty when the
 /// change only removed text (or nothing changed).
 pub(super) fn changed_region(previous: &str, current: &str) -> (usize, usize) {
-    let prefix: usize = previous
-        .chars()
-        .zip(current.chars())
-        .take_while(|(a, b)| a == b)
-        .map(|(c, _)| c.len_utf8())
-        .sum();
+    let prefix = common_prefix(previous, current);
     let room = previous.len().min(current.len()) - prefix;
     let mut suffix = 0;
     for (a, b) in previous.chars().rev().zip(current.chars().rev()) {
@@ -50,7 +46,7 @@ pub(super) fn changed_region(previous: &str, current: &str) -> (usize, usize) {
 fn sentence_region(current: &str, (start, end): (usize, usize)) -> (usize, usize) {
     sentences(current)
         .into_iter()
-        .filter(|&(from, to)| from < end.max(start + 1) && to > start)
+        .filter(|&(from, to)| overlaps((from, to), (start, end.max(start + 1))))
         .fold((start, end), |(lo, hi), (from, to)| {
             (lo.min(from), hi.max(to))
         })
@@ -68,11 +64,11 @@ fn written(
 ) -> bool {
     claim.location.unit_index == unit
         && claim.location.field == field
-        && !before.contains(&claim.location.quote)
+        && !stands(before, &claim.location.quote)
         && claim
             .location
             .span
-            .is_some_and(|(from, to)| from < end && to > start)
+            .is_some_and(|span| overlaps(span, (start, end)))
 }
 
 /// What the last step leaves for the pass that reads the lesson: whether

@@ -9,6 +9,7 @@
 use super::*;
 use crate::lessons::verifier_audit::batches::{Context, Item, Sizer};
 use crate::lessons::verifier_audit::calls::WindowSizer;
+use lattice_core::domain::learning::claim_review::StopCode;
 
 /// The smallest window, in steps of 64 tokens, whose request holds the
 /// first `claims` of the harness's claims, measured as the audit measures.
@@ -218,7 +219,12 @@ async fn an_outage_defers_and_the_next_audit_resumes_with_the_unaudited_claims()
     assert_eq!(outcome.summary().batches_done, 1);
     let run = harness.runs.only();
     assert_eq!(run.state, RunState::Stopped);
-    assert_eq!(run.last_failure(), Some("NETWORK_ERROR"));
+    assert_eq!(
+        run.batches
+            .last()
+            .and_then(|batch| batch.error_code.as_deref()),
+        Some("NETWORK_ERROR")
+    );
     // Claims are packed in lesson order, and "Water is everywhere." (c)
     // opens the unit.
     assert_eq!(
@@ -257,7 +263,7 @@ async fn a_rate_limit_defers_however_often_it_recurs() {
 }
 
 #[tokio::test]
-async fn the_same_failure_twice_with_no_batch_done_between_is_rejected() {
+async fn a_fault_is_final_at_once() {
     let harness = Harness::new(vec![verified("a", "Water boils at 100 °C at sea level.")]);
     let broken = ScriptedVerifier::new(BIG, |_, _| {
         Err(AppError::InternalError(
@@ -265,42 +271,32 @@ async fn the_same_failure_twice_with_no_batch_done_between_is_rejected() {
         ))
     });
 
-    let first = harness.audit(&broken, None).await.unwrap();
-    assert!(matches!(first, AuditOutcome::Deferred { .. }));
+    let outcome = harness.audit(&broken, None).await;
 
-    let second = harness.audit(&broken, None).await;
     assert!(
-        matches!(&second, Err(AppError::ModelRejected(message)) if message.contains("twice")),
-        "{second:?}"
+        matches!(outcome, Err(AppError::InternalError(_))),
+        "{outcome:?}"
     );
+    assert_eq!(broken.calls(), 1);
 }
 
 #[tokio::test]
-async fn different_failures_are_not_the_same_failure() {
-    let harness = Harness::new(vec![verified("a", "Water boils at 100 °C at sea level.")]);
-    let first = ScriptedVerifier::new(BIG, |_, _| Err(AppError::InternalError("one".into())));
-    let second = ScriptedVerifier::new(BIG, |_, _| Err(AppError::InvalidInput("two".into())));
-
-    assert!(matches!(
-        harness.audit(&first, None).await.unwrap(),
-        AuditOutcome::Deferred { .. }
-    ));
-    assert!(matches!(
-        harness.audit(&second, None).await.unwrap(),
-        AuditOutcome::Deferred { .. }
-    ));
-}
-
-#[tokio::test]
-async fn a_rejection_from_the_verifier_is_final_at_once() {
+async fn a_rejection_from_the_verifier_leaves_each_statement_with_its_reason() {
     let harness = Harness::new(vec![verified("a", "Water boils at 100 °C at sea level.")]);
     let rejecting = ScriptedVerifier::new(BIG, |_, _| {
         Err(AppError::ModelRejected("400 invalid_request_error".into()))
     });
 
-    let outcome = harness.audit(&rejecting, None).await;
+    let outcome = harness.audit(&rejecting, None).await.unwrap();
 
-    assert!(matches!(outcome, Err(AppError::ModelRejected(_))));
+    assert!(!outcome.publishable());
+    assert_eq!(outcome.summary().disputes, 1);
+    let check = harness.store.verifier_checks("a").pop().unwrap();
+    assert!(
+        check.reason.contains("400 invalid_request_error"),
+        "{}",
+        check.reason
+    );
     assert_eq!(rejecting.calls(), 1);
 }
 
@@ -382,7 +378,7 @@ async fn a_provider_changed_since_consent_is_refused_before_anything_is_sent() {
         stop.message(None),
         "Consent was for Anthropic; confirm again for OpenAI"
     );
-    assert_eq!(stop.code(), "verifier_consent_changed");
+    assert_eq!(stop.code(), StopCode::VerifierConsentChanged);
     assert!(
         !outcome.publishable(),
         "an audit that is on and cannot run holds the lesson"
@@ -392,7 +388,7 @@ async fn a_provider_changed_since_consent_is_refused_before_anything_is_sent() {
 #[test]
 fn every_stop_says_what_is_wrong_and_the_fix() {
     let unset = AuditStop::NoVerifier.stop_reason(None, 7);
-    assert_eq!(unset.code, "verifier_unset");
+    assert_eq!(unset.code, StopCode::VerifierUnset);
     assert_eq!(unset.message, "Audit cannot run: no Verifier model is set.");
     assert_eq!(
         unset.fix,
@@ -407,7 +403,7 @@ fn every_stop_says_what_is_wrong_and_the_fix() {
         no_key.message(None),
         "Audit cannot run: Your Verifier model Anthropic/claude-x has no API key saved."
     );
-    assert_eq!(no_key.code(), "verifier_unavailable");
+    assert_eq!(no_key.code(), StopCode::VerifierUnavailable);
     assert_eq!(
         no_key.fix(),
         "Fix the Verifier in Settings → Downloaded, or turn the audit off for this course."

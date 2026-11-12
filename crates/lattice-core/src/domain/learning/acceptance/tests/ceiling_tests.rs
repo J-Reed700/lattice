@@ -58,14 +58,6 @@ fn a_statement_whose_re_ask_is_spent_can_cost_the_longest_path_alone() {
 }
 
 #[test]
-fn a_neighbours_rewrite_can_cost_the_longest_path_from_the_post_rewrite_node() {
-    let policy = StandardPolicy::new();
-    for (class, most) in [(Sourced, 5), (Reasoning, 5), (Common, 4), (Internal, 4)] {
-        assert_eq!(after_rewrite_calls(&policy, class), most, "{class:?}");
-    }
-}
-
-#[test]
 fn a_spent_re_ask_lowers_the_ceiling_by_the_costliest_reading_ahead() {
     let policy = StandardPolicy::new();
     let grounding = position(Common, false, false, "c.ground", 2);

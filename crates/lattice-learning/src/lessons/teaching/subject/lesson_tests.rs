@@ -14,7 +14,7 @@ fn contradiction(subject: &str, note: &str) -> ReviewFinding {
 
 #[test]
 fn the_plan_check_stands_where_the_gate_is_told_it_does() {
-    assert_eq!(BESIDE[PLAN_CHECK], contract::DECIDES);
+    assert_eq!(Beside::Plan.decides(), contract::DECIDES);
 }
 
 #[test]
@@ -61,11 +61,13 @@ fn cited(index: u64, quote: &str) -> Value {
     json!({"blocks":[{"kind":"explanation","title":"Example","body":"A teaching explanation.","sourceIndex":index,"quote":quote}],"questions":[]})
 }
 
-fn quote_checks_of(numbered: &[crate::dto::LearningSourceDto], candidate: &Value) -> Vec<Value> {
+fn quote_checks_of(
+    numbered: &[crate::dto::LearningSourceDto],
+    candidate: &Value,
+) -> Vec<QuoteCheck> {
     let references = ReferenceCollection::lexical(&numbered[..1]).unwrap();
     LessonSubject::new(&references, numbered, &[], Held::default())
-        .quote_checks(candidate, &writer_context(), 1)
-        .unwrap()
+        .quote_checks(candidate, &writer_context())
 }
 
 #[test]
@@ -85,7 +87,7 @@ fn a_quotation_of_a_source_research_numbered_holds_though_the_writer_was_not_giv
 fn a_quotation_the_numbered_source_does_not_hold_still_fails() {
     let checks = quote_checks_of(&numbered(), &cited(1, WRITTEN));
     assert_eq!(checks.len(), 1);
-    assert_eq!(checks[0]["path"], "blocks[0]");
+    assert_eq!(checks[0].path, "blocks[0]");
 }
 
 #[test]
@@ -93,7 +95,7 @@ fn a_source_index_past_the_numbered_sources_still_fails() {
     let checks = quote_checks_of(&numbered(), &cited(2, RESEARCHED));
     assert_eq!(checks.len(), 1);
     assert_eq!(
-        checks[0]["error"],
+        checks[0].error,
         "The citation must select a supplied sourceIndex."
     );
 }

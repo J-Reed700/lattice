@@ -6,9 +6,16 @@
 //! Internal. The model sorts the rest, twenty statements to a call.
 
 use super::{invalid, unit_fields};
+use crate::dto::LearningBlockKind;
+use crate::review_findings::FindingSite;
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::domain::learning::claim_review::{Class, ClassifiedBy};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::hash::sha256_hex;
+use lattice_core::{protocol, shared::protocol::Protocol};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -41,9 +48,16 @@ pub(super) struct ToSort<'a> {
     pub(super) case: Case,
 }
 
-/// The sections that state what is so, where a specific needs a source: a
-/// worked example's, a practice's and a check's cases are hypothetical.
-pub(crate) const CITED_KINDS: [&str; 3] = ["explanation", "contrast", "recap"];
+/// The rule that saves the classes the model gave.
+const CLASS_CHECKS: Protocol = protocol!("classes", 2);
+
+/// The call that sorts statements by what checks them.
+pub(crate) struct SortStatements;
+
+impl Contract for SortStatements {
+    const ID: ContractId = ContractId::new("classify-statements");
+    type Input = PromptInput;
+}
 
 /// The figures of a text: each run of digits, with its decimal or thousands
 /// separators, except a number a label word precedes ("Source 0", "Option
@@ -108,26 +122,30 @@ pub(super) enum Case {
 }
 
 impl Case {
-    /// The case of the part at `unit` of `candidate`: a block whose kind is
-    /// not one of [`CITED_KINDS`] works a hypothetical case, and a question's
-    /// answer explanation states what is so from its question's givens.
+    /// The case of the part at `unit` of `candidate`: a block whose kind does
+    /// not cite works a hypothetical case, and a question's answer explanation
+    /// states what is so from its question's givens.
     pub(super) fn of(candidate: &Value, unit: usize) -> Self {
-        let blocks = candidate
-            .get("blocks")
-            .and_then(Value::as_array)
-            .map_or(&[][..], Vec::as_slice);
-        let Some(block) = blocks.get(unit) else {
-            let question = candidate
-                .get("questions")
-                .and_then(Value::as_array)
-                .and_then(|questions| questions.get(unit - blocks.len()));
-            return Self::Stated(question.map(Givens::of).unwrap_or_default());
-        };
-        match block.get("kind").and_then(Value::as_str) {
-            Some(kind) if !CITED_KINDS.contains(&kind) => Self::Hypothetical,
-            _ => Self::Stated(Givens::NONE),
+        let site = FindingSite::in_candidate(candidate, unit);
+        let part = site
+            .pointer()
+            .and_then(|pointer| candidate.pointer(&pointer));
+        match (site, part) {
+            (FindingSite::Section(_), Some(block)) if !cites(block) => Self::Hypothetical,
+            (FindingSite::Section(_), _) => Self::Stated(Givens::NONE),
+            (_, part) => Self::Stated(part.map(Givens::of).unwrap_or_default()),
         }
     }
+}
+
+/// Whether the section `block` states what is so, where a specific needs a
+/// source.
+fn cites(block: &Value) -> bool {
+    block
+        .get("kind")
+        .and_then(Value::as_str)
+        .and_then(LearningBlockKind::parse)
+        .is_none_or(|kind| kind.cites())
 }
 
 /// The case the part at `unit` works, as the learner reads it: a hypothetical
@@ -136,16 +154,14 @@ impl Case {
 /// prompt and options as they are. `None` for a section that states what is
 /// so.
 pub(super) fn case_text(candidate: &Value, unit: usize, own: &str) -> Option<String> {
-    let blocks = candidate
-        .get("blocks")
-        .and_then(Value::as_array)
-        .map_or(&[][..], Vec::as_slice);
-    let paragraphs: Vec<String> = match blocks.get(unit) {
-        Some(block) if Case::of(candidate, unit) == Case::Hypothetical => {
+    let site = FindingSite::in_candidate(candidate, unit);
+    let part = candidate.pointer(&site.pointer()?)?;
+    let paragraphs: Vec<String> = match site {
+        FindingSite::Section(_) if Case::of(candidate, unit) == Case::Hypothetical => {
             let mut taken = own.is_empty();
-            unit_fields(block, true)
+            unit_fields(part, true)
                 .iter()
-                .filter_map(|field| block.pointer(&format!("/{field}")).and_then(Value::as_str))
+                .filter_map(|field| part.pointer(&format!("/{field}")).and_then(Value::as_str))
                 .map(|text| {
                     if !taken && text.contains(own) {
                         taken = true;
@@ -156,14 +172,8 @@ pub(super) fn case_text(candidate: &Value, unit: usize, own: &str) -> Option<Str
                 })
                 .collect()
         }
-        Some(_) => return None,
-        None => candidate
-            .get("questions")
-            .and_then(Value::as_array)
-            .and_then(|questions| questions.get(unit.checked_sub(blocks.len())?))
-            .map(question_texts)?
-            .map(str::to_owned)
-            .collect(),
+        FindingSite::Section(_) => return None,
+        _ => question_texts(part).map(str::to_owned).collect(),
     };
     let paragraphs: Vec<String> = paragraphs
         .into_iter()
@@ -271,27 +281,45 @@ fn opens(mark: char, before: Option<char>) -> bool {
     }
 }
 
-/// The wording from an opening double quotation mark to the closing one after
-/// it, when it is long enough to be a quotation. A closing mark with no
-/// opening one before it (an inch or a second, say) quotes nothing. A single
-/// quote is an apostrophe or a possessive, never a quotation mark.
-pub(crate) fn quoted_wording(text: &str) -> impl Iterator<Item = &str> {
+/// The quotations of `text`, in order, each from its opening mark to its
+/// closing mark inclusive. A closing mark with no opening one before it (an
+/// inch or a second, say) quotes nothing, and neither does an opening mark
+/// with no closing one. A single quote is an apostrophe or a possessive,
+/// never a quotation mark.
+pub(crate) fn quotations(text: &str) -> Vec<(usize, usize)> {
     let mut spans = Vec::new();
-    let mut open: Option<usize> = None;
+    let mut open: Option<(usize, char)> = None;
     let mut before = None;
     for (at, c) in text.char_indices() {
         if QUOTE_MARKS.contains(&c) {
             if opens(c, before) {
-                open = Some(at + c.len_utf8());
-            } else if let Some(span) = open.take().and_then(|from| text.get(from..at)) {
-                if crate::generation::long_enough_quote(span) {
-                    spans.push(span);
-                }
+                open = Some((at, c));
+            } else if let Some((from, _)) =
+                open.filter(|&(_, opener)| (opener == '"') == (c == '"'))
+            {
+                spans.push((from, at + c.len_utf8()));
+                open = None;
             }
         }
         before = Some(c);
     }
-    spans.into_iter()
+    spans
+}
+
+/// The wording between the marks of the quotation at `span` of `text`.
+pub(super) fn inner(text: &str, span: (usize, usize)) -> Option<&str> {
+    let mut chars = text.get(span.0..span.1)?.chars();
+    chars.next();
+    chars.next_back();
+    Some(chars.as_str())
+}
+
+/// The wording of each quotation in `text` long enough to be one.
+pub(crate) fn quoted_wording(text: &str) -> impl Iterator<Item = &str> {
+    quotations(text)
+        .into_iter()
+        .filter_map(move |span| inner(text, span))
+        .filter(|wording| crate::generation::long_enough_quote(wording))
 }
 
 /// A class for every statement, in order: the rule layer's where it decides,
@@ -329,10 +357,16 @@ pub(super) async fn classify(
             batch.len()
         ));
         let _model_call = crate::lesson_progress::model_call(crate::lesson_progress::Term::Sort);
+        let prompt = Value::Object(shown).to_string();
+        let call = ContractCall::of::<SortStatements>(&PromptInput {
+            system: SYSTEM.to_owned(),
+            prompt: prompt.clone(),
+        })?;
         let classes = crate::generation::complete_checked(
             llm,
+            &call,
             SYSTEM,
-            Value::Object(shown).to_string(),
+            prompt,
             schema(&ids),
             OUTPUT_TOKENS,
             None,
@@ -341,7 +375,12 @@ pub(super) async fn classify(
         )
         .await?;
         for (index, class) in batch.iter().zip(classes) {
-            if let (Some(slot), Some(ruling)) = (sorted.get_mut(*index), rulings.get(*index)) {
+            if let (Some(slot), Some(ruling), Some(to_sort)) = (
+                sorted.get_mut(*index),
+                rulings.get(*index),
+                statements.get(*index),
+            ) {
+                save_class(llm, to_sort.statement, class).await?;
                 *slot = Some((ruling.settle(class), ClassifiedBy::Model));
             }
         }
@@ -394,6 +433,27 @@ fn class_named(name: &str) -> Option<Class> {
         "internal" => Some(Class::Internal),
         _ => None,
     }
+}
+
+fn class_key(llm: &dyn LLMPort, statement: &str) -> String {
+    CLASS_CHECKS.key(sha256_hex(
+        json!({"model": llm.model_name(), "statement": statement}).to_string(),
+    ))
+}
+
+/// The class the model gave `statement`, when it was asked before.
+pub(super) async fn saved_class(llm: &dyn LLMPort, statement: &str) -> Result<Option<Class>> {
+    Ok(crate::lesson_drafts::checkpoint(&class_key(llm, statement))
+        .await?
+        .and_then(|value| serde_json::from_value(value).ok()))
+}
+
+async fn save_class(llm: &dyn LLMPort, statement: &str, class: Class) -> Result<()> {
+    crate::lesson_drafts::record_checkpoint(
+        &class_key(llm, statement),
+        serde_json::to_value(class)?,
+    )
+    .await
 }
 
 #[cfg(test)]

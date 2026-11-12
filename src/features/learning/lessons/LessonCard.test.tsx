@@ -26,7 +26,7 @@ const program = { summary: { id: 'program-1', revision: 44, status: 'active' }, 
 const held: LearningGenerationJob = {
   id: 'job-1', programId: 'program-1', operationId: 'op', kind: 'lesson_preparation', payloadSha256: 'hash', baseRevisionNumber: 44,
   status: 'completed', progressCompleted: 1, progressTotal: 1, progressMessage: 'Needs your review: 3 statements', activity: null,
-  resultId: 'needs_review:lesson-1', error: null, retryOfJobId: null, createdAt: 1, startedAt: 1, finishedAt: 2,
+  resultId: null, heldLessonIds: ['lesson-1'], error: null, retryOfJobId: null, createdAt: 1, startedAt: 1, finishedAt: 2,
 };
 const noReview = { ok: true, data: null };
 
@@ -81,7 +81,7 @@ describe('Lesson card review state', () => {
   ] as const)('says what a preparation in its %s phase is doing', async (phase, counts, checksCompleted, row) => {
     const claims = { searching: 0, repairing: 0, waiting: 0, resolvedByYou: 0, ...counts };
     const preparing: LearningGenerationJob = {
-      ...held, status: 'running', progressMessage: '', resultId: null, finishedAt: null,
+      ...held, status: 'running', progressMessage: '', resultId: null, heldLessonIds: [], finishedAt: null,
       activity: {
         phase, phaseStartedAt: 1, lastActivityAt: 1, lastCheckpointAt: null, lessonTitle: lesson.title, modelName: null,
         modelRunning: true, responseCharacters: 0, modelAttempt: 1, verificationPass: 1,

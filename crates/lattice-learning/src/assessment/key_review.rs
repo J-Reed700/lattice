@@ -5,6 +5,9 @@
 use super::batched;
 use crate::assessment_engine::{self as engine, LearningAssessmentCandidate};
 use crate::model_call;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::{application::ports::LLMPort, shared::error::Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -100,6 +103,14 @@ fn bank_schema(indices: &[usize]) -> Value {
     }}}}})
 }
 
+/// The blind solver of quiz items, and what a call is told about it.
+pub(crate) struct QuizKeySolve;
+
+impl Contract for QuizKeySolve {
+    const ID: ContractId = ContractId::new("quiz-key-solve");
+    type Input = PromptInput;
+}
+
 /// Solve every item blind, whatever its format: one solution per item, in
 /// order. Items are sent in as many requests as the model's window needs; a
 /// malformed answer is asked for again once, then the solve fails rather than
@@ -108,8 +119,18 @@ pub(crate) async fn solve_items(
     llm: &dyn LLMPort,
     items: &[(&LearningAssessmentCandidate, &str)],
 ) -> Result<Vec<Solution>> {
+    let questions: Vec<Value> = items
+        .iter()
+        .enumerate()
+        .map(|(index, (candidate, quote))| blinded(index, candidate, quote))
+        .collect();
+    let call = ContractCall::of::<QuizKeySolve>(&PromptInput {
+        system: BANK_SYSTEM.to_owned(),
+        prompt: json!({"questions": questions}).to_string(),
+    })?;
     batched::answers(
         llm,
+        &call,
         items.len(),
         |indices| {
             let questions: Vec<Value> = indices
@@ -121,7 +142,6 @@ pub(crate) async fn solve_items(
                 json!({"questions": questions}).to_string(),
                 bank_schema(indices),
                 350 * indices.len() + 300,
-                "low",
             )
         },
         |parsed, _| {

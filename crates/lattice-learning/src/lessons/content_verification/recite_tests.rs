@@ -34,7 +34,8 @@ async fn supported_elsewhere(references: &ReferenceCollection<'_>) -> Result<Fin
     let world = world_of(references, citing_the_wrong_passage(references)?);
     Ok(read_one(Reading::Page, &model, &world, CLAIM)
         .await?
-        .finding)
+        .finding()
+        .clone())
 }
 
 #[tokio::test]

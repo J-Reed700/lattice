@@ -107,7 +107,7 @@ async fn a_plan_for_an_earlier_outline_does_not_make_the_current_one_planned() {
 }
 
 #[tokio::test]
-async fn a_running_lesson_job_locks_its_lesson_and_a_pending_one_does_not() {
+async fn a_queued_lesson_job_locks_its_lesson_and_so_does_a_running_one() {
     let pool = crate::tests::pool().await.unwrap();
     let (program, _) = planned_program(&pool, &Topics::new()).await;
     let order = ids(&program);
@@ -116,9 +116,11 @@ async fn a_running_lesson_job_locks_its_lesson_and_a_pending_one_does_not() {
     let pending = view(&Database::from(pool.clone()), &program.summary.id)
         .await
         .unwrap();
-    assert!(
-        pending.entries.iter().all(|entry| entry.editable),
-        "a job that is only queued locks nothing"
+    let queued: Vec<_> = pending.entries.iter().map(|entry| entry.editable).collect();
+    assert_eq!(
+        queued,
+        vec![true, false, true, true],
+        "a queued job locks its lesson"
     );
 
     assert!(JobStore::new(pool.clone())

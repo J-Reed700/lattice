@@ -102,7 +102,6 @@ impl DrillBuild<'_> {
             format!("{subject}\n\n{}", render_files(&proved.files)),
             review_schema(&proved.files),
             budget::findings(spec.lines),
-            "low",
         );
         let asked = ask_request(self.llm, request, |raw| read_findings(raw, &proved.files)).await?;
         trail.call("blind review", &model);
@@ -167,7 +166,6 @@ impl DrillBuild<'_> {
                 ),
                 entry_schema(&patterns, &proved.files),
                 budget::key_entry(),
-                "low",
             );
             let asked = ask_request(self.llm, request, |raw| {
                 describe(raw, &proved.files, &patterns)

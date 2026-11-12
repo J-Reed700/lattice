@@ -1,19 +1,15 @@
 //! What a reading or a research round leaves in the ledger: the check a
 //! reading observed, what research found for a claim (§3, §4).
 
-use super::super::provenance_gate::gate_reason;
-use super::super::support_gate::{Sufficiency, Support};
+use super::super::provenance_gate::{gate_reason, FindingTrust};
+use super::super::readings::Read;
 use super::super::*;
 use super::ClaimLedger;
 use crate::lessons::claim_reviews::repository::ShownPassage;
-use lattice_core::application::services::claim_verification::{
-    CONSISTENCY_POLICY, KNOWLEDGE_POLICY,
-};
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Outcome, Reading, Step};
 use lattice_core::domain::learning::claim_review::{
-    cited_source_versions, text_sha256, Check, CheckResult, Checker, ClaimEvent, ClaimId,
-    ClaimLedgerEntry, EvidenceFingerprint, EvidenceSeen, SourceChange, TrustAssessment,
-    VerdictKind,
+    cited_source_versions, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry,
+    EvidenceFingerprint, EvidenceSeen, SourceChange, TrustAssessment, VerdictKind,
 };
 
 /// The ledger's record of the gate's weighing, after the check it decided.
@@ -26,12 +22,12 @@ pub(super) fn assessed(trust: TrustAssessment) -> ClaimEvent {
 }
 
 fn seen(passage: &EvidencePassage) -> EvidenceSeen {
-    EvidenceSeen {
-        source_version_id: passage.source_id.clone(),
-        start_byte: passage.start_byte,
-        end_byte: passage.end_byte,
-        text_sha256: text_sha256(&passage.text),
-    }
+    EvidenceSeen::of(
+        &passage.source_id,
+        passage.start_byte,
+        passage.end_byte,
+        &passage.text,
+    )
 }
 
 pub(super) fn shown(passage: &EvidencePassage) -> ShownPassage {
@@ -58,122 +54,89 @@ pub(in crate::lessons::content_verification) struct Targets {
     pub(in crate::lessons::content_verification) hinted: Vec<ClaimId>,
 }
 
-/// The failure a finding that is not supported records: what its verdict
-/// says, or that no passage was compared, or that none supports it.
-fn failed_check(finding: &Finding, verdict: ClaimVerdict) -> (CheckResult, String) {
-    let kind = match verdict {
-        ClaimVerdict::Contradicted => VerdictKind::Contradicted,
-        ClaimVerdict::Unverified => VerdictKind::CouldNotJudge,
-        _ if finding.evidence.is_empty() => VerdictKind::NoSource,
-        _ => VerdictKind::Unsupported,
-    };
-    (CheckResult::Failed { kind }, finding.reason.clone())
-}
-
 impl ClaimLedger {
-    /// The check a reading records, named by the reading and not by the
-    /// class that was read: a finding that stands passes as its reading
-    /// passes a statement (a veto that stands is `NotFalse`, never the
-    /// unanimity `KnownCommon` records), any other fails with the kind its
-    /// verdict names, and its fingerprint follows the reading's policy. With
-    /// the gate's assessment when the gate decided the check.
+    /// The check a reading records: its finding's verdict, which its outcome
+    /// decided, passes or fails; a pass is named by the reading (`KnownCommon`,
+    /// `NotFalse`, `Consistent`) or rests on the passage holding its quotation
+    /// (`Supported`, `SupportedElsewhere` when the outcome is `StandsElsewhere`).
     pub(super) fn check_of_reading(
         &self,
         reading: Reading,
-        finding: &Finding,
-    ) -> (Check, Option<TrustAssessment>) {
+        read: &Read,
+    ) -> Result<(Check, Option<TrustAssessment>)> {
+        let finding = read.finding();
         let evidence: Vec<EvidenceSeen> = finding.evidence.iter().map(seen).collect();
-        let ((result, reason), trust) = match (finding.verdict, reading) {
-            (ClaimVerdict::Supported, Reading::Knowledge) => {
-                ((CheckResult::KnownCommon, finding.reason.clone()), None)
-            }
-            (ClaimVerdict::Supported, Reading::Veto) => {
-                ((CheckResult::NotFalse, finding.reason.clone()), None)
-            }
-            (ClaimVerdict::Supported, Reading::Consistency) => {
-                ((CheckResult::Consistent, finding.reason.clone()), None)
-            }
-            (ClaimVerdict::Supported, Reading::Parts | Reading::Ground | Reading::Page) => {
-                self.supported_check(finding)
-            }
-            (verdict, _) => (failed_check(finding, verdict), None),
+        let ((result, reason), trust) = match finding.verdict.failure(!evidence.is_empty()) {
+            Some(kind) => ((CheckResult::Failed { kind }, finding.reason.clone()), None),
+            None => self.passing(reading, read)?,
         };
-        let policy = match reading {
-            Reading::Consistency => CONSISTENCY_POLICY,
-            Reading::Knowledge | Reading::Veto => KNOWLEDGE_POLICY,
-            Reading::Parts | Reading::Ground | Reading::Page => POLICY,
-        };
-        (self.check(policy, result, reason, evidence), trust)
+        let policy = Judged::of(reading).policy();
+        Ok((self.check(policy, result, reason, evidence), trust))
     }
 
-    /// The result of a supported finding through the support gate, and the
-    /// gate's assessment when it weighed the support: the source is the one
-    /// whose passage holds the quotation, else the first passage.
+    /// The result of a finding that passed, named by the reading.
+    fn passing(
+        &self,
+        reading: Reading,
+        read: &Read,
+    ) -> Result<((CheckResult, String), Option<TrustAssessment>)> {
+        let reason = read.finding().reason.clone();
+        Ok(match reading {
+            Reading::Knowledge => ((CheckResult::KnownCommon, reason), None),
+            Reading::Veto => ((CheckResult::NotFalse, reason), None),
+            Reading::Consistency => ((CheckResult::Consistent, reason), None),
+            Reading::Parts | Reading::Ground | Reading::Page => self.supported_check(read)?,
+        })
+    }
+
+    /// The result of a supported finding and the gate's assessment when it
+    /// weighed the support: the source is the passage holding the quotation,
+    /// and the quotation recorded is its words of it.
     fn supported_check(
         &self,
-        finding: &Finding,
-    ) -> ((CheckResult, String), Option<TrustAssessment>) {
-        let quote = finding.supporting_quote.clone().unwrap_or_default();
-        let source = finding
-            .evidence
-            .iter()
-            .find(|passage| !quote.is_empty() && passage.text.contains(&quote))
-            .or_else(|| finding.evidence.first())
-            .map(|passage| passage.source_id.clone())
-            .unwrap_or_default();
-        let support = Support {
-            claim: &finding.statement,
-            source_version_id: &source,
-            supporting_quote: &quote,
-            passages: &finding.evidence,
-        };
+        read: &Read,
+    ) -> Result<((CheckResult, String), Option<TrustAssessment>)> {
+        let finding = read.finding();
+        let quote = finding.supporting_quote.as_deref().unwrap_or_default();
+        let strongest = finding.trust.as_deref().and_then(FindingTrust::strongest);
+        let (passage, words) =
+            supporting_passage(quote, &finding.evidence, strongest).ok_or_else(|| {
+                AppError::InternalError(format!(
+                    "Claim \"{}\": its supported finding names no passage that holds its quotation",
+                    finding.statement
+                ))
+            })?;
+        let source = passage.source_id.clone();
         let trust = finding
             .trust
             .as_ref()
-            .map(|trust| trust.assessment(&source, &quote));
-        // Support found on a page of the course when the section's
-        // citations gave none: the claim stands on the found passage, and
-        // the ledger says its citation was elsewhere.
-        let result = match &finding.two_pass.supported_by {
-            Some(found) => CheckResult::SupportedElsewhere {
-                cited: found.cited.clone(),
-                source_version_id: source.clone(),
-                supporting_quote: quote.clone(),
-            },
-            None => CheckResult::Supported {
-                source_version_id: source.clone(),
-                supporting_quote: quote.clone(),
-            },
+            .map(|trust| trust.assessment(&source, words));
+        let result = if read.outcome() == Outcome::StandsElsewhere {
+            CheckResult::SupportedElsewhere {
+                cited: finding
+                    .two_pass
+                    .supported_by
+                    .as_ref()
+                    .map(|found| found.cited.clone())
+                    .unwrap_or_default(),
+                source_version_id: source,
+                supporting_quote: words.to_owned(),
+            }
+        } else {
+            CheckResult::Supported {
+                source_version_id: source,
+                supporting_quote: words.to_owned(),
+            }
         };
-        match self.gate.judge(&support) {
-            Sufficiency::Sufficient => ((result, finding.reason.clone()), trust),
-            // A quotation that is not in its passage is a plain
-            // unsupported claim.
-            Sufficiency::Insufficient { reason } => (
-                (
-                    CheckResult::Failed {
-                        kind: VerdictKind::Unsupported,
-                    },
-                    reason,
-                ),
-                None,
-            ),
-        }
+        Ok(((result, finding.reason.clone()), trust))
     }
 
     /// The check an example's run records: it completed, or it did not.
     pub(super) fn example_check(&self, observation: &execution::Observation) -> Check {
-        let source = format!("execution:{}", observation.id);
-        let evidence = observation.evidence();
-        let seen = vec![EvidenceSeen {
-            source_version_id: source.clone(),
-            start_byte: 0,
-            end_byte: evidence.len(),
-            text_sha256: text_sha256(&evidence),
-        }];
+        let passage = observation.passage();
         let result = if observation.passed() {
             CheckResult::Supported {
-                source_version_id: source,
+                source_version_id: passage.source_id.clone(),
                 supporting_quote: observation.code().to_owned(),
             }
         } else {
@@ -181,7 +144,8 @@ impl ClaimLedger {
                 kind: VerdictKind::Unsupported,
             }
         };
-        self.check(POLICY, result, evidence, seen)
+        let policy = Judged::Passages.policy();
+        self.check(policy, result, passage.text.clone(), vec![seen(&passage)])
     }
 
     fn check(
@@ -210,7 +174,7 @@ impl ClaimLedger {
     ) -> Vec<SourceChange> {
         cited_source_versions(entry)
             .into_iter()
-            .filter(|id| !id.starts_with("execution:") && !active.contains(id))
+            .filter(|id| !execution::is_run(id) && !active.contains(id))
             .map(|id| SourceChange::Deleted(id.to_owned()))
             .collect()
     }

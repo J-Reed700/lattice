@@ -3,10 +3,10 @@
 //! and dashes made plain, whitespace runs one space, case ignored, and no
 //! space at either end.
 
-use lattice_core::shared::text::segmentation::sentences;
+use crate::shared::text::segmentation::sentences;
 
 /// One character of folded text with the bytes of the original it came from.
-pub(crate) type Folded = Vec<(char, usize, usize)>;
+pub type Folded = Vec<(char, usize, usize)>;
 
 fn plain(character: char) -> char {
     match character {
@@ -18,7 +18,7 @@ fn plain(character: char) -> char {
 }
 
 /// `text` folded, each character with its byte span in `text`.
-pub(crate) fn folded(text: &str) -> Folded {
+pub fn folded(text: &str) -> Folded {
     let mut out: Folded = Vec::new();
     let mut gap: Option<(usize, usize)> = None;
     for (start, character) in text.char_indices() {
@@ -45,20 +45,20 @@ pub(crate) fn folded(text: &str) -> Folded {
 }
 
 /// `text` folded.
-pub(crate) fn fold(text: &str) -> String {
+pub fn fold(text: &str) -> String {
     folded(text).into_iter().map(|(c, _, _)| c).collect()
 }
 
 /// Whether `a` and `b` are the same words, or one holds the other. Neither
 /// may be empty once folded.
-pub(crate) fn overlap(a: &str, b: &str) -> bool {
+pub fn overlap(a: &str, b: &str) -> bool {
     let (a, b) = (fold(a), fold(b));
     !a.is_empty() && !b.is_empty() && (a.contains(&b) || b.contains(&a))
 }
 
 /// Whether some sentence of `sentence` is, folded, a whole sentence of
 /// `text`: a sentence inside a longer one does not count.
-pub(crate) fn holds_sentence(text: &str, sentence: &str) -> bool {
+pub fn holds_sentence(text: &str, sentence: &str) -> bool {
     let folded_sentences = |text: &str| -> Vec<String> {
         sentences(text)
             .into_iter()
@@ -75,8 +75,9 @@ pub(crate) fn holds_sentence(text: &str, sentence: &str) -> bool {
 
 /// The bytes of `text` that `needle` stands for, if it occurs in it (the
 /// first occurrence) once both are folded: from where its first folded character began to where
-/// its last one ended.
-pub(crate) fn find(text: &str, needle: &str) -> Option<(usize, usize)> {
+/// its last one ended. A copy is located here and replaced by these bytes (T1); recorded text is
+/// compared with [`stands`] (T2).
+pub fn find(text: &str, needle: &str) -> Option<(usize, usize)> {
     let needle: Vec<char> = folded(needle).into_iter().map(|(c, _, _)| c).collect();
     if needle.is_empty() {
         return None;
@@ -93,7 +94,7 @@ pub(crate) fn find(text: &str, needle: &str) -> Option<(usize, usize)> {
 
 /// The bytes of `text` that `needle` stands for at each place it occurs once
 /// both are folded, in order. Occurrences may overlap.
-pub(crate) fn find_all(text: &str, needle: &str) -> Vec<(usize, usize)> {
+pub fn find_all(text: &str, needle: &str) -> Vec<(usize, usize)> {
     let needle: Vec<char> = folded(needle).into_iter().map(|(c, _, _)| c).collect();
     if needle.is_empty() {
         return Vec::new();
@@ -115,10 +116,10 @@ pub(crate) fn find_all(text: &str, needle: &str) -> Vec<(usize, usize)> {
 /// The byte spans of the sentences of `text` that the span `(start, end)`
 /// overlaps. A span that overlaps none (text the segmenter does not split)
 /// stands for itself, so a caller always has the exact text.
-pub(crate) fn sentences_over(text: &str, (start, end): (usize, usize)) -> Vec<(usize, usize)> {
+pub fn sentences_over(text: &str, (start, end): (usize, usize)) -> Vec<(usize, usize)> {
     let lying: Vec<(usize, usize)> = sentences(text)
         .into_iter()
-        .filter(|(from, to)| *from < end && start < *to)
+        .filter(|&sentence| overlaps(sentence, (start, end)))
         .collect();
     if lying.is_empty() {
         vec![(start, end)]
@@ -129,11 +130,40 @@ pub(crate) fn sentences_over(text: &str, (start, end): (usize, usize)) -> Vec<(u
 
 /// The text of `text` from the start of the first sentence the span lies in
 /// to the end of the last ([`sentences_over`]).
-pub(crate) fn exact_sentences(text: &str, span: (usize, usize)) -> Option<&str> {
+pub fn exact_sentences(text: &str, span: (usize, usize)) -> Option<&str> {
     let lying = sentences_over(text, span);
     let start = lying.first()?.0;
     let end = lying.last()?.1;
     text.get(start..end)
+}
+
+/// Whether `quote`, text the pipeline recorded, stands in `text` byte for byte. A blank quote stands nowhere.
+pub fn stands(text: &str, quote: &str) -> bool {
+    !quote.trim().is_empty() && text.contains(quote)
+}
+
+/// Whether byte spans `a` and `b` share a byte. An empty span shares none.
+pub fn overlaps(a: (usize, usize), b: (usize, usize)) -> bool {
+    a.0.max(b.0) < a.1.min(b.1)
+}
+
+/// The byte length of the longest common prefix of `a` and `b`, on character boundaries.
+pub fn common_prefix(a: &str, b: &str) -> usize {
+    a.chars()
+        .zip(b.chars())
+        .take_while(|(x, y)| x == y)
+        .map(|(c, _)| c.len_utf8())
+        .sum()
+}
+
+/// Whether `span` of `text` is one or more whole sentences: it starts where the first
+/// sentence it overlaps starts and ends where the last one ends.
+pub fn whole_sentences(text: &str, (start, end): (usize, usize)) -> bool {
+    let lying: Vec<(usize, usize)> = sentences(text)
+        .into_iter()
+        .filter(|&sentence| overlaps(sentence, (start, end)))
+        .collect();
+    matches!((lying.first(), lying.last()), (Some(first), Some(last)) if first.0 == start && last.1 == end)
 }
 
 #[cfg(test)]

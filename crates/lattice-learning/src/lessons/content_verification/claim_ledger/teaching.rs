@@ -6,7 +6,7 @@
 
 use super::*;
 use lattice_core::domain::learning::acceptance::{
-    next_rewrite, rewrites_given, AcceptancePolicy, Position,
+    next_rewrite, repair_attempt, AcceptancePolicy, Position,
 };
 use lattice_core::domain::learning::claim_review::{Actor, ClaimEvent, ClaimState};
 
@@ -97,9 +97,7 @@ impl ClaimLedger {
             .filter_map(|id| {
                 let entry = self.entry(id)?;
                 let last = self.stood_last(policy, id)?;
-                let attempt = rewrites_given(policy, last.class)
-                    .saturating_sub(last.rewrites_left)
-                    .saturating_add(1);
+                let attempt = repair_attempt(policy, last);
                 Some(RepairRecord {
                     claim_id: id.clone(),
                     unit: entry.location().unit_index,

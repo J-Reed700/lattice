@@ -6,12 +6,23 @@ use serde_json::{json, Value};
 
 use super::{data_prompt, judge, names, sanitised, CallOutcome};
 use crate::application::ports::LLMPort;
+use crate::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use crate::domain::provenance::{
     canonical_json, AuthorityAssessment, ClaimSubject, Judged, JudgementKey, Origin,
     ProvenanceSignals, Reason, ReasonCode, SubjectRelation,
 };
 use crate::shared::error::Result;
 use crate::shared::hash::sha256_hex;
+
+/// The model call of the ownership judgement.
+pub(crate) struct SourceOwnership;
+
+impl Contract for SourceOwnership {
+    const ID: ContractId = ContractId::new("source-ownership");
+    type Input = PromptInput;
+}
 
 pub const OWNERSHIP_POLICY: &str = "subject-ownership-v1";
 
@@ -211,8 +222,13 @@ pub async fn judge_ownership(
 ) -> Result<Judged<AuthorityAssessment>> {
     let model = llm.model_name().to_owned();
     let prompt = data_prompt("Subject and origin", &ownership_input(request));
+    let call = ContractCall::of::<SourceOwnership>(&PromptInput {
+        system: OWNERSHIP_SYSTEM.to_owned(),
+        prompt: prompt.clone(),
+    })?;
     let outcome = judge(
         llm,
+        &call,
         OWNERSHIP_SYSTEM,
         &prompt,
         &ownership_schema(),

@@ -12,13 +12,14 @@ use lattice_core::domain::learning::claim_review::{
     span_of, Actor, ClaimLedgerEntry, ClaimState, Ledger,
 };
 
-use super::actions::{in_section_body, whole_sentence};
-use super::published_edit::{gone, placed};
+use super::actions::in_section_body;
+use super::published_edit::placed;
 use super::published_restore::undoable_in_published;
 use super::teaching_findings::{
     TeachingFindingDto, TeachingFindingSiteDto, TeachingFindingStateDto, TeachingResolutionDto,
 };
 use crate::content_verification::claim_quote;
+use lattice_core::shared::text::same_text::whole_sentences;
 
 /// Where the sentence of a waiting section note is in `body` when "Remove this
 /// sentence" can take it out: it occurs once and is a whole sentence.
@@ -29,9 +30,8 @@ pub(super) fn removable_span(finding: &TeachingFindingDto, body: &str) -> Option
     {
         return None;
     }
-    let sentence = finding.sentence.as_deref()?.trim();
-    let span = span_of(body, sentence)?;
-    whole_sentence(body, sentence).then_some(span)
+    let span = span_of(body, finding.sentence.as_deref()?.trim())?;
+    whole_sentences(body, span).then_some(span)
 }
 
 /// Fills in the claim ids of each section note that is about a sentence, says
@@ -67,7 +67,7 @@ pub(super) fn name_claims(
             .claims
             .iter()
             .filter(in_unit)
-            .filter(|entry| !gone(entry))
+            .filter(|entry| !entry.state().is_gone())
             .filter(|entry| {
                 placed(entry, body)
                     .and_then(|(start, end)| body.get(start..end))

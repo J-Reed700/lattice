@@ -506,13 +506,13 @@ async fn a_rubric_without_a_missing_assertion_reports_nothing() -> Result<()> {
 #[test]
 fn a_report_whose_audit_names_a_gap_is_still_a_complete_report() {
     let lesson = PreparedLearningLesson {
-        blocks: vec![LearningBlockDto {
-            kind: LearningBlockKind::Explanation,
-            title: "CSV header names".into(),
-            body: GOOD.into(),
-            rubric: vec![],
-            source_ids: vec![],
-        }],
+        blocks: vec![LearningBlockDto::new(
+            LearningBlockKind::Explanation,
+            "CSV header names".into(),
+            GOOD.into(),
+            vec![],
+            vec![],
+        )],
         questions: vec![],
         keys: vec![],
         verification: None,

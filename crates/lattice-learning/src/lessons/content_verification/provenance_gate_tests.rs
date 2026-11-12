@@ -109,28 +109,13 @@ fn weighed(
     )
 }
 
-/// The ledger's gate on a weighed finding.
-fn judge(finding: &Finding) -> Sufficiency {
-    let quote = finding.supporting_quote.clone().unwrap_or_default();
-    let source = supporting_passages(finding)
-        .first()
-        .map(|passage| passage.source_id.clone())
-        .unwrap_or_default();
-    ProvenanceGate.judge(&Supported {
-        claim: &finding.statement,
-        source_version_id: &source,
-        supporting_quote: &quote,
-        passages: &finding.evidence,
-    })
-}
-
 const STRUCTURED: &str =
     "Structured Outputs ensures the model always follows the supplied JSON Schema.";
 
 #[test]
 fn a_primary_source_meets_a_specification_bar() {
     let text = "Structured Outputs ensures the model always follows the supplied JSON Schema.";
-    let mut claim = finding(STRUCTURED, text, vec![passage("docs", text)]);
+    let claim = finding(STRUCTURED, text, vec![passage("docs", text)]);
     let facts = HashMap::from([(
         "docs".to_owned(),
         facts(level("primary"), "web:openai.com", text, Vec::new()),
@@ -143,8 +128,6 @@ fn a_primary_source_meets_a_specification_bar() {
     assert!(matches!(trust.decision, Decision::Sufficient { .. }));
     assert_eq!(trust.supports.len(), 1);
     assert_eq!(trust.supports[0].passage, PassageKind::Direct);
-    claim.trust = Some(Box::new(trust));
-    assert!(matches!(judge(&claim), Sufficiency::Sufficient));
 }
 
 #[test]
@@ -155,7 +138,7 @@ fn an_established_source_alone_fails_a_specification_bar_and_names_its_next_step
     assert_eq!(links.len(), 1, "the fixture text carries one link");
     let mut blog = facts(level("established"), "web:blog.example", &text, links);
     blog.owner_hints = vec!["platform.openai.com".into()];
-    let mut claim = finding(
+    let claim = finding(
         STRUCTURED,
         "Structured Outputs ensures the model always follows the supplied JSON Schema",
         vec![passage("blog", &text)],
@@ -190,8 +173,6 @@ fn an_established_source_alone_fails_a_specification_bar_and_names_its_next_step
     // The support is below the bar and the checker's verdict stands: the
     // claim is labelled for what its support is.
     assert_eq!(trust.label(), Some(Label::Secondary));
-    claim.trust = Some(Box::new(trust));
-    assert!(matches!(judge(&claim), Sufficiency::Sufficient));
 }
 
 #[test]
@@ -379,7 +360,7 @@ fn only_passages_holding_the_quotation_support_and_each_version_once() {
             passage("a", "Monotremes lay eggs. Platypuses are monotremes."),
             passage("b", "Most mammals give birth to live young."),
             EvidencePassage {
-                retrieval_kind: EXECUTION.into(),
+                retrieval_kind: "execution".into(),
                 ..passage("run", text)
             },
         ],
@@ -408,46 +389,11 @@ fn material_the_user_added_is_sufficient_and_says_so() {
 }
 
 #[test]
-fn a_quotation_outside_the_named_passage_is_never_sufficient() {
-    let text = "Structured Outputs ensures the model always follows the supplied JSON Schema.";
-    let mut claim = finding(
-        STRUCTURED,
-        "words the passage does not hold",
-        vec![passage("docs", text)],
-    );
-    let facts = HashMap::from([(
-        "docs".to_owned(),
-        facts(level("primary"), "web:openai.com", text, Vec::new()),
-    )]);
-    claim.trust = Some(Box::new(weighed(
-        &profile(ClaimKind::Specification, Some("OpenAI API")),
-        &claim,
-        &facts,
-    )));
-    let quote = claim.supporting_quote.clone().unwrap();
-    let verdict = ProvenanceGate.judge(&Supported {
-        claim: &claim.statement,
-        source_version_id: "docs",
-        supporting_quote: &quote,
-        passages: &claim.evidence,
-    });
-    assert!(matches!(verdict, Sufficiency::Insufficient { .. }));
-}
-
-#[test]
-fn an_unweighed_finding_keeps_the_quotation_rule_alone() {
-    let text = "Monotremes lay eggs.";
-    let claim = finding(text, text, vec![passage("a", text)]);
-    assert!(claim.trust.is_none());
-    assert!(matches!(judge(&claim), Sufficiency::Sufficient));
-}
-
-#[test]
 fn a_contrary_that_outranks_the_support_is_recorded_and_the_claim_stands() {
     let text = "The current stable Python is 3.13.";
     let mut current = profile(ClaimKind::VersionBound, Some("Python"));
     current.temporal = TemporalScope::Current;
-    let mut claim = finding(text, text, vec![passage("blog", text)]);
+    let claim = finding(text, text, vec![passage("blog", text)]);
     // Unix seconds: published mid-2025, saved and contradicted in 2026.
     let mut blog = facts(level("established"), "web:blog.example", text, Vec::new());
     blog.dates.published = Some(1_750_000_000);
@@ -477,11 +423,6 @@ fn a_contrary_that_outranks_the_support_is_recorded_and_the_claim_stands() {
         trust.assessment("v1", "").overturn(),
         Overturn::Contradicted { .. }
     ));
-    claim.trust = Some(Box::new(trust));
-    assert!(
-        matches!(judge(&claim), Sufficiency::Sufficient),
-        "the weighing records the contradiction and does not take the verdict away"
-    );
 }
 
 #[test]
@@ -524,52 +465,6 @@ fn a_contradiction_another_reading_found_is_weighed_as_a_contrary() {
         )]),
     );
     assert!(unweighed.contrary.is_empty());
-}
-
-#[test]
-fn both_supports_of_a_claim_are_weighed_and_the_strongest_names_it() {
-    const CITED: &str = "Laboratory records confirm the beta behaviour of the sample.";
-    const FOUND: &str = "The owner's manual documents the beta behaviour of the sample.";
-    // The citation (established) and a page of the course (primary) both
-    // support the claim: the page's support is kept beside the citation's,
-    // not dropped.
-    let mut claim = finding(
-        "The sample shows the beta behaviour.",
-        CITED,
-        vec![passage("book", CITED)],
-    );
-    claim.two_pass.also_supported.push(SupportingPassage {
-        passage: passage("owner", FOUND),
-        quote: FOUND.into(),
-    });
-    let weighed: Vec<&str> = supporting_passages(&claim)
-        .iter()
-        .map(|passage| passage.source_id.as_str())
-        .collect();
-    assert_eq!(weighed, ["book", "owner"], "both are weighed");
-    // The gate met the bar with the owner's page first: it names the claim.
-    claim.trust = Some(Box::new(FindingTrust {
-        profile: profile(ClaimKind::Specification, None),
-        supports: Vec::new(),
-        contrary: Vec::new(),
-        decision: Decision::Sufficient {
-            met_by: vec!["owner".to_owned(), "book".to_owned()],
-            label: None,
-            reasons: Vec::new(),
-        },
-        available: None,
-    }));
-    name_strongest(&mut claim);
-    assert_eq!(claim.supporting_quote.as_deref(), Some(FOUND));
-    assert_eq!(
-        claim.two_pass.supported_by.as_ref().unwrap().source_id,
-        "owner"
-    );
-    assert_eq!(claim.two_pass.also_supported[0].passage.source_id, "book");
-    assert!(claim
-        .evidence
-        .iter()
-        .any(|passage| passage.source_id == "owner" && passage.text.contains(FOUND)));
 }
 
 #[test]
@@ -731,16 +626,15 @@ async fn the_function_calling_lesson_passes_its_primary_backed_claims_without_a_
         claim.trust = Some(Box::new(trust));
         match case["decision"].as_str().unwrap() {
             "sufficient" => assert!(
-                matches!(judge(&claim), Sufficiency::Sufficient),
+                matches!(
+                    claim.trust.as_ref().unwrap().decision,
+                    Decision::Sufficient { .. }
+                ),
                 "{id}: {}",
                 claim.trust.as_ref().unwrap().explain()
             ),
             _ => {
                 let trust = claim.trust.as_ref().unwrap();
-                assert!(
-                    matches!(judge(&claim), Sufficiency::Sufficient),
-                    "{id}: a support below its bar still stands"
-                );
                 assert_eq!(trust.label(), label_below_primary(&trust.profile), "{id}");
                 let Decision::Insufficient { bar, next, .. } = &trust.decision else {
                     unreachable!()
@@ -769,6 +663,7 @@ async fn outside_a_trust_scope_an_outline_assertion_is_not_weighed() -> Result<(
     let weighed = weigh_claim(
         &checker,
         0,
+        "Module 1",
         "The API returns JSON in strict mode.",
         &page,
         SupportedBy {
@@ -830,8 +725,8 @@ async fn a_unit_profiled_before_another_unit_fails_keeps_its_profiles() -> Resul
         context::Judgements::cached(Database::from(pool.clone()), "program", "profile-model")
             .await?;
     let claims = [
-        (0, "The first unit states one claim."),
-        (1, "The second unit states another claim."),
+        ("Section 1", "The first unit states one claim."),
+        ("Section 2", "The second unit states another claim."),
     ];
     let result = judgements.profiles(&SecondUnitFails, &claims).await;
     assert!(result.is_err(), "the second unit's call failed");
@@ -1042,6 +937,10 @@ async fn weighed_by(
     for (id, url) in versions {
         seed_version(&pool, &program_id, id, url).await?;
     }
+    let candidate = json!({
+        "blocks": [{"kind": "explanation"}, {"kind": "explanation"}],
+        "questions": [{"prompt": "Which?"}],
+    });
     let mut results: Vec<CheckedClaim> = claims
         .iter()
         .enumerate()
@@ -1060,7 +959,7 @@ async fn weighed_by(
         Database::from(pool.clone()),
         program_id,
         "Topic".into(),
-        async { weigh(&model, &mut results, &HashSet::new()).await },
+        async { weigh(&model, &candidate, &mut results, &HashSet::new()).await },
     )
     .await?;
     assert!(results.iter().all(|(_, _, claim, _)| claim.trust.is_some()));

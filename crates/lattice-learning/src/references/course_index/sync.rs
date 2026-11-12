@@ -4,12 +4,11 @@
 //! once all its passages are saved, so a cut run resumes), and settling
 //! ([`settle`]: the mode, and the course's revision once all is embedded).
 
-use super::{IndexMode, CHUNK_CHARS, STEP_CHARS};
+use super::IndexMode;
 use crate::source_library::{ActiveVersion, LearningSourceLibraryRepository};
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::Result;
 use lattice_index::passage_index::build::{self, BATCH_SIZE, SAVE_EVERY};
-use lattice_index::passage_index::chunking::spans::span_chunks;
 use lattice_index::passage_index::{
     embed_pending, EmbedTurns, Embedding, Engine, LiveIndex, Passage, PassageStore, Progress,
 };
@@ -62,7 +61,7 @@ pub(super) fn revision(versions: &[ActiveVersion]) -> String {
 /// made by the old one is not current, and a build for the new one is a new
 /// build.
 pub(super) fn stamp(revision: &str, identity: &str) -> String {
-    sha256_hex(format!("{revision}\n{identity}"))
+    sha256_hex(format!("{revision}\n{identity}\n{}", super::chunking()))
 }
 
 /// Chunks a version's text into the store under its id. Shared with the
@@ -74,10 +73,10 @@ pub(crate) async fn write_version(
     content_hash: &str,
     text: &str,
 ) -> Result<Vec<i64>> {
-    let passages = span_chunks(text, CHUNK_CHARS, STEP_CHARS);
-    // Versions are immutable, so there is no stamp to compare; the hash says
-    // what was chunked.
-    store.replace(version_id, "", content_hash, &passages).await
+    let passages = super::chunks(text);
+    store
+        .replace(version_id, &super::chunking(), content_hash, &passages)
+        .await
 }
 
 /// Brings `index`'s rows in line with `program`'s active versions, dropping
@@ -100,12 +99,13 @@ pub(super) async fn sync_rows(
         .filter(|key| !wanted.contains(key.as_str()))
         .cloned()
         .collect();
+    let chunking = super::chunking();
     let arriving: Vec<_> = active
         .iter()
         .filter(|version| {
-            stored
-                .get(&version.id)
-                .is_none_or(|document| document.content_hash != version.content_sha256)
+            stored.get(&version.id).is_none_or(|document| {
+                document.content_hash != version.content_sha256 || document.stamp != chunking
+            })
         })
         .collect();
     leaving.extend(

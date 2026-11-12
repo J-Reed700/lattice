@@ -1045,7 +1045,7 @@ export async function installLearningStudioBackend(page: Page) {
           return job;
         }
         const next: LearningGenerationJob = {
-          ...job, id: crypto.randomUUID(), operationId: request.operationId, retryOfJobId: job.id,
+          ...job, id: crypto.randomUUID(), operationId: request.operationId, retryOfJobId: job.id, heldLessonIds: [],
           status: "pending", createdAt: Date.now(), startedAt: null, finishedAt: null, progressMessage: "Retry queued", error: null,
         };
         state.planWorkspace.jobs.unshift(next);
@@ -1249,7 +1249,7 @@ export async function installLearningStudioBackend(page: Page) {
         if (review.claims.some((item) => item.state.state === "queued") && !review.changedSinceStop)
           throw { code: "INVALID_STATE", message: "Nothing changed since the last pass. Resolve a statement or add evidence first." };
         review.state = "verifying";
-        const next: LearningGenerationJob = { ...holding, id: crypto.randomUUID(), operationId: request.operationId, retryOfJobId: holding.id, status: "pending", resultId: null, createdAt: Date.now(), startedAt: null, finishedAt: null, progressMessage: "Resuming verification", error: null };
+        const next: LearningGenerationJob = { ...holding, id: crypto.randomUUID(), operationId: request.operationId, retryOfJobId: holding.id, status: "pending", resultId: null, heldLessonIds: [], createdAt: Date.now(), startedAt: null, finishedAt: null, progressMessage: "Resuming verification", error: null };
         state.planWorkspace.jobs.unshift(next);
         return next;
       },

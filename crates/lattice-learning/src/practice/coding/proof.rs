@@ -232,7 +232,7 @@ impl Proving<'_> {
 }
 
 pub(crate) fn cancelled() -> AppError {
-    AppError::InvalidState("The coding build was cancelled.".into())
+    AppError::Cancelled("The coding build was cancelled.".into())
 }
 
 /// How a run that happened ended; a run that could not happen is an error.

@@ -7,11 +7,16 @@
 //! replaced. Coverage of the entire changed section is still audited
 //! independently before fact checking.
 use super::*;
+use lattice_core::protocol;
 use lattice_core::shared::hash::sha256_hex;
 #[cfg(any(test, feature = "test-support"))]
 use lattice_core::shared::persistence::Database;
+use lattice_core::shared::protocol::Protocol;
 
 mod locations;
+
+const BASIS_KEYS: Protocol = protocol!("inventory-basis", 1);
+const DELTA_KEYS: Protocol = protocol!("inventory-delta", 1);
 
 /// Why a section whose every claim was taken out has none, when what the edit
 /// wrote has none.
@@ -29,7 +34,7 @@ struct Basis {
 }
 
 fn key(llm: &dyn LLMPort, index: usize) -> String {
-    format!("inventory-basis-v1:{}", sha256_hex(json!({"policy":INVENTORY_POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"index":index}).to_string()))
+    BASIS_KEYS.key(sha256_hex(json!({"policy":INVENTORY_POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"index":index}).to_string()))
 }
 
 /// Whether `now` is the section `before` was: of its kind and role, under its
@@ -177,10 +182,9 @@ pub(in crate::lessons::content_verification) async fn update(
     }
     // The delta is relative to a specific inventory, not just its model/index.
     // A later repair may revisit the same text with a different saved basis.
-    let delta_key = format!(
-        "inventory-delta-v1:{}",
-        sha256_hex(json!({"model":key(llm,index),"basis":before,"content":section}).to_string())
-    );
+    let delta_key = DELTA_KEYS.key(sha256_hex(
+        json!({"model":key(llm,index),"basis":before,"content":section}).to_string(),
+    ));
     if let Some(saved) = crate::lesson_drafts::checkpoint(&delta_key)
         .await?
         .and_then(|v| serde_json::from_value::<UnitClaims>(v).ok())
@@ -313,6 +317,8 @@ mod capacity_tests {
 #[cfg(test)]
 mod revision_tests {
     use super::*;
+
+    const REVISION_KEYS: Protocol = protocol!("inventory-revision", 2);
     use crate::content_verification::tests::{fixture_completion, fixture_prompts};
     use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     use std::sync::Mutex;
@@ -759,12 +765,9 @@ mod revision_tests {
                 (ALPHA, "Alpha is steady."),
                 ("Bravo yields at noon.", "Bravo is firm."),
             ]);
-            let old_key = format!(
-                "inventory-revision-v2:{}",
-                sha256_hex(
-                    json!({"model":key(&model,0),"basis":basis,"content":after[0]}).to_string()
-                )
-            );
+            let old_key = REVISION_KEYS.key(sha256_hex(
+                json!({"model":key(&model,0),"basis":basis,"content":after[0]}).to_string(),
+            ));
             crate::lesson_drafts::record_checkpoint(&old_key, serde_json::to_value(&kept)?).await?;
 
             let updated = update(&model, &after, 0).await?.unwrap();

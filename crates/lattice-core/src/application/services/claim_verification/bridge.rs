@@ -74,16 +74,12 @@ pub struct BridgeOutcome {
     pub reason: String,
 }
 
-/// What the parts add up to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BridgeDecision {
-    /// Every part is stated, or common or the lesson's own beside at least one
-    /// that is stated.
-    Supported,
-    /// A part is a specific no passage gives, or no part is stated.
-    Unsupported,
-    /// A passage says otherwise about a part.
-    Contradicted,
+/// The model call of the part-wise judge.
+pub(crate) struct ClaimParts;
+
+impl Contract for ClaimParts {
+    const ID: ContractId = ContractId::new("claim-parts");
+    type Input = PromptInput;
 }
 
 impl BridgeOutcome {
@@ -103,20 +99,6 @@ impl BridgeOutcome {
         (self, changed)
     }
 
-    /// Whether the statement stands: every part stated, common or the
-    /// lesson's own, and one stated. A part a passage contradicts outranks one
-    /// that is missing.
-    pub fn decision(&self) -> BridgeDecision {
-        let any = |kind: PartKind| self.parts.iter().any(|part| part.kind == kind);
-        if any(PartKind::Contradicted) {
-            BridgeDecision::Contradicted
-        } else if any(PartKind::SpecificMissing) || !any(PartKind::Stated) {
-            BridgeDecision::Unsupported
-        } else {
-            BridgeDecision::Supported
-        }
-    }
-
     /// What the parts add up to in the acceptance policy's words. Apply
     /// [`Self::guarded`] first: a common part that names a specific is one
     /// no passage gives.
@@ -134,15 +116,11 @@ impl BridgeOutcome {
     }
 
     /// Whether the passages ground a statement a closed-book reading called
-    /// false: some part stated, none missing, contradicted or common, else the
-    /// veto stands. Apply [`Self::guarded`] first.
+    /// false: the parts stand and none is common, else the veto stands. Apply
+    /// [`Self::guarded`] first.
     pub fn ground_outcome(&self) -> Outcome {
-        let any = |kind: PartKind| self.parts.iter().any(|part| part.kind == kind);
-        if any(PartKind::Stated)
-            && !any(PartKind::SpecificMissing)
-            && !any(PartKind::Contradicted)
-            && !any(PartKind::Common)
-        {
+        let common = self.parts.iter().any(|part| part.kind == PartKind::Common);
+        if self.outcome() == Outcome::Stands && !common {
             Outcome::Stands
         } else {
             Outcome::Refuted
@@ -213,7 +191,7 @@ fn passage_index(value: &Value) -> Option<usize> {
 /// The parts of a reply, when it is one JSON object holding at least one, each
 /// with text and a kind, and every stated part naming one of the `shown`
 /// passages: a part that says where it is stated and does not is not read.
-fn read_bridge(text: &str, shown: usize) -> Option<BridgeOutcome> {
+pub(super) fn read_bridge(text: &str, shown: usize) -> Option<BridgeOutcome> {
     #[derive(Deserialize)]
     struct Reply {
         parts: Vec<Part>,
@@ -274,7 +252,7 @@ impl ClaimChecker<'_> {
         }
         let shown = passages.len();
         let (judgments, output_tokens) = self
-            .class_judged_counted(
+            .class_judged_counted::<ClaimParts, _>(
                 BRIDGE_SYSTEM,
                 &bridge_prompt(statement, passages),
                 &bridge_schema(),

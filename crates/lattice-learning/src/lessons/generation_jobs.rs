@@ -4,13 +4,15 @@
 use crate::{
     content_verification::Rounds,
     curriculum_repository::{lesson_failure, LearningCurriculumRepository},
-    dto::{LearningPreparation, LearningProgramStatus},
+    dto::LearningProgramStatus,
     model_requirements,
+    planning::preparation_request::PreparationRequest,
     repository::LearningRepository,
     service,
 };
 use futures::future::BoxFuture;
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::shared::protocol::Protocol;
 use lattice_core::{
     application::ports::llm_port::PinnedModel,
     shared::{
@@ -44,6 +46,8 @@ pub fn pinned_for_test(llm: Arc<dyn lattice_core::application::ports::LLMPort>) 
         degraded: None,
     }
 }
+
+pub(crate) const PREPARED: Protocol = lattice_core::protocol!("prepared", 2);
 
 /// A verified lesson with the digest of the course plan it was written from,
 /// saved together so a retry never pairs a lesson with a plan it was not
@@ -195,19 +199,7 @@ impl LessonGenerationWorker {
                 "This worker currently accepts bounded lesson-preparation jobs only.".into(),
             ));
         }
-        let requested_ids = context
-            .job()
-            .requested
-            .get("lessonIds")
-            .and_then(serde_json::Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(serde_json::Value::as_str)
-                    .map(str::to_string)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let requested = PreparationRequest::parse(&context.job().requested.to_string())?;
         let program_repo = LearningRepository::new(self.database.clone());
         let mut program = program_repo.get(&job.program_id).await?;
         if !repo.job_content_is_current(job_id).await? {
@@ -230,32 +222,18 @@ impl LessonGenerationWorker {
                 "No active source snapshots are available for lesson preparation.".into(),
             ));
         }
-        let mut candidates = program
+        let preparable = repo
+            .preparable_lessons(&job.program_id, &requested.lesson_ids)
+            .await?;
+        let candidates = program
             .modules
             .iter()
             .flat_map(|m| m.lessons.iter())
-            .filter(|lesson| {
-                lesson.preparation == LearningPreparation::Outline && !lesson.completed
-            })
+            .filter(|lesson| preparable.contains(&lesson.id))
             .collect::<Vec<_>>();
-        if !requested_ids.is_empty() {
-            if requested_ids.len() > 3 {
-                return Err(lattice_core::shared::error::AppError::InvalidInput(
-                    "A preparation job may target at most three upcoming lessons.".into(),
-                ));
-            }
-            candidates.retain(|lesson| requested_ids.contains(&lesson.id));
-            if candidates.len() != requested_ids.len() {
-                return Err(lattice_core::shared::error::AppError::InvalidInput(
-                    "A requested lesson is not an upcoming outline in this program.".into(),
-                ));
-            }
-        } else {
-            candidates.truncate(job.progress_total as usize);
-        }
-        if candidates.is_empty() || candidates.len() != job.progress_total as usize {
-            return Err(lattice_core::shared::error::AppError::InvalidInput(
-                "The job must target one to three outline lessons.".into(),
+        if candidates.is_empty() || candidates.len() != requested.lesson_ids.len() {
+            return Err(AppError::InvalidInput(
+                "A requested lesson is not an upcoming outline in this program.".into(),
             ));
         }
         if program.sources.is_empty() {
@@ -314,7 +292,7 @@ impl LessonGenerationWorker {
                         .map(|plan| plan_digest(&plan))
                         .transpose()?;
                 let saved = repo
-                    .lesson_checkpoint(job_id, &lesson.id, "prepared-v2")
+                    .lesson_checkpoint(job_id, &lesson.id, PREPARED.as_str())
                     .await?
                     .and_then(|value| serde_json::from_value::<PreparedCheckpoint>(value).ok())
                     .filter(|saved| current_plan.as_deref() == Some(saved.plan.as_str()))
@@ -391,7 +369,7 @@ impl LessonGenerationWorker {
                     let used_plan = plan_digest(&plan)?;
                     let written = match prepared {
                         Ok(prepared) => prepared,
-                        Err(error) => {
+                        Err(error @ AppError::LessonHeld(_)) => {
                             // A lesson whose claims wait for the user is held,
                             // not failed; the others still publish (§6.1).
                             let hold = crate::content_verification::held_for_review(
@@ -409,6 +387,7 @@ impl LessonGenerationWorker {
                             crate::lesson_progress::completed(completed_count);
                             continue;
                         }
+                        Err(error) => return Err(error),
                     };
                     (written, used_plan)
                 };
@@ -419,7 +398,7 @@ impl LessonGenerationWorker {
                 repo.save_lesson_checkpoint(
                     job_id,
                     &lesson.id,
-                    "prepared-v2",
+                    PREPARED.as_str(),
                     serde_json::to_value(PreparedCheckpoint {
                         plan: used_plan,
                         lesson: generated.clone(),

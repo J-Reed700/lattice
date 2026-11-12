@@ -3,13 +3,13 @@
 //! nothing; `identify` records it (acceptance design §2.10).
 
 use super::super::*;
-use super::fields::{field_text, locate};
-use super::{is_example, is_gone, successor, ClaimLedger, RepairRecord};
+use super::fields::{self, field_text, locate};
+use super::{is_example, successor, ClaimLedger, RepairRecord};
 use lattice_core::domain::learning::acceptance::{self, AcceptancePolicy, Goal, Outcome, Step};
 use lattice_core::domain::learning::claim_review::{
     identities, Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ExtractedClaim, RepairOutcome,
 };
-use lattice_core::shared::text::sentences;
+use lattice_core::shared::text::{same_text, sentences};
 
 /// Why a rewrite that left the sentence as it was is recorded as not used.
 const UNCHANGED: &str = "The repair left the sentence as it was.";
@@ -126,11 +126,9 @@ impl ClaimLedger {
             extracted.len() - located
         );
         for observation in executions {
-            let statement = example_statement(&observation.id);
-            let tracked = self
-                .entries
-                .iter()
-                .any(|entry| entry.statement() == statement && !is_gone(entry.state()));
+            let tracked = self.entries.iter().any(|entry| {
+                entry.code_example() == Some(observation.id.as_str()) && !entry.state().is_gone()
+            });
             if observation.passed() && !tracked {
                 continue;
             }
@@ -142,7 +140,7 @@ impl ClaimLedger {
                         observation.code(),
                         None,
                     ),
-                    statement,
+                    statement: example_statement(&observation.id),
                 },
                 class: None,
                 example: Some(observation.id.clone()),
@@ -182,7 +180,7 @@ impl ClaimLedger {
         let prior_ids: Vec<ClaimId> = self
             .entries
             .iter()
-            .filter(|entry| !is_gone(entry.state()) || self.edited_now.contains(entry.claim_id()))
+            .filter(|entry| !entry.state().is_gone() || self.edited_now.contains(entry.claim_id()))
             .map(|entry| entry.claim_id().clone())
             .collect();
         let texts: HashMap<(usize, String), String> = prior_ids
@@ -340,7 +338,8 @@ impl ClaimLedger {
                         },
                     )
                     .await?;
-                    self.start(&successor, claim, class).await?;
+                    self.start(&successor, claim, class, example.clone())
+                        .await?;
                     successor
                 }
                 Some(id)
@@ -372,17 +371,22 @@ impl ClaimLedger {
                         },
                     )
                     .await?;
-                    self.start(&successor, claim, held).await?;
+                    self.start(&successor, claim, held, example.clone()).await?;
                     successor
                 }
                 Some(id) => {
-                    self.carry_on(policy, candidate, &id, claim, class, records.get(&id))
-                        .await?;
+                    self.carry_on(
+                        policy,
+                        candidate,
+                        (&id, claim, class, example.clone()),
+                        records.get(&id),
+                    )
+                    .await?;
                     id
                 }
                 None => {
                     let id = ClaimId::generate();
-                    self.start(&id, claim, class).await?;
+                    self.start(&id, claim, class, example.clone()).await?;
                     if let Some(parent) = parent {
                         let attempts_left = budgets.get(&parent).copied().unwrap_or(0);
                         let born = ClaimEvent::BornOfRepair {
@@ -437,7 +441,7 @@ impl ClaimLedger {
     /// Whether the statement `id` still has its sentence in the lesson, in a
     /// section that stays: a code example's claim has none, and a section that
     /// goes takes its claims with it.
-    fn stands(&self, candidate: &Value, id: &ClaimId) -> bool {
+    pub(super) fn stands(&self, candidate: &Value, id: &ClaimId) -> bool {
         let Some(entry) = self.entry(id).filter(|entry| !is_example(entry)) else {
             return false;
         };
@@ -445,7 +449,7 @@ impl ClaimLedger {
         !self.cuts.going.contains_key(&at.unit_index)
             && !at.quote.trim().is_empty()
             && field_text(candidate, at.unit_index, &at.field)
-                .is_some_and(|text| text.contains(&at.quote))
+                .is_some_and(|text| same_text::stands(&text, &at.quote))
     }
 
     /// Whether the claim `id`, which a repair of another claim sent for as a
@@ -464,12 +468,12 @@ impl ClaimLedger {
         let Some(entry) = self.entry(id) else {
             return false;
         };
-        if entry.state().is_the_users_decision() || entry.classified().is_none() {
+        if entry.state().is_the_users_decision() || is_example(entry) {
             return false;
         }
         let location = entry.location();
         let standing = field_text(candidate, location.unit_index, &location.field)
-            .is_some_and(|text| text.contains(&record.before));
+            .is_some_and(|text| same_text::stands(&text, &record.before));
         !standing
     }
 
@@ -490,13 +494,17 @@ impl ClaimLedger {
             return None;
         }
         let entry = self.entry(id)?;
-        if entry.state().is_the_users_decision() || entry.classified().is_none() {
+        if entry.state().is_the_users_decision() || is_example(entry) {
             return None;
         }
         let location = entry.location();
         let holds = |lesson: &Value| {
-            field_text(lesson, location.unit_index, &location.field)
-                .is_some_and(|text| text.contains(&location.quote))
+            fields::stands(
+                lesson,
+                location.unit_index,
+                &location.field,
+                &location.quote,
+            )
         };
         if holds(candidate) || entry.statement() == statement {
             return None;
@@ -516,6 +524,7 @@ impl ClaimLedger {
         id: &ClaimId,
         claim: ExtractedClaim,
         class: Option<Classed>,
+        example: Option<String>,
     ) -> Result<()> {
         self.append(
             id,
@@ -525,7 +534,13 @@ impl ClaimLedger {
             },
         )
         .await?;
-        self.classify_claim(id, class).await
+        match example {
+            Some(observation) => self
+                .append(id, ClaimEvent::CodeExample { observation })
+                .await
+                .map(|_| ()),
+            None => self.classify_claim(id, class).await,
+        }
     }
 
     /// Records the class a claim was sorted into. A claim the ledger holds a
@@ -550,13 +565,11 @@ impl ClaimLedger {
         &mut self,
         policy: &dyn AcceptancePolicy,
         candidate: &Value,
-        id: &ClaimId,
-        claim: ExtractedClaim,
-        class: Option<Classed>,
+        (id, claim, class, example): (&ClaimId, ExtractedClaim, Option<Classed>, Option<String>),
         repair: Option<&RepairRecord>,
     ) -> Result<()> {
         let Some(before) = self.entry(id).cloned() else {
-            return self.start(id, claim, class).await;
+            return self.start(id, claim, class, example).await;
         };
         let quote = claim.location.quote.clone();
         if claim.location != *before.location() || claim.statement != before.statement() {
@@ -575,7 +588,7 @@ impl ClaimLedger {
         // A statement that rode on another's repair, and whose sentence stands,
         // has no outcome of its own to record.
         let decided = match repair {
-            Some(record) if record.rides_on.is_none() || before.classified().is_none() => {
+            Some(record) if record.rides_on.is_none() || is_example(&before) => {
                 self.record_repair(policy, candidate, id, record, &quote)
                     .await?
             }
@@ -597,7 +610,7 @@ impl ClaimLedger {
         self.entry(id).is_none_or(|entry| {
             let location = entry.location();
             field_text(candidate, location.unit_index, &location.field)
-                .is_none_or(|text| !text.contains(&record.before))
+                .is_none_or(|text| !same_text::stands(&text, &record.before))
         })
     }
 
@@ -742,7 +755,7 @@ impl ClaimLedger {
                 // record, and a decided claim's record moves nothing: either
                 // way it went with the sentence.
                 self.append(id, event).await?;
-                if self.entry(id).is_some_and(|entry| !is_gone(entry.state())) {
+                if self.entry(id).is_some_and(|entry| !entry.state().is_gone()) {
                     self.append(id, gone).await?;
                 }
             }
@@ -795,7 +808,7 @@ impl ClaimLedger {
             && self
                 .record_step(policy, id, Step::Cut, Outcome::Cut)
                 .await?;
-        if !stepped && self.entry(id).is_some_and(|entry| !is_gone(entry.state())) {
+        if !stepped && self.entry(id).is_some_and(|entry| !entry.state().is_gone()) {
             self.append(id, gone).await?;
         }
         Ok(())

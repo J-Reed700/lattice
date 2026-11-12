@@ -7,6 +7,9 @@ use crate::{
         LearningInterviewTargetDto,
     },
 };
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::{application::ports::LLMPort, shared::error::Result};
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -485,6 +488,12 @@ pub(super) fn unanswered_interview_feedback(
     })
 }
 
+struct InterviewPlan;
+impl Contract for InterviewPlan {
+    const ID: ContractId = ContractId::new("interview-plan");
+    type Input = PromptInput;
+}
+
 pub async fn generate_interview_plan(
     llm: &dyn LLMPort,
     target: &LearningInterviewTargetDto,
@@ -531,8 +540,13 @@ pub async fn generate_interview_plan(
     );
     let prompt = with_snapshots(llm, system, context, &company_sources, &query, 3_000).await?;
     // Validate semantics ourselves as providers do not all enforce JSON Schema.
+    let call = ContractCall::of::<InterviewPlan>(&PromptInput {
+        system: system.to_owned(),
+        prompt: prompt.clone(),
+    })?;
     crate::generation::complete_checked(
         llm,
+        &call,
         system,
         prompt,
         interview_plan_schema(round),

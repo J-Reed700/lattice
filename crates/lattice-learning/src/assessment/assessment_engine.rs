@@ -472,15 +472,15 @@ pub fn to_authored(
 }
 
 mod answers;
-mod checks;
+pub(crate) mod checks;
 mod scoring;
 #[cfg(test)]
 mod tests;
 
 pub use answers::{normalize_answer, parse_number, show_number, text_matches};
 pub use checks::{
-    cloze_blanks, distinct_options, key_fault, key_leaks, length_biased, longest_allowed_key,
-    repeated_option, validate_candidate, KeyFault, SINGLE_CHOICE_OPTIONS, TRUE_FALSE,
+    cloze_blanks, distinct_options, length_biased, longest_allowed_key, repeated_option,
+    validate_candidate, RUBRIC_CRITERIA, SINGLE_CHOICE_OPTIONS, TRUE_FALSE,
 };
 pub use scoring::{
     answer_hint, grade_keyed, key_reveal, part_results, KeyReveal, KeyedGrade, KeyedOutcome,

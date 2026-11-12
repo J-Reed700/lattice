@@ -382,13 +382,13 @@ fn the_writers_context_is_the_same_whether_or_not_earlier_lessons_are_ready() {
 
     for lesson in &mut program.modules[0].lessons[..4] {
         lesson.preparation = LearningPreparation::Ready;
-        lesson.blocks = vec![LearningBlockDto {
-            kind: LearningBlockKind::Recap,
-            title: "Recap".into(),
-            body: "Recap of what the lesson established.".into(),
-            source_ids: vec![],
-            rubric: vec![],
-        }];
+        lesson.blocks = vec![LearningBlockDto::new(
+            LearningBlockKind::Recap,
+            "Recap".into(),
+            "Recap of what the lesson established.".into(),
+            vec![],
+            vec![],
+        )];
     }
     let after = super::lesson::course_context(&program, &current, &plan);
 
@@ -576,20 +576,20 @@ async fn a_lesson_block_of_any_length_does_not_stop_recall_drafts() {
     let lesson = &mut program.modules[0].lessons[0];
     lesson.preparation = LearningPreparation::Ready;
     lesson.blocks = vec![
-        LearningBlockDto {
-            kind: LearningBlockKind::Explanation,
-            title: "A title that runs on and on. ".repeat(10),
-            body: "A body that runs on and on without a figure in it. ".repeat(150),
-            source_ids: vec![source_id.clone()],
-            rubric: vec![],
-        },
-        LearningBlockDto {
-            kind: LearningBlockKind::Recap,
-            title: "Go".into(),
-            body: "Ok".into(),
-            source_ids: vec![source_id],
-            rubric: vec![],
-        },
+        LearningBlockDto::new(
+            LearningBlockKind::Explanation,
+            "A title that runs on and on. ".repeat(10),
+            "A body that runs on and on without a figure in it. ".repeat(150),
+            vec![source_id.clone()],
+            vec![],
+        ),
+        LearningBlockDto::new(
+            LearningBlockKind::Recap,
+            "Go".into(),
+            "Ok".into(),
+            vec![source_id],
+            vec![],
+        ),
     ];
     let lesson_id = lesson.id.clone();
     let model = ScriptedModel {

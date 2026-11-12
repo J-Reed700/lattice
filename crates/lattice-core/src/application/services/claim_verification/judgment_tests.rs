@@ -94,3 +94,17 @@ async fn an_unreadable_batch_reply_is_corrected_once() {
     );
     assert_eq!(llm.sent().len(), 2);
 }
+
+#[tokio::test]
+async fn a_cancelled_judge_call_fails_the_check() {
+    let llm = Failing(|| AppError::Cancelled("The check was cancelled.".into()));
+    let judgment = ClaimChecker::new(
+        &llm,
+        SamplingOverride::deterministic(),
+        512,
+        CheckPolicy::Chat,
+    )
+    .check("Rust has a borrow checker.", &evidence())
+    .await;
+    assert!(matches!(judgment, ClaimJudgment::Failed(_)), "{judgment:?}");
+}

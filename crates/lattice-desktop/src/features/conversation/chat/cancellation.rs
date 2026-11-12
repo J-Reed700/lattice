@@ -185,12 +185,12 @@ impl TurnCancellationRegistry {
 const CANCELLED: &str = "Generation cancelled by user.";
 
 pub(super) fn cancelled_error() -> AppError {
-    AppError::InvalidState(CANCELLED.to_string())
+    AppError::Cancelled(CANCELLED.to_string())
 }
 
 /// Whether a turn ended because it was stopped, not because it failed.
 pub(super) fn is_cancellation(error: &AppError) -> bool {
-    matches!(error, AppError::InvalidState(message) if message == CANCELLED)
+    matches!(error, AppError::Cancelled(_))
 }
 
 #[cfg(test)]
