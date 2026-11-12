@@ -28,6 +28,9 @@ use super::runner::RunOutcome;
 use crate::generation::parse_json;
 use crate::lessons::structured_call::complete_checked;
 use async_trait::async_trait;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::domain::learning::drills::{
     apply, overlaps, pattern, Assessment, DecidedBy, Drill, DrillFile, FixOutcome, IssueCheck,
     IssueFix, IssueOutcome, KeyIssue, LineSpan, Origin, Proof, SuiteVerdict,
@@ -206,6 +209,12 @@ enum Verdict {
     Not,
 }
 
+struct FixJudgement;
+impl Contract for FixJudgement {
+    const ID: ContractId = ContractId::new("fix-judgement");
+    type Input = PromptInput;
+}
+
 #[async_trait]
 impl FixStrategy for JudgedFix<'_> {
     async fn grade(
@@ -218,8 +227,13 @@ impl FixStrategy for JudgedFix<'_> {
             None => (SYSTEM, task(case, issue)),
             Some(source) => (EXPLANATION_SYSTEM, explanation_task(case, issue, source)),
         };
+        let call = ContractCall::of::<FixJudgement>(&PromptInput {
+            system: system.to_owned(),
+            prompt: task.clone(),
+        })?;
         let judgement = complete_checked(
             self.tools.llm,
+            &call,
             system,
             task,
             schema(),

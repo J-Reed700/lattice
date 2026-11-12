@@ -5,6 +5,9 @@ use crate::drills::runner::{CodeRunner, RunOutcome};
 use crate::lessons::structured_call::{complete_checked_request, reask};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::domain::learning::drills::{DrillFile, Edit, EditFault};
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
@@ -16,6 +19,12 @@ pub(crate) struct Asked<V> {
     pub value: V,
 }
 
+struct DrillStageAsk;
+impl Contract for DrillStageAsk {
+    const ID: ContractId = ContractId::new("drill-stage-ask");
+    type Input = PromptInput;
+}
+
 /// Asks for `request` and reads the answer with `accept`. An answer `accept` refuses is asked for once more in the
 /// same conversation, with the reason; a second refusal fails with the second reason.
 pub(crate) async fn ask_request<V>(
@@ -23,7 +32,11 @@ pub(crate) async fn ask_request<V>(
     request: GroundedRequest,
     accept: impl Fn(&str) -> Result<V>,
 ) -> Result<Asked<V>> {
-    let (raw, value) = complete_checked_request(llm, request, None, None, |raw| {
+    let call = ContractCall::of::<DrillStageAsk>(&PromptInput {
+        system: request.instructions.clone(),
+        prompt: request.task.clone(),
+    })?;
+    let (raw, value) = complete_checked_request(llm, &call, request, None, None, |raw| {
         accept(raw).map(|value| (raw.to_owned(), value))
     })
     .await?;

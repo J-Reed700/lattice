@@ -17,6 +17,9 @@ use crate::{
 use futures::StreamExt;
 use lattice_core::application::contracts::web::WebSearchResult;
 use lattice_core::application::ports::WebServiceTrait;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
     application::ports::LLMPort,
@@ -118,6 +121,12 @@ fn malformed() -> AppError {
     AppError::InvalidInput("The reference plan was malformed; the draft was not started.".into())
 }
 
+struct OutlineReferencePlan;
+impl Contract for OutlineReferencePlan {
+    const ID: ContractId = ContractId::new("outline-reference-plan");
+    type Input = PromptInput;
+}
+
 /// One model call that breaks the goal into subtopics with public searches.
 /// Queries that copy the goal or prior knowledge are dropped, not failed; a
 /// plan left without any usable search is an error unless the planner saw
@@ -188,10 +197,17 @@ pub(crate) async fn plan(
         }
         Ok((plan, planned, dropped))
     };
+    let system = format!("{PLAN_SYSTEM} {}", web_research::NEED_GUIDE);
+    let prompt = payload.to_string();
+    let call = ContractCall::of::<OutlineReferencePlan>(&PromptInput {
+        system: system.clone(),
+        prompt: prompt.clone(),
+    })?;
     let (plan, planned, dropped) = crate::generation::complete_checked(
         llm,
-        &format!("{PLAN_SYSTEM} {}", web_research::NEED_GUIDE),
-        payload.to_string(),
+        &call,
+        &system,
+        prompt,
         schema,
         // A subtopic's title and its searches, each now carrying its kind
         // and subject beside the query.

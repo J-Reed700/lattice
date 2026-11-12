@@ -3,6 +3,9 @@ use super::{
     invalid, validate_files, FileJson, GeneratedPracticalFile, PracticalFileRole,
     PracticalRuntimeContext,
 };
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::{application::ports::LLMPort, shared::error::Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -91,6 +94,14 @@ pub(super) fn check_python_line_quotes(path: &str, content: &str) -> Result<()> 
     Ok(())
 }
 
+const EVALUATOR_SYSTEM: &str = "Author only independent evaluator files for this public practical brief and exact executionEnvironment. evaluatorPaths are app-owned required filenames; use those paths exactly and include every listed file. Every publicFiles path belongs to the learner workspace: never emit, copy or replace it. Import the learner's supplied interface and assert the stated behavior and edge cases with 4 to 6 concise, syntactically valid test cases. A failing check is the learner's feedback, so name each test for the behavior it checks and give each assertion a message stating the expected behavior and the observed value, without revealing how to implement it. In Python files, use double-quoted string literals with backslash-escaped quotes instead of single-quoted strings containing double quotes. Use only supported language versions and available dependencies. Assertions must fail nonzero; zero checks cannot count as success. Do not include a solution or reference implementation, derive expected output from hidden solution text, use networking, or execute a host shell.";
+
+struct PracticalEvaluator;
+impl Contract for PracticalEvaluator {
+    const ID: ContractId = ContractId::new("practical-evaluator");
+    type Input = PromptInput;
+}
+
 pub(super) async fn generate(
     llm: &dyn LLMPort,
     brief: &str,
@@ -114,10 +125,17 @@ pub(super) async fn generate(
         .iter()
         .map(|file| file.path.as_str())
         .collect::<HashSet<_>>();
+    let prompt = json!({"brief":brief,"publicFiles":public_files,"executionEnvironment":runtime})
+        .to_string();
+    let call = ContractCall::of::<PracticalEvaluator>(&PromptInput {
+        system: EVALUATOR_SYSTEM.to_owned(),
+        prompt: prompt.clone(),
+    })?;
     crate::generation::complete_checked(
         llm,
-        "Author only independent evaluator files for this public practical brief and exact executionEnvironment. evaluatorPaths are app-owned required filenames; use those paths exactly and include every listed file. Every publicFiles path belongs to the learner workspace: never emit, copy or replace it. Import the learner's supplied interface and assert the stated behavior and edge cases with 4 to 6 concise, syntactically valid test cases. A failing check is the learner's feedback, so name each test for the behavior it checks and give each assertion a message stating the expected behavior and the observed value, without revealing how to implement it. In Python files, use double-quoted string literals with backslash-escaped quotes instead of single-quoted strings containing double quotes. Use only supported language versions and available dependencies. Assertions must fail nonzero; zero checks cannot count as success. Do not include a solution or reference implementation, derive expected output from hidden solution text, use networking, or execute a host shell.",
-        json!({"brief":brief,"publicFiles":public_files,"executionEnvironment":runtime}).to_string(),
+        &call,
+        EVALUATOR_SYSTEM,
+        prompt,
         schema(runtime), 2_500, None, None,
         |raw| {
             let checks: ChecksJson = serde_json::from_str(raw).map_err(|_| invalid("The model returned malformed evaluator JSON."))?;

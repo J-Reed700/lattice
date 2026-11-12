@@ -37,6 +37,9 @@ use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, InferencePriority, SamplingOverride,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::{
+    tagged, Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::domain::conversation::memory::{
     MemoryCommit, MemorySnapshot, MemoryValidationError, SummaryRefold,
 };
@@ -260,6 +263,46 @@ impl Deadline {
     }
 }
 
+struct MemoryExtractor;
+impl Contract for MemoryExtractor {
+    const ID: ContractId = ContractId::new("memory-extractor");
+    type Input = PromptInput;
+}
+
+struct MemoryVerifier;
+impl Contract for MemoryVerifier {
+    const ID: ContractId = ContractId::new("memory-verifier");
+    type Input = PromptInput;
+}
+
+struct MemorySummarizer;
+impl Contract for MemorySummarizer {
+    const ID: ContractId = ContractId::new("memory-summarizer");
+    type Input = PromptInput;
+}
+
+struct MemoryUtility;
+impl Contract for MemoryUtility {
+    const ID: ContractId = ContractId::new("memory-utility");
+    type Input = PromptInput;
+}
+
+fn contract_call(system: &str, prompt: &str) -> std::result::Result<ContractCall, AppError> {
+    let input = PromptInput {
+        system: system.to_string(),
+        prompt: prompt.to_string(),
+    };
+    if system == prompts::EXTRACTOR_SYSTEM {
+        ContractCall::of::<MemoryExtractor>(&input)
+    } else if system == prompts::VERIFIER_SYSTEM {
+        ContractCall::of::<MemoryVerifier>(&input)
+    } else if system == prompts::SUMMARIZER_SYSTEM {
+        ContractCall::of::<MemorySummarizer>(&input)
+    } else {
+        ContractCall::of::<MemoryUtility>(&input)
+    }
+}
+
 /// Run one prompt against the utility model inside the shared deadline.
 ///
 /// The request carries the JSON schema, which lets a provider reject a
@@ -302,6 +345,7 @@ async fn complete_json_within(
     } else {
         "other_model_call"
     };
+    let contract = contract_call(system, &prompt)?;
     let started = std::time::Instant::now();
     tracing::info!(
         phase,
@@ -337,7 +381,8 @@ async fn complete_json_within(
         cache_key: deadline.cache_key.clone(),
         ..Default::default()
     };
-    let call = llm.complete(&request);
+    let tagged_llm = tagged(llm, &contract);
+    let call = tagged_llm.complete(&request);
 
     let bounded = async {
         match remaining {
