@@ -2,6 +2,7 @@
 //! reading, the policy's decision on it and the state that follows, a change
 //! of class, and the fault of a check that disagrees with the outcome.
 use super::super::class_checks::finding_of;
+use super::super::provenance_gate::FindingTrust;
 use super::super::readings::driver::ReadStep;
 use super::super::readings::Read;
 use super::bridge_tests::{
@@ -21,7 +22,7 @@ use lattice_core::domain::learning::claim_review::{
     text_sha256, Actor, Check, CheckResult, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation,
     ClaimState, EvidenceFingerprint, EvidenceSeen, UnitKind, VerdictKind,
 };
-use lattice_core::domain::provenance::ClaimKind;
+use lattice_core::domain::provenance::{ClaimKind, ClaimProfile, Decision, TemporalScope};
 
 const SENTENCE: &str = "The reader hands over one row at a time.";
 const PASSAGE: &str = "The reader hands over one row at a time, as a dict.";
