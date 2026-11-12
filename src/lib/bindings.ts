@@ -8313,7 +8313,7 @@ endedByUpdate?: boolean;
 /**
  * The lessons the job prepares, in course order.
  */
-lessonIds?: string[]; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
+lessonIds?: string[]; heldLessonIds?: string[]; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
 export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity" |
 /**

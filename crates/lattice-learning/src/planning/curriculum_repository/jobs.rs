@@ -741,6 +741,11 @@ fn learning_job(job: JobRecord, scope: JobScope) -> Result<LearningGenerationJob
     } else {
         Vec::new()
     };
+    let held_lesson_ids = job
+        .result_ref
+        .as_deref()
+        .and_then(crate::content_verification::held_lessons)
+        .unwrap_or_default();
     let job = LearningGenerationJob {
         id: job.id,
         program_id: scope.program_id,
@@ -771,6 +776,7 @@ fn learning_job(job: JobRecord, scope: JobScope) -> Result<LearningGenerationJob
             .and_then(|code| serde_json::from_value(serde_json::Value::String(code)).ok()),
         ended_by_update,
         lesson_ids,
+        held_lesson_ids,
         retry_of_job_id: job.retry_of_job_id,
         created_at: job.created_at,
         started_at: job.started_at,
