@@ -20,7 +20,9 @@ use windows::Win32::System::Threading::{
     OpenThread, ResumeThread, CREATE_NO_WINDOW, CREATE_SUSPENDED, THREAD_SUSPEND_RESUME,
 };
 
-/// The job handle, or why it could not be made. Never closed: it lives until the process ends.
+// global-state: the job is the process's own; only the process's end closes it, and that
+// ends every child in it.
+/// The job handle, or why it could not be made.
 static JOB: OnceLock<Result<isize, String>> = OnceLock::new();
 
 fn windows_error(what: &str, error: windows::core::Error) -> io::Error {

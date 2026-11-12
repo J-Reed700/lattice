@@ -51,6 +51,14 @@ impl SidecarBinary {
             &[Self::Primary]
         }
     }
+
+    /// Where this platform's bundled builds are installed, the accelerated one first.
+    pub fn installed_paths() -> Vec<PathBuf> {
+        Self::bundled()
+            .iter()
+            .filter_map(|binary| binary.installed_path().ok())
+            .collect()
+    }
 }
 
 /// Configuration for spawning a llama-server sidecar.

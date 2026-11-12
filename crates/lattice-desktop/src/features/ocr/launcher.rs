@@ -17,7 +17,6 @@ use tracing::warn;
 
 use super::model::OcrModel;
 use super::server::{RunningServer, ServerLauncher, ServerProcess};
-use crate::features::llm::engine::sidecar_manager::SidecarBinary;
 use lattice_core::application::ports::OcrError;
 use lattice_core::shared::process::BoundCommand;
 
@@ -41,21 +40,13 @@ pub struct LlamaServerLauncher {
 }
 
 impl LlamaServerLauncher {
-    /// The builds bundled next to the app executable.
-    pub fn bundled() -> Self {
-        let binaries = [SidecarBinary::Primary, SidecarBinary::Cpu]
-            .into_iter()
-            .filter_map(|binary| binary.installed_path().ok())
-            .collect();
-        Self::with_binaries(binaries)
-    }
-
     /// One explicit binary.
     pub fn with_binary(binary: PathBuf) -> Self {
         Self::with_binaries(vec![binary])
     }
 
-    fn with_binaries(binaries: Vec<PathBuf>) -> Self {
+    /// Builds to try in order: the first with GPU offload, the rest without.
+    pub fn with_binaries(binaries: Vec<PathBuf>) -> Self {
         Self {
             binaries,
             port: None,

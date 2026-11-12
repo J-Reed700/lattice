@@ -16,6 +16,8 @@ struct Job {
     reply: oneshot::Sender<io::Result<Child>>,
 }
 
+// global-state: PDEATHSIG fires when the forking thread ends, so every spawn forks on one
+// thread that lives as long as the process.
 static SPAWNER: OnceLock<Result<mpsc::Sender<Job>, String>> = OnceLock::new();
 
 fn start_spawner() -> Result<mpsc::Sender<Job>, String> {
