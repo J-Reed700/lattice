@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({ plan: vi.fn(), review: vi.fn(), index: vi.fn() }
 vi.mock('@/lib/api', () => ({ default: {
   getLearningPlan: api.plan, getLearningLessonClaimReview: api.review, getLearningLessonEvidence: async () => ({ ok: true, data: null }),
   courseIndexStatus: api.index,
+  getLearningRecallWorkspace: async () => ({ ok: true, data: { programId: 'program-1', cards: [], duplicates: [], dueCount: 0, schedulerDisclosure: '' } }),
 } }));
 vi.mock('@/features/learning/tangents/StudyTangentSelection', () => ({
   StudyTangentSelection: ({ children }: { children: ReactNode }) => children,
@@ -162,5 +163,19 @@ describe('Lesson card review state', () => {
     </MemoryRouter></QueryClientProvider>);
     expect(await screen.findByRole('button', { name: 'Listen to the section “Boiling”' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Listen to the section “Key takeaways”' })).toBeVisible();
+  });
+
+  it('renders a check from the block’s own split, not from its body', async () => {
+    api.plan.mockResolvedValue({ ok: true, data: { jobs: [] } });
+    api.review.mockResolvedValue(noReview);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const blocks = [
+      { kind: 'check', title: 'Check', body: 'A sealed jar is carried up a mountain. It bulges.', sourceIds: [], check: { question: 'A sealed jar is carried up a mountain.', reveal: 'It bulges.' } },
+    ] as unknown as LearningLessonDto['blocks'];
+    render(<QueryClientProvider client={client}><MemoryRouter>
+      <LessonCard lesson={{ ...lesson, preparation: 'ready', blocks }} moduleId="module-1" program={program} isCurrent selected={false} pending={false}
+        onPrepare={vi.fn()} onComplete={vi.fn()} onSelect={vi.fn()} onPractice={vi.fn()} />
+    </MemoryRouter></QueryClientProvider>);
+    expect(await screen.findByRole('button', { name: 'Check my thinking' })).toBeVisible();
   });
 });
