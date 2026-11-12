@@ -13,7 +13,7 @@ use lattice_core::domain::learning::claim_review::{
 };
 
 use super::actions::{in_section_body, whole_sentence};
-use super::published_edit::{gone, placed};
+use super::published_edit::placed;
 use super::published_restore::undoable_in_published;
 use super::teaching_findings::{
     TeachingFindingDto, TeachingFindingSiteDto, TeachingFindingStateDto, TeachingResolutionDto,
@@ -67,7 +67,7 @@ pub(super) fn name_claims(
             .claims
             .iter()
             .filter(in_unit)
-            .filter(|entry| !gone(entry))
+            .filter(|entry| !entry.state().is_gone())
             .filter(|entry| {
                 placed(entry, body)
                     .and_then(|(start, end)| body.get(start..end))

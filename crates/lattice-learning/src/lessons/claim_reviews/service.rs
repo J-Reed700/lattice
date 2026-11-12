@@ -364,8 +364,8 @@ impl ClaimReviewService {
             ));
         }
 
-        let (ended, moved) = self.remove_sentences(&review, &ledger, &chosen).await?;
-        let mut revision = Revision(expected_revision + 1);
+        let (ended, moved, mut revision) =
+            self.remove_sentences(&review, &ledger, &chosen).await?;
         if self.redecide(lesson_id, moved).await? {
             revision = self.store.load(lesson_id).await?.revision;
         }
@@ -378,13 +378,14 @@ impl ClaimReviewService {
     /// Takes the chosen notes' sentences out of the published text, ends the
     /// claims they stood on and settles what the removals give the checker
     /// examples and calibration, in one unit of work under the ledger's
-    /// revision. Returns the claims it ended and the kinds whose bar moved.
+    /// revision. Returns the claims it ended, the kinds whose bar moved and
+    /// the revision it left.
     async fn remove_sentences(
         &self,
         review: &LessonReview,
         ledger: &Ledger,
         chosen: &[&TeachingFindingDto],
-    ) -> Result<(Vec<ClaimId>, Vec<ClaimKind>)> {
+    ) -> Result<(Vec<ClaimId>, Vec<ClaimKind>, Revision)> {
         let lesson_id = ledger.lesson_id.as_str();
         let user = provenance(review);
         let mut tx = self.database.begin_write().await.map_err(db)?;
@@ -432,7 +433,7 @@ impl ClaimReviewService {
                 }
             }
         }
-        bump_revision(&mut tx, lesson_id).await?;
+        let written = bump_revision(&mut tx, lesson_id).await?;
         let mut moved = Vec::new();
         for id in &through_claims {
             if let Some(entry) = ledger.claims.iter().find(|entry| entry.claim_id() == id) {
@@ -444,7 +445,7 @@ impl ClaimReviewService {
             }
         }
         tx.commit().await.map_err(db)?;
-        Ok((ended, moved))
+        Ok((ended, moved, written))
     }
 
     /// One claim's action checked against the claim and, in a published
@@ -567,14 +568,14 @@ impl ClaimReviewService {
                 }
             }
         }
-        bump_revision(&mut tx, lesson_id).await?;
+        let written = bump_revision(&mut tx, lesson_id).await?;
         let mut moved = Vec::new();
         for item in planned {
             let kinds = self.settle_in(&mut tx, review, lesson_id, item).await?;
             add_kinds(&mut moved, kinds);
         }
         tx.commit().await.map_err(db)?;
-        Ok((Revision(revision.0 + 1), moved))
+        Ok((written, moved))
     }
 
     /// Whether claim activity or a different checker gives verification new

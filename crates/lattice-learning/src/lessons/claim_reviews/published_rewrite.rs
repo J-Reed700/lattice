@@ -6,7 +6,7 @@ use std::ops::Range;
 use lattice_core::domain::learning::claim_review::{ClaimId, ClaimLedgerEntry, UnitKind};
 use lattice_core::shared::text::segmentation::{common_subsequence, sentences};
 
-use super::published_edit::{gone, placed};
+use super::published_edit::placed;
 
 /// A run of sentences that differ between the old and new text, as index
 /// ranges into each text's sentences; either side may be empty.
@@ -79,29 +79,18 @@ pub(super) struct Written {
     pub successor: ClaimId,
 }
 
-/// The kind of unit a field belongs to: a question's prompt and choices, its
-/// answer key's explanation and choice reasons, else a section's field.
-fn unit_kind_of(field: &str) -> UnitKind {
-    match field {
-        "prompt" => UnitKind::Question,
-        "explanation" => UnitKind::AnswerKey,
-        _ if field.starts_with("rationales/") => UnitKind::AnswerKey,
-        _ if field.starts_with("options/") => UnitKind::Question,
-        _ => UnitKind::Block,
-    }
-}
-
 /// What rewriting `field` of unit `unit` from `old` to `new` does to the
 /// claims on it; claims of other units or fields, and claims that already
 /// ended, are left out.
 pub(super) fn plan(
     claims: &[ClaimLedgerEntry],
     unit: usize,
+    section: bool,
     field: &str,
     old: &str,
     new: &str,
 ) -> FieldPlan {
-    let unit_kind = unit_kind_of(field);
+    let unit_kind = UnitKind::of(section, field);
     let (old_spans, new_spans) = (sentences(old), sentences(new));
     let found = hunks(&compared(old, &old_spans), &compared(new, &new_spans));
     let mut written = Vec::new();
@@ -131,7 +120,7 @@ pub(super) fn plan(
         if location.unit_kind != unit_kind
             || location.unit_index != unit
             || location.field != field
-            || gone(entry)
+            || entry.state().is_gone()
         {
             continue;
         }

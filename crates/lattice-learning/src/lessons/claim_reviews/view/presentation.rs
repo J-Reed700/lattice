@@ -12,6 +12,7 @@ use serde_json::Value;
 
 use super::super::dto::{ClaimPresentationDto, ResearchSummaryDto};
 use super::SourceFacts;
+use crate::lessons::claim_reviews::count;
 use crate::content_verification::{field_text, located_quote};
 
 /// Whether the machine took the statement's text out of the lesson: what
@@ -80,7 +81,6 @@ pub(super) fn tried(
     entry: &ClaimLedgerEntry,
     sources: &HashMap<String, SourceFacts>,
 ) -> ResearchSummaryDto {
-    let count = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
     let mut searches = 0;
     // Each saved version with when research last saved it.
     let mut saved: HashMap<&str, i64> = HashMap::new();

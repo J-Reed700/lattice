@@ -143,9 +143,9 @@ impl ClaimReviewStore for ClaimReviewRepository {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         check_revision(&mut tx, lesson_id, expected_revision).await?;
         append_in(&mut tx, lesson_id, claim_id, provenance, event).await?;
-        bump_revision(&mut tx, lesson_id).await?;
+        let revision = bump_revision(&mut tx, lesson_id).await?;
         tx.commit().await.map_err(db)?;
-        Ok(Revision(expected_revision.0 + 1))
+        Ok(revision)
     }
 
     async fn set_lesson_review(&self, lesson_id: &str, review: LessonReview) -> Result<Revision> {
@@ -257,13 +257,18 @@ pub(super) async fn check_revision(
 pub(super) async fn bump_revision(
     connection: &mut SqliteConnection,
     lesson_id: &str,
-) -> Result<()> {
-    sqlx::query("UPDATE learning_lesson_reviews SET revision=revision+1 WHERE lesson_id=?")
-        .bind(lesson_id)
-        .execute(&mut *connection)
-        .await
-        .map_err(db)?;
-    Ok(())
+) -> Result<Revision> {
+    sqlx::query_scalar::<_, i64>(
+        "UPDATE learning_lesson_reviews SET revision=revision+1 WHERE lesson_id=? RETURNING revision",
+    )
+    .bind(lesson_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(db)?
+    .map(Revision)
+    .ok_or_else(|| {
+        AppError::InvalidState("This lesson has no statement review to record into.".into())
+    })
 }
 
 /// Writes one event of one claim on `connection`, without the revision

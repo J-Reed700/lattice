@@ -11,6 +11,7 @@ use lattice_core::domain::provenance::OverrideScope;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::Database;
 
+use super::count;
 use super::trust_changed::{override_changed, Redecidable, Redecided};
 use crate::dto::{
     GetLearningSourceTrustRequestDto, LearningSourceTrustEntryDto, LearningSourceTrustViewDto,
@@ -21,10 +22,6 @@ use crate::dto::{
 use crate::references::trust::overrides::{self, preview, CoveredVersion, TrustChange};
 use crate::references::trust::repository::unix_seconds;
 use crate::references::trust::{dto_map, source_view, SqliteSourceTrustStore};
-
-fn count(value: usize) -> u32 {
-    u32::try_from(value).unwrap_or(u32::MAX)
-}
 
 /// The trust view a request asks for; with `include_impact`, each source
 /// (and each of the claim's supports) says what an override of the source,

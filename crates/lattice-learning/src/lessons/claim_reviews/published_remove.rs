@@ -8,14 +8,14 @@ use std::collections::HashSet;
 
 use lattice_core::domain::learning::claim_review::{
     span_of, Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, EventProvenance,
-    UnitKind, UnverifiedReason, UserAction,
+    UnitKind, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::WriteTx;
 use lattice_core::shared::text::segmentation::sentences;
 
 use super::actions::{in_section_body, ONLY_SECTION};
-use super::published_edit::{gone, placed, section_body, update_report, CHANGED};
+use super::published_edit::{placed, section_body, update_report, user_sentence_in, CHANGED};
 use super::repository::{append_in, blocks, load_in};
 use crate::content_verification::TakenOut;
 
@@ -172,7 +172,7 @@ pub(super) async fn remove_in(
             entry.claim_id() == claim_id
                 || (in_section_body(entry)
                     && entry.location().unit_index == unit
-                    && !gone(entry)
+                    && !entry.state().is_gone()
                     && placed(entry, &body)
                         .is_some_and(|(start, end)| start < range.1 && range.0 < end))
         })
@@ -241,21 +241,7 @@ pub(super) async fn remove_sentence_in(
         quote: sentence.into(),
         span: Some(span),
     };
-    let machine = EventProvenance {
-        actor: Actor::Machine,
-        ..user.clone()
-    };
-    for event in [
-        ClaimEvent::Extracted {
-            location,
-            statement: sentence.into(),
-        },
-        ClaimEvent::PublishedUnverified {
-            reason: UnverifiedReason::Unchecked,
-        },
-    ] {
-        append_in(connection, lesson_id, &claim_id, machine.clone(), event).await?;
-    }
+    user_sentence_in(connection, lesson_id, &claim_id, location, user).await?;
     let ended = remove_in(connection, lesson_id, &claim_id, user).await?;
     Ok((claim_id, ended))
 }

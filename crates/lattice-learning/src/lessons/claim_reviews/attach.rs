@@ -32,6 +32,7 @@ use self::report::{
     ClaimAttachProgressDto, ClaimAttachReportDto, OtherClaimsCheckedDto, PutBackOutcomeDto,
 };
 use super::checker_examples::CheckerExamples;
+use super::count;
 use super::dto::AttachEvidenceDto;
 use super::repository::{ClaimReviewRepository, ShownPassage};
 use super::trust_changed::{redecide_kinds, Redecided};
@@ -664,8 +665,4 @@ pub(super) async fn check_others(
         }
     }
     Ok((tally, revision))
-}
-
-fn count(value: usize) -> u32 {
-    u32::try_from(value).unwrap_or(u32::MAX)
 }
