@@ -26,7 +26,7 @@ mod teaching;
 mod unverified;
 
 pub(super) use audit::Audited;
-pub(super) use cotenancy::{sentences, CutOf};
+pub(super) use cotenancy::CutOf;
 pub(super) use faults::contain;
 pub(crate) use faults::StatementFault;
 pub(super) use position::StepKind;
@@ -314,6 +314,17 @@ impl ClaimLedger {
         &self.findings
     }
 
+    /// The sections the latest observed findings stand in.
+    pub(super) fn finding_sections(&self) -> u32 {
+        let sections: HashSet<usize> = self
+            .findings
+            .iter()
+            .filter_map(|id| self.entry(id))
+            .map(|entry| entry.location().unit_index)
+            .collect();
+        u32::try_from(sections.len()).unwrap_or(u32::MAX)
+    }
+
     async fn write_review(
         &mut self,
         state: LessonReviewState,
@@ -536,16 +547,11 @@ impl ClaimLedger {
             .count()
     }
 
-    /// What the next pass keeps of the ledger: whether it is a later pass, the
-    /// lesson as it was before the repairs or edits, and the place in its
-    /// graph of each statement the ledger holds (acceptance design §2.9).
-    pub(super) fn rewrites(&self, policy: &dyn AcceptancePolicy) -> Rewrites {
-        Rewrites::new(
-            !self.entries.is_empty(),
-            self.pending.previous.clone(),
-            self.walks(policy),
-        )
-        .holding(self.held())
+    /// What the next pass keeps of the ledger: whether it is a later pass and
+    /// the lesson as it was before the repairs or edits (acceptance design
+    /// §2.9).
+    pub(super) fn rewrites(&self) -> Rewrites {
+        Rewrites::new(!self.entries.is_empty(), self.pending.previous.clone()).holding(self.held())
     }
 
     /// The claims of the statements neither the user nor the machine has

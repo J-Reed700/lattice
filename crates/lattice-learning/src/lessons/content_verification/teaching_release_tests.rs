@@ -5,7 +5,7 @@ use super::acceptance_switch_tests::{claim, identified, lesson_of, node_of, open
 use super::class_checks_tests::Classes;
 use super::round::Unsettled;
 use super::*;
-use crate::lessons::call_plan::CallPlan;
+use crate::lessons::call_plan::{CallPlan, Joining};
 use lattice_core::domain::learning::acceptance::{Goal, Outcome, Reading, Step};
 use lattice_core::domain::learning::claim_review::{
     Actor, AttachOutcome, Check, CheckResult, Checker, ClaimEvent, ClaimState, EvidenceFingerprint,
@@ -179,11 +179,16 @@ async fn the_plan_holds_the_reading_of_a_lone_statements_teaching_rewrite() -> R
     let mut ledger = open().await?;
     let id = claim(&mut ledger, "reader", (FIRST, FIRST), FIRST, REASONED).await?;
     let lone = std::slice::from_ref(&id);
-    let mut plan = CallPlan::new(
-        &policy,
-        &ledger.planned(&policy, &lesson_of(FIRST), lone),
-        0,
-    );
+    let mut plan = CallPlan::empty(0);
+    let joining: Vec<Joining> = ledger
+        .planned(&policy, &lesson_of(FIRST), lone)
+        .into_iter()
+        .map(|planned| Joining {
+            planned,
+            beside: Vec::new(),
+        })
+        .collect();
+    plan.take_in(&policy, &joining);
     walk(
         &mut ledger,
         &id,

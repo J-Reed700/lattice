@@ -2101,7 +2101,7 @@ async fn a_claim_whose_sentence_still_stands_is_not_ended_removed_because_no_ext
     // The next pass: its extraction names no claim for a sentence the draft
     // still holds.
     let checks = ClaimChecks {
-        rewrites: ledger.rewrites(&policy),
+        rewrites: ledger.rewrites(),
         ..ClaimChecks::default()
     };
     let extraction =
@@ -2207,7 +2207,7 @@ async fn a_full_extraction_that_misses_a_claim_whose_sentence_stands_carries_it_
     let read = passage_finding(CELL, ATP, true, CELL_SOURCE);
     stood(&mut ledger, &id, SOURCED.0, (Reading::Parts, read)).await?;
     let checks = ClaimChecks {
-        rewrites: ledger.rewrites(&policy),
+        rewrites: ledger.rewrites(),
         ..ClaimChecks::default()
     };
 
@@ -2246,7 +2246,7 @@ async fn a_claim_whose_sentence_is_gone_is_not_carried_by_the_extraction() -> Re
     claim(&mut ledger, "atp", (ATP_SENTENCE, ATP), CELL, SOURCED).await?;
     let cut = cell_lesson(&CELL.replace(&format!("{ATP_SENTENCE} "), ""));
     let checks = ClaimChecks {
-        rewrites: ledger.rewrites(&policy),
+        rewrites: ledger.rewrites(),
         ..ClaimChecks::default()
     };
 
@@ -2270,7 +2270,7 @@ async fn a_claim_the_extraction_words_differently_on_its_sentence_is_continued_n
     let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
     claim(&mut ledger, "atp", (ATP_SENTENCE, ATP), CELL, SOURCED).await?;
     let checks = ClaimChecks {
-        rewrites: ledger.rewrites(&policy),
+        rewrites: ledger.rewrites(),
         ..ClaimChecks::default()
     };
 
@@ -2308,7 +2308,7 @@ async fn two_claims_on_one_sentence_are_both_kept_when_the_extraction_names_one(
     )
     .await?;
     let checks = ClaimChecks {
-        rewrites: ledger.rewrites(&policy),
+        rewrites: ledger.rewrites(),
         ..ClaimChecks::default()
     };
 

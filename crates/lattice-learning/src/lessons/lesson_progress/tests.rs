@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::panic)]
 use super::*;
-use crate::lessons::call_plan::PlannedAt;
+use crate::lessons::call_plan::{Joining, PlannedAt};
 use lattice_core::application::services::model_contract::{
     Contract, ContractCall, ContractId, PromptInput,
 };
@@ -207,19 +207,25 @@ async fn calls_are_counted_and_the_ceiling_appears_once_the_statements_are_sorte
             );
 
             let policy = StandardPolicy::new();
-            let alone = |class, at| Planned {
-                class,
-                at,
-                sentence: None,
+            let alone = |class, at| Planned { class, at };
+            let joining = |class| Joining {
+                planned: alone(class, PlannedAt::Entry),
+                beside: Vec::new(),
             };
-            let statements = [
-                alone(Class::Sourced, PlannedAt::Entry),
-                alone(Class::Common, PlannedAt::Entry),
-                alone(Class::Common, PlannedAt::Entry),
-            ];
+            let claims = ["first", "second", "third"].map(|name| ClaimId(name.into()));
             assert_eq!(progress.snapshot().2.statements, None);
-            calls_planned(&policy, &statements, 1);
-            // The plan is what the statements were sorted into.
+            statements_moved(
+                &policy,
+                1,
+                &claims,
+                &[],
+                &[
+                    joining(Class::Sourced),
+                    joining(Class::Common),
+                    joining(Class::Common),
+                ],
+            );
+            // The plan is what the statements are in.
             assert_eq!(
                 progress.snapshot().2.statements,
                 Some(LearningStatementPlan {
@@ -232,13 +238,20 @@ async fn calls_are_counted_and_the_ceiling_appears_once_the_statements_are_sorte
             // statement from its entry (19 for the Sourced one, 19 for
             // each Common one) and the flow repair of the section (1).
             assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(59));
-            calls_planned(&policy, &[], 0);
+            // Naming the same statements again, where they were, changes nothing.
+            let entry = [
+                alone(Class::Sourced, PlannedAt::Entry),
+                alone(Class::Common, PlannedAt::Entry),
+                alone(Class::Common, PlannedAt::Entry),
+            ];
+            statements_moved(&policy, 1, &claims, &entry, &[]);
             assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(59));
 
             // The Sourced statement is resolved: its path is over.
             statements_moved(
                 &policy,
-                &[],
+                1,
+                &claims,
                 &[alone(Class::Sourced, PlannedAt::Ended(None))],
                 &[],
             );
@@ -264,11 +277,18 @@ fn a_ceiling_that_goes_up_is_counted_and_one_that_comes_down_is_not() {
     let sourced = |at| Planned {
         class: Class::Sourced,
         at,
-        sentence: None,
     };
+    let mut plan = CallPlan::empty(1);
+    plan.take_in(
+        &policy,
+        &[Joining {
+            planned: sourced(PlannedAt::Entry),
+            beside: Vec::new(),
+        }],
+    );
     // The sort made one call.
     let mut state = State {
-        plan: Some(CallPlan::new(&policy, &[sourced(PlannedAt::Entry)], 1)),
+        plan: Some(plan),
         activity: LearningGenerationActivity {
             model_calls: 1,
             ..Default::default()
@@ -307,11 +327,21 @@ async fn a_flow_repair_with_its_call_leaves_the_ceiling_where_it_was_and_one_wit
             let statement = |at| Planned {
                 class: Class::Sourced,
                 at,
-                sentence: None,
             };
             let ceiling = || progress.snapshot().2.model_calls_ceiling;
-            calls_planned(&policy, &[statement(PlannedAt::Entry)], 2);
-            statements_moved(&policy, &[], &[statement(PlannedAt::Ended(None))], &[]);
+            let claim = [ClaimId("only".into())];
+            let joining = Joining {
+                planned: statement(PlannedAt::Entry),
+                beside: Vec::new(),
+            };
+            statements_moved(&policy, 2, &claim, &[], &[joining]);
+            statements_moved(
+                &policy,
+                2,
+                &claim,
+                &[statement(PlannedAt::Ended(None))],
+                &[],
+            );
             cuts_known(2);
             // The sorting call made (1) and the flow repair of each of the
             // two sections that took a cut.
@@ -322,7 +352,13 @@ async fn a_flow_repair_with_its_call_leaves_the_ceiling_where_it_was_and_one_wit
             flow_repaired();
             assert_eq!(ceiling(), Some(3));
             // The pass after the repairs does not raise it.
-            statements_moved(&policy, &[], &[statement(PlannedAt::Ended(None))], &[]);
+            statements_moved(
+                &policy,
+                2,
+                &claim,
+                &[statement(PlannedAt::Ended(None))],
+                &[],
+            );
             assert_eq!(ceiling(), Some(3));
 
             // The second finds no gap to mend: it makes no call, and the
@@ -341,16 +377,15 @@ async fn a_statement_the_plan_takes_in_is_followed_and_raises_the_ceiling_by_its
     CURRENT
         .scope(progress.clone(), async {
             let policy = StandardPolicy::new();
-            let planned = |class, at| Planned {
-                class,
-                at,
-                sentence: None,
-            };
+            let planned = |class, at| Planned { class, at };
             let done = planned(Class::Sourced, PlannedAt::Ended(None));
-            calls_planned(&policy, &[done], 0);
             assert_eq!(plan_claims(), Some(Vec::new()));
             let first = ClaimId("first".into());
-            statements_moved(&policy, std::slice::from_ref(&first), &[done], &[]);
+            let beginning = Joining {
+                planned: done,
+                beside: Vec::new(),
+            };
+            statements_moved(&policy, 0, std::slice::from_ref(&first), &[], &[beginning]);
             assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(0));
 
             // A later sort sorts a statement new to the plan, which joins it.
@@ -362,6 +397,7 @@ async fn a_statement_the_plan_takes_in_is_followed_and_raises_the_ceiling_by_its
             };
             statements_moved(
                 &policy,
+                0,
                 &[first.clone(), joined.clone()],
                 &[done],
                 &[joining],

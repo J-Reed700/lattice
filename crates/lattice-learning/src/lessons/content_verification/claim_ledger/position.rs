@@ -1,8 +1,6 @@
 //! Where a claim stands in its class's graph, read from the steps the ledger
 //! records for it (acceptance design §2.9).
 
-use std::collections::HashMap;
-
 use super::ClaimLedger;
 use crate::lessons::call_plan::{Joining, Planned, PlannedAt};
 use lattice_core::domain::learning::acceptance::{
@@ -225,7 +223,6 @@ impl ClaimLedger {
                 .and_then(ClaimLedgerEntry::class)
                 .unwrap_or(Class::Sourced),
             at,
-            sentence: None,
         }
     }
 
@@ -274,31 +271,6 @@ impl ClaimLedger {
             }
         }
         false
-    }
-
-    /// Where each claim still on its sentence stands, by section and
-    /// statement. Of claims that state the same words in a section, the one
-    /// with more to do.
-    pub(super) fn walks(&self, policy: &dyn AcceptancePolicy) -> HashMap<(usize, String), Walked> {
-        let mut walks: HashMap<(usize, String), Walked> = HashMap::new();
-        for entry in &self.entries {
-            if entry.state().is_gone() || self.edited_now.contains(entry.claim_id()) {
-                continue;
-            }
-            let Some(here) = self.position(policy, entry.claim_id()) else {
-                continue;
-            };
-            let key = (entry.location().unit_index, entry.statement().to_owned());
-            walks
-                .entry(key)
-                .and_modify(|kept| {
-                    if !has_more_to_do(kept) && has_more_to_do(&here) {
-                        *kept = here;
-                    }
-                })
-                .or_insert(here);
-        }
-        walks
     }
 
     /// The claim that carries `id`'s sentence on after its rewrites: the last
@@ -381,10 +353,4 @@ impl ClaimLedger {
         }
         Some(start(policy, sorted_class(entry)?))
     }
-}
-
-/// Whether the claim can still make calls: it is somewhere in its graph, or
-/// its record does not fit it.
-fn has_more_to_do(walked: &Walked) -> bool {
-    matches!(walked, Walked::At(_) | Walked::Diverged { .. })
 }
