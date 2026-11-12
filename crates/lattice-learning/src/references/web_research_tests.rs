@@ -768,7 +768,11 @@ async fn a_page_that_cannot_be_read_gives_its_own_error_unchanged() {
             .map(|_| ())
             .unwrap_err();
 
-        assert_eq!(got.error_code(), error.error_code(), "{got:?}");
+        assert_eq!(
+            lattice_core::shared::ErrorCode::from(&got),
+            lattice_core::shared::ErrorCode::from(&error),
+            "{got:?}"
+        );
         assert_eq!(got.to_string(), error.to_string());
     }
 }

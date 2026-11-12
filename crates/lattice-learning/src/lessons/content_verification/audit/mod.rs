@@ -30,6 +30,7 @@ use lattice_core::application::services::model_contract::{
 use lattice_core::domain::learning::claim_review::{ClaimId, StopCode, StopReason};
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
 use lattice_core::shared::error::{smaller_parts_may_succeed, AppError, Result};
+use lattice_core::shared::ErrorCode;
 
 use crate::model_call::ErrorClass;
 use batches::Item;
@@ -391,7 +392,7 @@ pub(crate) async fn run(
             Err(error) => {
                 record.outcome = BatchOutcome::Failed;
                 record.error = Some(error.to_string());
-                record.error_code = Some(error.error_code().to_owned());
+                record.error_code = Some(ErrorCode::from(&error).to_string());
                 deps.runs.record(&key, &record).await?;
                 deps.runs
                     .finish(&key, RunState::Stopped, (deps.clock)())

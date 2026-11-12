@@ -7,6 +7,7 @@ use super::{
 };
 use crate::shared::{
     error::{AppError, ErrorClass, Result},
+    ipc::ErrorCode,
     persistence::Database,
     runtime::background::BackgroundTasks,
 };
@@ -252,7 +253,7 @@ impl Drop for SubjectLease {
 struct LastFailure {
     /// The error's code: its kind, never its text, which may carry a request
     /// id or a slot number that changes on every attempt.
-    failure: &'static str,
+    failure: ErrorCode,
     saved_work: String,
 }
 
@@ -716,7 +717,7 @@ impl JobRuntime {
             return Ok(false);
         }
         let latest = LastFailure {
-            failure: error.error_code(),
+            failure: ErrorCode::from(error),
             saved_work: self
                 .settle(&job.id, backoff, || self.saved_work(job))
                 .await?,

@@ -231,8 +231,10 @@ fn a_conflict_reaches_the_frontend_as_an_error_with_code_conflict() {
     let sent = serde_json::to_value(&api_err).unwrap();
     assert_eq!(sent["code"], "CONFLICT");
     assert_eq!(sent["message"], "Practice profile changed");
-    assert_eq!(AppError::Conflict(String::new()).error_code(), "CONFLICT");
-    assert_eq!(AppError::Conflict(String::new()).http_status_code(), 409);
+    assert_eq!(
+        ErrorCode::from(&AppError::Conflict(String::new())),
+        ErrorCode::Conflict
+    );
 }
 
 #[test]
@@ -305,8 +307,14 @@ fn a_busy_database_converts_to_its_own_code() {
 #[test]
 fn each_model_and_lesson_error_has_a_code_of_its_own() {
     for (error, code) in [
-        (AppError::WindowTooSmall("x".into()), ErrorCode::WindowTooSmall),
-        (AppError::ModelRejected("x".into()), ErrorCode::ModelRejected),
+        (
+            AppError::WindowTooSmall("x".into()),
+            ErrorCode::WindowTooSmall,
+        ),
+        (
+            AppError::ModelRejected("x".into()),
+            ErrorCode::ModelRejected,
+        ),
         (
             AppError::ModelAnswerUnusable("x".into()),
             ErrorCode::ModelAnswerUnusable,

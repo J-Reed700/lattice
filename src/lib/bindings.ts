@@ -6708,6 +6708,14 @@ export type ErrorCode =
  */
 "CONSTRAINT_VIOLATION" |
 /**
+ * The work was stopped on request
+ */
+"CANCELLED" |
+/**
+ * A lesson was held back for review
+ */
+"LESSON_HELD" |
+/**
  * File not found
  */
 "FILE_NOT_FOUND" |
@@ -6784,9 +6792,25 @@ export type ErrorCode =
  */
 "PROMPT_EXCEEDS_WINDOW" |
 /**
+ * The configured context window cannot hold what the work needs
+ */
+"WINDOW_TOO_SMALL" |
+/**
  * No Learning model is set
  */
 "LEARNING_MODEL_NOT_SET" |
+/**
+ * The model server turned the request down
+ */
+"MODEL_REJECTED" |
+/**
+ * A model answered, but the answer could not be used
+ */
+"MODEL_ANSWER_UNUSABLE" |
+/**
+ * A model's answer ended before it was complete
+ */
+"ANSWER_CUT_OFF" |
 /**
  * Data processing failed
  */
