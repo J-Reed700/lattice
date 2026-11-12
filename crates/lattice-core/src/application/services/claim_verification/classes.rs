@@ -5,6 +5,8 @@
 //! reads, under the prompts the replay measured
 //! (evals/grounding/claim-classes/replay_classes.py).
 use super::*;
+#[cfg(any(test, feature = "test-support"))]
+use crate::application::services::model_contract::test_support::RenderAnswer;
 use crate::domain::learning::acceptance::KNOWLEDGE_SAMPLES;
 use crate::shared::protocol::Protocol;
 use serde_json::{json, Value};
@@ -418,5 +420,31 @@ impl ClaimChecker<'_> {
             priority: InferencePriority::Verification,
             ..Default::default()
         }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl RenderAnswer for Consistency {
+    type Answer = ConsistencyOutcome;
+
+    fn render(answer: &ConsistencyOutcome) -> String {
+        json!({"verdict": answer.verdict, "reason": answer.reason}).to_string()
+    }
+
+    fn read(text: &str) -> Result<ConsistencyOutcome> {
+        read_consistency(text).ok_or_else(|| unreadable("the reply is not a consistency verdict"))
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl RenderAnswer for Knowledge {
+    type Answer = KnowledgeSample;
+
+    fn render(answer: &KnowledgeSample) -> String {
+        json!({"verdict": answer.verdict, "reason": answer.reason}).to_string()
+    }
+
+    fn read(text: &str) -> Result<KnowledgeSample> {
+        read_sample(text).ok_or_else(|| unreadable("the reply is not a knowledge verdict"))
     }
 }

@@ -5,6 +5,8 @@ use crate::application::ports::llm_port::{
     ANSWER_EFFORT,
 };
 use crate::application::ports::LLMPort;
+#[cfg(any(test, feature = "test-support"))]
+use crate::application::services::model_contract::test_support::RenderAnswer;
 use crate::application::services::model_contract::{
     answer, refusal, Contract, ContractCall, ContractId, Plain, PromptInput, Transport,
 };
@@ -916,4 +918,83 @@ fn truncate_chars(text: &str, limit: usize) -> String {
     let mut out: String = text.chars().take(limit).collect();
     out.push('…');
     out
+}
+
+/// The three labelled lines a located, reasoned claim check answers.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckReply {
+    pub verdict: ClaimVerdict,
+    pub reason: String,
+    /// The `Source passage:` line as written: `passage-N` or `none`.
+    pub source: String,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl CheckReply {
+    /// A reply that cites the passage at `passage`, or none.
+    pub fn on(verdict: ClaimVerdict, reason: &str, passage: Option<usize>) -> Self {
+        Self {
+            verdict,
+            reason: reason.to_owned(),
+            source: passage.map_or_else(|| "none".to_owned(), |at| format!("passage-{at}")),
+        }
+    }
+
+    pub fn render(&self) -> String {
+        format!(
+            "Reason: {}
+Source passage: {}
+Verdict: {}",
+            self.reason,
+            self.source,
+            self.verdict.as_str()
+        )
+    }
+
+    /// The reply a located, reasoned check reads, before its passage is looked up.
+    pub fn read(text: &str) -> Option<Self> {
+        let text = without_field_emphasis(text);
+        let text = normalize_reasoned_fields(&text).unwrap_or(text);
+        Some(Self {
+            verdict: final_verdict(&text)?,
+            reason: labeled_value(&text, &["Reason", "Explanation"])
+                .map(|reason| strip_wrapping_quotes(&reason))?,
+            source: labeled_value(&text, &["Source passage"])?,
+        })
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl RenderAnswer for ClaimCheck {
+    type Answer = CheckReply;
+
+    fn render(answer: &CheckReply) -> String {
+        answer.render()
+    }
+
+    fn read(text: &str) -> Result<CheckReply> {
+        CheckReply::read(text).ok_or_else(|| unreadable("the reply is not three labelled lines"))
+    }
+}
+
+#[cfg(test)]
+mod round_trips {
+    use super::*;
+    use crate::application::services::model_contract::test_support::assert_round_trip;
+
+    #[test]
+    fn a_check_reads_what_it_renders_for_every_verdict() {
+        for (verdict, passage) in [
+            (ClaimVerdict::Supported, Some(2)),
+            (ClaimVerdict::Contradicted, Some(0)),
+            (ClaimVerdict::Unsupported, None),
+        ] {
+            assert_round_trip::<ClaimCheck>(&CheckReply::on(
+                verdict,
+                "The passage says so.",
+                passage,
+            ));
+        }
+    }
 }

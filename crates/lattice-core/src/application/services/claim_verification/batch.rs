@@ -214,6 +214,37 @@ impl ClaimChecker<'_> {
     }
 }
 
+/// The checks a batch reply holds, each under its claim id.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchReply {
+    pub checks: Vec<(String, CheckReply)>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl RenderAnswer for ClaimBatch {
+    type Answer = BatchReply;
+
+    fn render(answer: &BatchReply) -> String {
+        json!({"checks": answer.checks.iter().map(|(id, reply)| {
+            json!({"id": id, "response": reply.render()})
+        }).collect::<Vec<_>>()})
+        .to_string()
+    }
+
+    fn read(text: &str) -> Result<BatchReply> {
+        let unread = || unreadable("the reply must hold one readable response per claim id");
+        let reply: BatchResponse = serde_json::from_str(text).map_err(|_| unread())?;
+        let checks = reply
+            .checks
+            .into_iter()
+            .map(|check| Some((check.id, CheckReply::read(&check.response)?)))
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(unread)?;
+        Ok(BatchReply { checks })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,5 +298,23 @@ mod tests {
         assert!(
             matches!(&result[0], ClaimJudgment::Judged(f) if f.reason.as_deref() == Some(reason.as_str()))
         );
+    }
+}
+
+#[cfg(test)]
+mod round_trips {
+    use super::*;
+    use crate::application::services::model_contract::test_support::assert_round_trip;
+
+    #[test]
+    fn a_batch_reads_what_it_renders_for_every_verdict() {
+        let reply = |verdict, source: Option<usize>| CheckReply::on(verdict, "Because.", source);
+        assert_round_trip::<ClaimBatch>(&BatchReply {
+            checks: vec![
+                ("claim-0".into(), reply(ClaimVerdict::Supported, Some(0))),
+                ("claim-1".into(), reply(ClaimVerdict::Contradicted, Some(1))),
+                ("claim-2".into(), reply(ClaimVerdict::Unsupported, None)),
+            ],
+        });
     }
 }

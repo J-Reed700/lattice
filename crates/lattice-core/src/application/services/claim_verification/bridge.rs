@@ -9,6 +9,8 @@
 //! measured (evals/grounding/claim-classes/replay_classes.py,
 //! `BRIDGE_SYSTEM`).
 use super::*;
+#[cfg(any(test, feature = "test-support"))]
+use crate::application::services::model_contract::test_support::RenderAnswer;
 use serde_json::{json, Value};
 
 /// The part-wise judge's instructions: the replay's text (`BRIDGE_SYSTEM`)
@@ -279,5 +281,42 @@ impl ClaimChecker<'_> {
         self.llm
             .count_tokens(BRIDGE_SYSTEM)
             .saturating_add(self.llm.count_tokens(&bridge_prompt(statement, passages)))
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl RenderAnswer for ClaimParts {
+    type Answer = BridgeOutcome;
+
+    fn render(answer: &BridgeOutcome) -> String {
+        let any = |kind: PartKind| answer.parts.iter().any(|part| part.kind == kind);
+        let verdict = if any(PartKind::Contradicted) {
+            "contradicted"
+        } else if any(PartKind::SpecificMissing) {
+            "unsupported"
+        } else if answer
+            .parts
+            .iter()
+            .all(|part| part.kind == PartKind::Stated)
+        {
+            "supported"
+        } else {
+            "supported_with_common"
+        };
+        json!({
+            "parts": answer.parts.iter().map(|part| json!({
+                "part": part.part,
+                "kind": part.kind,
+                "passage": part.passage.map(|at| format!("passage-{at}")),
+            })).collect::<Vec<_>>(),
+            "verdict": verdict,
+            "reason": answer.reason,
+        })
+        .to_string()
+    }
+
+    fn read(text: &str) -> Result<BridgeOutcome> {
+        read_bridge(text, usize::MAX)
+            .ok_or_else(|| unreadable("the reply is not a part-wise judgment"))
     }
 }

@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-use super::bridge::{read_bridge, ClaimParts};
+use super::bridge::ClaimParts;
 use super::classes_tests::{checker, conversation, messages, Reply, Scripted};
 use super::*;
-use crate::application::services::model_contract::test_support::{assert_round_trip, RenderAnswer};
+use crate::application::services::model_contract::test_support::assert_round_trip;
 use crate::application::services::model_contract::CORRECTION_LEAD;
 use crate::domain::learning::claim_review::text_sha256;
 use serde_json::{json, Value};
@@ -566,26 +566,6 @@ async fn a_reason_past_600_characters_is_kept_whole() {
     assert_eq!(outcome.reason, reason);
 }
 
-impl RenderAnswer for ClaimParts {
-    type Answer = BridgeOutcome;
-    fn render(answer: &BridgeOutcome) -> String {
-        json!({
-            "parts": answer.parts.iter().map(|part| json!({
-                "part": part.part,
-                "kind": part.kind,
-                "passage": part.passage.map(|at| format!("passage-{at}")),
-            })).collect::<Vec<_>>(),
-            "verdict": "supported",
-            "reason": answer.reason,
-        })
-        .to_string()
-    }
-    fn read(text: &str) -> crate::shared::error::Result<BridgeOutcome> {
-        read_bridge(text, usize::MAX)
-            .ok_or_else(|| crate::shared::error::AppError::InvalidInput("unreadable".into()))
-    }
-}
-
 #[test]
 fn the_part_wise_contract_reads_what_it_renders() {
     assert_round_trip::<ClaimParts>(&outcome(vec![
@@ -595,5 +575,12 @@ fn the_part_wise_contract_reads_what_it_renders() {
             passage: Some(0),
         },
         part("It tokenizes.", PartKind::Common),
+        part("It ships with the toolchain.", PartKind::Own),
+        part("It lexes 4 languages.", PartKind::SpecificMissing),
+        BridgePart {
+            part: "It is a parser".into(),
+            kind: PartKind::Contradicted,
+            passage: Some(1),
+        },
     ]));
 }
