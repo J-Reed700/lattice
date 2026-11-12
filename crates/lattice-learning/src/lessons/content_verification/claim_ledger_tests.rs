@@ -2559,6 +2559,23 @@ impl Course {
         Ok(())
     }
 
+    /// Each claim's statement and the events it went through, so a failed
+    /// assertion shows where each walk ended.
+    pub(super) async fn trail(&self) -> Result<String> {
+        let ledger = ClaimReviewRepository::new(self.pool.clone())
+            .load(&self.lesson_id)
+            .await?;
+        Ok(ledger
+            .claims
+            .iter()
+            .map(|entry| {
+                let events: Vec<_> = entry.events().iter().map(|record| &record.event).collect();
+                format!("{}: {events:?}", entry.statement())
+            })
+            .collect::<Vec<_>>()
+            .join("\n"))
+    }
+
     pub(super) async fn new() -> Result<Self> {
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
@@ -3001,9 +3018,10 @@ async fn a_lesson_whose_cuts_would_take_all_of_its_questions_is_published_with_t
     .is_none());
     let published: Value = serde_json::from_str(&raw)?;
     let questions = published["questions"].as_array().unwrap();
-    assert_eq!(questions.len(), 2, "{questions:?}");
+    let trail = course.trail().await?;
+    assert_eq!(questions.len(), 2, "{questions:?}\n{trail}");
     for (index, sentence) in [figure(0), figure(1)].iter().enumerate() {
-        assert_eq!(questions[index]["explanation"], json!(sentence));
+        assert_eq!(questions[index]["explanation"], json!(sentence), "{trail}");
     }
     course.assert_invariants(&raw, &report).await?;
     Ok(())
@@ -3035,7 +3053,8 @@ async fn a_lesson_whose_cuts_take_every_question_of_a_kind_it_asks_is_published_
     .is_none());
     let published: Value = serde_json::from_str(&raw)?;
     let questions = published["questions"].as_array().unwrap();
-    assert_eq!(questions.len(), 1, "{questions:?}");
+    let trail = course.trail().await?;
+    assert_eq!(questions.len(), 1, "{questions:?}\n{trail}");
     assert_eq!(questions[0]["kind"], json!("quiz"));
     assert_eq!(questions[0]["explanation"], json!(GOOD));
     course.assert_invariants(&raw, &report).await?;

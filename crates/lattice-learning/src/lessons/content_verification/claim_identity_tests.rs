@@ -202,6 +202,11 @@ async fn identifying_a_repaired_claim_that_continues_records_its_repair_and_no_c
                     escalated: false,
                     outcome: RepairOutcome::Rewritten,
                     ..
+                },
+                ClaimEvent::Stepped {
+                    step: Step::Rewrite(_),
+                    outcome: Outcome::Rewritten,
+                    ..
                 }
             ]
         ),
