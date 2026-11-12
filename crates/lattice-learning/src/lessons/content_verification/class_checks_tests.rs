@@ -1786,3 +1786,70 @@ async fn a_sentence_that_only_names_the_documentation_is_the_models_to_sort() ->
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn a_saved_class_is_the_models_answer_and_is_settled_where_it_is_restored() -> Result<()> {
+    const CASE: &str = "5 documents have confidence scores below 0.70.";
+    let pool = crate::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let model = Classes::new(&[CASE]).classed(&[(CASE, "internal")]);
+    let example = json!({"blocks":[{"kind":"worked_example","title":"Thresholds",
+        "body":CASE,"rubric":[]}],"questions":[]});
+    let claims = [(
+        0,
+        Claim {
+            quote: CASE.to_owned(),
+            statement: CASE.to_owned(),
+        },
+    )];
+    let nothing = claim_ledger::Rewrites::default();
+
+    lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &repo,
+        &job,
+        &lesson_id,
+        async {
+            lesson_drafts::resume("class-fixture".into()).await?;
+            // An explanation settles what the model calls Internal to Reasoning.
+            let stated = class_checks::sort(
+                &model,
+                &StandardPolicy::new(),
+                &lesson(CASE),
+                &claims,
+                &[None],
+                &nothing,
+                &Citations::default(),
+            )
+            .await?;
+            assert_eq!(
+                stated,
+                [Classed {
+                    class: Class::Reasoning,
+                    by: ClassifiedBy::Model
+                }]
+            );
+            // A worked example's ruling leaves it as the model sorted it.
+            let hypothetical = class_checks::sort(
+                &model,
+                &StandardPolicy::new(),
+                &example,
+                &claims,
+                &[None],
+                &nothing,
+                &Citations::default(),
+            )
+            .await?;
+            assert_eq!(
+                hypothetical,
+                [Classed {
+                    class: Class::Internal,
+                    by: ClassifiedBy::Model
+                }]
+            );
+            assert_eq!(model.calls("sort"), 1);
+            Ok(())
+        },
+    )
+    .await
+}

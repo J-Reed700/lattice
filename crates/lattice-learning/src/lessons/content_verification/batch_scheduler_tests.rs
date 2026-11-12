@@ -843,3 +843,26 @@ fn claims_are_packed_by_section_with_both_comparisons_together() {
     // give way.
     assert!(requests.contains(&vec![(5, Pass::Corroboration)]));
 }
+
+#[tokio::test]
+async fn a_statement_with_no_passages_is_derived_not_restored() -> Result<()> {
+    let pool = crate::tests::pool().await?;
+    let (repo, job, lesson) = setup(&pool).await?;
+    let sources: Vec<LearningSourceDto> = Vec::new();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = BatchModel::default();
+    let retained = measured();
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+        let first = paged(&model, &references, &inventory(1), &retained).await?;
+        assert!(first.iter().all(|read| !read.reused));
+        let second = paged(&model, &references, &inventory(1), &retained).await?;
+        assert_eq!(second.len(), 1);
+        assert!(
+            second.iter().all(|read| !read.reused),
+            "a statement with no passage is derived on every read, never restored from a receipt"
+        );
+        assert!(model.calls.lock().unwrap().is_empty());
+        Ok(())
+    })
+    .await
+}
