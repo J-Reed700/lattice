@@ -586,11 +586,7 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
                 scope_hash: "same-lesson-request".into(),
                 prompt: "Original authoring prompt and citation order".into(),
                 sources: program.sources.clone(),
-                reference_hashes: program
-                    .sources
-                    .iter()
-                    .map(|source| (source.id.clone(), sha256_hex(&source.excerpt)))
-                    .collect(),
+                reference_hashes: crate::teaching::versions(&program.sources),
             });
             assert!(crate::lesson_drafts::resume("matching-inputs".into())
                 .await?
@@ -818,13 +814,13 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
             .map_err(db)?;
     let mut broken = crate::dto::PreparedLearningLesson {
         verification: None,
-        blocks: vec![crate::dto::LearningBlockDto {
-            rubric: vec![],
-            kind: crate::dto::LearningBlockKind::Explanation,
-            title: "A staged explanation".into(),
-            body: "This should roll back with the transaction.".into(),
-            source_ids: vec![],
-        }],
+        blocks: vec![crate::dto::LearningBlockDto::new(
+            crate::dto::LearningBlockKind::Explanation,
+            "A staged explanation".into(),
+            "This should roll back with the transaction.".into(),
+            vec![],
+            vec![],
+        )],
         questions: vec![crate::dto::LessonQuestion {
             id: duplicate_question_id.clone(),
             kind: crate::dto::LessonQuestionKind::Practice,
@@ -872,13 +868,13 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
 
     let mut good = crate::dto::PreparedLearningLesson {
         verification: None,
-        blocks: vec![crate::dto::LearningBlockDto {
-            kind: crate::dto::LearningBlockKind::Explanation,
-            title: "Verified teaching fixture".into(),
-            body: "A persisted explanation.".into(),
-            source_ids: vec![],
-            rubric: vec![],
-        }],
+        blocks: vec![crate::dto::LearningBlockDto::new(
+            crate::dto::LearningBlockKind::Explanation,
+            "Verified teaching fixture".into(),
+            "A persisted explanation.".into(),
+            vec![],
+            vec![],
+        )],
         questions: vec![],
         keys: vec![],
     };
@@ -887,7 +883,7 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
         .save_lesson_checkpoint(
             &retry.id,
             &target,
-            "prepared-v2",
+            crate::generation_jobs::PREPARED.as_str(),
             serde_json::to_value(&good)?,
         )
         .await?;
@@ -903,7 +899,11 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
     assert!(jobs(&pool).claim(&retry.id).await?.is_some());
     let good = serde_json::from_value(
         curriculum
-            .lesson_checkpoint(&retry.id, &target, "prepared-v2")
+            .lesson_checkpoint(
+                &retry.id,
+                &target,
+                crate::generation_jobs::PREPARED.as_str(),
+            )
             .await?
             .unwrap(),
     )?;
@@ -1218,7 +1218,7 @@ async fn a_module_skips_a_lesson_that_waits_for_the_users_review() -> Result<()>
 async fn a_job_names_the_lessons_it_prepares() -> Result<()> {
     let pool = pool().await?;
     let program = active_program(&pool).await?;
-    let lessons = lesson_ids(&program, 0);
+    let lessons = lesson_ids(&program, 0)[..1].to_vec();
     let repo = LearningCurriculumRepository::new(pool.clone());
     let job = repo
         .start_job(&StartLearningGenerationJobRequestDto {
@@ -1227,7 +1227,7 @@ async fn a_job_names_the_lessons_it_prepares() -> Result<()> {
             expected_revision: program.summary.revision,
             kind: LearningGenerationJobKind::LessonPreparation,
             request_json: serde_json::json!({"lessonIds":lessons}).to_string(),
-            progress_total: 2,
+            progress_total: 1,
         })
         .await?;
     assert_eq!(job.lesson_ids, lessons);

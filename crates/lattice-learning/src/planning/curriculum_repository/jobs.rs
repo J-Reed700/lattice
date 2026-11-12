@@ -8,16 +8,18 @@ use crate::course_plan::COURSE_PLAN;
 use crate::curriculum::{
     self, LearningGenerationJob, LearningGenerationJobKind, LearningGenerationJobStatus,
 };
-use crate::persistence::{db, decode, hash};
+use crate::persistence::{db, hash};
 use crate::plan_dto::{
     LearningGenerationJobActionRequestDto, StartLearningGenerationJobRequestDto,
     StartLearningModuleJobsRequestDto,
 };
+use crate::planning::preparation_request::PreparationRequest;
 use crate::quiz_bank_jobs::{QUIZ_BANK, QUIZ_GRADING};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::runtime::jobs::{JobRecord, JobStatus, JobStore, NewJob};
 use sqlx::Row;
+use std::collections::HashSet;
 
 impl LearningCurriculumRepository {
     pub async fn jobs(&self, program_id: &str) -> Result<Vec<LearningGenerationJob>> {
@@ -52,11 +54,6 @@ impl LearningCurriculumRepository {
         &self,
         request: &StartLearningGenerationJobRequestDto,
     ) -> Result<LearningGenerationJob> {
-        if request.progress_total != 1 {
-            return Err(AppError::InvalidInput(
-                "Select one lesson to prepare.".into(),
-            ));
-        }
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         let id = Self::admit_job(&mut tx, request).await?;
         let job = Self::job_on(&mut tx, &id).await?;
@@ -161,7 +158,7 @@ impl LearningCurriculumRepository {
         .await
         .map_err(db)?;
         let candidates: Vec<String> = sqlx::query_scalar(&format!(
-            "SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND m.ordinal IN (?,?) AND {UNPREPARED_OUTLINE_LESSON} ORDER BY m.ordinal,l.ordinal"
+            "SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND m.ordinal IN (?,?) AND {PREPARABLE_LESSON} AND {NOT_HELD_FOR_REVIEW} ORDER BY m.ordinal,l.ordinal"
         ))
         .bind(program_id)
         .bind(module_ordinal)
@@ -178,16 +175,11 @@ impl LearningCurriculumRepository {
                     .get(&job.id)
                     .is_some_and(|scope| scope.content_revision == Some(content_revision))
             })
-            .flat_map(|job| {
-                job.requested
-                    .get("lessonIds")
-                    .and_then(serde_json::Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|id| id.as_str().map(str::to_string))
-                    .collect::<Vec<_>>()
-            })
-            .collect::<std::collections::HashSet<_>>();
+            .map(|job| PreparationRequest::parse(&job.requested.to_string()))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flat_map(|request| request.lesson_ids)
+            .collect::<HashSet<_>>();
         let untried: Vec<String> = candidates
             .into_iter()
             .filter(|lesson| !covered.contains(lesson))
@@ -214,7 +206,7 @@ impl LearningCurriculumRepository {
         validate_operation_id(operation_id)?;
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         let lessons: Vec<String> = sqlx::query_scalar(&format!(
-            "SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND l.module_id=? AND {UNPREPARED_OUTLINE_LESSON} ORDER BY m.ordinal,l.ordinal"
+            "SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND l.module_id=? AND {PREPARABLE_LESSON} AND {NOT_HELD_FOR_REVIEW} ORDER BY m.ordinal,l.ordinal"
         ))
         .bind(program_id)
         .bind(module_id)
@@ -260,7 +252,10 @@ impl LearningCurriculumRepository {
                 program_id: program_id.to_string(),
                 expected_revision,
                 kind: LearningGenerationJobKind::LessonPreparation,
-                request_json: serde_json::json!({ "lessonIds": [lesson] }).to_string(),
+                request_json: PreparationRequest {
+                    lesson_ids: vec![lesson.clone()],
+                }
+                .to_json()?,
                 progress_total: 1,
             };
             ids.push(Self::admit_job(tx, &single).await?);
@@ -287,9 +282,9 @@ impl LearningCurriculumRepository {
         request: &StartLearningGenerationJobRequestDto,
     ) -> Result<String> {
         validate_operation_id(&request.operation_id)?;
-        if !(1..=3).contains(&request.progress_total) {
+        if request.progress_total != 1 {
             return Err(AppError::InvalidInput(
-                "Lesson preparation jobs must contain 1–3 bounded steps.".into(),
+                "Select one lesson to prepare.".into(),
             ));
         }
         if request.kind != LearningGenerationJobKind::LessonPreparation {
@@ -297,38 +292,23 @@ impl LearningCurriculumRepository {
                 "Only bounded lesson-preparation jobs are currently supported.".into(),
             ));
         }
-        let parsed: serde_json::Value = decode(&request.request_json)?;
         if request.request_json.len() > 64 * 1024 {
             return Err(AppError::InvalidInput(
                 "Generation job input is too large.".into(),
             ));
         }
-        let lesson_ids = parsed
-            .get("lessonIds")
-            .and_then(serde_json::Value::as_array)
-            .ok_or_else(|| AppError::InvalidInput("Lesson jobs require lessonIds.".into()))?
-            .iter()
-            .map(|value| {
-                let id = value
-                    .as_str()
-                    .ok_or_else(|| AppError::InvalidInput("Lesson IDs must be strings.".into()))?;
-                uuid::Uuid::parse_str(id)
-                    .map_err(|_| AppError::InvalidInput("Invalid lesson ID.".into()))?;
-                Ok(id.to_string())
-            })
-            .collect::<Result<Vec<_>>>()?;
-        if lesson_ids.len() != request.progress_total as usize
-            || lesson_ids.is_empty()
-            || lesson_ids.len() > 3
-            || lesson_ids
-                .iter()
-                .collect::<std::collections::HashSet<_>>()
-                .len()
-                != lesson_ids.len()
-        {
+        let parsed = PreparationRequest::parse(&request.request_json)?;
+        let lesson_ids = parsed.lesson_ids.clone();
+        if lesson_ids.len() != 1 {
             return Err(AppError::InvalidInput(
-                "A job must name one to three unique lessons matching progressTotal.".into(),
+                "A lesson preparation job names one lesson.".into(),
             ));
+        }
+        if lesson_ids
+            .iter()
+            .any(|id| uuid::Uuid::parse_str(id).is_err())
+        {
+            return Err(AppError::InvalidInput("Invalid lesson ID.".into()));
         }
         let digest = hash(&parsed)?;
         let payload = hash(request)?;
@@ -344,55 +324,25 @@ impl LearningCurriculumRepository {
         }
         let content_revision =
             check_program_open(tx, &request.program_id, request.expected_revision).await?;
-        let next_lessons: Vec<String> = sqlx::query_scalar("SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND l.preparation='outline' AND l.completed=0 AND l.curriculum_state='outline' ORDER BY m.ordinal,l.ordinal")
-            .bind(&request.program_id).fetch_all(&mut *tx).await.map_err(db)?;
-        if (lesson_ids.len() == 1
-            && lesson_ids
-                .first()
-                .is_some_and(|id| !next_lessons.contains(id)))
-            || (lesson_ids.len() > 1
-                && next_lessons.get(..lesson_ids.len()) != Some(lesson_ids.as_slice()))
+        if preparable_in(tx, &request.program_id, &lesson_ids)
+            .await?
+            .len()
+            != lesson_ids.len()
         {
             return Err(AppError::InvalidInput(
-                "Select an unfinished outline lesson; batch preparation must follow course order."
-                    .into(),
+                "Select an unfinished outline lesson.".into(),
             ));
         }
         // A new UI revision or operation ID must not create duplicate work for
         // a lesson already queued against the same teaching inputs.
-        let scopes = job_scopes(tx, &request.program_id).await?;
-        let mut active = JobStore::list_for_subject_in(tx, LESSON_PREPARATION, &request.program_id)
-            .await?
-            .into_iter()
-            .filter(|job| {
-                !job.status.is_finished()
-                    && scopes
-                        .get(&job.id)
-                        .is_some_and(|scope| scope.content_revision == Some(content_revision))
-            })
-            .collect::<Vec<_>>();
+        let mut active =
+            Self::unfinished_preparations(tx, &request.program_id, content_revision).await?;
         active.reverse();
-        for existing in active {
-            let ids = existing
-                .requested
-                .get("lessonIds")
-                .and_then(serde_json::Value::as_array);
-            let overlaps = ids.is_some_and(|ids| {
-                ids.iter().any(|id| {
-                    id.as_str()
-                        .is_some_and(|id| lesson_ids.iter().any(|wanted| wanted == id))
-                })
-            });
-            if !overlaps {
+        for (existing, named) in active {
+            if !named.lesson_ids.iter().any(|id| lesson_ids.contains(id)) {
                 continue;
             }
-            if !ids.is_some_and(|ids| {
-                ids.len() == lesson_ids.len()
-                    && ids.iter().all(|id| {
-                        id.as_str()
-                            .is_some_and(|id| lesson_ids.iter().any(|wanted| wanted == id))
-                    })
-            }) {
+            if named != parsed {
                 return Err(AppError::InvalidState(
                     "A selected lesson already has preparation in progress. Let that job finish or cancel it before starting an overlapping batch.".into(),
                 ));
@@ -411,7 +361,7 @@ impl LearningCurriculumRepository {
                 subject_id: Some(request.program_id.clone()),
                 operation_id: request.operation_id.clone(),
                 payload_hash: digest,
-                requested: parsed,
+                requested: serde_json::to_value(&parsed)?,
                 progress_total: request.progress_total,
                 message: "Queued".into(),
             },
@@ -425,6 +375,40 @@ impl LearningCurriculumRepository {
         }
         operation.record(tx, &admitted.id).await?;
         Ok(admitted.id)
+    }
+
+    /// The lesson-preparation jobs of `content_revision` that have not finished,
+    /// newest first, with the lessons each names.
+    pub(crate) async fn unfinished_preparations(
+        connection: &mut sqlx::SqliteConnection,
+        program_id: &str,
+        content_revision: i64,
+    ) -> Result<Vec<(JobRecord, PreparationRequest)>> {
+        let scopes = job_scopes(&mut *connection, program_id).await?;
+        JobStore::list_for_subject_in(&mut *connection, LESSON_PREPARATION, program_id)
+            .await?
+            .into_iter()
+            .filter(|job| {
+                !job.status.is_finished()
+                    && scopes
+                        .get(&job.id)
+                        .is_some_and(|scope| scope.content_revision == Some(content_revision))
+            })
+            .map(|job| {
+                let request = PreparationRequest::parse(&job.requested.to_string())?;
+                Ok((job, request))
+            })
+            .collect()
+    }
+
+    /// Which of `lesson_ids` can be prepared now.
+    pub(crate) async fn preparable_lessons(
+        &self,
+        program_id: &str,
+        lesson_ids: &[String],
+    ) -> Result<HashSet<String>> {
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        preparable_in(&mut connection, program_id, lesson_ids).await
     }
 
     /// Commits the cancellation. The caller then signals the running worker.
@@ -544,7 +528,9 @@ impl LearningCurriculumRepository {
                             &request.job_id,
                             &request.operation_id,
                             "Resuming verification",
-                            &serde_json::json!({ "lessonIds": lessons }),
+                            &serde_json::to_value(PreparationRequest {
+                                lesson_ids: lessons.clone(),
+                            })?,
                             u32::try_from(lessons.len()).unwrap_or(u32::MAX),
                         )
                         .await?
@@ -590,9 +576,33 @@ impl LearningCurriculumRepository {
     }
 }
 
-/// The lessons a job may still prepare: in outline, unfinished and not held
-/// for the user's review.
-const UNPREPARED_OUTLINE_LESSON: &str = "l.preparation='outline' AND l.completed=0 AND l.curriculum_state='outline' AND NOT EXISTS (SELECT 1 FROM learning_lesson_reviews r WHERE r.lesson_id=l.id AND r.state IN ('needs_review','stopped'))";
+/// The lessons a job may prepare: in outline and unfinished.
+pub(crate) const PREPARABLE_LESSON: &str =
+    "preparation = 'outline' AND completed = 0 AND curriculum_state = 'outline'";
+
+/// Lessons that do not wait for the user's review (the table is aliased `l`).
+const NOT_HELD_FOR_REVIEW: &str = "NOT EXISTS (SELECT 1 FROM learning_lesson_reviews r WHERE r.lesson_id=l.id AND r.state IN ('needs_review','stopped'))";
+
+pub(super) async fn preparable_in(
+    connection: &mut sqlx::SqliteConnection,
+    program_id: &str,
+    lesson_ids: &[String],
+) -> Result<HashSet<String>> {
+    let marks = vec!["?"; lesson_ids.len()].join(",");
+    let sql = format!(
+        "SELECT id FROM learning_lessons WHERE program_id=? AND id IN ({marks}) AND {PREPARABLE_LESSON}"
+    );
+    let mut query = sqlx::query_scalar::<_, String>(&sql).bind(program_id);
+    for id in lesson_ids {
+        query = query.bind(id);
+    }
+    Ok(query
+        .fetch_all(connection)
+        .await
+        .map_err(db)?
+        .into_iter()
+        .collect())
+}
 
 /// A lesson's place in its course, counting from 0 through every lesson in
 /// course order (module ordinal, then lesson ordinal). It is the rank of the
@@ -666,20 +676,11 @@ async fn held_outlines(
         .ok_or_else(|| {
             AppError::InvalidState("No lesson of this job waits for your review.".into())
         })?;
-    let mut lessons = Vec::new();
-    for lesson_id in held {
-        let outline: Option<bool> = sqlx::query_scalar(
-            "SELECT preparation='outline' FROM learning_lessons WHERE id=? AND program_id=?",
-        )
-        .bind(&lesson_id)
-        .bind(program_id)
-        .fetch_optional(&mut *connection)
-        .await
-        .map_err(db)?;
-        if outline == Some(true) {
-            lessons.push(lesson_id);
-        }
-    }
+    let preparable = preparable_in(connection, program_id, &held).await?;
+    let lessons: Vec<String> = held
+        .into_iter()
+        .filter(|id| preparable.contains(id))
+        .collect();
     if lessons.is_empty() {
         return Err(AppError::InvalidState(
             "Every lesson this job held for review was prepared since.".into(),
@@ -735,6 +736,11 @@ fn learning_job(job: JobRecord, scope: JobScope) -> Result<LearningGenerationJob
         _ => return Err(AppError::Database("Invalid generation job kind".into())),
     };
     let ended_by_update = job.error_code.as_deref() == Some(ENDED_BY_UPDATE);
+    let lesson_ids = if kind == LearningGenerationJobKind::LessonPreparation {
+        PreparationRequest::parse(&job.requested.to_string())?.lesson_ids
+    } else {
+        Vec::new()
+    };
     let job = LearningGenerationJob {
         id: job.id,
         program_id: scope.program_id,
@@ -764,16 +770,7 @@ fn learning_job(job: JobRecord, scope: JobScope) -> Result<LearningGenerationJob
             .cause_code
             .and_then(|code| serde_json::from_value(serde_json::Value::String(code)).ok()),
         ended_by_update,
-        lesson_ids: job
-            .requested
-            .get("lessonIds")
-            .and_then(serde_json::Value::as_array)
-            .map(|ids| {
-                ids.iter()
-                    .filter_map(|id| id.as_str().map(str::to_owned))
-                    .collect()
-            })
-            .unwrap_or_default(),
+        lesson_ids,
         retry_of_job_id: job.retry_of_job_id,
         created_at: job.created_at,
         started_at: job.started_at,
