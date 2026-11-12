@@ -25,6 +25,21 @@ impl Contract for LessonContractConfirm {
     type Input = PromptInput;
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for LessonContractConfirm
+{
+    type Answer = Value;
+
+    fn render(answer: &Value) -> String {
+        answer.to_string()
+    }
+
+    fn read(text: &str) -> Result<Value> {
+        crate::generation::parse_json::<Value>(text)
+    }
+}
+
 pub(crate) const PLANNED_TASK: &str = "Confirm that the lesson teaches a planned item";
 pub(crate) const USE_TASK: &str = "Confirm that the lesson teaches what a part uses";
 pub(crate) const CLASH_TASK: &str = "Confirm that two statements of a lesson contradict each other";

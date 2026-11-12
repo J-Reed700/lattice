@@ -29,6 +29,21 @@ impl Contract for TeachingReview {
     type Input = PromptInput;
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for TeachingReview
+{
+    type Answer = Review;
+
+    fn render(answer: &Review) -> String {
+        json!(answer).to_string()
+    }
+
+    fn read(text: &str) -> Result<Review> {
+        crate::generation::parse_json::<Review>(text)
+    }
+}
+
 /// The room the review's answer is given.
 const REVIEW_ANSWER_TOKENS: usize = 6000;
 
@@ -72,8 +87,12 @@ struct BlockCheck {
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(Serialize, Debug, PartialEq)
+)]
 #[serde(deny_unknown_fields)]
-struct Review {
+pub(crate) struct Review {
     issues: Vec<Issue>,
     #[serde(default, rename = "blockChecks")]
     block_checks: Vec<Value>,
@@ -84,6 +103,10 @@ struct Review {
 /// An issue as the reviewer gave it: plain text, or, when open findings were
 /// asked about, text with the open finding it continues.
 #[derive(Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(Serialize, Debug, PartialEq)
+)]
 #[serde(untagged)]
 enum Issue {
     Plain(String),
