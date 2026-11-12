@@ -1,7 +1,6 @@
 //! Starting practice sessions, saving artifact revisions and changing modes.
 use super::*;
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::shared::persistence::Transactions;
 
 impl LearningPracticeRepository {
     pub async fn start(
@@ -11,8 +10,7 @@ impl LearningPracticeRepository {
     ) -> Result<LearningPracticeWorkspaceDto> {
         Self::validate_ids(&req.program_id, &req.session_id, Some(&req.operation_id))?;
         uuid(&req.lesson_id, "lesson")?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &req.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         if practice_operation(
             &req.operation_id,
             &req.program_id,
@@ -191,8 +189,7 @@ impl LearningPracticeRepository {
         {
             return self.workspace(&req.program_id).await;
         }
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &req.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         if practice_operation(
             &req.operation_id,
             &req.program_id,
@@ -251,8 +248,7 @@ impl LearningPracticeRepository {
         {
             return self.workspace(&req.program_id).await;
         }
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &req.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         if practice_operation(
             &req.operation_id,
             &req.program_id,

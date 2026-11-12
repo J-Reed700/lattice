@@ -10,7 +10,7 @@ use lattice_core::domain::conversation::memory::{
     compute_digest, MemoryId, MemoryItem, MemoryKind, MEMORY_SCHEMA_VERSION,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::WriteTx;
 use std::str::FromStr;
 
 fn db(error: impl std::fmt::Display) -> MemoryCommitError {
@@ -24,6 +24,7 @@ impl ConversationRepository {
     /// be able to disturb an already-completed chat turn (invariant 16).
     pub async fn record_memory_error(&self, conversation_id: &str, code: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
+        let mut tx = self.db.begin_write().await?;
         sqlx::query(
             "INSERT INTO conversation_memory_state \
                 (conversation_id, schema_version, last_error_code, updated_at) \
@@ -36,9 +37,10 @@ impl ConversationRepository {
         .bind(MEMORY_SCHEMA_VERSION)
         .bind(code)
         .bind(&now)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to record memory error: {}", e)))?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -50,7 +52,7 @@ impl ConversationRepository {
     ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin invalidation: {}", e)))?;
@@ -105,7 +107,7 @@ impl ConversationRepository {
         let conversation_id = preconditions.conversation_id.as_str();
         let now = Utc::now().to_rfc3339();
 
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
 
         // --- idempotency -------------------------------------------------
         // Checked first: a crash between commit and response leaves the caller
@@ -452,7 +454,7 @@ impl ConversationRepository {
     }
 
     async fn insert_memory_item(
-        tx: &mut sqlx::SqliteConnection,
+        tx: &mut WriteTx,
         item: &MemoryItem,
         revision: i64,
         now: &str,
@@ -476,7 +478,7 @@ impl ConversationRepository {
         .bind(related_ids_to_json(&item.related_item_ids))
         .bind(now)
         .bind(now)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
         Self::replace_evidence(tx, item).await
     }
@@ -486,7 +488,7 @@ impl ConversationRepository {
     /// summary repeating the old value do not survive it, as with a correction
     /// made by hand.
     async fn retire_shared_item(
-        tx: &mut sqlx::SqliteConnection,
+        tx: &mut WriteTx,
         item: &MemoryItem,
         now: &str,
     ) -> std::result::Result<(), sqlx::Error> {
@@ -501,7 +503,7 @@ impl ConversationRepository {
         .bind(now)
         .bind(item.id.as_str())
         .bind(source)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
         sqlx::query(
             "UPDATE conversation_memory_state SET memory_revision = memory_revision + 1, \
@@ -509,17 +511,17 @@ impl ConversationRepository {
         )
         .bind(now)
         .bind(source)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
         sqlx::query("DELETE FROM conversation_summaries WHERE conversation_id = ?")
             .bind(source)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         Ok(())
     }
 
     async fn update_memory_item(
-        tx: &mut sqlx::SqliteConnection,
+        tx: &mut WriteTx,
         item: &MemoryItem,
         revision: i64,
         now: &str,
@@ -540,7 +542,7 @@ impl ConversationRepository {
         .bind(now)
         .bind(item.id.as_str())
         .bind(&item.conversation_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
         Self::replace_evidence(tx, item).await
     }
@@ -552,12 +554,12 @@ impl ConversationRepository {
     /// the item's original assertions — an update never narrows the evidence a
     /// requirement rests on.
     async fn replace_evidence(
-        tx: &mut sqlx::SqliteConnection,
+        tx: &mut WriteTx,
         item: &MemoryItem,
     ) -> std::result::Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM conversation_memory_evidence WHERE item_id = ?")
             .bind(item.id.as_str())
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         for (ordinal, span) in item.evidence.iter().enumerate() {
             sqlx::query(
@@ -575,7 +577,7 @@ impl ConversationRepository {
             .bind(span.end_byte as i64)
             .bind(&span.content_digest)
             .bind(span.purpose.as_str())
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         }
         Ok(())

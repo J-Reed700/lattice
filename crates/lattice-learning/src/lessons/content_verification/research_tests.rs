@@ -273,7 +273,8 @@ async fn reference_selection_can_reject_unrelated_hits_without_inventing_pages()
 async fn research_searches_the_site_the_planner_named_and_reads_a_page_where_it_moved() -> Result<()>
 {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
@@ -306,7 +307,7 @@ async fn research_searches_the_site_the_planner_named_and_reads_a_page_where_it_
         prompts: Mutex::new(vec![]),
     };
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web.clone()),
@@ -339,7 +340,8 @@ async fn research_searches_the_site_the_planner_named_and_reads_a_page_where_it_
 #[tokio::test]
 async fn research_can_save_evidence_after_one_hundred_sources() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     program.sources = (0..100)
@@ -352,8 +354,7 @@ async fn research_can_save_evidence_after_one_hundred_sources() -> Result<()> {
         })
         .collect();
     repo.create(&program).await?;
-    let library =
-        crate::source_library::LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let library = crate::source_library::LearningSourceLibraryRepository::new(db.clone());
     library
         .preflight_new_source(
             &program.summary.id,
@@ -365,7 +366,7 @@ async fn research_can_save_evidence_after_one_hundred_sources() -> Result<()> {
     let references = ReferenceCollection::lexical(&sources)?;
     let llm = model();
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(false)),
@@ -392,7 +393,8 @@ async fn research_can_save_evidence_after_one_hundred_sources() -> Result<()> {
 #[tokio::test]
 async fn research_persists_full_capture_and_deduplicates_without_approving_claims() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
@@ -401,7 +403,7 @@ async fn research_persists_full_capture_and_deduplicates_without_approving_claim
     let llm = model();
     let findings = vec![gap()];
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(false)),
@@ -453,20 +455,20 @@ fn saved_page(url: &str, text: &str) -> crate::source_library::CapturedLearningS
 /// before the other saved anything: how many saves returned a new source, and
 /// how many sources the course gained.
 async fn save_together(pages: [(&str, &str); 2]) -> Result<(usize, usize)> {
-    let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
     let before = repo.verification_sources(&program.summary.id).await?.len();
     let context = Context {
-        database: pool.clone().into(),
+        database: db.clone(),
         program_id: program.summary.id.clone(),
         topic: program.summary.goal.clone(),
         web: web(false),
         searched: Default::default(),
     };
-    let library = crate::source_library::LearningSourceLibraryRepository::new(Database::from(pool));
+    let library = crate::source_library::LearningSourceLibraryRepository::new(db.clone());
     let saving = Saving {
         context: &context,
         program_repo: &repo,
@@ -535,14 +537,15 @@ async fn two_lessons_saving_different_pages_leave_two_sources() -> Result<()> {
 #[tokio::test]
 async fn research_rejects_truncated_pages_and_does_not_search_for_judge_failures() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
     let sources = repo.verification_sources(&program.summary.id).await?;
     let references = ReferenceCollection::lexical(&sources)?;
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(true)),
@@ -576,14 +579,15 @@ async fn research_rejects_truncated_pages_and_does_not_search_for_judge_failures
 #[tokio::test]
 async fn an_empty_claim_plan_ends_research_honestly_instead_of_failing() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
     let sources = repo.verification_sources(&program.summary.id).await?;
     let references = ReferenceCollection::lexical(&sources)?;
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(false)),
@@ -648,14 +652,15 @@ async fn a_hint_with_no_terms_besides_its_sites_is_not_searched_and_the_log_says
     tracing::callsite::rebuild_interest_cache();
 
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
     let sources = repo.verification_sources(&program.summary.id).await?;
     let references = ReferenceCollection::lexical(&sources)?;
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(false)),
@@ -788,7 +793,8 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
     }
 
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
@@ -802,7 +808,7 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
     let references = ReferenceCollection::lexical(&sources)?;
     let runtimes = crate::embedded_runtime::BuiltinRuntimes::for_tests();
     let (_, report, owned) = run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id,
         program.summary.goal,
         Some(Arc::new(ResearchRounds {
@@ -859,7 +865,8 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
 #[tokio::test]
 async fn a_planned_official_docs_need_is_searched_with_its_subject_and_site() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
@@ -921,7 +928,7 @@ async fn a_planned_official_docs_need_is_searched_with_its_subject_and_site() ->
     };
 
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id,
         program.summary.goal,
         Some(web.clone()),
@@ -1150,14 +1157,15 @@ impl LLMPort for Failing {
 #[tokio::test]
 async fn a_research_round_that_fails_leaves_the_claims_held_and_the_lesson_going() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
     let sources = repo.verification_sources(&program.summary.id).await?;
     let references = ReferenceCollection::lexical(&sources)?;
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(false)),
@@ -1192,7 +1200,8 @@ async fn a_research_round_that_fails_leaves_the_claims_held_and_the_lesson_going
 #[tokio::test]
 async fn a_round_whose_searches_found_nothing_did_reach_a_search_engine() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
@@ -1201,7 +1210,7 @@ async fn a_round_whose_searches_found_nothing_did_reach_a_search_engine() -> Res
     let empty = web(false);
     empty.0.set_search_results(Vec::new());
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(empty),
@@ -1297,7 +1306,8 @@ fn a_round_fetches_at_most_two_pages_for_a_statement_and_twice_the_statements_in
 async fn a_round_fetches_the_selectors_first_choice_and_one_page_on_the_owners_site_and_no_more(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
@@ -1332,7 +1342,7 @@ async fn a_round_fetches_the_selectors_first_choice_and_one_page_on_the_owners_s
         prompts: Mutex::new(vec![]),
     };
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web),
@@ -1359,7 +1369,8 @@ async fn a_round_fetches_the_selectors_first_choice_and_one_page_on_the_owners_s
 async fn a_fetched_page_that_is_not_a_source_counts_against_the_pages_and_is_not_saved(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
@@ -1371,7 +1382,7 @@ async fn a_fetched_page_that_is_not_a_source_counts_against_the_pages_and_is_not
         "Please sign in to continue to the library.",
     );
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web),
@@ -1407,7 +1418,8 @@ async fn a_claim_research_round_records_what_it_cost_a_claim_on_each_researched_
     };
     const CLAIM: &str = "Mineral alpha shows property beta under pressure.";
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
@@ -1439,7 +1451,7 @@ async fn a_claim_research_round_records_what_it_cost_a_claim_on_each_researched_
         prompts: Mutex::new(vec![]),
     };
     let expansion = run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(false)),

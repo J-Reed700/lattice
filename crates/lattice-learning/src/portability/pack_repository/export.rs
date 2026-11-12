@@ -24,8 +24,7 @@ use crate::{
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::Database;
 use serde::Serialize;
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashMap;
@@ -33,15 +32,14 @@ use std::collections::HashMap;
 /// A user-requested export: refused while the course is still being
 /// generated or before it has an outline another computer could import.
 pub(crate) async fn snapshot(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
     options: &LearningPackExportOptionsDto,
 ) -> Result<LearningPackInput> {
-    let pool = pool.sqlx_pool();
-    let mut tx = pool.begin_read().await.map_err(db)?;
+    let mut tx = database.begin_read().await?;
     guards::require_exportable(&mut tx, program_id).await?;
     let input = snapshot_on(&mut tx, program_id, options).await?;
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(input)
 }
 
@@ -350,10 +348,9 @@ mod tests {
     #[tokio::test]
     async fn export_keeps_program_and_related_entries_in_one_snapshot() -> Result<()> {
         let pool = pool().await?;
+        let db = Database::new(pool.clone());
         let program = fixture();
-        LearningRepository::new(pool.clone())
-            .create(&program)
-            .await?;
+        LearningRepository::new(db.clone()).create(&program).await?;
         let request = ExportLearningPackRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
             program_id: program.summary.id.clone(),
@@ -365,7 +362,7 @@ mod tests {
             },
         };
         let held = pool.acquire().await?;
-        let mut read = Box::pin(snapshot(&pool, &request.program_id, &request.options));
+        let mut read = Box::pin(snapshot(&db, &request.program_id, &request.options));
         assert!(futures::poll!(&mut read).is_pending());
         let mut writer = Box::pin(pool.acquire());
         assert!(futures::poll!(&mut writer).is_pending());
@@ -419,7 +416,7 @@ mod tests {
             .entries
             .iter()
             .any(|entry| entry.path == PRACTICAL_ENTRY));
-        let after = snapshot(&pool, &request.program_id, &request.options).await?;
+        let after = snapshot(&db, &request.program_id, &request.options).await?;
         let entry = after
             .entries
             .iter()
@@ -447,10 +444,9 @@ mod tests {
     #[tokio::test]
     async fn export_is_refused_while_a_job_is_preparing_the_course() -> Result<()> {
         let pool = pool().await?;
+        let db = Database::new(pool.clone());
         let program = fixture();
-        LearningRepository::new(pool.clone())
-            .create(&program)
-            .await?;
+        LearningRepository::new(db.clone()).create(&program).await?;
         let job = uuid::Uuid::new_v4().to_string();
         sqlx::query("INSERT INTO jobs(id,kind,subject_id,operation_id,payload_hash,status,requested_json,progress_total,progress_message,created_at) VALUES(?,'learning_lesson',?,?,'job-hash','pending','{}',1,'Queued',1)")
             .bind(&job)
@@ -464,7 +460,7 @@ mod tests {
             .execute(&pool)
             .await?;
         let error = snapshot(
-            &pool,
+            &db,
             &program.summary.id,
             &request(&program.summary.id).options,
         )
@@ -481,7 +477,7 @@ mod tests {
             .execute(&pool)
             .await?;
         assert!(snapshot(
-            &pool,
+            &db,
             &program.summary.id,
             &request(&program.summary.id).options
         )
@@ -493,14 +489,13 @@ mod tests {
     #[tokio::test]
     async fn export_is_refused_before_the_course_has_modules() -> Result<()> {
         let pool = pool().await?;
+        let db = Database::new(pool.clone());
         let mut program = fixture();
         program.modules.clear();
         program.summary.current_lesson_id = None;
-        LearningRepository::new(pool.clone())
-            .create(&program)
-            .await?;
+        LearningRepository::new(db.clone()).create(&program).await?;
         let error = snapshot(
-            &pool,
+            &db,
             &program.summary.id,
             &request(&program.summary.id).options,
         )

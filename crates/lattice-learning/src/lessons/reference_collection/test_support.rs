@@ -9,7 +9,7 @@ use crate::source_library::CapturedLearningSource;
 use crate::sources::InitialReference;
 use lattice_core::application::ports::{LibraryChunk, LibraryPassagesPort};
 use lattice_core::shared::error::Result;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::collections::{HashMap, HashSet};
 
 /// A library holding fixed documents. Search returns the scoped documents'
@@ -94,7 +94,7 @@ const PLANTS: [&str; 1] = ["# Plant cells\nPhotosynthesis takes place in chlorop
 /// A program with a document snapshot, a web snapshot and a second document
 /// snapshot, captured the way the app captures them.
 pub async fn collection_fixture(
-    pool: &SqlitePool,
+    db: &Database,
     documents: [&str; 2],
 ) -> Result<(String, Vec<LearningSourceDto>)> {
     let mut program = crate::test_support::fixture();
@@ -136,7 +136,7 @@ pub async fn collection_fixture(
             found: false,
         })
         .collect();
-    let repo = LearningRepository::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     repo.create_with_references(&program, &references).await?;
     let sources = repo.verification_sources(&program.summary.id).await?;
     Ok((program.summary.id, sources))

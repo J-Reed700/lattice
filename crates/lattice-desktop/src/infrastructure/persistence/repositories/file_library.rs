@@ -2,9 +2,7 @@
 use lattice_core::application::contracts::file_library::{IndexedFolder, IndexingActivity};
 use lattice_core::application::ports::file_library::FileLibraryPort;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 
 const FOLDER_COUNTS: &str = "SELECT json_extract(folder.value,'$[0]'), (
     SELECT COUNT(*) FROM documents d
@@ -31,22 +29,21 @@ fn folder_scope(path: &str) -> (&str, String, String) {
     (path, prefix, end)
 }
 
-pub async fn watch_folder_paths(pool: &impl DriverPool) -> Result<Vec<String>> {
-    let pool = pool.sqlx_pool();
-    Ok(
-        sqlx::query_scalar::<_, String>("SELECT path FROM watch_folders")
-            .fetch_all(pool)
-            .await?,
-    )
+pub async fn watch_folder_paths(db: &Database) -> Result<Vec<String>> {
+    let mut read = db.begin_read().await?;
+    let paths = sqlx::query_scalar::<_, String>("SELECT path FROM watch_folders")
+        .fetch_all(&mut *read)
+        .await?;
+    read.commit().await?;
+    Ok(paths)
 }
 
 pub struct SqliteFileLibrary {
-    pool: SqlitePool,
+    db: Database,
 }
 impl SqliteFileLibrary {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 }
 
@@ -69,7 +66,7 @@ struct ActivityRow {
 #[async_trait::async_trait]
 impl FileLibraryPort for SqliteFileLibrary {
     async fn indexed_folders(&self) -> Result<Vec<IndexedFolder>> {
-        let mut tx = self.pool.begin_read().await?;
+        let mut tx = self.db.begin_read().await?;
         let rows = sqlx::query_as::<_, FolderRow>("SELECT path, recursive, enabled, last_scan, created_at FROM watch_folders ORDER BY created_at DESC")
             .fetch_all(&mut *tx).await?;
         if rows.is_empty() {
@@ -101,8 +98,10 @@ impl FileLibraryPort for SqliteFileLibrary {
         Ok(folders)
     }
     async fn indexing_activities(&self, limit: usize) -> Result<Vec<IndexingActivity>> {
+        let mut read = self.db.begin_read().await?;
         let rows = sqlx::query_as::<_, ActivityRow>("SELECT d.id, d.file_path as file_path, d.status, d.indexed_at as timestamp FROM documents d ORDER BY d.indexed_at DESC LIMIT ?")
-            .bind(limit.min(10000) as i64).fetch_all(&self.pool).await?;
+            .bind(limit.min(10000) as i64).fetch_all(&mut *read).await?;
+        read.commit().await?;
         Ok(rows
             .into_iter()
             .map(|row| IndexingActivity {
@@ -120,6 +119,7 @@ impl FileLibraryPort for SqliteFileLibrary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::SqlitePool;
     // Stored paths and prefix bounds use the host's separator.
     use lattice_core::shared::testing::paths::abs_str;
 
@@ -177,7 +177,7 @@ mod tests {
             .await
             .unwrap();
         }
-        let repo = SqliteFileLibrary::new(pool.clone());
+        let repo = SqliteFileLibrary::new(Database::new(pool.clone()));
         (pool, repo)
     }
 

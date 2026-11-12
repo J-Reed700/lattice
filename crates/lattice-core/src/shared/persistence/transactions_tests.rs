@@ -268,3 +268,30 @@ async fn a_vacuum_waits_for_its_turn() {
     held.commit().await.unwrap();
     vacuum.await.unwrap().unwrap();
 }
+
+#[tokio::test]
+async fn a_read_unit_that_changed_rows_rolls_them_back_and_fails_to_commit() {
+    let opened = open().await;
+    let mut read = opened.db.begin_read().await.unwrap();
+    sqlx::query("INSERT INTO notes(body) VALUES('mine')")
+        .execute(&mut *read)
+        .await
+        .unwrap();
+    let error = read.commit().await.unwrap_err();
+    assert_eq!(error.kind(), PersistenceErrorKind::Other);
+    assert!(error.to_string().contains("only reads changed rows"));
+    assert_eq!(notes(&opened.pool).await, 1);
+}
+
+#[tokio::test]
+async fn a_read_unit_commits_after_another_unit_wrote_meanwhile() {
+    let opened = open().await;
+    let mut read = opened.db.begin_read().await.unwrap();
+    sqlx::query_scalar::<_, i64>("SELECT count(*) FROM notes")
+        .fetch_one(&mut *read)
+        .await
+        .unwrap();
+    writer(&opened.db).await.unwrap().unwrap();
+    read.commit().await.unwrap();
+    assert_eq!(notes(&opened.pool).await, 2);
+}

@@ -94,6 +94,7 @@ mod tests {
     use super::*;
     use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
     use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
+    use lattice_core::shared::persistence::Database;
     use sqlx::sqlite::SqlitePoolOptions;
     use std::path::{Path, PathBuf};
 
@@ -107,7 +108,7 @@ mod tests {
             .run(&pool)
             .await
             .expect("run migrations");
-        Arc::new(DownloadedModelRepository::new(pool))
+        Arc::new(DownloadedModelRepository::new(Database::new(pool)))
     }
 
     /// An embedding GGUF and its tokenizer, as a download leaves them.

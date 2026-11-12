@@ -13,7 +13,7 @@ use lattice_core::domain::provenance::{
     ClaimKind, LabelSource, OriginKey, OutcomeRecord, TRUST_POLICY_VERSION,
 };
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::{Database, Transactions, WriteTx};
+use lattice_core::shared::persistence::{Database, WriteTx};
 
 use super::calibration::{bars_of, moved_kinds};
 use super::repository::outcomes as stored;

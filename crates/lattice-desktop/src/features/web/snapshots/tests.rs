@@ -41,6 +41,7 @@ impl SnapshotEvents for RecordingEvents {
 
 struct Fixture {
     pool: SqlitePool,
+    db: Database,
     dir: TempDir,
     capture: Arc<MockPageCapture>,
     events: Arc<RecordingEvents>,
@@ -72,12 +73,12 @@ async fn fixture_with(register: bool) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let capture = Arc::new(MockPageCapture::new());
     let events = Arc::new(RecordingEvents::default());
-    let database = Database::from(pool.clone());
+    let database = Database::new(pool.clone());
     let jobs = lattice_core::shared::runtime::jobs::JobRuntime::new(database.clone());
     let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
     sweep_gate.open();
     let service = Arc::new(WebPageSnapshotService::new(
-        database,
+        database.clone(),
         dir.path().join("web-snapshots"),
         capture.clone(),
         jobs,
@@ -91,6 +92,7 @@ async fn fixture_with(register: bool) -> Fixture {
     }
     Fixture {
         pool,
+        db: database,
         dir,
         capture,
         events,
@@ -220,7 +222,7 @@ async fn failed_row_is_retried_only_on_request_with_a_new_job() {
     let failed = f.settled(URL).await;
     assert_eq!(failed.status, WebPageSnapshotStatus::Failed);
     assert_eq!(failed.error_code.as_deref(), Some("blocked"));
-    let repository = repository::SnapshotRepository::new(f.pool.clone());
+    let repository = repository::SnapshotRepository::new(f.db.clone());
     let first_job = repository.get(&failed.id).await.unwrap().unwrap().job_id;
 
     // An automatic ensure leaves a failed row alone.
@@ -320,7 +322,7 @@ async fn a_job_the_runtime_failed_for_stopping_the_app_leaves_a_failed_row_that_
         .ensure_capture(CONVERSATION, URL, false)
         .await
         .unwrap();
-    let job_id = repository::SnapshotRepository::new(f.pool.clone())
+    let job_id = repository::SnapshotRepository::new(f.db.clone())
         .get(&queued.id)
         .await
         .unwrap()
@@ -395,7 +397,7 @@ async fn deleting_its_conversation_lets_the_sweep_take_a_page() {
     let f = fixture().await;
     let ready = f.ready().await;
     let file = f.root().join(format!("{}.html", ready.id));
-    crate::features::conversation::repository::ConversationRepository::new(f.pool.clone())
+    crate::features::conversation::repository::ConversationRepository::new(f.db.clone())
         .delete(CONVERSATION)
         .await
         .unwrap();
@@ -564,7 +566,7 @@ async fn unknown_ids_are_404_and_pending_rows_are_425() {
     assert_eq!(unknown.status(), 404);
     assert_eq!(unknown.headers()["content-security-policy"], CSP);
 
-    let repository = repository::SnapshotRepository::new(f.pool.clone());
+    let repository = repository::SnapshotRepository::new(f.db.clone());
     let (row, created) = repository
         .insert_or_get(
             &new_id(),

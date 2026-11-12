@@ -23,15 +23,17 @@ pub struct ProgramVerifierAudit {
 
 impl LearningCurriculumRepository {
     pub async fn verifier_audit(&self, program_id: &str) -> Result<ProgramVerifierAudit> {
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let row = sqlx::query(
             "SELECT verifier_audit, verifier_web_search, verifier_consent_at, \
              verifier_consent_provider FROM learning_programs WHERE id=?",
         )
         .bind(program_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *read)
         .await
         .map_err(db)?
         .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
+        read.commit().await.map_err(db)?;
         Ok(ProgramVerifierAudit {
             on: row.get::<String, _>("verifier_audit") == "on",
             web_search: row.get::<i64, _>("verifier_web_search") == 1,
@@ -52,6 +54,7 @@ impl LearningCurriculumRepository {
         } else {
             (None, None)
         };
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let written = sqlx::query(
             "UPDATE learning_programs SET verifier_audit=?, verifier_web_search=?, \
              verifier_consent_at=?, verifier_consent_provider=? WHERE id=?",
@@ -61,12 +64,13 @@ impl LearningCurriculumRepository {
         .bind(consent_at)
         .bind(consent_provider)
         .bind(program_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(db)?;
         if written.rows_affected() == 0 {
             return Err(AppError::NotFound("Learning program not found".into()));
         }
+        tx.commit().await.map_err(db)?;
         Ok(())
     }
 }

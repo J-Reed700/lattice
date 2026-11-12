@@ -278,9 +278,11 @@ mod tests {
         let verification = BackgroundVerification {
             conversation_repository: Arc::new(
                 crate::features::conversation::repository::ConversationRepository::new(
-                    sqlx::sqlite::SqlitePoolOptions::new()
-                        .connect_lazy("sqlite::memory:")
-                        .unwrap(),
+                    lattice_core::shared::persistence::Database::new(
+                        sqlx::sqlite::SqlitePoolOptions::new()
+                            .connect_lazy("sqlite::memory:")
+                            .unwrap(),
+                    ),
                 ),
             ),
             conversation_service: service,

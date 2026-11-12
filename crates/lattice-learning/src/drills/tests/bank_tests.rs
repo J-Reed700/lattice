@@ -44,7 +44,7 @@ impl<'a> Ready<'a> {
     }
 
     /// Puts the drill into the bank.
-    async fn put(self, pool: &SqlitePool) -> Result<()> {
+    async fn put(self, database: &Database) -> Result<()> {
         let proved = proved();
         let drill = Drill {
             id: self.id.into(),
@@ -71,9 +71,9 @@ impl<'a> Ready<'a> {
             &unchecked(),
             &quiet(),
         );
-        let mut connection = pool.acquire().await.map_err(db)?;
+        let mut tx = database.begin_write().await?;
         repository::insert_in(
-            &mut connection,
+            &mut tx,
             &NewDrill {
                 drill: &drill,
                 clean_files: &files(),
@@ -90,9 +90,10 @@ impl<'a> Ready<'a> {
         sqlx::query("UPDATE learning_drills SET created_at=? WHERE id=?")
             .bind(self.at)
             .bind(self.id)
-            .execute(&mut *connection)
+            .execute(&mut *tx)
             .await
             .map_err(db)?;
+        tx.commit().await?;
         Ok(())
     }
 }
@@ -113,8 +114,11 @@ fn build_spec(program: &str, lesson: &str, material: Material) -> DrillSpec {
 }
 
 /// A course and its lessons, in course order.
-async fn course_with_lessons(pool: &SqlitePool) -> Result<(String, Vec<String>)> {
-    let program = course(pool).await?;
+async fn course_with_lessons(
+    pool: &SqlitePool,
+    database: &Database,
+) -> Result<(String, Vec<String>)> {
+    let program = course(database).await?;
     let lessons = lessons_of(pool, &program).await?;
     Ok((program, lessons))
 }
@@ -128,9 +132,9 @@ async fn builds(pool: &SqlitePool) -> Result<i64> {
 }
 
 /// The build queued when `taken` was taken.
-async fn queued_for(pool: &SqlitePool, taken: &Taken) -> Result<JobRecord> {
+async fn queued_for(database: &Database, taken: &Taken) -> Result<JobRecord> {
     let id = taken.next_build.as_deref().expect("a build was queued");
-    JobStore::new(pool.clone()).get(id).await
+    JobStore::new(database.clone()).get(id).await
 }
 
 /// Ends the job as `status` says: `failed` or `completed`.
@@ -162,17 +166,17 @@ fn pattern_ids(material: &Material, states: &[PatternDue], now: i64, count: usiz
 #[tokio::test]
 async fn with_nothing_ready_on_the_shelf_nothing_is_given_and_nothing_is_queued() -> Result<()> {
     let pool = pool().await?;
-    let database = Database::from(pool.clone());
-    let (first, first_lessons) = course_with_lessons(&pool).await?;
-    let (second, second_lessons) = course_with_lessons(&pool).await?;
+    let database = Database::new(pool.clone());
+    let (first, first_lessons) = course_with_lessons(&pool, &database).await?;
+    let (second, second_lessons) = course_with_lessons(&pool, &database).await?;
     Ready {
         language: "javascript",
         ..Ready::new("other language", &first, Some(first_lessons[0].as_str()))
     }
-    .put(&pool)
+    .put(&database)
     .await?;
     Ready::new("other course", &second, Some(second_lessons[0].as_str()))
-        .put(&pool)
+        .put(&database)
         .await?;
     let python = Material::code("python");
     let shelf = Shelf {
@@ -197,29 +201,29 @@ async fn with_nothing_ready_on_the_shelf_nothing_is_given_and_nothing_is_queued(
 async fn the_oldest_ready_drill_of_the_shelf_built_from_a_lesson_is_taken_and_marked() -> Result<()>
 {
     let pool = pool().await?;
-    let database = Database::from(pool.clone());
-    let (first, lessons) = course_with_lessons(&pool).await?;
-    let (second, others) = course_with_lessons(&pool).await?;
+    let database = Database::new(pool.clone());
+    let (first, lessons) = course_with_lessons(&pool, &database).await?;
+    let (second, others) = course_with_lessons(&pool, &database).await?;
     Ready::new("older", &first, Some(lessons[0].as_str()))
-        .put(&pool)
+        .put(&database)
         .await?;
     Ready {
         at: 200,
         ..Ready::new("newer", &first, Some(lessons[1].as_str()))
     }
-    .put(&pool)
+    .put(&database)
     .await?;
     Ready {
         at: 10,
         ..Ready::new("before-lessons", &first, None)
     }
-    .put(&pool)
+    .put(&database)
     .await?;
     Ready {
         at: 50,
         ..Ready::new("elsewhere", &second, Some(others[0].as_str()))
     }
-    .put(&pool)
+    .put(&database)
     .await?;
     let python = Material::code("python");
     let shelf = Shelf {
@@ -264,16 +268,16 @@ async fn the_oldest_ready_drill_of_the_shelf_built_from_a_lesson_is_taken_and_ma
 #[tokio::test]
 async fn asking_for_a_lesson_takes_only_a_drill_built_from_it() -> Result<()> {
     let pool = pool().await?;
-    let database = Database::from(pool.clone());
-    let (program, lessons) = course_with_lessons(&pool).await?;
+    let database = Database::new(pool.clone());
+    let (program, lessons) = course_with_lessons(&pool, &database).await?;
     Ready::new("first", &program, Some(lessons[0].as_str()))
-        .put(&pool)
+        .put(&database)
         .await?;
     Ready {
         at: 200,
         ..Ready::new("second", &program, Some(lessons[1].as_str()))
     }
-    .put(&pool)
+    .put(&database)
     .await?;
     let python = Material::code("python");
     let shelf = Shelf {
@@ -306,8 +310,8 @@ async fn asking_for_a_lesson_takes_only_a_drill_built_from_it() -> Result<()> {
 #[tokio::test]
 async fn taking_the_last_ready_drill_queues_the_build_of_the_lesson_next_up() -> Result<()> {
     let pool = pool().await?;
-    let database = Database::from(pool.clone());
-    let (program, lessons) = course_with_lessons(&pool).await?;
+    let database = Database::new(pool.clone());
+    let (program, lessons) = course_with_lessons(&pool, &database).await?;
     Ready {
         lines: 70,
         patterns: &[
@@ -317,7 +321,7 @@ async fn taking_the_last_ready_drill_queues_the_build_of_the_lesson_next_up() ->
         ],
         ..Ready::new("older", &program, Some(lessons[0].as_str()))
     }
-    .put(&pool)
+    .put(&database)
     .await?;
     let python = Material::code("python");
     let taken = take(
@@ -331,7 +335,7 @@ async fn taking_the_last_ready_drill_queues_the_build_of_the_lesson_next_up() ->
     .await?
     .expect("a ready drill");
 
-    let job = queued_for(&pool, &taken).await?;
+    let job = queued_for(&database, &taken).await?;
     assert_eq!(job.kind, DRILL_BUILD);
     assert_eq!(job.subject_id, Some(format!("drill:{program}:code:python")));
     assert_eq!(job.status, JobStatus::Pending);
@@ -359,8 +363,8 @@ async fn taking_the_last_ready_drill_queues_the_build_of_the_lesson_next_up() ->
 #[tokio::test]
 async fn a_pattern_due_in_the_schedule_is_the_first_the_next_build_plants() -> Result<()> {
     let pool = pool().await?;
-    let database = Database::from(pool.clone());
-    let (program, lessons) = course_with_lessons(&pool).await?;
+    let database = Database::new(pool.clone());
+    let (program, lessons) = course_with_lessons(&pool, &database).await?;
     Ready {
         lines: 70,
         patterns: &[
@@ -370,7 +374,7 @@ async fn a_pattern_due_in_the_schedule_is_the_first_the_next_build_plants() -> R
         ],
         ..Ready::new("older", &program, Some(lessons[0].as_str()))
     }
-    .put(&pool)
+    .put(&database)
     .await?;
     let due = "concurrency.check_then_act";
     schedule_pattern(&pool, "code:python", due, 1).await?;
@@ -387,7 +391,7 @@ async fn a_pattern_due_in_the_schedule_is_the_first_the_next_build_plants() -> R
     .await?
     .expect("a ready drill");
 
-    let queued = spec_of(&queued_for(&pool, &taken).await?)?;
+    let queued = spec_of(&queued_for(&database, &taken).await?)?;
     assert_eq!(queued.patterns.first().map(String::as_str), Some(due));
     let mut states = held_back(&taken.drill.drill);
     states.push(PatternDue {
@@ -409,16 +413,16 @@ async fn a_pattern_due_in_the_schedule_is_the_first_the_next_build_plants() -> R
 #[tokio::test]
 async fn taking_queues_no_build_while_another_drill_of_the_shelf_is_ready() -> Result<()> {
     let pool = pool().await?;
-    let database = Database::from(pool.clone());
-    let (program, lessons) = course_with_lessons(&pool).await?;
+    let database = Database::new(pool.clone());
+    let (program, lessons) = course_with_lessons(&pool, &database).await?;
     Ready::new("first", &program, Some(lessons[0].as_str()))
-        .put(&pool)
+        .put(&database)
         .await?;
     Ready {
         at: 200,
         ..Ready::new("second", &program, Some(lessons[1].as_str()))
     }
-    .put(&pool)
+    .put(&database)
     .await?;
     let python = Material::code("python");
     let shelf = Shelf {
@@ -441,17 +445,17 @@ async fn taking_queues_no_build_while_another_drill_of_the_shelf_is_ready() -> R
 #[tokio::test]
 async fn a_ready_drill_from_before_lessons_holds_nothing_back() -> Result<()> {
     let pool = pool().await?;
-    let database = Database::from(pool.clone());
-    let (program, lessons) = course_with_lessons(&pool).await?;
+    let database = Database::new(pool.clone());
+    let (program, lessons) = course_with_lessons(&pool, &database).await?;
     let python = Material::code("python");
     Ready {
         at: 50,
         ..Ready::new("before-lessons", &program, None)
     }
-    .put(&pool)
+    .put(&database)
     .await?;
     Ready::new("only", &program, Some(lessons[0].as_str()))
-        .put(&pool)
+        .put(&database)
         .await?;
     let shelf = Shelf {
         program_id: &program,
@@ -469,18 +473,18 @@ async fn a_ready_drill_from_before_lessons_holds_nothing_back() -> Result<()> {
 #[tokio::test]
 async fn taking_queues_no_build_while_a_build_of_the_shelf_is_under_way() -> Result<()> {
     let pool = pool().await?;
-    let database = Database::from(pool.clone());
-    let (program, lessons) = course_with_lessons(&pool).await?;
+    let database = Database::new(pool.clone());
+    let (program, lessons) = course_with_lessons(&pool, &database).await?;
     let python = Material::code("python");
     let shelf = Shelf {
         program_id: &program,
         material: &python,
     };
     Ready::new("first", &program, Some(lessons[0].as_str()))
-        .put(&pool)
+        .put(&database)
         .await?;
     let under_way = queue_build(
-        &Database::from(pool.clone()),
+        &database,
         &build_spec(&program, &lessons[1], python.clone()),
         "under way",
     )
@@ -492,7 +496,7 @@ async fn taking_queues_no_build_while_a_build_of_the_shelf_is_under_way() -> Res
     assert_eq!(pending.next_build, None, "a build is pending");
     assert_eq!(builds(&pool).await?, 1);
 
-    JobStore::new(pool.clone())
+    JobStore::new(database.clone())
         .claim(&under_way)
         .await?
         .expect("the build is claimed");
@@ -500,7 +504,7 @@ async fn taking_queues_no_build_while_a_build_of_the_shelf_is_under_way() -> Res
         at: 200,
         ..Ready::new("second", &program, Some(lessons[0].as_str()))
     }
-    .put(&pool)
+    .put(&database)
     .await?;
     let running = take(&database, shelf, None)
         .await?
@@ -515,34 +519,34 @@ async fn taking_queues_no_build_while_a_build_of_the_shelf_is_under_way() -> Res
 async fn a_build_of_another_shelf_or_one_that_has_ended_does_not_hold_the_next_back() -> Result<()>
 {
     let pool = pool().await?;
-    let database = Database::from(pool.clone());
-    let (program, lessons) = course_with_lessons(&pool).await?;
-    let (other, others) = course_with_lessons(&pool).await?;
+    let database = Database::new(pool.clone());
+    let (program, lessons) = course_with_lessons(&pool, &database).await?;
+    let (other, others) = course_with_lessons(&pool, &database).await?;
     let python = Material::code("python");
     Ready::new("only", &program, Some(lessons[0].as_str()))
-        .put(&pool)
+        .put(&database)
         .await?;
     queue_build(
-        &Database::from(pool.clone()),
+        &database,
         &build_spec(&program, &lessons[1], Material::code("javascript")),
         "another language",
     )
     .await?;
     queue_build(
-        &Database::from(pool.clone()),
+        &database,
         &build_spec(&other, &others[1], python.clone()),
         "another course",
     )
     .await?;
     let failed = queue_build(
-        &Database::from(pool.clone()),
+        &database,
         &build_spec(&program, &lessons[1], python.clone()),
         "failed",
     )
     .await?;
     end(&pool, &failed, "failed").await?;
     let completed = queue_build(
-        &Database::from(pool.clone()),
+        &database,
         &build_spec(&program, &lessons[2], python.clone()),
         "completed",
     )
@@ -568,13 +572,13 @@ async fn a_build_of_another_shelf_or_one_that_has_ended_does_not_hold_the_next_b
 #[tokio::test]
 async fn a_course_of_one_lesson_drills_it_again() -> Result<()> {
     let pool = pool().await?;
-    let database = Database::from(pool.clone());
-    let (program, lessons) = course_with_lessons(&pool).await?;
+    let database = Database::new(pool.clone());
+    let (program, lessons) = course_with_lessons(&pool, &database).await?;
     for skipped in &lessons[1..] {
         set_state(&pool, skipped, "skipped").await?;
     }
     Ready::new("only", &program, Some(lessons[0].as_str()))
-        .put(&pool)
+        .put(&database)
         .await?;
     let python = Material::code("python");
     let taken = take(
@@ -587,7 +591,7 @@ async fn a_course_of_one_lesson_drills_it_again() -> Result<()> {
     )
     .await?
     .expect("the only drill");
-    let queued = spec_of(&queued_for(&pool, &taken).await?)?;
+    let queued = spec_of(&queued_for(&database, &taken).await?)?;
     assert_eq!(queued.lesson_id.as_deref(), Some(lessons[0].as_str()));
     Ok(())
 }
@@ -595,14 +599,14 @@ async fn a_course_of_one_lesson_drills_it_again() -> Result<()> {
 #[tokio::test]
 async fn with_no_lesson_left_to_drill_on_the_material_no_build_is_queued() -> Result<()> {
     let pool = pool().await?;
-    let database = Database::from(pool.clone());
-    let (program, lessons) = course_with_lessons(&pool).await?;
+    let database = Database::new(pool.clone());
+    let (program, lessons) = course_with_lessons(&pool, &database).await?;
     let python = Material::code("python");
     for lesson in &lessons {
-        record_unfit(&pool, &program, lesson, &python).await?;
+        record_unfit(&database, &program, lesson, &python).await?;
     }
     Ready::new("only", &program, Some(lessons[0].as_str()))
-        .put(&pool)
+        .put(&database)
         .await?;
     let taken = take(
         &database,
@@ -623,23 +627,24 @@ async fn with_no_lesson_left_to_drill_on_the_material_no_build_is_queued() -> Re
 #[tokio::test]
 async fn queueing_a_build_twice_with_one_seed_finds_the_same_job() -> Result<()> {
     let pool = pool().await?;
-    let first = queue_build(&Database::from(pool.clone()), &lesson_spec(), "refill").await?;
-    let again = queue_build(&Database::from(pool.clone()), &lesson_spec(), "refill").await?;
+    let database = Database::new(pool.clone());
+    let first = queue_build(&database, &lesson_spec(), "refill").await?;
+    let again = queue_build(&database, &lesson_spec(), "refill").await?;
     assert_eq!(first, again);
     assert_eq!(builds(&pool).await?, 1);
-    let other = queue_build(&Database::from(pool.clone()), &lesson_spec(), "another").await?;
+    let other = queue_build(&database, &lesson_spec(), "another").await?;
     assert_ne!(first, other);
 
     let mut different = lesson_spec();
     different.lines += 1;
-    let error = queue_build(&Database::from(pool.clone()), &different, "refill")
+    let error = queue_build(&database, &different, "refill")
         .await
         .unwrap_err();
     assert!(
         matches!(&error, AppError::InvalidInput(message) if message.contains("reused")),
         "{error:?}"
     );
-    let job = JobStore::new(pool.clone()).get(&first).await?;
+    let job = JobStore::new(database.clone()).get(&first).await?;
     assert_eq!(job.progress_total, 7);
     assert_eq!(job.subject_id.as_deref(), Some("drill:course:code:python"));
     assert_eq!(spec_of(&job)?, lesson_spec());
@@ -649,6 +654,7 @@ async fn queueing_a_build_twice_with_one_seed_finds_the_same_job() -> Result<()>
 #[tokio::test]
 async fn a_spec_that_names_no_drill_is_refused_before_a_job_is_queued() -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     for bad in [
         DrillSpec {
             material: Material::code("klingon"),
@@ -679,9 +685,7 @@ async fn a_spec_that_names_no_drill_is_refused_before_a_job_is_queued() -> Resul
             ..lesson_spec()
         },
     ] {
-        let error = queue_build(&Database::from(pool.clone()), &bad, "bad")
-            .await
-            .unwrap_err();
+        let error = queue_build(&database, &bad, "bad").await.unwrap_err();
         assert!(matches!(error, AppError::InvalidInput(_)), "{bad:?}");
     }
     assert_eq!(builds(&pool).await?, 0);
@@ -822,16 +826,17 @@ fn a_shelf_is_a_course_and_a_material_and_its_builds_share_a_subject() -> Result
 #[tokio::test]
 async fn the_build_under_way_is_found_again_for_its_lesson_or_for_any() -> Result<()> {
     let pool = pool().await?;
-    let (program, lessons) = course_with_lessons(&pool).await?;
+    let database = Database::new(pool.clone());
+    let (program, lessons) = course_with_lessons(&pool, &database).await?;
     let python = Material::code("python");
     let javascript = Material::code("javascript");
     let shelf = Shelf {
         program_id: &program,
         material: &python,
     };
-    let store = JobStore::new(pool.clone());
+    let store = JobStore::new(database.clone());
 
-    let first = ensure_build(&Database::from(pool.clone()), shelf, None, 40, 2).await?;
+    let first = ensure_build(&database, shelf, None, 40, 2).await?;
     let job = store.get(&first).await?;
     assert_eq!(job.kind, DRILL_BUILD);
     assert_eq!(job.subject_id, Some(format!("drill:{program}:code:python")));
@@ -847,49 +852,25 @@ async fn the_build_under_way_is_found_again_for_its_lesson_or_for_any() -> Resul
         },
         "the lesson next up, with the patterns the schedule offers"
     );
-    assert_eq!(
-        ensure_build(&Database::from(pool.clone()), shelf, None, 40, 2).await?,
-        first
-    );
+    assert_eq!(ensure_build(&database, shelf, None, 40, 2).await?, first);
 
-    let second = ensure_build(
-        &Database::from(pool.clone()),
-        shelf,
-        Some(lessons[1].as_str()),
-        40,
-        2,
-    )
-    .await?;
+    let second = ensure_build(&database, shelf, Some(lessons[1].as_str()), 40, 2).await?;
     assert_ne!(second, first);
     assert_eq!(
         spec_of(&store.get(&second).await?)?.lesson_id.as_deref(),
         Some(lessons[1].as_str())
     );
     assert_eq!(
-        ensure_build(
-            &Database::from(pool.clone()),
-            shelf,
-            Some(lessons[1].as_str()),
-            40,
-            2
-        )
-        .await?,
+        ensure_build(&database, shelf, Some(lessons[1].as_str()), 40, 2).await?,
         second
     );
     assert_eq!(
-        ensure_build(
-            &Database::from(pool.clone()),
-            shelf,
-            Some(lessons[0].as_str()),
-            40,
-            2
-        )
-        .await?,
+        ensure_build(&database, shelf, Some(lessons[0].as_str()), 40, 2).await?,
         first
     );
 
     let elsewhere = ensure_build(
-        &Database::from(pool.clone()),
+        &database,
         Shelf {
             program_id: &program,
             material: &javascript,
@@ -906,14 +887,7 @@ async fn the_build_under_way_is_found_again_for_its_lesson_or_for_any() -> Resul
     );
 
     end(&pool, &first, "failed").await?;
-    let again = ensure_build(
-        &Database::from(pool.clone()),
-        shelf,
-        Some(lessons[0].as_str()),
-        40,
-        2,
-    )
-    .await?;
+    let again = ensure_build(&database, shelf, Some(lessons[0].as_str()), 40, 2).await?;
     assert!(![&first, &second, &elsewhere].contains(&&again));
     assert_eq!(
         spec_of(&store.get(&again).await?)?.lesson_id.as_deref(),
@@ -926,30 +900,24 @@ async fn the_build_under_way_is_found_again_for_its_lesson_or_for_any() -> Resul
 async fn ensuring_a_build_with_no_lesson_to_drill_is_refused_unless_one_is_asked_for() -> Result<()>
 {
     let pool = pool().await?;
-    let (program, lessons) = course_with_lessons(&pool).await?;
+    let database = Database::new(pool.clone());
+    let (program, lessons) = course_with_lessons(&pool, &database).await?;
     let python = Material::code("python");
     for lesson in &lessons {
-        record_unfit(&pool, &program, lesson, &python).await?;
+        record_unfit(&database, &program, lesson, &python).await?;
     }
     let shelf = Shelf {
         program_id: &program,
         material: &python,
     };
-    let error = ensure_build(&Database::from(pool.clone()), shelf, None, 40, 2)
+    let error = ensure_build(&database, shelf, None, 40, 2)
         .await
         .unwrap_err();
     assert!(matches!(error, AppError::InvalidInput(_)), "{error:?}");
     assert_eq!(builds(&pool).await?, 0);
 
-    let asked = ensure_build(
-        &Database::from(pool.clone()),
-        shelf,
-        Some(lessons[2].as_str()),
-        40,
-        2,
-    )
-    .await?;
-    let queued = spec_of(&JobStore::new(pool.clone()).get(&asked).await?)?;
+    let asked = ensure_build(&database, shelf, Some(lessons[2].as_str()), 40, 2).await?;
+    let queued = spec_of(&JobStore::new(database.clone()).get(&asked).await?)?;
     assert_eq!(queued.lesson_id.as_deref(), Some(lessons[2].as_str()));
     assert_eq!(builds(&pool).await?, 1);
     Ok(())

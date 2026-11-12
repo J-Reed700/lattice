@@ -14,8 +14,8 @@ const PROVENANCE: &str = "program/provenance.json";
 const QUOTE: &str =
     "A saved citation identifies exactly the immutable passage used to support the lesson claim.";
 
-async fn ready_course(pool: &sqlx::SqlitePool) -> Result<LearningProgramDto> {
-    let repository = LearningRepository::new(pool.clone());
+async fn ready_course(db: &Database) -> Result<LearningProgramDto> {
+    let repository = LearningRepository::new(db.clone());
     let mut program = fixture();
     program.summary.status = LearningProgramStatus::Active;
     program.sources[0].excerpt = QUOTE.into();
@@ -122,23 +122,23 @@ async fn apply_path(
 async fn copied_course_retains_citations_bound_to_copied_ids_without_exposing_answers() -> Result<()>
 {
     let pool = pool().await?;
-    let original = ready_course(&pool).await?;
+    let db = Database::new(pool.clone());
+    let original = ready_course(&db).await?;
     let workspace = tempfile::tempdir().expect("pack workspace");
     let packs = LearningPackRepository::new(
-        pool.clone(),
+        db.clone(),
         workspace.path().join("learning-packs"),
         workspace.path().to_path_buf(),
     );
     let (copy_id, _) = export_copy(&packs, &original.summary.id).await?;
     assert_ne!(copy_id, original.summary.id);
-    let copy = LearningRepository::new(pool.clone()).get(&copy_id).await?;
+    let copy = LearningRepository::new(db.clone()).get(&copy_id).await?;
     let copied_lesson = &copy.modules[0].lessons[0];
-    let database = Database::from(pool.clone());
-    let evidence = lesson_evidence::get(&database, &copy_id, &copied_lesson.id)
+    let evidence = lesson_evidence::get(&db, &copy_id, &copied_lesson.id)
         .await?
         .unwrap();
     let before = lesson_evidence::get(
-        &database,
+        &db,
         &original.summary.id,
         &original.modules[0].lessons[0].id,
     )
@@ -161,9 +161,7 @@ async fn copied_course_retains_citations_bound_to_copied_ids_without_exposing_an
         copied_lesson.blocks[0].source_ids[0]
     );
     assert_ne!(passage.source_version_id, original.sources[0].id);
-    let outline = outline_evidence_view::get(&database, &copy_id)
-        .await?
-        .unwrap();
+    let outline = outline_evidence_view::get(&db, &copy_id).await?.unwrap();
     assert!(!outline.citations.is_empty());
     assert_eq!(outline.unavailable_count, 0);
     assert!(outline.citations.iter().all(|citation| copy
@@ -196,10 +194,11 @@ async fn copied_course_retains_citations_bound_to_copied_ids_without_exposing_an
 async fn replacing_course_backs_up_current_provenance_and_restores_exported_provenance(
 ) -> Result<()> {
     let pool = pool().await?;
-    let original = ready_course(&pool).await?;
+    let db = Database::new(pool.clone());
+    let original = ready_course(&db).await?;
     let workspace = tempfile::tempdir().expect("pack workspace");
     let packs = LearningPackRepository::new(
-        pool.clone(),
+        db.clone(),
         workspace.path().join("learning-packs"),
         workspace.path().to_path_buf(),
     );
@@ -232,7 +231,7 @@ async fn replacing_course_backs_up_current_provenance_and_restores_exported_prov
         .unwrap()
         .contains("Current-only receipt"));
     let restored = lesson_evidence::get(
-        &Database::from(pool.clone()),
+        &db,
         &original.summary.id,
         &original.modules[0].lessons[0].id,
     )
@@ -245,11 +244,11 @@ async fn replacing_course_backs_up_current_provenance_and_restores_exported_prov
         LearningPackConflictPolicy::CreateCopy,
     )
     .await?;
-    let recovered = LearningRepository::new(pool.clone())
+    let recovered = LearningRepository::new(db.clone())
         .get(&recovery.program_id)
         .await?;
     let evidence = lesson_evidence::get(
-        &Database::from(pool.clone()),
+        &db,
         &recovery.program_id,
         &recovered.modules[0].lessons[0].id,
     )
@@ -288,10 +287,11 @@ async fn variant(path: &str, edit: impl FnOnce(&mut LearningPackInput)) -> Resul
 #[tokio::test]
 async fn malformed_or_future_provenance_is_rejected_before_an_import_writes() -> Result<()> {
     let pool = pool().await?;
-    let original = ready_course(&pool).await?;
+    let db = Database::new(pool.clone());
+    let original = ready_course(&db).await?;
     let workspace = tempfile::tempdir().expect("pack workspace");
     let packs = LearningPackRepository::new(
-        pool.clone(),
+        db.clone(),
         workspace.path().join("learning-packs"),
         workspace.path().to_path_buf(),
     );
@@ -344,7 +344,7 @@ async fn malformed_or_future_provenance_is_rejected_before_an_import_writes() ->
         0
     );
     assert!(lesson_evidence::get(
-        &Database::from(pool.clone()),
+        &db,
         &original.summary.id,
         &original.modules[0].lessons[0].id
     )
@@ -356,10 +356,11 @@ async fn malformed_or_future_provenance_is_rejected_before_an_import_writes() ->
 #[tokio::test]
 async fn failed_provenance_backup_leaves_the_replacement_target_untouched() -> Result<()> {
     let pool = pool().await?;
-    let original = ready_course(&pool).await?;
+    let db = Database::new(pool.clone());
+    let original = ready_course(&db).await?;
     let workspace = tempfile::tempdir().expect("pack workspace");
     let packs = LearningPackRepository::new(
-        pool.clone(),
+        db.clone(),
         workspace.path().join("learning-packs"),
         workspace.path().to_path_buf(),
     );

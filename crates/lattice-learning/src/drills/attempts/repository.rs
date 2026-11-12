@@ -6,6 +6,7 @@ use crate::drills::jobs::{DRILL_GRADING, GRADING_STEPS};
 use crate::drills::repository::{self as drill_repository, StoredDrill};
 use crate::persistence::{db, decode, encode, hash, now};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::WriteTx;
 use lattice_core::shared::runtime::jobs::{JobStore, NewJob};
 use serde::de::DeserializeOwned;
 use serde_json::json;
@@ -13,7 +14,7 @@ use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 
 /// Opens an attempt `id` on a drill.
 pub(super) async fn insert_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     id: &str,
     drill_id: &str,
     mode: AttemptMode,
@@ -25,7 +26,7 @@ pub(super) async fn insert_in(
     .bind(drill_id)
     .bind(mode.as_str())
     .bind(now())
-    .execute(&mut *connection)
+    .execute(&mut **tx)
     .await
     .map(drop)
     .map_err(db)
@@ -33,40 +34,36 @@ pub(super) async fn insert_in(
 
 /// Opens an attempt on a drill the caller has taken from the bank.
 pub(crate) async fn open_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     drill_id: &str,
     mode: AttemptMode,
 ) -> Result<Attempt> {
     let id = uuid::Uuid::new_v4().to_string();
-    insert_in(connection, &id, drill_id, mode).await?;
-    find_in(connection, &id)
+    insert_in(tx, &id, drill_id, mode).await?;
+    find_in(tx, &id)
         .await?
         .ok_or_else(|| AppError::InternalError("The attempt just opened is not there.".into()))
 }
 
 /// Stores what the learner handed in on an open attempt.
-pub(super) async fn submit_in(
-    connection: &mut SqliteConnection,
-    id: &str,
-    submission: &Submission,
-) -> Result<()> {
+pub(super) async fn submit_in(tx: &mut WriteTx, id: &str, submission: &Submission) -> Result<()> {
     sqlx::query("UPDATE learning_drill_attempts SET status='submitted',submitted_at=?,time_spent_ms=?,findings_json=?,fix_files_json=? WHERE id=? AND status='open'")
         .bind(now())
         .bind(submission.time_spent_ms)
         .bind(encode(&submission.findings)?)
         .bind(submission.fix_files.as_ref().map(encode).transpose()?)
         .bind(id)
-        .execute(&mut *connection)
+        .execute(&mut **tx)
         .await
         .map(drop)
         .map_err(db)
 }
 
 /// Sets an attempt that could not be graded to wait for a new grade, clearing the error of the last try.
-pub(super) async fn regrade_in(connection: &mut SqliteConnection, id: &str) -> Result<()> {
+pub(super) async fn regrade_in(tx: &mut WriteTx, id: &str) -> Result<()> {
     sqlx::query("UPDATE learning_drill_attempts SET status='submitted',grading_error=NULL,grader_model=NULL,regrades=regrades+1 WHERE id=? AND status='couldnt_grade'")
         .bind(id)
-        .execute(&mut *connection)
+        .execute(&mut **tx)
         .await
         .map(drop)
         .map_err(db)
@@ -74,7 +71,7 @@ pub(super) async fn regrade_in(connection: &mut SqliteConnection, id: &str) -> R
 
 /// Writes the grade and marks the attempt graded. False when the attempt was not waiting for a grade.
 pub(crate) async fn record_graded_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     id: &str,
     graded: &Graded<'_>,
 ) -> Result<bool> {
@@ -86,7 +83,7 @@ pub(crate) async fn record_graded_in(
         .bind(graded.model)
         .bind(now())
         .bind(id)
-        .execute(connection)
+        .execute(&mut **tx)
         .await
         .map_err(db)?
         .rows_affected()
@@ -96,7 +93,7 @@ pub(crate) async fn record_graded_in(
 /// Marks the attempt as not graded, keeping why and the model that was tried, when one was reached. False when the
 /// attempt was not waiting for a grade.
 pub(crate) async fn record_ungraded_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     id: &str,
     model: Option<&str>,
     error: &str,
@@ -105,7 +102,7 @@ pub(crate) async fn record_ungraded_in(
         .bind(error)
         .bind(model)
         .bind(id)
-        .execute(connection)
+        .execute(&mut **tx)
         .await
         .map_err(db)?
         .rows_affected()
@@ -199,14 +196,11 @@ pub(crate) async fn recent_in(
 
 /// Queues the job that grades `attempt` as it stands. The operation ID derives from the attempt and the times it was
 /// asked for again, so queueing it twice finds the same job.
-pub(super) async fn queue_grading_in(
-    connection: &mut SqliteConnection,
-    attempt: &Attempt,
-) -> Result<String> {
+pub(super) async fn queue_grading_in(tx: &mut WriteTx, attempt: &Attempt) -> Result<String> {
     let requested = json!({"attemptId": attempt.id, "regrades": attempt.regrades});
     let payload_hash = hash(&requested)?;
     let admitted = JobStore::submit_in(
-        connection,
+        tx,
         &NewJob {
             kind: DRILL_GRADING.into(),
             subject_id: Some(attempt.id.clone()),

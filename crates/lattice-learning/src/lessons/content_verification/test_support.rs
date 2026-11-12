@@ -8,13 +8,12 @@ use crate::{
     repository::LearningRepository,
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::JobStore;
 use serde_json::json;
 
-pub async fn setup(
-    pool: &sqlx::SqlitePool,
-) -> Result<(LearningCurriculumRepository, String, String)> {
-    let programs = LearningRepository::new(pool.clone());
+pub async fn setup(db: &Database) -> Result<(LearningCurriculumRepository, String, String)> {
+    let programs = LearningRepository::new(db.clone());
     let program = crate::test_support::fixture();
     programs.create(&program).await?;
     programs
@@ -26,7 +25,7 @@ pub async fn setup(
         .await?;
     let program = programs.get(&program.summary.id).await?;
     let lesson_id = program.modules[0].lessons[0].id.clone();
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let repo = LearningCurriculumRepository::new(db.clone());
     let job = repo
         .start_job(&StartLearningGenerationJobRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
@@ -37,6 +36,6 @@ pub async fn setup(
             progress_total: 1,
         })
         .await?;
-    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
+    assert!(JobStore::new(db.clone()).claim(&job.id).await?.is_some());
     Ok((repo, job.id, lesson_id))
 }

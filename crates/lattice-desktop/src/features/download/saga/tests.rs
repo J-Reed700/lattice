@@ -113,6 +113,7 @@ async fn complete_gguf_embedding_download(
         .run(&pool)
         .await
         .expect("run migrations");
+    let db = Database::new(pool.clone());
 
     sqlx::query(
         "INSERT INTO models (id, model_name, model_id, base_path, model_type, architecture, status)
@@ -150,10 +151,10 @@ async fn complete_gguf_embedding_download(
         .expect("insert model file row");
     }
 
-    let downloaded_models = Arc::new(DownloadedModelRepository::new(pool.clone()));
+    let downloaded_models = Arc::new(DownloadedModelRepository::new(db.clone()));
     let saga = DownloadSaga::new(
         Arc::new(EventBus::new()),
-        Database::from(pool.clone()),
+        db,
         Arc::clone(&downloaded_models),
     );
 
@@ -240,6 +241,7 @@ async fn saga_with_one_file(
         .run(&pool)
         .await
         .expect("run migrations");
+    let db = Database::new(pool.clone());
     sqlx::query(
         "INSERT INTO models (id, model_name, model_id, base_path, model_type, architecture, status)
              VALUES ('row-1', 'embed', 'embed', '/tmp/embed', 'embedding', 'bert', ?1)",
@@ -261,8 +263,8 @@ async fn saga_with_one_file(
 
     let saga = DownloadSaga::new(
         Arc::new(EventBus::new()),
-        Database::from(pool.clone()),
-        Arc::new(DownloadedModelRepository::new(pool.clone())),
+        db.clone(),
+        Arc::new(DownloadedModelRepository::new(db)),
     );
     (saga, pool)
 }
@@ -357,6 +359,7 @@ async fn complete_chat_download(
         .run(&pool)
         .await
         .expect("run migrations");
+    let db = Database::new(pool.clone());
     sqlx::query(
         "INSERT INTO models (id, model_name, model_id, base_path, model_type, architecture, status)
              VALUES ('row-1', 'test-chat-model', 'test-chat-model', ?1, 'chat', 'GGUF', 'downloading')",
@@ -383,8 +386,8 @@ async fn complete_chat_download(
     let settings = Arc::new(MockSettingsRepository::with_settings(initial));
     let saga = DownloadSaga::new(
         Arc::new(EventBus::new()),
-        Database::from(pool.clone()),
-        Arc::new(DownloadedModelRepository::new(pool.clone())),
+        db.clone(),
+        Arc::new(DownloadedModelRepository::new(db)),
     )
     .with_settings(settings.clone());
 

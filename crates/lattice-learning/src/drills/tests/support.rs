@@ -779,6 +779,7 @@ pub(super) fn entry_answer() -> String {
 /// A pool with every migration, and a drill build job queued for [`spec`] and claimed, as the runtime would.
 pub(super) struct Harness {
     pub pool: SqlitePool,
+    pub db: Database,
     pub store: JobStore,
     pub job: String,
 }
@@ -787,19 +788,25 @@ impl Harness {
     /// A harness over a new course from [`code_spec`], and the spec of its build.
     pub(super) async fn lesson() -> Result<(Self, DrillSpec)> {
         let pool = crate::test_support::pool().await?;
-        let spec = code_spec(&pool).await?;
-        Ok((Self::on(pool, &spec).await?, spec))
+        let db = Database::new(pool.clone());
+        let spec = code_spec(&pool, &db).await?;
+        Ok((Self::on(pool, db, &spec).await?, spec))
     }
 
     /// A harness over `pool`, with a build job queued for `spec` and claimed.
-    pub(super) async fn on(pool: SqlitePool, spec: &DrillSpec) -> Result<Self> {
-        let job = bank::queue_build(&Database::from(pool.clone()), spec, "test").await?;
-        let store = JobStore::new(pool.clone());
+    pub(super) async fn on(pool: SqlitePool, db: Database, spec: &DrillSpec) -> Result<Self> {
+        let job = bank::queue_build(&db, spec, "test").await?;
+        let store = JobStore::new(db.clone());
         store
             .claim(&job)
             .await?
             .ok_or_else(|| AppError::InternalError("The job was not claimed.".into()))?;
-        Ok(Self { pool, store, job })
+        Ok(Self {
+            pool,
+            db,
+            store,
+            job,
+        })
     }
 
     pub(super) async fn context(&self) -> Result<JobContext> {
@@ -819,7 +826,7 @@ impl Harness {
                 runner.map(|runner| runner as &dyn CodeRunner),
             )),
             grader,
-            &Database::from(self.pool.clone()),
+            &self.db,
             CancellationToken::new(),
         )
     }
@@ -838,7 +845,7 @@ pub fn quiet() -> BlindReview {
 
 /// A build on these fakes, over a pool with every migration but no job.
 pub(super) fn build<'a>(
-    pool: &'a SqlitePool,
+    db: &'a Database,
     model: &'a ScriptedModel,
     runner: Option<&'a FakeRunner>,
     grader: &'a FakeGrader,
@@ -849,7 +856,7 @@ pub(super) fn build<'a>(
             runner.map(|runner| runner as &dyn CodeRunner),
         )),
         grader,
-        &Database::from(pool.clone()),
+        db,
         CancellationToken::new(),
     )
 }
@@ -938,13 +945,13 @@ pub(super) fn raised_all(drill: &Drill) -> Assessment {
 }
 
 /// [`stock_on`] for [`spec`]: a drill built for no course and no lesson.
-pub async fn stock(pool: &SqlitePool, id: &str) -> Result<()> {
-    stock_on(pool, id, &spec()).await
+pub async fn stock(db: &Database, id: &str) -> Result<()> {
+    stock_on(db, id, &spec()).await
 }
 
 /// Puts the drill of [`proved`] into the bank, ready, as a finished build for `spec` leaves it: with its suite, its
 /// runner and its evidence. The course and the lesson of `spec` must exist for the drill to keep them.
-pub(super) async fn stock_on(pool: &SqlitePool, id: &str, spec: &DrillSpec) -> Result<()> {
+pub(super) async fn stock_on(db: &Database, id: &str, spec: &DrillSpec) -> Result<()> {
     let proved = proved();
     let drill = Drill {
         id: id.into(),
@@ -962,9 +969,9 @@ pub(super) async fn stock_on(pool: &SqlitePool, id: &str, spec: &DrillSpec) -> R
         &unchecked(),
         &quiet(),
     );
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut tx = db.begin_write().await?;
     repository::insert_in(
-        &mut connection,
+        &mut tx,
         &NewDrill {
             drill: &drill,
             clean_files: &clean,
@@ -977,7 +984,9 @@ pub(super) async fn stock_on(pool: &SqlitePool, id: &str, spec: &DrillSpec) -> R
             evidence: &evidence,
         },
     )
-    .await
+    .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 /// The drill a build stored: the only one in the pool.
@@ -995,21 +1004,20 @@ pub(super) async fn built_drill(pool: &SqlitePool) -> Result<Option<StoredDrill>
 
 /// Takes the stocked drill `drill_id` from the bank and opens an attempt on it, as starting a drill does, without the
 /// bank choosing it.
-pub(super) async fn opened(
-    pool: &SqlitePool,
-    drill_id: &str,
-    mode: AttemptMode,
-) -> Result<Attempt> {
-    let mut connection = pool.acquire().await.map_err(db)?;
-    let taken = repository::mark_taken_in(&mut connection, drill_id, now()).await?;
+pub(super) async fn opened(db: &Database, drill_id: &str, mode: AttemptMode) -> Result<Attempt> {
+    let mut tx = db.begin_write().await?;
+    let taken = repository::mark_taken_in(&mut tx, drill_id, now()).await?;
     assert!(taken, "the drill {drill_id} was ready to be taken");
-    attempts::repository::open_in(&mut connection, drill_id, mode).await
+    let attempt = attempts::repository::open_in(&mut tx, drill_id, mode).await?;
+    tx.commit().await?;
+    Ok(attempt)
 }
 
 /// A pool with every migration, a drill stocked and an attempt opened on it and submitted, and its grading job
 /// claimed, as the job runtime would.
 pub(super) struct Waiting {
     pub pool: SqlitePool,
+    pub db: Database,
     pub store: JobStore,
     pub attempt: String,
     pub job: String,
@@ -1032,10 +1040,11 @@ impl Waiting {
         fix_files: Option<Vec<DrillFile>>,
     ) -> Result<Self> {
         let pool = crate::test_support::pool().await?;
-        stock(&pool, "drill").await?;
-        let attempt = opened(&pool, "drill", AttemptMode::Practice).await?;
+        let db = Database::new(pool.clone());
+        stock(&db, "drill").await?;
+        let attempt = opened(&db, "drill", AttemptMode::Practice).await?;
         let queued = attempts::submit(
-            &Database::from(pool.clone()),
+            &db,
             &attempt.id,
             Submission {
                 findings,
@@ -1047,9 +1056,10 @@ impl Waiting {
         let job = queued
             .job
             .ok_or_else(|| AppError::InternalError("No job was queued.".into()))?;
-        let store = JobStore::new(pool.clone());
+        let store = JobStore::new(db.clone());
         Ok(Self {
             pool,
+            db,
             store,
             attempt: attempt.id,
             job,
@@ -1070,7 +1080,7 @@ impl Waiting {
     }
 
     pub(super) async fn attempt(&self) -> Result<Attempt> {
-        attempts::get(&Database::from(self.pool.clone()), &self.attempt)
+        attempts::get(&self.db, &self.attempt)
             .await
             .map(|(attempt, _)| attempt)
     }
@@ -1088,7 +1098,7 @@ impl Waiting {
                 runner.map(|runner| runner as &dyn CodeRunner),
             )),
             grader,
-            &Database::from(self.pool.clone()),
+            &self.db,
             CancellationToken::new(),
         )
     }
@@ -1100,10 +1110,9 @@ impl Waiting {
         runner: Option<&FakeRunner>,
         grader: &FakeGrader,
     ) -> Result<lattice_core::shared::runtime::jobs::JobOutcome> {
-        let (attempt, stored) =
-            attempts::waiting(&Database::from(self.pool.clone()), &self.attempt)
-                .await?
-                .ok_or_else(|| AppError::InternalError("The attempt is not waiting.".into()))?;
+        let (attempt, stored) = attempts::waiting(&self.db, &self.attempt)
+            .await?
+            .ok_or_else(|| AppError::InternalError("The attempt is not waiting.".into()))?;
         let context = self.context().await?;
         let grading = self.grading(model, runner, grader);
         let outcome = grading.run(&context, &attempt, &stored).await;
@@ -1422,7 +1431,7 @@ pub(super) fn passage_baseline() -> Baseline {
 
 /// A build of a passage drill on these fakes, over a pool with every migration.
 pub(super) fn passage_build<'a>(
-    pool: &'a SqlitePool,
+    db: &'a Database,
     model: &'a ScriptedModel,
     check: &'a ScriptedCheck,
     grader: &'a FakeGrader,
@@ -1431,7 +1440,7 @@ pub(super) fn passage_build<'a>(
         model,
         Box::new(PassageMaterial::new(check)),
         grader,
-        &Database::from(pool.clone()),
+        db,
         CancellationToken::new(),
     )
 }
@@ -1443,9 +1452,9 @@ pub(super) const SPACING_LESSON: &str = "Spacing study over sessions";
 pub(super) const SLEEP_LESSON: &str = "Sleep after learning";
 
 /// A course with the sources [`SPACING`] and [`SLEEP`], in that order, and its id.
-pub(super) async fn course(pool: &SqlitePool) -> Result<String> {
+pub(super) async fn course(db: &Database) -> Result<String> {
     course_of(
-        pool,
+        db,
         &[("Spacing and memory", SPACING), ("Sleep and memory", SLEEP)],
     )
     .await
@@ -1454,7 +1463,7 @@ pub(super) async fn course(pool: &SqlitePool) -> Result<String> {
 /// A course with `sources` (a title and a text each), in that order, and its id. The first module's two lessons are
 /// [`SPACING_LESSON`] and [`SLEEP_LESSON`], so that a lesson's query finds what the fixture sources say; the second
 /// module keeps the fixture's.
-pub(super) async fn course_of(pool: &SqlitePool, sources: &[(&str, &str)]) -> Result<String> {
+pub(super) async fn course_of(db: &Database, sources: &[(&str, &str)]) -> Result<String> {
     use crate::dto::LearningSourceDto;
     use crate::repository::LearningRepository;
     let mut program = crate::test_support::fixture();
@@ -1485,9 +1494,7 @@ pub(super) async fn course_of(pool: &SqlitePool, sources: &[(&str, &str)]) -> Re
             acquired_at: i64::try_from(position).unwrap_or(0) + 1,
         })
         .collect();
-    LearningRepository::new(pool.clone())
-        .create(&program)
-        .await?;
+    LearningRepository::new(db.clone()).create(&program).await?;
     Ok(program.summary.id)
 }
 
@@ -1542,8 +1549,8 @@ pub(super) async fn prepare_lesson(
 }
 
 /// A spec for code in Python on a new course from [`course`], built from its spacing lesson.
-pub(super) async fn code_spec(pool: &SqlitePool) -> Result<DrillSpec> {
-    let program = course(pool).await?;
+pub(super) async fn code_spec(pool: &SqlitePool, db: &Database) -> Result<DrillSpec> {
+    let program = course(db).await?;
     let lesson = lesson_titled(pool, &program, SPACING_LESSON).await?;
     Ok(DrillSpec {
         program_id: Some(program),
@@ -1576,7 +1583,7 @@ pub(super) async fn lessons_of(pool: &SqlitePool, program_id: &str) -> Result<Ve
 /// Records that the lesson `lesson_id` of the course `program_id` does not fit `material`, on the lesson's basis now.
 /// Code is turned down by a build whose code fit check answers no.
 pub(super) async fn record_unfit(
-    pool: &SqlitePool,
+    db: &Database,
     program_id: &str,
     lesson_id: &str,
     material: &Material,
@@ -1590,7 +1597,7 @@ pub(super) async fn record_unfit(
         };
         let model = ScriptedModel::new([code_check_answer(false)]);
         let grader = idle_grader();
-        return match build(pool, &model, None, &grader).clean_code(&spec).await {
+        return match build(db, &model, None, &grader).clean_code(&spec).await {
             Err(AppError::InvalidInput(_)) => Ok(()),
             other => Err(AppError::InternalError(format!(
                 "The code fit check did not turn the lesson down: {:?}",
@@ -1598,10 +1605,10 @@ pub(super) async fn record_unfit(
             ))),
         };
     }
-    let mut connection = pool.acquire().await.map_err(db)?;
-    let basis = schedules::fit_basis_in(&mut connection, program_id, lesson_id).await?;
+    let mut tx = db.begin_write().await?;
+    let basis = schedules::fit_basis_in(&mut tx, program_id, lesson_id).await?;
     schedules::record_fit_in(
-        &mut connection,
+        &mut tx,
         program_id,
         lesson_id,
         material,
@@ -1609,7 +1616,9 @@ pub(super) async fn record_unfit(
         &basis,
         now(),
     )
-    .await
+    .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 /// Sets the curriculum state of the lesson `lesson_id`, such as `skipped` or `replaced`.

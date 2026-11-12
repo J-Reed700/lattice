@@ -2,6 +2,7 @@
 use super::*;
 use crate::generation::GeneratedLearningCardDraft;
 use crate::tests::{fixture, pool, ready_program};
+use sqlx::SqlitePool;
 
 async fn fk_pool() -> Result<SqlitePool> {
     let pool = pool().await?;
@@ -80,7 +81,8 @@ async fn add_source(
 #[tokio::test]
 async fn discarding_a_draft_is_idempotent_and_blocks_later_acceptance() -> Result<()> {
     let pool = fk_pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let repo = LearningRepository::new(database.clone());
     let program = ready_program(&repo).await?;
     let lesson_id = program.modules[0].lessons[0].id.clone();
     let program_id = program.summary.id.clone();
@@ -135,7 +137,8 @@ async fn discarding_a_draft_is_idempotent_and_blocks_later_acceptance() -> Resul
 #[tokio::test]
 async fn replaying_an_accepted_draft_reports_a_deleted_card() -> Result<()> {
     let pool = fk_pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let repo = LearningRepository::new(database.clone());
     let program = ready_program(&repo).await?;
     let lesson_id = program.modules[0].lessons[1].id.clone();
     let program_id = program.summary.id.clone();
@@ -167,7 +170,8 @@ async fn replaying_an_accepted_draft_reports_a_deleted_card() -> Result<()> {
 #[tokio::test]
 async fn memory_tools_require_an_accepted_program_and_a_prepared_lesson() -> Result<()> {
     let pool = fk_pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let repo = LearningRepository::new(database.clone());
 
     let missing = repo.memory_state("no-such-program").await;
     assert!(matches!(missing, Err(AppError::NotFound(_))), "{missing:?}");
@@ -240,7 +244,8 @@ async fn memory_tools_require_an_accepted_program_and_a_prepared_lesson() -> Res
 #[tokio::test]
 async fn draft_sources_must_be_unique_owned_and_cited_by_the_lesson() -> Result<()> {
     let pool = fk_pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let repo = LearningRepository::new(database.clone());
     let program = ready_program(&repo).await?;
     let other = ready_program(&repo).await?;
     let program_id = program.summary.id.clone();
@@ -336,7 +341,8 @@ async fn draft_sources_must_be_unique_owned_and_cited_by_the_lesson() -> Result<
 #[tokio::test]
 async fn accepting_drafts_records_citations_or_an_honest_fallback() -> Result<()> {
     let pool = fk_pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let repo = LearningRepository::new(database.clone());
     let program = ready_program(&repo).await?;
     let program_id = program.summary.id.clone();
     let lesson = program.modules[1].lessons[0].clone();
@@ -374,7 +380,7 @@ async fn accepting_drafts_records_citations_or_an_honest_fallback() -> Result<()
 
     let state = repo.memory_state(&program_id).await?;
     let deck_id = state.deck_id.clone().expect("deck");
-    let deck = StudyRepository::new(pool.clone()).get(&deck_id).await?;
+    let deck = StudyRepository::new(database.clone()).get(&deck_id).await?;
     let card = |id: &str| {
         deck.cards
             .iter()
@@ -449,7 +455,8 @@ async fn accepting_drafts_records_citations_or_an_honest_fallback() -> Result<()
 #[tokio::test]
 async fn a_course_notebook_gets_an_emoji_for_its_icon() -> Result<()> {
     let pool = fk_pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let repo = LearningRepository::new(database.clone());
     let active = accepted_unprepared_program(&repo).await?;
     let lesson_id = active.modules[0].lessons[0].id.clone();
     repo.ensure_lesson_note(&active.summary.id, &lesson_id, "Notes", "")
@@ -518,7 +525,8 @@ async fn the_course_notebooks_made_before_get_the_emoji_too() -> Result<()> {
         .await
         .unwrap();
 
-    let repo = LearningRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let repo = LearningRepository::new(database.clone());
     let active = accepted_unprepared_program(&repo).await?;
     let lesson_id = active.modules[0].lessons[0].id.clone();
     repo.ensure_lesson_note(&active.summary.id, &lesson_id, "Notes", "")

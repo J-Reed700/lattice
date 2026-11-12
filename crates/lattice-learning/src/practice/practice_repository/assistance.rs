@@ -3,7 +3,6 @@ use super::*;
 use crate::practice::assistance_policy::{
     written_help, written_level, AssistancePolicy, Help, HelpLevel, WrittenAssistance,
 };
-use lattice_core::shared::persistence::Transactions;
 
 fn require(
     help: Help,
@@ -40,8 +39,7 @@ impl LearningPracticeRepository {
         {
             return self.workspace(&req.program_id).await;
         }
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &req.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         if practice_operation(
             &req.operation_id,
             &req.program_id,
@@ -126,8 +124,7 @@ impl LearningPracticeRepository {
     ) -> Result<LearningPracticeWorkspaceDto> {
         Self::validate_ids(program_id, session_id, Some(&turn.operation_id))?;
         uuid(&turn.id, "tutor turn")?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         if practice_operation(
             &turn.operation_id,
             program_id,
@@ -207,8 +204,7 @@ impl LearningPracticeRepository {
         citations: &[LearningPracticeCitationDto],
     ) -> Result<LearningPracticeWorkspaceDto> {
         Self::validate_ids(&req.program_id, &req.session_id, Some(&req.operation_id))?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &req.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         if practice_operation(
             &req.operation_id,
             &req.program_id,

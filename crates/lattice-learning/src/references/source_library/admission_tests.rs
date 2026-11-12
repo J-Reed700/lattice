@@ -11,8 +11,8 @@ fn words(count: usize) -> String {
     "word ".repeat(count)
 }
 
-async fn active_program(pool: &SqlitePool) -> Result<String> {
-    let repo = LearningRepository::new(pool.clone());
+async fn active_program(database: &Database) -> Result<String> {
+    let repo = LearningRepository::new(database.clone());
     let program = tests::fixture();
     repo.create(&program).await?;
     repo.accept(&AcceptLearningProgramRequestDto {
@@ -90,9 +90,10 @@ async fn cite(pool: &SqlitePool, program_id: &str, version_id: &str) -> Result<(
 async fn the_sweep_marks_a_page_the_machine_saved_that_is_not_a_source_and_leaves_it_out_of_retrieval(
 ) -> Result<()> {
     let pool = tests::pool().await?;
-    let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
-    let repo = LearningRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let program_id = active_program(&database).await?;
+    let library = LearningSourceLibraryRepository::new(database.clone());
+    let repo = LearningRepository::new(database.clone());
     let article = format!("# Reading files\n{}", words(400));
     save(
         &library,
@@ -151,8 +152,9 @@ async fn the_sweep_marks_a_page_the_machine_saved_that_is_not_a_source_and_leave
 #[tokio::test]
 async fn the_short_pages_the_gate_admitted_are_listed_for_the_floors_to_be_read() -> Result<()> {
     let pool = tests::pool().await?;
-    let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let database = Database::new(pool.clone());
+    let program_id = active_program(&database).await?;
+    let library = LearningSourceLibraryRepository::new(database.clone());
     let page = |name: &str, count: usize| {
         (
             format!("https://docs.example.org/{name}"),
@@ -197,8 +199,9 @@ fn titles(items: &[LearningRemovableSourceDto]) -> Vec<&str> {
 async fn the_library_lists_the_pages_the_gate_refused_and_the_research_no_lesson_cites_for_the_user_to_remove(
 ) -> Result<()> {
     let pool = tests::pool().await?;
-    let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let database = Database::new(pool.clone());
+    let program_id = active_program(&database).await?;
+    let library = LearningSourceLibraryRepository::new(database.clone());
     let article = format!("# Reading files\n{}", words(400));
     let cited = save(
         &library,
@@ -266,8 +269,9 @@ async fn the_library_lists_the_pages_the_gate_refused_and_the_research_no_lesson
 #[tokio::test]
 async fn a_research_source_a_lesson_block_cites_is_not_listed_as_unused() -> Result<()> {
     let pool = tests::pool().await?;
-    let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let database = Database::new(pool.clone());
+    let program_id = active_program(&database).await?;
+    let library = LearningSourceLibraryRepository::new(database.clone());
     let article = format!("# Reading files\n{}", words(400));
     let cited = save(
         &library,
@@ -306,8 +310,9 @@ async fn a_research_source_a_lesson_block_cites_is_not_listed_as_unused() -> Res
 #[tokio::test]
 async fn no_research_source_is_listed_as_unused_while_a_lesson_is_being_prepared() -> Result<()> {
     let pool = tests::pool().await?;
-    let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let database = Database::new(pool.clone());
+    let program_id = active_program(&database).await?;
+    let library = LearningSourceLibraryRepository::new(database.clone());
     let article = format!("# Reading files\n{}", words(400));
     save(
         &library,
@@ -342,8 +347,9 @@ async fn no_research_source_is_listed_as_unused_while_a_lesson_is_being_prepared
 #[tokio::test]
 async fn a_sweep_that_cannot_mark_every_page_marks_none() -> Result<()> {
     let pool = tests::pool().await?;
-    let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let database = Database::new(pool.clone());
+    let program_id = active_program(&database).await?;
+    let library = LearningSourceLibraryRepository::new(database.clone());
     let article = format!("# Reading files\n{}", words(400));
     for url in ["https://docs.example.org/a", "https://docs.example.org/b"] {
         save(

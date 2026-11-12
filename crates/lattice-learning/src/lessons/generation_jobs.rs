@@ -474,32 +474,32 @@ mod repository_tests {
     }
 
     pub(super) async fn queued_job(
-        pool: &SqlitePool,
+        db: &Database,
     ) -> (
         LearningCurriculumRepository,
         crate::curriculum::LearningGenerationJob,
     ) {
-        queued_job_with(pool, true).await
+        queued_job_with(db, true).await
     }
 
     /// A course the learner has not added any reference material to.
     pub(super) async fn queued_job_without_sources(
-        pool: &SqlitePool,
+        db: &Database,
     ) -> (
         LearningCurriculumRepository,
         crate::curriculum::LearningGenerationJob,
     ) {
-        queued_job_with(pool, false).await
+        queued_job_with(db, false).await
     }
 
     async fn queued_job_with(
-        pool: &SqlitePool,
+        db: &Database,
         with_sources: bool,
     ) -> (
         LearningCurriculumRepository,
         crate::curriculum::LearningGenerationJob,
     ) {
-        let program_repo = LearningRepository::new(pool.clone());
+        let program_repo = LearningRepository::new(db.clone());
         let mut program = crate::tests::fixture();
         if !with_sources {
             program.sources.clear();
@@ -536,7 +536,7 @@ mod repository_tests {
             .await
             .unwrap();
         let program = program_repo.get(&program.summary.id).await.unwrap();
-        let repo = LearningCurriculumRepository::new(pool.clone());
+        let repo = LearningCurriculumRepository::new(db.clone());
         let job = repo
             .start_lesson_job(&StartLearningGenerationJobRequestDto {
                 operation_id: uuid::Uuid::new_v4().to_string(),
@@ -558,7 +558,8 @@ mod repository_tests {
     async fn shutdown_and_user_cancellation_stop_running_work() {
         for user_cancel in [false, true] {
             let pool = crate::tests::pool().await.unwrap();
-            let (repo, job) = queued_job(&pool).await;
+            let db = Database::new(pool.clone());
+            let (repo, job) = queued_job(&db).await;
             let count: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM learning_curriculum_revisions WHERE program_id=?",
             )
@@ -575,7 +576,7 @@ mod repository_tests {
                 research_web: None,
                 verifier: None,
                 courses: None,
-                database: pool.clone().into(),
+                database: db.clone(),
                 refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
                 load_llm: Arc::new(move || {
                     let entered = notification.clone();
@@ -585,7 +586,7 @@ mod repository_tests {
                     })
                 }),
             };
-            let runtime = JobRuntime::new(Database::from(pool.clone()));
+            let runtime = JobRuntime::new(db.clone());
             runtime
                 .register(LESSON_PREPARATION, Arc::new(worker), lesson_job_config())
                 .await
@@ -627,7 +628,7 @@ mod repository_tests {
             );
             assert_eq!(interrupted.finished_at.is_some(), user_cancel);
             assert!(interrupted.result_id.is_none());
-            let store = JobStore::new(pool.clone());
+            let store = JobStore::new(db.clone());
             store
                 .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
                 .await
@@ -642,7 +643,7 @@ mod repository_tests {
                     .any(|pending| pending.id == job.id),
                 !user_cancel
             );
-            let (_, pending) = queued_job(&pool).await;
+            let (_, pending) = queued_job(&db).await;
             store.interrupt(&pending.id).await.unwrap();
             assert_eq!(
                 repo.job(&pending.id).await.unwrap().status,
@@ -654,8 +655,9 @@ mod repository_tests {
     #[tokio::test]
     async fn shutdown_finalization_does_not_overwrite_user_cancellation() {
         let pool = crate::tests::pool().await.unwrap();
-        let (repo, job) = queued_job(&pool).await;
-        let store = JobStore::new(pool.clone());
+        let db = Database::new(pool.clone());
+        let (repo, job) = queued_job(&db).await;
+        let store = JobStore::new(db.clone());
         assert!(store.claim(&job.id).await.unwrap().is_some());
         repo.cancel_job(&LearningGenerationJobActionRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),

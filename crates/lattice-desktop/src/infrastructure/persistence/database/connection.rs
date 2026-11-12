@@ -1,9 +1,32 @@
 use lattice_core::shared::error::{AppError, Result, ResultExt};
-use lattice_core::shared::persistence::Database;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
-use std::future::Future;
+use lattice_core::shared::persistence::{Database, PersistenceError};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+/// How long a statement waits for a lock held outside the write queue: another program on the
+/// file, the rollback of a unit dropped mid-run, the optimize a connection runs when it opens.
+const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long a unit waits for a connection, which units hold only while they run.
+const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Readers run side by side in WAL mode and each connection keeps its own page cache, so this
+/// bounds memory.
+const MAX_CONNECTIONS: u32 = 5;
+
+/// One connection stays open so the first unit after a quiet spell does not pay for opening it.
+const MIN_CONNECTIONS: u32 = 1;
+
+/// An idle connection closes and gives back its cache.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// A connection is replaced so the optimize at open runs again in a long session.
+const MAX_LIFETIME: Duration = Duration::from_secs(1800);
+
+/// The rows ANALYZE reads per index when optimize refreshes statistics, SQLite's recommended
+/// bound, which keeps it short on a large library.
+const ANALYSIS_LIMIT: u32 = 400;
 
 pub struct DatabaseConnection {
     database: Database,
@@ -70,9 +93,17 @@ impl DatabaseConnection {
     pub async fn new(db_path: PathBuf) -> Result<Self> {
         // Connect with corruption detection and automatic recovery.
         let (pool, recovered_from) = Self::create_pool_with_corruption_recovery(&db_path).await?;
+        let database = Database::new(pool);
 
+        let mut read = database
+            .begin_read()
+            .await
+            .context("Failed to check foreign key status")?;
         let fk_enabled: (i32,) = sqlx::query_as("PRAGMA foreign_keys")
-            .fetch_one(&pool)
+            .fetch_one(&mut *read)
+            .await
+            .context("Failed to check foreign key status")?;
+        read.commit()
             .await
             .context("Failed to check foreign key status")?;
 
@@ -83,7 +114,7 @@ impl DatabaseConnection {
         }
 
         Ok(Self {
-            database: pool.into(),
+            database,
             recovered_from,
         })
     }
@@ -111,7 +142,7 @@ impl DatabaseConnection {
         let connect_options = SqliteConnectOptions::new()
             .filename(db_path)
             .create_if_missing(true)
-            .busy_timeout(Duration::from_secs(5)) // SQLite busy timeout
+            .busy_timeout(BUSY_TIMEOUT)
             .pragma("foreign_keys", "ON") // Enable foreign keys
             .pragma("journal_mode", "WAL") // Write-ahead logging for better concurrency
             .pragma("synchronous", "NORMAL") // Balance between safety and speed
@@ -119,15 +150,10 @@ impl DatabaseConnection {
             .pragma("temp_store", "MEMORY") // Use memory for temp tables
             .pragma("mmap_size", "268435456") // 256MB mapped database cache
             .pragma("optimize", "0x10002") // Initial planner-statistics check on open
-            .optimize_on_close(true, Some(400)); // Bounded maintenance as each connection closes
+            .analysis_limit(ANALYSIS_LIMIT)
+            .optimize_on_close(true, Some(ANALYSIS_LIMIT)); // Bounded maintenance as each connection closes
 
-        let pool = SqlitePoolOptions::new()
-            .max_connections(5)
-            .min_connections(1)
-            .acquire_timeout(Duration::from_secs(5)) // Don't wait forever for connection
-            .idle_timeout(Duration::from_secs(600)) // Keep connections alive for 10 minutes
-            .max_lifetime(Duration::from_secs(1800)) // Recycle connections after 30 minutes
-            .connect_lazy_with(connect_options.clone());
+        let pool = pool_options().connect_lazy_with(connect_options.clone());
         let pool_result = pool.acquire().await.map(drop);
 
         match pool_result {
@@ -163,12 +189,7 @@ impl DatabaseConnection {
                             tracing::info!("Creating fresh database at: {}", db_path.display());
 
                             // Retry connection (will create fresh database)
-                            SqlitePoolOptions::new()
-                                .max_connections(5)
-                                .min_connections(1)
-                                .acquire_timeout(Duration::from_secs(5))
-                                .idle_timeout(Duration::from_secs(600))
-                                .max_lifetime(Duration::from_secs(1800))
+                            pool_options()
                                 .connect_with(connect_options)
                                 .await
                                 .context(
@@ -207,70 +228,63 @@ impl DatabaseConnection {
     }
 }
 
-// P1 Issue #3: Add query timeout wrapper to prevent queries from hanging indefinitely
-
-// Default timeout durations for different operation types
-use lattice_core::shared::constants::{
-    DB_QUERY_TIMEOUT_HEAVY, DB_QUERY_TIMEOUT_NORMAL, DB_QUERY_TIMEOUT_QUICK,
-};
-
-pub async fn query_with_timeout<T, F, Fut>(operation: F) -> Result<T>
-where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<T, sqlx::Error>>,
-{
-    query_with_timeout_duration(operation, DB_QUERY_TIMEOUT_NORMAL).await
+fn pool_options() -> SqlitePoolOptions {
+    SqlitePoolOptions::new()
+        .max_connections(MAX_CONNECTIONS)
+        .min_connections(MIN_CONNECTIONS)
+        .acquire_timeout(ACQUIRE_TIMEOUT)
+        .idle_timeout(IDLE_TIMEOUT)
+        .max_lifetime(MAX_LIFETIME)
 }
 
-pub async fn query_with_quick_timeout<T, F, Fut>(operation: F) -> Result<T>
-where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<T, sqlx::Error>>,
-{
-    query_with_timeout_duration(operation, DB_QUERY_TIMEOUT_QUICK).await
+/// Opens a database file other than the live one only to read it: read-only, with a rollback
+/// journal so no -wal/-shm appears beside a file that may sit on read-only or synced storage.
+pub async fn open_to_read(path: &Path) -> Result<Database, PersistenceError> {
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .read_only(true)
+        .create_if_missing(false)
+        .journal_mode(SqliteJournalMode::Delete)
+        .foreign_keys(false);
+    open_single_connection(options).await
 }
 
-pub async fn query_with_heavy_timeout<T, F, Fut>(operation: F) -> Result<T>
-where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<T, sqlx::Error>>,
-{
-    query_with_timeout_duration(operation, DB_QUERY_TIMEOUT_HEAVY).await
+/// Opens an existing database file other than the live one to change it (a snapshot copy, a
+/// restore candidate): rollback journal, foreign keys off.
+pub async fn open_to_change(path: &Path) -> Result<Database, PersistenceError> {
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(false)
+        .journal_mode(SqliteJournalMode::Delete)
+        .foreign_keys(false);
+    open_single_connection(options).await
 }
 
-pub async fn query_with_timeout_duration<T, F, Fut>(operation: F, timeout: Duration) -> Result<T>
-where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<T, sqlx::Error>>,
-{
-    let result = tokio::time::timeout(timeout, operation())
-        .await
-        .map_err(|_| {
-            AppError::Database(format!(
-                "Database query timed out after {} seconds",
-                timeout.as_secs()
-            ))
-        })?;
-
-    result.map_err(|e| AppError::Database(format!("Database query failed: {}", e)))
+async fn open_single_connection(
+    options: SqliteConnectOptions,
+) -> Result<Database, PersistenceError> {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await?;
+    Ok(Database::new(pool))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lattice_core::shared::persistence::driver::DriverPool;
 
     #[tokio::test]
     async fn file_backed_pool_applies_connection_pragmas_and_closes_with_a_clone() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("settings.db");
         let connection = DatabaseConnection::new(db).await.unwrap();
-        let pool = connection.database().sqlx_pool();
+        let database = connection.database().clone();
 
         // Holding two connections at once verifies these settings are applied
         // to every SQLite connection, rather than one arbitrary pooled handle.
-        let mut first = pool.acquire().await.unwrap();
-        let mut second = pool.acquire().await.unwrap();
+        let mut first = database.begin_read().await.unwrap();
+        let mut second = database.begin_read().await.unwrap();
         for conn in [&mut *first, &mut *second] {
             assert_eq!(
                 sqlx::query_scalar::<_, i64>("PRAGMA foreign_keys")
@@ -318,9 +332,27 @@ mod tests {
         }
         drop((first, second));
 
-        let cloned_pool = pool.clone();
         connection.close().await.unwrap();
-        assert!(cloned_pool.acquire().await.is_err());
+        assert!(database.begin_read().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn each_connection_bounds_its_analysis() {
+        let dir = tempfile::tempdir().unwrap();
+        let connection = DatabaseConnection::new(dir.path().join("lattice.db"))
+            .await
+            .unwrap();
+
+        let mut read = connection.database().begin_read().await.unwrap();
+        let limit: i64 = sqlx::query_scalar("PRAGMA analysis_limit")
+            .fetch_one(&mut *read)
+            .await
+            .unwrap();
+        drop(read);
+
+        assert_eq!(limit, i64::from(ANALYSIS_LIMIT));
+        assert_eq!(limit, 400);
+        connection.close().await.unwrap();
     }
 
     #[tokio::test]
@@ -437,10 +469,12 @@ mod tests {
         // already have discarded a WAL it could not read when the failed open
         // closed. What matters here is that nothing was replayed into the
         // fresh file.
+        let mut read = connection.database().begin_read().await.unwrap();
         let fresh: (i32,) = sqlx::query_as("PRAGMA schema_version")
-            .fetch_one(connection.database().sqlx_pool())
+            .fetch_one(&mut *read)
             .await
             .unwrap();
+        drop(read);
         assert_eq!(
             fresh.0, 0,
             "the database at the original path is a new, empty one"

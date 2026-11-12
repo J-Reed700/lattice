@@ -32,6 +32,7 @@ async fn real_model_import_search_and_disk_restart_preserve_results() {
         .await
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let db = Database::new(pool.clone());
 
     // Actual repository prose, rather than seeded vectors or generated facts.
     // This checks component integration, not held-out retrieval accuracy.
@@ -107,15 +108,9 @@ async fn real_model_import_search_and_disk_restart_preserve_results() {
             .unwrap()
             .with_coalesced_saves(),
         );
-        let outcome = open_or_rebuild(
-            &index,
-            &pool,
-            &path,
-            &identity,
-            &identity,
-            dimension,
-            || generation::restore(&pool, &identity, dimension),
-        )
+        let outcome = open_or_rebuild(&index, &db, &path, &identity, &identity, dimension, || {
+            generation::restore(&db, &identity, dimension)
+        })
         .await
         .unwrap();
         assert!(outcome.rebuilt());
@@ -129,6 +124,7 @@ async fn real_model_import_search_and_disk_restart_preserve_results() {
             .connect_with(options.clone())
             .await
             .unwrap();
+        let reopened_db = Database::new(reopened_pool.clone());
         let index = Arc::new(
             USearchVectorIndex::open_or_create_with_compression(
                 dimension,
@@ -140,7 +136,7 @@ async fn real_model_import_search_and_disk_restart_preserve_results() {
         );
         let outcome = open_or_rebuild(
             &index,
-            &reopened_pool,
+            &reopened_db,
             &path,
             &identity,
             &identity,

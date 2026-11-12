@@ -66,7 +66,7 @@ fn budget() -> Budget {
     }
 }
 
-async fn setup_db() -> SqlitePool {
+async fn setup_db() -> Database {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::query(
         r#"CREATE TABLE IF NOT EXISTS sourcing_owner_cache (
@@ -81,12 +81,12 @@ async fn setup_db() -> SqlitePool {
     .execute(&pool)
     .await
     .unwrap();
-    pool
+    Database::new(pool)
 }
 
 fn resolver(
     server: Option<&MockServer>,
-    pool: Option<SqlitePool>,
+    db: Option<Database>,
     clock: Arc<FakeClock>,
 ) -> OwnerResolver {
     let wikidata = match server {
@@ -96,7 +96,7 @@ fn resolver(
     OwnerResolver::new(
         wikidata,
         Arc::new(Wikipedia::new(http())),
-        pool.map(Into::into),
+        db,
         SourcingPolicy::default(),
         clock,
     )
@@ -194,11 +194,11 @@ async fn owner_resolution_queries_wikidata_and_caches_in_memory() {
 #[tokio::test]
 async fn owner_resolution_persists_to_and_reads_from_sqlite_cache() {
     let server = MockServer::start().await;
-    let pool = setup_db().await;
+    let db = setup_db().await;
     mock_wikidata(&server, "Q200", "https://rust-lang.org", 1).await;
 
     let clock = FakeClock::new();
-    let res1 = resolver(Some(&server), Some(pool.clone()), clock.clone());
+    let res1 = resolver(Some(&server), Some(db.clone()), clock.clone());
     let sub = subject("Rust", Vec::new());
 
     // First call with res1 writes to SQLite
@@ -207,7 +207,7 @@ async fn owner_resolution_persists_to_and_reads_from_sqlite_cache() {
     assert_eq!(r1.resolved_by, Some(OwnerSource::Wikidata));
 
     // Fresh res2 with empty in-memory cache reads from SQLite
-    let res2 = resolver(Some(&server), Some(pool), clock);
+    let res2 = resolver(Some(&server), Some(db), clock);
     let r2 = res2.resolve(&sub, &budget()).await;
     assert_eq!(r2.origins, vec![Origin::new("rust-lang.org", None)]);
     assert_eq!(r2.resolved_by, Some(OwnerSource::Wikidata));

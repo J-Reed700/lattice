@@ -30,7 +30,6 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::shared::persistence::Database;
 use serde_json::{json, Value};
 
 const P0: &str = "What does DictReader do with spaces in a header name?";
@@ -133,7 +132,7 @@ fn provenance() -> EventProvenance {
 }
 
 async fn ledger(course: &Course) -> Result<Ledger> {
-    ClaimReviewRepository::new(course.pool.clone())
+    ClaimReviewRepository::new(course.db.clone())
         .load(&course.lesson_id)
         .await
 }
@@ -147,7 +146,7 @@ async fn claim(
     sentence: &str,
     field_text: &str,
 ) -> Result<()> {
-    let repository = ClaimReviewRepository::new(course.pool.clone());
+    let repository = ClaimReviewRepository::new(course.db.clone());
     let id = ClaimId(uuid::Uuid::new_v4().to_string());
     let revision = ledger(course).await?.revision;
     let revision = repository
@@ -205,9 +204,9 @@ async fn published() -> Result<Course> {
     for item in &mut items {
         item.lesson_id = Some(course.lesson_id.clone());
     }
-    let mut connection = course.pool.acquire().await?;
-    let stored = insert_bank_items_in(&mut connection, &course.program_id, &items, None).await?;
-    drop(connection);
+    let mut tx = course.db.begin_write().await?;
+    let stored = insert_bank_items_in(&mut tx, &course.program_id, &items, None).await?;
+    tx.commit().await?;
     assert_eq!(stored, 3);
     let unit = SECTIONS;
     claim(&course, unit, UnitKind::Question, "prompt", P0, P0).await?;
@@ -297,7 +296,7 @@ async fn edit(
     after: QuestionText,
     dry_run: bool,
 ) -> Result<QuestionEditOutcome> {
-    ClaimReviewService::new(Database::from(course.pool.clone()))
+    ClaimReviewService::new(course.db.clone())
         .edit_question(QuestionEdit {
             program_id: course.program_id.clone(),
             lesson_id: course.lesson_id.clone(),
@@ -393,7 +392,7 @@ fn assert_confirmed_at(
 #[tokio::test]
 async fn a_question_is_read_by_its_place_among_the_lessons_questions() -> Result<()> {
     let course = published().await?;
-    let service = ClaimReviewService::new(Database::from(course.pool.clone()));
+    let service = ClaimReviewService::new(course.db.clone());
 
     for (index, expected) in [q0(), q1(), q2()].into_iter().enumerate() {
         let read = service
@@ -414,7 +413,7 @@ async fn a_question_is_read_by_its_place_among_the_lessons_questions() -> Result
 async fn a_question_of_a_lesson_from_another_course_is_not_read() -> Result<()> {
     let course = published().await?;
 
-    let error = ClaimReviewService::new(Database::from(course.pool.clone()))
+    let error = ClaimReviewService::new(course.db.clone())
         .question_text("another-course", &course.lesson_id, 0)
         .await
         .unwrap_err();
@@ -865,7 +864,7 @@ async fn a_lesson_from_another_course_is_refused() -> Result<()> {
         ..q0()
     };
 
-    let result = ClaimReviewService::new(Database::from(course.pool.clone()))
+    let result = ClaimReviewService::new(course.db.clone())
         .edit_question(QuestionEdit {
             program_id: "another-course".into(),
             lesson_id: course.lesson_id.clone(),
@@ -917,7 +916,7 @@ async fn a_lesson_still_being_prepared_is_refused() -> Result<()> {
 }
 
 async fn notes(course: &Course) -> Result<TeachingFindingsRepository> {
-    let store = TeachingFindingsRepository::new(Database::from(course.pool.clone()));
+    let store = TeachingFindingsRepository::new(course.db.clone());
     let candidate = json!({"blocks":[
         {"title":"Section 0","body":section(GOOD)},
         {"title":"Section 1","body":section(&figure(7))}
@@ -1251,8 +1250,9 @@ async fn add_question(course: &Course, text: &QuestionText) -> Result<()> {
     .await?;
     let mut entry = bank_item(&outcome, text);
     entry.lesson_id = Some(course.lesson_id.clone());
-    let mut connection = course.pool.acquire().await?;
-    let stored = insert_bank_items_in(&mut connection, &course.program_id, &[entry], None).await?;
+    let mut tx = course.db.begin_write().await?;
+    let stored = insert_bank_items_in(&mut tx, &course.program_id, &[entry], None).await?;
+    tx.commit().await?;
     assert_eq!(stored, 1);
     Ok(())
 }
@@ -1391,7 +1391,7 @@ async fn the_undo_of_a_statement_a_question_edit_ended_is_refused_with_the_quest
 
     for claim in &ended {
         let revision = ledger(&course).await?.revision.0;
-        let result = ClaimReviewService::new(Database::from(course.pool.clone()))
+        let result = ClaimReviewService::new(course.db.clone())
             .resolve(
                 &course.lesson_id,
                 &claim.0,
@@ -1445,7 +1445,7 @@ async fn a_questions_reasons_are_read_with_it_and_an_edit_of_one_is_written_in_i
 ) -> Result<()> {
     let course = published().await?;
     give_the_first_question_its_reasons(&course).await?;
-    let service = ClaimReviewService::new(Database::from(course.pool.clone()));
+    let service = ClaimReviewService::new(course.db.clone());
     let read = service
         .question_text(&course.program_id, &course.lesson_id, 0)
         .await?;

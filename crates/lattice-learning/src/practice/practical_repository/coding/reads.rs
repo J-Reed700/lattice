@@ -13,7 +13,6 @@ use crate::practice::coding::records::{
 use crate::practice::session::dto::{PracticeDueDto, PracticeSessionSummaryDto};
 use lattice_core::domain::learning::practice::{Scorecard, ScorecardRow};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection};
 
 async fn events_on(
@@ -196,7 +195,7 @@ impl LearningPracticalRepository {
         session_id: &str,
     ) -> Result<SessionBundle> {
         uuid(session_id, "coding session")?;
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await.map_err(db)?;
         let row = row_on(&mut tx, program_id, session_id).await?;
         let snapshot: String = sqlx::query_scalar(
             "SELECT activity_snapshot_json FROM learning_simulation_sessions WHERE id=?",
@@ -231,7 +230,7 @@ impl LearningPracticalRepository {
         run_id: &str,
     ) -> Result<StoredRun> {
         uuid(session_id, "coding session")?;
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await.map_err(db)?;
         row_on(&mut tx, program_id, session_id).await?;
         let run = runs_on(&mut tx, session_id, Some(run_id))
             .await?
@@ -248,7 +247,7 @@ impl LearningPracticalRepository {
         program_id: &str,
     ) -> Result<Vec<PracticeSessionSummaryDto>> {
         uuid(program_id, "program")?;
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await.map_err(db)?;
         let rows = sqlx::query("SELECT s.*,a.title AS title FROM learning_exercise_sessions s JOIN learning_practical_activities a ON a.id=s.activity_id WHERE s.program_id=? ORDER BY s.created_at DESC,s.id DESC")
             .bind(program_id)
             .fetch_all(&mut *tx)
@@ -297,7 +296,7 @@ impl LearningPracticalRepository {
     /// Whether anything but the draft changed after `since`: a run, a stage move or a learner turn.
     pub async fn coding_worked_since(&self, session_id: &str, since: i64) -> Result<bool> {
         uuid(session_id, "coding session")?;
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await.map_err(db)?;
         let worked: i64 = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM learning_exercise_session_events WHERE session_id=?1 AND kind IN ('check','stage') AND at>?2) OR EXISTS(SELECT 1 FROM learning_simulation_turns WHERE session_id=?1 AND speaker='learner' AND created_at>?2)",
         )
@@ -319,7 +318,7 @@ impl LearningPracticalRepository {
         code_fits: bool,
     ) -> Result<PracticeDueDto> {
         uuid(program_id, "program")?;
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await.map_err(db)?;
         let due = patterns::practice_due_in(&mut tx, program_id, now, code_fits).await?;
         tx.commit().await.map_err(db)?;
         Ok(due)

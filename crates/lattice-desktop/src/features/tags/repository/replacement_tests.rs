@@ -1,13 +1,14 @@
 //! Tests that replacing a document's tags is atomic.
 
 use super::*;
+use sqlx::SqlitePool;
 
 #[tokio::test]
 async fn replacement_rolls_back_deletions_and_new_tags_when_an_insert_fails() {
     let pool = SqlitePool::connect(":memory:").await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     sqlx::query("INSERT INTO documents (id, file_path, file_name, mime_type, size_bytes, modified_at, indexed_at, checksum, status) VALUES ('doc', '/doc.txt', 'doc.txt', 'text/plain', 1, '2026-10-05', '2026-10-05', 'checksum', 'pending')").execute(&pool).await.unwrap();
-    let repository = TagRepository::new(pool.clone());
+    let repository = TagRepository::new(Database::new(pool.clone()));
     repository
         .replace_document_tags("doc", vec!["old".into()])
         .await

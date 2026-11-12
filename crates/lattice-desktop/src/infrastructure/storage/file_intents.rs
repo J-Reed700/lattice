@@ -4,12 +4,10 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
-use sqlx::SqlitePool;
-
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::Database;
+
+use crate::infrastructure::persistence::database::open_to_change;
 
 /// Which files a row names, and what its `name` is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,35 +87,39 @@ pub fn record_releases_sql(store: FileStore, name: &str, from: &str) -> String {
 
 #[derive(Debug, Clone)]
 pub struct FileIntents {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl FileIntents {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     pub async fn record(&self, store: FileStore, kind: IntentKind, name: &str) -> Result<i64> {
-        Ok(sqlx::query_scalar::<_, i64>(
+        let mut tx = self.db.begin_write().await?;
+        let id = sqlx::query_scalar::<_, i64>(
             "INSERT INTO file_intents (store, kind, name, run_id) VALUES (?, ?, ?, ?) RETURNING id",
         )
         .bind(store.as_str())
         .bind(kind.as_str())
         .bind(name)
         .bind(run_id())
-        .fetch_one(&self.pool)
-        .await?)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(id)
     }
 
     /// Every row for `store`, oldest first.
     pub async fn pending(&self, store: FileStore) -> Result<Vec<FileIntent>> {
+        let mut read = self.db.begin_read().await?;
         let rows: Vec<(i64, String, String, String)> = sqlx::query_as(
             "SELECT id, kind, name, run_id FROM file_intents WHERE store = ? ORDER BY id",
         )
         .bind(store.as_str())
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await?;
+        read.commit().await?;
         Ok(rows
             .into_iter()
             .filter_map(|(id, kind, name, run)| {
@@ -133,20 +135,23 @@ impl FileIntents {
 
     /// The ids of the releases recorded for `name`.
     pub async fn releases_of(&self, store: FileStore, name: &str) -> Result<Vec<i64>> {
-        Ok(sqlx::query_scalar(
+        let mut read = self.db.begin_read().await?;
+        let ids = sqlx::query_scalar(
             "SELECT id FROM file_intents WHERE store = ? AND kind = 'release' AND name = ?",
         )
         .bind(store.as_str())
         .bind(name)
-        .fetch_all(&self.pool)
-        .await?)
+        .fetch_all(&mut *read)
+        .await?;
+        read.commit().await?;
+        Ok(ids)
     }
 
     pub async fn forget(&self, ids: &[i64]) -> Result<()> {
         if ids.is_empty() {
             return Ok(());
         }
-        let mut tx = self.pool.begin_write().await?;
+        let mut tx = self.db.begin_write().await?;
         for id in ids {
             sqlx::query("DELETE FROM file_intents WHERE id = ?")
                 .bind(id)
@@ -162,7 +167,7 @@ impl FileIntents {
         if names.is_empty() {
             return Ok(());
         }
-        let mut tx = self.pool.begin_write().await?;
+        let mut tx = self.db.begin_write().await?;
         for name in names {
             sqlx::query(
                 "DELETE FROM file_intents WHERE store = ? AND kind = 'release' AND name = ?",
@@ -182,22 +187,14 @@ impl FileIntents {
 /// that the database being replaced may since have claimed again. A database
 /// from before the table existed has none.
 pub async fn forget_all_in(path: &Path) -> Result<()> {
-    let options = SqliteConnectOptions::new()
-        .filename(path)
-        .create_if_missing(false)
-        .journal_mode(SqliteJournalMode::Delete)
-        .foreign_keys(false);
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(options)
-        .await?;
-    let outcome = forget_all(&pool).await;
-    pool.close().await;
+    let db = open_to_change(path).await?;
+    let outcome = forget_all(&db).await;
+    db.close().await;
     outcome
 }
 
-async fn forget_all(pool: &SqlitePool) -> Result<()> {
-    let mut tx = pool.begin_write().await?;
+async fn forget_all(db: &Database) -> Result<()> {
+    let mut tx = db.begin_write().await?;
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'file_intents')",
     )
@@ -215,6 +212,8 @@ async fn forget_all(pool: &SqlitePool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use sqlx::SqlitePool;
 
     async fn migrated_pool() -> SqlitePool {
         let pool = SqlitePoolOptions::new()
@@ -229,7 +228,7 @@ mod tests {
     #[tokio::test]
     async fn a_record_is_kept_until_it_is_forgotten_and_knows_its_run() {
         let pool = migrated_pool().await;
-        let intents = FileIntents::new(pool.clone());
+        let intents = FileIntents::new(Database::new(pool.clone()));
         let ours = intents
             .record(FileStore::Library, IntentKind::Import, "a")
             .await
@@ -282,7 +281,7 @@ mod tests {
             .await
             .unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        FileIntents::new(pool.clone())
+        FileIntents::new(Database::new(pool.clone()))
             .record(FileStore::ChatImage, IntentKind::Release, "x.png")
             .await
             .unwrap();
@@ -328,14 +327,15 @@ mod tests {
             .unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
 
-        let mut writer = pool.begin_write().await.unwrap();
+        let db = Database::new(pool.clone());
+        let mut writer = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
         sqlx::query("DROP TABLE file_intents")
             .execute(&mut *writer)
             .await
             .unwrap();
         let forgetting = tokio::spawn({
-            let pool = pool.clone();
-            async move { forget_all(&pool).await }
+            let db = db.clone();
+            async move { forget_all(&db).await }
         });
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         writer.commit().await.unwrap();

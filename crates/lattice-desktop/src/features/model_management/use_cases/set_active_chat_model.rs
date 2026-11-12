@@ -52,6 +52,7 @@ mod tests {
     use super::*;
     use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
     use lattice_core::domain::models::downloaded::ModelLocation;
+    use lattice_core::shared::persistence::Database;
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn setup_repo() -> Arc<DownloadedModelRepository> {
@@ -64,7 +65,7 @@ mod tests {
             .run(&pool)
             .await
             .expect("run migrations");
-        Arc::new(DownloadedModelRepository::new(pool))
+        Arc::new(DownloadedModelRepository::new(Database::new(pool)))
     }
 
     #[tokio::test]

@@ -2,7 +2,6 @@
 
 use super::*;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
 
 #[derive(sqlx::FromRow)]
 struct TangentRow {
@@ -60,7 +59,7 @@ impl LearningRepository {
             ));
         }
 
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
 
         #[derive(sqlx::FromRow)]
         struct ProgramRow {
@@ -439,6 +438,7 @@ impl LearningRepository {
 
     pub async fn list_tangents(&self, program_id: Option<&str>) -> Result<Vec<LearningTangentDto>> {
         let pid = program_id.map(str::trim).filter(|s| !s.is_empty());
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let rows = sqlx::query_as::<_, TangentRow>(
             r#"
             SELECT
@@ -469,9 +469,10 @@ impl LearningRepository {
         )
         .bind(pid)
         .bind(pid)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(db)?;
+        read.commit().await.map_err(db)?;
         Ok(rows.into_iter().map(LearningTangentDto::from).collect())
     }
 }

@@ -48,13 +48,11 @@ impl Database {
     }
 
     /// Copies the whole database into a new file (`VACUUM INTO`). It only
-    /// reads this database, so writers carry on meanwhile. `VACUUM INTO` takes
-    /// a string literal, not a bind parameter, so the single quotes of
-    /// `destination` are doubled.
+    /// reads this database, so writers carry on meanwhile.
     pub async fn vacuum_into(&self, destination: &str) -> Result<(), PersistenceError> {
-        let escaped = destination.replace('\'', "''");
         let mut connection = self.pool.acquire().await?;
-        sqlx::query(&format!("VACUUM INTO '{escaped}'"))
+        sqlx::query("VACUUM INTO ?")
+            .bind(destination)
             .execute(&mut *connection)
             .await?;
         Ok(())

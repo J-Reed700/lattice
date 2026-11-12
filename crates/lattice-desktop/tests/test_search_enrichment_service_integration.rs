@@ -28,17 +28,18 @@ use sqlx::SqlitePool;
 use std::time::Instant;
 use uuid::Uuid;
 
-/// Helper to create test database pool
-async fn create_test_db() -> SqlitePool {
+/// Helper to create test database pool and the database over it
+async fn create_test_db() -> (SqlitePool, Database) {
     let pool = SqlitePool::connect(":memory:")
         .await
         .expect("Failed to create in-memory database");
 
-    lattice::infrastructure::persistence::database::init::initialize_database(&pool)
+    let db = Database::new(pool.clone());
+    lattice::infrastructure::persistence::database::init::initialize_database(&db)
         .await
         .expect("Failed to initialize database");
 
-    pool
+    (pool, db)
 }
 
 /// Helper to insert test document
@@ -110,8 +111,8 @@ async fn insert_test_chunk(
 /// Test 1: Enrich empty results
 #[tokio::test]
 async fn test_enrich_empty_results() {
-    let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
+    let (pool, db) = create_test_db().await;
+    let service = SearchEnrichmentService::new(db.clone());
 
     let result = service.enrich_results(&[]).await;
 
@@ -124,8 +125,8 @@ async fn test_enrich_empty_results() {
 /// Test 2: Enrich single result
 #[tokio::test]
 async fn test_enrich_single_result() {
-    let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
+    let (pool, db) = create_test_db().await;
+    let service = SearchEnrichmentService::new(db.clone());
 
     // Insert test data
     let doc_id = Uuid::new_v4().to_string();
@@ -157,8 +158,8 @@ async fn test_enrich_single_result() {
 /// Test 3: Enrich multiple results
 #[tokio::test]
 async fn test_enrich_multiple_results() {
-    let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
+    let (pool, db) = create_test_db().await;
+    let service = SearchEnrichmentService::new(db.clone());
 
     // Insert test data
     let doc_id = Uuid::new_v4().to_string();
@@ -195,8 +196,8 @@ async fn test_enrich_multiple_results() {
 /// Test 4: Batch processing large input (SQLite 999 parameter limit)
 #[tokio::test]
 async fn test_enrich_batching_large_input() {
-    let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
+    let (pool, db) = create_test_db().await;
+    let service = SearchEnrichmentService::new(db.clone());
 
     // Create 2000 chunks (should create 3 batches: 900, 900, 200)
     let doc_id = Uuid::new_v4().to_string();
@@ -231,8 +232,8 @@ async fn test_enrich_batching_large_input() {
 /// Test 5: Snippet generation and truncation
 #[tokio::test]
 async fn test_enrich_snippet_generation() {
-    let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
+    let (pool, db) = create_test_db().await;
+    let service = SearchEnrichmentService::new(db.clone());
 
     // Create content longer than 200 chars
     let long_content = "a".repeat(500);
@@ -259,8 +260,8 @@ async fn test_enrich_snippet_generation() {
 /// Test 6: Snippet for short content
 #[tokio::test]
 async fn test_enrich_snippet_short_content() {
-    let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
+    let (pool, db) = create_test_db().await;
+    let service = SearchEnrichmentService::new(db.clone());
 
     let short_content = "Short content";
 
@@ -286,8 +287,8 @@ async fn test_enrich_snippet_short_content() {
 /// Test 7: Metadata extraction
 #[tokio::test]
 async fn test_enrich_metadata_extraction() {
-    let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
+    let (pool, db) = create_test_db().await;
+    let service = SearchEnrichmentService::new(db.clone());
 
     let doc_id = Uuid::new_v4().to_string();
     insert_test_document(&pool, &doc_id, "report.pdf", "/docs/report.pdf").await;
@@ -333,8 +334,8 @@ async fn test_enrich_metadata_extraction() {
 /// Test 8: Missing chunks (non-existent IDs)
 #[tokio::test]
 async fn test_enrich_missing_chunks() {
-    let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
+    let (pool, db) = create_test_db().await;
+    let service = SearchEnrichmentService::new(db.clone());
 
     // Create some chunks
     let doc_id = Uuid::new_v4().to_string();
@@ -359,8 +360,8 @@ async fn test_enrich_missing_chunks() {
 /// Test 9: Multiple documents
 #[tokio::test]
 async fn test_enrich_multiple_documents() {
-    let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
+    let (pool, db) = create_test_db().await;
+    let service = SearchEnrichmentService::new(db.clone());
 
     // Create multiple documents
     let doc1_id = Uuid::new_v4().to_string();
@@ -399,8 +400,8 @@ async fn test_enrich_multiple_documents() {
 /// Test 10: Parallel batch processing performance
 #[tokio::test]
 async fn test_enrich_parallel_performance() {
-    let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
+    let (pool, db) = create_test_db().await;
+    let service = SearchEnrichmentService::new(db.clone());
 
     // Create 3600 chunks (4 batches of 900)
     let doc_id = Uuid::new_v4().to_string();
@@ -441,8 +442,8 @@ async fn test_enrich_parallel_performance() {
 /// Test 11: Batch boundary conditions
 #[tokio::test]
 async fn test_enrich_batch_boundaries() {
-    let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
+    let (pool, db) = create_test_db().await;
+    let service = SearchEnrichmentService::new(db.clone());
 
     let doc_id = Uuid::new_v4().to_string();
     insert_test_document(&pool, &doc_id, "test.txt", "/path/test.txt").await;
@@ -472,8 +473,8 @@ async fn test_enrich_batch_boundaries() {
 /// Test 12: Unicode content in snippets
 #[tokio::test]
 async fn test_enrich_unicode_content() {
-    let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
+    let (pool, db) = create_test_db().await;
+    let service = SearchEnrichmentService::new(db.clone());
 
     let unicode_content = "Hello 世界 🌍 Привет مرحبا";
 
@@ -498,8 +499,8 @@ async fn test_enrich_unicode_content() {
 #[tokio::test]
 #[ignore] // Run only when explicitly requested (slow test)
 async fn test_enrich_stress_test() {
-    let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
+    let (pool, db) = create_test_db().await;
+    let service = SearchEnrichmentService::new(db.clone());
 
     // Create 10,000 chunks
     let doc_id = Uuid::new_v4().to_string();
@@ -537,8 +538,8 @@ async fn test_enrich_stress_test() {
 /// Test 14: Verify query timeout protection
 #[tokio::test]
 async fn test_enrich_query_timeout() {
-    let pool = create_test_db().await;
-    let service = SearchEnrichmentService::new(Database::from(pool.clone()));
+    let (pool, db) = create_test_db().await;
+    let service = SearchEnrichmentService::new(db.clone());
 
     // Normal operation should complete without timeout
     let doc_id = Uuid::new_v4().to_string();
@@ -560,11 +561,11 @@ async fn test_enrich_query_timeout() {
 /// Test 15: Database connection pool handling
 #[tokio::test]
 async fn test_enrich_connection_pooling() {
-    let pool = create_test_db().await;
+    let (pool, db) = create_test_db().await;
 
     // Create multiple service instances (sharing pool)
-    let service1 = SearchEnrichmentService::new(Database::from(pool.clone()));
-    let service2 = SearchEnrichmentService::new(Database::from(pool.clone()));
+    let service1 = SearchEnrichmentService::new(db.clone());
+    let service2 = SearchEnrichmentService::new(db.clone());
 
     let doc_id = Uuid::new_v4().to_string();
     insert_test_document(&pool, &doc_id, "test.txt", "/path/test.txt").await;

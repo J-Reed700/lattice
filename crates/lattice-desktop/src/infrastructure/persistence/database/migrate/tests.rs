@@ -3,7 +3,7 @@
 
 use super::{reconcile_line_endings, run_migrations};
 use crate::infrastructure::persistence::database::DatabaseConnection;
-use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Database;
 use parking_lot::Mutex;
 use sha2::{Digest, Sha384};
 use sqlx::migrate::{Migration, Migrator};
@@ -180,6 +180,7 @@ fn assert_nothing_reconciled_was_logged(logs: &Captured) {
 #[tokio::test]
 async fn a_database_recorded_with_the_other_line_endings_opens_with_this_builds_checksums() {
     let pool = migrated_database().await;
+    let db = Database::new(pool.clone());
     let migrator = embedded();
     for migration in migrator.iter() {
         set_other_line_endings(&pool, migration).await;
@@ -187,7 +188,7 @@ async fn a_database_recorded_with_the_other_line_endings_opens_with_this_builds_
     watch_updates(&pool).await;
     let (logs, _capture) = capture_logs();
 
-    run_migrations(&pool).await.unwrap();
+    run_migrations(&db).await.unwrap();
 
     assert_eq!(recorded(&pool).await, embedded_rows(&migrator));
     let versions: Vec<i64> = migrator.iter().map(|migration| migration.version).collect();
@@ -206,6 +207,7 @@ async fn a_database_recorded_with_the_other_line_endings_opens_with_this_builds_
 #[tokio::test]
 async fn only_rows_with_other_line_endings_are_updated_and_a_second_start_updates_none() {
     let pool = migrated_database().await;
+    let db = Database::new(pool.clone());
     let migrator = embedded();
     let mut switched = Vec::new();
     for migration in migrator.iter().step_by(2) {
@@ -214,7 +216,7 @@ async fn only_rows_with_other_line_endings_are_updated_and_a_second_start_update
     }
     watch_updates(&pool).await;
 
-    run_migrations(&pool).await.unwrap();
+    run_migrations(&db).await.unwrap();
 
     assert_eq!(recorded(&pool).await, embedded_rows(&migrator));
     assert_eq!(updates_seen(&pool).await, switched);
@@ -224,7 +226,7 @@ async fn only_rows_with_other_line_endings_are_updated_and_a_second_start_update
         .await
         .unwrap();
     let (logs, _capture) = capture_logs();
-    run_migrations(&pool).await.unwrap();
+    run_migrations(&db).await.unwrap();
     assert!(updates_seen(&pool).await.is_empty());
     assert_nothing_reconciled_was_logged(&logs);
 }
@@ -232,6 +234,7 @@ async fn only_rows_with_other_line_endings_are_updated_and_a_second_start_update
 #[tokio::test]
 async fn a_checksum_that_is_not_the_other_line_endings_of_the_same_sql_is_refused_and_left_alone() {
     let pool = migrated_database().await;
+    let db = Database::new(pool.clone());
     let migrator = embedded();
     let migrations: Vec<_> = migrator.iter().collect();
     let target = migrations[3];
@@ -256,7 +259,7 @@ async fn a_checksum_that_is_not_the_other_line_endings_of_the_same_sql_is_refuse
     for (what, checksum) in cases {
         set_checksum(&pool, target.version, &checksum).await;
 
-        let error = run_migrations(&pool).await.unwrap_err().to_string();
+        let error = run_migrations(&db).await.unwrap_err().to_string();
 
         assert!(error.contains(&refusal(target.version)), "{what}: {error}");
         let mut expected = embedded_rows(&migrator);
@@ -268,6 +271,7 @@ async fn a_checksum_that_is_not_the_other_line_endings_of_the_same_sql_is_refuse
 #[tokio::test]
 async fn a_real_change_is_refused_and_left_alone_when_other_rows_differ_only_in_line_endings() {
     let pool = migrated_database().await;
+    let db = Database::new(pool.clone());
     let migrator = embedded();
     for migration in migrator.iter() {
         set_other_line_endings(&pool, migration).await;
@@ -277,7 +281,7 @@ async fn a_real_change_is_refused_and_left_alone_when_other_rows_differ_only_in_
     let edited = checksum_of(&format!("{}-- edited\n", changed.sql));
     set_checksum(&pool, changed.version, &edited).await;
 
-    let error = run_migrations(&pool).await.unwrap_err().to_string();
+    let error = run_migrations(&db).await.unwrap_err().to_string();
 
     assert!(error.contains(&refusal(changed.version)), "{error}");
     let mut expected = embedded_rows(&migrator);
@@ -288,6 +292,7 @@ async fn a_real_change_is_refused_and_left_alone_when_other_rows_differ_only_in_
 #[tokio::test]
 async fn a_migration_this_build_does_not_embed_is_refused_as_before() {
     let pool = migrated_database().await;
+    let db = Database::new(pool.clone());
     let migrator = embedded();
     let newer = migrator
         .iter()
@@ -305,7 +310,7 @@ async fn a_migration_this_build_does_not_embed_is_refused_as_before() {
     .await
     .unwrap();
 
-    let error = run_migrations(&pool).await.unwrap_err().to_string();
+    let error = run_migrations(&db).await.unwrap_err().to_string();
 
     assert!(
         error.contains(&format!(
@@ -321,9 +326,10 @@ async fn a_migration_this_build_does_not_embed_is_refused_as_before() {
 #[tokio::test]
 async fn a_fresh_database_migrates_as_before() {
     let pool = empty_database().await;
+    let db = Database::new(pool.clone());
     let (logs, _capture) = capture_logs();
 
-    run_migrations(&pool).await.unwrap();
+    run_migrations(&db).await.unwrap();
 
     assert_eq!(recorded(&pool).await, embedded_rows(&embedded()));
     let conversations: i64 = sqlx::query_scalar(
@@ -339,11 +345,12 @@ async fn a_fresh_database_migrates_as_before() {
 #[tokio::test]
 async fn a_database_that_already_matches_is_not_touched() {
     let pool = migrated_database().await;
+    let db = Database::new(pool.clone());
     let before = recorded(&pool).await;
     watch_updates(&pool).await;
     let (logs, _capture) = capture_logs();
 
-    run_migrations(&pool).await.unwrap();
+    run_migrations(&db).await.unwrap();
 
     assert_eq!(recorded(&pool).await, before);
     assert!(updates_seen(&pool).await.is_empty());
@@ -358,18 +365,34 @@ async fn a_database_file_recorded_with_the_other_line_endings_opens_on_the_next_
 
     let first_start = DatabaseConnection::new(path.clone()).await.unwrap();
     run_migrations(first_start.database()).await.unwrap();
+    let mut tx = first_start.database().begin_write().await.unwrap();
     for migration in migrator.iter() {
-        set_other_line_endings(first_start.database().sqlx_pool(), migration).await;
+        let other = checksum_of(&other_line_endings(&migration.sql));
+        sqlx::query("UPDATE _sqlx_migrations SET checksum = ?1 WHERE version = ?2")
+            .bind(other)
+            .bind(migration.version)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
     }
+    tx.commit().await.unwrap();
     first_start.close().await.unwrap();
 
     let next_start = DatabaseConnection::new(path).await.unwrap();
     run_migrations(next_start.database()).await.unwrap();
 
-    assert_eq!(
-        recorded(next_start.database().sqlx_pool()).await,
-        embedded_rows(&migrator)
-    );
+    let mut read = next_start.database().begin_read().await.unwrap();
+    let rows: Vec<(i64, Vec<u8>)> =
+        sqlx::query_as("SELECT version, checksum FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&mut *read)
+            .await
+            .unwrap();
+    drop(read);
+    let rows: Vec<Row> = rows
+        .into_iter()
+        .map(|(version, checksum)| (version, hex::encode(checksum)))
+        .collect();
+    assert_eq!(rows, embedded_rows(&migrator));
     next_start.close().await.unwrap();
 }
 
@@ -409,9 +432,10 @@ async fn a_database_recorded_with_either_line_endings_is_reconciled_to_the_other
             "every checksum differs between the two checkouts"
         );
         let pool = empty_database().await;
+        let db = Database::new(pool.clone());
         recorded_by.run(&pool).await.unwrap();
 
-        reconcile_line_endings(&pool, &opened_by).await.unwrap();
+        reconcile_line_endings(&db, &opened_by).await.unwrap();
 
         assert_eq!(
             recorded(&pool).await,
@@ -425,8 +449,9 @@ async fn a_database_recorded_with_either_line_endings_is_reconciled_to_the_other
 #[tokio::test]
 async fn reconciling_a_database_without_a_migrations_table_does_not_create_one() {
     let pool = empty_database().await;
+    let db = Database::new(pool.clone());
 
-    reconcile_line_endings(&pool, &embedded()).await.unwrap();
+    reconcile_line_endings(&db, &embedded()).await.unwrap();
 
     let objects: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master")
         .fetch_one(&pool)
@@ -438,6 +463,7 @@ async fn reconciling_a_database_without_a_migrations_table_does_not_create_one()
 #[tokio::test]
 async fn the_rewrites_are_one_transaction_and_are_logged_only_once_committed() {
     let pool = migrated_database().await;
+    let db = Database::new(pool.clone());
     let migrator = embedded();
     for migration in migrator.iter() {
         set_other_line_endings(&pool, migration).await;
@@ -458,7 +484,7 @@ async fn the_rewrites_are_one_transaction_and_are_logged_only_once_committed() {
     .unwrap();
     let (logs, _capture) = capture_logs();
 
-    let error = reconcile_line_endings(&pool, &migrator)
+    let error = reconcile_line_endings(&db, &migrator)
         .await
         .unwrap_err()
         .to_string();

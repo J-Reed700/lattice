@@ -15,12 +15,13 @@ use crate::{
     service,
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use serde_json::json;
 
 #[tokio::test]
 async fn single_module_recheck_reuses_completed_checks_and_keeps_whole_course_connections(
 ) -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let mut initial = candidate();
     let mut source = original_source();
     let quote = ORIGINAL.repeat(12);
@@ -195,7 +196,8 @@ async fn review_receipts_survive_new_references_and_invalidate_on_model_request_
 async fn interrupted_incremental_review_resumes_from_last_completed_receipt_without_approval(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool);
+    let repo = LearningRepository::new(db.clone());
     let mut initial = candidate();
     let sources = vec![original_source()];
     cite_at(&mut initial, "/modules/0/summary", 0, ORIGINAL);
@@ -237,7 +239,7 @@ async fn interrupted_incremental_review_resumes_from_last_completed_receipt_with
     )
     .await
     .is_err());
-    let reopened = LearningRepository::new(pool);
+    let reopened = LearningRepository::new(db);
     // The resumed check reuses the link receipts and the module receipts:
     // one incremental review call, nothing else.
     let llm = model(vec![verdicts(&[("finding-1", "resolved")], vec![])]);
@@ -273,7 +275,7 @@ async fn interrupted_incremental_review_resumes_from_last_completed_receipt_with
 #[tokio::test]
 async fn incremental_review_anchors_cross_module_effects_to_the_module_that_must_change(
 ) -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let mut initial = candidate();
     let sources = vec![original_source()];
     cite_at(&mut initial, "/modules/0/summary", 0, ORIGINAL);

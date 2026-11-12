@@ -1,7 +1,6 @@
 //! Reading source workspaces, versions, search hits and prepared sources.
 use super::repository::reads as stored;
 use super::*;
-use lattice_core::shared::persistence::Transactions;
 
 /// A source's active version as the course index keys it: its immutable id,
 /// the title its passages are embedded under, and the hash of its text.
@@ -96,7 +95,8 @@ impl LearningSourceLibraryRepository {
             return Err(invalid("Search query must contain 1–200 characters"));
         }
         let limit = req.limit.clamp(1, 50) as i64;
-        let mut rows = stored::searchable_versions(&self.database, &req.program_id);
+        let mut read = self.database.begin_read().await.map_err(db)?;
+        let mut rows = stored::searchable_versions(&mut read, &req.program_id);
         let mut results = Vec::new();
         while let Some(r) = rows.try_next().await? {
             if let Some(index) = find_case_insensitive(&r.text, query) {
@@ -111,6 +111,8 @@ impl LearningSourceLibraryRepository {
                 }
             }
         }
+        drop(rows);
+        read.commit().await.map_err(db)?;
         Ok(results)
     }
 

@@ -3,6 +3,7 @@ use super::{study_dto::*, study_repository::StudyRepository};
 use crate::persistence::db;
 use crate::tests::pool;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use sqlx::SqlitePool;
 
 fn id() -> String {
@@ -80,7 +81,8 @@ fn assert_invalid<T: std::fmt::Debug>(result: Result<T>) {
 #[tokio::test]
 async fn a_deck_with_one_malformed_card_is_not_saved_at_all() -> Result<()> {
     let pool = fk_pool().await?;
-    let repo = StudyRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let repo = StudyRepository::new(database.clone());
     let mc = StudyCardFormat::MultipleChoice;
     let qa = StudyCardFormat::QuestionAnswer;
 
@@ -117,7 +119,8 @@ async fn a_deck_with_one_malformed_card_is_not_saved_at_all() -> Result<()> {
 #[tokio::test]
 async fn decks_list_newest_first_with_due_counts_and_round_trip_citations() -> Result<()> {
     let pool = fk_pool().await?;
-    let repo = StudyRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let repo = StudyRepository::new(database.clone());
     let mc = StudyCardFormat::MultipleChoice;
     let older = deck(1_000, |d| {
         vec![card(d, mc, &["Basil", "Mint", "Sage"], 0, 500)]
@@ -171,7 +174,8 @@ async fn decks_list_newest_first_with_due_counts_and_round_trip_citations() -> R
 #[tokio::test]
 async fn editing_keeps_choices_distinct_and_edits_free_answers_in_place() -> Result<()> {
     let pool = fk_pool().await?;
-    let repo = StudyRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let repo = StudyRepository::new(database.clone());
     let saved = deck(1_000, |d| {
         vec![
             card(
@@ -218,7 +222,8 @@ async fn editing_keeps_choices_distinct_and_edits_free_answers_in_place() -> Res
 async fn a_target_pulls_late_cards_due_and_spaces_reviews_to_land_before_it() -> Result<()> {
     use super::schedule::{DAY_MS, FINAL_WINDOW_MS, RELEARN_STEP_MS};
     let pool = fk_pool().await?;
-    let repo = StudyRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let repo = StudyRepository::new(database.clone());
     let qa = StudyCardFormat::QuestionAnswer;
     let now = 1_000 * DAY_MS;
     let target = now + DAY_MS;

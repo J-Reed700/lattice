@@ -110,15 +110,16 @@ async fn use_case() -> (DownloadModelUseCase, SqlitePool) {
         .await
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let db = Database::new(pool.clone());
     let use_case = DownloadModelUseCase::new(
         Arc::new(HardcodedModelCatalog::new()),
-        Arc::new(DownloadedModelRepository::new(pool.clone())),
+        Arc::new(DownloadedModelRepository::new(db.clone())),
         Arc::new(RefusingDownloads),
         Arc::new(FileSystemAdapter::new()),
         Arc::new(EmptyKeychain),
         Arc::new(TokioChecksumAdapter),
         Arc::new(TokioFileSystemAdapter),
-        Database::from(pool.clone()),
+        db,
     );
     (use_case, pool)
 }

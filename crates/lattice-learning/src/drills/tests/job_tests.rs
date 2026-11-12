@@ -30,9 +30,9 @@ use std::time::Duration;
 
 /// A worker on `model`, without the built-in runtimes, so that every defect is proven by judgement, and with the
 /// judge that grades reviews, as the app wires it.
-fn worker(pool: &SqlitePool, model: Arc<dyn LLMPort>) -> DrillBuildWorker {
+fn worker(database: &Database, model: Arc<dyn LLMPort>) -> DrillBuildWorker {
     DrillBuildWorker {
-        database: pool.clone().into(),
+        database: database.clone(),
         load_llm: Arc::new(move || {
             let model = model.clone();
             Box::pin(async move { Ok(pinned_for_test(model)) })
@@ -61,7 +61,8 @@ fn builds_are_one_per_language_and_resume_after_a_restart() {
 #[tokio::test]
 async fn a_job_names_the_drill_it_builds() -> Result<()> {
     let pool = pool().await?;
-    let store = JobStore::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let store = JobStore::new(database.clone());
     for requested in [
         json!({}),
         json!({"spec": {"language": "klingon", "domain": null, "lines": 40, "patterns": ["readability.magic_number"], "programId": null}}),
@@ -80,7 +81,7 @@ async fn a_job_names_the_drill_it_builds() -> Result<()> {
         let job = store.get(&admitted.id).await?;
         assert!(matches!(spec_of(&job), Err(AppError::InvalidInput(_))));
     }
-    let queued = queue_build(&Database::from(pool.clone()), &lesson_spec(), "named").await?;
+    let queued = queue_build(&database, &lesson_spec(), "named").await?;
     assert_eq!(spec_of(&store.get(&queued).await?)?, lesson_spec());
     Ok(())
 }
@@ -88,7 +89,8 @@ async fn a_job_names_the_drill_it_builds() -> Result<()> {
 #[tokio::test]
 async fn a_build_queued_before_drills_had_lessons_is_refused_by_its_spec() -> Result<()> {
     let pool = pool().await?;
-    let store = JobStore::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let store = JobStore::new(database.clone());
     let admitted = store
         .submit(&NewJob {
             kind: DRILL_BUILD.into(),
@@ -110,8 +112,8 @@ async fn a_build_queued_before_drills_had_lessons_is_refused_by_its_spec() -> Re
 }
 
 /// Runs the job through a runtime of its own, as the app would after a queue.
-async fn run_to_the_end(pool: &SqlitePool, worker: DrillBuildWorker, id: &str) -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool.clone()));
+async fn run_to_the_end(database: &Database, worker: DrillBuildWorker, id: &str) -> Result<()> {
+    let runtime = JobRuntime::new(database.clone());
     runtime
         .register(DRILL_BUILD, Arc::new(worker), drill_job_config())
         .await?;
@@ -125,6 +127,7 @@ async fn run_to_the_end(pool: &SqlitePool, worker: DrillBuildWorker, id: &str) -
 #[tokio::test]
 async fn a_queued_build_runs_on_the_runtime_and_the_judge_grades_its_blind_review() -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let model = Arc::new(ScriptedModel::new([
         code_check_answer(true),
         clean_code_answer(),
@@ -136,11 +139,11 @@ async fn a_queued_build_runs_on_the_runtime_and_the_judge_grades_its_blind_revie
         grade_answer(),
         entry_answer(),
     ]));
-    let spec = code_spec(&pool).await?;
-    let id = queue_build(&Database::from(pool.clone()), &spec, "end to end").await?;
-    run_to_the_end(&pool, worker(&pool, model.clone()), &id).await?;
+    let spec = code_spec(&pool, &database).await?;
+    let id = queue_build(&database, &spec, "end to end").await?;
+    run_to_the_end(&database, worker(&database, model.clone()), &id).await?;
 
-    let job = JobStore::new(pool.clone()).get(&id).await?;
+    let job = JobStore::new(database.clone()).get(&id).await?;
     assert_eq!(job.status, JobStatus::Completed, "{:?}", job.error_message);
     assert_eq!(
         model.purposes(),
@@ -201,22 +204,18 @@ async fn a_queued_build_runs_on_the_runtime_and_the_judge_grades_its_blind_revie
 #[tokio::test]
 async fn a_model_outage_defers_the_build_and_stores_nothing() -> Result<()> {
     let pool = pool().await?;
-    let id = queue_build(
-        &Database::from(pool.clone()),
-        &code_spec(&pool).await?,
-        "outage",
-    )
-    .await?;
+    let database = Database::new(pool.clone());
+    let id = queue_build(&database, &code_spec(&pool, &database).await?, "outage").await?;
     let outage = DrillBuildWorker {
-        database: pool.clone().into(),
+        database: database.clone(),
         load_llm: Arc::new(|| {
             Box::pin(async { Err(AppError::Network("The model is down.".into())) })
         }),
         runtimes: BuiltinRuntimes::new(None),
         grader: judge_grader,
     };
-    run_to_the_end(&pool, outage, &id).await?;
-    let job = JobStore::new(pool.clone()).get(&id).await?;
+    run_to_the_end(&database, outage, &id).await?;
+    let job = JobStore::new(database.clone()).get(&id).await?;
     assert_eq!(
         job.status,
         JobStatus::Pending,
@@ -231,6 +230,7 @@ async fn a_model_outage_defers_the_build_and_stores_nothing() -> Result<()> {
 async fn a_review_the_judge_cannot_grade_fails_the_build_with_the_work_before_it_saved(
 ) -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let nothing = || json!({"issues": [], "findings": []}).to_string();
     let model = Arc::new(ScriptedModel::new([
         code_check_answer(true),
@@ -243,11 +243,11 @@ async fn a_review_the_judge_cannot_grade_fails_the_build_with_the_work_before_it
         nothing(),
         nothing(),
     ]));
-    let spec = code_spec(&pool).await?;
-    let id = queue_build(&Database::from(pool.clone()), &spec, "ungradable").await?;
-    run_to_the_end(&pool, worker(&pool, model.clone()), &id).await?;
+    let spec = code_spec(&pool, &database).await?;
+    let id = queue_build(&database, &spec, "ungradable").await?;
+    run_to_the_end(&database, worker(&database, model.clone()), &id).await?;
 
-    let store = JobStore::new(pool.clone());
+    let store = JobStore::new(database.clone());
     let job = store.get(&id).await?;
     assert_eq!(job.status, JobStatus::Failed);
     assert!(
@@ -305,16 +305,17 @@ impl LLMPort for Hang {
 #[tokio::test]
 async fn cancelling_a_build_stops_its_model_call_and_stores_nothing() -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let model = Arc::new(Hang {
         started: AtomicUsize::new(0),
     });
-    let spec = code_spec(&pool).await?;
-    let id = queue_build(&Database::from(pool.clone()), &spec, "cancelled").await?;
-    let runtime = JobRuntime::new(Database::from(pool.clone()));
+    let spec = code_spec(&pool, &database).await?;
+    let id = queue_build(&database, &spec, "cancelled").await?;
+    let runtime = JobRuntime::new(database.clone());
     runtime
         .register(
             DRILL_BUILD,
-            Arc::new(worker(&pool, model.clone())),
+            Arc::new(worker(&database, model.clone())),
             drill_job_config(),
         )
         .await?;
@@ -335,7 +336,7 @@ async fn cancelling_a_build_stops_its_model_call_and_stores_nothing() -> Result<
     runtime.close();
     runtime.drain().await;
 
-    let store = JobStore::new(pool.clone());
+    let store = JobStore::new(database.clone());
     assert_eq!(store.get(&id).await?.status, JobStatus::Cancelled);
     assert_eq!(drills(&pool).await?, 0);
     assert!(store

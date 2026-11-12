@@ -1,13 +1,12 @@
 //! Reading the practice workspace and sessions back into DTOs, and replay checks.
 use super::*;
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::shared::persistence::Transactions;
 use sqlx::SqliteConnection;
 
 impl LearningPracticeRepository {
     pub async fn workspace(&self, program_id: &str) -> Result<LearningPracticeWorkspaceDto> {
         uuid(program_id, "program")?;
-        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut *read)
@@ -54,7 +53,7 @@ impl LearningPracticeRepository {
     }
 
     pub async fn get_session(&self, session_id: &str) -> Result<LearningPracticeSessionDto> {
-        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let session = Self::session_on(&mut read, session_id).await?;
         read.commit().await.map_err(db)?;
         Ok(session)
@@ -233,7 +232,7 @@ impl LearningPracticeRepository {
         i64,
     )> {
         Self::validate_ids(program_id, session_id, None)?;
-        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let ws = Self::session_on(&mut read, session_id).await?;
         let owner: Option<String> =
             sqlx::query_scalar("SELECT program_id FROM learning_practice_sessions WHERE id=?")
@@ -261,7 +260,7 @@ impl LearningPracticeRepository {
         expected_revision: i64,
         allow_demonstrate: bool,
     ) -> Result<LearningPracticeSessionDto> {
-        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let session = Self::session_on(&mut read, session_id).await?;
         let owner: Option<String> =
             sqlx::query_scalar("SELECT program_id FROM learning_practice_sessions WHERE id=?")
@@ -304,9 +303,10 @@ impl LearningPracticeRepository {
         ids: &[String],
     ) -> Result<Vec<LearningSourceVersionDto>> {
         let mut out = Vec::new();
+        let mut read = self.db.begin_read().await.map_err(db)?;
         for id in ids.iter().take(32) {
             let row=sqlx::query("SELECT source_id,id,version_number,title,publisher,resolved_url,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at,snapshot_hash,full_text FROM learning_source_versions WHERE program_id=? AND id=?")
-                .bind(program_id).bind(id).fetch_optional(&self.pool).await.map_err(db)?.ok_or_else(||AppError::NotFound("A source version frozen into this attempt is unavailable.".into()))?;
+                .bind(program_id).bind(id).fetch_optional(&mut *read).await.map_err(db)?.ok_or_else(||AppError::NotFound("A source version frozen into this attempt is unavailable.".into()))?;
             out.push(LearningSourceVersionDto {
                 source_id: row.get("source_id"),
                 version: LearningSourceVersionSummaryDto {
@@ -327,6 +327,7 @@ impl LearningPracticeRepository {
                 usage: vec![],
             });
         }
+        read.commit().await.map_err(db)?;
         Ok(out)
     }
 
@@ -339,9 +340,11 @@ impl LearningPracticeRepository {
         payload_hash: &str,
     ) -> Result<bool> {
         uuid(operation_id, "operation")?;
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        practice_operation(operation_id, program_id, session_id, kind, payload_hash)
-            .seen(&mut connection)
-            .await
+        let mut read = self.db.begin_read().await.map_err(db)?;
+        let seen = practice_operation(operation_id, program_id, session_id, kind, payload_hash)
+            .seen(&mut read)
+            .await?;
+        read.commit().await.map_err(db)?;
+        Ok(seen)
     }
 }

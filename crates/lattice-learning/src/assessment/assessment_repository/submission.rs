@@ -11,7 +11,7 @@ use crate::dto::*;
 use crate::persistence::{db, now};
 use crate::quiz_bank_jobs;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::{Row, SqliteConnection};
 
 /// What grading decided for one pending item.
@@ -55,7 +55,7 @@ async fn form_facts(connection: &mut SqliteConnection, form_id: &str) -> Result<
 /// Evidence for one graded item, and the follow-ups it suggests.
 #[allow(clippy::too_many_arguments)]
 async fn record_evidence(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     facts: &FormFacts,
     form_id: &str,
     ordinal: i64,
@@ -68,7 +68,7 @@ async fn record_evidence(
     let item = sqlx::query("SELECT format,difficulty FROM learning_assessment_form_items WHERE form_id=? AND ordinal=?")
         .bind(form_id)
         .bind(ordinal)
-        .fetch_one(&mut *connection)
+        .fetch_one(&mut **tx)
         .await
         .map_err(db)?;
     let format = parse_format(item.get("format"))?;
@@ -76,7 +76,7 @@ async fn record_evidence(
     let assistance: Option<String> = sqlx::query_scalar("SELECT assistance_json FROM learning_assessment_response_revisions WHERE form_id=? AND item_ordinal=? ORDER BY revision DESC LIMIT 1")
         .bind(form_id)
         .bind(ordinal)
-        .fetch_optional(&mut *connection)
+        .fetch_optional(&mut **tx)
         .await
         .map_err(db)?;
     let used: Vec<String> = assistance
@@ -86,7 +86,7 @@ async fn record_evidence(
     let outcomes = sqlx::query("SELECT fio.outcome_id,o.lesson_id FROM learning_assessment_form_item_outcomes fio LEFT JOIN learning_outcome_definitions o ON o.id=fio.outcome_id WHERE fio.form_id=? AND fio.item_ordinal=? ORDER BY fio.outcome_id")
         .bind(form_id)
         .bind(ordinal)
-        .fetch_all(&mut *connection)
+        .fetch_all(&mut **tx)
         .await
         .map_err(db)?;
     let uncertain = overridden
@@ -125,7 +125,7 @@ async fn record_evidence(
             .bind(quote)
             .bind(json(&assistance_json)?)
             .bind(now())
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
         let events = std::slice::from_ref(&event);
@@ -134,16 +134,16 @@ async fn record_evidence(
                 .bind(&facts.program_id)
                 .bind(&outcome_id)
                 .bind(form_id)
-                .fetch_one(&mut *connection)
+                .fetch_one(&mut **tx)
                 .await
                 .map_err(db)?;
             if latest.is_some_and(|date| now() - date > STALE_EVIDENCE_MS) {
-                insert_followup(connection, &facts.program_id, Some(&outcome_id), "stale_evidence", "Earlier evidence for this outcome is old enough to benefit from a fresh check.", "assessment", Some(form_id), events).await?;
+                insert_followup(tx, &facts.program_id, Some(&outcome_id), "stale_evidence", "Earlier evidence for this outcome is old enough to benefit from a fresh check.", "assessment", Some(form_id), events).await?;
             }
         }
         if result == "observed" && !used.is_empty() {
             insert_followup(
-                connection,
+                tx,
                 &facts.program_id,
                 Some(&outcome_id),
                 "assisted_success",
@@ -155,12 +155,12 @@ async fn record_evidence(
             .await?;
         }
         if uncertain && !overridden {
-            insert_followup(connection, &facts.program_id, Some(&outcome_id), "uncertain_grade", "This answer could not be graded with confidence; review it or answer another question on the same point.", "assessment", Some(form_id), events).await?;
+            insert_followup(tx, &facts.program_id, Some(&outcome_id), "uncertain_grade", "This answer could not be graded with confidence; review it or answer another question on the same point.", "assessment", Some(form_id), events).await?;
         } else if result == "not_observed" && dimension == "transfer" {
-            insert_followup(connection, &facts.program_id, Some(&outcome_id), "low_transfer", "The changed-context answer did not yet show this outcome; try a new transfer example.", "practice", Some(&outcome_id), events).await?;
+            insert_followup(tx, &facts.program_id, Some(&outcome_id), "low_transfer", "The changed-context answer did not yet show this outcome; try a new transfer example.", "practice", Some(&outcome_id), events).await?;
         } else if result == "not_observed" {
             insert_followup(
-                connection,
+                tx,
                 &facts.program_id,
                 Some(&outcome_id),
                 "missed_outcome",
@@ -186,8 +186,7 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &req.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = assessment_operation(
             &req.operation_id,
             &req.program_id,
@@ -347,9 +346,8 @@ impl LearningAssessmentRepository {
         grades: &[ItemGrade],
         grader_model: &str,
     ) -> Result<()> {
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let facts = form_facts(&mut tx, form_id).await?;
-        Self::writer_lock(&mut tx, &facts.program_id).await?;
         for grade in grades {
             match grade {
                 ItemGrade::Graded {
@@ -425,19 +423,16 @@ impl LearningAssessmentRepository {
 
     /// Recompute a submission from its item results: score (an overridden
     /// item counts as full credit), pending count, status and verdict.
-    pub(crate) async fn finalize_in(
-        connection: &mut SqliteConnection,
-        form_id: &str,
-    ) -> Result<()> {
+    pub(crate) async fn finalize_in(tx: &mut WriteTx, form_id: &str) -> Result<()> {
         let rows = sqlx::query("SELECT grade_status,points_earned,points_possible,learner_override FROM learning_assessment_item_results WHERE form_id=?")
             .bind(form_id)
-            .fetch_all(&mut *connection)
+            .fetch_all(&mut **tx)
             .await
             .map_err(db)?;
         let passing: f64 =
             sqlx::query_scalar("SELECT passing_score FROM learning_assessment_forms WHERE id=?")
                 .bind(form_id)
-                .fetch_one(&mut *connection)
+                .fetch_one(&mut **tx)
                 .await
                 .map_err(db)?;
         let mut earned = 0.0;
@@ -497,7 +492,7 @@ impl LearningAssessmentRepository {
             .bind(feedback)
             .bind(json(&disagreement)?)
             .bind(form_id)
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
         Ok(())
@@ -512,7 +507,7 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_assessment_item_results r JOIN learning_assessment_forms f ON f.id=r.form_id WHERE r.form_id=? AND f.program_id=? AND r.grade_status='pending'")
             .bind(&req.form_id)
             .bind(&req.program_id)
@@ -543,8 +538,7 @@ impl LearningAssessmentRepository {
         uuid(&req.program_id, "program")?;
         uuid(&req.follow_up_id, "follow-up")?;
         uuid(&req.operation_id, "operation")?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &req.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = assessment_operation(
             &req.operation_id,
             &req.program_id,
@@ -568,13 +562,13 @@ impl LearningAssessmentRepository {
 
     /// Evidence for an item the learner overrode: never `observed`.
     pub(crate) async fn record_override_evidence_in(
-        connection: &mut SqliteConnection,
+        tx: &mut WriteTx,
         form_id: &str,
         ordinal: i64,
     ) -> Result<()> {
-        let facts = form_facts(connection, form_id).await?;
+        let facts = form_facts(tx, form_id).await?;
         record_evidence(
-            connection,
+            tx,
             &facts,
             form_id,
             ordinal,

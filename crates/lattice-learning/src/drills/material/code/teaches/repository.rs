@@ -2,7 +2,7 @@
 
 use crate::persistence::db;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Database;
 
 /// A verdict to store for a lesson.
 pub(super) struct Verdict<'a> {
@@ -17,28 +17,29 @@ pub(super) struct Verdict<'a> {
 
 /// Whether the verdict stored for the lesson on `basis` says it teaches something code can show, if one is stored.
 pub(super) async fn teaches_on(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
     lesson_id: &str,
     basis: &str,
 ) -> Result<Option<bool>> {
-    let pool = pool.sqlx_pool();
+    let mut read = database.begin_read().await.map_err(db)?;
     let teaches: Option<i64> = sqlx::query_scalar(
         "SELECT teaches FROM learning_drill_code_checks WHERE program_id=? AND lesson_id=? AND basis=?",
     )
     .bind(program_id)
     .bind(lesson_id)
     .bind(basis)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *read)
     .await
     .map_err(db)?;
+    read.commit().await.map_err(db)?;
     Ok(teaches.map(|teaches| teaches != 0))
 }
 
 /// Stores the verdict for its lesson, replacing the earlier one; nothing, when the lesson is no longer one of the
 /// course's.
-pub(super) async fn record(pool: &impl DriverPool, verdict: &Verdict<'_>) -> Result<()> {
-    let pool = pool.sqlx_pool();
+pub(super) async fn record(database: &Database, verdict: &Verdict<'_>) -> Result<()> {
+    let mut tx = database.begin_write().await.map_err(db)?;
     sqlx::query(
         "INSERT INTO learning_drill_code_checks(program_id,lesson_id,basis,teaches,reason,model,checked_at) SELECT ?1,?2,?3,?4,?5,?6,?7 WHERE EXISTS(SELECT 1 FROM learning_lessons WHERE program_id=?1 AND id=?2) ON CONFLICT(program_id,lesson_id) DO UPDATE SET basis=excluded.basis,teaches=excluded.teaches,reason=excluded.reason,model=excluded.model,checked_at=excluded.checked_at",
     )
@@ -49,8 +50,9 @@ pub(super) async fn record(pool: &impl DriverPool, verdict: &Verdict<'_>) -> Res
     .bind(verdict.reason)
     .bind(verdict.model)
     .bind(verdict.checked_at)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map(drop)
-    .map_err(db)
+    .map_err(db)?;
+    tx.commit().await.map_err(db)
 }

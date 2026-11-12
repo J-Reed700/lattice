@@ -11,7 +11,6 @@ use crate::drills::spec::DrillSpec;
 use crate::persistence::{db, now};
 use lattice_core::domain::learning::drills::{check_key, Drill, KeyFault};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
 
 /// What the stages made.

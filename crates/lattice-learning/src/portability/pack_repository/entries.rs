@@ -30,6 +30,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::WriteTx;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sqlx::SqliteConnection;
 use std::collections::HashMap;
@@ -93,11 +94,7 @@ pub(super) trait SectionRows: Sync {
         Ok(())
     }
     /// Write the section's rows in the importing transaction.
-    async fn insert(
-        &self,
-        _connection: &mut SqliteConnection,
-        _scope: &ImportScope<'_>,
-    ) -> Result<()> {
+    async fn insert(&self, _tx: &mut WriteTx, _scope: &ImportScope<'_>) -> Result<()> {
         Ok(())
     }
 }
@@ -196,18 +193,8 @@ impl SectionRows for LessonStates {
     ) -> Result<Vec<LearningPackEntry>> {
         export::lesson_states(connection, &scope.program.summary.id).await
     }
-    async fn insert(
-        &self,
-        connection: &mut SqliteConnection,
-        scope: &ImportScope<'_>,
-    ) -> Result<()> {
-        importers::insert_lesson_states(
-            connection,
-            &scope.program.summary.id,
-            scope.pack,
-            scope.ids,
-        )
-        .await
+    async fn insert(&self, tx: &mut WriteTx, scope: &ImportScope<'_>) -> Result<()> {
+        importers::insert_lesson_states(tx, &scope.program.summary.id, scope.pack, scope.ids).await
     }
 }
 
@@ -269,13 +256,8 @@ impl SectionRows for Outcomes {
     ) -> Result<()> {
         map_table_ids(pack, OUTCOMES_ENTRY, ids)
     }
-    async fn insert(
-        &self,
-        connection: &mut SqliteConnection,
-        scope: &ImportScope<'_>,
-    ) -> Result<()> {
-        importers::insert_outcomes(connection, &scope.program.summary.id, scope.pack, scope.ids)
-            .await
+    async fn insert(&self, tx: &mut WriteTx, scope: &ImportScope<'_>) -> Result<()> {
+        importers::insert_outcomes(tx, &scope.program.summary.id, scope.pack, scope.ids).await
     }
 }
 
@@ -310,15 +292,11 @@ impl SectionRows for Events {
     ) -> Result<()> {
         map_table_ids(pack, EVIDENCE_ENTRY, ids)
     }
-    async fn insert(
-        &self,
-        connection: &mut SqliteConnection,
-        scope: &ImportScope<'_>,
-    ) -> Result<()> {
+    async fn insert(&self, tx: &mut WriteTx, scope: &ImportScope<'_>) -> Result<()> {
         if !scope.pack.manifest.privacy.includes_learner_evidence {
             return Ok(());
         }
-        importers::insert_events(connection, &scope.program.summary.id, scope.pack, scope.ids).await
+        importers::insert_events(tx, &scope.program.summary.id, scope.pack, scope.ids).await
     }
 }
 
@@ -353,16 +331,11 @@ impl SectionRows for FollowUps {
     ) -> Result<()> {
         map_table_ids(pack, FOLLOW_UP_ENTRY, ids)
     }
-    async fn insert(
-        &self,
-        connection: &mut SqliteConnection,
-        scope: &ImportScope<'_>,
-    ) -> Result<()> {
+    async fn insert(&self, tx: &mut WriteTx, scope: &ImportScope<'_>) -> Result<()> {
         if !scope.pack.manifest.privacy.includes_learner_evidence {
             return Ok(());
         }
-        importers::insert_follow_ups(connection, &scope.program.summary.id, scope.pack, scope.ids)
-            .await
+        importers::insert_follow_ups(tx, &scope.program.summary.id, scope.pack, scope.ids).await
     }
 }
 
@@ -501,11 +474,7 @@ impl SectionRows for Practical {
         }
         Ok(())
     }
-    async fn insert(
-        &self,
-        connection: &mut SqliteConnection,
-        scope: &ImportScope<'_>,
-    ) -> Result<()> {
+    async fn insert(&self, tx: &mut WriteTx, scope: &ImportScope<'_>) -> Result<()> {
         let Some(mut snapshot) = decode::<PracticalPackSnapshot>(scope.pack, PRACTICAL_ENTRY)?
         else {
             return Ok(());
@@ -518,7 +487,7 @@ impl SectionRows for Practical {
             super::evidence_entries::carries_evidence_tables(scope.pack),
             scope.policy.remaps_ids(),
         )?;
-        importers::insert_practical_snapshot(connection, program_id, &snapshot).await
+        importers::insert_practical_snapshot(tx, program_id, &snapshot).await
     }
 }
 
@@ -548,14 +517,10 @@ impl SectionRows for Provenance {
         provenance::decode(pack, program)?;
         Ok(Vec::new())
     }
-    async fn insert(
-        &self,
-        connection: &mut SqliteConnection,
-        scope: &ImportScope<'_>,
-    ) -> Result<()> {
+    async fn insert(&self, tx: &mut WriteTx, scope: &ImportScope<'_>) -> Result<()> {
         // Validated against the identifiers the pack carries, then remapped.
         let snapshot = provenance::decode(scope.pack, scope.original)?;
-        provenance::restore(connection, &scope.program.summary.id, snapshot, scope.ids).await
+        provenance::restore(tx, &scope.program.summary.id, snapshot, scope.ids).await
     }
 }
 

@@ -59,9 +59,9 @@ impl Operation<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::persistence::db;
     use crate::tests::pool;
     use lattice_core::shared::error::Result;
+    use lattice_core::shared::persistence::Database;
 
     const CONFLICT: &str = "Operation ID was already used with different test data.";
 
@@ -105,47 +105,47 @@ mod tests {
 
     #[tokio::test]
     async fn the_ledger_returns_the_first_result_and_refuses_a_reused_id() -> Result<()> {
-        let pool = pool().await?;
+        let db = Database::new(pool().await?);
         let first = operation("save", "a");
-        let mut connection = pool.acquire().await.map_err(db)?;
-        assert_eq!(first.replay::<i64>(&mut connection).await?, None);
-        assert!(!first.seen(&mut connection).await?);
-        drop(connection);
-        let mut tx = pool.begin().await.map_err(db)?;
+        let mut read = db.begin_read().await?;
+        assert_eq!(first.replay::<i64>(&mut read).await?, None);
+        assert!(!first.seen(&mut read).await?);
+        drop(read);
+        let mut tx = db.begin_write().await?;
         first.record(&mut tx, &7_i64).await?;
-        tx.commit().await.map_err(db)?;
-        let mut connection = pool.acquire().await.map_err(db)?;
-        assert_eq!(first.replay::<i64>(&mut connection).await?, Some(7));
-        assert!(first.seen(&mut connection).await?);
-        let reused = operation("save", "b").replay::<i64>(&mut connection).await;
+        tx.commit().await?;
+        let mut read = db.begin_read().await?;
+        assert_eq!(first.replay::<i64>(&mut read).await?, Some(7));
+        assert!(first.seen(&mut read).await?);
+        let reused = operation("save", "b").replay::<i64>(&mut read).await;
         assert!(matches!(reused, Err(AppError::InvalidInput(message)) if message == CONFLICT));
         Ok(())
     }
 
     #[tokio::test]
     async fn forgetting_frees_the_id_for_the_same_request_only() -> Result<()> {
-        let pool = pool().await?;
+        let db = Database::new(pool().await?);
         let first = operation("save", "a");
-        let mut connection = pool.acquire().await.map_err(db)?;
-        first.record(&mut connection, &1_i64).await?;
-        operation("save", "b").forget(&mut connection).await?;
-        assert_eq!(first.replay::<i64>(&mut connection).await?, Some(1));
-        first.forget(&mut connection).await?;
-        assert!(!first.seen(&mut connection).await?);
-        first.record(&mut connection, &2_i64).await?;
-        assert_eq!(first.replay::<i64>(&mut connection).await?, Some(2));
+        let mut tx = db.begin_write().await?;
+        first.record(&mut tx, &1_i64).await?;
+        operation("save", "b").forget(&mut tx).await?;
+        assert_eq!(first.replay::<i64>(&mut tx).await?, Some(1));
+        first.forget(&mut tx).await?;
+        assert!(!first.seen(&mut tx).await?);
+        first.record(&mut tx, &2_i64).await?;
+        assert_eq!(first.replay::<i64>(&mut tx).await?, Some(2));
         Ok(())
     }
 
     #[tokio::test]
     async fn a_rolled_back_transaction_leaves_no_ledger_row() -> Result<()> {
-        let pool = pool().await?;
+        let db = Database::new(pool().await?);
         let op = operation("save", "a");
-        let mut tx = pool.begin().await.map_err(db)?;
+        let mut tx = db.begin_write().await?;
         op.record(&mut tx, &()).await?;
-        tx.rollback().await.map_err(db)?;
-        let mut connection = pool.acquire().await.map_err(db)?;
-        assert!(!op.seen(&mut connection).await?);
+        tx.rollback().await?;
+        let mut read = db.begin_read().await?;
+        assert!(!op.seen(&mut read).await?);
         Ok(())
     }
 }

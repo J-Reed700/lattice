@@ -381,8 +381,9 @@ async fn live_research_rejects_or_corrects_the_retained_rust_counterexample() ->
         .run(&pool)
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
+    let db = Database::new(pool.clone());
     let program_id = uuid::Uuid::new_v4().to_string();
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(db.clone())
         .create(&LearningProgramDto {
             outline_review: None,
             summary: LearningProgramSummaryDto {
@@ -404,14 +405,14 @@ async fn live_research_rejects_or_corrects_the_retained_rust_counterexample() ->
             sources: vec![],
         })
         .await?;
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(db.clone())
         .accept(&AcceptLearningProgramRequestDto {
             program_id: program_id.clone(),
             expected_revision: 0,
             title: "Rust reference control".into(),
         })
         .await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let library = LearningSourceLibraryRepository::new(db.clone());
     let versions = research_interview_answers(
         model.as_ref(),
         &web,

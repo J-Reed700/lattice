@@ -12,6 +12,7 @@ use crate::features::conversation::tangent_dto::CreateTangentRequestDto;
 use lattice_core::domain::conversation::ChatModelChoice;
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::persistence::Database;
 
 fn chosen() -> ChatModelChoice {
     ChatModelChoice::Explicit {
@@ -26,7 +27,8 @@ async fn thread() -> (SqlitePool, ConversationRepository, String) {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let id = seed_thread(&pool).await;
-    (pool.clone(), ConversationRepository::new(pool), id)
+    let db = Database::new(pool.clone());
+    (pool, ConversationRepository::new(db), id)
 }
 
 async fn stored(pool: &SqlitePool, id: &str) -> Option<String> {
@@ -204,7 +206,8 @@ async fn the_model_choice_migration_keeps_every_chat_and_drops_the_dead_model_co
     }
 
     // The chat and its message survive, and the chat follows the default.
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let migrated = repo.find_by_id("conv-old").await.unwrap().unwrap();
     assert_eq!(migrated.title, "Lithium recycling");
     assert_eq!(migrated.model_choice, ChatModelChoice::Default);
@@ -261,7 +264,7 @@ async fn the_model_choice_migration_keeps_every_chat_and_drops_the_dead_model_co
     assert_eq!(hits("recovery").await, 1);
 
     // Spaces and journals round-trip without the dropped tier.
-    let spaces = ConversationSpaceRepository::new(pool.clone());
+    let spaces = ConversationSpaceRepository::new(db.clone());
     let created = spaces
         .create(CreateConversationSpaceRequestDto {
             name: "Fresh".into(),

@@ -15,7 +15,7 @@ use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::domain::value_objects::model_status::FileStatus;
 use lattice_core::domain::value_objects::ArtifactIdentity;
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -4,8 +4,7 @@
 //! Migrations are automatically discovered from the migrations/ directory.
 
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::Database;
 use sha2::{Digest, Sha384};
 use sqlx::migrate::Migrator;
 use std::collections::HashMap;
@@ -16,13 +15,13 @@ use std::collections::HashMap;
 /// migration files from the migrations/ directory at compile time. Stored
 /// checksums that differ from the embedded ones only in line endings are
 /// reconciled first.
-pub async fn run_migrations(pool: &impl DriverPool) -> Result<()> {
-    let pool = pool.sqlx_pool();
+pub async fn run_migrations(db: &Database) -> Result<()> {
     tracing::info!("Starting database migrations...");
 
     let migrator = sqlx::migrate!("./migrations");
-    reconcile_line_endings(pool, &migrator).await?;
-    migrator.run(pool).await.map_err(|error| {
+    reconcile_line_endings(db, &migrator).await?;
+    let mut tx = db.begin_write().await?;
+    migrator.run_direct(&mut *tx).await.map_err(|error| {
         let error_text = error.to_string();
         tracing::error!("Migration failed: {}", error_text);
         AppError::Database(format!("Migration failed: {}", error_text))
@@ -30,7 +29,8 @@ pub async fn run_migrations(pool: &impl DriverPool) -> Result<()> {
 
     // Migrations may create or change indexes; let SQLite refresh only the
     // planner statistics that its bounded optimizer considers useful.
-    sqlx::query("PRAGMA optimize").execute(pool).await?;
+    sqlx::query("PRAGMA optimize").execute(&mut *tx).await?;
+    tx.commit().await?;
 
     tracing::info!("All migrations completed successfully");
     Ok(())
@@ -39,12 +39,8 @@ pub async fn run_migrations(pool: &impl DriverPool) -> Result<()> {
 /// Rewrites the stored checksum of an applied migration to the embedded one when it is the
 /// checksum of the same SQL with the other line endings. Any other difference is left for sqlx
 /// to refuse. Does nothing before `_sqlx_migrations` exists.
-pub(crate) async fn reconcile_line_endings(
-    pool: &impl DriverPool,
-    migrator: &Migrator,
-) -> Result<()> {
-    let pool = pool.sqlx_pool();
-    let mut tx = pool.begin_write().await?;
+pub(crate) async fn reconcile_line_endings(db: &Database, migrator: &Migrator) -> Result<()> {
+    let mut tx = db.begin_write().await?;
 
     let has_table: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",

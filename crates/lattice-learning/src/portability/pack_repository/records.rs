@@ -10,9 +10,7 @@ use crate::{
     source_library::LearningSourceLibraryRepository,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Database;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, WriteTx};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 use std::path::Path;
 
@@ -63,16 +61,17 @@ pub(super) fn pack_operation<'a>(
 /// What an earlier identical pack request produced: the export's file
 /// path, the preview ID, or the imported program ID.
 pub(super) async fn replay(
-    pool: &impl DriverPool,
+    database: &Database,
     id: &str,
     kind: &str,
     payload: &str,
 ) -> Result<Option<String>> {
-    let pool = pool.sqlx_pool();
-    let mut connection = pool.acquire().await.map_err(db)?;
-    pack_operation(id, kind, payload)
-        .replay::<String>(&mut connection)
-        .await
+    let mut read = database.begin_read().await?;
+    let replayed = pack_operation(id, kind, payload)
+        .replay::<String>(&mut read)
+        .await?;
+    read.commit().await?;
+    Ok(replayed)
 }
 
 /// The stored form of a policy is its wire form, so one codec serves both.
@@ -102,22 +101,23 @@ fn export_dto(r: &SqliteRow) -> Result<LearningPackExportDto> {
 /// What an identical earlier export request wrote, while that file is
 /// still there. A pack deleted since is written again under the same ID.
 pub(super) async fn replayed_export(
-    pool: &impl DriverPool,
+    database: &Database,
     req: &ExportLearningPackRequestDto,
     payload: &str,
 ) -> Result<Option<LearningPackExportDto>> {
-    let pool = pool.sqlx_pool();
-    let Some(path) = replay(pool, &req.operation_id, "export", payload).await? else {
+    let Some(path) = replay(database, &req.operation_id, "export", payload).await? else {
         return Ok(None);
     };
     if !Path::new(&path).exists() {
         return Ok(None);
     }
+    let mut read = database.begin_read().await?;
     let row = sqlx::query("SELECT manifest_json,destination_path,created_at,id,program_id FROM learning_pack_exports WHERE operation_id=?")
         .bind(&req.operation_id)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *read)
         .await
         .map_err(db)?;
+    read.commit().await?;
     row.as_ref().map(export_dto).transpose()
 }
 
@@ -125,16 +125,15 @@ pub(super) async fn replayed_export(
 /// recorded under the same operation ID points at a pack that is gone, since
 /// the replay found no file, and gives way to this one.
 pub(super) async fn record_export(
-    pool: &impl DriverPool,
+    database: &Database,
     req: &ExportLearningPackRequestDto,
     payload: &str,
     destination: String,
     manifest: LearningPackManifest,
 ) -> Result<LearningPackExportDto> {
-    let pool = pool.sqlx_pool();
     let id = uuid::Uuid::new_v4().to_string();
     let created = now();
-    let mut tx = pool.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     sqlx::query("DELETE FROM learning_pack_exports WHERE operation_id=?")
         .bind(&req.operation_id)
         .execute(&mut *tx)
@@ -148,7 +147,7 @@ pub(super) async fn record_export(
     pack_operation(&req.operation_id, "export", payload)
         .record(&mut tx, &destination)
         .await?;
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(LearningPackExportDto {
         id,
         program_id: req.program_id.clone(),
@@ -210,11 +209,10 @@ async fn export_notice(
 }
 
 pub(super) async fn workspace(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
 ) -> Result<LearningPortabilityWorkspaceDto> {
-    let pool = pool.sqlx_pool();
-    let source_workspace = match LearningSourceLibraryRepository::new(Database::from(pool.clone()))
+    let source_workspace = match LearningSourceLibraryRepository::new(database.clone())
         .workspace(program_id)
         .await
     {
@@ -228,7 +226,7 @@ pub(super) async fn workspace(
         },
         Err(error) => return Err(error),
     };
-    let mut read = pool.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let exports = sqlx::query("SELECT manifest_json,destination_path,created_at,id,program_id FROM learning_pack_exports WHERE program_id=? ORDER BY created_at DESC")
             .bind(program_id).fetch_all(&mut *read).await.map_err(db)?.iter().map(export_dto).collect::<Result<Vec<_>>>()?;
     let import_previews = sqlx::query(
@@ -292,7 +290,7 @@ pub(super) async fn workspace(
     })
     .collect::<Result<Vec<_>>>()?;
     let export_notice = export_notice(&mut read, program_id).await?;
-    read.commit().await.map_err(db)?;
+    read.commit().await?;
     Ok(LearningPortabilityWorkspaceDto {
         program_id: program_id.into(),
         exports,
@@ -304,25 +302,27 @@ pub(super) async fn workspace(
 }
 
 /// The program a stored preview would produce.
-pub(super) async fn preview_program(pool: &impl DriverPool, preview_id: &str) -> Result<String> {
-    let pool = pool.sqlx_pool();
-    sqlx::query_scalar("SELECT program_id FROM learning_pack_import_previews WHERE id=?")
-        .bind(preview_id)
-        .fetch_one(pool)
-        .await
-        .map_err(db)
+pub(super) async fn preview_program(database: &Database, preview_id: &str) -> Result<String> {
+    let mut read = database.begin_read().await?;
+    let program_id =
+        sqlx::query_scalar("SELECT program_id FROM learning_pack_import_previews WHERE id=?")
+            .bind(preview_id)
+            .fetch_one(&mut *read)
+            .await
+            .map_err(db)?;
+    read.commit().await?;
+    Ok(program_id)
 }
 
 /// Store a preview; it can be applied only while none of its conflicts
 /// stands under its policy. Answers with the program it would produce.
 pub(super) async fn record_preview(
-    pool: &impl DriverPool,
+    database: &Database,
     req: &PreviewLearningPackImportRequestDto,
     payload: &str,
     decoded: &DecodedLearningPack,
     preview: PreviewRecord,
 ) -> Result<String> {
-    let pool = pool.sqlx_pool();
     let result_program_id = if req.conflict_policy.remaps_ids() {
         uuid::Uuid::new_v4().to_string()
     } else {
@@ -331,13 +331,13 @@ pub(super) async fn record_preview(
     let id = req.preview_id.clone();
     let timestamp = now();
     let manifest_json = json_string(&decoded.manifest)?;
-    let mut tx = pool.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     sqlx::query("INSERT INTO learning_pack_import_previews(id,operation_id,payload_hash,source_path,root_sha256,program_id,program_title,conflict_policy,conflicts_json,changes_json,warnings_json,manifest_json,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)")
         .bind(&id).bind(&req.operation_id).bind(payload).bind(&req.source_path).bind(&decoded.manifest.root_sha256).bind(&result_program_id).bind(&preview.title).bind(policy_column(req.conflict_policy)?).bind(json_string(&preview.conflicts)?).bind(json_string(&preview.changes)?).bind(json_string(&preview.warnings)?).bind(&manifest_json).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
     pack_operation(&req.operation_id, "preview_import", payload)
         .record(&mut tx, &id)
         .await?;
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(result_program_id)
 }
 
@@ -352,16 +352,17 @@ pub(super) struct PendingPreview {
 
 /// The preview `preview_id`, while it is pending and nothing blocks it.
 pub(super) async fn pending_preview(
-    pool: &impl DriverPool,
+    database: &Database,
     preview_id: &str,
 ) -> Result<PendingPreview> {
-    let pool = pool.sqlx_pool();
+    let mut read = database.begin_read().await?;
     let row = sqlx::query("SELECT * FROM learning_pack_import_previews WHERE id=?")
         .bind(preview_id)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *read)
         .await
-        .map_err(db)?
-        .ok_or_else(|| AppError::NotFound("Pack preview not found".into()))?;
+        .map_err(db)?;
+    read.commit().await?;
+    let row = row.ok_or_else(|| AppError::NotFound("Pack preview not found".into()))?;
     if row.get::<String, _>("status") != "pending" {
         return Err(invalid("Only a pending pack preview can be applied."));
     }
@@ -385,7 +386,7 @@ pub(super) async fn pending_preview(
 /// Record an applied import in its own transaction: the replacement's
 /// backup, the import, the preview's decision, and the ledger entry.
 pub(super) async fn record_import(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     req: &ApplyLearningPackImportRequestDto,
     payload: &str,
     program_id: &str,
@@ -396,21 +397,21 @@ pub(super) async fn record_import(
         // If restoration fails, the old program rolls back and the durable
         // backup file remains as an additional recovery copy.
         sqlx::query("INSERT INTO learning_pack_exports(id,program_id,operation_id,payload_hash,format_version,root_sha256,destination_path,privacy_manifest_json,entry_manifest_json,manifest_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
-            .bind(&backup.id).bind(&backup.program_id).bind(&backup.operation_id).bind(&backup.payload_hash).bind(backup.format_version).bind(&backup.root_sha256).bind(&backup.destination_path).bind(&backup.privacy_manifest_json).bind(&backup.entry_manifest_json).bind(&backup.manifest_json).bind(backup.created_at).execute(&mut *connection).await.map_err(db)?;
+            .bind(&backup.id).bind(&backup.program_id).bind(&backup.operation_id).bind(&backup.payload_hash).bind(backup.format_version).bind(&backup.root_sha256).bind(&backup.destination_path).bind(&backup.privacy_manifest_json).bind(&backup.entry_manifest_json).bind(&backup.manifest_json).bind(backup.created_at).execute(&mut **tx).await.map_err(db)?;
     }
     let result_id = uuid::Uuid::new_v4().to_string();
     let timestamp = now();
     sqlx::query("INSERT INTO learning_pack_imports(id,preview_id,operation_id,payload_hash,imported_program_id,backup_id,applied_changes_json,imported_at) VALUES(?,?,?,?,?,?,?,?)")
-        .bind(&result_id).bind(&req.preview_id).bind(&req.operation_id).bind(payload).bind(program_id).bind(backup.map(|x|x.id.as_str())).bind(json_string(&changes)?).bind(timestamp).execute(&mut *connection).await.map_err(db)?;
+        .bind(&result_id).bind(&req.preview_id).bind(&req.operation_id).bind(payload).bind(program_id).bind(backup.map(|x|x.id.as_str())).bind(json_string(&changes)?).bind(timestamp).execute(&mut **tx).await.map_err(db)?;
     sqlx::query(
         "UPDATE learning_pack_import_previews SET status='applied',decided_at=? WHERE id=?",
     )
     .bind(timestamp)
     .bind(&req.preview_id)
-    .execute(&mut *connection)
+    .execute(&mut **tx)
     .await
     .map_err(db)?;
     pack_operation(&req.operation_id, "apply_import", payload)
-        .record(&mut *connection, &result_id)
+        .record(tx, &result_id)
         .await
 }

@@ -13,6 +13,7 @@ use lattice_core::domain::learning::drills::{
     Origin, Proof, Severity,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use serde_json::{json, Value};
 
 fn span(line: u32) -> LineSpan {
@@ -32,10 +33,10 @@ fn pop_finding() -> Value {
 
 #[tokio::test]
 async fn the_reviewer_reads_the_drills_code_and_is_told_nothing_of_the_key() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([blind_answer(), entry_answer()]);
     let grader = FakeGrader::new(blind_assessment());
-    build(&pool, &model, None, &grader)
+    build(&db, &model, None, &grader)
         .blind_review(
             &super::support::spec(),
             &baseline(),
@@ -66,7 +67,7 @@ async fn the_reviewer_reads_the_drills_code_and_is_told_nothing_of_the_key() -> 
 
 #[tokio::test]
 async fn the_key_the_grader_is_shown_carries_the_link_of_a_checked_lesson_issue() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([blind_answer(), entry_answer()]);
     let grader = FakeGrader::new(blind_assessment());
     let link = lesson_brief().link(&[1]);
@@ -75,7 +76,7 @@ async fn the_key_the_grader_is_shown_carries_the_link_of_a_checked_lesson_issue(
         links: vec![link.clone(), None],
         checks: Vec::new(),
     };
-    build(&pool, &model, None, &grader)
+    build(&db, &model, None, &grader)
         .blind_review(
             &super::support::spec(),
             &baseline_with_brief(),
@@ -98,10 +99,10 @@ async fn the_key_the_grader_is_shown_carries_the_link_of_a_checked_lesson_issue(
 #[tokio::test]
 async fn a_quote_gives_its_lines_unless_it_is_missing_or_ambiguous_and_the_grader_sees_them(
 ) -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([blind_answer(), entry_answer()]);
     let grader = FakeGrader::new(blind_assessment());
-    let blind = build(&pool, &model, None, &grader)
+    let blind = build(&db, &model, None, &grader)
         .blind_review(
             &super::support::spec(),
             &baseline(),
@@ -135,11 +136,11 @@ async fn a_quote_gives_its_lines_unless_it_is_missing_or_ambiguous_and_the_grade
 
 #[tokio::test]
 async fn a_valid_extra_becomes_a_found_in_review_issue_with_its_span_from_its_fix() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([blind_answer(), entry_answer()]);
     let grader = FakeGrader::new(blind_assessment());
     let proved = proved();
-    let blind = build(&pool, &model, None, &grader)
+    let blind = build(&db, &model, None, &grader)
         .blind_review(&super::support::spec(), &baseline(), &proved, &unchecked())
         .await?;
     assert_eq!(blind.extras.len(), 1);
@@ -205,10 +206,10 @@ async fn a_valid_extra_becomes_a_found_in_review_issue_with_its_span_from_its_fi
 
 #[tokio::test]
 async fn how_findable_each_planted_issue_was_is_kept() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([blind_answer(), entry_answer()]);
     let grader = FakeGrader::new(blind_assessment());
-    let blind = build(&pool, &model, None, &grader)
+    let blind = build(&db, &model, None, &grader)
         .blind_review(
             &super::support::spec(),
             &baseline(),
@@ -249,10 +250,10 @@ fn entry(pattern: &str, before: &str) -> String {
 
 #[tokio::test]
 async fn none_adds_nothing_to_the_key() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([blind_answer(), entry("none", "-")]);
     let grader = FakeGrader::new(blind_assessment());
-    let blind = build(&pool, &model, None, &grader)
+    let blind = build(&db, &model, None, &grader)
         .blind_review(
             &super::support::spec(),
             &baseline(),
@@ -291,10 +292,10 @@ async fn an_entry_that_does_not_fit_the_code_is_refused_with_what_to_change() ->
         ),
     ];
     for (bad, fragment) in cases {
-        let pool = pool().await?;
+        let db = Database::new(pool().await?);
         let model = ScriptedModel::new([blind_answer(), bad, entry_answer()]);
         let grader = FakeGrader::new(blind_assessment());
-        let blind = build(&pool, &model, None, &grader)
+        let blind = build(&db, &model, None, &grader)
             .blind_review(
                 &super::support::spec(),
                 &baseline(),
@@ -315,7 +316,7 @@ async fn an_entry_that_does_not_fit_the_code_is_refused_with_what_to_change() ->
 
 #[tokio::test]
 async fn an_entry_that_cannot_be_used_is_left_out_without_failing_the_build() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let bad = || {
         entry(
             "resources.unbounded_growth",
@@ -324,7 +325,7 @@ async fn an_entry_that_cannot_be_used_is_left_out_without_failing_the_build() ->
     };
     let model = ScriptedModel::new([blind_answer(), bad(), bad()]);
     let grader = FakeGrader::new(blind_assessment());
-    let blind = build(&pool, &model, None, &grader)
+    let blind = build(&db, &model, None, &grader)
         .blind_review(
             &super::support::spec(),
             &baseline(),
@@ -346,7 +347,7 @@ async fn an_entry_that_cannot_be_used_is_left_out_without_failing_the_build() ->
 
 #[tokio::test]
 async fn two_findings_that_describe_one_fix_add_one_issue() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let reviewer = json!({"findings": [pop_finding(), pop_finding()]}).to_string();
     let assessment = Assessment {
         issues: vec![
@@ -360,7 +361,7 @@ async fn two_findings_that_describe_one_fix_add_one_issue() -> Result<()> {
     };
     let model = ScriptedModel::new([reviewer, entry_answer(), entry_answer()]);
     let grader = FakeGrader::new(assessment);
-    let blind = build(&pool, &model, None, &grader)
+    let blind = build(&db, &model, None, &grader)
         .blind_review(
             &super::support::spec(),
             &baseline(),
@@ -377,7 +378,7 @@ async fn two_findings_that_describe_one_fix_add_one_issue() -> Result<()> {
 #[tokio::test]
 async fn a_review_that_found_nothing_is_still_judged_and_every_planted_issue_is_missed(
 ) -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let assessment = Assessment {
         issues: vec![
             (IssueOutcome::Missed, "No finding.".into()),
@@ -387,7 +388,7 @@ async fn a_review_that_found_nothing_is_still_judged_and_every_planted_issue_is_
     };
     let model = ScriptedModel::new([json!({"findings": []}).to_string()]);
     let grader = FakeGrader::new(assessment);
-    let blind = build(&pool, &model, None, &grader)
+    let blind = build(&db, &model, None, &grader)
         .blind_review(
             &super::support::spec(),
             &baseline(),
@@ -407,13 +408,13 @@ async fn a_review_that_found_nothing_is_still_judged_and_every_planted_issue_is_
 
 #[tokio::test]
 async fn an_assessment_that_is_not_consistent_with_the_review_fails_the_stage() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([blind_answer()]);
     let grader = FakeGrader::new(Assessment {
         issues: Vec::new(),
         findings: Vec::new(),
     });
-    let error = build(&pool, &model, None, &grader)
+    let error = build(&db, &model, None, &grader)
         .blind_review(
             &super::support::spec(),
             &baseline(),
@@ -431,10 +432,10 @@ async fn an_assessment_that_is_not_consistent_with_the_review_fails_the_stage() 
 
 #[tokio::test]
 async fn a_grader_that_cannot_grade_fails_the_stage_with_its_error() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([blind_answer()]);
     let grader = FakeGrader::failing("the judge is down");
-    let error = build(&pool, &model, None, &grader)
+    let error = build(&db, &model, None, &grader)
         .blind_review(
             &super::support::spec(),
             &baseline(),
@@ -452,10 +453,10 @@ async fn a_grader_that_cannot_grade_fails_the_stage_with_its_error() -> Result<(
 
 #[tokio::test]
 async fn a_review_refused_twice_fails_the_stage() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new(["not json".to_owned(), "still not json".to_owned()]);
     let grader = idle_grader();
-    let error = build(&pool, &model, None, &grader)
+    let error = build(&db, &model, None, &grader)
         .blind_review(
             &super::support::spec(),
             &baseline(),
@@ -476,7 +477,7 @@ async fn a_review_refused_twice_fails_the_stage() -> Result<()> {
 #[tokio::test]
 async fn with_no_planted_issue_there_is_no_key_to_judge_against_and_nothing_is_asked() -> Result<()>
 {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([]);
     let grader = idle_grader();
     let nothing = Proved {
@@ -485,7 +486,7 @@ async fn with_no_planted_issue_there_is_no_key_to_judge_against_and_nothing_is_a
         files: files(),
         spans: Vec::new(),
     };
-    let blind = build(&pool, &model, None, &grader)
+    let blind = build(&db, &model, None, &grader)
         .blind_review(&super::support::spec(), &baseline(), &nothing, &unchecked())
         .await?;
     assert_eq!(blind, super::support::quiet());
@@ -496,7 +497,7 @@ async fn with_no_planted_issue_there_is_no_key_to_judge_against_and_nothing_is_a
 
 /// The extras the key gains when the reviewer's one finding is a valid extra that the model describes as `entry`.
 async fn extras_for(entry: String) -> Result<Vec<KeyIssue>> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let reviewer = json!({"findings": [pop_finding()]}).to_string();
     let assessment = Assessment {
         issues: vec![
@@ -507,7 +508,7 @@ async fn extras_for(entry: String) -> Result<Vec<KeyIssue>> {
     };
     let model = ScriptedModel::new([reviewer, entry]);
     let grader = FakeGrader::new(assessment);
-    let blind = build(&pool, &model, None, &grader)
+    let blind = build(&db, &model, None, &grader)
         .blind_review(
             &super::support::spec(),
             &baseline(),

@@ -190,6 +190,7 @@ async fn problem_with(
     row: &Row,
     has_files: bool,
     has_documents: bool,
+    db: &Database,
     pool: &SqlitePool,
 ) -> Option<String> {
     sqlx::query("DELETE FROM library_owner")
@@ -214,7 +215,7 @@ async fn problem_with(
         add_document(pool).await;
     }
 
-    let swept = may_sweep(&Database::from(pool.clone()), &files_in(home.path())).await;
+    let swept = may_sweep(db, &files_in(home.path())).await;
     let (database, file) = (recorded(pool).await, filed(home.path()));
 
     let mut problems = Vec::new();
@@ -245,13 +246,15 @@ async fn problem_with(
 #[tokio::test]
 async fn every_row_of_the_decision_table_holds() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     let mut failures = Vec::new();
     let mut cases = 0;
     for row in TABLE {
         for &has_files in row.files.values() {
             for &has_documents in row.documents.values() {
                 cases += 1;
-                if let Some(problem) = problem_with(row, has_files, has_documents, &pool).await {
+                if let Some(problem) = problem_with(row, has_files, has_documents, &db, &pool).await
+                {
                     failures.push(format!(
                         "{} (files: {has_files}, documents: {has_documents}): {problem}",
                         row.name
@@ -271,12 +274,13 @@ async fn every_row_of_the_decision_table_holds() {
 #[tokio::test]
 async fn a_file_in_any_one_root_counts_as_files() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     for root in ["files", "web-snapshots", "chat-images"] {
         let home = TempDir::new().unwrap();
         put_file(&home.path().join(root));
 
         assert!(
-            !may_sweep(&Database::from(pool.clone()), &files_in(home.path())).await,
+            !may_sweep(&db, &files_in(home.path())).await,
             "a new database beside a file in {root}"
         );
         assert_eq!(recorded(&pool).await, None);
@@ -287,29 +291,28 @@ async fn a_file_in_any_one_root_counts_as_files() {
 #[tokio::test]
 async fn folders_without_files_do_not_count_as_files() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     let home = TempDir::new().unwrap();
     std::fs::create_dir_all(home.path().join("files").join("0123")).unwrap();
     std::fs::create_dir_all(home.path().join("chat-images").join("prepared")).unwrap();
 
-    assert!(may_sweep(&Database::from(pool.clone()), &files_in(home.path())).await);
+    assert!(may_sweep(&db, &files_in(home.path())).await);
     assert!(recorded(&pool).await.is_some());
 }
 
 #[tokio::test]
 async fn the_database_that_took_the_files_keeps_them_on_every_later_start() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     let home = TempDir::new().unwrap();
     let files = files_in(home.path());
 
-    assert!(may_sweep(&Database::from(pool.clone()), &files).await);
+    assert!(may_sweep(&db, &files).await);
     let id = recorded(&pool).await.expect("a new install records its id");
     put_file(&home.path().join("files"));
 
     for start in 2..=3 {
-        assert!(
-            may_sweep(&Database::from(pool.clone()), &files).await,
-            "start {start}"
-        );
+        assert!(may_sweep(&db, &files).await, "start {start}");
         assert_eq!(recorded(&pool).await.as_deref(), Some(id.as_str()));
         assert_eq!(filed(home.path()).as_deref(), Some(id.as_str()));
     }
@@ -318,12 +321,13 @@ async fn the_database_that_took_the_files_keeps_them_on_every_later_start() {
 #[tokio::test]
 async fn any_error_means_no_and_leaves_both_sides_as_they_were() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
 
     // The owner file cannot be read: it is a folder.
     let home = TempDir::new().unwrap();
     std::fs::create_dir(home.path().join("owner")).unwrap();
     assert!(
-        !may_sweep(&Database::from(pool.clone()), &files_in(home.path())).await,
+        !may_sweep(&db, &files_in(home.path())).await,
         "an unreadable owner file"
     );
     assert_eq!(recorded(&pool).await, None);
@@ -334,10 +338,7 @@ async fn any_error_means_no_and_leaves_both_sides_as_they_were() {
     std::fs::write(home.path().join("blocked"), "").unwrap();
     let mut files = files_in(home.path());
     files.owner_file = home.path().join("blocked").join("owner");
-    assert!(
-        !may_sweep(&Database::from(pool.clone()), &files).await,
-        "an unwritable owner file"
-    );
+    assert!(!may_sweep(&db, &files).await, "an unwritable owner file");
     assert_eq!(recorded(&pool).await, None);
 
     // The database cannot be read: it was never migrated.
@@ -348,7 +349,7 @@ async fn any_error_means_no_and_leaves_both_sides_as_they_were() {
         .unwrap();
     let home = TempDir::new().unwrap();
     assert!(
-        !may_sweep(&Database::from(bare.clone()), &files_in(home.path())).await,
+        !may_sweep(&Database::new(bare), &files_in(home.path())).await,
         "a database without the table"
     );
     assert_eq!(filed(home.path()), None);

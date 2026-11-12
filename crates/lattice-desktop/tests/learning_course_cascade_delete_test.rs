@@ -7,6 +7,7 @@
 )]
 
 use lattice::features::learning::repository::LearningRepository;
+use lattice_core::shared::persistence::Database;
 use sqlx::migrate::Migrate;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use sqlx::Row;
@@ -67,7 +68,8 @@ async fn test_course_cascade_deletion_with_all_assessment_and_revisions_data(
     assert_eq!(course_count, 2);
 
     // Delete Course A via production LearningRepository
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db);
     repo.delete("course_a").await?;
 
     // 1. Verify Course A is gone and Course B remains
@@ -256,7 +258,7 @@ async fn test_delete_cascades_migration_preserves_existing_rows(
     .fetch_one(&pool)
     .await?;
     assert_eq!(predecessor_action, "SET NULL");
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(Database::new(pool.clone()))
         .delete("course_a")
         .await?;
     let after_delete = learning_row_counts(&pool).await?;

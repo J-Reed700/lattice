@@ -10,6 +10,7 @@ use crate::assessment_engine::{LearningBlueprintRequirement, LearningItemFormat}
 use crate::dto::{LearningQuizScopeDto, LearningQuizScopeKind, LearningQuizSettingsDto};
 use crate::persistence::{decode, encode, now};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::SqliteConnection;
 use std::collections::{BTreeSet, HashSet};
 
@@ -26,24 +27,22 @@ pub async fn settings_in(
 /// The lesson's outcome: the existing one, or a new one with `preferred_id`
 /// (or a fresh ID) named after the lesson.
 pub async fn ensure_lesson_outcome_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     lesson_id: &str,
     preferred_id: Option<&str>,
 ) -> Result<String> {
-    if let Some(existing) = repository::lesson_outcome_in(connection, program_id, lesson_id).await?
-    {
+    if let Some(existing) = repository::lesson_outcome_in(tx, program_id, lesson_id).await? {
         return Ok(existing);
     }
-    let (title, objective, ordinal) =
-        repository::lesson_heading_in(connection, program_id, lesson_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("Lesson not found in this course".into()))?;
+    let (title, objective, ordinal) = repository::lesson_heading_in(tx, program_id, lesson_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Lesson not found in this course".into()))?;
     let id = preferred_id
         .map(str::to_owned)
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     repository::insert_lesson_outcome_in(
-        connection,
+        tx,
         &repository::NewLessonOutcome {
             id: &id,
             program_id,
@@ -162,20 +161,20 @@ pub async fn latest_blueprint_in(
 /// course or its settings changed what it should ask. None when the scope has
 /// nothing to ask yet.
 pub async fn ensure_blueprint_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     scope: &LearningQuizScopeDto,
 ) -> Result<Option<(BlueprintRef, DesiredBlueprint)>> {
     validate_scope(scope)?;
-    let settings = settings_in(connection, program_id).await?;
-    let facts = course_facts_in(connection, program_id).await?;
-    ensure_blueprint_with(connection, program_id, scope, &facts, &settings).await
+    let settings = settings_in(tx, program_id).await?;
+    let facts = course_facts_in(tx, program_id).await?;
+    ensure_blueprint_with(tx, program_id, scope, &facts, &settings).await
 }
 
 /// [`ensure_blueprint_in`] with the course already read, for callers that
 /// derive many scopes at once.
 pub async fn ensure_blueprint_with(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     scope: &LearningQuizScopeDto,
     facts: &CourseFacts,
@@ -184,10 +183,10 @@ pub async fn ensure_blueprint_with(
     let Some(desired) = blueprint_for(scope, facts, settings) else {
         return Ok(None);
     };
-    let latest = latest_blueprint_in(connection, program_id, scope).await?;
+    let latest = latest_blueprint_in(tx, program_id, scope).await?;
     if let Some(latest) = &latest {
-        let row = repository::stored_blueprint_in(connection, &latest.id, latest.revision).await?;
-        let slots = repository::stored_slots_in(connection, &latest.id, latest.revision).await?;
+        let row = repository::stored_blueprint_in(tx, &latest.id, latest.revision).await?;
+        let slots = repository::stored_slots_in(tx, &latest.id, latest.revision).await?;
         let wanted = slot_rows(&desired);
         if row.title == desired.title
             && (row.passing_score - desired.passing_score).abs() < 1e-9
@@ -206,7 +205,7 @@ pub async fn ensure_blueprint_with(
         None => (uuid::Uuid::new_v4().to_string(), 1, None),
     };
     repository::insert_blueprint_in(
-        connection,
+        tx,
         &repository::NewBlueprint {
             id: &id,
             program_id,
@@ -233,7 +232,7 @@ pub async fn ensure_blueprint_with(
         slot_rows(&desired).into_iter().enumerate()
     {
         repository::insert_slot_in(
-            connection,
+            tx,
             &repository::NewSlot {
                 blueprint_id: &id,
                 revision,

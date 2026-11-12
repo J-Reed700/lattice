@@ -3,7 +3,6 @@ use super::repository::{self, lifecycle as stored, SourceVersionInsert};
 use super::*;
 use crate::references::trust;
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::shared::persistence::Transactions;
 
 impl LearningSourceLibraryRepository {
     pub async fn adopt(&self, req: &AdoptLearningSourceVersionRequestDto) -> Result<()> {

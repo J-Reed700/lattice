@@ -8,6 +8,7 @@ use super::*;
 use crate::features::learning::tests;
 use crate::infrastructure::passage_index::build::BATCH_SIZE;
 use crate::infrastructure::passage_index::testing::{BatchGate, FakeEmbedder, FixedEmbedders};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::{AppError, Result};
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
@@ -26,7 +27,7 @@ pub(super) async fn pool(dir: &Path) -> Result<SqlitePool> {
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
     sqlx::migrate!("./migrations")
-        .run(&pool)
+        .run(&db)
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
     Ok(pool)
@@ -39,9 +40,9 @@ fn texts(word: &str, count: usize) -> Vec<String> {
 }
 
 /// Waits until every build of `program` has finished.
-async fn finished(pool: &SqlitePool, program: &str) {
+async fn finished(db: &Database, program: &str) {
     for _ in 0..2_000 {
-        let jobs = builds(pool, program).await;
+        let jobs = builds(db, program).await;
         if !jobs.is_empty() && jobs.iter().all(|job| job.status.is_finished()) {
             return;
         }
@@ -54,24 +55,24 @@ async fn finished(pool: &SqlitePool, program: &str) {
 /// course B is opened and queued (in `order`), then the model is let go.
 async fn opened_course_goes_first(open_before_queueing: bool) -> Result<()> {
     let temp = tempfile::tempdir().unwrap();
-    let pool = pool(temp.path()).await?;
+    let db = Database::new(pool(temp.path()).await?);
     let model = FakeEmbedder::new("model-a");
     let gate = BatchGate::new(1);
     *model.batch_gate.lock() = Some(Arc::clone(&gate));
     let courses = indexes(
-        &pool,
+        &db,
         &temp.path().join("course-index"),
         FixedEmbedders::new(Some(Arc::clone(&model))),
     );
     let failures = courses.jobs.register_all(vec![courses.job_kind()]).await;
     assert!(failures.is_empty(), "{failures:?}");
-    let (a, _) = course(&pool, &texts("alpha", BATCH_SIZE * 3)).await?;
-    let (b, _) = course(&pool, &texts("beta", BATCH_SIZE)).await?;
+    let (a, _) = course(&db, &texts("alpha", BATCH_SIZE * 3)).await?;
+    let (b, _) = course(&db, &texts("beta", BATCH_SIZE)).await?;
 
     courses.refresh(&a).await;
     tokio::select! {
         () = gate.blocked.notified() => {}
-        () = finished(&pool, &a) => panic!("{:?}", builds(&pool, &a).await),
+        () = finished(&db, &a) => panic!("{:?}", builds(&db, &a).await),
     }
     if open_before_queueing {
         courses.open(&b).await?;
@@ -81,8 +82,8 @@ async fn opened_course_goes_first(open_before_queueing: bool) -> Result<()> {
         courses.open(&b).await?;
     }
     gate.permits.add_permits(BATCH_SIZE * 10);
-    finished(&pool, &b).await;
-    finished(&pool, &a).await;
+    finished(&db, &b).await;
+    finished(&db, &a).await;
 
     // A's two batches, all of B, then the rest of A.
     let order: Vec<char> = model
@@ -110,11 +111,11 @@ async fn a_build_queued_for_an_open_course_goes_first() -> Result<()> {
 
 #[tokio::test]
 async fn closing_the_workspace_gives_the_turn_back_and_a_later_course_keeps_it() -> Result<()> {
-    let pool = tests::pool().await?;
+    let db = Database::new(tests::pool().await?);
     let temp = tempfile::tempdir().unwrap();
-    let courses = indexes(&pool, temp.path(), FixedEmbedders::new(None));
-    let (a, _) = course(&pool, &texts("alpha", 1)).await?;
-    let (b, _) = course(&pool, &texts("beta", 1)).await?;
+    let courses = indexes(&db, temp.path(), FixedEmbedders::new(None));
+    let (a, _) = course(&db, &texts("alpha", 1)).await?;
+    let (b, _) = course(&db, &texts("beta", 1)).await?;
 
     courses.open(&a).await?;
     assert!(courses.is_awaited(&a));

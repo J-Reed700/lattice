@@ -85,7 +85,7 @@ impl Course {
 
     async fn save_card(&self, front: &str) -> String {
         let card_id = id();
-        LearningRecallRepository::new(self.pool.clone())
+        LearningRecallRepository::new(self.database.clone())
             .save_card(&SaveLearningRecallCardRequestDto {
                 operation_id: id(),
                 program_id: self.program.summary.id.clone(),
@@ -119,9 +119,9 @@ impl Course {
     }
 }
 
-async fn add_source(pool: &SqlitePool, program_id: &str, title: &str, text: &str) -> String {
+async fn add_source(db: &Database, program_id: &str, title: &str, text: &str) -> String {
     let version = id();
-    LearningSourceLibraryRepository::new(Database::from(pool.clone()))
+    LearningSourceLibraryRepository::new(db.clone())
         .add(
             NewLearningSource {
                 operation_id: &id(),
@@ -155,7 +155,8 @@ async fn add_source(pool: &SqlitePool, program_id: &str, title: &str, text: &str
 /// bound to it.
 async fn course() -> Course {
     let pool = tests::pool().await.expect("a database");
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let program = tests::fixture();
     repo.create(&program).await.expect("the course saves");
     repo.accept(&AcceptLearningProgramRequestDto {
@@ -165,7 +166,7 @@ async fn course() -> Course {
     })
     .await
     .expect("the course is accepted");
-    let version = add_source(&pool, &program.summary.id, "Search notes", SOURCE_TEXT).await;
+    let version = add_source(&db, &program.summary.id, "Search notes", SOURCE_TEXT).await;
     let lesson = program.modules[0].lessons[0].id.clone();
     sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json) VALUES(?,0,'explanation','Fusion','Body',?)")
         .bind(&lesson)
@@ -180,7 +181,7 @@ async fn course() -> Course {
         .await
         .expect("the chat saves");
     bind_conversation(
-        &Database::from(pool.clone()),
+        &db,
         &SetConversationCourseRequestDto {
             conversation_id: conversation.clone(),
             program_id: program.summary.id.clone(),
@@ -191,7 +192,7 @@ async fn course() -> Course {
     .expect("the chat binds");
     let program = repo.get(&program.summary.id).await.expect("the course");
     Course {
-        database: Database::from(pool.clone()),
+        database: db,
         pool,
         program,
         conversation,
@@ -228,7 +229,7 @@ async fn deleting_a_course_leaves_its_tutor_chats_as_ordinary_chats() {
         (Some(course.program.summary.id.clone()), Some(lesson))
     );
 
-    LearningRepository::new(course.pool.clone())
+    LearningRepository::new(course.database.clone())
         .delete(&course.program.summary.id)
         .await
         .expect("the course is deleted");
@@ -267,7 +268,7 @@ async fn a_chat_binds_only_to_an_accepted_course_a_lesson_of_it_and_no_folder() 
     assert!(bind_conversation(&course.database, &gone).await.is_err());
 
     let draft = tests::fixture();
-    let repo = LearningRepository::new(course.pool.clone());
+    let repo = LearningRepository::new(course.database.clone());
     repo.create(&draft).await.expect("the draft saves");
     let unaccepted = request(&course.conversation, &draft.summary.id, None);
     assert!(bind_conversation(&course.database, &unaccepted)
@@ -470,7 +471,7 @@ fn due_reviews_come_from_across_modules() {
 async fn a_card_answered_in_the_tutor_is_a_review_in_recall() {
     let course = course().await;
     let card = course.save_card("What does k flatten?").await;
-    let recall = LearningRecallRepository::new(course.pool.clone());
+    let recall = LearningRecallRepository::new(course.database.clone());
     let program = course.program.summary.id.clone();
     assert_eq!(
         recall.workspace(&program).await.expect("cards").due_count,
@@ -626,7 +627,7 @@ async fn record_recall_refuses_a_rating_it_cannot_read() {
 async fn a_multiple_choice_card_is_rated_by_the_option_the_learner_chose() {
     let course = course().await;
     let card = id();
-    LearningRecallRepository::new(course.pool.clone())
+    LearningRecallRepository::new(course.database.clone())
         .save_card(&SaveLearningRecallCardRequestDto {
             operation_id: id(),
             program_id: course.program.summary.id.clone(),
@@ -699,7 +700,7 @@ async fn save_card_cites_its_source_and_joins_the_recall_deck() {
         .expect("the card's id")
         .trim_end_matches('.');
 
-    let workspace = LearningRecallRepository::new(course.pool.clone())
+    let workspace = LearningRecallRepository::new(course.database.clone())
         .workspace(&course.program.summary.id)
         .await
         .expect("cards");
@@ -759,13 +760,13 @@ async fn save_note_adds_the_summary_to_the_lesson_s_note() {
     assert!(saved.contains("Lesson 0-1"), "{saved}");
     assert_eq!(course.notes_written.load(Ordering::SeqCst), 1);
 
-    let memory = LearningRepository::new(course.pool.clone())
+    let memory = LearningRepository::new(course.database.clone())
         .memory_state(&course.program.summary.id)
         .await
         .expect("the notebook");
     let (noted, note_id) = memory.lesson_notes.first().expect("the note");
     assert_eq!(noted, &lesson);
-    let notes = DailyNotesRepository::new(course.pool.clone());
+    let notes = DailyNotesRepository::new(course.database.clone());
     let note = notes.get(note_id).await.expect("the note");
     assert!(note.content.contains("Fusion adds up reciprocal ranks."));
 
@@ -790,7 +791,7 @@ async fn save_note_without_a_lesson_uses_the_lesson_the_learner_is_on() {
     course
         .text("save_note", json!({ "summary": "In my own words." }))
         .await;
-    let memory = LearningRepository::new(course.pool.clone())
+    let memory = LearningRepository::new(course.database.clone())
         .memory_state(&course.program.summary.id)
         .await
         .expect("the notebook");
@@ -822,7 +823,7 @@ async fn a_turn_s_first_passages_carry_the_course_label_and_fit_their_room() {
 async fn a_chat_on_a_lesson_reads_the_sources_it_cites_first() {
     let course = course().await;
     let other = add_source(
-        &course.pool,
+        &course.database,
         &course.program.summary.id,
         "Other notes",
         "Rank fusion also appears in this other source.",

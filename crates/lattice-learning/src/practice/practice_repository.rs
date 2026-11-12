@@ -6,9 +6,9 @@ use crate::{
 };
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::{Database, WriteTx};
 use serde::{de::DeserializeOwned, Serialize};
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use sqlx::{Row, SqliteConnection};
 
 mod assistance;
 mod fits;
@@ -134,7 +134,7 @@ fn proposal_status(value: &str) -> Result<LearningPracticeProposalStatus> {
 
 #[derive(Clone)]
 pub struct LearningPracticeRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 #[derive(Debug, Clone)]
@@ -162,9 +162,8 @@ pub struct SubmissionWrite {
 }
 
 impl LearningPracticeRepository {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     fn validate_ids(program_id: &str, session_id: &str, operation_id: Option<&str>) -> Result<()> {
@@ -176,14 +175,6 @@ impl LearningPracticeRepository {
         Ok(())
     }
 
-    async fn writer_lock(tx: &mut SqliteConnection, program_id: &str) -> Result<()> {
-        sqlx::query("UPDATE learning_programs SET revision=revision WHERE id=?")
-            .bind(program_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        Ok(())
-    }
     async fn verify_active(tx: &mut SqliteConnection, program_id: &str) -> Result<()> {
         let status: Option<String> =
             sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
@@ -244,7 +235,7 @@ impl LearningPracticeRepository {
     }
 
     async fn insert_assistance(
-        tx: &mut SqliteConnection,
+        tx: &mut WriteTx,
         id: &str,
         program_id: &str,
         session_id: &str,
@@ -254,7 +245,7 @@ impl LearningPracticeRepository {
         details: &serde_json::Value,
         timestamp: i64,
     ) -> Result<()> {
-        sqlx::query("INSERT INTO learning_practice_assistance(id,program_id,session_id,operation_id,kind,mode,artifact_revision,details_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(uuid::Uuid::new_v4().to_string()).bind(program_id).bind(session_id).bind(id).bind(kind).bind(mode).bind(artifact_revision).bind(json(details)?).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_practice_assistance(id,program_id,session_id,operation_id,kind,mode,artifact_revision,details_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(uuid::Uuid::new_v4().to_string()).bind(program_id).bind(session_id).bind(id).bind(kind).bind(mode).bind(artifact_revision).bind(json(details)?).bind(timestamp).execute(&mut **tx).await.map_err(db)?;
         Ok(())
     }
 }

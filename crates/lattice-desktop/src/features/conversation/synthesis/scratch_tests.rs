@@ -47,6 +47,7 @@ impl SynthesisWork for Scratchpad {
 #[tokio::test]
 async fn a_part_whose_scratch_cannot_be_recorded_leaves_no_scratch_conversation() {
     let pool = pool().await;
+    let db = Database::new(pool.clone());
     sqlx::query(
         "CREATE TRIGGER refuse_scratch BEFORE INSERT ON job_checkpoints \
          WHEN NEW.key = 'scratch' BEGIN SELECT RAISE(ABORT, 'injected'); END",
@@ -55,8 +56,7 @@ async fn a_part_whose_scratch_cannot_be_recorded_leaves_no_scratch_conversation(
     .await
     .unwrap();
     let work = Arc::new(Scratchpad::default());
-    let jobs =
-        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
+    let jobs = JobRuntime::with_poll_interval(db.clone(), Duration::from_millis(50));
     jobs.register(
         JOURNAL_SYNTHESIS,
         Arc::new(JournalSynthesisJob::with(work.clone())),

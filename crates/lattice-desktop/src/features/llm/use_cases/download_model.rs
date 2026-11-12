@@ -18,7 +18,7 @@ use lattice_core::domain::models::validation::ModelFileValidator;
 use lattice_core::domain::ports::file_access::{ChecksumService, FileSystemAccess};
 use lattice_core::domain::value_objects::model_status::FileStatus;
 use lattice_core::shared::error::AppError;
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use plan::{planned_files, PlannedFile};
 use std::path::Path;
 use std::sync::Arc;

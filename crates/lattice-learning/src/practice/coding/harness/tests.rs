@@ -12,6 +12,7 @@ use crate::practice::practical_repository::{
 use crate::practice::practical_runs::CodingRunStart;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::shared::persistence::Database;
 use serde_json::json;
 use sqlx::SqlitePool;
 
@@ -191,12 +192,12 @@ struct Setup {
     session_id: String,
 }
 
-async fn setup(pool: &SqlitePool) -> Result<Setup> {
-    let repo = LearningPracticalRepository::new(pool.clone());
+async fn setup(pool: &SqlitePool, database: &Database) -> Result<Setup> {
+    let repo = LearningPracticalRepository::new(database.clone());
     let program = crate::tests::fixture();
     let program_id = program.summary.id.clone();
     let lesson_id = program.modules[0].lessons[0].id.clone();
-    let programs = crate::repository::LearningRepository::new(pool.clone());
+    let programs = crate::repository::LearningRepository::new(database.clone());
     programs.create(&program).await?;
     programs
         .accept(&crate::dto::AcceptLearningProgramRequestDto {
@@ -363,7 +364,8 @@ fn execution(status: LearningLabRunStatus, stdout: String) -> LearningLabExecuti
 #[tokio::test]
 async fn a_coding_run_stores_a_row_per_case_with_the_definition_beside_the_result() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let setup = setup(&pool).await?;
+    let database = Database::new(pool.clone());
+    let setup = setup(&pool, &database).await?;
     let prepared = running(&pool, &setup, true, vec![]).await?;
     let claiming = format!(
         "{NONCE}{}\n",
@@ -417,7 +419,8 @@ async fn a_coding_run_stores_a_row_per_case_with_the_definition_beside_the_resul
 #[tokio::test]
 async fn a_timed_out_coding_run_keeps_finished_cases_and_marks_the_rest() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let setup = setup(&pool).await?;
+    let database = Database::new(pool.clone());
+    let setup = setup(&pool, &database).await?;
     let prepared = running(&pool, &setup, true, vec![]).await?;
     let stdout = line("exact", "passed", Some("[0, 1]"), "", None);
     setup
@@ -440,7 +443,8 @@ async fn a_timed_out_coding_run_keeps_finished_cases_and_marks_the_rest() -> Res
 #[tokio::test]
 async fn a_hidden_cases_content_never_reaches_a_generic_run_read() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let setup = setup(&pool).await?;
+    let database = Database::new(pool.clone());
+    let setup = setup(&pool, &database).await?;
     let prepared = running(&pool, &setup, true, vec![]).await?;
     let stdout = format!(
         "{}{}{}",
@@ -477,7 +481,8 @@ async fn a_hidden_cases_content_never_reaches_a_generic_run_read() -> Result<()>
 #[tokio::test]
 async fn a_coding_run_writes_no_evidence_events() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let setup = setup(&pool).await?;
+    let database = Database::new(pool.clone());
+    let setup = setup(&pool, &database).await?;
     let outcome_id = uuid::Uuid::new_v4().to_string();
     let prepared = running(&pool, &setup, true, vec![outcome_id]).await?;
     let stdout = line("exact", "passed", Some("[0, 1]"), "", None);
@@ -498,7 +503,8 @@ async fn a_coding_run_writes_no_evidence_events() -> Result<()> {
 #[tokio::test]
 async fn a_run_without_a_harness_keeps_the_single_contained_evaluator_row() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let setup = setup(&pool).await?;
+    let database = Database::new(pool.clone());
+    let setup = setup(&pool, &database).await?;
     let prepared = running(&pool, &setup, false, vec![]).await?;
     let stdout = format!(
         "Ran 5 tests in 0.02s\nOK\n{}",
@@ -523,7 +529,8 @@ async fn a_run_without_a_harness_keeps_the_single_contained_evaluator_row() -> R
 #[tokio::test]
 async fn a_coding_runs_files_are_the_learners_and_the_harness_evaluator_only() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let setup = setup(&pool).await?;
+    let database = Database::new(pool.clone());
+    let setup = setup(&pool, &database).await?;
     let request = run_request(
         &setup,
         vec![("solution.py", "def add(a, b):\n    return a + b\n")],
@@ -561,7 +568,8 @@ async fn a_coding_runs_files_are_the_learners_and_the_harness_evaluator_only() -
 #[tokio::test]
 async fn each_coding_run_gets_its_own_nonce_and_records_its_session_and_scope() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let setup = setup(&pool).await?;
+    let database = Database::new(pool.clone());
+    let setup = setup(&pool, &database).await?;
     let mut nonces = Vec::new();
     for scope in [CodingRunScope::Shown, CodingRunScope::Input] {
         let request = run_request(&setup, vec![("solution.py", "x = 1\n")]);

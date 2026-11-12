@@ -29,6 +29,7 @@ impl ConversationRepository {
         // One row more than asked for, so `has_more` is an observation rather
         // than a guess from a full page.
         let fetch = limits.max_messages.saturating_add(1).min(4096) as i64;
+        let mut read = self.db.begin_read().await?;
         let rows = sqlx::query_as::<_, SourceMessageRow>(&format!(
             "SELECT {SOURCE_COLUMNS} FROM conversation_messages \
              WHERE conversation_id = ? AND sequence > ? AND sequence <= ? \
@@ -38,9 +39,10 @@ impl ConversationRepository {
         .bind(after_sequence)
         .bind(through_sequence)
         .bind(fetch)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("Failed to page source messages: {}", e)))?;
+        read.commit().await?;
 
         Self::assemble_page(rows, after_sequence, through_sequence, limits)
     }
@@ -63,6 +65,7 @@ impl ConversationRepository {
             });
         }
         let fetch = limits.max_messages.saturating_add(1).min(4096) as i64;
+        let mut read = self.db.begin_read().await?;
         let rows = sqlx::query_as::<_, SourceMessageRow>(&format!(
             "SELECT {SOURCE_COLUMNS} FROM conversation_messages \
              WHERE conversation_id = ? AND sequence > ? AND sequence <= ? \
@@ -72,9 +75,10 @@ impl ConversationRepository {
         .bind(after_sequence)
         .bind(through_sequence)
         .bind(fetch)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("Failed to page recent source messages: {}", e)))?;
+        read.commit().await?;
 
         // The same limits as an ascending page, applied from the newest row.
         // Only an observed extra row sets `has_more`, so an exhausted range
@@ -216,6 +220,7 @@ impl ConversationRepository {
             end_byte: i64,
             content_digest: String,
         }
+        let mut read = self.db.begin_read().await?;
         let rows = sqlx::query_as::<_, Row>(
             "SELECT s.message_id, s.start_byte, s.end_byte, s.content_digest \
              FROM conversation_memory_suppressions s \
@@ -226,9 +231,10 @@ impl ConversationRepository {
         )
         .bind(conversation_id)
         .bind(serde_json::to_string(message_ids)?)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("Failed to read memory suppressions: {}", e)))?;
+        read.commit().await?;
         Ok(rows
             .into_iter()
             .map(|row| SuppressedSpan {
@@ -243,7 +249,8 @@ impl ConversationRepository {
     /// Labels of every forgotten item in the conversation, distinct, most
     /// recently changed first.
     pub async fn memory_forgotten_labels(&self, conversation_id: &str) -> Result<Vec<String>> {
-        sqlx::query_scalar(
+        let mut read = self.db.begin_read().await?;
+        let labels = sqlx::query_scalar(
             "SELECT i.label \
              FROM conversation_memory_items i \
              JOIN conversation_memory_attributes a ON a.item_id = i.id \
@@ -252,9 +259,11 @@ impl ConversationRepository {
              ORDER BY MAX(i.updated_at) DESC, i.label",
         )
         .bind(conversation_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
-        .map_err(|e| AppError::Database(format!("Failed to read forgotten memory: {}", e)))
+        .map_err(|e| AppError::Database(format!("Failed to read forgotten memory: {}", e)))?;
+        read.commit().await?;
+        Ok(labels)
     }
 
     /// Read specific messages, scoped to one conversation. Foreign ids are
@@ -274,14 +283,16 @@ impl ConversationRepository {
             "SELECT {SOURCE_COLUMNS} FROM conversation_messages \
              WHERE conversation_id = ? AND id IN ({placeholders}) ORDER BY sequence ASC"
         );
+        let mut read = self.db.begin_read().await?;
         let mut query = sqlx::query_as::<_, SourceMessageRow>(&sql).bind(conversation_id);
         for id in wanted {
             query = query.bind(id);
         }
         let rows = query
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *read)
             .await
             .map_err(|e| AppError::Database(format!("Failed to read source messages: {}", e)))?;
+        read.commit().await?;
 
         let mut messages = Vec::new();
         let mut bytes = 0usize;
@@ -329,6 +340,7 @@ impl ConversationRepository {
             });
         }
         let fetch = limits.max_messages.saturating_add(1).min(4096) as i64;
+        let mut read = self.db.begin_read().await?;
         let rows = sqlx::query_as::<_, SourceMessageRow>(&format!(
             "SELECT {SOURCE_COLUMNS} FROM conversation_messages \
              WHERE conversation_id = ? AND sequence >= ? AND sequence <= ? \
@@ -338,9 +350,10 @@ impl ConversationRepository {
         .bind(from_sequence)
         .bind(to_sequence)
         .bind(fetch)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("Failed to read sequence range: {}", e)))?;
+        read.commit().await?;
 
         Self::assemble_page(rows, from_sequence.saturating_sub(1), to_sequence, limits)
     }

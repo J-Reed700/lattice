@@ -264,7 +264,7 @@ mod tests {
             .expect("Failed to create in-memory database");
 
         let mock = Arc::new(MockModelCatalogPort::new());
-        ModelCacheAdapter::new(Database::from(pool), mock as Arc<dyn ModelCatalogPort>)
+        ModelCacheAdapter::new(Database::new(pool), mock as Arc<dyn ModelCatalogPort>)
             .await
             .expect("Failed to create cache adapter")
     }
@@ -380,7 +380,7 @@ mod tests {
             .expect("Failed to create in-memory database");
         let mock = Arc::new(MockModelCatalogPort::new());
         ModelCacheAdapter::with_ttl(
-            Database::from(pool),
+            Database::new(pool),
             mock as Arc<dyn ModelCatalogPort>,
             ttl_seconds,
         )

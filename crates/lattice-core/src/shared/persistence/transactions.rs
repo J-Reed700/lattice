@@ -20,7 +20,10 @@ pub struct WriteTx {
 }
 
 /// A unit of work that never writes; dropping it without `commit` rolls back.
-pub struct ReadTx(Transaction<'static, Sqlite>);
+pub struct ReadTx {
+    tx: Transaction<'static, Sqlite>,
+    changed_before: i64,
+}
 
 impl WriteTx {
     pub(super) async fn start(
@@ -48,16 +51,31 @@ impl WriteTx {
 
 impl ReadTx {
     pub(super) async fn start(pool: &SqlitePool) -> Result<Self, PersistenceError> {
-        Ok(Self(pool.begin().await?))
+        let mut tx = pool.begin().await?;
+        let changed_before = changed_rows(&mut tx).await?;
+        Ok(Self { tx, changed_before })
     }
 
-    pub async fn commit(self) -> Result<(), PersistenceError> {
-        Ok(self.0.commit().await?)
+    /// Commits, unless the unit changed rows: those it rolls back, and fails.
+    pub async fn commit(mut self) -> Result<(), PersistenceError> {
+        if changed_rows(&mut self.tx).await? != self.changed_before {
+            self.tx.rollback().await?;
+            return Err(PersistenceError::changed_while_reading());
+        }
+        Ok(self.tx.commit().await?)
     }
 
     pub async fn rollback(self) -> Result<(), PersistenceError> {
-        Ok(self.0.rollback().await?)
+        Ok(self.tx.rollback().await?)
     }
+}
+
+/// Rows the connection's statements have inserted, updated or deleted since it
+/// opened.
+async fn changed_rows(connection: &mut SqliteConnection) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar("SELECT total_changes()")
+        .fetch_one(connection)
+        .await
 }
 
 impl Deref for WriteTx {
@@ -78,12 +96,12 @@ impl Deref for ReadTx {
     type Target = SqliteConnection;
 
     fn deref(&self) -> &SqliteConnection {
-        &self.0
+        &self.tx
     }
 }
 
 impl DerefMut for ReadTx {
     fn deref_mut(&mut self) -> &mut SqliteConnection {
-        &mut self.0
+        &mut self.tx
     }
 }

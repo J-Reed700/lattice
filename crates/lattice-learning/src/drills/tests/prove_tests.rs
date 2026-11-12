@@ -12,6 +12,7 @@ use lattice_core::domain::learning::drills::{
     apply, check_key, Drill, Edit, LineSpan, Material, Origin, Proof, Severity,
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 
 fn span(path: &str, line: u32) -> LineSpan {
     LineSpan {
@@ -23,11 +24,11 @@ fn span(path: &str, line: u32) -> LineSpan {
 
 #[tokio::test]
 async fn every_mutation_proven_gives_the_files_the_spans_and_the_planted_key() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([judge_answer(true)]);
     let runner = FakeRunner::killing_the_operator();
     let grader = idle_grader();
-    let proved = build(&pool, &model, Some(&runner), &grader)
+    let proved = build(&db, &model, Some(&runner), &grader)
         .prove(&spec(), &baseline(), &planted())
         .await?;
     assert_eq!(proved.proven.len(), 2);
@@ -73,11 +74,11 @@ async fn every_mutation_proven_gives_the_files_the_spans_and_the_planted_key() -
 #[tokio::test]
 async fn an_unproven_mutation_is_dropped_with_why_and_the_files_are_applied_again_without_it(
 ) -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([judge_answer(false)]);
     let runner = FakeRunner::killing_the_operator();
     let grader = idle_grader();
-    let proved = build(&pool, &model, Some(&runner), &grader)
+    let proved = build(&db, &model, Some(&runner), &grader)
         .prove(&spec(), &baseline(), &planted())
         .await?;
     assert_eq!(proved.proven.len(), 1);
@@ -102,7 +103,7 @@ async fn an_unproven_mutation_is_dropped_with_why_and_the_files_are_applied_agai
 
 #[tokio::test]
 async fn a_mutation_that_cannot_be_undone_once_another_is_dropped_is_dropped_too() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     // The first puts a line into the code that the second's original text also holds: undoing the first is certain
     // only while the second stays in.
     let first = Mutation {
@@ -138,7 +139,7 @@ async fn a_mutation_that_cannot_be_undone_once_another_is_dropped_is_dropped_too
     let model = ScriptedModel::new([judge_answer(true), judge_answer(false)]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let proved = build(&pool, &model, Some(&runner), &grader)
+    let proved = build(&db, &model, Some(&runner), &grader)
         .prove(&spec(), &baseline(), &planted)
         .await?;
     assert!(proved.proven.is_empty());
@@ -155,10 +156,10 @@ async fn a_mutation_that_cannot_be_undone_once_another_is_dropped_is_dropped_too
 
 #[tokio::test]
 async fn a_build_without_a_runner_proves_every_defect_by_judgement() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([judge_answer(true), judge_answer(true)]);
     let grader = idle_grader();
-    let proved = build(&pool, &model, None, &grader)
+    let proved = build(&db, &model, None, &grader)
         .prove(&spec(), &baseline(), &planted())
         .await?;
     assert_eq!(model.purposes(), ["judge", "judge"]);

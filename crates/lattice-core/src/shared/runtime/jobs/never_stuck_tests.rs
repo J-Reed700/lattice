@@ -29,6 +29,10 @@ async fn pool() -> sqlx::SqlitePool {
     pool
 }
 
+async fn database() -> Database {
+    Database::new(pool().await)
+}
+
 fn new_job(operation: &str, subject: Option<&str>) -> NewJob {
     NewJob {
         kind: KIND.into(),
@@ -64,7 +68,7 @@ async fn finished(runtime: &JobRuntime, id: &str) {
 
 #[tokio::test]
 async fn a_handler_that_panics_fails_its_job_and_frees_the_kind() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     runtime
         .register(
             KIND,
@@ -104,7 +108,7 @@ impl JobHandler for Failing {
 
 #[tokio::test]
 async fn a_handler_that_returns_an_error_still_fails_with_that_error() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     runtime
         .register(
             KIND,
@@ -134,7 +138,7 @@ async fn recovered(store: &JobStore) {
 
 #[tokio::test]
 async fn one_launch_that_finds_a_job_running_resumes_it() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let id = submitted(&store, "once").await;
     left_running(&store, &id).await;
     recovered(&store).await;
@@ -146,7 +150,7 @@ async fn one_launch_that_finds_a_job_running_resumes_it() -> Result<()> {
 
 #[tokio::test]
 async fn a_second_launch_with_nothing_saved_between_fails_the_job() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let id = submitted(&store, "crashes").await;
     left_running(&store, &id).await;
     recovered(&store).await;
@@ -163,7 +167,7 @@ async fn a_second_launch_with_nothing_saved_between_fails_the_job() -> Result<()
 
 #[tokio::test]
 async fn work_saved_between_two_launches_keeps_the_job_resumable() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let checkpointed = submitted(&store, "checkpointed").await;
     let progressed = submitted(&store, "progressed").await;
     for id in [&checkpointed, &progressed] {
@@ -198,7 +202,7 @@ async fn work_saved_between_two_launches_keeps_the_job_resumable() -> Result<()>
 
 #[tokio::test]
 async fn a_retried_job_starts_counting_afresh() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let first = submitted(&store, "crashes").await;
     left_running(&store, &first).await;
     recovered(&store).await;
@@ -247,7 +251,7 @@ async fn a_kind_that_cannot_be_recovered_does_not_stop_the_others() -> Result<()
     const BAD: &str = "test.bad";
     const AFTER: &str = "test.after";
     let pool = pool().await;
-    let runtime = JobRuntime::new(Database::from(pool.clone()));
+    let runtime = JobRuntime::new(Database::new(pool.clone()));
     let store = runtime.store();
     let mut stuck = new_job("stuck", None);
     stuck.kind = BAD.into();
@@ -292,7 +296,7 @@ async fn a_kind_that_cannot_be_recovered_does_not_stop_the_others() -> Result<()
 
 #[tokio::test]
 async fn registering_every_kind_without_a_failure_reports_none() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let failures = runtime
         .register_all(vec![registration(KIND), registration("test.other")])
         .await;
@@ -304,7 +308,7 @@ async fn registering_every_kind_without_a_failure_reports_none() -> Result<()> {
 async fn a_kind_that_failed_to_register_is_retried_until_it_does_and_its_jobs_run() -> Result<()> {
     const LATE: &str = "test.late";
     let pool = pool().await;
-    let runtime = JobRuntime::new(Database::from(pool.clone()));
+    let runtime = JobRuntime::new(Database::new(pool.clone()));
     let store = runtime.store();
     let mut saved = new_job("saved", None);
     saved.kind = LATE.into();

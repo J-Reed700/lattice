@@ -8,14 +8,13 @@ use crate::embedded_runtime::LearningBuiltinRuntime;
 use crate::persistence::db;
 use crate::practical_dto::*;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
 use sqlx::Row;
 use std::collections::HashMap;
 
 impl LearningPracticalRepository {
     pub async fn workspace(&self, program_id: &str) -> Result<PracticalWorkspaceSnapshot> {
         uuid(program_id, "program")?;
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await.map_err(db)?;
         let workspace = Self::workspace_on(&mut tx, program_id).await?;
         tx.commit().await.map_err(db)?;
         Ok(workspace)
@@ -87,8 +86,10 @@ impl LearningPracticalRepository {
     }
 
     pub(crate) async fn profiles(&self) -> Result<Vec<LearningRuntimeProfileDto>> {
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        Self::profiles_on(&mut connection).await
+        let mut tx = self.db.begin_read().await.map_err(db)?;
+        let profiles = Self::profiles_on(&mut tx).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(profiles)
     }
 
     async fn profiles_on(
@@ -338,7 +339,7 @@ impl LearningPracticalRepository {
 
     pub async fn run(&self, run_id: &str) -> Result<LearningPracticalRunDto> {
         uuid(run_id, "run")?;
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await.map_err(db)?;
         let connection = &mut *tx;
         let row = sqlx::query("SELECT * FROM learning_practical_runs WHERE id=?")
             .bind(run_id)
@@ -353,7 +354,7 @@ impl LearningPracticalRepository {
 
     pub async fn simulation(&self, session_id: &str) -> Result<LearningSimulationSessionDto> {
         uuid(session_id, "simulation")?;
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await.map_err(db)?;
         let connection = &mut *tx;
         let row = sqlx::query("SELECT * FROM learning_simulation_sessions WHERE id=?")
             .bind(session_id)

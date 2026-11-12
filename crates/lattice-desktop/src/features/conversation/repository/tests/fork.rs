@@ -2,13 +2,15 @@
 
 use super::*;
 use crate::features::conversation::repository::ConversationRepository;
+use lattice_core::shared::persistence::Database;
 
 #[tokio::test]
 async fn test_fork_copies_messages_up_to() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     let (new_id, copied) = repo
         .fork(
@@ -69,7 +71,8 @@ async fn test_fork_copies_all_when_none() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     let (_, copied) = repo
         .fork(&conversation_id, None, "conv-branch-all", "Thread · branch")
@@ -85,7 +88,8 @@ async fn test_fork_unknown_anchor_copies_nothing() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     let (_, copied) = repo
         .fork(
@@ -128,7 +132,8 @@ async fn test_fork_copies_linked_documents_and_web_sources() {
         .await
         .unwrap();
 
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     repo.fork(
         &conversation_id,
         None,
@@ -165,7 +170,8 @@ async fn test_fork_does_not_touch_original() {
     let conversation_id = seed_thread(&pool).await;
     let before = conversation_counts(&pool, &conversation_id).await;
 
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     repo.fork(
         &conversation_id,
         Some("m2"),
@@ -189,7 +195,8 @@ async fn a_branch_records_the_conversation_and_turn_it_was_taken_from() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     repo.fork(
         &conversation_id,
@@ -220,7 +227,8 @@ async fn a_whole_thread_branch_records_the_parent_and_no_turn() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     repo.fork(&conversation_id, None, "conv-whole", "Thread · branch")
         .await
@@ -247,7 +255,8 @@ async fn an_unknown_anchor_records_no_turn() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     let (_, copied) = repo
         .fork(
@@ -288,7 +297,8 @@ async fn a_continuation_opens_with_the_summary_in_the_same_space() {
     .await
     .unwrap();
 
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     repo.create_continuation(
         &conversation_id,
         "conv-next",
@@ -336,7 +346,8 @@ async fn a_continuation_opens_with_the_summary_in_the_same_space() {
 async fn a_continuation_of_a_missing_conversation_creates_nothing() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     let result = repo
         .create_continuation("nope", "conv-next", "t", "s", "{}")

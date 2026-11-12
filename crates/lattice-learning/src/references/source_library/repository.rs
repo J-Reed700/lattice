@@ -1,8 +1,6 @@
 //! The source library's statements, their bindings and their row mapping.
 use super::*;
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection};
 
 pub(super) mod admission;
@@ -46,10 +44,9 @@ pub(super) async fn ids_in_use(
 }
 
 /// Finalizes SQL-migrated legacy snapshots in one transaction.
-pub(super) async fn backfill_legacy(pool: &impl DriverPool, program_id: &str) -> Result<()> {
-    let pool = pool.sqlx_pool();
+pub(super) async fn backfill_legacy(database: &Database, program_id: &str) -> Result<()> {
     let waiting: Option<i64> = {
-        let mut read = pool.begin_read().await.map_err(db)?;
+        let mut read = database.begin_read().await.map_err(db)?;
         let waiting = sqlx::query_scalar("SELECT 1 FROM learning_source_versions WHERE program_id=? AND extraction_version=? AND content_sha256='' LIMIT 1")
             .bind(program_id).bind(LEGACY_EXTRACTION).fetch_optional(&mut *read).await.map_err(db)?;
         read.commit().await.map_err(db)?;
@@ -58,7 +55,7 @@ pub(super) async fn backfill_legacy(pool: &impl DriverPool, program_id: &str) ->
     if waiting.is_none() {
         return Ok(());
     }
-    let mut tx = pool.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await.map_err(db)?;
     let rows = sqlx::query("SELECT id,full_text FROM learning_source_versions WHERE program_id=? AND extraction_version=? AND content_sha256='' ")
         .bind(program_id).bind(LEGACY_EXTRACTION).fetch_all(&mut *tx).await.map_err(db)?;
     for row in rows {
@@ -71,14 +68,11 @@ pub(super) async fn backfill_legacy(pool: &impl DriverPool, program_id: &str) ->
 }
 
 /// Whether the active program exists and is now locked by this transaction.
-pub(super) async fn lock_active_program(
-    connection: &mut SqliteConnection,
-    program_id: &str,
-) -> Result<bool> {
+pub(super) async fn lock_active_program(tx: &mut WriteTx, program_id: &str) -> Result<bool> {
     let result =
         sqlx::query("UPDATE learning_programs SET status=status WHERE id=? AND status='active'")
             .bind(program_id)
-            .execute(connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
     Ok(result.rows_affected() == 1)
@@ -121,17 +115,14 @@ pub(super) struct SourceVersionInsert<'a> {
     pub content_sha256: &'a str,
 }
 
-pub(super) async fn insert_version(
-    connection: &mut SqliteConnection,
-    v: SourceVersionInsert<'_>,
-) -> Result<()> {
+pub(super) async fn insert_version(tx: &mut WriteTx, v: SourceVersionInsert<'_>) -> Result<()> {
     sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-        .bind(v.version_id).bind(v.program_id).bind(v.source_id).bind(v.version_number).bind(v.title).bind(v.publisher).bind(v.requested_url).bind(v.resolved_url).bind(v.full_text).bind(excerpt(v.full_text)).bind(v.content_sha256).bind(words(v.full_text) as i64).bind(v.truncated as i64).bind(v.extraction_version).bind(v.acquired_at).execute(connection).await.map_err(db)?;
+        .bind(v.version_id).bind(v.program_id).bind(v.source_id).bind(v.version_number).bind(v.title).bind(v.publisher).bind(v.requested_url).bind(v.resolved_url).bind(v.full_text).bind(excerpt(v.full_text)).bind(v.content_sha256).bind(words(v.full_text) as i64).bind(v.truncated as i64).bind(v.extraction_version).bind(v.acquired_at).execute(&mut **tx).await.map_err(db)?;
     Ok(())
 }
 
 pub(super) async fn mirror_legacy(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program: &str,
     id: &str,
     title: &str,
@@ -140,6 +131,6 @@ pub(super) async fn mirror_legacy(
     at: i64,
 ) -> Result<()> {
     sqlx::query("INSERT INTO learning_sources(id,program_id,title,url,excerpt,acquired_at) VALUES(?,?,?,?,?,?)")
-        .bind(id).bind(program).bind(title.trim()).bind(url).bind(excerpt(text)).bind(at).execute(connection).await.map_err(db)?;
+        .bind(id).bind(program).bind(title.trim()).bind(url).bind(excerpt(text)).bind(at).execute(&mut **tx).await.map_err(db)?;
     Ok(())
 }

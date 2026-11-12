@@ -10,8 +10,9 @@
 #[cfg(test)]
 mod tag_repository_tests {
     use lattice::features::tags::repository::TagRepository;
+    use lattice_core::shared::persistence::Database;
     use sqlx::SqlitePool;
-    async fn setup_test_db() -> SqlitePool {
+    async fn setup_test_db() -> (SqlitePool, Database) {
         let pool = SqlitePool::connect(":memory:")
             .await
             .expect("Failed to create in-memory SQLite pool");
@@ -21,13 +22,14 @@ mod tag_repository_tests {
             .await
             .expect("Failed to apply production migrations");
 
-        pool
+        let db = Database::new(pool.clone());
+        (pool, db)
     }
 
     #[tokio::test]
     async fn test_create_tag() {
-        let pool = setup_test_db().await;
-        let repo = TagRepository::new(pool);
+        let (_, db) = setup_test_db().await;
+        let repo = TagRepository::new(db);
 
         let tag = repo
             .create("rust", Some("#ff6b6b"))
@@ -41,8 +43,8 @@ mod tag_repository_tests {
 
     #[tokio::test]
     async fn test_get_or_create_tag() {
-        let pool = setup_test_db().await;
-        let repo = TagRepository::new(pool);
+        let (_, db) = setup_test_db().await;
+        let repo = TagRepository::new(db);
 
         // First call creates the tag
         let tag1 = repo
@@ -61,8 +63,8 @@ mod tag_repository_tests {
 
     #[tokio::test]
     async fn test_find_by_name() {
-        let pool = setup_test_db().await;
-        let repo = TagRepository::new(pool);
+        let (_, db) = setup_test_db().await;
+        let repo = TagRepository::new(db);
 
         repo.create("typescript", None)
             .await
@@ -78,8 +80,8 @@ mod tag_repository_tests {
 
     #[tokio::test]
     async fn test_get_all_tags() {
-        let pool = setup_test_db().await;
-        let repo = TagRepository::new(pool);
+        let (_, db) = setup_test_db().await;
+        let repo = TagRepository::new(db);
 
         repo.create("tag1", None)
             .await
@@ -97,8 +99,8 @@ mod tag_repository_tests {
 
     #[tokio::test]
     async fn test_update_tag() {
-        let pool = setup_test_db().await;
-        let repo = TagRepository::new(pool);
+        let (_, db) = setup_test_db().await;
+        let repo = TagRepository::new(db);
 
         let tag = repo
             .create("old-name", Some("#000000"))
@@ -116,8 +118,8 @@ mod tag_repository_tests {
 
     #[tokio::test]
     async fn test_delete_tag() {
-        let pool = setup_test_db().await;
-        let repo = TagRepository::new(pool);
+        let (_, db) = setup_test_db().await;
+        let repo = TagRepository::new(db);
 
         let tag = repo
             .create("to-delete", None)
@@ -137,8 +139,8 @@ mod tag_repository_tests {
 
     #[tokio::test]
     async fn test_add_tag_to_document() {
-        let pool = setup_test_db().await;
-        let repo = TagRepository::new(pool.clone());
+        let (pool, db) = setup_test_db().await;
+        let repo = TagRepository::new(db.clone());
 
         // Create a test document
         let doc_id = "test-doc-1";
@@ -180,8 +182,8 @@ mod tag_repository_tests {
 
     #[tokio::test]
     async fn test_remove_tag_from_document() {
-        let pool = setup_test_db().await;
-        let repo = TagRepository::new(pool.clone());
+        let (pool, db) = setup_test_db().await;
+        let repo = TagRepository::new(db.clone());
 
         // Create a test document
         let doc_id = "test-doc-2";
@@ -225,8 +227,8 @@ mod tag_repository_tests {
 
     #[tokio::test]
     async fn test_bulk_add_tags() {
-        let pool = setup_test_db().await;
-        let repo = TagRepository::new(pool.clone());
+        let (pool, db) = setup_test_db().await;
+        let repo = TagRepository::new(db.clone());
 
         // Create a test document
         let doc_id = "test-doc-3";

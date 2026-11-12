@@ -13,7 +13,7 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Transactions, WriteTx};
+use lattice_core::shared::persistence::WriteTx;
 
 use super::{add_kinds, provenance, user_resolution, ClaimReviewService, LabelSource, Planned};
 use crate::content_verification::Rewritten;
@@ -399,7 +399,7 @@ pub(super) async fn record_edit<'a>(
                 },
             ),
         ] {
-            append_in(&mut *tx, lesson_id, &item.successor, by.clone(), event).await?;
+            append_in(tx, lesson_id, &item.successor, by.clone(), event).await?;
         }
     }
     let mut planned = Vec::new();
@@ -416,7 +416,7 @@ pub(super) async fn record_edit<'a>(
         };
         let resolution = user_resolution(action, None, Some(label));
         append_in(
-            &mut *tx,
+            tx,
             lesson_id,
             item.entry.claim_id(),
             machine.clone(),
@@ -424,7 +424,7 @@ pub(super) async fn record_edit<'a>(
         )
         .await?;
         append_in(
-            &mut *tx,
+            tx,
             lesson_id,
             item.entry.claim_id(),
             user.clone(),
@@ -437,7 +437,7 @@ pub(super) async fn record_edit<'a>(
                 by: Actor::User,
             };
             append_in(
-                &mut *tx,
+                tx,
                 lesson_id,
                 item.entry.claim_id(),
                 machine.clone(),
