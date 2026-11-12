@@ -3,7 +3,9 @@
 //! model is asked lives in `asking`.
 use super::copied_wording::{self, Wording, SAY_IT_YOURSELF};
 use super::repeats::{self, Counts};
+use super::review_findings::{index_segment, leaves, FindingSite};
 use super::same_text;
+use lattice_core::domain::learning::claim_review::span_of;
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -61,18 +63,13 @@ fn cited_paths(candidate: &Value) -> Vec<String> {
 /// lists that citation.
 fn cited_at(candidate: &Value, path: &str) -> Option<(String, usize)> {
     let (part, at) = path.rsplit_once("/citations/")?;
-    let at = Some(at)
-        .filter(|at| !at.is_empty() && at.bytes().all(|byte| byte.is_ascii_digit()))?
-        .parse()
-        .ok()?;
-    let (list, index) = part.strip_prefix('/')?.split_once('/')?;
-    let counted = ["blocks", "questions"].contains(&list)
-        && !index.is_empty()
-        && index.bytes().all(|byte| byte.is_ascii_digit());
+    let at = index_segment(at)?;
+    let part = FindingSite::of_pointer(part)
+        .pointer()
+        .filter(|canonical| canonical == part)?;
     candidate
         .pointer(&format!("{part}/citations/{at}"))
-        .filter(|_| counted)
-        .map(|_| (part.to_owned(), at))
+        .map(|_| (part, at))
 }
 
 /// Takes back the citations at `uncite` from `result`, the later ones of a
@@ -149,20 +146,36 @@ struct Cite {
     quote: String,
 }
 
+/// The fields that teach, of a block and of a question: where a cited
+/// sentence may stand and where a written sentence is held to the lesson's
+/// own words.
+const TAUGHT: (&[&str], &[&str]) = (&["body"], &["explanation", "rationales"]);
+
 /// The texts of a block or question a cited sentence may stand in: a block's
 /// body, a question's explanation or any of its choice reasons.
 pub(super) fn citable_texts(part: &Value, question: bool) -> Vec<&str> {
-    let first = part
-        .get(if question { "explanation" } else { "body" })
-        .and_then(Value::as_str);
-    let reasons = part
-        .get("rationales")
-        .and_then(Value::as_array)
-        .filter(|_| question)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str);
-    first.into_iter().chain(reasons).collect()
+    let fields = if question { TAUGHT.1 } else { TAUGHT.0 };
+    fields
+        .iter()
+        .filter_map(|field| part.get(*field))
+        .flat_map(|value| leaves(value).into_iter().map(|(_, text)| text))
+        .collect()
+}
+
+/// Whether `path` names a text that teaches in a block or question.
+fn taught_at(path: &str) -> bool {
+    let mut segments = path.split('/').skip(1);
+    let (Some(list), Some(index), Some(field)) =
+        (segments.next(), segments.next(), segments.next())
+    else {
+        return false;
+    };
+    let fields = match list {
+        "blocks" => TAUGHT.0,
+        "questions" => TAUGHT.1,
+        _ => return false,
+    };
+    index_segment(index).is_some() && fields.contains(&field)
 }
 
 /// The entry that cites `sentence` in `part`, a question or a block: it holds
@@ -189,16 +202,16 @@ pub(super) fn citation_entry(
 /// sentence must stand in that part's body, or in a question's explanation
 /// or a choice's reason, and the same citation is not listed twice.
 fn append(lesson: &mut Value, cite: &Cite) -> std::result::Result<(), String> {
-    let not_a_part = || format!("names {}, which is not a block or a question.", cite.path);
-    let (text, index) = if let Some(index) = cite.path.strip_prefix("/blocks/") {
-        ("body", index)
-    } else if let Some(index) = cite.path.strip_prefix("/questions/") {
-        ("explanation", index)
-    } else {
-        return Err(not_a_part());
+    let site = FindingSite::of_pointer(&cite.path);
+    let text = match site {
+        FindingSite::Section(_) => "body",
+        FindingSite::Question(_) | FindingSite::Lesson => "explanation",
     };
-    if index.is_empty() || !index.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(not_a_part());
+    if site.pointer().as_deref() != Some(cite.path.as_str()) {
+        return Err(format!(
+            "names {}, which is not a block or a question.",
+            cite.path
+        ));
     }
     let target = lesson
         .pointer(&cite.path)
@@ -250,15 +263,7 @@ struct Edit {
 /// The part of the input a path belongs to: its block or question, or else
 /// the rest of the input.
 fn part_of(path: &str) -> String {
-    let mut segments = path.split('/').skip(1);
-    match (segments.next(), segments.next()) {
-        (Some(list @ ("blocks" | "questions")), Some(index))
-            if !index.is_empty() && index.bytes().all(|byte| byte.is_ascii_digit()) =>
-        {
-            format!("/{list}/{index}")
-        }
-        _ => String::new(),
-    }
+    FindingSite::of_pointer(path).pointer().unwrap_or_default()
 }
 
 /// The quotes of the block or question at `part`, and those of the citations
@@ -319,12 +324,6 @@ struct Range {
     index: usize,
 }
 
-impl Range {
-    fn overlaps(&self, start: usize, end: usize) -> bool {
-        self.start < end && start < self.end
-    }
-}
-
 /// One field's change under a group of edits: where its edits fall in a text,
 /// or the new value of a number or a boolean.
 enum Change {
@@ -370,17 +369,21 @@ fn field_change(
                     format!("edit {index} to {path} must replace nonempty text with text."),
                 ));
             };
-            let mut matches = text.match_indices(before);
-            let Some((start, _)) = matches.next() else {
+            if !text.contains(before) {
                 return Err((index, not_found(candidate, path, before, index)));
-            };
-            if matches.next().is_some() {
-                return Err((index, format!("the before text of edit {index} occurs more than once in {path}; include enough surrounding text to make it unique.")));
             }
+            let Some((start, _)) = span_of(text, before) else {
+                return Err((index, format!("the before text of edit {index} occurs more than once in {path}; include enough surrounding text to make it unique.")));
+            };
             let mut alone = text.to_owned();
             alone.replace_range(start..start + before.len(), after);
-            let repeated = repeats::teaches_path(path)
-                .then(|| repeats::gained_repeat(text, &alone, lesson))
+            let added = repeats::added(text, &alone);
+            let repeated = repeats::says_at(path)
+                .then(|| {
+                    added
+                        .iter()
+                        .find(|sentence| lesson.contains_key(&repeats::key(sentence)))
+                })
                 .flatten();
             if let Some(sentence) = repeated {
                 return Err((
@@ -388,8 +391,14 @@ fn field_change(
                     format!("edit {index} to {path} adds a sentence the lesson already has: \"{sentence}\". Reword it or leave it out."),
                 ));
             }
-            let copied = copied_wording::is_taught_text(path)
-                .then(|| copied_wording::gained(text, &alone, part, wording))
+            let copied = taught_at(path)
+                .then(|| {
+                    added.iter().find_map(|sentence| {
+                        copied_wording::copies(sentence, part, wording)
+                            .into_iter()
+                            .next()
+                    })
+                })
                 .flatten();
             if let Some(copied_wording::Copied { sentence, words }) = copied {
                 return Err((
@@ -407,7 +416,7 @@ fn field_change(
         ranges.sort_by_key(|range| range.start);
         if ranges
             .windows(2)
-            .any(|pair| matches!(pair, [left, right] if left.end > right.start))
+            .any(|pair| matches!(pair, [left, right] if same_text::overlaps((left.start, left.end), (right.start, right.end))))
         {
             return Err((first, format!("two edits to {path} overlap.")));
         }
@@ -580,7 +589,7 @@ fn clash(
                     .filter(|range| {
                         taken
                             .iter()
-                            .any(|(start, end)| range.overlaps(*start, *end))
+                            .any(|taken| same_text::overlaps((range.start, range.end), *taken))
                     })
                     .map(|range| (range.index, path.clone()))
                     .min_by_key(|(index, _)| *index)
@@ -621,11 +630,11 @@ fn grouped(edits: Vec<Edit>) -> Vec<Group> {
     groups
 }
 
-/// The path with every all-digit segment ignored.
+/// The path with every array index ignored.
 fn shape_of(path: &str) -> Vec<&str> {
     path.split('/')
         .map(|segment| {
-            if !segment.is_empty() && segment.bytes().all(|byte| byte.is_ascii_digit()) {
+            if index_segment(segment).is_some() {
                 ""
             } else {
                 segment
@@ -658,7 +667,7 @@ fn placed(candidate: &Value, mut edits: Vec<Edit>) -> Vec<Edit> {
             .filter(|field| shape_of(field) == shape)
             .filter_map(|field| holding(field).map(|text| (field, text)));
         let only = match (found.next(), found.next()) {
-            (Some((field, text)), None) if text.matches(before).count() == 1 => Some(field.clone()),
+            (Some((field, text)), None) if span_of(text, before).is_some() => Some(field.clone()),
             _ => None,
         };
         if let Some(field) = only {
@@ -686,7 +695,7 @@ fn accept(
 ) -> Accepted {
     let mut allowed = Vec::new();
     paths(candidate, "", &mut allowed);
-    let held = repeats::counts_of(&[candidate, lesson]);
+    let held = repeats::said(&[candidate, lesson]);
     let mut accepted = Accepted {
         named: BTreeMap::new(),
         problems: Vec::new(),

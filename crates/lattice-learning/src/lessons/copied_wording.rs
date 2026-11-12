@@ -196,25 +196,6 @@ pub(crate) fn copies(text: &str, part: &Wording, lesson: &Wording) -> Vec<Copied
         .collect()
 }
 
-/// Whether `path` names a text that teaches in a block or question: a
-/// block's body, a question's explanation or one of its choice reasons.
-pub(crate) fn is_taught_text(path: &str) -> bool {
-    path.ends_with("/body") || path.ends_with("/explanation") || path.contains("/rationales/")
-}
-
-/// The first sentence `after` copies that `before` did not.
-pub(crate) fn gained(
-    before: &str,
-    after: &str,
-    part: &Wording,
-    lesson: &Wording,
-) -> Option<Copied> {
-    let had = copies(before, part, lesson);
-    copies(after, part, lesson)
-        .into_iter()
-        .find(|copied| !had.iter().any(|known| known.sentence == copied.sentence))
-}
-
 /// What a repair is told about a sentence that copies a source.
 pub(crate) const SAY_IT_YOURSELF: &str = "Say it in the lesson's own words.";
 
@@ -227,16 +208,12 @@ pub(crate) fn findings(candidate: &Value, wording: &Wording) -> Vec<ReviewFindin
         let parts = candidate.get(list).and_then(Value::as_array);
         for (index, part) in parts.into_iter().flatten().enumerate() {
             let quotes = Wording::of_part(part, []);
-            let (site, label, plain) = if question {
-                let name = format!("Question {}", index + 1);
-                (FindingSite::Question(index), name.clone(), name)
+            let site = if question {
+                FindingSite::Question(index)
             } else {
-                (
-                    FindingSite::Section(index),
-                    format!("Section {} (candidate blocks-{index})", index + 1),
-                    format!("Section {}", index + 1),
-                )
+                FindingSite::Section(index)
             };
+            let (label, plain) = (site.note_label(), site.label());
             for text in citable_texts(part, question) {
                 for Copied { sentence, words } in copies(text, &quotes, wording) {
                     found.push(

@@ -992,3 +992,54 @@ fn a_finding_reports_the_field_its_moved_edit_wrote() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn an_edit_whose_text_overlaps_itself_is_refused() {
+    let candidate = json!({"blocks":[{"kind":"explanation","body":"Go. Go. Go."}],"questions":[]});
+    let edit = json!({"path":"/blocks/0/body","before":"Go. Go.","after":"Run."});
+    let reason = apply(&candidate, &json!({"edits":[edit]}).to_string())
+        .err()
+        .map(|error| error.to_string())
+        .unwrap_or_default();
+    assert!(reason.contains("occurs more than once"), "{reason:?}");
+}
+
+#[test]
+fn a_path_with_a_leading_zero_is_refused() {
+    let edit =
+        json!({"path":"/blocks/00/body","before":"Beta is second.","after":"Beta comes second."});
+    let applied = apply(&two_sections(), &json!({"edits":[edit]}).to_string());
+    assert!(applied.is_err(), "{applied:?}");
+}
+
+fn lesson_with_question_explanation(explanation: &str) -> Value {
+    json!({"blocks":[
+        {"kind":"explanation","body":"Alpha is the first of them all. Beta is second."}
+    ],"questions":[
+        {"kind":"practice","prompt":"Which comes first?","options":["Alpha","Beta","Gamma","Delta"],
+         "correctIndex":0,"rationales":["","No.","No.","No."],"explanation":explanation,
+         "quote":"Gamma stands here, in the words of the source."}
+    ]})
+}
+
+#[test]
+fn a_repair_may_restate_a_section_sentence_in_a_question_explanation() {
+    let candidate = lesson_with_question_explanation("Alpha leads.");
+    let edit = json!({"path":"/questions/0/explanation","before":"Alpha leads.",
+        "after":"Alpha leads. Alpha is the first of them all."});
+    let applied = apply(&candidate, &json!({"edits":[edit]}).to_string());
+    assert!(applied.is_ok(), "{:?}", applied.err());
+}
+
+#[test]
+fn an_edit_that_writes_a_copied_sentence_a_second_time_is_refused() {
+    const COPIED: &str = "Gamma stands here, in the words of the source.";
+    let candidate = lesson_with_question_explanation(COPIED);
+    let edit = json!({"path":"/questions/0/explanation","before":COPIED,
+        "after":format!("{COPIED} {COPIED}")});
+    let reason = apply(&candidate, &json!({"edits":[edit]}).to_string())
+        .err()
+        .map(|error| error.to_string())
+        .unwrap_or_default();
+    assert!(reason.contains("writes the source's wording"), "{reason:?}");
+}

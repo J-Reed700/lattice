@@ -4,6 +4,7 @@
 //! finding ids are identified by kind and place (`FindingKey`).
 use crate::lessons::same_text;
 use lattice_core::domain::learning::claim_review::text_sha256;
+use lattice_core::shared::text::plain_text;
 use lattice_core::shared::text::segmentation::sentences;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -57,24 +58,40 @@ pub enum FindingSite {
 }
 
 impl FindingSite {
+    /// The site of flat unit index `unit` in a lesson of `sections` sections: sections first, then questions.
+    pub fn of_unit(unit: usize, sections: usize) -> Self {
+        match unit.checked_sub(sections) {
+            None => Self::Section(unit),
+            Some(question) => Self::Question(question),
+        }
+    }
+
+    /// [`Self::of_unit`] with the length of `candidate`'s `blocks` array (0 when it has none).
+    pub fn in_candidate(candidate: &Value, unit: usize) -> Self {
+        let sections = candidate
+            .get("blocks")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        Self::of_unit(unit, sections)
+    }
+
+    /// The flat unit index of this site; none for the whole lesson.
+    pub fn unit(self, sections: usize) -> Option<usize> {
+        match self {
+            Self::Lesson => None,
+            Self::Section(index) => Some(index),
+            Self::Question(index) => sections.checked_add(index),
+        }
+    }
+
     /// The site a JSON pointer into the candidate is in:
     /// `/blocks/3/title` is section 3, `/questions` the whole lesson.
     pub fn of_pointer(pointer: &str) -> Self {
         let mut parts = pointer.trim_start_matches('/').split('/');
-        match (parts.next(), parts.next().and_then(|i| i.parse().ok())) {
+        match (parts.next(), parts.next().and_then(index_segment)) {
             (Some("blocks"), Some(index)) => Self::Section(index),
             (Some("questions"), Some(index)) => Self::Question(index),
             _ => Self::Lesson,
-        }
-    }
-
-    /// The pointer of the block or question this site is, or none for the
-    /// whole lesson.
-    pub fn pointer(self) -> Option<String> {
-        match self {
-            Self::Lesson => None,
-            Self::Section(index) => Some(format!("/blocks/{index}")),
-            Self::Question(index) => Some(format!("/questions/{index}")),
         }
     }
 
@@ -85,13 +102,99 @@ impl FindingSite {
             .strip_suffix(']')
             .and_then(|id| id.split_once('['))
             .or_else(|| id.rsplit_once('-'))?;
-        let index = index.parse().ok()?;
+        let index = index_segment(index)?;
         match field {
             "blocks" => Some(Self::Section(index)),
             "questions" => Some(Self::Question(index)),
             _ => None,
         }
     }
+
+    /// ("blocks", 3) or ("questions", 1); none for the whole lesson.
+    pub fn array(self) -> Option<(&'static str, usize)> {
+        match self {
+            Self::Lesson => None,
+            Self::Section(index) => Some(("blocks", index)),
+            Self::Question(index) => Some(("questions", index)),
+        }
+    }
+
+    /// The pointer of the block or question this site is, or none for the
+    /// whole lesson.
+    pub fn pointer(self) -> Option<String> {
+        self.array().map(|(list, index)| format!("/{list}/{index}"))
+    }
+
+    /// The pointer of `field` of this site's block or question.
+    pub fn field_pointer(self, field: &str) -> Option<String> {
+        self.pointer().map(|pointer| format!("{pointer}/{field}"))
+    }
+
+    /// `blocks-3`: how an evidence ID names this site.
+    pub fn part_id(self) -> Option<String> {
+        self.array().map(|(list, index)| format!("{list}-{index}"))
+    }
+
+    /// `blocks[3]`: how a quotation check's path names this site.
+    pub fn path(self) -> Option<String> {
+        self.array().map(|(list, index)| format!("{list}[{index}]"))
+    }
+
+    /// `lesson`, `section-3` or `question-1`: how a site is written in an id.
+    pub fn id_text(self) -> String {
+        match self {
+            Self::Lesson => "lesson".to_owned(),
+            Self::Section(index) => format!("section-{index}"),
+            Self::Question(index) => format!("question-{index}"),
+        }
+    }
+
+    /// "The whole lesson", "Section 4" or "Question 2".
+    pub fn label(self) -> String {
+        match self {
+            Self::Lesson => "The whole lesson".to_owned(),
+            Self::Section(index) => format!("Section {}", index + 1),
+            Self::Question(index) => format!("Question {}", index + 1),
+        }
+    }
+
+    /// "the lesson", "section 4" or "question 2".
+    pub fn plain(self) -> String {
+        match self {
+            Self::Lesson => "the lesson".to_owned(),
+            Self::Section(index) => format!("section {}", index + 1),
+            Self::Question(index) => format!("question {}", index + 1),
+        }
+    }
+
+    /// "Section 4 (candidate blocks-3)", or [`Self::label`] for the whole lesson.
+    pub fn note_label(self) -> String {
+        self.part_id().map_or_else(
+            || self.label(),
+            |id| format!("{} (candidate {id})", self.label()),
+        )
+    }
+
+    /// "Section 2 · Defining Tool Schemas" (the title as plain text, trimmed);
+    /// [`Self::label`] for a blank title and for other sites.
+    pub fn titled(self, title: &str) -> String {
+        let title = plain_text(title);
+        let title = title.trim();
+        match self {
+            Self::Section(_) if !title.is_empty() => format!("{} \u{b7} {title}", self.label()),
+            _ => self.label(),
+        }
+    }
+}
+
+/// An RFC 6901 array index: "0", or a nonzero digit followed by digits.
+pub(crate) fn index_segment(segment: &str) -> Option<usize> {
+    let digits = |rest: &str| rest.bytes().all(|byte| byte.is_ascii_digit());
+    let canonical = segment == "0"
+        || segment
+            .strip_prefix(|c: char| ('1'..='9').contains(&c))
+            .is_some_and(digits);
+    canonical.then(|| segment.parse().ok()).flatten()
 }
 
 /// A deterministic rule a lesson can break; one variant for each place that
@@ -109,7 +212,7 @@ pub enum Rule {
     PracticeRubric,
     /// A quotation matches no saved reference.
     Quotation,
-    /// The count of invalid citations a closed material's first pass found.
+    /// Carried by rows stored earlier; no longer raised.
     QuoteChecks,
     /// A section has no title.
     TitleMissing,
@@ -125,10 +228,12 @@ pub enum Rule {
     PromptRepeated,
     /// A question has no answer explanation.
     ExplanationMissing,
-    /// A question lacks four distinct answer choices.
+    /// A question lacks [`CHOICES_PER_QUESTION`](crate::assessment::assessment_engine::checks::CHOICES_PER_QUESTION) distinct answer choices.
     Choices,
-    /// Carried by rows stored earlier; no longer raised.
+    /// A question's right choice is much longer than the others.
     KeyLongest,
+    /// A question's prompt contains its answer.
+    AnswerInPrompt,
     /// Carried by rows stored earlier; no longer raised.
     KeyGivenAway,
     /// A question's rationales do not match its choices.
@@ -157,9 +262,9 @@ pub enum Rule {
     NoQuestion,
     /// A sentence copies the source's wording.
     CopiedWording,
-    /// A sentence's citation could not be confirmed.
+    /// Carried by rows stored earlier; no longer raised.
     SentenceCitation,
-    /// A part's citation could not be confirmed.
+    /// Carried by rows stored earlier; no longer raised.
     PartCitation,
 }
 
@@ -185,6 +290,7 @@ impl Rule {
             | Self::FenceUnclosed
             | Self::PromptRepeated
             | Self::KeyLongest
+            | Self::AnswerInPrompt
             | Self::KeyGivenAway
             | Self::Uncited
             | Self::CitationLabel
@@ -289,15 +395,6 @@ pub(crate) fn subject_of(text: &str) -> String {
         .chars()
         .take(16)
         .collect()
-}
-
-/// `lesson`, `section-3` or `question-1`: how a site is written in an id.
-fn site_text(site: FindingSite) -> String {
-    match site {
-        FindingSite::Lesson => "lesson".to_owned(),
-        FindingSite::Section(index) => format!("section-{index}"),
-        FindingSite::Question(index) => format!("question-{index}"),
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -489,7 +586,7 @@ impl ReviewFinding {
     /// This finding's identity: the same across passes while the same defect
     /// is raised, whatever its note says.
     pub fn id(&self) -> FindingId {
-        let site = site_text(self.site.unwrap_or(FindingSite::Lesson));
+        let site = self.site.unwrap_or(FindingSite::Lesson).id_text();
         let kind = self.origin.kind();
         FindingId(match &self.origin {
             Origin::Rule { subject: None, .. } => format!("{kind}/{site}"),
@@ -525,16 +622,6 @@ pub(crate) fn join_plain(items: &[String]) -> String {
     }
 }
 
-/// How a summary names the part a site is: "section 3", "question 2" or
-/// "the lesson".
-pub(crate) fn plain_part(site: FindingSite) -> String {
-    match site {
-        FindingSite::Lesson => "the lesson".to_owned(),
-        FindingSite::Section(index) => format!("section {}", index + 1),
-        FindingSite::Question(index) => format!("question {}", index + 1),
-    }
-}
-
 /// A finding's identity across passes and reviews.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct FindingKey {
@@ -546,7 +633,7 @@ impl FindingKey {
     /// The stored identity: `teaching:section-3`, `answer_key:question-1`,
     /// `structure:lesson`.
     pub fn id(&self) -> String {
-        format!("{}:{}", self.kind.as_str(), site_text(self.site))
+        format!("{}:{}", self.kind.as_str(), self.site.id_text())
     }
 }
 
@@ -585,10 +672,9 @@ pub(crate) struct Unit {
 
 /// The part of the candidate a site names.
 pub(crate) fn part_at(candidate: &Value, site: FindingSite) -> Option<&Value> {
-    match site {
-        FindingSite::Lesson => Some(candidate),
-        FindingSite::Section(index) => candidate.pointer(&format!("/blocks/{index}")),
-        FindingSite::Question(index) => candidate.pointer(&format!("/questions/{index}")),
+    match site.pointer() {
+        None => Some(candidate),
+        Some(pointer) => candidate.pointer(&pointer),
     }
 }
 
@@ -601,14 +687,35 @@ pub(crate) fn site_sha256(candidate: &Value, site: FindingSite) -> String {
     )
 }
 
-/// Every string of `value`, at any depth.
-fn string_leaves<'a>(value: &'a Value, out: &mut Vec<&'a str>) {
-    match value {
-        Value::String(text) => out.push(text),
-        Value::Array(items) => items.iter().for_each(|item| string_leaves(item, out)),
-        Value::Object(fields) => fields.values().for_each(|field| string_leaves(field, out)),
-        _ => {}
+/// Every string of `value` at any depth, with its path relative to `value`
+/// ("body", "rubric/0/description"; "" for a string `value`).
+pub(crate) fn leaves(value: &Value) -> Vec<(String, &str)> {
+    fn walk<'a>(value: &'a Value, path: &str, out: &mut Vec<(String, &'a str)>) {
+        let child = |name: &str| {
+            if path.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{path}/{name}")
+            }
+        };
+        match value {
+            Value::String(text) => out.push((path.to_owned(), text)),
+            Value::Array(items) => {
+                for (index, item) in items.iter().enumerate() {
+                    walk(item, &child(&index.to_string()), out);
+                }
+            }
+            Value::Object(fields) => {
+                for (name, field) in fields {
+                    walk(field, &child(name), out);
+                }
+            }
+            _ => {}
+        }
     }
+    let mut out = Vec::new();
+    walk(value, "", &mut out);
+    out
 }
 
 /// The whole sentences of the finding's part that its passage or sentence
@@ -617,11 +724,9 @@ pub(crate) fn sentences_of(candidate: &Value, finding: &ReviewFinding) -> Vec<St
     let Some(part) = part_at(candidate, finding.site.unwrap_or(FindingSite::Lesson)) else {
         return Vec::new();
     };
-    let mut leaves = Vec::new();
-    string_leaves(part, &mut leaves);
     let needles = [finding.passage.as_deref(), finding.sentence.as_deref()];
     let mut found: Vec<String> = Vec::new();
-    for leaf in leaves {
+    for (_, leaf) in leaves(part) {
         for needle in needles.into_iter().flatten() {
             for span in same_text::find_all(leaf, needle) {
                 for (from, to) in same_text::sentences_over(leaf, span) {
@@ -637,26 +742,26 @@ pub(crate) fn sentences_of(candidate: &Value, finding: &ReviewFinding) -> Vec<St
     found
 }
 
-/// Whether `quote` stands in the text of the part `site` names, the whole
-/// candidate for the lesson.
-pub(crate) fn part_holds(candidate: &Value, site: FindingSite, quote: &str) -> bool {
-    let Some(part) = part_at(candidate, site) else {
-        return false;
-    };
-    let mut leaves = Vec::new();
-    string_leaves(part, &mut leaves);
-    leaves
+/// The lesson bytes of the first string of the part `site` names (the whole
+/// candidate for the lesson) that holds `quote` as a copy.
+pub(crate) fn part_quote<'c>(
+    candidate: &'c Value,
+    site: FindingSite,
+    quote: &str,
+) -> Option<&'c str> {
+    leaves(part_at(candidate, site)?)
         .into_iter()
-        .any(|leaf| same_text::find(leaf, quote).is_some())
+        .find_map(|(_, leaf)| {
+            let (start, end) = same_text::find(leaf, quote)?;
+            leaf.get(start..end)
+        })
 }
 
 /// The sentences of every string of `value` that are not blank once folded.
 pub(crate) fn sentences_in(value: &Value) -> Vec<String> {
-    let mut leaves = Vec::new();
-    string_leaves(value, &mut leaves);
-    leaves
+    leaves(value)
         .into_iter()
-        .flat_map(|leaf| {
+        .flat_map(|(_, leaf)| {
             sentences(leaf)
                 .into_iter()
                 .filter_map(move |(from, to)| leaf.get(from..to))
@@ -704,12 +809,12 @@ pub(crate) fn new_sentences(previous: &Value, repaired: &Value) -> Vec<(FindingS
             .unwrap_or_default()
     };
     for (index, block) in items("blocks").iter().enumerate() {
-        let before = previous.pointer(&format!("/blocks/{index}"));
-        visit(FindingSite::Section(index), before, block);
+        let site = FindingSite::Section(index);
+        visit(site, part_at(previous, site), block);
     }
     for (index, question) in items("questions").iter().enumerate() {
-        let before = previous.pointer(&format!("/questions/{index}"));
-        visit(FindingSite::Question(index), before, question);
+        let site = FindingSite::Question(index);
+        visit(site, part_at(previous, site), question);
     }
     visit(
         FindingSite::Lesson,
@@ -728,36 +833,19 @@ pub(crate) fn unit(candidate: &Value, finding: &ReviewFinding) -> Unit {
             .map(str::to_owned)
     };
     let site = finding.site.unwrap_or(FindingSite::Lesson);
-    let sha256 = site_sha256(candidate, site);
-    match site {
-        FindingSite::Lesson => Unit {
-            title: "Whole lesson".into(),
-            sha256,
-            passage: None,
-        },
-        FindingSite::Section(index) => {
-            let block = candidate.pointer(&format!("/blocks/{index}"));
-            Unit {
-                title: text(block, "title").map_or_else(
-                    || format!("Section {}", index + 1),
-                    |title| format!("Section {}: {title}", index + 1),
-                ),
-                sha256,
-                passage: None,
-            }
-        }
-        FindingSite::Question(index) => {
-            let question = candidate.pointer(&format!("/questions/{index}"));
-            Unit {
-                title: format!("Question {}", index + 1),
-                sha256,
-                passage: if finding.kind == FindingKind::Quotation {
-                    None
-                } else {
-                    text(question, "prompt")
-                },
-            }
-        }
+    let part = part_at(candidate, site);
+    let title = match site {
+        FindingSite::Section(_) => site.titled(&text(part, "title").unwrap_or_default()),
+        FindingSite::Lesson | FindingSite::Question(_) => site.label(),
+    };
+    let passage = match site {
+        FindingSite::Question(_) if finding.kind != FindingKind::Quotation => text(part, "prompt"),
+        _ => None,
+    };
+    Unit {
+        title,
+        sha256: site_sha256(candidate, site),
+        passage,
     }
 }
 

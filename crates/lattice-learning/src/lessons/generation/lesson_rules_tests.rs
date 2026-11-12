@@ -243,7 +243,10 @@ fn each_broken_rule_says_what_is_wrong_in_plain_words() {
             "Section 5 has the same title as section 1.",
             "The lesson should have at least two explanations, two worked examples, one contrast and two checks, and one each of guided practice, independent practice, reflection and recap. It has 3 explanations, 2 worked examples, 1 contrast, 2 checks, 1 guided practice, 1 independent practice, 1 reflection, 0 recaps.",
             "Question 4 asks the same thing as question 3.",
-            "Question 5 repeats the answer choice \"Yes\"; each choice must differ.",
+            format!(
+                "Question 5: {}",
+                ChoiceFault::Repeated("Yes".to_owned()).message()
+            ),
         ]
     );
 }
@@ -884,36 +887,6 @@ fn first_question_notes(candidate: &Value) -> Vec<String> {
 }
 
 #[test]
-fn a_right_choice_much_longer_than_the_others_is_no_finding() {
-    let candidate = question_case(
-        "Which one is named first?",
-        [
-            "Bravo",
-            "Alpha, which keeps every entry in place, including the ones that sit beyond the marked edge",
-            "Charlie",
-            "Delta",
-        ],
-        1,
-    );
-    assert!(first_question_notes(&candidate).is_empty());
-}
-
-#[test]
-fn a_right_choice_repeating_a_value_its_prompt_states_is_no_finding() {
-    let candidate = question_case(
-        "Which rule says the Alpha limit stays inside the marked line?",
-        [
-            "the Alpha limit stays inside the marked line",
-            "Bravo moves past it",
-            "Charlie ignores it",
-            "Delta stops at once",
-        ],
-        0,
-    );
-    assert!(first_question_notes(&candidate).is_empty());
-}
-
-#[test]
 fn path_like_choices_break_no_question_rule() {
     let candidate = question_case(
         "Which command enters the folder one level up?",
@@ -1024,22 +997,106 @@ fn choices_note(options: Value) -> String {
 fn a_wrong_number_of_choices_is_named_with_its_count() {
     assert_eq!(
         choices_note(json!(["Alpha", "Bravo", "Charlie"])),
-        "Question 3 needs four answer choices; it has 3."
+        format!(
+            "Question 3 (candidate questions-2): {}",
+            ChoiceFault::Count {
+                has: 3,
+                wanted: CHOICES_PER_QUESTION..=CHOICES_PER_QUESTION
+            }
+            .message()
+        )
     );
 }
 
 #[test]
 fn a_repeated_choice_is_named_by_quoting_it() {
-    assert_eq!(
-        choices_note(json!(["Alpha", "Bravo", "Bravo.", "Charlie"])),
-        "Question 3 repeats the answer choice \"Bravo.\"; each choice must differ."
+    let note = choices_note(json!(["Alpha", "Bravo", "Bravo.", "Charlie"]));
+    assert!(
+        note.starts_with("Question 3 (candidate questions-2): "),
+        "{note}"
     );
+    assert!(note.contains("Bravo"), "{note}");
 }
 
 #[test]
 fn a_blank_choice_is_named() {
     assert_eq!(
         choices_note(json!(["Alpha", "  ", "Bravo", "Charlie"])),
-        "Question 3 has a blank answer choice."
+        format!(
+            "Question 3 (candidate questions-2): {}",
+            ChoiceFault::Blank.message()
+        )
     );
+}
+
+#[test]
+fn a_missing_prompt_is_noted_with_its_candidate_id() {
+    let mut candidate = lesson();
+    candidate["questions"][0]["prompt"] = json!("");
+    let notes: Vec<String> = lesson_rules(&candidate)
+        .into_iter()
+        .filter(|finding| finding.place().site == FindingSite::Question(0))
+        .map(|finding| finding.note)
+        .collect();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].starts_with("Question 1 (candidate questions-0)"),
+        "{notes:?}"
+    );
+}
+
+#[test]
+fn teaching_sentences_leave_out_tilde_fences() {
+    let sentences = teaching_sentences("Intro sentence here.\n\n~~~\nInside the fence.\n~~~\n");
+    assert!(
+        !sentences
+            .iter()
+            .any(|sentence| sentence.contains("Inside the fence.")),
+        "{sentences:?}"
+    );
+}
+
+#[test]
+fn a_check_whose_case_is_empty_does_not_split() {
+    assert_eq!(split_check(&format!("\n{CHECK_REVEAL}\n{REVEAL}")), None);
+    assert_eq!(split_check(&format!("{CASE}\n{CHECK_REVEAL}\n  ")), None);
+}
+
+fn rule_ids(findings: &[ReviewFinding]) -> Vec<String> {
+    findings
+        .iter()
+        .map(|finding| finding.id().as_str().to_owned())
+        .collect()
+}
+
+#[test]
+fn a_lesson_question_whose_right_choice_is_much_the_longest_is_a_finding() {
+    let candidate = question_case(
+        "Which one is named first?",
+        [
+            "Bravo",
+            "Alpha, which keeps every entry in place, including the ones that sit beyond the marked edge",
+            "Charlie",
+            "Delta",
+        ],
+        1,
+    );
+    let ids = rule_ids(&lesson_rules(&candidate));
+    assert_eq!(ids, ["rule/key-longest/question-0"], "{ids:?}");
+}
+
+#[test]
+fn a_lesson_question_whose_key_is_in_its_prompt_is_a_finding() {
+    let candidate = question_case(
+        "Which rule says the Alpha limit stays inside the marked line?",
+        [
+            "the Alpha limit stays inside the marked line",
+            "Bravo lets the limit move past the marked line",
+            "Charlie ignores the marked line in every case",
+            "Delta stops the limit before the marked line",
+        ],
+        0,
+    );
+    let ids = rule_ids(&lesson_rules(&candidate));
+    assert_eq!(ids, ["rule/answer-in-prompt/question-0"], "{ids:?}");
 }
