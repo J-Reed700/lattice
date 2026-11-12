@@ -301,18 +301,15 @@ impl ShapePolicy for StandardShape {
             .iter()
             .position(|block| text(block, "kind") == LearningBlockKind::Explanation.as_str());
         let questions = items(lesson, "questions");
-        let kind_lost = questions
+        let lacking = kinds_lacking(questions);
+        let kept = questions
             .iter()
-            .map(|question| text(question, "kind"))
-            .collect::<BTreeSet<_>>()
+            .enumerate()
+            .filter(|(at, _)| !going.contains(&(sections + at)))
+            .map(|(_, question)| question);
+        let kind_lost = kinds_lacking(kept)
             .into_iter()
-            .find(|kind| {
-                questions
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, question)| text(question, "kind") == *kind)
-                    .all(|(at, _)| going.contains(&(sections + at)))
-            });
+            .find(|kind| !lacking.contains(kind));
         if first.is_some_and(|unit| going.contains(&unit)) {
             Some("its first explanation would have to be taken out".to_owned())
         } else if 3 * lost > sections {
@@ -323,7 +320,7 @@ impl ShapePolicy for StandardShape {
             kind_lost.map(|kind| {
                 format!(
                     "its last {} question would have to be taken out",
-                    kind_name(kind)
+                    kind_name(kind.as_str())
                 )
             })
         }
@@ -386,6 +383,18 @@ fn kind_count(items: &[Value], kind: &str) -> usize {
         .iter()
         .filter(|item| text(item, "kind") == kind)
         .count()
+}
+
+/// The kinds of `LessonQuestionKind::ALL` that none of `questions` is.
+fn kinds_lacking<'a>(questions: impl IntoIterator<Item = &'a Value>) -> Vec<LessonQuestionKind> {
+    let asked: BTreeSet<&str> = questions
+        .into_iter()
+        .map(|question| text(question, "kind"))
+        .collect();
+    LessonQuestionKind::ALL
+        .into_iter()
+        .filter(|kind| !asked.contains(kind.as_str()))
+        .collect()
 }
 
 /// "2 checks", "1 contrast": `count` of `noun`, in the plural unless it is one.
@@ -637,9 +646,8 @@ fn explanation_finding(blocks: &[Value]) -> Option<ReviewFinding> {
 }
 
 fn question_kinds_finding(questions: &[Value]) -> Option<ReviewFinding> {
-    let missing: Vec<String> = LessonQuestionKind::ALL
+    let missing: Vec<String> = kinds_lacking(questions)
         .iter()
-        .filter(|kind| kind_count(questions, kind.as_str()) == 0)
         .map(|kind| kind.as_str().to_owned())
         .collect();
     if missing.is_empty() {

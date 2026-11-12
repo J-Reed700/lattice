@@ -212,8 +212,6 @@ pub enum Rule {
     PracticeRubric,
     /// A quotation matches no saved reference.
     Quotation,
-    /// Carried by rows stored earlier; no longer raised.
-    QuoteChecks,
     /// A section has no title.
     TitleMissing,
     /// Two sections share a title.
@@ -234,8 +232,6 @@ pub enum Rule {
     KeyLongest,
     /// A question's prompt contains its answer.
     AnswerInPrompt,
-    /// Carried by rows stored earlier; no longer raised.
-    KeyGivenAway,
     /// A question's rationales do not match its choices.
     RationaleCount,
     /// A wrong choice has no reason.
@@ -260,14 +256,8 @@ pub enum Rule {
     NoExplanation,
     /// A kind of question is missing.
     QuestionKinds,
-    /// Carried by rows stored earlier; no longer raised.
-    NoQuestion,
     /// A sentence copies the source's wording.
     CopiedWording,
-    /// Carried by rows stored earlier; no longer raised.
-    SentenceCitation,
-    /// Carried by rows stored earlier; no longer raised.
-    PartCitation,
 }
 
 /// How a finding can be corrected.
@@ -293,19 +283,15 @@ impl Rule {
             | Self::PromptRepeated
             | Self::KeyLongest
             | Self::AnswerInPrompt
-            | Self::KeyGivenAway
             | Self::Uncited
             | Self::CitationLabel
             | Self::SourceNumber
             | Self::SentenceRepeated
-            | Self::CopiedWording
-            | Self::SentenceCitation
-            | Self::PartCitation => Remedy::Edits,
+            | Self::CopiedWording => Remedy::Edits,
             Self::Unreadable
             | Self::Schema
             | Self::BlockBody
             | Self::PracticeRubric
-            | Self::QuoteChecks
             | Self::TitleMissing
             | Self::PromptMissing
             | Self::ExplanationMissing
@@ -317,8 +303,7 @@ impl Rule {
             | Self::SectionMix
             | Self::QuestionCount
             | Self::NoExplanation
-            | Self::QuestionKinds
-            | Self::NoQuestion => Remedy::Whole,
+            | Self::QuestionKinds => Remedy::Whole,
         }
     }
 }
