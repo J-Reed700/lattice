@@ -24,8 +24,8 @@ fn assert_not_found<T: std::fmt::Debug>(result: Result<T>) {
     );
 }
 
-async fn active_program(pool: &SqlitePool) -> Result<String> {
-    let repo = LearningRepository::new(pool.clone());
+async fn active_program(database: &Database) -> Result<String> {
+    let repo = LearningRepository::new(database.clone());
     let program = tests::fixture();
     repo.create(&program).await?;
     repo.accept(&AcceptLearningProgramRequestDto {
@@ -178,8 +178,9 @@ async fn check_row(
 #[tokio::test]
 async fn policy_changes_are_receipted_revision_guarded_and_kind_checked() -> Result<()> {
     let pool = tests::pool().await?;
-    let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let database = Database::new(pool.clone());
+    let program_id = active_program(&database).await?;
+    let library = LearningSourceLibraryRepository::new(database.clone());
     let (web, _) = add(
         &library,
         &program_id,
@@ -280,7 +281,9 @@ async fn policy_changes_are_receipted_revision_guarded_and_kind_checked() -> Res
     );
 
     let draft = tests::fixture();
-    LearningRepository::new(pool.clone()).create(&draft).await?;
+    LearningRepository::new(database.clone())
+        .create(&draft)
+        .await?;
     assert_not_found(
         library
             .update_policy(&policy_request(
@@ -297,8 +300,9 @@ async fn policy_changes_are_receipted_revision_guarded_and_kind_checked() -> Res
 #[tokio::test]
 async fn only_live_web_sources_with_a_refreshable_policy_are_offered_for_refresh() -> Result<()> {
     let pool = tests::pool().await?;
-    let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let database = Database::new(pool.clone());
+    let program_id = active_program(&database).await?;
+    let library = LearningSourceLibraryRepository::new(database.clone());
     let (manual, _) = add(
         &library,
         &program_id,
@@ -352,8 +356,9 @@ async fn only_live_web_sources_with_a_refreshable_policy_are_offered_for_refresh
 #[tokio::test]
 async fn refresh_guards_its_inputs_and_records_unusable_pages_as_failed_checks() -> Result<()> {
     let pool = tests::pool().await?;
-    let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let database = Database::new(pool.clone());
+    let program_id = active_program(&database).await?;
+    let library = LearningSourceLibraryRepository::new(database.clone());
     let (web, _) = add(
         &library,
         &program_id,
@@ -440,8 +445,9 @@ async fn refresh_guards_its_inputs_and_records_unusable_pages_as_failed_checks()
 async fn refreshing_to_known_text_reuses_its_version_and_adoption_needs_the_pending_one(
 ) -> Result<()> {
     let pool = tests::pool().await?;
-    let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let database = Database::new(pool.clone());
+    let program_id = active_program(&database).await?;
+    let library = LearningSourceLibraryRepository::new(database.clone());
     let (web, first_version) = add(
         &library,
         &program_id,
@@ -513,8 +519,9 @@ async fn refreshing_to_known_text_reuses_its_version_and_adoption_needs_the_pend
 #[tokio::test]
 async fn deleting_a_source_needs_a_reason_and_happens_once() -> Result<()> {
     let pool = tests::pool().await?;
-    let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let database = Database::new(pool.clone());
+    let program_id = active_program(&database).await?;
+    let library = LearningSourceLibraryRepository::new(database.clone());
     let (source_id, _) = add(
         &library,
         &program_id,
@@ -573,8 +580,9 @@ async fn deleting_a_source_needs_a_reason_and_happens_once() -> Result<()> {
 #[tokio::test]
 async fn capture_validates_metadata_and_keeps_only_a_meaningful_selection_note() -> Result<()> {
     let pool = tests::pool().await?;
-    let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let database = Database::new(pool.clone());
+    let program_id = active_program(&database).await?;
+    let library = LearningSourceLibraryRepository::new(database.clone());
     // The fixture program brings its own selected source.
     let fixture_rows = library_rows(&pool, &program_id).await?;
 
@@ -737,8 +745,9 @@ async fn shown_title_and_publisher(
 #[tokio::test]
 async fn a_long_title_or_publisher_is_cut_to_what_the_library_shows_never_refused() -> Result<()> {
     let pool = tests::pool().await?;
-    let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let database = Database::new(pool.clone());
+    let program_id = active_program(&database).await?;
+    let library = LearningSourceLibraryRepository::new(database.clone());
     let title = "A headline that runs on and on. "
         .repeat(12)
         .trim()
@@ -774,8 +783,9 @@ async fn a_long_title_or_publisher_is_cut_to_what_the_library_shows_never_refuse
 #[tokio::test]
 async fn a_refreshed_page_with_a_long_title_or_publisher_is_cut_never_failed() -> Result<()> {
     let pool = tests::pool().await?;
-    let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let database = Database::new(pool.clone());
+    let program_id = active_program(&database).await?;
+    let library = LearningSourceLibraryRepository::new(database.clone());
     let (web, _) = add(
         &library,
         &program_id,
@@ -823,8 +833,9 @@ async fn legacy_snapshot(pool: &SqlitePool, program_id: &str) -> Result<String> 
 #[tokio::test]
 async fn backfilling_legacy_snapshots_keeps_none_when_one_is_refused() -> Result<()> {
     let pool = tests::pool().await?;
-    let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let database = Database::new(pool.clone());
+    let program_id = active_program(&database).await?;
+    let library = LearningSourceLibraryRepository::new(database.clone());
     legacy_snapshot(&pool, &program_id).await?;
     legacy_snapshot(&pool, &program_id).await?;
     sqlx::query("CREATE TRIGGER refuse_for_test BEFORE UPDATE ON learning_source_versions WHEN (SELECT COUNT(*) FROM learning_source_versions WHERE extraction_version='legacy_bounded_extraction_v1' AND content_sha256<>'')>=1 BEGIN SELECT RAISE(ABORT, 'refused for the test'); END")
@@ -846,8 +857,9 @@ async fn backfilling_legacy_snapshots_keeps_none_when_one_is_refused() -> Result
 #[tokio::test]
 async fn a_selected_source_whose_note_cannot_be_saved_is_not_added() -> Result<()> {
     let pool = tests::pool().await?;
-    let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let database = Database::new(pool.clone());
+    let program_id = active_program(&database).await?;
+    let library = LearningSourceLibraryRepository::new(database.clone());
     sqlx::query("CREATE TRIGGER refuse_for_test BEFORE UPDATE ON learning_source_library BEGIN SELECT RAISE(ABORT, 'refused for the test'); END")
         .execute(&pool)
         .await

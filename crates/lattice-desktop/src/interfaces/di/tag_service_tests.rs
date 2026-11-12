@@ -6,11 +6,10 @@ use std::sync::Arc;
 #[tokio::test]
 async fn the_container_hands_one_tag_service_to_tags_and_file_metadata() -> anyhow::Result<()> {
     let data = tempfile::tempdir()?;
-    let database = Arc::new(DatabaseConnection::new(data.path().join("app.db")).await?);
+    let database = DatabaseConnection::new(data.path().join("app.db")).await?;
     initialize_database(database.database()).await?;
     let container = Container::new(
         database.database().clone(),
-        database,
         None,
         "http://127.0.0.1:1",
         "test-model",

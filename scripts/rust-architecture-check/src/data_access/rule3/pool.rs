@@ -5,57 +5,20 @@ use quote::ToTokens;
 use std::collections::{HashMap, HashSet};
 use syn::{
     visit::{self, Visit},
-    Expr, GenericParam, Generics, Type, TypeParamBound, WherePredicate,
+    Expr, Type,
 };
 
 const POOL_TYPES: [&str; 4] = ["Database", "SqlitePool", "PgPool", "Pool"];
 const POOL_CALLS: [&str; 3] = ["database", "db_pool", "sqlx_pool"];
 const ALIAS_CALLS: [&str; 4] = ["clone", "as_ref", "as_deref", "to_owned"];
 
-fn driver_bound<'a>(bounds: impl IntoIterator<Item = &'a TypeParamBound>) -> bool {
-    bounds.into_iter().any(|bound| {
-        matches!(bound, TypeParamBound::Trait(item)
-            if item.path.segments.last().is_some_and(|last| last.ident == "DriverPool"))
-    })
-}
-
-/// The generic parameters bounded by `DriverPool`.
-pub(super) fn bounded(generics: &Generics) -> HashSet<String> {
-    let mut names = HashSet::new();
-    for param in &generics.params {
-        if let GenericParam::Type(param) = param {
-            if driver_bound(&param.bounds) {
-                names.insert(param.ident.to_string());
-            }
-        }
-    }
-    if let Some(clause) = &generics.where_clause {
-        for predicate in &clause.predicates {
-            let WherePredicate::Type(predicate) = predicate else {
-                continue;
-            };
-            if let Type::Path(ty) = &predicate.bounded_ty {
-                if let (true, Some(name)) = (driver_bound(&predicate.bounds), ty.path.get_ident()) {
-                    names.insert(name.to_string());
-                }
-            }
-        }
-    }
-    names
-}
-
-struct Named<'a> {
-    bounded: &'a HashSet<String>,
+struct Named {
     found: bool,
 }
 
-impl<'ast> Visit<'ast> for Named<'_> {
+impl<'ast> Visit<'ast> for Named {
     fn visit_path_segment(&mut self, segment: &'ast syn::PathSegment) {
-        let name = segment.ident.to_string();
-        if POOL_TYPES.contains(&name.as_str())
-            || name == "DriverPool"
-            || self.bounded.contains(&name)
-        {
+        if POOL_TYPES.contains(&segment.ident.to_string().as_str()) {
             self.found = true;
         }
         visit::visit_path_segment(self, segment);
@@ -63,11 +26,8 @@ impl<'ast> Visit<'ast> for Named<'_> {
 }
 
 /// Whether a type is, or holds behind `&`, `Arc` or `Option`, a pool.
-pub(super) fn pool_type(ty: &Type, bounded: &HashSet<String>) -> bool {
-    let mut named = Named {
-        bounded,
-        found: false,
-    };
+pub(super) fn pool_type(ty: &Type) -> bool {
+    let mut named = Named { found: false };
     named.visit_type(ty);
     named.found
 }
@@ -80,11 +40,10 @@ struct Structs {
 
 impl<'ast> Visit<'ast> for Structs {
     fn visit_item_struct(&mut self, item: &'ast syn::ItemStruct) {
-        let bounded = bounded(&item.generics);
         let pools = item
             .fields
             .iter()
-            .filter(|field| pool_type(&field.ty, &bounded))
+            .filter(|field| pool_type(&field.ty))
             .filter_map(|field| field.ident.as_ref().map(ToString::to_string))
             .collect();
         self.fields.insert(item.ident.to_string(), pools);

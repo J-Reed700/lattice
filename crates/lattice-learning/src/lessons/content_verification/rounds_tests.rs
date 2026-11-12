@@ -122,14 +122,11 @@ async fn a_source_added_after_the_lesson_was_verified_does_not_stop_it_publishin
     let sources = course.references().await?;
     let (_, prepared) = staged(&model, &course.lesson_id, &sources).await?;
     // Research, or the user, saves another page.
-    install_source(
-        &course.pool,
-        &course.program_id,
-        "A page on another subject.",
-    )
-    .await?;
+    install_source(&course.db, &course.program_id, "A page on another subject.").await?;
 
-    let mut tx = lattice_core::shared::persistence::Transactions::begin_write(&course.pool)
+    let mut tx = course
+        .db
+        .begin_write()
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
     persist_report(&mut tx, &course.program_id, &course.lesson_id, &prepared).await?;
@@ -149,7 +146,9 @@ async fn a_source_the_report_is_bound_to_changing_still_stops_publication() -> R
         report.sources[0].sha256.push('x');
     }
 
-    let mut tx = lattice_core::shared::persistence::Transactions::begin_write(&course.pool)
+    let mut tx = course
+        .db
+        .begin_write()
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
     let error = persist_report(&mut tx, &course.program_id, &course.lesson_id, &prepared)

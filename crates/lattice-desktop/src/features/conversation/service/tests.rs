@@ -1,5 +1,6 @@
 use super::*;
 use crate::features::conversation::repository::ConversationRepository;
+use lattice_core::shared::persistence::Database;
 use sqlx::SqlitePool;
 
 #[tokio::test]
@@ -102,7 +103,9 @@ async fn seed_documents(pool: &SqlitePool, ids: &[&str]) {
 /// Create test service with fresh database
 async fn create_test_service() -> (ConversationService, SqlitePool) {
     let pool = create_test_pool().await;
-    let service = ConversationService::new(Arc::new(ConversationRepository::new(pool.clone())));
+    let service = ConversationService::new(Arc::new(ConversationRepository::new(Database::new(
+        pool.clone(),
+    ))));
     (service, pool)
 }
 

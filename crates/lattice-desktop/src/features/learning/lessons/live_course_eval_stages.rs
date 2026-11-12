@@ -237,20 +237,20 @@ pub(super) fn stage_cost(run: &Path, calls: std::ops::Range<usize>, seconds: f64
 /// The outline stage, then each selected lesson; what done.json records.
 pub(super) async fn run_stages(
     run: &mut Run,
-    pool: &sqlx::SqlitePool,
+    database: &Database,
     options: &sqlx::sqlite::SqliteConnectOptions,
     request: &GenerateLearningProgramRequestDto,
     selectors: &[String],
 ) -> Result<(Value, Value)> {
-    let accepted = outline_stage(run, pool, request).await?;
+    let accepted = outline_stage(run, database, request).await?;
     let mut lessons = serde_json::Map::new();
     for selector in selectors {
         let outcome = match &accepted {
             Some(program) => {
                 let outcome =
-                    lesson_stage(run, pool, options, &program.summary.id, selector).await?;
+                    lesson_stage(run, database, options, &program.summary.id, selector).await?;
                 if outcome == "ready" {
-                    super::quiz::quiz_stage(run, pool, &program.summary.id, selector).await?;
+                    super::quiz::quiz_stage(run, database, &program.summary.id, selector).await?;
                 }
                 outcome
             }
@@ -267,15 +267,17 @@ pub(super) async fn run_stages(
 /// accepted course, or `None` when the outline did not pass.
 async fn outline_stage(
     run: &mut Run,
-    pool: &sqlx::SqlitePool,
+    database: &Database,
     request: &GenerateLearningProgramRequestDto,
 ) -> Result<Option<LearningProgramDto>> {
-    let repo = LearningRepository::new(pool.clone());
+    let repo = LearningRepository::new(database.clone());
     let drafts = DraftRunRegistry::new();
+    let mut read = database.begin_read().await.map_err(db)?;
     let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM learning_programs")
-        .fetch_all(pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(db)?;
+    read.commit().await.map_err(db)?;
     if ids.len() > 1 {
         return Err(refuse("the run database holds more than one course"));
     }
@@ -474,7 +476,7 @@ async fn record_outline(
 /// and recorded once its job settles. Returns its outcome.
 async fn lesson_stage(
     run: &mut Run,
-    pool: &sqlx::SqlitePool,
+    database: &Database,
     options: &sqlx::sqlite::SqliteConnectOptions,
     program_id: &str,
     selector: &str,
@@ -486,7 +488,7 @@ async fn lesson_stage(
     let job_dir = run.dir.join("jobs").join(selector);
     std::fs::create_dir_all(&job_dir)?;
     let job_id_file = job_dir.join("job-id.txt");
-    let jobs = LearningCurriculumRepository::new(pool.clone());
+    let jobs = LearningCurriculumRepository::new(database.clone());
     let saved = match std::fs::read_to_string(&job_id_file) {
         Ok(id) => Some(jobs.job(id.trim()).await?),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -501,7 +503,7 @@ async fn lesson_stage(
         return Ok(recorded["outcome"].as_str().unwrap_or("unknown").to_owned());
     }
     let (module, position) = parse_selector(selector)?;
-    let program = LearningRepository::new(pool.clone())
+    let program = LearningRepository::new(database.clone())
         .get(program_id)
         .await?;
     let Some(lesson_id) = program
@@ -533,7 +535,7 @@ async fn lesson_stage(
         }
         (LessonStep::Dispatch, Some(job)) => {
             // As native startup does: a job left running is requeued.
-            JobStore::new(pool.clone())
+            JobStore::new(database.clone())
                 .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
                 .await?;
             Some(job.id.clone())
@@ -583,11 +585,10 @@ async fn lesson_stage(
             };
             // As the app wires it: one runtime runs the lesson and the course
             // index builds, and the worker searches the course's index.
-            let database = Database::from(pool.clone());
             let runtime = lattice_core::shared::runtime::jobs::JobRuntime::new(database.clone());
             let courses = CourseIndexes::new(
                 run.dir.join("course-index"),
-                database,
+                database.clone(),
                 Arc::new(super::super::GivenModel(Some(run.embedder.clone()))),
                 Arc::new(crate::features::search::trait_def::HybridSearchUseCaseFactory),
                 Arc::clone(&runtime),
@@ -596,7 +597,7 @@ async fn lesson_stage(
             );
             let failures = runtime.register_all(vec![courses.job_kind()]).await;
             assert!(failures.is_empty(), "{failures:?}");
-            let worker = small::worker(pool, run.model.clone(), run.web.clone(), Some(courses));
+            let worker = small::worker(database, run.model.clone(), run.web.clone(), Some(courses));
             small::run_job(runtime, worker, &id, &job_dir, &observe).await?
         }
         None => {
@@ -609,11 +610,13 @@ async fn lesson_stage(
     let seconds = started.elapsed().as_secs_f64();
 
     // Read what was published from a new connection, as the app would.
-    let reopened = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(options.clone())
-        .await
-        .map_err(db)?;
+    let reopened = Database::new(
+        sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options.clone())
+            .await
+            .map_err(db)?,
+    );
     let library = LearningRepository::new(reopened.clone());
     let lesson = library
         .get(program_id)
@@ -623,14 +626,16 @@ async fn lesson_stage(
         .and_then(|m| m.lessons.get(position))
         .cloned()
         .ok_or_else(|| refuse(format!("lesson {selector} is no longer in the course")))?;
+    let mut read = reopened.begin_read().await.map_err(db)?;
     let report: Option<String> = sqlx::query_scalar(
         "SELECT report_json FROM learning_lesson_verifications WHERE program_id=? AND lesson_id=?",
     )
     .bind(program_id)
     .bind(&lesson.id)
-    .fetch_optional(&reopened)
+    .fetch_optional(&mut *read)
     .await
     .map_err(db)?;
+    read.commit().await.map_err(db)?;
     let report: Option<Value> = report.as_deref().map(serde_json::from_str).transpose()?;
     // The lesson's questions are bank items now; the quiz stage records them with their keys.
     let sources = library.verification_sources(program_id).await?;

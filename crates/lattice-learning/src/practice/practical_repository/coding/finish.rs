@@ -37,7 +37,8 @@ impl LearningPracticalRepository {
         uuid(session_id, "coding session")?;
         uuid(op.operation_id, "operation")?;
         write.scorecard.validate()?;
-        let mut tx = self.begin_coding_write(program_id).await?;
+        uuid(program_id, "program")?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = op.operation(program_id, session_id);
         if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
@@ -132,10 +133,14 @@ impl LearningPracticalRepository {
     /// How many evidence events a session left, for tests.
     #[cfg(test)]
     pub(crate) async fn coding_evidence_count(&self, session_id: &str) -> Result<i64> {
-        sqlx::query_scalar("SELECT count(*) FROM learning_evidence_events WHERE source_id=?")
-            .bind(session_id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(db)
+        let mut read = self.db.begin_read().await.map_err(db)?;
+        let count =
+            sqlx::query_scalar("SELECT count(*) FROM learning_evidence_events WHERE source_id=?")
+                .bind(session_id)
+                .fetch_one(&mut *read)
+                .await
+                .map_err(db)?;
+        read.commit().await.map_err(db)?;
+        Ok(count)
     }
 }

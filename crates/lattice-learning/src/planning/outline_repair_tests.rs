@@ -18,6 +18,7 @@ use crate::{
 };
 use lattice_core::application::services::claim_verification::ClaimVerdict;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use serde_json::{json, Value};
 
 fn with_summary(text: &str) -> Value {
@@ -57,7 +58,7 @@ async fn generate_with(
 #[tokio::test]
 async fn a_supported_factual_finding_is_closed_by_attached_evidence_without_a_rewrite() -> Result<()>
 {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let mut source = original_source();
     source.excerpt = ADDITIONAL.into();
     let sources = vec![source.clone()];
@@ -119,7 +120,7 @@ async fn a_supported_factual_finding_is_closed_by_attached_evidence_without_a_re
 #[tokio::test]
 async fn a_contradicted_factual_finding_is_rewritten_with_the_contradicting_passage() -> Result<()>
 {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let wrong = "Random assignment increases confounding when treatment groups are compared.";
     let mut source = original_source();
     source.excerpt = ADDITIONAL.into();
@@ -183,7 +184,7 @@ async fn a_contradicted_factual_finding_is_rewritten_with_the_contradicting_pass
 
 #[tokio::test]
 async fn an_unsupported_assertion_is_narrowed_then_removed_then_left_for_the_user() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let claim = "Random assignment isolates the intervention and eliminates every source of bias in a comparison.";
     let sources = vec![original_source()];
     let initial = with_summary(claim);
@@ -247,7 +248,7 @@ async fn an_unsupported_assertion_is_narrowed_then_removed_then_left_for_the_use
 
 #[tokio::test]
 async fn a_module_that_keeps_spawning_findings_runs_out_of_rewrites() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     let first = module_with_objective(&initial, 0, "Measure the first comparison.");
     let mut second = first.clone();
@@ -319,7 +320,7 @@ async fn a_module_that_keeps_spawning_findings_runs_out_of_rewrites() -> Result<
 
 #[tokio::test]
 async fn plan_repair_never_adds_a_citation() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let sources = vec![original_source()];
     let initial = candidate();
     let mut fixed = initial["modules"][0].clone();
@@ -377,7 +378,7 @@ async fn plan_repair_never_adds_a_citation() -> Result<()> {
 
 #[tokio::test]
 async fn second_plan_attempt_asks_for_the_smallest_edit() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     let llm = model(vec![
         initial.clone(),
@@ -423,7 +424,7 @@ async fn second_plan_attempt_asks_for_the_smallest_edit() -> Result<()> {
 #[tokio::test]
 async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the_planner_what_was_searched(
 ) -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let claim = "Random assignment isolates the intervention and limits confounding when groups are compared.";
     let reason = "No saved reference states this; it needs a primary source.";
     // First run: the one page the search finds is irrelevant, the judge finds
@@ -568,7 +569,7 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
 
 #[tokio::test]
 async fn an_unchanged_last_attempt_leaves_a_plan_finding_as_an_advisory_and_passes() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     let first = module_with_objective(&initial, 0, "Measure the first comparison.");
     let llm = model(vec![
@@ -606,7 +607,7 @@ async fn an_unchanged_last_attempt_leaves_a_plan_finding_as_an_advisory_and_pass
 #[tokio::test]
 async fn a_first_attempt_that_keeps_the_module_leaves_a_plan_finding_as_an_advisory_and_passes(
 ) -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     let llm = model(vec![
         initial.clone(),
@@ -644,7 +645,7 @@ fn clashing_correction(initial: &Value) -> Value {
 
 #[tokio::test]
 async fn a_correction_that_repeats_another_modules_title_is_asked_again_and_saved() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     let llm = model(vec![
         initial.clone(),
@@ -688,7 +689,7 @@ async fn a_correction_that_repeats_another_modules_title_is_asked_again_and_save
 
 #[tokio::test]
 async fn a_correction_still_unusable_keeps_its_module_and_repair_goes_on() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     let mut second = initial["modules"][1].clone();
     second["lessons"][0]["objective"] = json!("Measure the second comparison.");
@@ -753,7 +754,7 @@ async fn a_correction_still_unusable_keeps_its_module_and_repair_goes_on() -> Re
 
 #[tokio::test]
 async fn a_pass_whose_only_correction_is_unusable_says_why_and_keeps_the_findings() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     let llm = model(vec![
         initial.clone(),
@@ -815,7 +816,8 @@ fn lesson_ids(program: &LearningProgramDto, module: usize) -> Vec<String> {
 #[tokio::test]
 async fn a_repair_may_add_a_lesson_and_keeps_every_saved_identity_in_order() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db);
     let initial = candidate();
     let drafts = DraftRunRegistry::new();
     // Both answers in the first run are unusable, so the finding stays open.
@@ -920,7 +922,7 @@ async fn a_repair_may_add_a_lesson_and_keeps_every_saved_identity_in_order() -> 
 
 #[tokio::test]
 async fn an_answer_that_drops_a_lesson_is_asked_again() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     let mut dropped = initial["modules"][0].clone();
     if let Some(lessons) = dropped["lessons"].as_array_mut() {
@@ -960,7 +962,7 @@ async fn an_answer_that_drops_a_lesson_is_asked_again() -> Result<()> {
 #[tokio::test]
 async fn a_kept_lesson_after_an_inserted_one_keeps_its_citation_and_the_new_lesson_is_linked(
 ) -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let mut initial = candidate();
     initial["modules"][0]["lessons"][1]["objective"] = json!(ORIGINAL);
     cite_at(&mut initial, "/modules/0/lessons/1", 0, ORIGINAL);
@@ -1045,7 +1047,8 @@ async fn saved_fixture(
 async fn saving_an_outline_with_an_added_lesson_inserts_it_and_renumbers_the_module() -> Result<()>
 {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db);
     let (mut program, mut draft) = saved_fixture(&repo).await?;
     let saved_ids = lesson_ids(&program, 0);
     let mut added = program.modules[0].lessons[0].clone();
@@ -1077,7 +1080,7 @@ async fn saving_an_outline_with_an_added_lesson_inserts_it_and_renumbers_the_mod
 
 #[tokio::test]
 async fn saving_an_outline_that_loses_a_saved_lesson_is_refused() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let (mut program, mut draft) = saved_fixture(&repo).await?;
     program.modules[0].lessons.remove(0);
     assert!(repo

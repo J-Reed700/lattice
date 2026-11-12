@@ -9,8 +9,9 @@ async fn missing_utility_and_failed_compaction_never_release_an_incomplete_plan(
         AppError::InvalidState("Utility model request failed".into()),
     ] {
         let pool = database().await;
-        let id = seed(&pool, LONG_CONVERSATION).await;
-        let repository = ConversationRepository::new(pool.clone());
+        let db = Database::new(pool.clone());
+        let id = seed(&db, LONG_CONVERSATION).await;
+        let repository = ConversationRepository::new(db.clone());
         let model = llm();
         let before = repository.load_memory_snapshot(&id).await.unwrap();
         let attempts = std::cell::Cell::new(0);
@@ -48,8 +49,9 @@ async fn missing_utility_and_failed_compaction_never_release_an_incomplete_plan(
 #[tokio::test]
 async fn successful_noop_cannot_release_an_incomplete_plan_or_retry_forever() {
     let pool = database().await;
-    let id = seed(&pool, LONG_CONVERSATION).await;
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let id = seed(&db, LONG_CONVERSATION).await;
+    let repository = ConversationRepository::new(db.clone());
     let model = llm();
     let builds = std::cell::Cell::new(0);
     let attempts = std::cell::Cell::new(0);
@@ -86,8 +88,9 @@ async fn successful_noop_cannot_release_an_incomplete_plan_or_retry_forever() {
 #[tokio::test]
 async fn partial_commit_is_preserved_but_does_not_authorize_generation_with_missing_source() {
     let pool = database().await;
-    let id = seed(&pool, LONG_CONVERSATION).await;
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let id = seed(&db, LONG_CONVERSATION).await;
+    let repository = ConversationRepository::new(db.clone());
     let model = llm();
     let result = prepare_memory_turn(
         || {
@@ -104,7 +107,7 @@ async fn partial_commit_is_preserved_but_does_not_authorize_generation_with_miss
             )
         },
         || async {
-            record_constraint_through(&pool, &id, Some(1)).await;
+            record_constraint_through(&pool, &db, &id, Some(1)).await;
             Ok(())
         },
     )
@@ -122,8 +125,9 @@ async fn partial_commit_is_preserved_but_does_not_authorize_generation_with_miss
 #[tokio::test]
 async fn a_rebuilt_complete_plan_can_continue_with_the_original_restriction() {
     let pool = database().await;
-    let id = seed(&pool, LONG_CONVERSATION).await;
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let id = seed(&db, LONG_CONVERSATION).await;
+    let repository = ConversationRepository::new(db.clone());
     let model = llm();
     let result = prepare_memory_turn(
         || {
@@ -140,7 +144,7 @@ async fn a_rebuilt_complete_plan_can_continue_with_the_original_restriction() {
             )
         },
         || async {
-            record_constraint(&pool, &id).await;
+            record_constraint(&pool, &db, &id).await;
             Ok(())
         },
     )
@@ -159,8 +163,9 @@ async fn a_rebuilt_complete_plan_can_continue_with_the_original_restriction() {
 #[tokio::test]
 async fn complete_raw_history_and_disabled_memory_do_not_need_a_utility_model() {
     let pool = database().await;
-    let id = seed(&pool, 4).await;
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let id = seed(&db, 4).await;
+    let repository = ConversationRepository::new(db.clone());
     let model = llm();
     for enabled in [true, false] {
         let result = prepare_memory_turn(
@@ -188,8 +193,9 @@ async fn complete_raw_history_and_disabled_memory_do_not_need_a_utility_model() 
 #[tokio::test]
 async fn fewer_than_64_messages_can_still_require_compaction_before_the_first_ledger() {
     let pool = database().await;
-    let id = seed(&pool, 4).await;
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let id = seed(&db, 4).await;
+    let repository = ConversationRepository::new(db.clone());
     repository
         .add_message(
             &id,
@@ -234,11 +240,12 @@ async fn fewer_than_64_messages_can_still_require_compaction_before_the_first_le
 #[tokio::test]
 async fn invalidated_memory_must_recheck_raw_history_instead_of_falling_back() {
     let pool = database().await;
-    let id = seed(&pool, LONG_CONVERSATION).await;
-    record_constraint(&pool, &id).await;
+    let db = Database::new(pool.clone());
+    let id = seed(&db, LONG_CONVERSATION).await;
+    record_constraint(&pool, &db, &id).await;
     sqlx::query("UPDATE conversation_messages SET content = 'Do not deploy at all.' WHERE conversation_id = ? AND sequence = 1")
         .bind(&id).execute(&pool).await.unwrap();
-    let repository = ConversationRepository::new(pool.clone());
+    let repository = ConversationRepository::new(db.clone());
     assert!(!repository
         .load_memory_snapshot(&id)
         .await
@@ -271,8 +278,9 @@ async fn invalidated_memory_must_recheck_raw_history_instead_of_falling_back() {
 #[tokio::test]
 async fn a_byte_limited_source_page_reports_its_missing_tail() {
     let pool = database().await;
-    let id = seed(&pool, 0).await;
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let id = seed(&db, 0).await;
+    let repository = ConversationRepository::new(db.clone());
     // Three of 400 KB: one source page (1 MiB) holds the newest two.
     for _ in 0..3 {
         repository
@@ -313,8 +321,9 @@ async fn a_byte_limited_source_page_reports_its_missing_tail() {
 #[tokio::test]
 async fn a_fallback_after_compaction_cannot_bypass_the_generation_gate() {
     let pool = database().await;
-    let id = seed(&pool, LONG_CONVERSATION).await;
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let id = seed(&db, LONG_CONVERSATION).await;
+    let repository = ConversationRepository::new(db.clone());
     let model = llm();
     let enabled = std::cell::Cell::new(true);
     let result = prepare_memory_turn(
@@ -367,8 +376,9 @@ impl LLMPort for LargeWindow {
 #[tokio::test]
 async fn a_long_chat_of_short_turns_rides_verbatim_in_a_large_window() {
     let pool = database().await;
-    let id = seed(&pool, 200).await;
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let id = seed(&db, 200).await;
+    let repository = ConversationRepository::new(db.clone());
     let model: Arc<dyn LLMPort> = Arc::new(LargeWindow);
 
     let built = build_memory_plan(

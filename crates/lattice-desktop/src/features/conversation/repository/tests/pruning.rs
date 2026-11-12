@@ -3,13 +3,15 @@
 use super::*;
 use crate::features::conversation::repository::ConversationRepository;
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::persistence::Database;
 
 #[tokio::test]
 async fn test_truncate_after_exclusive() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     let deleted = repo
         .truncate_after(&conversation_id, "m2", false)
@@ -26,7 +28,8 @@ async fn pruning_commits_messages_bookmarks_and_totals_together() {
     setup_schema(&pool).await;
     let id = seed_thread(&pool).await;
     seed_pruning_bookmarks(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let selected = vec!["m1".into(), "m2".into(), "m2".into(), "missing".into()];
     assert_eq!(repo.delete_messages(&id, &selected).await.unwrap(), 2);
     assert_eq!(message_ids(&pool, &id).await, vec!["m3", "m4"]);
@@ -48,7 +51,8 @@ async fn pruning_failure_rolls_back_and_allows_retry() {
         setup_schema(&pool).await;
         let id = seed_thread(&pool).await;
         seed_pruning_bookmarks(&pool).await;
-        let repo = ConversationRepository::new(pool.clone());
+        let db = Database::new(pool.clone());
+        let repo = ConversationRepository::new(db.clone());
         sqlx::query(&format!("CREATE TRIGGER reject_pruning BEFORE {operation} BEGIN SELECT RAISE(ABORT, 'injected pruning failure'); END"))
                 .execute(&pool).await.unwrap();
         let result = repo.delete_messages(&id, &["m1".into(), "m2".into()]).await;
@@ -89,7 +93,8 @@ async fn pruning_cannot_delete_another_conversations_messages_or_bookmarks() {
     .await;
     sqlx::query("INSERT INTO conversation_message_bookmarks (id, conversation_id, message_id) VALUES ('b3', 'other', 'foreign')")
             .execute(&pool).await.unwrap();
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     assert_eq!(
         repo.delete_messages(&id, &["m1".into(), "foreign".into()])
             .await
@@ -106,7 +111,8 @@ async fn test_truncate_after_inclusive() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     let deleted = repo
         .truncate_after(&conversation_id, "m2", true)
@@ -137,7 +143,8 @@ async fn test_truncate_after_deletes_orphaned_bookmarks() {
             .unwrap();
     }
 
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     repo.truncate_after(&conversation_id, "m2", false)
         .await
         .unwrap();
@@ -200,7 +207,8 @@ async fn test_truncate_after_same_second_ordering() {
     )
     .await;
 
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let deleted = repo.truncate_after("conv-2", "t1", false).await.unwrap();
 
     assert_eq!(deleted, 2);
@@ -212,7 +220,8 @@ async fn test_take_last_user_turn_removes_trailing_assistants_only() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     let taken = repo
         .take_last_user_turn(&conversation_id)
@@ -253,7 +262,8 @@ async fn test_take_last_user_turn_none_when_no_user_message() {
     )
     .await;
 
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     assert!(repo.take_last_user_turn("conv-3").await.unwrap().is_none());
     assert_eq!(message_ids(&pool, "conv-3").await, vec!["s1"]);
 }

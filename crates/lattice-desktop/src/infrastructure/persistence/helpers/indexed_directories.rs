@@ -4,15 +4,15 @@
 //! FileAccessConfig allowed_roots at application startup.
 
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Database;
 use std::path::PathBuf;
 
 /// Query unique top-level indexed directories from documents table
 ///
 /// Extracts the first path component (directory name) from all indexed
 /// file paths to determine which directories have been indexed.
-pub async fn query_indexed_directories(pool: &impl DriverPool) -> Result<Vec<PathBuf>> {
-    let pool = pool.sqlx_pool();
+pub async fn query_indexed_directories(db: &Database) -> Result<Vec<PathBuf>> {
+    let mut read = db.begin_read().await?;
     let rows = sqlx::query!(
         r#"
         SELECT DISTINCT
@@ -27,9 +27,10 @@ pub async fn query_indexed_directories(pool: &impl DriverPool) -> Result<Vec<Pat
         ORDER BY root_dir
         "#
     )
-    .fetch_all(pool)
+    .fetch_all(&mut *read)
     .await
     .map_err(|e| AppError::Database(format!("Failed to query indexed directories: {}", e)))?;
+    read.commit().await?;
 
     Ok(rows
         .into_iter()
@@ -45,6 +46,7 @@ mod tests {
     #[tokio::test]
     async fn test_query_indexed_directories() {
         let pool = SqlitePoolOptions::new().connect(":memory:").await.unwrap();
+        let db = Database::new(pool.clone());
 
         sqlx::query(
             "CREATE TABLE documents (
@@ -86,7 +88,7 @@ mod tests {
             .unwrap();
 
         // Query directories
-        let dirs = query_indexed_directories(&pool).await.unwrap();
+        let dirs = query_indexed_directories(&db).await.unwrap();
 
         assert_eq!(dirs.len(), 2);
         assert!(dirs.contains(&PathBuf::from("notes")));

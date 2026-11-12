@@ -59,7 +59,7 @@ async fn a_site_override_covers_the_site_in_every_course_with_or_without_a_class
     let here = page(&course, "https://developer.example.org/api").await?;
     page(&course, "https://elsewhere.example.net/api").await?;
     let other = Course {
-        program_id: course_on(&course.pool).await?,
+        program_id: course_on(&course.database).await?,
         pool: course.pool.clone(),
         database: course.database.clone(),
         library: course.library.clone(),

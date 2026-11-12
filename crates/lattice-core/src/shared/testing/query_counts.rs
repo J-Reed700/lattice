@@ -4,6 +4,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use crate::shared::persistence::transactions::CHANGED_ROWS;
 use std::future::Future;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -88,6 +89,9 @@ impl<S: Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for Reads {
         } else {
             statement.sql
         };
+        if sql == CHANGED_ROWS {
+            return;
+        }
         if sql.starts_with("SELECT") || sql.starts_with("WITH") {
             count.reads.fetch_add(1, Ordering::Relaxed);
         } else if ["INSERT", "UPDATE", "DELETE", "REPLACE"]
@@ -99,6 +103,7 @@ impl<S: Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for Reads {
     }
 }
 
+/// Counts SELECT/WITH statements, excluding a read unit's check of its own changes.
 pub async fn count_reads<F: Future>(operation: F) -> (F::Output, usize) {
     let (result, count) = count_queries(operation).await;
     (result, count.reads.load(Ordering::Relaxed))
@@ -176,4 +181,21 @@ async fn counter_observes_worker_reads_and_excludes_writes() {
     })
     .await;
     assert_eq!(writes, 3);
+}
+
+#[tokio::test]
+async fn a_read_units_check_of_its_own_changes_is_not_counted() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    let database = crate::shared::persistence::Database::new(pool);
+    let (_, count) = count_reads(async {
+        let mut read = database.begin_read().await.unwrap();
+        sqlx::query("SELECT 1").fetch_one(&mut *read).await.unwrap();
+        read.commit().await.unwrap();
+    })
+    .await;
+    assert_eq!(count, 1);
 }

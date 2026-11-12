@@ -4,7 +4,7 @@ pub mod migrate;
 pub mod performance_indexes;
 pub mod schema;
 
-pub use connection::{query_with_quick_timeout, query_with_timeout, DatabaseConnection};
+pub use connection::{open_to_change, open_to_read, DatabaseConnection};
 pub use init::initialize_database;
 pub use migrate::run_migrations;
 pub use performance_indexes::get_index_stats;

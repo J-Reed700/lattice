@@ -1,6 +1,5 @@
 use super::*;
 use lattice_core::shared::http::normalize_web_source_url;
-use lattice_core::shared::persistence::Transactions;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct ConversationLinkedDocumentRow {
@@ -30,6 +29,7 @@ impl ConversationRepository {
         &self,
         conversation_id: String,
     ) -> Result<Vec<ConversationLinkedDocumentDto>, AppError> {
+        let mut read = self.db.begin_read().await?;
         let linked_docs = sqlx::query_as::<_, ConversationLinkedDocumentRow>(
             r#"
         SELECT
@@ -50,7 +50,7 @@ impl ConversationRepository {
         "#,
         )
         .bind(&conversation_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| {
             AppError::Database(format!(
@@ -58,6 +58,7 @@ impl ConversationRepository {
                 e
             ))
         })?;
+        read.commit().await?;
 
         Ok(linked_docs
             .into_iter()
@@ -81,7 +82,7 @@ impl ConversationRepository {
         document_id: String,
     ) -> Result<RenameConversationResponseDto, AppError> {
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -158,7 +159,7 @@ impl ConversationRepository {
         let source_id = format!("cws_{}", uuid::Uuid::new_v4().simple());
 
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -227,6 +228,7 @@ impl ConversationRepository {
         &self,
         conversation_id: String,
     ) -> Result<Vec<ConversationWebSourceDto>, AppError> {
+        let mut read = self.db.begin_read().await?;
         let rows = sqlx::query_as::<_, ConversationWebSourceRow>(
             r#"
         SELECT
@@ -243,11 +245,12 @@ impl ConversationRepository {
         "#,
         )
         .bind(&conversation_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| {
             AppError::Database(format!("Failed to list conversation web sources: {}", e))
         })?;
+        read.commit().await?;
 
         Ok(rows
             .into_iter()
@@ -281,6 +284,7 @@ impl ConversationRepository {
             content_truncated: bool,
         }
 
+        let mut read = self.db.begin_read().await?;
         let row = sqlx::query_as::<_, SnapshotRow>(
             r#"
         SELECT title, content, content_fetched_at, content_truncated
@@ -290,7 +294,7 @@ impl ConversationRepository {
         )
         .bind(conversation_id.trim())
         .bind(normalize_web_source_url(url.trim()))
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *read)
         .await
         .map_err(|e| {
             AppError::Database(format!(
@@ -298,6 +302,7 @@ impl ConversationRepository {
                 e
             ))
         })?;
+        read.commit().await?;
 
         Ok(row.and_then(|row| {
             let content = row.content?;
@@ -342,6 +347,7 @@ impl ConversationRepository {
         let now = Utc::now().to_rfc3339();
         let source_id = format!("cws_{}", uuid::Uuid::new_v4().simple());
 
+        let mut tx = self.db.begin_write().await?;
         sqlx::query(
             r#"
         INSERT INTO conversation_web_sources (
@@ -376,7 +382,7 @@ impl ConversationRepository {
         .bind(&now)
         .bind(truncated)
         .bind(&now)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             AppError::Database(format!(
@@ -384,6 +390,7 @@ impl ConversationRepository {
                 e
             ))
         })?;
+        tx.commit().await?;
 
         Ok(RenameConversationResponseDto {
             status: "success".to_string(),
@@ -396,7 +403,7 @@ impl ConversationRepository {
         source_id: String,
     ) -> Result<RenameConversationResponseDto, AppError> {
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;

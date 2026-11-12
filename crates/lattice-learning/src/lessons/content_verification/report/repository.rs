@@ -1,6 +1,7 @@
 //! The verification report and the review's state at publication.
 
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::SqliteConnection;
 
 fn failed(error: sqlx::Error) -> AppError {
@@ -31,10 +32,7 @@ pub(super) struct StoredReport<'a> {
     pub checked_at: i64,
 }
 
-pub(super) async fn insert_report(
-    connection: &mut SqliteConnection,
-    report: &StoredReport<'_>,
-) -> Result<()> {
+pub(super) async fn insert_report(tx: &mut WriteTx, report: &StoredReport<'_>) -> Result<()> {
     sqlx::query("INSERT INTO learning_lesson_verifications(lesson_id,program_id,policy,content_sha256,report_json,checked_at) VALUES(?,?,?,?,?,?)")
         .bind(report.lesson_id)
         .bind(report.program_id)
@@ -42,22 +40,18 @@ pub(super) async fn insert_report(
         .bind(report.content_sha256)
         .bind(report.report_json)
         .bind(report.checked_at)
-        .execute(&mut *connection)
+        .execute(&mut **tx)
         .await
         .map_err(failed)?;
     Ok(())
 }
 
 /// Ends the lesson's claim review with its publication.
-pub(super) async fn mark_review_ready(
-    connection: &mut SqliteConnection,
-    lesson_id: &str,
-    at: i64,
-) -> Result<()> {
+pub(super) async fn mark_review_ready(tx: &mut WriteTx, lesson_id: &str, at: i64) -> Result<()> {
     sqlx::query("UPDATE learning_lesson_reviews SET state='ready',revision=revision+1,updated_at=? WHERE lesson_id=?")
         .bind(at)
         .bind(lesson_id)
-        .execute(&mut *connection)
+        .execute(&mut **tx)
         .await
         .map_err(failed)?;
     Ok(())

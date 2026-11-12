@@ -261,7 +261,8 @@ async fn live_complete_python_course() -> Result<()> {
         .run(&pool)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let drafts = lattice::features::learning::outline_draft::DraftRunRegistry::new();
     let mut program = if std::env::var("LATTICE_TEACHING_RESUME").as_deref() == Ok("1")
         && model.directory.join("outline.json").exists()
@@ -321,11 +322,11 @@ async fn live_complete_python_course() -> Result<()> {
     }
     let outcomes =
         lattice::features::learning::assessment_repository::LearningAssessmentRepository::new(
-            pool.clone(),
+            db.clone(),
         )
         .module_outcomes(&program.summary.id)
         .await?;
-    let sources = lattice::features::learning::repository::LearningRepository::new(pool.clone())
+    let sources = lattice::features::learning::repository::LearningRepository::new(db.clone())
         .verification_sources(&program.summary.id)
         .await?;
     let tasks = lattice::features::learning::diagnostic_generation::author(
@@ -426,7 +427,8 @@ async fn live_saved_course_checkpoint() -> Result<()> {
         )
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    let program = LearningRepository::new(pool.clone())
+    let db = Database::new(pool.clone());
+    let program = LearningRepository::new(db.clone())
         .get(&saved.summary.id)
         .await?;
     assert!(program
@@ -438,16 +440,10 @@ async fn live_saved_course_checkpoint() -> Result<()> {
         kind: LearningQuizScopeKind::Module,
         id: Some(program.modules[0].id.clone()),
     };
-    let report = quiz_bank_jobs::prepare_bank_now(
-        &Database::from(pool.clone()),
-        &model,
-        &program.summary.id,
-        &scope,
-        false,
-    )
-    .await?;
+    let report =
+        quiz_bank_jobs::prepare_bank_now(&db, &model, &program.summary.id, &scope, false).await?;
     model.save("checkpoint-bank-report.json", &report.dropped);
-    let form = LearningAssessmentRepository::new(pool.clone())
+    let form = LearningAssessmentRepository::new(db.clone())
         .start_quiz(
             &StartLearningQuizRequestDto {
                 operation_id: uuid::Uuid::new_v4().to_string(),

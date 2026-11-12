@@ -4,6 +4,7 @@ use super::rows::{directory_has_loadable_weights, parse_optional_db_timestamp};
 use super::*;
 use lattice_core::domain::value_objects::ArtifactIdentity;
 use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::SqlitePool;
 
 #[test]
 fn parse_optional_timestamp_accepts_sqlite_format() {
@@ -24,7 +25,7 @@ fn parse_optional_timestamp_treats_invalid_as_none() {
     assert!(parsed.is_none());
 }
 
-async fn setup_repo() -> DownloadedModelRepository {
+async fn setup_repo() -> (DownloadedModelRepository, SqlitePool) {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect(":memory:")
@@ -34,7 +35,8 @@ async fn setup_repo() -> DownloadedModelRepository {
         .run(&pool)
         .await
         .expect("run migrations");
-    DownloadedModelRepository::new(pool)
+    let db = Database::new(pool.clone());
+    (DownloadedModelRepository::new(db), pool)
 }
 
 fn make_local_chat_model(model_id: &str) -> DownloadedModel {
@@ -92,22 +94,19 @@ fn directory_embedding_model(model_id: &str) -> (tempfile::TempDir, DownloadedMo
     (directory, model)
 }
 
-async fn stored_embedding_state(
-    repo: &DownloadedModelRepository,
-    model_id: &str,
-) -> (i64, Option<String>) {
+async fn stored_embedding_state(pool: &SqlitePool, model_id: &str) -> (i64, Option<String>) {
     sqlx::query_as(
         "SELECT is_active_for_embedding, embedding_artifact_identity FROM models WHERE model_id = ?1",
     )
     .bind(model_id)
-    .fetch_one(&repo.pool)
+    .fetch_one(pool)
     .await
     .expect("read embedding state")
 }
 
 #[tokio::test]
 async fn activating_local_model_without_identity_is_invalid_state() {
-    let repo = setup_repo().await;
+    let (repo, pool) = setup_repo().await;
     repo.set_active_embedding_model("__ollama_server__", None)
         .await
         .expect("activate remote model");
@@ -121,11 +120,11 @@ async fn activating_local_model_without_identity_is_invalid_state() {
     assert!(matches!(err, AppError::InvalidState(_)), "{err:?}");
 
     assert_eq!(
-        stored_embedding_state(&repo, "no-identity").await,
+        stored_embedding_state(&pool, "no-identity").await,
         (0, None)
     );
     assert_eq!(
-        stored_embedding_state(&repo, "__ollama_server__").await.0,
+        stored_embedding_state(&pool, "__ollama_server__").await.0,
         1,
         "a refused activation must not deactivate the current model"
     );
@@ -134,13 +133,13 @@ async fn activating_local_model_without_identity_is_invalid_state() {
 /// The rule holds for every write, not just the guarded UPDATE.
 #[tokio::test]
 async fn schema_rejects_an_active_local_model_without_identity() {
-    let repo = setup_repo().await;
+    let (repo, pool) = setup_repo().await;
     let model = make_local_embedding_model("raw-write");
     repo.save(&model).await.expect("save embedding model");
 
     let result =
         sqlx::query("UPDATE models SET is_active_for_embedding = 1 WHERE model_id = 'raw-write'")
-            .execute(&repo.pool)
+            .execute(&pool)
             .await;
     assert!(
         result.is_err(),
@@ -154,7 +153,7 @@ async fn schema_rejects_an_active_local_model_without_identity() {
     let result = sqlx::query(
         "UPDATE models SET embedding_artifact_identity = NULL WHERE model_id = 'raw-write'",
     )
-    .execute(&repo.pool)
+    .execute(&pool)
     .await;
     assert!(
         result.is_err(),
@@ -164,7 +163,7 @@ async fn schema_rejects_an_active_local_model_without_identity() {
 
 #[tokio::test]
 async fn activating_local_model_records_identity_and_reads_it_back() {
-    let repo = setup_repo().await;
+    let (repo, _) = setup_repo().await;
     let (_directory, model) = directory_embedding_model("with-identity");
     repo.save(&model).await.expect("save embedding model");
 
@@ -184,7 +183,7 @@ async fn activating_local_model_records_identity_and_reads_it_back() {
 
 #[tokio::test]
 async fn remote_model_activates_without_identity() {
-    let repo = setup_repo().await;
+    let (repo, _) = setup_repo().await;
     repo.set_active_embedding_model("__ollama_server__", None)
         .await
         .expect("remote models carry no identity");
@@ -200,7 +199,7 @@ async fn remote_model_activates_without_identity() {
 
 #[tokio::test]
 async fn reactivating_without_identity_keeps_the_stored_one() {
-    let repo = setup_repo().await;
+    let (repo, pool) = setup_repo().await;
     let model = make_local_embedding_model("reactivated");
     repo.save(&model).await.expect("save embedding model");
     repo.set_active_embedding_model("reactivated", Some(&identity(2)))
@@ -215,14 +214,14 @@ async fn reactivating_without_identity_keeps_the_stored_one() {
         .expect("the stored identity satisfies the guard");
 
     assert_eq!(
-        stored_embedding_state(&repo, "reactivated").await,
+        stored_embedding_state(&pool, "reactivated").await,
         (1, Some(identity(2).to_string()))
     );
 }
 
 #[tokio::test]
 async fn clearing_active_embedding_model_keeps_identity() {
-    let repo = setup_repo().await;
+    let (repo, pool) = setup_repo().await;
     let model = make_local_embedding_model("cleared");
     repo.save(&model).await.expect("save embedding model");
     repo.set_active_embedding_model("cleared", Some(&identity(3)))
@@ -234,7 +233,7 @@ async fn clearing_active_embedding_model_keeps_identity() {
         .expect("clear active embedding model");
 
     assert_eq!(
-        stored_embedding_state(&repo, "cleared").await,
+        stored_embedding_state(&pool, "cleared").await,
         (0, Some(identity(3).to_string()))
     );
     let loaded = repo
@@ -247,7 +246,7 @@ async fn clearing_active_embedding_model_keeps_identity() {
 
 #[tokio::test]
 async fn activating_unknown_model_is_not_found() {
-    let repo = setup_repo().await;
+    let (repo, _) = setup_repo().await;
     for candidate in [None, Some(identity(4))] {
         let err = repo
             .set_active_embedding_model("no-such-model", candidate.as_ref())
@@ -259,7 +258,7 @@ async fn activating_unknown_model_is_not_found() {
 
 #[tokio::test]
 async fn schema_rejects_malformed_identity() {
-    let repo = setup_repo().await;
+    let (_, pool) = setup_repo().await;
     let hex = "ab".repeat(32);
     for malformed in [
         format!("sha256:{}", hex.to_uppercase()),
@@ -273,7 +272,7 @@ async fn schema_rejects_malformed_identity() {
             "UPDATE models SET embedding_artifact_identity = ?1 WHERE model_id = '__ollama_server__'",
         )
         .bind(&malformed)
-        .execute(&repo.pool)
+        .execute(&pool)
         .await;
         assert!(result.is_err(), "CHECK accepted {malformed:?}");
     }
@@ -282,7 +281,7 @@ async fn schema_rejects_malformed_identity() {
         "UPDATE models SET embedding_artifact_identity = ?1 WHERE model_id = '__ollama_server__'",
     )
     .bind(format!("sha256:{hex}").into_bytes())
-    .execute(&repo.pool)
+    .execute(&pool)
     .await;
     assert!(blob.is_err(), "CHECK accepted a blob");
 
@@ -290,7 +289,7 @@ async fn schema_rejects_malformed_identity() {
         "UPDATE models SET embedding_artifact_identity = ?1 WHERE model_id = '__ollama_server__'",
     )
     .bind(format!("sha256:{hex}"))
-    .execute(&repo.pool)
+    .execute(&pool)
     .await
     .expect("CHECK accepts a well-formed identity");
 }
@@ -300,11 +299,11 @@ async fn schema_rejects_malformed_identity() {
 /// on a row read back and then corrupted in memory instead.
 #[tokio::test]
 async fn malformed_identity_fails_the_read() {
-    let repo = setup_repo().await;
+    let (_, pool) = setup_repo().await;
     let query = build_model_select_query("WHERE m.model_id = ?1");
     let mut record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
         .bind("__ollama_server__")
-        .fetch_one(&repo.pool)
+        .fetch_one(&pool)
         .await
         .expect("read synthetic row");
     record.embedding_artifact_identity = Some(format!("sha256:{}", "AB".repeat(32)));
@@ -315,7 +314,7 @@ async fn malformed_identity_fails_the_read() {
 
 #[tokio::test]
 async fn saving_a_fresh_model_resets_the_stored_identity() {
-    let repo = setup_repo().await;
+    let (repo, pool) = setup_repo().await;
     let model = make_local_embedding_model("redownloaded");
     repo.save(&model).await.expect("save embedding model");
     repo.set_active_embedding_model("redownloaded", Some(&identity(5)))
@@ -330,7 +329,7 @@ async fn saving_a_fresh_model_resets_the_stored_identity() {
         .expect("model exists");
     repo.save(&loaded).await.expect("save loaded model");
     assert_eq!(
-        stored_embedding_state(&repo, "redownloaded").await,
+        stored_embedding_state(&pool, "redownloaded").await,
         (1, Some(identity(5).to_string()))
     );
 
@@ -338,14 +337,14 @@ async fn saving_a_fresh_model_resets_the_stored_identity() {
     let fresh = make_local_embedding_model("redownloaded");
     repo.save(&fresh).await.expect("save fresh model");
     assert_eq!(
-        stored_embedding_state(&repo, "redownloaded").await,
+        stored_embedding_state(&pool, "redownloaded").await,
         (0, None)
     );
 }
 
 #[tokio::test]
 async fn synthetic_ollama_row_loads_via_find_by_model_id() {
-    let repo = setup_repo().await;
+    let (repo, _) = setup_repo().await;
     let model = repo
         .find_by_model_id("__ollama_server__")
         .await
@@ -359,7 +358,7 @@ async fn synthetic_ollama_row_loads_via_find_by_model_id() {
 
 #[tokio::test]
 async fn set_and_get_active_utility_model_roundtrip() {
-    let repo = setup_repo().await;
+    let (repo, _) = setup_repo().await;
 
     // Activate the synthetic ollama row for utility (no FS check).
     repo.set_active_utility_model("__ollama_server__")
@@ -386,7 +385,7 @@ async fn set_and_get_active_utility_model_roundtrip() {
 
 #[tokio::test]
 async fn get_active_chat_model_returns_ollama_row_without_filesystem_check() {
-    let repo = setup_repo().await;
+    let (repo, _) = setup_repo().await;
 
     repo.set_active_chat_model("__ollama_server__")
         .await
@@ -403,7 +402,7 @@ async fn get_active_chat_model_returns_ollama_row_without_filesystem_check() {
 
 #[tokio::test]
 async fn has_any_embedding_model_false_on_empty_then_true_after_save() {
-    let repo = setup_repo().await;
+    let (repo, _) = setup_repo().await;
 
     // Synthetic ollama row is model_type='chat', so initially no embedding rows.
     let before = repo
@@ -424,7 +423,7 @@ async fn has_any_embedding_model_false_on_empty_then_true_after_save() {
 
 #[tokio::test]
 async fn save_and_load_local_model_preserves_location() {
-    let repo = setup_repo().await;
+    let (repo, _) = setup_repo().await;
     let model = make_local_chat_model("local-chat-1");
     repo.save(&model).await.expect("save local chat model");
 
@@ -440,7 +439,7 @@ async fn save_and_load_local_model_preserves_location() {
 
 #[tokio::test]
 async fn directory_model_fallback_tracks_required_weights_file() {
-    let repo = setup_repo().await;
+    let (repo, pool) = setup_repo().await;
     let directory = tempfile::tempdir().expect("create model directory");
     std::fs::write(directory.path().join("model.safetensors"), b"weights")
         .expect("write model weights");
@@ -466,7 +465,7 @@ async fn directory_model_fallback_tracks_required_weights_file() {
 
     let file_path: String =
         sqlx::query_scalar("SELECT file_path FROM model_files WHERE model_id = 'directory-model'")
-            .fetch_one(&repo.pool)
+            .fetch_one(&pool)
             .await
             .expect("load fallback file path");
     assert!(file_path.ends_with("model.safetensors"));
@@ -500,7 +499,7 @@ fn only_a_safetensors_shard_counts_as_directory_weights() {
 
 #[tokio::test]
 async fn downloaded_inventory_tracks_files_on_disk_without_deleting_records() {
-    let repo = setup_repo().await;
+    let (repo, _) = setup_repo().await;
     let directory = tempfile::tempdir().expect("create model directory");
     let weights = directory.path().join("model.safetensors");
     std::fs::write(&weights, b"weights").expect("write weights");

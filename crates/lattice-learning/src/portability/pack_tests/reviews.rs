@@ -11,6 +11,7 @@ use crate::{
     tests::{pool, ready_program},
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use sqlx::SqlitePool;
 
 /// A lesson's review, its job and one claim with two events, an audit and
@@ -131,8 +132,8 @@ async fn count(pool: &SqlitePool, sql: &str, bind: &str) -> Result<i64> {
 /// A course with a published lesson's review, a failed lesson's unfinished
 /// one, a tangent chat and the Verifier audit on. Returns the course, the
 /// published lesson, and its job and claim.
-async fn course(pool: &SqlitePool) -> Result<(String, String, String, String)> {
-    let program = ready_program(&LearningRepository::new(pool.clone())).await?;
+async fn course(pool: &SqlitePool, db: &Database) -> Result<(String, String, String, String)> {
+    let program = ready_program(&LearningRepository::new(db.clone())).await?;
     let module = &program.modules[0];
     let (published, failed) = (&module.lessons[0].id, &module.lessons[1].id);
     let (job, claim) =
@@ -147,9 +148,10 @@ async fn course(pool: &SqlitePool) -> Result<(String, String, String, String)> {
 #[tokio::test]
 async fn a_published_lessons_review_moves_and_an_unfinished_one_stays_behind() -> Result<()> {
     let home = pool().await?;
-    let (course, lesson, job, claim) = course(&home).await?;
+    let home_db = Database::new(home.clone());
+    let (course, lesson, job, claim) = course(&home, &home_db).await?;
     let home_dir = tempfile::tempdir()?;
-    let home_packs = packs(&home, home_dir.path());
+    let home_packs = packs(&home_db, home_dir.path());
     let notice = home_packs.workspace(&course).await?.export_notice;
     for kind in [
         LearningPackStaysBehindKind::UnfinishedLessonReviews,
@@ -170,9 +172,10 @@ async fn a_published_lessons_review_moves_and_an_unfinished_one_stays_behind() -
         .clone();
 
     let fresh = pool().await?;
+    let fresh_db = Database::new(fresh.clone());
     let fresh_dir = tempfile::tempdir()?;
     import(
-        &packs(&fresh, fresh_dir.path()),
+        &packs(&fresh_db, fresh_dir.path()),
         &pack,
         LearningPackConflictPolicy::MergeSafe,
     )
@@ -247,9 +250,10 @@ async fn a_published_lessons_review_moves_and_an_unfinished_one_stays_behind() -
 #[tokio::test]
 async fn a_copy_gives_every_review_record_its_own_identity() -> Result<()> {
     let pool = pool().await?;
-    let (course, lesson, job, claim) = course(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (course, lesson, job, claim) = course(&pool, &db).await?;
     let dir = tempfile::tempdir()?;
-    let packs = packs(&pool, dir.path());
+    let packs = packs(&db, dir.path());
     let pack = packs.export(&move_request(&course)).await?.exports[0]
         .destination_path
         .clone();
@@ -350,9 +354,10 @@ async fn count_lesson(pool: &SqlitePool, program_id: &str, lesson_id: &str) -> R
 #[tokio::test]
 async fn a_replace_warns_about_unfinished_reviews_and_keeps_what_lives_here() -> Result<()> {
     let pool = pool().await?;
-    let (course, lesson, _, _) = course(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (course, lesson, _, _) = course(&pool, &db).await?;
     let dir = tempfile::tempdir()?;
-    let packs = packs(&pool, dir.path());
+    let packs = packs(&db, dir.path());
     let pack = packs.export(&move_request(&course)).await?.exports[0]
         .destination_path
         .clone();
@@ -422,21 +427,21 @@ async fn a_replace_warns_about_unfinished_reviews_and_keeps_what_lives_here() ->
 const JOB_COUNTERS: [&str; 3] = ["saved_work", "recovery_mark", "unsaved_starts"];
 const REVIEW_JOBS: &str = "curriculum/reviews/jobs.json";
 
-async fn exported_pack(home: &SqlitePool, dir: &std::path::Path) -> Result<String> {
-    let (course, ..) = course(home).await?;
-    Ok(packs(home, dir)
-        .export(&move_request(&course))
-        .await?
-        .exports[0]
-        .destination_path
-        .clone())
+async fn exported_pack(home: &SqlitePool, db: &Database, dir: &std::path::Path) -> Result<String> {
+    let (course, ..) = course(home, db).await?;
+    Ok(
+        packs(db, dir).export(&move_request(&course)).await?.exports[0]
+            .destination_path
+            .clone(),
+    )
 }
 
 #[tokio::test]
 async fn a_pack_carries_no_job_counters_and_still_imports() -> Result<()> {
     let home = pool().await?;
+    let home_db = Database::new(home.clone());
     let home_dir = tempfile::tempdir()?;
-    let path = exported_pack(&home, home_dir.path()).await?;
+    let path = exported_pack(&home, &home_db, home_dir.path()).await?;
     let decoded = decode_learning_pack(&std::fs::read(&path)?)?;
     let table: serde_json::Value = serde_json::from_slice(&decoded.entries[REVIEW_JOBS])?;
     let columns: Vec<&str> = table["columns"]
@@ -456,9 +461,10 @@ async fn a_pack_carries_no_job_counters_and_still_imports() -> Result<()> {
     }
 
     let fresh = pool().await?;
+    let fresh_db = Database::new(fresh.clone());
     let fresh_dir = tempfile::tempdir()?;
     import(
-        &packs(&fresh, fresh_dir.path()),
+        &packs(&fresh_db, fresh_dir.path()),
         &path,
         LearningPackConflictPolicy::MergeSafe,
     )
@@ -474,8 +480,9 @@ async fn a_pack_carries_no_job_counters_and_still_imports() -> Result<()> {
 #[tokio::test]
 async fn a_pack_whose_job_table_has_only_the_portable_columns_imports() -> Result<()> {
     let home = pool().await?;
+    let home_db = Database::new(home.clone());
     let home_dir = tempfile::tempdir()?;
-    let path = exported_pack(&home, home_dir.path()).await?;
+    let path = exported_pack(&home, &home_db, home_dir.path()).await?;
     let decoded = decode_learning_pack(&std::fs::read(&path)?)?;
     let bytes = repack(&decoded, |input| {
         let entry = input
@@ -499,9 +506,10 @@ async fn a_pack_whose_job_table_has_only_the_portable_columns_imports() -> Resul
     std::fs::write(&portable, bytes)?;
 
     let fresh = pool().await?;
+    let fresh_db = Database::new(fresh.clone());
     let fresh_dir = tempfile::tempdir()?;
     import(
-        &packs(&fresh, fresh_dir.path()),
+        &packs(&fresh_db, fresh_dir.path()),
         portable.to_str().expect("UTF-8 path"),
         LearningPackConflictPolicy::MergeSafe,
     )
@@ -516,9 +524,10 @@ async fn a_pack_whose_job_table_has_only_the_portable_columns_imports() -> Resul
 #[tokio::test]
 async fn a_pack_whose_review_job_would_run_here_is_refused() -> Result<()> {
     let home = pool().await?;
-    let (course, ..) = course(&home).await?;
+    let home_db = Database::new(home.clone());
+    let (course, ..) = course(&home, &home_db).await?;
     let dir = tempfile::tempdir()?;
-    let home_packs = packs(&home, dir.path());
+    let home_packs = packs(&home_db, dir.path());
     let path = home_packs.export(&move_request(&course)).await?.exports[0]
         .destination_path
         .clone();
@@ -535,8 +544,9 @@ async fn a_pack_whose_review_job_would_run_here_is_refused() -> Result<()> {
     let tampered = dir.path().join("tampered.lattice-learning");
     std::fs::write(&tampered, bytes)?;
     let fresh = pool().await?;
+    let fresh_db = Database::new(fresh.clone());
     let fresh_dir = tempfile::tempdir()?;
-    let refused = packs(&fresh, fresh_dir.path())
+    let refused = packs(&fresh_db, fresh_dir.path())
         .preview(&preview_request(
             tampered.to_str().expect("UTF-8 path"),
             LearningPackConflictPolicy::MergeSafe,

@@ -22,7 +22,7 @@ use lattice_core::domain::entities::Document;
 use lattice_core::domain::entities::Embedding;
 use lattice_core::domain::value_objects::chunking_strategy::ChunkingStrategy;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 
 /// Reindex document use case.
 ///

@@ -1,4 +1,5 @@
 use super::*;
+use lattice_core::shared::persistence::Database;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct ConversationStateRow {
@@ -20,9 +21,10 @@ struct ConversationStateRow {
     tangent_parent_id: Option<String>,
 }
 async fn fetch_conversation_state(
-    pool: &SqlitePool,
+    db: &Database,
     conversation_id: &str,
 ) -> Result<Option<ConversationStateRow>, AppError> {
+    let mut read = db.begin_read().await?;
     let state = sqlx::query_as::<_, ConversationStateRow>(
         r#"
         SELECT
@@ -53,9 +55,10 @@ async fn fetch_conversation_state(
         "#,
     )
     .bind(conversation_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *read)
     .await
     .map_err(|e| AppError::Database(format!("Failed to fetch conversation state: {}", e)))?;
+    read.commit().await?;
 
     Ok(state)
 }
@@ -152,7 +155,7 @@ fn to_conversation_dto(
 }
 
 async fn set_conversation_state(
-    pool: &SqlitePool,
+    db: &Database,
     conversation_id: &str,
     column_name: &str,
     timestamp_column: &str,
@@ -176,8 +179,9 @@ async fn set_conversation_state(
         .push(" WHERE id = ")
         .push_bind(conversation_id);
 
+    let mut tx = db.begin_write().await?;
     let result =
-        qb.build().execute(pool).await.map_err(|e| {
+        qb.build().execute(&mut *tx).await.map_err(|e| {
             AppError::Database(format!("Failed to update conversation state: {}", e))
         })?;
 
@@ -188,6 +192,7 @@ async fn set_conversation_state(
         )));
     }
 
+    tx.commit().await?;
     Ok(())
 }
 
@@ -197,7 +202,7 @@ impl ConversationRepository {
         request: SetConversationStateRequestDto,
     ) -> Result<RenameConversationResponseDto, AppError> {
         set_conversation_state(
-            &self.pool,
+            &self.db,
             &request.conversation_id,
             "is_saved",
             "saved_at",
@@ -215,7 +220,7 @@ impl ConversationRepository {
         request: SetConversationStateRequestDto,
     ) -> Result<RenameConversationResponseDto, AppError> {
         set_conversation_state(
-            &self.pool,
+            &self.db,
             &request.conversation_id,
             "is_bookmarked",
             "bookmarked_at",
@@ -233,7 +238,7 @@ impl ConversationRepository {
         request: SetConversationStateRequestDto,
     ) -> Result<RenameConversationResponseDto, AppError> {
         set_conversation_state(
-            &self.pool,
+            &self.db,
             &request.conversation_id,
             "is_pinned",
             "pinned_at",
@@ -251,7 +256,7 @@ impl ConversationRepository {
         request: SetConversationStateRequestDto,
     ) -> Result<RenameConversationResponseDto, AppError> {
         set_conversation_state(
-            &self.pool,
+            &self.db,
             &request.conversation_id,
             "is_archived",
             "archived_at",
@@ -268,7 +273,7 @@ impl ConversationRepository {
         &self,
         conversation: &lattice_core::domain::conversation::Conversation,
     ) -> Result<ConversationDto, AppError> {
-        let state = fetch_conversation_state(&self.pool, &conversation.id.to_string()).await?;
+        let state = fetch_conversation_state(&self.db, &conversation.id.to_string()).await?;
         let compaction = match self.get_summary(&conversation.id.to_string()).await {
             Ok(Some(record)) => Some(CompactionRecordDto::from_record(&record)),
             Ok(None) => None,

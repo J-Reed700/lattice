@@ -14,7 +14,7 @@ use crate::practice_repository::profile_in;
 use async_trait::async_trait;
 use lattice_core::domain::learning::practice::work::{Exercise, Form, KindId};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use serde_json::Value;
 use std::sync::Arc;
 

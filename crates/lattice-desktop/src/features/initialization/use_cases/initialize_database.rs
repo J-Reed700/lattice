@@ -83,23 +83,21 @@ impl InitializeDatabaseUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lattice_core::shared::persistence::driver::DriverPool;
-    use lattice_core::shared::persistence::Database;
     use sqlx::sqlite::SqlitePoolOptions;
+    use sqlx::SqlitePool;
 
-    async fn create_test_pool() -> Database {
+    async fn create_test_pool() -> SqlitePool {
         SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
             .await
             .expect("Failed to create test database pool")
-            .into()
     }
 
     #[tokio::test]
     async fn test_initialize_database_success() {
         let pool = create_test_pool().await;
-        let use_case = InitializeDatabaseUseCase::new(pool);
+        let use_case = InitializeDatabaseUseCase::new(Database::new(pool));
 
         let result = use_case.execute().await;
 
@@ -112,12 +110,12 @@ mod tests {
     #[tokio::test]
     async fn test_initialize_database_creates_schema_version_table() {
         let pool = create_test_pool().await;
-        let use_case = InitializeDatabaseUseCase::new(pool.clone());
+        let use_case = InitializeDatabaseUseCase::new(Database::new(pool.clone()));
 
         use_case.execute().await.unwrap();
 
         let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM schema_version")
-            .fetch_one(pool.sqlx_pool())
+            .fetch_one(&pool)
             .await
             .unwrap();
 
@@ -127,7 +125,7 @@ mod tests {
     #[tokio::test]
     async fn test_initialize_database_is_idempotent() {
         let pool = create_test_pool().await;
-        let use_case = InitializeDatabaseUseCase::new(pool);
+        let use_case = InitializeDatabaseUseCase::new(Database::new(pool));
 
         let result1 = use_case.execute().await.unwrap();
         let result2 = use_case.execute().await.unwrap();
@@ -140,7 +138,7 @@ mod tests {
     #[tokio::test]
     async fn test_initialize_database_returns_schema_version() {
         let pool = create_test_pool().await;
-        let use_case = InitializeDatabaseUseCase::new(pool);
+        let use_case = InitializeDatabaseUseCase::new(Database::new(pool));
 
         let result = use_case.execute().await.unwrap();
 
@@ -152,7 +150,7 @@ mod tests {
     #[tokio::test]
     async fn test_initialize_database_detects_new_database() {
         let pool = create_test_pool().await;
-        let use_case = InitializeDatabaseUseCase::new(pool);
+        let use_case = InitializeDatabaseUseCase::new(Database::new(pool));
 
         let result = use_case.execute().await.unwrap();
 

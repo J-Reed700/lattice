@@ -356,6 +356,7 @@ async fn store_builds_paths_only_for_valid_ids_and_extensions() {
 
 struct Fixture {
     pool: SqlitePool,
+    db: Database,
     dir: TempDir,
     network: Arc<FakeNetwork>,
     service: Arc<ChatImageService>,
@@ -417,8 +418,9 @@ async fn fixture() -> Fixture {
     network.serve("https://upload.wikimedia.org/two.png", gif(32, 24));
     let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
     sweep_gate.open();
+    let db = Database::new(pool.clone());
     let service = Arc::new(ChatImageService::new(
-        Database::from(pool.clone()),
+        db.clone(),
         dir.path().join("chat-images"),
         network.clone(),
         Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),
@@ -426,6 +428,7 @@ async fn fixture() -> Fixture {
     ));
     Fixture {
         pool,
+        db,
         dir,
         network,
         service,
@@ -761,7 +764,7 @@ async fn truncating_a_thread_frees_its_pictures() {
         .attach(REQUEST, MESSAGE, &["img-1".into()])
         .await
         .unwrap();
-    crate::features::conversation::repository::ConversationRepository::new(fx.pool.clone())
+    crate::features::conversation::repository::ConversationRepository::new(fx.db.clone())
         .delete_messages(CONVERSATION, &[MESSAGE.to_string()])
         .await
         .unwrap();

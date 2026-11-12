@@ -12,6 +12,7 @@ use crate::features::conversation::{
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::conversation::MessageRole;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 
@@ -58,9 +59,13 @@ struct Saved {
 }
 
 /// Save an answer that cites one search result whose page was never read.
-async fn save_answer_citing_an_unread_page(runtime: &FakeRuntime, pool: sqlx::SqlitePool) -> Saved {
+async fn save_answer_citing_an_unread_page(
+    runtime: &FakeRuntime,
+    pool: sqlx::SqlitePool,
+    db: &Database,
+) -> Saved {
     let service: Arc<dyn ConversationServiceTrait> = Arc::new(ConversationService::new(Arc::new(
-        ConversationRepository::new(pool.clone()),
+        ConversationRepository::new(db.clone()),
     )));
     let conversation_id = service
         .create_conversation("Chat".into(), None)
@@ -199,7 +204,9 @@ async fn the_turn_returns_while_a_cited_page_is_still_being_read() {
         })),
         ..Default::default()
     };
-    let saved = save_answer_citing_an_unread_page(&runtime, migrated_pool().await).await;
+    let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
+    let saved = save_answer_citing_an_unread_page(&runtime, pool, &db).await;
     assert_eq!(
         saved.answer.uncaptured,
         vec![UncapturedPage {
@@ -237,12 +244,13 @@ async fn a_captured_page_is_archived_attached_and_announced() {
     // The archive and the conversation share one database, so the page is
     // stored beside the conversation it was cited in.
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     let runtime = FakeRuntime {
         page_reader: Some(Arc::new(ReadyReader)),
-        records: Some(Arc::new(ConversationRepository::new(pool.clone()))),
+        records: Some(Arc::new(ConversationRepository::new(db.clone()))),
         ..Default::default()
     };
-    let saved = save_answer_citing_an_unread_page(&runtime, pool).await;
+    let saved = save_answer_citing_an_unread_page(&runtime, pool, &db).await;
 
     let events = Arc::new(Mutex::new(Vec::new()));
     let emitted = Arc::new(Notify::new());

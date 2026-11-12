@@ -8,6 +8,7 @@ use super::*;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::llm::engine::factory::MockLLMPort;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::shared::persistence::Database;
 use sqlx::SqlitePool;
 
 async fn database() -> SqlitePool {
@@ -22,8 +23,8 @@ async fn database() -> SqlitePool {
 
 /// A conversation with `count` turns, written through the production path so
 /// sequences and digests are allocated the way they are in production.
-async fn seed(pool: &SqlitePool, count: usize) -> String {
-    let repository = ConversationRepository::new(pool.clone());
+async fn seed(db: &Database, count: usize) -> String {
+    let repository = ConversationRepository::new(db.clone());
     let conversation = repository
         .create_conversation("Memory turn", None)
         .await
@@ -55,11 +56,16 @@ async fn seed(pool: &SqlitePool, count: usize) -> String {
 }
 
 /// Commit one mandatory constraint quoting the first message.
-async fn record_constraint(pool: &SqlitePool, conversation_id: &str) {
-    record_constraint_through(pool, conversation_id, None).await;
+async fn record_constraint(pool: &SqlitePool, db: &Database, conversation_id: &str) {
+    record_constraint_through(pool, db, conversation_id, None).await;
 }
 
-async fn record_constraint_through(pool: &SqlitePool, conversation_id: &str, through: Option<i64>) {
+async fn record_constraint_through(
+    pool: &SqlitePool,
+    db: &Database,
+    conversation_id: &str,
+    through: Option<i64>,
+) {
     use lattice_core::application::ports::conversation_memory::{
         MemoryCommitCandidate, MemoryCommitPreconditions, SummaryUpdate,
     };
@@ -68,7 +74,7 @@ async fn record_constraint_through(pool: &SqlitePool, conversation_id: &str, thr
         MemoryKind, MemoryReview, MemoryState, SourceRole,
     };
 
-    let repository = ConversationRepository::new(pool.clone());
+    let repository = ConversationRepository::new(db.clone());
     let snapshot = repository
         .load_memory_snapshot(conversation_id)
         .await
@@ -164,9 +170,10 @@ fn llm() -> Arc<dyn LLMPort> {
 #[tokio::test]
 async fn the_switch_being_off_leaves_the_existing_path_entirely_alone() {
     let pool = database().await;
-    let id = seed(&pool, 6).await;
-    record_constraint(&pool, &id).await;
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let id = seed(&db, 6).await;
+    record_constraint(&pool, &db, &id).await;
+    let repository = ConversationRepository::new(db.clone());
 
     let built = build_memory_plan(
         &repository,
@@ -190,8 +197,9 @@ async fn the_switch_being_off_leaves_the_existing_path_entirely_alone() {
 #[tokio::test]
 async fn a_conversation_without_memory_is_checked_and_keeps_its_raw_history() {
     let pool = database().await;
-    let id = seed(&pool, 4).await;
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let id = seed(&db, 4).await;
+    let repository = ConversationRepository::new(db.clone());
 
     let built = build_memory_plan(
         &repository,
@@ -219,10 +227,11 @@ async fn a_conversation_without_memory_is_checked_and_keeps_its_raw_history() {
 #[tokio::test]
 async fn a_long_conversation_that_was_never_compacted_still_asks_for_compaction() {
     let pool = database().await;
+    let db = Database::new(pool.clone());
     // More messages than the candidate window and no ledger: the assembler is
     // still consulted, so the oldest messages falling out of reach is reported.
-    let id = seed(&pool, LONG_CONVERSATION).await;
-    let repository = ConversationRepository::new(pool.clone());
+    let id = seed(&db, LONG_CONVERSATION).await;
+    let repository = ConversationRepository::new(db.clone());
 
     let built = build_memory_plan(
         &repository,
@@ -250,9 +259,10 @@ async fn a_long_conversation_that_was_never_compacted_still_asks_for_compaction(
 #[tokio::test]
 async fn a_fact_from_another_chat_in_the_pool_reaches_a_prompt_it_bears_on() {
     let pool = database().await;
-    let repository = ConversationRepository::new(pool.clone());
-    let source = seed(&pool, 2).await;
-    let elsewhere = seed(&pool, 2).await;
+    let db = Database::new(pool.clone());
+    let repository = ConversationRepository::new(db.clone());
+    let source = seed(&db, 2).await;
+    let elsewhere = seed(&db, 2).await;
     repository
         .knowledge(
             &crate::features::conversation::knowledge_dto::KnowledgeRequestDto {
@@ -303,9 +313,10 @@ async fn a_fact_from_another_chat_in_the_pool_reaches_a_prompt_it_bears_on() {
 #[tokio::test]
 async fn a_recorded_constraint_reaches_the_prompt_with_its_exact_words() {
     let pool = database().await;
-    let id = seed(&pool, 8).await;
-    record_constraint(&pool, &id).await;
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let id = seed(&db, 8).await;
+    record_constraint(&pool, &db, &id).await;
+    let repository = ConversationRepository::new(db.clone());
 
     let built = build_memory_plan(
         &repository,
@@ -369,9 +380,10 @@ async fn a_recorded_constraint_reaches_the_prompt_with_its_exact_words() {
 #[tokio::test]
 async fn the_summary_is_carried_as_assistant_context_once_older_turns_are_out_of_reach() {
     let pool = database().await;
-    let id = seed(&pool, LONG_CONVERSATION).await;
-    record_constraint(&pool, &id).await;
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let id = seed(&db, LONG_CONVERSATION).await;
+    record_constraint(&pool, &db, &id).await;
+    let repository = ConversationRepository::new(db.clone());
 
     let built = build_memory_plan(
         &repository,
@@ -406,8 +418,9 @@ async fn the_summary_is_carried_as_assistant_context_once_older_turns_are_out_of
 #[tokio::test]
 async fn a_failed_assistant_message_is_not_replayed_as_an_answer() {
     let pool = database().await;
-    let id = seed(&pool, 6).await;
-    record_constraint(&pool, &id).await;
+    let db = Database::new(pool.clone());
+    let id = seed(&db, 6).await;
+    record_constraint(&pool, &db, &id).await;
     // Mark one assistant message failed: it is not an answer that was returned.
     sqlx::query(
         "UPDATE conversation_messages SET status = 'failed' \
@@ -417,7 +430,7 @@ async fn a_failed_assistant_message_is_not_replayed_as_an_answer() {
     .execute(&pool)
     .await
     .unwrap();
-    let repository = ConversationRepository::new(pool.clone());
+    let repository = ConversationRepository::new(db.clone());
 
     let built = build_memory_plan(
         &repository,
@@ -469,9 +482,10 @@ async fn a_failed_assistant_message_is_not_replayed_as_an_answer() {
 #[tokio::test]
 async fn recall_availability_is_reported_even_when_nothing_was_found() {
     let pool = database().await;
-    let id = seed(&pool, 8).await;
-    record_constraint(&pool, &id).await;
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let id = seed(&db, 8).await;
+    record_constraint(&pool, &db, &id).await;
+    let repository = ConversationRepository::new(db.clone());
 
     let built = build_memory_plan(
         &repository,
@@ -518,9 +532,10 @@ async fn recall_availability_is_reported_even_when_nothing_was_found() {
 #[tokio::test]
 async fn an_oversized_current_message_is_an_error_rather_than_a_clipped_instruction() {
     let pool = database().await;
-    let id = seed(&pool, 8).await;
-    record_constraint(&pool, &id).await;
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let id = seed(&db, 8).await;
+    record_constraint(&pool, &db, &id).await;
+    let repository = ConversationRepository::new(db.clone());
 
     // MockLLMPort advertises a small window; a message far larger than it cannot
     // be carried, and must not be silently shortened into a different request.
@@ -550,7 +565,8 @@ async fn an_oversized_current_message_is_an_error_rather_than_a_clipped_instruct
 #[tokio::test]
 async fn recent_candidates_over_the_byte_cap_keep_the_newest_and_only_flag_unprocessed_source() {
     let pool = database().await;
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repository = ConversationRepository::new(db.clone());
     let id = repository
         .create_conversation("Big pastes", None)
         .await
@@ -723,8 +739,9 @@ async fn a_plan_the_estimate_undercounted_is_planned_again_at_the_measured_ratio
 #[tokio::test]
 async fn evidence_rendered_into_the_message_is_cut_to_fit_instead_of_refusing_the_turn() {
     let pool = database().await;
-    let id = seed(&pool, 4).await;
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let id = seed(&db, 4).await;
+    let repository = ConversationRepository::new(db.clone());
     let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 13).unwrap();
     let bare = "Question: what does the runbook say about rollbacks?";
     let render = |keep: usize| {

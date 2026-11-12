@@ -86,6 +86,7 @@ use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::domain::conversation::memory::compute_digest;
 use lattice_core::domain::conversation::MessageRole;
 use lattice_core::shared::persistence::embedding_encoding::encode_embedding;
+use lattice_core::shared::persistence::Database;
 
 // ---------------------------------------------------------------------------
 // The labelled set
@@ -502,10 +503,11 @@ impl Scorer {
             .execute(&pool)
             .await
             .expect("foreign keys");
+        let db = Database::new(pool.clone());
         let embedder: Arc<dyn EmbeddingPort> = service.clone();
         Self {
-            repo: ConversationRepository::new(pool.clone()).with_memory_embedding(Some(embedder)),
-            lexical_repo: ConversationRepository::new(pool.clone()),
+            repo: ConversationRepository::new(db.clone()).with_memory_embedding(Some(embedder)),
+            lexical_repo: ConversationRepository::new(db),
             identity: service.model_identity(),
             name: service.facts().display_name.clone(),
             pool,

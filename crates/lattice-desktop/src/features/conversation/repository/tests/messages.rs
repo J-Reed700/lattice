@@ -3,12 +3,14 @@
 use super::*;
 use crate::features::conversation::repository::ConversationRepository;
 use lattice_core::domain::conversation::MessageRole;
+use lattice_core::shared::persistence::Database;
 
 #[tokio::test]
 async fn test_add_message() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
-    let repo = ConversationRepository::new(pool);
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     let conversation = repo.create_conversation("Test", None).await.unwrap();
 
@@ -40,7 +42,8 @@ async fn test_add_message() {
 async fn test_get_messages() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
-    let repo = ConversationRepository::new(pool);
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     let conversation = repo.create_conversation("Test", None).await.unwrap();
 

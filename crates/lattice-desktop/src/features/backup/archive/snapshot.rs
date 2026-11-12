@@ -76,33 +76,6 @@ fn db_err(err: impl std::fmt::Display) -> ArchiveError {
     ArchiveError::Database(err.to_string())
 }
 
-/// Reject the handful of characters that could end a `VACUUM INTO '...'`
-/// statement early. Mirrors `BackupAdapter::validate_sql_safe_path`: the real
-/// protection is the single-quote escaping below, this is defence in depth.
-fn validate_sql_safe_path(path: &str) -> Result<(), ArchiveError> {
-    if path.contains(';') {
-        return Err(ArchiveError::Other(
-            "snapshot path contains SQL statement terminator (;)".to_string(),
-        ));
-    }
-    if path.contains("--") {
-        return Err(ArchiveError::Other(
-            "snapshot path contains SQL comment sequence (--)".to_string(),
-        ));
-    }
-    if path.contains("/*") || path.contains("*/") {
-        return Err(ArchiveError::Other(
-            "snapshot path contains SQL comment sequence (/* */)".to_string(),
-        ));
-    }
-    if path.contains('\0') {
-        return Err(ArchiveError::Other(
-            "snapshot path contains null byte".to_string(),
-        ));
-    }
-    Ok(())
-}
-
 /// Append a suffix to a path's file name (`foo.db` -> `foo.db-wal`).
 fn sidecar_path(db: &Path, suffix: &str) -> PathBuf {
     let mut raw = db.as_os_str().to_os_string();
@@ -156,7 +129,6 @@ pub async fn snapshot_database(
     dest: &Path,
 ) -> Result<SnapshotReport, ArchiveError> {
     let dest_str = dest.to_string_lossy().to_string();
-    validate_sql_safe_path(&dest_str)?;
 
     if dest.exists() {
         return Err(ArchiveError::Other(format!(

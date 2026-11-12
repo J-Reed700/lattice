@@ -8,6 +8,7 @@ use crate::references::trust::pack::{
 };
 use lattice_core::domain::provenance::{ProvenanceRecord, SourceRelation, TrustOverride};
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::{Row, SqliteConnection};
 
 pub(in crate::references::trust) async fn provenance(
@@ -82,25 +83,19 @@ impl SourceTrustPackEntry {
 
     /// Writes the rows in the import's transaction, after the versions they
     /// hang from.
-    pub async fn write(&self, conn: &mut SqliteConnection, program_id: &str) -> Result<()> {
+    pub async fn write(&self, tx: &mut WriteTx, program_id: &str) -> Result<()> {
         for record in &self.provenance {
-            write_provenance(conn, record).await?;
+            write_provenance(tx, record).await?;
         }
         for PackRelation {
             relation,
             detected_at,
         } in &self.relations
         {
-            write_relations(
-                conn,
-                program_id,
-                std::slice::from_ref(relation),
-                *detected_at,
-            )
-            .await?;
+            write_relations(tx, program_id, std::slice::from_ref(relation), *detected_at).await?;
         }
         for entry in &self.overrides {
-            write_override(conn, entry).await?;
+            write_override(tx, entry).await?;
         }
         Ok(())
     }

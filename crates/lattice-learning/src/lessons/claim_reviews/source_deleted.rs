@@ -10,7 +10,7 @@ use lattice_core::domain::learning::claim_review::{
     LessonReview, LessonReviewState, NewInformation, ReopenCause, SourceChange,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, Transactions, WriteTx};
+use lattice_core::shared::persistence::{Database, WriteTx};
 
 use super::repository::{append_in, bump_revision, check_revision, load_in, reviews};
 use super::trust_changed::machine;

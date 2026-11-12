@@ -447,28 +447,23 @@ fn an_unsorted_gap_in_text_no_pass_rewrote_is_not_adopted_again() {
 #[tokio::test]
 async fn a_second_pass_over_an_unchanged_section_audits_and_adopts_nothing_again() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     let model = JudgingModel::new(FIGURE_PREMISE, &[FIGURE], FIGURE);
     let original = lesson(FIGURE_PREMISE);
 
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async {
-            lesson_drafts::resume("gaps-fixture".into()).await?;
-            let first = verify(&model, &original, &[source()]).await?;
-            let judged = model.judged.load(Ordering::Relaxed);
-            assert_eq!((first.coverage[1].claims.len(), judged), (1, 1));
+    lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        lesson_drafts::resume("gaps-fixture".into()).await?;
+        let first = verify(&model, &original, &[source()]).await?;
+        let judged = model.judged.load(Ordering::Relaxed);
+        assert_eq!((first.coverage[1].claims.len(), judged), (1, 1));
 
-            let again = verify(&model, &original, &[source()]).await?;
+        let again = verify(&model, &original, &[source()]).await?;
 
-            assert_eq!(again.coverage[1].claims.len(), 1);
-            assert_eq!(model.judged.load(Ordering::Relaxed), judged);
-            Ok(())
-        },
-    )
+        assert_eq!(again.coverage[1].claims.len(), 1);
+        assert_eq!(model.judged.load(Ordering::Relaxed), judged);
+        Ok(())
+    })
     .await
 }
 

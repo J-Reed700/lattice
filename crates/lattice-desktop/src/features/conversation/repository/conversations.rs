@@ -13,7 +13,7 @@ use lattice_core::domain::conversation::{
     ChatModelChoice, CompactionRecord, Conversation, ConversationAggregate,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::WriteTx;
 use lattice_core::shared::types::ConversationId;
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashMap;
@@ -43,7 +43,7 @@ impl ConversationRepository {
             return Ok(());
         }
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -74,6 +74,7 @@ impl ConversationRepository {
         // Store value to avoid E0716 temporary value dropped error
         let id_str = id.to_string();
 
+        let mut tx = self.db.begin_write().await?;
         sqlx::query!(
             r#"
             INSERT INTO conversations (id, title, system_prompt, created_at, updated_at, message_count, total_tokens)
@@ -85,9 +86,10 @@ impl ConversationRepository {
             now,
             now
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to create conversation: {}", e)))?;
+        tx.commit().await?;
 
         Ok(Conversation {
             id,
@@ -102,17 +104,19 @@ impl ConversationRepository {
     }
 
     pub async fn find_by_id(&self, id: &str) -> Result<Option<Conversation>> {
-        let mut connection = self
-            .pool
-            .acquire()
+        let mut read = self
+            .db
+            .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to find conversation: {}", e)))?;
-        find_conversation(&mut connection, id).await
+        let found = find_conversation(&mut read, id).await?;
+        read.commit().await?;
+        Ok(found)
     }
 
     pub async fn find_aggregate_by_id(&self, id: &str) -> Result<Option<ConversationAggregate>> {
         let mut tx = self
-            .pool
+            .db
             .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -139,10 +143,12 @@ impl ConversationRepository {
     /// UNIQUE and the memory commit conflicts on it, so a re-compaction updates
     /// the row in place and a read never has to choose between two.
     pub async fn get_summary(&self, id: &str) -> Result<Option<CompactionRecord>> {
-        let mut connection = self.pool.acquire().await.map_err(|e| {
+        let mut read = self.db.begin_read().await.map_err(|e| {
             AppError::Database(format!("Failed to load conversation summary: {}", e))
         })?;
-        load_summary(&mut connection, id).await
+        let summary = load_summary(&mut read, id).await?;
+        read.commit().await?;
+        Ok(summary)
     }
 
     pub async fn find_all(
@@ -153,6 +159,7 @@ impl ConversationRepository {
         let limit = limit.unwrap_or(100);
         let offset = offset.unwrap_or(0);
 
+        let mut read = self.db.begin_read().await?;
         let db_models = sqlx::query_as::<_, ConversationModel>(
             r#"
             SELECT id, title, model_choice, system_prompt, created_at, updated_at,
@@ -165,41 +172,48 @@ impl ConversationRepository {
         )
         .bind(limit)
         .bind(offset)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("Failed to list conversations: {}", e)))?;
+        read.commit().await?;
 
         Ok(ConversationRowMapper::to_entities(&db_models))
     }
 
     pub async fn update_title(&self, id: &str, new_title: &str) -> Result<()> {
-        let mut connection = self.pool.acquire().await.map_err(|e| {
+        let mut tx = self.db.begin_write().await.map_err(|e| {
             AppError::Database(format!("Failed to update conversation title: {}", e))
         })?;
-        set_title(&mut connection, id, new_title).await
+        set_title(&mut tx, id, new_title).await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     pub async fn update_system_prompt(&self, id: &str, system_prompt: Option<&str>) -> Result<()> {
-        let mut connection = self.pool.acquire().await.map_err(|e| {
+        let mut tx = self.db.begin_write().await.map_err(|e| {
             AppError::Database(format!(
                 "Failed to update conversation system prompt: {}",
                 e
             ))
         })?;
-        set_system_prompt(&mut connection, id, system_prompt).await
+        set_system_prompt(&mut tx, id, system_prompt).await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     /// The model this chat asked for.
     pub async fn model_choice(&self, conversation_id: &str) -> Result<ChatModelChoice> {
+        let mut read = self.db.begin_read().await?;
         let column: Option<String> =
             sqlx::query_scalar("SELECT model_choice FROM conversations WHERE id = ?")
                 .bind(conversation_id)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut *read)
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to read model choice: {}", e)))?
                 .ok_or_else(|| {
                     AppError::NotFound(format!("Conversation not found: {}", conversation_id))
                 })?;
+        read.commit().await?;
         ChatModelChoice::from_column(conversation_id, column.as_deref())
     }
 
@@ -211,12 +225,13 @@ impl ConversationRepository {
         choice: &ChatModelChoice,
     ) -> Result<()> {
         let column = ModelChoiceColumn::to_column(choice)?;
+        let mut tx = self.db.begin_write().await?;
         let result =
             sqlx::query("UPDATE conversations SET model_choice = ?, updated_at = ? WHERE id = ?")
                 .bind(column)
                 .bind(Utc::now().to_rfc3339())
                 .bind(conversation_id)
-                .execute(&self.pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to set model choice: {}", e)))?;
 
@@ -227,12 +242,13 @@ impl ConversationRepository {
             )));
         }
 
+        tx.commit().await?;
         Ok(())
     }
 
     pub async fn delete(&self, id: &str) -> Result<()> {
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -302,6 +318,7 @@ impl ConversationRepository {
         // Store value to avoid E0716 temporary value dropped error
         let id_str = conversation.id.to_string();
 
+        let mut tx = self.db.begin_write().await?;
         let result = sqlx::query!(
             r#"
             UPDATE conversations
@@ -319,7 +336,7 @@ impl ConversationRepository {
             now,
             id_str
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to save aggregate: {}", e)))?;
 
@@ -330,39 +347,50 @@ impl ConversationRepository {
             )));
         }
 
+        tx.commit().await?;
         Ok(())
     }
 
     pub async fn count(&self) -> Result<usize> {
-        sqlx::query_scalar::<_, i64>(
+        let mut read = self.db.begin_read().await?;
+        let count = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM conversations WHERE tangent_parent_id IS NULL",
         )
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *read)
         .await
         .map(|c| c as usize)
-        .map_err(|e| AppError::Database(format!("Failed to count conversations: {}", e)))
+        .map_err(|e| AppError::Database(format!("Failed to count conversations: {}", e)))?;
+        read.commit().await?;
+        Ok(count)
     }
 
     pub async fn exists(&self, id: &str) -> Result<bool> {
-        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?)")
-            .bind(id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| {
-                AppError::Database(format!("Failed to check conversation existence: {}", e))
-            })
+        let mut read = self.db.begin_read().await?;
+        let exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?)",
+        )
+        .bind(id)
+        .fetch_one(&mut *read)
+        .await
+        .map_err(|e| {
+            AppError::Database(format!("Failed to check conversation existence: {}", e))
+        })?;
+        read.commit().await?;
+        Ok(exists)
     }
 
     /// The titles of the conversations `ids` name, keyed by id.
     pub async fn titles_of(&self, ids: &[&str]) -> Result<HashMap<String, String>> {
         let ids = serde_json::to_string(ids).map_err(|e| AppError::Serialization(e.to_string()))?;
+        let mut read = self.db.begin_read().await?;
         let rows = sqlx::query(
             "SELECT id, title FROM conversations WHERE id IN (SELECT value FROM json_each(?))",
         )
         .bind(ids)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
+        read.commit().await?;
         Ok(rows
             .iter()
             .map(|row| (row.get::<String, _>("id"), row.get::<String, _>("title")))
@@ -417,7 +445,7 @@ async fn load_summary(
     }
 }
 
-async fn set_title(connection: &mut SqliteConnection, id: &str, new_title: &str) -> Result<()> {
+async fn set_title(tx: &mut WriteTx, id: &str, new_title: &str) -> Result<()> {
     let now = Utc::now().to_rfc3339();
 
     let result = sqlx::query!(
@@ -430,7 +458,7 @@ async fn set_title(connection: &mut SqliteConnection, id: &str, new_title: &str)
         now,
         id
     )
-    .execute(connection)
+    .execute(&mut **tx)
     .await
     .map_err(|e| AppError::Database(format!("Failed to update conversation title: {}", e)))?;
 
@@ -444,11 +472,7 @@ async fn set_title(connection: &mut SqliteConnection, id: &str, new_title: &str)
     Ok(())
 }
 
-async fn set_system_prompt(
-    connection: &mut SqliteConnection,
-    id: &str,
-    system_prompt: Option<&str>,
-) -> Result<()> {
+async fn set_system_prompt(tx: &mut WriteTx, id: &str, system_prompt: Option<&str>) -> Result<()> {
     let now = Utc::now().to_rfc3339();
 
     let result = sqlx::query!(
@@ -461,7 +485,7 @@ async fn set_system_prompt(
         now,
         id
     )
-    .execute(connection)
+    .execute(&mut **tx)
     .await
     .map_err(|e| {
         AppError::Database(format!(

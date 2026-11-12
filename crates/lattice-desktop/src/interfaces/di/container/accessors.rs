@@ -67,12 +67,6 @@ impl Container {
         self.course_indexes.as_ref()
     }
 
-    pub fn db_conn(
-        &self,
-    ) -> &Arc<crate::infrastructure::persistence::database::DatabaseConnection> {
-        self.core.db_conn()
-    }
-
     pub fn security_context(&self) -> &Arc<SecurityContext> {
         self.core.security_context()
     }

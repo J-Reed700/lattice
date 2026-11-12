@@ -12,14 +12,14 @@ use crate::{
     tests::{fixture, pool},
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 
 #[tokio::test]
 async fn cancelled_preview_and_blocked_replace_do_not_write_program_rows() -> Result<()> {
     let pool = pool().await?;
+    let db = Database::new(pool.clone());
     let program = fixture();
-    LearningRepository::new(pool.clone())
-        .create(&program)
-        .await?;
+    LearningRepository::new(db.clone()).create(&program).await?;
     let lesson_id = &program.modules[0].lessons[0].id;
     let activity_id = id();
     sqlx::query("INSERT INTO learning_practical_activities(id,program_id,lesson_id,predecessor_id,kind,title,brief,status,practice_mode,allowed_aids_json,outcome_ids_json,source_version_ids_json,rubric_json,runtime_kind,runtime_profile_id,runtime_engine,runtime_image_id,runtime_command_json,runtime_limits_json,generator_model,revision,created_at,updated_at) VALUES(?,?,?,NULL,'project','Protected project','A project with a private evaluator','ready','practice','[]','[]','[]','[]','none',NULL,NULL,NULL,NULL,NULL,'test-model',0,1,1)")
@@ -37,7 +37,7 @@ async fn cancelled_preview_and_blocked_replace_do_not_write_program_rows() -> Re
 
     let workspace = tempfile::tempdir().expect("pack workspace");
     let packs = LearningPackRepository::new(
-        pool.clone(),
+        db.clone(),
         workspace.path().join("learning-packs"),
         workspace.path().to_path_buf(),
     );
@@ -149,13 +149,12 @@ async fn cancelled_preview_and_blocked_replace_do_not_write_program_rows() -> Re
 #[tokio::test]
 async fn successful_replace_returns_a_readable_recovery_backup() -> Result<()> {
     let pool = pool().await?;
+    let db = Database::new(pool.clone());
     let program = fixture();
-    LearningRepository::new(pool.clone())
-        .create(&program)
-        .await?;
+    LearningRepository::new(db.clone()).create(&program).await?;
     let workspace = tempfile::tempdir().expect("pack workspace");
     let packs = LearningPackRepository::new(
-        pool.clone(),
+        db.clone(),
         workspace.path().join("learning-packs"),
         workspace.path().to_path_buf(),
     );

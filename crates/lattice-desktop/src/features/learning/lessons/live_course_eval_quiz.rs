@@ -28,7 +28,6 @@ use crate::features::learning::assessment_repository::{
 use crate::features::learning::grade_rationale::{self, Checked, Grader, GraderVerdict, Reference};
 use crate::features::learning::{quiz_bank_jobs, quiz_blueprints};
 use lattice_core::shared::persistence::Database;
-use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::runtime::jobs::{JobRuntime, JobStore, RecoveryPolicy};
 
 const BANK_SCHEMA: &str = "course-eval-quiz-bank/1";
@@ -44,7 +43,7 @@ const REGRADES: usize = 3;
 /// `quiz_error` without a file, so the next run of the request retries it.
 pub(super) async fn quiz_stage(
     run: &mut Run,
-    pool: &sqlx::SqlitePool,
+    database: &Database,
     program_id: &str,
     selector: &str,
 ) -> Result<()> {
@@ -62,20 +61,21 @@ pub(super) async fn quiz_stage(
     };
     let first_call = run.calls();
     let started = std::time::Instant::now();
-    let database = Database::from(pool.clone());
+    let mut read = database.begin_read().await.map_err(db)?;
     let job_id: Option<String> = sqlx::query_scalar(
         "SELECT id FROM jobs WHERE kind=? AND subject_id=? AND json_extract(requested_json,'$.lessonStage')=1 AND json_extract(requested_json,'$.scope.id')=? ORDER BY created_at DESC, id DESC LIMIT 1",
     )
     .bind(quiz_bank_jobs::QUIZ_BANK)
     .bind(program_id)
     .bind(&lesson_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *read)
     .await
     .map_err(db)?;
+    read.commit().await.map_err(db)?;
     let mut staged = None;
     if let Some(job_id) = job_id {
-        let id = run_lesson_quiz_job(run, &database, &job_id).await?;
-        let Some(report) = quiz_bank_jobs::lesson_stage_report(&database, &id).await? else {
+        let id = run_lesson_quiz_job(run, database, &job_id).await?;
+        let Some(report) = quiz_bank_jobs::lesson_stage_report(database, &id).await? else {
             let job = JobStore::new(database.clone()).get(&id).await?;
             let error = job
                 .error_message
@@ -89,7 +89,7 @@ pub(super) async fn quiz_stage(
     let top_up_started = std::time::Instant::now();
     let top_up_first = run.calls();
     let topped =
-        quiz_bank_jobs::prepare_bank_now(&database, &*run.model, program_id, &scope, false).await;
+        quiz_bank_jobs::prepare_bank_now(database, &*run.model, program_id, &scope, false).await;
     let top_up_seconds = top_up_started.elapsed().as_secs_f64();
     let top_up = match topped {
         Ok(report) => report,
@@ -130,9 +130,9 @@ pub(super) async fn quiz_stage(
         .join("\n\n");
     let mut sources = BTreeMap::new();
     sources.insert(format!("lesson:{lesson_id}"), lesson_text);
-    sources.extend(lesson_sources(pool, program_id).await?);
-    let (review, items) = read_bank(pool, program_id, &lesson_id, &sources).await?;
-    let (target, mix) = blueprint_mix(pool, program_id, &scope).await?;
+    sources.extend(lesson_sources(database, program_id).await?);
+    let (review, items) = read_bank(database, program_id, &lesson_id, &sources).await?;
+    let (target, mix) = blueprint_mix(database, program_id, &scope).await?;
     let authored = report.written + report.dropped.len();
     let mut metrics = json!({
         "target": target,
@@ -207,12 +207,9 @@ async fn run_lesson_quiz_job(run: &Run, database: &Database, job_id: &str) -> Re
     Ok(id)
 }
 
-async fn lesson_sources(
-    pool: &sqlx::SqlitePool,
-    program_id: &str,
-) -> Result<BTreeMap<String, String>> {
+async fn lesson_sources(database: &Database, program_id: &str) -> Result<BTreeMap<String, String>> {
     let mut sources = BTreeMap::new();
-    for source in LearningRepository::new(pool.clone())
+    for source in LearningRepository::new(database.clone())
         .verification_sources(program_id)
         .await?
     {
@@ -222,12 +219,12 @@ async fn lesson_sources(
 }
 
 async fn read_bank(
-    pool: &sqlx::SqlitePool,
+    database: &Database,
     program_id: &str,
     lesson_id: &str,
     sources: &BTreeMap<String, String>,
 ) -> Result<(BTreeMap<String, usize>, Vec<Value>)> {
-    let mut tx = pool.begin_read().await.map_err(db)?;
+    let mut tx = database.begin_read().await.map_err(db)?;
     let rows: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT id,origin,review_status FROM learning_assessment_candidates WHERE program_id=? AND lesson_id=? ORDER BY id",
     )
@@ -251,11 +248,11 @@ async fn read_bank(
 }
 
 async fn blueprint_mix(
-    pool: &sqlx::SqlitePool,
+    database: &Database,
     program_id: &str,
     scope: &LearningQuizScopeDto,
 ) -> Result<(usize, BTreeMap<String, usize>)> {
-    let mut tx = pool.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await.map_err(db)?;
     let requirements =
         match quiz_blueprints::ensure_blueprint_in(&mut tx, program_id, scope).await? {
             Some((blueprint, _)) => quiz_blueprints::requirements_in(&mut tx, &blueprint).await?,

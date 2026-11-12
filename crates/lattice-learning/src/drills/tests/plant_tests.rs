@@ -9,6 +9,7 @@ use crate::drills::build::{Baseline, Mutation, Verification};
 use crate::tests::pool;
 use lattice_core::domain::learning::drills::{pattern, patterns_for, DrillFile, Material};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use serde_json::{json, Value};
 
 /// [`plant_answer`] with `change` made to its list of mutations.
@@ -20,12 +21,12 @@ fn answer_with(change: impl FnOnce(&mut Vec<Value>)) -> String {
 
 #[tokio::test]
 async fn one_mutation_for_each_target_comes_back_in_the_order_of_the_targets() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let reversed = answer_with(|mutations| mutations.reverse());
     let model = ScriptedModel::new([reversed]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let planted = build(&pool, &model, Some(&runner), &grader)
+    let planted = build(&db, &model, Some(&runner), &grader)
         .plant(&spec(), &baseline())
         .await?;
     assert_eq!(
@@ -39,11 +40,11 @@ async fn one_mutation_for_each_target_comes_back_in_the_order_of_the_targets() -
 
 #[tokio::test]
 async fn the_request_names_the_targets_the_runtime_and_the_suite() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([plant_answer()]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    build(&pool, &model, Some(&runner), &grader)
+    build(&db, &model, Some(&runner), &grader)
         .plant(&spec(), &baseline())
         .await?;
     let request = &model.requests()[0];
@@ -79,11 +80,11 @@ async fn the_request_names_the_targets_the_runtime_and_the_suite() -> Result<()>
 
 #[tokio::test]
 async fn the_prompt_allows_the_name_the_comment_or_the_string_a_pattern_needs() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([plant_answer()]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    build(&pool, &model, Some(&runner), &grader)
+    build(&db, &model, Some(&runner), &grader)
         .plant(&spec(), &baseline())
         .await?;
     let system = system(&model.requests()[0]);
@@ -102,12 +103,12 @@ async fn the_prompt_allows_the_name_the_comment_or_the_string_a_pattern_needs() 
 
 #[tokio::test]
 async fn without_a_runner_no_test_is_asked_for() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([plant_answer()]);
     let grader = idle_grader();
     let mut baseline = baseline();
     baseline.suite = None;
-    let planted = build(&pool, &model, None, &grader)
+    let planted = build(&db, &model, None, &grader)
         .plant(&spec(), &baseline)
         .await?;
     assert!(planted
@@ -124,11 +125,11 @@ async fn without_a_runner_no_test_is_asked_for() -> Result<()> {
 
 /// The first answer is `bad`, which has to be refused with a message holding `fragment`; the second is good.
 async fn refused_then_accepted(bad: String, fragment: &str) -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([bad, plant_answer()]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let planted = build(&pool, &model, Some(&runner), &grader)
+    let planted = build(&db, &model, Some(&runner), &grader)
         .plant(&spec(), &baseline())
         .await?;
     assert_eq!(planted.mutations.len(), 2, "{fragment}");
@@ -249,7 +250,7 @@ async fn a_behavioural_defect_comes_with_a_test_or_the_reason_for_none() -> Resu
     for (bad, fragment) in cases {
         refused_then_accepted(bad, fragment).await?;
     }
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let reason = answer_with(|mutations| {
         mutations[0]["killingTest"] = json!("");
         mutations[0]["noTestBecause"] = json!(" No test can observe this. ");
@@ -257,7 +258,7 @@ async fn a_behavioural_defect_comes_with_a_test_or_the_reason_for_none() -> Resu
     let model = ScriptedModel::new([reason]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let planted = build(&pool, &model, Some(&runner), &grader)
+    let planted = build(&db, &model, Some(&runner), &grader)
         .plant(&spec(), &baseline())
         .await?;
     assert_eq!(
@@ -270,12 +271,12 @@ async fn a_behavioural_defect_comes_with_a_test_or_the_reason_for_none() -> Resu
 
 #[tokio::test]
 async fn a_mutation_refused_twice_fails_the_stage() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let missing = || answer_with(|mutations| mutations.truncate(1));
     let model = ScriptedModel::new([missing(), missing()]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let error = build(&pool, &model, Some(&runner), &grader)
+    let error = build(&db, &model, Some(&runner), &grader)
         .plant(&spec(), &baseline())
         .await
         .unwrap_err();
@@ -289,7 +290,7 @@ async fn a_mutation_refused_twice_fails_the_stage() -> Result<()> {
 
 #[tokio::test]
 async fn a_testing_pattern_changes_a_test_file() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let mut spec = spec();
     spec.patterns = vec!["testing.assertion_free_test".into()];
     let mut baseline = baseline();
@@ -321,7 +322,7 @@ async fn a_testing_pattern_changes_a_test_file() -> Result<()> {
     let model = ScriptedModel::new([elsewhere, weakened]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let planted = build(&pool, &model, Some(&runner), &grader)
+    let planted = build(&db, &model, Some(&runner), &grader)
         .plant(&spec, &baseline)
         .await?;
     assert_eq!(planted.mutations[0].edit.path, "tests/test_limiter.py");
@@ -357,11 +358,11 @@ fn lesson_answer(pattern: &str, sentences: &[usize]) -> String {
 /// The first answer is `bad`, which has to be refused with a message holding `fragment`; the second is a lesson
 /// issue on the operator citing L1, with the literals change beside it. The code has a brief with three units.
 async fn lesson_refused_then_accepted(bad: String, fragment: &str) -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([bad, lesson_answer(OPERATOR, &[1])]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let planted = build(&pool, &model, Some(&runner), &grader)
+    let planted = build(&db, &model, Some(&runner), &grader)
         .plant(&spec(), &baseline_with_brief())
         .await?;
     assert_eq!(planted.mutations.len(), 2, "{fragment}");
@@ -379,12 +380,12 @@ async fn lesson_refused_then_accepted(bad: String, fragment: &str) -> Result<()>
 #[tokio::test]
 async fn a_brief_with_evidence_tells_the_planter_of_lesson_issues_and_gives_the_whole_catalogue(
 ) -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([plant_answer()]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
     let baseline = baseline_with_brief();
-    build(&pool, &model, Some(&runner), &grader)
+    build(&db, &model, Some(&runner), &grader)
         .plant(&spec(), &baseline)
         .await?;
     let request = &model.requests()[0];
@@ -454,7 +455,7 @@ async fn a_brief_with_evidence_tells_the_planter_of_lesson_issues_and_gives_the_
 
 #[tokio::test]
 async fn a_brief_with_no_evidence_leaves_the_planter_as_it_is_without_a_brief() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
     let mut bare = lesson_brief();
@@ -466,7 +467,7 @@ async fn a_brief_with_no_evidence_leaves_the_planter_as_it_is_without_a_brief() 
     let mut requests = Vec::new();
     for baseline in [baseline(), with_empty, baseline_with_brief()] {
         let model = ScriptedModel::new([plant_answer()]);
-        build(&pool, &model, Some(&runner), &grader)
+        build(&db, &model, Some(&runner), &grader)
             .plant(&spec(), &baseline)
             .await?;
         requests.push(model.requests().remove(0));
@@ -497,14 +498,14 @@ async fn a_brief_with_no_evidence_leaves_the_planter_as_it_is_without_a_brief() 
 #[tokio::test]
 async fn the_schema_puts_the_lesson_use_and_the_lesson_sentences_first_when_a_lesson_issue_is_asked_for(
 ) -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([plant_answer(), plant_answer()]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    build(&pool, &model, Some(&runner), &grader)
+    build(&db, &model, Some(&runner), &grader)
         .plant(&spec(), &baseline_with_brief())
         .await?;
-    build(&pool, &model, Some(&runner), &grader)
+    build(&db, &model, Some(&runner), &grader)
         .plant(&spec(), &baseline())
         .await?;
     let requests = model.requests();
@@ -534,7 +535,7 @@ async fn the_schema_puts_the_lesson_use_and_the_lesson_sentences_first_when_a_le
 
 #[tokio::test]
 async fn an_answer_carrying_a_lesson_use_is_read_and_its_mutations_are_kept() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let mut answer: Value = serde_json::from_str(&lesson_answer(OPERATOR, &[1])).unwrap();
     answer["lessonUse"] = json!("The limiter compares at the bound (L1).");
     let model = ScriptedModel::new([
@@ -544,7 +545,7 @@ async fn an_answer_carrying_a_lesson_use_is_read_and_its_mutations_are_kept() ->
     ]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let with = build(&pool, &model, Some(&runner), &grader)
+    let with = build(&db, &model, Some(&runner), &grader)
         .plant(&spec(), &baseline_with_brief())
         .await?;
     assert_eq!(
@@ -552,7 +553,7 @@ async fn an_answer_carrying_a_lesson_use_is_read_and_its_mutations_are_kept() ->
         1,
         "the answer carrying a lesson use was refused"
     );
-    let without = build(&pool, &model, Some(&runner), &grader)
+    let without = build(&db, &model, Some(&runner), &grader)
         .plant(&spec(), &baseline_with_brief())
         .await?;
     assert_eq!(with.mutations.len(), 2);
@@ -563,11 +564,11 @@ async fn an_answer_carrying_a_lesson_use_is_read_and_its_mutations_are_kept() ->
 #[tokio::test]
 async fn a_lesson_issue_on_the_first_target_leaves_the_next_target_to_the_catalogue_issue(
 ) -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([lesson_answer(OPERATOR, &[1])]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let planted = build(&pool, &model, Some(&runner), &grader)
+    let planted = build(&db, &model, Some(&runner), &grader)
         .plant(&spec(), &baseline_with_brief())
         .await?;
     assert_eq!(
@@ -585,11 +586,11 @@ async fn a_lesson_issue_on_the_first_target_leaves_the_next_target_to_the_catalo
 
 #[tokio::test]
 async fn a_lesson_issue_on_the_second_target_follows_the_catalogue_issue() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([lesson_answer(LITERALS, &[2])]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let planted = build(&pool, &model, Some(&runner), &grader)
+    let planted = build(&db, &model, Some(&runner), &grader)
         .plant(&spec(), &baseline_with_brief())
         .await?;
     assert_eq!(
@@ -662,7 +663,7 @@ async fn a_catalogue_change_of_the_lesson_issues_pattern_is_refused_naming_the_p
 #[tokio::test]
 async fn two_lesson_issues_of_one_pattern_are_refused_when_more_than_one_is_allowed() -> Result<()>
 {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let mut spec = spec();
     spec.patterns.push("correctness.off_by_one".into());
     let twice = answer_with(|mutations| {
@@ -673,7 +674,7 @@ async fn two_lesson_issues_of_one_pattern_are_refused_when_more_than_one_is_allo
     let model = ScriptedModel::new([twice.clone(), twice]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let error = build(&pool, &model, Some(&runner), &grader)
+    let error = build(&db, &model, Some(&runner), &grader)
         .plant(&spec, &baseline_with_brief())
         .await
         .unwrap_err();

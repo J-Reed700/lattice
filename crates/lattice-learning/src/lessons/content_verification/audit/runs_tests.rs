@@ -70,7 +70,7 @@ fn batch(index: usize, outcome: BatchOutcome, tokens: (u64, u64)) -> BatchRecord
 
 #[tokio::test]
 async fn a_run_keeps_each_batch_and_its_tokens_across_a_stop_and_a_resume() {
-    let runs = SqliteAuditRuns::new(Database::from(database().await));
+    let runs = SqliteAuditRuns::new(Database::new(database().await));
     let key = key("draft-1");
 
     let opened = runs.begin(&key, "verifier-audit-v1", 2_500).await.unwrap();
@@ -104,7 +104,7 @@ async fn a_run_keeps_each_batch_and_its_tokens_across_a_stop_and_a_resume() {
 
 #[tokio::test]
 async fn the_course_total_sums_every_audit_of_its_lessons() {
-    let runs = SqliteAuditRuns::new(Database::from(database().await));
+    let runs = SqliteAuditRuns::new(Database::new(database().await));
     for (draft, tokens) in [("draft-1", (1_000, 50)), ("draft-2", (2_000, 70))] {
         runs.begin(&key(draft), "verifier-audit-v1", 1)
             .await
@@ -132,7 +132,7 @@ async fn the_course_total_sums_every_audit_of_its_lessons() {
 
 #[tokio::test]
 async fn a_batch_for_an_audit_that_is_gone_is_refused() {
-    let runs = SqliteAuditRuns::new(Database::from(database().await));
+    let runs = SqliteAuditRuns::new(Database::new(database().await));
     let refused = runs
         .record(&key("never-begun"), &batch(1, BatchOutcome::Done, (1, 1)))
         .await;
@@ -141,7 +141,7 @@ async fn a_batch_for_an_audit_that_is_gone_is_refused() {
 
 #[tokio::test]
 async fn the_course_switch_is_stored_and_turning_it_off_clears_the_consent() {
-    let programs = LearningCurriculumRepository::new(database().await);
+    let programs = LearningCurriculumRepository::new(Database::new(database().await));
     assert_eq!(
         programs.verifier_audit("p1").await.unwrap(),
         ProgramVerifierAudit::default(),
@@ -179,10 +179,10 @@ async fn the_course_switch_is_stored_and_turning_it_off_clears_the_consent() {
 
 #[tokio::test]
 async fn the_gate_stops_an_audit_switched_off_or_consented_for_another_provider() {
-    let pool = database().await;
-    let programs = LearningCurriculumRepository::new(pool.clone());
+    let db = Database::new(database().await);
+    let programs = LearningCurriculumRepository::new(db.clone());
     let gate = |model: ModelRef| ProgramGate {
-        programs: LearningCurriculumRepository::new(pool.clone()),
+        programs: LearningCurriculumRepository::new(db.clone()),
         program_id: "p1".into(),
         model,
     };

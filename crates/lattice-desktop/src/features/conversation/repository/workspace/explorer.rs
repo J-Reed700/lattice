@@ -7,13 +7,9 @@ impl ConversationRepository {
     ) -> Result<ListConversationsResponseDto, AppError> {
         let (limit, offset) = ConversationListing::page(query.limit, query.offset, 100);
 
+        let mut read = self.db.begin_read().await?;
         if let Some(space_id) = &query.space_id {
-            let mut connection = self
-                .pool
-                .acquire()
-                .await
-                .map_err(|e| AppError::Database(format!("Failed to verify space: {}", e)))?;
-            ensure_standard_space(&mut connection, space_id).await?;
+            ensure_standard_space(&mut read, space_id).await?;
         }
 
         let mut qb = ConversationListing {
@@ -33,11 +29,12 @@ impl ConversationRepository {
 
         let rows = qb
             .build_query_as::<ConversationListRow>()
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *read)
             .await
             .map_err(|e| {
                 AppError::Database(format!("Failed to list explorer conversations: {}", e))
             })?;
+        read.commit().await?;
 
         listing_response(rows)
     }

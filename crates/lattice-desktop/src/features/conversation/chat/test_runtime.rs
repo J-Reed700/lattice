@@ -489,9 +489,11 @@ impl ChatStorage for FakeRuntime {
         }
         // Never queried unless the model calls a history tool.
         Arc::new(ConversationRepository::new(
-            sqlx::sqlite::SqlitePoolOptions::new()
-                .connect_lazy("sqlite::memory:")
-                .unwrap(),
+            lattice_core::shared::persistence::Database::new(
+                sqlx::sqlite::SqlitePoolOptions::new()
+                    .connect_lazy("sqlite::memory:")
+                    .unwrap(),
+            ),
         ))
     }
     fn chat_starter_cache(&self) -> Arc<dyn ChatStarterCache> {

@@ -1,5 +1,5 @@
 //! Writers for every section of an imported pack, in the order the import
-//! runs them. Each takes the importing transaction's connection and the
+//! runs them. Each takes the importing transaction and the
 //! identifier map; nothing here decides whether a section is imported.
 use super::{
     canvas_entries::CanvasPackSnapshot,
@@ -26,8 +26,8 @@ use crate::{
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::shared::persistence::WriteTx;
 use serde::Serialize;
-use sqlx::SqliteConnection;
 use std::collections::{HashMap, HashSet};
 
 fn enum_label<T: Serialize>(value: &T) -> Result<String> {
@@ -39,16 +39,16 @@ fn enum_label<T: Serialize>(value: &T) -> Result<String> {
 }
 
 /// Write every section, in the order of `SECTION_ROWS`.
-pub(super) async fn run(connection: &mut SqliteConnection, scope: &ImportScope<'_>) -> Result<()> {
+pub(super) async fn run(tx: &mut WriteTx, scope: &ImportScope<'_>) -> Result<()> {
     for rows in SECTION_ROWS {
         tracing::debug!(section = ?rows.section(), "importing pack section");
-        rows.insert(connection, scope).await?;
+        rows.insert(tx, scope).await?;
     }
     Ok(())
 }
 
 pub(super) async fn insert_program(
-    tx: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program: &LearningProgramDto,
     map: &HashMap<String, String>,
 ) -> Result<()> {
@@ -58,27 +58,27 @@ pub(super) async fn insert_program(
         LearningProgramStatus::Active => "active",
     };
     sqlx::query("INSERT INTO learning_programs(id,title,goal,status,revision,prior_knowledge,minutes_per_session,model_name,current_lesson_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
-        .bind(&summary.id).bind(&summary.title).bind(&summary.goal).bind(status).bind(summary.revision).bind(&program.prior_knowledge).bind(program.minutes_per_session).bind(&program.model_name).bind(&summary.current_lesson_id).bind(summary.created_at).execute(&mut *tx).await.map_err(db)?;
+        .bind(&summary.id).bind(&summary.title).bind(&summary.goal).bind(status).bind(summary.revision).bind(&program.prior_knowledge).bind(program.minutes_per_session).bind(&program.model_name).bind(&summary.current_lesson_id).bind(summary.created_at).execute(&mut **tx).await.map_err(db)?;
     for (mi, module) in program.modules.iter().enumerate() {
-        sqlx::query("INSERT INTO learning_modules(id,program_id,ordinal,title,summary,outcomes_json,prerequisite_ids_json,project_json) VALUES(?,?,?,?,?,?,?,?)").bind(&module.id).bind(&summary.id).bind(mi as i64).bind(&module.title).bind(&module.summary).bind(json_string(&module.outcomes)?).bind(json_string(&module.prerequisite_module_ids)?).bind(json_string(&module.project)?).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_modules(id,program_id,ordinal,title,summary,outcomes_json,prerequisite_ids_json,project_json) VALUES(?,?,?,?,?,?,?,?)").bind(&module.id).bind(&summary.id).bind(mi as i64).bind(&module.title).bind(&module.summary).bind(json_string(&module.outcomes)?).bind(json_string(&module.prerequisite_module_ids)?).bind(json_string(&module.project)?).execute(&mut **tx).await.map_err(db)?;
         for (li, lesson) in module.lessons.iter().enumerate() {
             sqlx::query("INSERT INTO learning_lessons(id,program_id,module_id,ordinal,title,objective,estimated_minutes,preparation,completed) VALUES(?,?,?,?,?,?,?,?,?)")
-                .bind(&lesson.id).bind(&summary.id).bind(&module.id).bind(li as i64).bind(&lesson.title).bind(&lesson.objective).bind(lesson.estimated_minutes).bind(if lesson.preparation==LearningPreparation::Ready{"ready"}else{"outline"}).bind(lesson.completed as i64).execute(&mut *tx).await.map_err(db)?;
+                .bind(&lesson.id).bind(&summary.id).bind(&module.id).bind(li as i64).bind(&lesson.title).bind(&lesson.objective).bind(lesson.estimated_minutes).bind(if lesson.preparation==LearningPreparation::Ready{"ready"}else{"outline"}).bind(lesson.completed as i64).execute(&mut **tx).await.map_err(db)?;
             for (bi, block) in lesson.blocks.iter().enumerate() {
                 let mut sources = block.source_ids.clone();
                 remap_refs(map, &mut sources);
-                sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json,rubric_json) VALUES(?,?,?,?,?,?,?)").bind(&lesson.id).bind(bi as i64).bind(crate::repository::block_kind(block.kind.clone())).bind(&block.title).bind(&block.body).bind(json_string(&sources)?).bind(json_string(&block.rubric)?).execute(&mut *tx).await.map_err(db)?;
+                sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json,rubric_json) VALUES(?,?,?,?,?,?,?)").bind(&lesson.id).bind(bi as i64).bind(crate::repository::block_kind(block.kind.clone())).bind(&block.title).bind(&block.body).bind(json_string(&sources)?).bind(json_string(&block.rubric)?).execute(&mut **tx).await.map_err(db)?;
             }
         }
     }
     for source in &program.sources {
-        sqlx::query("INSERT INTO learning_sources(id,program_id,title,url,excerpt,acquired_at) VALUES(?,?,?,?,?,?)").bind(&source.id).bind(&summary.id).bind(&source.title).bind(&source.url).bind(&source.excerpt).bind(source.acquired_at).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_sources(id,program_id,title,url,excerpt,acquired_at) VALUES(?,?,?,?,?,?)").bind(&source.id).bind(&summary.id).bind(&source.title).bind(&source.url).bind(&source.excerpt).bind(source.acquired_at).execute(&mut **tx).await.map_err(db)?;
     }
     Ok(())
 }
 
 pub(super) async fn insert_lesson_states(
-    tx: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     pack: &DecodedLearningPack,
     map: &HashMap<String, String>,
@@ -100,14 +100,14 @@ pub(super) async fn insert_lesson_states(
                 return Err(invalid("Pack lesson curriculum state is invalid."));
             }
             sqlx::query("UPDATE learning_lessons SET curriculum_state=?,replacement_lesson_id=? WHERE program_id=? AND id=?")
-                .bind(status).bind(state.get("replacementLessonId").filter(|v|!v.is_null()).and_then(serde_json::Value::as_str)).bind(program_id).bind(lesson).execute(&mut *tx).await.map_err(db)?;
+                .bind(status).bind(state.get("replacementLessonId").filter(|v|!v.is_null()).and_then(serde_json::Value::as_str)).bind(program_id).bind(lesson).execute(&mut **tx).await.map_err(db)?;
         }
     }
     Ok(())
 }
 
 pub(super) async fn insert_outcomes(
-    tx: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     pack: &DecodedLearningPack,
     map: &HashMap<String, String>,
@@ -131,13 +131,13 @@ pub(super) async fn insert_outcomes(
         if title.trim().is_empty() || ordinal < 0 {
             return Err(invalid("Pack outcome metadata is invalid."));
         }
-        sqlx::query("INSERT INTO learning_outcome_definitions(id,program_id,module_id,lesson_id,title,description,ordinal,created_at) VALUES(?,?,?,?,?,?,?,?)").bind(id).bind(program_id).bind(module).bind(lesson).bind(title).bind(description).bind(ordinal).bind(created).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_outcome_definitions(id,program_id,module_id,lesson_id,title,description,ordinal,created_at) VALUES(?,?,?,?,?,?,?,?)").bind(id).bind(program_id).bind(module).bind(lesson).bind(title).bind(description).bind(ordinal).bind(created).execute(&mut **tx).await.map_err(db)?;
     }
     Ok(())
 }
 
 pub(super) async fn insert_canvas_snapshot(
-    tx: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     snapshot: &mut CanvasPackSnapshot,
     map: &HashMap<String, String>,
@@ -153,7 +153,7 @@ pub(super) async fn insert_canvas_snapshot(
             return Err(invalid("Pack canvas data exceeds its bounds."));
         }
         sqlx::query("INSERT INTO learning_canvases(id,program_id,lesson_id,title,description,scene_json,element_count,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
-            .bind(value_str(row,"id")?).bind(program_id).bind(row.get("lessonId").filter(|v|!v.is_null()).and_then(serde_json::Value::as_str)).bind(value_str(row,"title")?).bind(value_str(row,"description")?).bind(scene).bind(count).bind(revision).bind(value_i64(row,"createdAt")?).bind(value_i64(row,"updatedAt")?).execute(&mut *tx).await.map_err(db)?;
+            .bind(value_str(row,"id")?).bind(program_id).bind(row.get("lessonId").filter(|v|!v.is_null()).and_then(serde_json::Value::as_str)).bind(value_str(row,"title")?).bind(value_str(row,"description")?).bind(scene).bind(count).bind(revision).bind(value_i64(row,"createdAt")?).bind(value_i64(row,"updatedAt")?).execute(&mut **tx).await.map_err(db)?;
     }
     for row in &mut snapshot.snapshots {
         remap_json_field(row, "id", map)?;
@@ -161,12 +161,12 @@ pub(super) async fn insert_canvas_snapshot(
         let scene = value_str(row, "sceneJson")?;
         let _: serde_json::Value = parse(scene.as_bytes())?;
         sqlx::query("INSERT INTO learning_canvas_snapshots(id,program_id,canvas_id,name,title,description,scene_json,element_count,canvas_revision,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
-            .bind(value_str(row,"id")?).bind(program_id).bind(value_str(row,"canvasId")?).bind(value_str(row,"name")?).bind(value_str(row,"title")?).bind(value_str(row,"description")?).bind(scene).bind(value_i64(row,"elementCount")?).bind(value_i64(row,"canvasRevision")?).bind(value_i64(row,"createdAt")?).execute(&mut *tx).await.map_err(db)?;
+            .bind(value_str(row,"id")?).bind(program_id).bind(value_str(row,"canvasId")?).bind(value_str(row,"name")?).bind(value_str(row,"title")?).bind(value_str(row,"description")?).bind(scene).bind(value_i64(row,"elementCount")?).bind(value_i64(row,"canvasRevision")?).bind(value_i64(row,"createdAt")?).execute(&mut **tx).await.map_err(db)?;
     }
     Ok(())
 }
 pub(super) async fn insert_events(
-    tx: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     pack: &DecodedLearningPack,
     map: &HashMap<String, String>,
@@ -204,14 +204,14 @@ pub(super) async fn insert_events(
             {
                 return Err(invalid("Pack evidence record is invalid."));
             }
-            sqlx::query("INSERT INTO learning_evidence_events(id,program_id,outcome_id,source_kind,source_id,dimension,result,score,observation,evidence_quote,assistance_json,observed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").bind(id).bind(program_id).bind(outcome).bind(source_kind).bind(source_id).bind(dimension).bind(result).bind(score).bind(observation).bind(quote).bind(assistance).bind(observed).execute(&mut *tx).await.map_err(db)?;
+            sqlx::query("INSERT INTO learning_evidence_events(id,program_id,outcome_id,source_kind,source_id,dimension,result,score,observation,evidence_quote,assistance_json,observed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").bind(id).bind(program_id).bind(outcome).bind(source_kind).bind(source_id).bind(dimension).bind(result).bind(score).bind(observation).bind(quote).bind(assistance).bind(observed).execute(&mut **tx).await.map_err(db)?;
         }
     }
     Ok(())
 }
 
 pub(super) async fn insert_follow_ups(
-    tx: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     pack: &DecodedLearningPack,
     map: &HashMap<String, String>,
@@ -251,14 +251,14 @@ pub(super) async fn insert_follow_ups(
             {
                 return Err(invalid("Pack follow-up record is invalid."));
             }
-            sqlx::query("INSERT INTO learning_follow_up_recommendations(id,program_id,outcome_id,reason_code,explanation,action_kind,action_ref,status,evidence_event_ids_json,created_at,decided_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(id).bind(program_id).bind(outcome).bind(reason).bind(explanation).bind(kind).bind(action).bind(status).bind(json_string(&evidence)?).bind(created).bind(decided).execute(&mut *tx).await.map_err(db)?;
+            sqlx::query("INSERT INTO learning_follow_up_recommendations(id,program_id,outcome_id,reason_code,explanation,action_kind,action_ref,status,evidence_event_ids_json,created_at,decided_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(id).bind(program_id).bind(outcome).bind(reason).bind(explanation).bind(kind).bind(action).bind(status).bind(json_string(&evidence)?).bind(created).bind(decided).execute(&mut **tx).await.map_err(db)?;
         }
     }
     Ok(())
 }
 
 pub(super) async fn insert_practical_snapshot(
-    tx: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     snapshot: &PracticalPackSnapshot,
 ) -> Result<()> {
@@ -269,7 +269,7 @@ pub(super) async fn insert_practical_snapshot(
         let profile_available = if let Some(profile) = activity.runtime_profile_id.as_deref() {
             sqlx::query_scalar::<_, i64>("SELECT 1 FROM learning_runtime_profiles WHERE id=?")
                 .bind(profile)
-                .fetch_optional(&mut *tx)
+                .fetch_optional(&mut **tx)
                 .await
                 .map_err(db)?
                 .is_some()
@@ -325,7 +325,7 @@ pub(super) async fn insert_practical_snapshot(
             None
         };
         sqlx::query("INSERT INTO learning_practical_activities(id,program_id,lesson_id,predecessor_id,kind,title,brief,status,practice_mode,allowed_aids_json,outcome_ids_json,source_version_ids_json,rubric_json,runtime_kind,runtime_profile_id,runtime_engine,runtime_image_id,runtime_command_json,runtime_limits_json,generator_model,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-            .bind(&activity.id).bind(program_id).bind(&activity.lesson_id).bind(Option::<&str>::None).bind(kind).bind(&activity.title).bind(&activity.brief).bind(status).bind(mode).bind(json_string(&activity.allowed_aids)?).bind(json_string(&activity.outcome_ids)?).bind(json_string(&activity.source_version_ids)?).bind(json_string(&activity.rubric)?).bind(runtime_name).bind(runtime_profile).bind(engine).bind(image).bind(command).bind(limits).bind(&activity.generator_model).bind(activity.revision).bind(activity.created_at).bind(activity.updated_at).execute(&mut *tx).await.map_err(db)?;
+            .bind(&activity.id).bind(program_id).bind(&activity.lesson_id).bind(Option::<&str>::None).bind(kind).bind(&activity.title).bind(&activity.brief).bind(status).bind(mode).bind(json_string(&activity.allowed_aids)?).bind(json_string(&activity.outcome_ids)?).bind(json_string(&activity.source_version_ids)?).bind(json_string(&activity.rubric)?).bind(runtime_name).bind(runtime_profile).bind(engine).bind(image).bind(command).bind(limits).bind(&activity.generator_model).bind(activity.revision).bind(activity.created_at).bind(activity.updated_at).execute(&mut **tx).await.map_err(db)?;
         for (ordinal, file) in activity.files.iter().enumerate() {
             if !matches!(
                 file.role,
@@ -340,7 +340,7 @@ pub(super) async fn insert_practical_snapshot(
                 return Err(invalid("Practical activity file checksum does not match."));
             }
             let role = enum_label(&file.role)?;
-            sqlx::query("INSERT INTO learning_practical_files(activity_id,ordinal,path,role,content,content_sha256,editable) VALUES(?,?,?,?,?,?,?)").bind(&activity.id).bind(ordinal as i64).bind(&file.path).bind(role).bind(&file.content).bind(&file.content_sha256).bind(file.editable as i64).execute(&mut *tx).await.map_err(db)?;
+            sqlx::query("INSERT INTO learning_practical_files(activity_id,ordinal,path,role,content,content_sha256,editable) VALUES(?,?,?,?,?,?,?)").bind(&activity.id).bind(ordinal as i64).bind(&file.path).bind(role).bind(&file.content).bind(&file.content_sha256).bind(file.editable as i64).execute(&mut **tx).await.map_err(db)?;
         }
         if let Some(plan) = &activity.interview_plan {
             let content = json_string(plan)?;
@@ -351,7 +351,7 @@ pub(super) async fn insert_practical_snapshot(
                 .bind(crate::practice::practical_generation::INTERVIEW_PLAN_FILE_PATH)
                 .bind(&content)
                 .bind(&checksum)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await
                 .map_err(db)?;
         }
@@ -359,7 +359,7 @@ pub(super) async fn insert_practical_snapshot(
     for activity in &snapshot.activities {
         if let Some(predecessor) = &activity.predecessor_id {
             sqlx::query("UPDATE learning_practical_activities SET predecessor_id=? WHERE program_id=? AND id=?")
-                .bind(predecessor).bind(program_id).bind(&activity.id).execute(&mut *tx).await.map_err(db)?;
+                .bind(predecessor).bind(program_id).bind(&activity.id).execute(&mut **tx).await.map_err(db)?;
         }
     }
     for run in &snapshot.runs {
@@ -385,10 +385,10 @@ pub(super) async fn insert_practical_snapshot(
         let operation_id = value_str(raw_snapshot, "operationId")?;
         let payload_hash = value_str(raw_snapshot, "payloadHash")?;
         sqlx::query("INSERT INTO learning_practical_runs(id,program_id,activity_id,activity_revision,activity_snapshot_json,practice_session_id,operation_id,payload_hash,engine,image_id,status,learner_files_json,stdout,stderr,output_truncated,exit_code,duration_ms,check_results_json,created_at,completed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-            .bind(&run.id).bind(program_id).bind(&run.activity_id).bind(run.activity_revision).bind(snapshot_json).bind(&run.practice_session_id).bind(operation_id).bind(payload_hash).bind(engine).bind(&run.image_id).bind(status).bind(files).bind(&run.stdout).bind(&run.stderr).bind(run.output_truncated as i64).bind(run.exit_code).bind(run.duration_ms).bind(checks).bind(run.created_at).bind(run.completed_at).execute(&mut *tx).await.map_err(db)?;
+            .bind(&run.id).bind(program_id).bind(&run.activity_id).bind(run.activity_revision).bind(snapshot_json).bind(&run.practice_session_id).bind(operation_id).bind(payload_hash).bind(engine).bind(&run.image_id).bind(status).bind(files).bind(&run.stdout).bind(&run.stderr).bind(run.output_truncated as i64).bind(run.exit_code).bind(run.duration_ms).bind(checks).bind(run.created_at).bind(run.completed_at).execute(&mut **tx).await.map_err(db)?;
         for (ordinal, check) in run.checks.iter().enumerate() {
             let status = enum_label(&check.status)?;
-            sqlx::query("INSERT INTO learning_practical_run_checks(run_id,ordinal,name,status,message,duration_ms) VALUES(?,?,?,?,?,?)").bind(&run.id).bind(ordinal as i64).bind(&check.name).bind(status).bind(&check.message).bind(check.duration_ms).execute(&mut *tx).await.map_err(db)?;
+            sqlx::query("INSERT INTO learning_practical_run_checks(run_id,ordinal,name,status,message,duration_ms) VALUES(?,?,?,?,?,?)").bind(&run.id).bind(ordinal as i64).bind(&check.name).bind(status).bind(&check.message).bind(check.duration_ms).execute(&mut **tx).await.map_err(db)?;
         }
     }
     for session in &snapshot.simulations {
@@ -403,7 +403,7 @@ pub(super) async fn insert_practical_snapshot(
             return Err(invalid("Pack simulation status is invalid."));
         }
         sqlx::query("INSERT INTO learning_simulation_sessions(id,program_id,activity_id,activity_revision,activity_snapshot_json,practice_session_id,operation_id,payload_hash,learner_role,counterpart_role,status,revision,created_at,updated_at,submitted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-            .bind(id).bind(program_id).bind(activity).bind(revision).bind(snapshot_json).bind(session.get("practiceSessionId").filter(|v|!v.is_null()).and_then(serde_json::Value::as_str)).bind(operation).bind(payload).bind(value_str(session,"learnerRole")?).bind(value_str(session,"counterpartRole")?).bind(status).bind(value_i64(session,"revision")?).bind(value_i64(session,"createdAt")?).bind(value_i64(session,"updatedAt")?).bind(session.get("submittedAt").filter(|v|!v.is_null()).and_then(serde_json::Value::as_i64)).execute(&mut *tx).await.map_err(db)?;
+            .bind(id).bind(program_id).bind(activity).bind(revision).bind(snapshot_json).bind(session.get("practiceSessionId").filter(|v|!v.is_null()).and_then(serde_json::Value::as_str)).bind(operation).bind(payload).bind(value_str(session,"learnerRole")?).bind(value_str(session,"counterpartRole")?).bind(status).bind(value_i64(session,"revision")?).bind(value_i64(session,"createdAt")?).bind(value_i64(session,"updatedAt")?).bind(session.get("submittedAt").filter(|v|!v.is_null()).and_then(serde_json::Value::as_i64)).execute(&mut **tx).await.map_err(db)?;
     }
     for turn in &snapshot.simulation_turns {
         let speaker = value_str(turn, "speaker")?;
@@ -413,13 +413,13 @@ pub(super) async fn insert_practical_snapshot(
         let citations = value_str(turn, "citations")?;
         let _: serde_json::Value = parse(citations.as_bytes())?;
         sqlx::query("INSERT INTO learning_simulation_turns(id,program_id,session_id,operation_id,payload_hash,ordinal,speaker,content,citations_json,model_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
-            .bind(value_str(turn,"id")?).bind(program_id).bind(value_str(turn,"sessionId")?).bind(value_str(turn,"operationId")?).bind(value_str(turn,"payloadHash")?).bind(value_i64(turn,"ordinal")?).bind(speaker).bind(value_str(turn,"content")?).bind(citations).bind(turn.get("modelName").and_then(serde_json::Value::as_str)).bind(value_i64(turn,"createdAt")?).execute(&mut *tx).await.map_err(db)?;
+            .bind(value_str(turn,"id")?).bind(program_id).bind(value_str(turn,"sessionId")?).bind(value_str(turn,"operationId")?).bind(value_str(turn,"payloadHash")?).bind(value_i64(turn,"ordinal")?).bind(speaker).bind(value_str(turn,"content")?).bind(citations).bind(turn.get("modelName").and_then(serde_json::Value::as_str)).bind(value_i64(turn,"createdAt")?).execute(&mut **tx).await.map_err(db)?;
     }
     Ok(())
 }
 
 pub(super) async fn insert_source_workspace(
-    tx: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     workspace: &crate::dto::LearningSourceWorkspaceDto,
     pack: &DecodedLearningPack,
@@ -449,7 +449,7 @@ pub(super) async fn insert_source_workspace(
             .found_by_search
             .unwrap_or(added_by == outline && kind == "web");
         sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,deleted_at,deletion_reason,created_at,updated_at,added_by,found_by_search) VALUES(?,?,?,?,?,?,NULL,NULL,?,?,?,?,?,?,?)")
-            .bind(&source_id).bind(program_id).bind(kind).bind(&source.origin).bind(&source.requested_url).bind(policy).bind(source.revision).bind(source.deleted_at).bind(&source.deletion_reason).bind(source.created_at).bind(source.updated_at).bind(added_by).bind(found).execute(&mut *tx).await.map_err(db)?;
+            .bind(&source_id).bind(program_id).bind(kind).bind(&source.origin).bind(&source.requested_url).bind(policy).bind(source.revision).bind(source.deleted_at).bind(&source.deletion_reason).bind(source.created_at).bind(source.updated_at).bind(added_by).bind(found).execute(&mut **tx).await.map_err(db)?;
         let mut restored_digests = HashSet::new();
         for version in &source.versions {
             validate_source_id(&version.id)?;
@@ -482,7 +482,7 @@ pub(super) async fn insert_source_workspace(
             // so elsewhere the source is captured again rather than shown as
             // frozen with nothing behind it.
             sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at,snapshot_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,(SELECT sha256 FROM web_page_snapshots WHERE status='ready' AND sha256=? LIMIT 1))")
-                .bind(&version_id).bind(program_id).bind(&source_id).bind(version.version_number).bind(&version.title).bind(&version.publisher).bind(&source.requested_url).bind(&version.resolved_url).bind(&full_text).bind(&version.excerpt).bind(if body.is_some(){version.content_sha256.clone()}else{content_digest}).bind(restored_word_count).bind(truncated as i64).bind(extraction).bind(version.acquired_at).bind(&version.snapshot_hash).execute(&mut *tx).await.map_err(db)?;
+                .bind(&version_id).bind(program_id).bind(&source_id).bind(version.version_number).bind(&version.title).bind(&version.publisher).bind(&source.requested_url).bind(&version.resolved_url).bind(&full_text).bind(&version.excerpt).bind(if body.is_some(){version.content_sha256.clone()}else{content_digest}).bind(restored_word_count).bind(truncated as i64).bind(extraction).bind(version.acquired_at).bind(&version.snapshot_hash).execute(&mut **tx).await.map_err(db)?;
         }
         let active = source.active_version_id.as_deref().map(|id| remap(map, id));
         let pending = source
@@ -490,14 +490,14 @@ pub(super) async fn insert_source_workspace(
             .as_deref()
             .map(|id| remap(map, id));
         sqlx::query("UPDATE learning_source_library SET active_version_id=?,pending_version_id=? WHERE id=? AND program_id=?")
-            .bind(active).bind(pending).bind(&source_id).bind(program_id).execute(&mut *tx).await.map_err(db)?;
+            .bind(active).bind(pending).bind(&source_id).bind(program_id).execute(&mut **tx).await.map_err(db)?;
     }
     Ok(())
 }
 
 /// A pack's trust rows, after the source versions they hang from.
 pub(super) async fn insert_source_trust(
-    tx: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     rows: SourceTrustPackEntry,
     map: &HashMap<String, String>,
@@ -509,7 +509,7 @@ pub(super) async fn insert_source_trust(
 }
 
 pub(super) async fn insert_source_history(
-    tx: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     history: &mut SourceHistorySnapshot,
     map: &HashMap<String, String>,
@@ -523,7 +523,7 @@ pub(super) async fn insert_source_history(
             return Err(invalid("Pack source check status is invalid."));
         }
         sqlx::query("INSERT INTO learning_source_refresh_checks(operation_id,program_id,source_id,status,checked_at,active_digest,pending_version_id,message) VALUES(?,?,?,?,?,?,?,?)")
-            .bind(value_str(check,"operationId")?).bind(program_id).bind(value_str(check,"sourceId")?).bind(status).bind(value_i64(check,"checkedAt")?).bind(check.get("activeDigest").filter(|v|!v.is_null()).and_then(serde_json::Value::as_str)).bind(check.get("pendingVersionId").filter(|v|!v.is_null()).and_then(serde_json::Value::as_str)).bind(check.get("message").filter(|v|!v.is_null()).and_then(serde_json::Value::as_str)).execute(&mut *tx).await.map_err(db)?;
+            .bind(value_str(check,"operationId")?).bind(program_id).bind(value_str(check,"sourceId")?).bind(status).bind(value_i64(check,"checkedAt")?).bind(check.get("activeDigest").filter(|v|!v.is_null()).and_then(serde_json::Value::as_str)).bind(check.get("pendingVersionId").filter(|v|!v.is_null()).and_then(serde_json::Value::as_str)).bind(check.get("message").filter(|v|!v.is_null()).and_then(serde_json::Value::as_str)).execute(&mut **tx).await.map_err(db)?;
     }
     Ok(())
 }
@@ -589,7 +589,7 @@ pub(super) fn remap_practical(
 }
 
 pub(super) async fn insert_selectors(
-    tx: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     pack: &DecodedLearningPack,
     map: &HashMap<String, String>,
@@ -683,7 +683,7 @@ pub(super) async fn insert_selectors(
                     .to_owned()
             };
             sqlx::query("INSERT INTO learning_source_selectors(id,program_id,source_id,source_version_id,exact_text,prefix_text,suffix_text,start_byte,end_byte,candidate_count,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
-                .bind(selector_id).bind(program_id).bind(source_id).bind(version_id).bind(exact).bind(prefix).bind(suffix).bind(start).bind(end).bind(candidate_count).bind(status).bind(created_at).execute(&mut *tx).await.map_err(db)?;
+                .bind(selector_id).bind(program_id).bind(source_id).bind(version_id).bind(exact).bind(prefix).bind(suffix).bind(start).bind(end).bind(candidate_count).bind(status).bind(created_at).execute(&mut **tx).await.map_err(db)?;
         }
     }
     Ok(())

@@ -1,5 +1,6 @@
 use super::chunks::store_document;
 use crate::features::indexing::engine::chunker::TextChunk;
+use lattice_core::shared::persistence::Database;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 
@@ -27,6 +28,7 @@ async fn count(pool: &SqlitePool, table: &str) -> i64 {
 #[tokio::test]
 async fn a_document_whose_mentions_cannot_be_saved_is_not_stored() {
     let pool = setup_pool().await;
+    let db = Database::new(pool.clone());
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("note.md");
     let text = "Met @[Alice] about [[Plan]].";
@@ -47,7 +49,7 @@ async fn a_document_whose_mentions_cannot_be_saved_is_not_stored() {
     };
 
     let result = store_document(
-        &pool,
+        &db,
         &path,
         "text/markdown",
         vec![chunk],

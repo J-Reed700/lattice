@@ -9,11 +9,6 @@ use std::time::Duration;
 /// Default timeout for operations in seconds
 pub const DEFAULT_TIMEOUT_SECS: u64 = 30;
 
-/// Database query timeouts
-pub const DB_QUERY_TIMEOUT_QUICK: Duration = Duration::from_secs(5);
-pub const DB_QUERY_TIMEOUT_NORMAL: Duration = Duration::from_secs(30);
-pub const DB_QUERY_TIMEOUT_HEAVY: Duration = Duration::from_secs(60);
-
 /// HTTP request timeout for web integrations
 pub const WEB_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 

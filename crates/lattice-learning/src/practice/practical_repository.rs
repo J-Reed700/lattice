@@ -11,9 +11,9 @@ use crate::{
     practice::coding::{harness::CaseHarness, problem::ProblemCase},
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Database;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use sqlx::{Row, SqliteConnection};
 use std::collections::HashMap;
 
 mod activities;
@@ -257,13 +257,12 @@ pub struct PracticalWorkspaceSnapshot {
 
 #[derive(Clone)]
 pub struct LearningPracticalRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl LearningPracticalRepository {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     async fn active_program(tx: &mut SqliteConnection, program_id: &str) -> Result<i64> {
@@ -279,15 +278,6 @@ impl LearningPracticalRepository {
             ));
         }
         Ok(row.get("revision"))
-    }
-
-    async fn writer_lock(tx: &mut SqliteConnection, program_id: &str) -> Result<()> {
-        sqlx::query("UPDATE learning_programs SET revision=revision WHERE id=?")
-            .bind(program_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        Ok(())
     }
 }
 

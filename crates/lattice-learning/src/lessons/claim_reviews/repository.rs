@@ -13,10 +13,9 @@ use lattice_core::domain::learning::claim_review::{
     Ledger, LessonReview, LessonReviewState, RecordedEvent, Revision, StopReason, UnitKind,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, WriteTx};
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use sqlx::{Row, SqliteConnection};
 
 use crate::persistence::{db, decode, encode, now};
 
@@ -50,13 +49,12 @@ struct StoredEvent {
 
 #[derive(Clone)]
 pub struct ClaimReviewRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl ClaimReviewRepository {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     /// The passages each claim's latest check compared, as shown on its card.
@@ -64,7 +62,7 @@ impl ClaimReviewRepository {
         &self,
         lesson_id: &str,
     ) -> Result<HashMap<ClaimId, Vec<ShownPassage>>> {
-        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let shown = shown_passages_in(&mut read, lesson_id).await?;
         read.commit().await.map_err(db)?;
         Ok(shown)
@@ -79,13 +77,14 @@ impl ClaimReviewRepository {
         claim_id: &ClaimId,
         passages: &[ShownPassage],
     ) -> Result<()> {
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        Self::show_passages_in(&mut connection, lesson_id, claim_id, passages).await
+        let mut tx = self.db.begin_write().await.map_err(db)?;
+        Self::show_passages_in(&mut tx, lesson_id, claim_id, passages).await?;
+        tx.commit().await.map_err(db)
     }
 
     /// [`Self::show_passages`] inside the caller's unit of work.
     pub async fn show_passages_in(
-        conn: &mut SqliteConnection,
+        tx: &mut WriteTx,
         lesson_id: &str,
         claim_id: &ClaimId,
         passages: &[ShownPassage],
@@ -96,7 +95,7 @@ impl ClaimReviewRepository {
         .bind(encode(passages)?)
         .bind(&claim_id.0)
         .bind(lesson_id)
-        .execute(&mut *conn)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
         Ok(())
@@ -105,28 +104,36 @@ impl ClaimReviewRepository {
     /// The review row's last write by the job, as Unix milliseconds: what
     /// "changed since the job ended" is measured from (§6.2).
     pub async fn review_written_at(&self, lesson_id: &str) -> Result<Option<i64>> {
-        sqlx::query_scalar("SELECT updated_at FROM learning_lesson_reviews WHERE lesson_id=?")
-            .bind(lesson_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(db)
+        let mut read = self.db.begin_read().await.map_err(db)?;
+        let written =
+            sqlx::query_scalar("SELECT updated_at FROM learning_lesson_reviews WHERE lesson_id=?")
+                .bind(lesson_id)
+                .fetch_optional(&mut *read)
+                .await
+                .map_err(db)?;
+        read.commit().await.map_err(db)?;
+        Ok(written)
     }
 
     /// The body of the lesson's block at `ordinal`, when the lesson has one.
     pub async fn block_body(&self, lesson_id: &str, ordinal: usize) -> Result<Option<String>> {
-        sqlx::query_scalar("SELECT body FROM learning_blocks WHERE lesson_id=? AND ordinal=?")
-            .bind(lesson_id)
-            .bind(i64::try_from(ordinal).unwrap_or(i64::MAX))
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(db)
+        let mut read = self.db.begin_read().await.map_err(db)?;
+        let body =
+            sqlx::query_scalar("SELECT body FROM learning_blocks WHERE lesson_id=? AND ordinal=?")
+                .bind(lesson_id)
+                .bind(i64::try_from(ordinal).unwrap_or(i64::MAX))
+                .fetch_optional(&mut *read)
+                .await
+                .map_err(db)?;
+        read.commit().await.map_err(db)?;
+        Ok(body)
     }
 }
 
 #[async_trait]
 impl ClaimReviewStore for ClaimReviewRepository {
     async fn load(&self, lesson_id: &str) -> Result<Ledger> {
-        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let ledger = load_in(&mut read, lesson_id).await?;
         read.commit().await.map_err(db)?;
         Ok(ledger)
@@ -140,7 +147,7 @@ impl ClaimReviewStore for ClaimReviewRepository {
         event: ClaimEvent,
         expected_revision: Revision,
     ) -> Result<Revision> {
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         check_revision(&mut tx, lesson_id, expected_revision).await?;
         append_in(&mut tx, lesson_id, claim_id, provenance, event).await?;
         bump_revision(&mut tx, lesson_id).await?;
@@ -151,6 +158,7 @@ impl ClaimReviewStore for ClaimReviewRepository {
     async fn set_lesson_review(&self, lesson_id: &str, review: LessonReview) -> Result<Revision> {
         let stamp = now();
         let stop_reason = review.stop_reason.as_ref().map(encode).transpose()?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let revision: i64 = sqlx::query_scalar(
             "INSERT INTO learning_lesson_reviews(lesson_id,program_id,job_id,state,revision,draft_sha256,checker_model,stop_reason_json,opened_at,updated_at) \
              VALUES(?,?,?,?,0,?,?,?,?,?) \
@@ -168,9 +176,10 @@ impl ClaimReviewStore for ClaimReviewRepository {
         .bind(stop_reason)
         .bind(stamp)
         .bind(stamp)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(db)?;
+        tx.commit().await.map_err(db)?;
         Ok(Revision(revision))
     }
 
@@ -179,15 +188,17 @@ impl ClaimReviewStore for ClaimReviewRepository {
         lesson_id: &str,
         stop_reason: Option<StopReason>,
     ) -> Result<Option<Revision>> {
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        hold_in(&mut connection, lesson_id, stop_reason.as_ref()).await
+        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let held = hold_in(&mut tx, lesson_id, stop_reason.as_ref()).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(held)
     }
 }
 
 /// Sends the review to Needs review in one statement, keeping its other
 /// fields; `None` keeps the stored stop reason. `None` back: no review row.
 pub(super) async fn hold_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     lesson_id: &str,
     stop_reason: Option<&StopReason>,
 ) -> Result<Option<Revision>> {
@@ -200,7 +211,7 @@ pub(super) async fn hold_in(
     .bind(stop_reason)
     .bind(now())
     .bind(lesson_id)
-    .fetch_optional(&mut *connection)
+    .fetch_optional(&mut **tx)
     .await
     .map_err(db)?;
     Ok(revision.map(Revision))
@@ -254,13 +265,10 @@ pub(super) async fn check_revision(
     Ok(())
 }
 
-pub(super) async fn bump_revision(
-    connection: &mut SqliteConnection,
-    lesson_id: &str,
-) -> Result<()> {
+pub(super) async fn bump_revision(tx: &mut WriteTx, lesson_id: &str) -> Result<()> {
     sqlx::query("UPDATE learning_lesson_reviews SET revision=revision+1 WHERE lesson_id=?")
         .bind(lesson_id)
-        .execute(&mut *connection)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
     Ok(())
@@ -269,7 +277,7 @@ pub(super) async fn bump_revision(
 /// Writes one event of one claim on `connection`, without the revision
 /// check or its advance: the caller's transaction owns both.
 pub(super) async fn append_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     lesson_id: &str,
     claim_id: &ClaimId,
     provenance: EventProvenance,
@@ -278,7 +286,7 @@ pub(super) async fn append_in(
     let owner: Option<String> =
         sqlx::query_scalar("SELECT lesson_id FROM learning_lesson_claims WHERE claim_id=?")
             .bind(&claim_id.0)
-            .fetch_optional(&mut *connection)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(db)?;
     if owner.as_deref().is_some_and(|owner| owner != lesson_id) {
@@ -288,7 +296,7 @@ pub(super) async fn append_in(
     }
     let mut entry = match owner {
         Some(_) => {
-            let events = claim_events(connection, claim_id).await?;
+            let events = claim_events(tx, claim_id).await?;
             ClaimLedgerEntry::from_events(claim_id.clone(), events)?
         }
         None => match &event {
@@ -313,7 +321,7 @@ pub(super) async fn append_in(
     } else {
         0
     };
-    upsert_claim(connection, lesson_id, &entry).await?;
+    upsert_claim(tx, lesson_id, &entry).await?;
     sqlx::query("INSERT INTO learning_lesson_claim_events(claim_id,ordinal,actor,kind,payload_json,job_id,at) VALUES(?,?,?,?,?,?,?)")
         .bind(&claim_id.0)
         .bind(i64::from(ordinal))
@@ -326,7 +334,7 @@ pub(super) async fn append_in(
         })?)
         .bind(provenance.job_id)
         .bind(provenance.at)
-        .execute(&mut *connection)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
     Ok(())
@@ -426,11 +434,7 @@ fn recorded(row: &sqlx::sqlite::SqliteRow) -> Result<RecordedEvent> {
 
 /// Writes the claim row's listing columns from its replayed log. The
 /// passages shown are written separately ([`ClaimReviewRepository::show_passages`]).
-async fn upsert_claim(
-    connection: &mut SqliteConnection,
-    lesson_id: &str,
-    entry: &ClaimLedgerEntry,
-) -> Result<()> {
+async fn upsert_claim(tx: &mut WriteTx, lesson_id: &str, entry: &ClaimLedgerEntry) -> Result<()> {
     let ClaimLocation {
         unit_index,
         unit_kind,
@@ -466,7 +470,7 @@ async fn upsert_claim(
     .bind(verdict_kind)
     .bind(reason)
     .bind(now())
-    .execute(&mut *connection)
+    .execute(&mut **tx)
     .await
     .map_err(db)?;
     Ok(())

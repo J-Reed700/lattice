@@ -12,9 +12,10 @@ use crate::{
 };
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::RecoveryPolicy;
+use sqlx::SqlitePool;
 
-async fn active_program(pool: &SqlitePool) -> Result<LearningProgramDto> {
-    let repo = LearningRepository::new(pool.clone());
+async fn active_program(database: &Database) -> Result<LearningProgramDto> {
+    let repo = LearningRepository::new(database.clone());
     let program = fixture();
     repo.create(&program).await?;
     repo.accept(&AcceptLearningProgramRequestDto {
@@ -30,8 +31,8 @@ fn op_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-fn jobs(pool: &SqlitePool) -> JobStore {
-    JobStore::new(pool.clone())
+fn jobs(database: &Database) -> JobStore {
+    JobStore::new(database.clone())
 }
 
 fn new_lesson() -> LearningCurriculumLesson {
@@ -50,8 +51,9 @@ fn new_lesson() -> LearningCurriculumLesson {
 async fn real_migration_seeds_uuid_outcomes_and_preview_is_replayable_and_cas_guarded() -> Result<()>
 {
     let pool = pool().await?;
-    let program = active_program(&pool).await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let program = active_program(&database).await?;
+    let repo = LearningCurriculumRepository::new(database.clone());
     let plan = repo.plan(&program.summary.id).await?;
     let accepted = plan.accepted_revision.expect("seed snapshot");
     let outcome_id = accepted.modules[0].outcome_ids[0].clone();
@@ -163,8 +165,9 @@ async fn real_migration_seeds_uuid_outcomes_and_preview_is_replayable_and_cas_gu
 #[tokio::test]
 async fn diagnostic_lifecycle_is_idempotent_complete_and_does_not_claim_mastery() -> Result<()> {
     let pool = pool().await?;
-    let program = active_program(&pool).await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let program = active_program(&database).await?;
+    let repo = LearningCurriculumRepository::new(database.clone());
     let start = StartLearningDiagnosticRequestDto {
         operation_id: op_id(),
         program_id: program.summary.id.clone(),
@@ -233,8 +236,9 @@ async fn diagnostic_lifecycle_is_idempotent_complete_and_does_not_claim_mastery(
 #[tokio::test]
 async fn a_course_that_changed_since_it_was_loaded_is_reported_as_a_conflict() -> Result<()> {
     let pool = pool().await?;
-    let program = active_program(&pool).await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let database = Database::new(pool);
+    let program = active_program(&database).await?;
+    let repo = LearningCurriculumRepository::new(database.clone());
     let stale = program.summary.revision + 1;
     crate::tests::assert_conflict(
         repo.discard_revision(&DiscardLearningCurriculumRevisionRequestDto {
@@ -273,8 +277,9 @@ async fn a_course_that_changed_since_it_was_loaded_is_reported_as_a_conflict() -
 async fn a_starting_point_that_changed_since_it_was_loaded_is_reported_as_a_conflict() -> Result<()>
 {
     let pool = pool().await?;
-    let program = active_program(&pool).await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let database = Database::new(pool);
+    let program = active_program(&database).await?;
+    let repo = LearningCurriculumRepository::new(database.clone());
     let stale = program.summary.revision + 1;
     crate::tests::assert_conflict(
         repo.start_diagnostic(&StartLearningDiagnosticRequestDto {
@@ -321,8 +326,9 @@ async fn a_starting_point_that_changed_since_it_was_loaded_is_reported_as_a_conf
 #[tokio::test]
 async fn completed_and_assessed_lessons_are_protected_by_current_outcome_joins() -> Result<()> {
     let pool = pool().await?;
-    let program = active_program(&pool).await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let program = active_program(&database).await?;
+    let repo = LearningCurriculumRepository::new(database.clone());
     let accepted = repo
         .plan(&program.summary.id)
         .await?
@@ -395,8 +401,9 @@ async fn completed_and_assessed_lessons_are_protected_by_current_outcome_joins()
 async fn selected_lesson_jobs_allow_placement_and_retry_failures_without_duplicate_workers(
 ) -> Result<()> {
     let pool = pool().await?;
-    let program = active_program(&pool).await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let database = Database::new(pool);
+    let program = active_program(&database).await?;
+    let repo = LearningCurriculumRepository::new(database.clone());
     let target = program.modules[1].lessons[1].id.clone();
     let request = StartLearningGenerationJobRequestDto {
         operation_id: op_id(),
@@ -408,8 +415,8 @@ async fn selected_lesson_jobs_allow_placement_and_retry_failures_without_duplica
     };
     let first = repo.start_lesson_job(&request).await?;
     assert_eq!(repo.start_lesson_job(&request).await?.id, first.id);
-    assert!(jobs(&pool).claim(&first.id).await?.is_some());
-    jobs(&pool)
+    assert!(jobs(&database).claim(&first.id).await?.is_some());
+    jobs(&database)
         .fail(&first.id, "generation_failed", "Synthetic review failure")
         .await?;
     let (left, right) = tokio::join!(
@@ -420,9 +427,9 @@ async fn selected_lesson_jobs_allow_placement_and_retry_failures_without_duplica
     assert_eq!(retry.id, right?.id);
     assert_ne!(retry.id, first.id);
     assert_eq!(retry.retry_of_job_id.as_deref(), Some(first.id.as_str()));
-    assert!(jobs(&pool).claim(&retry.id).await?.is_some());
-    assert!(jobs(&pool).claim(&retry.id).await?.is_none());
-    jobs(&pool)
+    assert!(jobs(&database).claim(&retry.id).await?.is_some());
+    assert!(jobs(&database).claim(&retry.id).await?.is_none());
+    jobs(&database)
         .fail(&retry.id, "generation_failed", "A second synthetic failure")
         .await?;
     let next = repo.start_lesson_job(&request).await?;
@@ -443,8 +450,9 @@ async fn selected_lesson_jobs_allow_placement_and_retry_failures_without_duplica
 #[tokio::test]
 async fn a_job_an_update_ended_says_so_and_another_does_not() -> Result<()> {
     let pool = pool().await?;
-    let program = active_program(&pool).await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let program = active_program(&database).await?;
+    let repo = LearningCurriculumRepository::new(database.clone());
     let start = |lesson: &str| StartLearningGenerationJobRequestDto {
         operation_id: op_id(),
         program_id: program.summary.id.clone(),
@@ -456,8 +464,8 @@ async fn a_job_an_update_ended_says_so_and_another_does_not() -> Result<()> {
     let ended = repo
         .start_lesson_job(&start(&program.modules[1].lessons[1].id))
         .await?;
-    assert!(jobs(&pool).claim(&ended.id).await?.is_some());
-    jobs(&pool)
+    assert!(jobs(&database).claim(&ended.id).await?.is_some());
+    jobs(&database)
         .fail(&ended.id, "generation_failed", "Synthetic failure")
         .await?;
     sqlx::query("UPDATE jobs SET status = 'cancelled', error_code = 'ended_by_update', error_message = NULL WHERE id = ?")
@@ -468,8 +476,8 @@ async fn a_job_an_update_ended_says_so_and_another_does_not() -> Result<()> {
     let other = repo
         .start_lesson_job(&start(&program.modules[0].lessons[0].id))
         .await?;
-    assert!(jobs(&pool).claim(&other.id).await?.is_some());
-    jobs(&pool)
+    assert!(jobs(&database).claim(&other.id).await?.is_some());
+    jobs(&database)
         .fail(&other.id, "generation_failed", "Another synthetic failure")
         .await?;
 
@@ -486,9 +494,10 @@ async fn a_job_an_update_ended_says_so_and_another_does_not() -> Result<()> {
 #[tokio::test]
 async fn deleting_a_program_removes_its_jobs_and_their_saved_work() -> Result<()> {
     let pool = pool().await?;
-    let program = active_program(&pool).await?;
-    let other = active_program(&pool).await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let database = Database::new(pool);
+    let program = active_program(&database).await?;
+    let other = active_program(&database).await?;
+    let repo = LearningCurriculumRepository::new(database.clone());
     let start = |program: &LearningProgramDto| StartLearningGenerationJobRequestDto {
         operation_id: op_id(),
         program_id: program.summary.id.clone(),
@@ -500,11 +509,11 @@ async fn deleting_a_program_removes_its_jobs_and_their_saved_work() -> Result<()
     };
     let job = repo.start_job(&start(&program)).await?;
     let kept = repo.start_job(&start(&other)).await?;
-    assert!(jobs(&pool).claim(&job.id).await?.is_some());
+    assert!(jobs(&database).claim(&job.id).await?.is_some());
     let lesson = &program.modules[0].lessons[0].id;
     repo.save_lesson_checkpoint(&job.id, lesson, "step", serde_json::json!(1))
         .await?;
-    jobs(&pool)
+    jobs(&database)
         .fail(&job.id, "generation_failed", "Fixture failure")
         .await?;
     let retry = repo
@@ -516,15 +525,15 @@ async fn deleting_a_program_removes_its_jobs_and_their_saved_work() -> Result<()
         })
         .await?;
 
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(database.clone())
         .delete(&program.summary.id)
         .await?;
     for id in [&job.id, &retry.id] {
         assert!(matches!(
-            jobs(&pool).get(id).await,
+            jobs(&database).get(id).await,
             Err(AppError::NotFound(_))
         ));
-        assert!(jobs(&pool)
+        assert!(jobs(&database)
             .checkpoint(id, &lesson_checkpoint_key(lesson, "step"))
             .await?
             .is_none());
@@ -540,8 +549,9 @@ async fn deleting_a_program_removes_its_jobs_and_their_saved_work() -> Result<()
 #[tokio::test]
 async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> Result<()> {
     let pool = pool().await?;
-    let program = active_program(&pool).await?;
-    let curriculum = LearningCurriculumRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let program = active_program(&database).await?;
+    let curriculum = LearningCurriculumRepository::new(database.clone());
     let stored = curriculum.plan(&program.summary.id).await?;
     let accepted = stored.accepted_revision.expect("accepted");
     let target = accepted.modules[0].lessons[0].id.clone();
@@ -550,7 +560,7 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
     // lesson's question joins the bank under. This test exercises
     // publication rollback, not a stale job.
     let duplicate_question_id = uuid::Uuid::new_v4().to_string();
-    let other = active_program(&pool).await?;
+    let other = active_program(&database).await?;
     let other_outcome = curriculum
         .plan(&other.summary.id)
         .await?
@@ -574,40 +584,31 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
     let mut mismatch = request.clone();
     mismatch.request_json = "{\"lessonIds\":[]}".into();
     assert!(curriculum.start_job(&mismatch).await.is_err());
-    assert!(jobs(&pool).claim(&job.id).await?.is_some());
+    assert!(jobs(&database).claim(&job.id).await?.is_some());
     let draft_body = "{\"blocks\":[{\"body\":\"Unpublished lesson draft\"}]}";
-    crate::lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &curriculum,
-        &job.id,
-        &target,
-        async {
-            crate::lesson_drafts::authoring(crate::lesson_drafts::AuthoringContext {
-                scope_hash: "same-lesson-request".into(),
-                prompt: "Original authoring prompt and citation order".into(),
-                sources: program.sources.clone(),
-                reference_hashes: program
-                    .sources
-                    .iter()
-                    .map(|source| (source.id.clone(), sha256_hex(&source.excerpt)))
-                    .collect(),
-            });
-            assert!(crate::lesson_drafts::resume("matching-inputs".into())
-                .await?
-                .is_none());
-            crate::lesson_drafts::save(draft_body).await?;
-            crate::lesson_drafts::record_teaching(draft_body, "teaching-policy".into()).await?;
-            crate::lesson_drafts::record_claim_inventory(draft_body, "audited-inventory".into())
-                .await?;
-            crate::lesson_drafts::record_pending_repair(
-                draft_body,
-                "failed-checks-to-repair".into(),
-            )
+    crate::lesson_drafts::run(&database, &curriculum, &job.id, &target, async {
+        crate::lesson_drafts::authoring(crate::lesson_drafts::AuthoringContext {
+            scope_hash: "same-lesson-request".into(),
+            prompt: "Original authoring prompt and citation order".into(),
+            sources: program.sources.clone(),
+            reference_hashes: program
+                .sources
+                .iter()
+                .map(|source| (source.id.clone(), sha256_hex(&source.excerpt)))
+                .collect(),
+        });
+        assert!(crate::lesson_drafts::resume("matching-inputs".into())
+            .await?
+            .is_none());
+        crate::lesson_drafts::save(draft_body).await?;
+        crate::lesson_drafts::record_teaching(draft_body, "teaching-policy".into()).await?;
+        crate::lesson_drafts::record_claim_inventory(draft_body, "audited-inventory".into())
             .await?;
-            assert!(crate::lesson_drafts::teaching_completed(draft_body, "teaching-policy").await?);
-            Ok(())
-        },
-    )
+        crate::lesson_drafts::record_pending_repair(draft_body, "failed-checks-to-repair".into())
+            .await?;
+        assert!(crate::lesson_drafts::teaching_completed(draft_body, "teaching-policy").await?);
+        Ok(())
+    })
     .await?;
     assert_eq!(
         curriculum
@@ -617,7 +618,7 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
             .candidate,
         draft_body
     );
-    assert!(LearningRepository::new(pool.clone())
+    assert!(LearningRepository::new(database.clone())
         .get(&program.summary.id)
         .await?
         .modules[0]
@@ -632,11 +633,11 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
         ..Default::default()
     };
     let snapshot = serde_json::to_value(&activity)?;
-    jobs(&pool)
+    jobs(&database)
         .progress(&job.id, 1, "Prepared one lesson", Some(&snapshot))
         .await?;
     assert!(
-        jobs(&pool)
+        jobs(&database)
             .progress(&job.id, 0, "An older heartbeat", Some(&snapshot))
             .await?
     );
@@ -646,7 +647,7 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
         after_delayed_heartbeat.progress_message,
         "Prepared one lesson"
     );
-    assert!(jobs(&pool)
+    assert!(jobs(&database)
         .progress(&job.id, 0, "Backwards", None)
         .await
         .is_err());
@@ -661,15 +662,15 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
 
     // Process death retains the same queued job and its unpublished draft.
     // Explicit retry after a failure copies these checkpoints to a child.
-    jobs(&pool)
+    jobs(&database)
         .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
         .await?;
     let interrupted = curriculum.job(&job.id).await?;
     assert_eq!(interrupted.status, LearningGenerationJobStatus::Pending);
     assert!(interrupted.finished_at.is_none());
     assert_eq!(interrupted.activity, Some(activity.clone()));
-    assert!(jobs(&pool).claim(&job.id).await?.is_some());
-    jobs(&pool)
+    assert!(jobs(&database).claim(&job.id).await?.is_some());
+    jobs(&database)
         .fail(
             &job.id,
             "generation_failed",
@@ -696,103 +697,90 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
     replay_mismatch.job_id = retry.id.clone();
     assert!(curriculum.retry_job(&replay_mismatch).await.is_err());
 
-    assert!(jobs(&pool).claim(&retry.id).await?.is_some());
-    let reopened = LearningCurriculumRepository::new(pool.clone());
-    crate::lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &reopened,
-        &retry.id,
-        &target,
-        async {
-            let mut augmented = program.sources.clone();
-            let mut additional = augmented[0].clone();
-            additional.id = uuid::Uuid::new_v4().to_string();
-            additional.excerpt = "Additional research never grants publication approval.".into();
-            augmented.push(additional);
-            let (input_hash, authoring) =
-                crate::lesson_drafts::reusable_authoring("same-lesson-request", &augmented)
-                    .await?
-                    .expect("additional research retains the authoring context");
-            assert_eq!(input_hash, "matching-inputs");
-            assert_eq!(
-                authoring.prompt,
-                "Original authoring prompt and citation order"
-            );
-            assert_eq!(authoring.sources.len(), program.sources.len());
-            assert_eq!(authoring.sources[0].id, program.sources[0].id);
-            assert!(crate::lesson_drafts::reusable_authoring(
-                "different-lesson-request",
-                &augmented
-            )
+    assert!(jobs(&database).claim(&retry.id).await?.is_some());
+    let reopened = LearningCurriculumRepository::new(database.clone());
+    crate::lesson_drafts::run(&database, &reopened, &retry.id, &target, async {
+        let mut augmented = program.sources.clone();
+        let mut additional = augmented[0].clone();
+        additional.id = uuid::Uuid::new_v4().to_string();
+        additional.excerpt = "Additional research never grants publication approval.".into();
+        augmented.push(additional);
+        let (input_hash, authoring) =
+            crate::lesson_drafts::reusable_authoring("same-lesson-request", &augmented)
+                .await?
+                .expect("additional research retains the authoring context");
+        assert_eq!(input_hash, "matching-inputs");
+        assert_eq!(
+            authoring.prompt,
+            "Original authoring prompt and citation order"
+        );
+        assert_eq!(authoring.sources.len(), program.sources.len());
+        assert_eq!(authoring.sources[0].id, program.sources[0].id);
+        assert!(
+            crate::lesson_drafts::reusable_authoring("different-lesson-request", &augmented)
+                .await?
+                .is_none()
+        );
+        augmented[0]
+            .excerpt
+            .push_str(" Changed original reference.");
+        assert!(
+            crate::lesson_drafts::reusable_authoring("same-lesson-request", &augmented)
+                .await?
+                .is_none()
+        );
+        assert!(
+            crate::lesson_drafts::reusable_authoring("same-lesson-request", &[])
+                .await?
+                .is_none()
+        );
+        crate::lesson_drafts::authoring(authoring);
+        assert_eq!(
+            crate::lesson_drafts::resume("matching-inputs".into())
+                .await?
+                .as_deref(),
+            Some(draft_body)
+        );
+        let formatted =
+            serde_json::to_string_pretty(&serde_json::from_str::<serde_json::Value>(draft_body)?)?;
+        assert_eq!(
+            crate::lesson_drafts::pending_repair(&formatted)
+                .await?
+                .as_deref(),
+            Some("failed-checks-to-repair")
+        );
+        assert_eq!(
+            crate::lesson_drafts::claim_inventory(&formatted)
+                .await?
+                .as_deref(),
+            Some("audited-inventory")
+        );
+        assert!(crate::lesson_drafts::claim_inventory("changed draft")
             .await?
             .is_none());
-            augmented[0]
-                .excerpt
-                .push_str(" Changed original reference.");
-            assert!(
-                crate::lesson_drafts::reusable_authoring("same-lesson-request", &augmented)
-                    .await?
-                    .is_none()
-            );
-            assert!(
-                crate::lesson_drafts::reusable_authoring("same-lesson-request", &[])
-                    .await?
-                    .is_none()
-            );
-            crate::lesson_drafts::authoring(authoring);
-            assert_eq!(
-                crate::lesson_drafts::resume("matching-inputs".into())
-                    .await?
-                    .as_deref(),
-                Some(draft_body)
-            );
-            let formatted = serde_json::to_string_pretty(&serde_json::from_str::<
-                serde_json::Value,
-            >(draft_body)?)?;
-            assert_eq!(
-                crate::lesson_drafts::pending_repair(&formatted)
-                    .await?
-                    .as_deref(),
-                Some("failed-checks-to-repair")
-            );
-            assert_eq!(
-                crate::lesson_drafts::claim_inventory(&formatted)
-                    .await?
-                    .as_deref(),
-                Some("audited-inventory")
-            );
-            assert!(crate::lesson_drafts::claim_inventory("changed draft")
+        assert!(crate::lesson_drafts::teaching_completed(draft_body, "teaching-policy").await?);
+        assert!(!crate::lesson_drafts::teaching_completed(draft_body, "new-policy").await?);
+        assert!(
+            !crate::lesson_drafts::teaching_completed("changed draft", "teaching-policy").await?
+        );
+        assert!(
+            crate::lesson_drafts::resume("changed-source-or-prompt".into())
                 .await?
-                .is_none());
-            assert!(crate::lesson_drafts::teaching_completed(draft_body, "teaching-policy").await?);
-            assert!(!crate::lesson_drafts::teaching_completed(draft_body, "new-policy").await?);
-            assert!(
-                !crate::lesson_drafts::teaching_completed("changed draft", "teaching-policy")
-                    .await?
-            );
-            assert!(
-                crate::lesson_drafts::resume("changed-source-or-prompt".into())
-                    .await?
-                    .is_none()
-            );
-            assert!(
-                !crate::lesson_drafts::teaching_completed(draft_body, "teaching-policy").await?
-            );
-            crate::lesson_drafts::resume("matching-inputs".into()).await?;
-            crate::lesson_drafts::save("changed draft").await?;
-            crate::lesson_drafts::save(draft_body).await?;
-            assert!(crate::lesson_drafts::claim_inventory(draft_body)
-                .await?
-                .is_none());
-            assert!(crate::lesson_drafts::pending_repair(draft_body)
-                .await?
-                .is_none());
-            assert!(
-                !crate::lesson_drafts::teaching_completed(draft_body, "teaching-policy").await?
-            );
-            Ok(())
-        },
-    )
+                .is_none()
+        );
+        assert!(!crate::lesson_drafts::teaching_completed(draft_body, "teaching-policy").await?);
+        crate::lesson_drafts::resume("matching-inputs".into()).await?;
+        crate::lesson_drafts::save("changed draft").await?;
+        crate::lesson_drafts::save(draft_body).await?;
+        assert!(crate::lesson_drafts::claim_inventory(draft_body)
+            .await?
+            .is_none());
+        assert!(crate::lesson_drafts::pending_repair(draft_body)
+            .await?
+            .is_none());
+        assert!(!crate::lesson_drafts::teaching_completed(draft_body, "teaching-policy").await?);
+        Ok(())
+    })
     .await?;
     assert!(reopened
         .save_lesson_draft(
@@ -892,15 +880,15 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
         )
         .await?;
     // Interrupt after all expensive work, immediately before publication.
-    jobs(&pool).suspend(&retry.id).await?;
+    jobs(&database).suspend(&retry.id).await?;
     assert!(curriculum
         .save_lesson_checkpoint(&retry.id, &target, "late-write", serde_json::json!(true))
         .await
         .is_err());
-    jobs(&pool)
+    jobs(&database)
         .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
         .await?;
-    assert!(jobs(&pool).claim(&retry.id).await?.is_some());
+    assert!(jobs(&database).claim(&retry.id).await?.is_some());
     let good = serde_json::from_value(
         curriculum
             .lesson_checkpoint(&retry.id, &target, "prepared-v1")
@@ -913,11 +901,11 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
     let completed = curriculum.job(&retry.id).await?;
     assert_eq!(completed.status, LearningGenerationJobStatus::Completed);
     assert!(completed.finished_at.is_some());
-    jobs(&pool)
+    jobs(&database)
         .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
         .await?;
     assert!(
-        jobs(&pool).claim(&retry.id).await?.is_none(),
+        jobs(&database).claim(&retry.id).await?.is_none(),
         "Redelivering a completed job cannot publish twice"
     );
     let prepared: String =
@@ -964,8 +952,9 @@ async fn shared_file_pool(directory: &std::path::Path) -> Result<SqlitePool> {
 async fn loading_a_seeded_plan_takes_no_write_lock() -> Result<()> {
     let directory = tempfile::tempdir().unwrap();
     let pool = shared_file_pool(directory.path()).await?;
-    let program = active_program(&pool).await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let program = active_program(&database).await?;
+    let repo = LearningCurriculumRepository::new(database.clone());
     let seeded = repo.plan(&program.summary.id).await?;
     let writer = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
     let loaded = tokio::time::timeout(
@@ -986,8 +975,9 @@ async fn loading_a_seeded_plan_takes_no_write_lock() -> Result<()> {
 async fn concurrent_plan_loads_of_a_legacy_program_seed_one_accepted_revision() -> Result<()> {
     let directory = tempfile::tempdir().unwrap();
     let pool = shared_file_pool(directory.path()).await?;
-    let program = active_program(&pool).await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let program = active_program(&database).await?;
+    let repo = LearningCurriculumRepository::new(database.clone());
     let accepted_before: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM learning_curriculum_revisions WHERE program_id=? AND status='accepted'",
     )
@@ -1067,8 +1057,9 @@ async fn make_ready(pool: &SqlitePool, lesson: &str) -> Result<()> {
 #[tokio::test]
 async fn a_module_queues_a_job_for_each_unprepared_lesson_in_course_order() -> Result<()> {
     let pool = pool().await?;
-    let program = active_program(&pool).await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let program = active_program(&database).await?;
+    let repo = LearningCurriculumRepository::new(database.clone());
     let queued = repo.start_module_jobs(&module_request(&program, 1)).await?;
     assert_eq!(lessons_of(&pool, &queued).await?, lesson_ids(&program, 1));
     for job in &queued {
@@ -1086,10 +1077,11 @@ async fn a_module_queues_a_job_for_each_unprepared_lesson_in_course_order() -> R
 #[tokio::test]
 async fn a_module_skips_a_lesson_that_is_ready() -> Result<()> {
     let pool = pool().await?;
-    let program = active_program(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = active_program(&database).await?;
     let lessons = lesson_ids(&program, 0);
     make_ready(&pool, &lessons[0]).await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let repo = LearningCurriculumRepository::new(database.clone());
     let queued = repo.start_module_jobs(&module_request(&program, 0)).await?;
     assert_eq!(lessons_of(&pool, &queued).await?, vec![lessons[1].clone()]);
     Ok(())
@@ -1098,9 +1090,10 @@ async fn a_module_skips_a_lesson_that_is_ready() -> Result<()> {
 #[tokio::test]
 async fn a_module_returns_the_job_of_a_lesson_already_queued() -> Result<()> {
     let pool = pool().await?;
-    let program = active_program(&pool).await?;
+    let database = Database::new(pool);
+    let program = active_program(&database).await?;
     let lessons = lesson_ids(&program, 0);
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let repo = LearningCurriculumRepository::new(database.clone());
     let existing = repo
         .start_job(&StartLearningGenerationJobRequestDto {
             operation_id: op_id(),
@@ -1122,8 +1115,9 @@ async fn a_module_returns_the_job_of_a_lesson_already_queued() -> Result<()> {
 #[tokio::test]
 async fn repeating_a_module_request_returns_the_same_jobs() -> Result<()> {
     let pool = pool().await?;
-    let program = active_program(&pool).await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let database = Database::new(pool);
+    let program = active_program(&database).await?;
+    let repo = LearningCurriculumRepository::new(database.clone());
     let request = module_request(&program, 0);
     let first = repo.start_module_jobs(&request).await?;
     let again = repo.start_module_jobs(&request).await?;
@@ -1139,11 +1133,12 @@ async fn repeating_a_module_request_returns_the_same_jobs() -> Result<()> {
 #[tokio::test]
 async fn a_module_with_nothing_to_prepare_queues_nothing() -> Result<()> {
     let pool = pool().await?;
-    let program = active_program(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = active_program(&database).await?;
     for lesson in lesson_ids(&program, 0) {
         make_ready(&pool, &lesson).await?;
     }
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let repo = LearningCurriculumRepository::new(database.clone());
     let queued = repo.start_module_jobs(&module_request(&program, 0)).await?;
     assert!(queued.is_empty());
     assert!(repo.jobs(&program.summary.id).await?.is_empty());
@@ -1153,8 +1148,9 @@ async fn a_module_with_nothing_to_prepare_queues_nothing() -> Result<()> {
 #[tokio::test]
 async fn a_module_request_against_a_stale_revision_queues_nothing() -> Result<()> {
     let pool = pool().await?;
-    let program = active_program(&pool).await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let database = Database::new(pool);
+    let program = active_program(&database).await?;
+    let repo = LearningCurriculumRepository::new(database.clone());
     let mut stale = module_request(&program, 0);
     stale.expected_revision += 1;
     let error = repo.start_module_jobs(&stale).await.unwrap_err();
@@ -1168,11 +1164,12 @@ async fn a_module_request_against_a_stale_revision_queues_nothing() -> Result<()
 #[tokio::test]
 async fn a_module_request_against_an_inactive_program_is_refused() -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool);
     let program = fixture();
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(database.clone())
         .create(&program)
         .await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let repo = LearningCurriculumRepository::new(database.clone());
     let error = repo
         .start_module_jobs(&module_request(&program, 0))
         .await
@@ -1185,9 +1182,10 @@ async fn a_module_request_against_an_inactive_program_is_refused() -> Result<()>
 #[tokio::test]
 async fn a_module_skips_a_lesson_that_waits_for_the_users_review() -> Result<()> {
     let pool = pool().await?;
-    let program = active_program(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = active_program(&database).await?;
     let lessons = lesson_ids(&program, 0);
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let repo = LearningCurriculumRepository::new(database.clone());
     let held = repo
         .start_job(&StartLearningGenerationJobRequestDto {
             operation_id: op_id(),
@@ -1198,8 +1196,8 @@ async fn a_module_skips_a_lesson_that_waits_for_the_users_review() -> Result<()>
             progress_total: 1,
         })
         .await?;
-    assert!(jobs(&pool).claim(&held.id).await?.is_some());
-    jobs(&pool)
+    assert!(jobs(&database).claim(&held.id).await?.is_some());
+    jobs(&database)
         .fail(&held.id, "generation_failed", "Held for review")
         .await?;
     sqlx::query("INSERT INTO learning_lesson_reviews(lesson_id,program_id,job_id,state,revision,draft_sha256,checker_model,opened_at,updated_at) VALUES(?,?,?,'needs_review',0,'sha','fixture',1,1)")
@@ -1217,9 +1215,10 @@ async fn a_module_skips_a_lesson_that_waits_for_the_users_review() -> Result<()>
 #[tokio::test]
 async fn a_job_names_the_lessons_it_prepares() -> Result<()> {
     let pool = pool().await?;
-    let program = active_program(&pool).await?;
+    let database = Database::new(pool);
+    let program = active_program(&database).await?;
     let lessons = lesson_ids(&program, 0);
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let repo = LearningCurriculumRepository::new(database.clone());
     let job = repo
         .start_job(&StartLearningGenerationJobRequestDto {
             operation_id: op_id(),
@@ -1239,8 +1238,9 @@ async fn a_job_names_the_lessons_it_prepares() -> Result<()> {
 #[tokio::test]
 async fn cancelling_a_queued_lesson_and_preparing_the_module_again_requeues_it() -> Result<()> {
     let pool = pool().await?;
-    let program = active_program(&pool).await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let database = Database::new(pool);
+    let program = active_program(&database).await?;
+    let repo = LearningCurriculumRepository::new(database.clone());
     let first_jobs = repo
         .start_module_jobs(&module_request(&program, 0))
         .await

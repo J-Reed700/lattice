@@ -6,6 +6,7 @@ use lattice_core::application::contracts::settings::{LlamaCppSettingsDto, Settin
 use lattice_core::application::ports::MockSettingsRepository;
 use lattice_core::domain::models::downloaded::ModelLocation;
 use lattice_core::domain::DownloadedModel;
+use lattice_core::shared::persistence::Database;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -18,7 +19,7 @@ async fn role_models(settings: LLMSettingsDto, utility: Option<DownloadedModel>)
         .await
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    let models = Arc::new(DownloadedModelRepository::new(pool));
+    let models = Arc::new(DownloadedModelRepository::new(Database::new(pool)));
     if let Some(row) = utility {
         models.save(&row).await.unwrap();
         models

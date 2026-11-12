@@ -656,10 +656,11 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
 {
     use crate::lesson_drafts;
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     let mut model = Model::new();
     let mut sources = vec![source()];
-    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson_id, async {
+    lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
         let references = ReferenceCollection::lexical(&sources)?;
         let world = world_of(&references, Citations::default());
         let first = read_one(Reading::Page, &model, &world, GOOD).await?;
@@ -742,59 +743,54 @@ async fn a_section_that_goes_is_not_checked_and_its_statements_are_not_in_the_re
 async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> Result<()> {
     use crate::lesson_drafts;
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     let model = Model::new();
     let sources = vec![source()];
     let references = ReferenceCollection::lexical(&sources)?;
     let world = world_of(&references, Citations::default());
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async {
-            let first = read_all(
-                Reading::Page,
-                &model,
-                &world,
-                &[(0, claim(GOOD)), (1, claim(BAD))],
-            )
-            .await?;
-            assert_eq!(*model.judge_calls.lock().unwrap(), 2);
-            assert_eq!(first[1].finding.verdict, ClaimVerdict::Contradicted);
-            // The second section is repaired.
-            let repaired = read_all(
-                Reading::Page,
-                &model,
-                &world,
-                &[(0, claim(GOOD)), (1, claim(GOOD))],
-            )
-            .await?;
-            assert!(repaired.iter().all(|read| read.finding.publishable()));
-            assert_eq!(
-                *model.judge_calls.lock().unwrap(),
-                3,
-                "Repairing one section must not repeat the other section's identical comparison"
-            );
-            // Changed neighboring wording still needs coverage review, but an
-            // identical standalone factual statement keeps its completed evidence
-            // comparison.
-            let reworded = Claim {
-                quote: format!("{GOOD} Additional wording."),
-                statement: GOOD.into(),
-            };
-            let again = read_all(
-                Reading::Page,
-                &model,
-                &world,
-                &[(0, reworded), (1, claim(GOOD))],
-            )
-            .await?;
-            assert!(again.iter().all(|read| read.reused));
-            assert_eq!(*model.judge_calls.lock().unwrap(), 3);
-            Ok(())
-        },
-    )
+    lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        let first = read_all(
+            Reading::Page,
+            &model,
+            &world,
+            &[(0, claim(GOOD)), (1, claim(BAD))],
+        )
+        .await?;
+        assert_eq!(*model.judge_calls.lock().unwrap(), 2);
+        assert_eq!(first[1].finding.verdict, ClaimVerdict::Contradicted);
+        // The second section is repaired.
+        let repaired = read_all(
+            Reading::Page,
+            &model,
+            &world,
+            &[(0, claim(GOOD)), (1, claim(GOOD))],
+        )
+        .await?;
+        assert!(repaired.iter().all(|read| read.finding.publishable()));
+        assert_eq!(
+            *model.judge_calls.lock().unwrap(),
+            3,
+            "Repairing one section must not repeat the other section's identical comparison"
+        );
+        // Changed neighboring wording still needs coverage review, but an
+        // identical standalone factual statement keeps its completed evidence
+        // comparison.
+        let reworded = Claim {
+            quote: format!("{GOOD} Additional wording."),
+            statement: GOOD.into(),
+        };
+        let again = read_all(
+            Reading::Page,
+            &model,
+            &world,
+            &[(0, reworded), (1, claim(GOOD))],
+        )
+        .await?;
+        assert!(again.iter().all(|read| read.reused));
+        assert_eq!(*model.judge_calls.lock().unwrap(), 3);
+        Ok(())
+    })
     .await
 }
 
@@ -1001,7 +997,8 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
     }
 
     let pool = crate::tests::pool().await?;
-    let repository = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repository = LearningRepository::new(db.clone());
     let program = crate::tests::fixture();
     repository.create(&program).await?;
     repository
@@ -1012,7 +1009,7 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
         })
         .await?;
     let program = repository.get(&program.summary.id).await?;
-    let jobs = LearningCurriculumRepository::new(pool.clone());
+    let jobs = LearningCurriculumRepository::new(db.clone());
     jobs.plan(&program.summary.id).await?;
     let target = &program.modules[0].lessons[0].id;
     let job = jobs
@@ -1025,7 +1022,7 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
             progress_total: 1,
         })
         .await?;
-    JobStore::new(pool.clone()).claim(&job.id).await?;
+    JobStore::new(db.clone()).claim(&job.id).await?;
     let model = InterruptedRepair {
         model: Model::new(),
         repairs: AtomicUsize::new(0),
@@ -1038,20 +1035,14 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
     second["title"] = json!("A second section needing repair");
     original["blocks"].as_array_mut().unwrap().push(second);
     let raw = original.to_string();
-    let first = lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &jobs,
-        &job.id,
-        target,
-        async {
-            lesson_drafts::resume("same-inputs".into()).await?;
-            lesson_drafts::save(&raw).await?;
-            verify_and_repair(&model, "{}", &json!({}), raw.clone(), &sources, 4000).await
-        },
-    )
+    let first = lesson_drafts::run(&db, &jobs, &job.id, target, async {
+        lesson_drafts::resume("same-inputs".into()).await?;
+        lesson_drafts::save(&raw).await?;
+        verify_and_repair(&model, "{}", &json!({}), raw.clone(), &sources, 4000).await
+    })
     .await;
     let error = first.unwrap_err();
-    JobStore::new(pool.clone())
+    JobStore::new(db.clone())
         .fail(&job.id, "generation_failed", &error.to_string())
         .await?;
     let partial = jobs.lesson_draft(&job.id, target).await?.unwrap();
@@ -1070,27 +1061,21 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
             expected_revision: program.summary.revision,
         })
         .await?;
-    JobStore::new(pool.clone()).claim(&retry.id).await?;
-    let (_, report) = lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &jobs,
-        &retry.id,
-        target,
-        async {
-            let saved = lesson_drafts::resume("same-inputs".into()).await?.unwrap();
-            assert!(
-                has_pending_repair(
-                    &model,
-                    "{}",
-                    &json!({}),
-                    &saved,
-                    &ReferenceCollection::lexical(&sources)?
-                )
-                .await?
-            );
-            verify_and_repair(&model, "{}", &json!({}), saved, &sources, 4000).await
-        },
-    )
+    JobStore::new(db.clone()).claim(&retry.id).await?;
+    let (_, report) = lesson_drafts::run(&db, &jobs, &retry.id, target, async {
+        let saved = lesson_drafts::resume("same-inputs".into()).await?.unwrap();
+        assert!(
+            has_pending_repair(
+                &model,
+                "{}",
+                &json!({}),
+                &saved,
+                &ReferenceCollection::lexical(&sources)?
+            )
+            .await?
+        );
+        verify_and_repair(&model, "{}", &json!({}), saved, &sources, 4000).await
+    })
     .await?;
     assert_eq!(model.repairs.load(Ordering::Relaxed), 3);
     assert_eq!(
@@ -1600,7 +1585,8 @@ async fn publication_requires_current_report_and_source_and_rolls_back_on_reject
 {
     use crate::{dto::*, repository::LearningRepository};
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     let reference = source();
     program.sources = vec![reference];
@@ -2153,17 +2139,13 @@ async fn strict_checker_rejects_missing_invented_quotes_and_truncated_replies() 
     }
 }
 
-pub(crate) async fn install_source(
-    pool: &sqlx::SqlitePool,
-    program_id: &str,
-    text: &str,
-) -> Result<()> {
+pub(crate) async fn install_source(db: &Database, program_id: &str, text: &str) -> Result<()> {
     use crate::{
         dto::{LearningSourceKind, LearningSourcePolicy},
         source_library::{CapturedLearningSource, LearningSourceLibraryRepository},
     };
     let id = || uuid::Uuid::new_v4().to_string();
-    LearningSourceLibraryRepository::new(Database::from(pool.clone()))
+    LearningSourceLibraryRepository::new(db.clone())
         .add(
             crate::source_library::NewLearningSource {
                 operation_id: &id(),
@@ -2207,8 +2189,9 @@ async fn unsupported_languages_are_disclosed_and_csv_fixture_is_test_only() -> R
 #[tokio::test]
 async fn evidence_view_hides_assessment_claims_and_marks_source_changes() -> Result<()> {
     let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
     let program = crate::tests::fixture();
-    let repo = crate::repository::LearningRepository::new(pool.clone());
+    let repo = crate::repository::LearningRepository::new(db.clone());
     repo.create(&program).await?;
     let lesson = &program.modules[0].lessons[0];
     // This fixture deliberately puts a private key in an assessment unit. The
@@ -2217,13 +2200,9 @@ async fn evidence_view_hides_assessment_claims_and_marks_source_changes() -> Res
     let saved = repo.verification_sources(&program.summary.id).await?;
     let report = json!({"policy":POLICY,"lesson_id":lesson.id,"content_sha256":"fixture","checked_at":1,"checker_model":"fixture","sources":[{"id":source.id,"sha256":sha256_hex(&saved[0].excerpt)}],"findings":[{"unit":0,"quote":"PRIVATE QUOTE","statement":"PRIVATE ANSWER KEY","verdict":"supported","reason":"PRIVATE RATIONALE","evidence":[],"supporting_quote":null}],"coverage":[],"coverage_audit":[],"executions":[],"issues":[],"retrieval_mode":"hybrid","embedding_model":null,"unexecuted_languages":[]});
     sqlx::query("INSERT INTO learning_lesson_verifications(lesson_id,program_id,policy,content_sha256,report_json,checked_at) VALUES(?,?,?,?,?,?)").bind(&lesson.id).bind(&program.summary.id).bind(POLICY).bind("fixture").bind(report.to_string()).bind(1_i64).execute(&pool).await.map_err(|e|AppError::Database(e.to_string()))?;
-    let view = crate::lesson_evidence::get(
-        &Database::from(pool.clone()),
-        &program.summary.id,
-        &lesson.id,
-    )
-    .await?
-    .unwrap();
+    let view = crate::lesson_evidence::get(&db, &program.summary.id, &lesson.id)
+        .await?
+        .unwrap();
     assert!(view.teaching_claims.is_empty());
     assert!(!serde_json::to_string(&view)?.contains("PRIVATE"));
     assert!(view.sources_current);
@@ -2232,13 +2211,9 @@ async fn evidence_view_hides_assessment_claims_and_marks_source_changes() -> Res
         .execute(&pool)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    let view = crate::lesson_evidence::get(
-        &Database::from(pool.clone()),
-        &program.summary.id,
-        &lesson.id,
-    )
-    .await?
-    .unwrap();
+    let view = crate::lesson_evidence::get(&db, &program.summary.id, &lesson.id)
+        .await?
+        .unwrap();
     assert!(!view.sources_current);
 
     // Missing unit identity must not silently become teaching section zero.
@@ -2252,14 +2227,10 @@ async fn evidence_view_hides_assessment_claims_and_marks_source_changes() -> Res
         .bind(&lesson.id)
         .execute(&pool)
         .await?;
-    let error = crate::lesson_evidence::get(
-        &Database::from(pool.clone()),
-        &program.summary.id,
-        &lesson.id,
-    )
-    .await
-    .unwrap_err()
-    .to_string();
+    let error = crate::lesson_evidence::get(&db, &program.summary.id, &lesson.id)
+        .await
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("unavailable"));
     assert!(!error.contains("PRIVATE"));
 
@@ -2270,13 +2241,11 @@ async fn evidence_view_hides_assessment_claims_and_marks_source_changes() -> Res
         .bind(&lesson.id)
         .execute(&pool)
         .await?;
-    assert!(crate::lesson_evidence::get(
-        &Database::from(pool.clone()),
-        &program.summary.id,
-        &lesson.id
-    )
-    .await
-    .is_err());
+    assert!(
+        crate::lesson_evidence::get(&db, &program.summary.id, &lesson.id)
+            .await
+            .is_err()
+    );
     Ok(())
 }
 

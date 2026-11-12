@@ -1,10 +1,9 @@
 //! Every read and write of `batch_import_items`.
 use super::items::{BatchItem, ItemCounts, ItemState};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::PersistenceError;
-use lattice_core::shared::persistence::Transactions;
-use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
+use lattice_core::shared::persistence::{Database, WriteTx};
+use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 use std::collections::HashMap;
 
 fn db(error: impl Into<PersistenceError>) -> AppError {
@@ -32,28 +31,23 @@ fn count(row: &SqliteRow, column: &str) -> u32 {
 
 #[derive(Clone)]
 pub struct BatchItems {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl BatchItems {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     /// Saves a new import's items, pending, in the order given.
-    pub async fn insert_in(
-        connection: &mut SqliteConnection,
-        job_id: &str,
-        targets: &[String],
-    ) -> Result<()> {
+    pub async fn insert_in(tx: &mut WriteTx, job_id: &str, targets: &[String]) -> Result<()> {
         for (position, target) in targets.iter().enumerate() {
             sqlx::query("INSERT INTO batch_import_items(id,job_id,position,target,status) VALUES(?,?,?,?,'pending')")
                 .bind(uuid::Uuid::new_v4().to_string())
                 .bind(job_id)
                 .bind(i64::try_from(position).unwrap_or(i64::MAX))
                 .bind(target)
-                .execute(&mut *connection)
+                .execute(&mut **tx)
                 .await
                 .map_err(db)?;
         }
@@ -76,18 +70,22 @@ impl BatchItems {
     }
 
     pub async fn list(&self, job_id: &str) -> Result<Vec<BatchItem>> {
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        Self::list_in(&mut connection, job_id).await
+        let mut read = self.db.begin_read().await?;
+        let items = Self::list_in(&mut read, job_id).await?;
+        read.commit().await?;
+        Ok(items)
     }
 
     /// How many items each job has, and how many finished each way.
     pub async fn counts(&self, job_ids: &[String]) -> Result<HashMap<String, ItemCounts>> {
         let ids = serde_json::to_string(job_ids)?;
+        let mut read = self.db.begin_read().await?;
         let rows = sqlx::query("SELECT job_id, count(*) AS total, sum(status='completed') AS completed, sum(status='failed') AS failed FROM batch_import_items WHERE job_id IN (SELECT value FROM json_each(?)) GROUP BY job_id")
             .bind(ids)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *read)
             .await
             .map_err(db)?;
+        read.commit().await?;
         Ok(rows
             .iter()
             .map(|row| {
@@ -114,20 +112,22 @@ impl BatchItems {
     /// Returns the items an attempt left in flight to the queue: the process
     /// ended before it recorded how they went.
     pub async fn reset_processing(&self, job_id: &str) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query(
             "UPDATE batch_import_items SET status='pending' WHERE job_id=? AND status='processing'",
         )
         .bind(job_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(db)?;
+        tx.commit().await?;
         Ok(())
     }
 
     /// Takes the job's next pending item, in batch order. An item the user
     /// cancelled in the meantime is never taken.
     pub async fn claim_next(&self, job_id: &str) -> Result<Option<BatchItem>> {
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let next = sqlx::query("SELECT * FROM batch_import_items WHERE job_id=? AND status='pending' ORDER BY position LIMIT 1")
             .bind(job_id)
             .fetch_optional(&mut *tx)
@@ -160,40 +160,41 @@ impl BatchItems {
         document_id: Option<&str>,
         error_message: Option<&str>,
     ) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query("UPDATE batch_import_items SET status=?, document_id=coalesce(?,document_id), error_message=?, processed_at=? WHERE id=?")
             .bind(state.as_str())
             .bind(document_id)
             .bind(error_message)
             .bind(now())
             .bind(item_id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(db)?;
+        tx.commit().await?;
         Ok(())
     }
 
     /// Puts back an item whose work stopped part-way: pending when the job
     /// resumes later, cancelled when the user cancelled it.
     pub async fn release(&self, item_id: &str, state: ItemState) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query("UPDATE batch_import_items SET status=? WHERE id=? AND status='processing'")
             .bind(state.as_str())
             .bind(item_id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(db)?;
+        tx.commit().await?;
         Ok(())
     }
 
     /// Cancels every item that has not finished, including the one in flight:
     /// a worker that still finishes it records how it actually went.
-    pub async fn cancel_unfinished_in(
-        connection: &mut SqliteConnection,
-        job_id: &str,
-    ) -> Result<usize> {
+    pub async fn cancel_unfinished_in(tx: &mut WriteTx, job_id: &str) -> Result<usize> {
         let cancelled = sqlx::query("UPDATE batch_import_items SET status='cancelled', processed_at=? WHERE job_id=? AND status IN ('pending','processing')")
             .bind(now())
             .bind(job_id)
-            .execute(connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?
             .rows_affected();
@@ -201,15 +202,11 @@ impl BatchItems {
     }
 
     /// Hands a job's items to its retry.
-    pub async fn move_to_in(
-        connection: &mut SqliteConnection,
-        from_job: &str,
-        to_job: &str,
-    ) -> Result<()> {
+    pub async fn move_to_in(tx: &mut WriteTx, from_job: &str, to_job: &str) -> Result<()> {
         sqlx::query("UPDATE batch_import_items SET job_id=? WHERE job_id=?")
             .bind(to_job)
             .bind(from_job)
-            .execute(connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
         Ok(())
@@ -218,7 +215,7 @@ impl BatchItems {
     /// Queues failed items again: all of them, or the one `item_id` names,
     /// optionally pointed at a replacement target. Returns how many.
     pub async fn requeue_failed_in(
-        connection: &mut SqliteConnection,
+        tx: &mut WriteTx,
         job_id: &str,
         item_id: Option<&str>,
         replacement: Option<&str>,
@@ -228,7 +225,7 @@ impl BatchItems {
             .bind(job_id)
             .bind(item_id)
             .bind(item_id)
-            .execute(connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?
             .rows_affected();

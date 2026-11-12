@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use sqlx::{Row, SqliteConnection};
+use lattice_core::shared::persistence::{Database, WriteTx};
+use sqlx::Row;
 
 use crate::persistence::db;
 
@@ -52,17 +52,18 @@ pub(in crate::lessons::claim_reviews) struct FindingWrite<'a> {
 }
 
 pub(in crate::lessons::claim_reviews) async fn held_rows(
-    pool: &impl DriverPool,
+    database: &Database,
     lesson_id: &str,
 ) -> Result<Vec<HeldRow>> {
-    let pool = pool.sqlx_pool();
+    let mut read = database.begin_read().await.map_err(db)?;
     let rows = sqlx::query(
         "SELECT kind, site, unit_index, unit_sha256 FROM learning_lesson_teaching_findings WHERE lesson_id=?",
     )
     .bind(lesson_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *read)
     .await
     .map_err(db)?;
+    read.commit().await.map_err(db)?;
     Ok(rows
         .iter()
         .map(|row| HeldRow {
@@ -76,7 +77,7 @@ pub(in crate::lessons::claim_reviews) async fn held_rows(
 
 /// Deletes the lesson's findings whose keys are not in `keys_json`.
 pub(in crate::lessons::claim_reviews) async fn delete_not_raised(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     lesson_id: &str,
     keys_json: &str,
 ) -> Result<()> {
@@ -85,14 +86,14 @@ pub(in crate::lessons::claim_reviews) async fn delete_not_raised(
     )
     .bind(lesson_id)
     .bind(keys_json)
-    .execute(&mut *connection)
+    .execute(&mut **tx)
     .await
     .map_err(db)?;
     Ok(())
 }
 
 pub(in crate::lessons::claim_reviews) async fn upsert(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     lesson_id: &str,
     finding: &FindingWrite<'_>,
 ) -> Result<()> {
@@ -124,7 +125,7 @@ pub(in crate::lessons::claim_reviews) async fn upsert(
     .bind(finding.repairs)
     .bind(finding.job_id)
     .bind(finding.found_at)
-    .execute(&mut *connection)
+    .execute(&mut **tx)
     .await
     .map_err(db)?;
     Ok(())
@@ -132,10 +133,10 @@ pub(in crate::lessons::claim_reviews) async fn upsert(
 
 /// The lesson's findings: by place, then kind.
 pub(in crate::lessons::claim_reviews) async fn stored_findings(
-    pool: &impl DriverPool,
+    database: &Database,
     lesson_id: &str,
 ) -> Result<Vec<StoredFinding>> {
-    let pool = pool.sqlx_pool();
+    let mut read = database.begin_read().await.map_err(db)?;
     let rows = sqlx::query(
         "SELECT finding_key, kind, site, unit_index, unit_title, note, summary, passage, sentence, repairs, state, resolution, resolved_at, \
          part_changed_at IS NOT NULL AND part_changed_at >= found_at AS part_changed \
@@ -143,9 +144,10 @@ pub(in crate::lessons::claim_reviews) async fn stored_findings(
          ORDER BY CASE site WHEN 'lesson' THEN 0 WHEN 'section' THEN 1 ELSE 2 END, unit_index, kind",
     )
     .bind(lesson_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *read)
     .await
     .map_err(db)?;
+    read.commit().await.map_err(db)?;
     Ok(rows
         .iter()
         .map(|row| StoredFinding {
@@ -179,7 +181,7 @@ pub(in crate::lessons::claim_reviews) struct Settle<'a> {
 /// Moves the findings in `keys` that are in a `from` state to `to`, when the
 /// lesson is in the program; returns how many it moved.
 pub(in crate::lessons::claim_reviews) async fn settle(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     lesson_id: &str,
     keys: &BTreeSet<&str>,
@@ -199,7 +201,7 @@ pub(in crate::lessons::claim_reviews) async fn settle(
     .bind(serde_json::to_string(keys).map_err(AppError::from)?)
     .bind(lesson_id)
     .bind(program_id)
-    .execute(&mut *connection)
+    .execute(&mut **tx)
     .await
     .map_err(db)?;
     Ok(changed.rows_affected())
@@ -207,7 +209,7 @@ pub(in crate::lessons::claim_reviews) async fn settle(
 
 /// Marks the findings about a part as written before the user changed it.
 pub(in crate::lessons::claim_reviews) async fn mark_part_changed(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     lesson_id: &str,
     site: &str,
     unit_index: usize,
@@ -221,7 +223,7 @@ pub(in crate::lessons::claim_reviews) async fn mark_part_changed(
     .bind(lesson_id)
     .bind(site)
     .bind(i64::try_from(unit_index).unwrap_or(i64::MAX))
-    .execute(&mut *connection)
+    .execute(&mut **tx)
     .await
     .map_err(db)?;
     Ok(())

@@ -71,11 +71,11 @@ mod resolution;
 pub use inventory::revisions::live_revision_fixture;
 #[cfg(any(test, feature = "test-support"))]
 pub async fn live_inventory_fixture(llm: &dyn LLMPort, content: &[Value]) -> Result<Value> {
-    let pool = crate::test_support::pool().await?;
-    let (_, job, _) = test_support::setup(&pool).await?;
+    let db = lattice_core::shared::persistence::Database::new(crate::test_support::pool().await?);
+    let (_, job, _) = test_support::setup(&db).await?;
     crate::lesson_progress::run(
         &lattice_core::shared::runtime::jobs::JobContext::detached(
-            &lattice_core::shared::runtime::jobs::JobStore::new(pool.clone()),
+            &lattice_core::shared::runtime::jobs::JobStore::new(db.clone()),
             &job,
         )
         .await?,

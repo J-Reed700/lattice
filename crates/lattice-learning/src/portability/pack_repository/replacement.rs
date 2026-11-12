@@ -10,8 +10,7 @@ use crate::{
     portability_dto::{ExportLearningPackRequestDto, LearningPackExportOptionsDto},
 };
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::{Transactions, WriteTx};
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::{Row, SqliteConnection};
 use std::path::Path;
 
@@ -19,24 +18,24 @@ use std::path::Path;
 #[path = "replacement_tests.rs"]
 mod tests;
 
-pub(super) async fn begin_apply(
-    pool: &impl DriverPool,
+/// Readies `tx` to apply the preview: it is still pending, no job is preparing the course it
+/// replaces, and that course is backed up first. Returns the backup, if one was made.
+pub(super) async fn prepare_apply(
+    tx: &mut WriteTx,
     managed_dir: &Path,
     preview_id: &str,
     program_id: &str,
     replaces_program: bool,
-) -> Result<(WriteTx, Option<BackupExportRecord>)> {
-    let pool = pool.sqlx_pool();
-    let mut tx = pool.begin_write().await.map_err(db)?;
+) -> Result<Option<BackupExportRecord>> {
     sqlx::query("PRAGMA defer_foreign_keys=ON")
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
     let pending = sqlx::query_scalar::<_, String>(
         "SELECT status FROM learning_pack_import_previews WHERE id=? AND status='pending'",
     )
     .bind(preview_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await
     .map_err(db)?;
     if pending.is_none() {
@@ -44,15 +43,15 @@ pub(super) async fn begin_apply(
     }
     // A job may have started after the preview; deleting the course now would
     // remove its rows from under the worker.
-    if replaces_program && guards::active_job_exists(&mut tx, program_id).await? {
+    if replaces_program && guards::active_job_exists(tx, program_id).await? {
         return Err(invalid(guards::PREPARING));
     }
     let backup = if replaces_program {
-        backup_if_present(&mut tx, managed_dir, program_id).await?
+        backup_if_present(tx, managed_dir, program_id).await?
     } else {
         None
     };
-    Ok((tx, backup))
+    Ok(backup)
 }
 
 pub(super) async fn require_recoverable_on(
@@ -198,7 +197,7 @@ pub(super) async fn snapshot_local_links(
 /// replaced: notes and tangent chats on every lesson it still has, its
 /// notebook when the pack's memory record has none, and the Verifier consent.
 pub(super) async fn restore_local_links(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     saved: LocalLinks,
 ) -> Result<()> {
@@ -206,7 +205,7 @@ pub(super) async fn restore_local_links(
         sqlx::query("INSERT OR IGNORE INTO learning_memory(program_id,journal_id,deck_id,created_at) VALUES(?,NULL,NULL,?)")
             .bind(program_id)
             .bind(now())
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
     }
@@ -215,7 +214,7 @@ pub(super) async fn restore_local_links(
             .bind(journal_id)
             .bind(program_id)
             .bind(journal_id)
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
     }
@@ -228,7 +227,7 @@ pub(super) async fn restore_local_links(
             .bind(program_id)
             .bind(&lesson_id)
             .bind(&note_id)
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
     }
@@ -253,7 +252,7 @@ pub(super) async fn restore_local_links(
             .bind(program_id)
             .bind(&lesson_id)
             .bind(&conversation_id)
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
     }
@@ -263,7 +262,7 @@ pub(super) async fn restore_local_links(
             .bind(program_id)
             .bind(&lesson_id)
             .bind(&conversation_id)
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
     }
@@ -274,7 +273,7 @@ pub(super) async fn restore_local_links(
             .bind(consent_at)
             .bind(provider)
             .bind(program_id)
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
     }

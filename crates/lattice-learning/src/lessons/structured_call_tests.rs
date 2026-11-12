@@ -358,8 +358,8 @@ async fn lesson_job() -> Result<(
         repository::LearningRepository,
     };
     use lattice_core::shared::runtime::jobs::JobStore;
-    let pool = crate::tests::pool().await?;
-    let programs = LearningRepository::new(pool.clone());
+    let db = Database::new(crate::tests::pool().await?);
+    let programs = LearningRepository::new(db.clone());
     let program = crate::tests::fixture();
     programs.create(&program).await?;
     programs
@@ -376,7 +376,7 @@ async fn lesson_job() -> Result<(
         .and_then(|module| module.lessons.first())
         .map(|lesson| lesson.id.clone())
         .ok_or_else(|| AppError::InternalError("fixture has no lesson".into()))?;
-    let jobs = LearningCurriculumRepository::new(pool.clone());
+    let jobs = LearningCurriculumRepository::new(db.clone());
     let job = jobs
         .start_job(&StartLearningGenerationJobRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
@@ -387,8 +387,8 @@ async fn lesson_job() -> Result<(
             progress_total: 1,
         })
         .await?;
-    JobStore::new(pool.clone()).claim(&job.id).await?;
-    Ok((Database::from(pool), jobs, job.id, lesson))
+    JobStore::new(db.clone()).claim(&job.id).await?;
+    Ok((db, jobs, job.id, lesson))
 }
 
 #[tokio::test]

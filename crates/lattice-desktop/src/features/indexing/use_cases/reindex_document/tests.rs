@@ -169,19 +169,20 @@ impl EmbeddingPort for MockEmbedder {
     }
 }
 
-async fn pool_with(document: Option<&Document>) -> SqlitePool {
+async fn pool_with(document: Option<&Document>) -> (SqlitePool, Database) {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
         .await
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let db = Database::new(pool.clone());
     if let Some(document) = document {
-        let mut tx = pool.begin_write().await.unwrap();
+        let mut tx = db.begin_write().await.unwrap();
         document::ops::save(&mut tx, document).await.unwrap();
         tx.commit().await.unwrap();
     }
-    pool
+    (pool, db)
 }
 
 async fn count(pool: &SqlitePool, table: &str) -> i64 {
@@ -282,14 +283,14 @@ async fn test_reindex_document() {
     let doc_id = aggregate.id().to_string();
     let _original_chunks = aggregate.chunks().len();
 
-    let pool = pool_with(Some(&aggregate)).await;
+    let (pool, db) = pool_with(Some(&aggregate)).await;
     repo.set_document(aggregate);
 
     let use_case = ReindexDocumentUseCase::new(
         Arc::new(MockFileStorage::updated()),
         Arc::new(MockEmbedder),
         repo.clone(),
-        Database::from(pool.clone()),
+        db,
         Arc::new(MockVectorSearch::default()),
     );
 
@@ -323,7 +324,7 @@ async fn reindex_evicts_stale_vectors_and_adds_new_ones() {
         .collect();
     assert!(!stale_keys.is_empty(), "fixture must start with chunks");
 
-    let pool = pool_with(Some(&aggregate)).await;
+    let (_, db) = pool_with(Some(&aggregate)).await;
     repo.set_document(aggregate);
 
     let vector_search = Arc::new(MockVectorSearch::default());
@@ -331,7 +332,7 @@ async fn reindex_evicts_stale_vectors_and_adds_new_ones() {
         Arc::new(MockFileStorage::updated()),
         Arc::new(MockEmbedder),
         repo.clone(),
-        Database::from(pool.clone()),
+        db,
         vector_search.clone(),
     );
 
@@ -371,7 +372,7 @@ async fn a_file_that_now_extracts_to_whitespace_fails_and_keeps_its_vectors() {
     let repo = Arc::new(MockDocumentRepo::new());
     let (aggregate, _temp_dir) = create_test_aggregate();
     let doc_id = aggregate.id().to_string();
-    let pool = pool_with(Some(&aggregate)).await;
+    let (_, db) = pool_with(Some(&aggregate)).await;
     repo.set_document(aggregate);
     let vector_search = Arc::new(MockVectorSearch::default());
     let use_case = ReindexDocumentUseCase::new(
@@ -380,7 +381,7 @@ async fn a_file_that_now_extracts_to_whitespace_fails_and_keeps_its_vectors() {
         }),
         Arc::new(MockEmbedder),
         repo,
-        Database::from(pool.clone()),
+        db,
         vector_search.clone(),
     );
 
@@ -402,7 +403,7 @@ async fn test_reindex_document_not_found() {
         Arc::new(MockFileStorage::updated()),
         Arc::new(MockEmbedder),
         repo,
-        Database::from(pool_with(None).await),
+        pool_with(None).await.1,
         Arc::new(MockVectorSearch::default()),
     );
 
@@ -419,7 +420,7 @@ async fn test_reindex_with_different_strategy() {
     let (aggregate, _temp_dir) = create_test_aggregate();
     let doc_id = aggregate.id().to_string();
 
-    let pool = pool_with(Some(&aggregate)).await;
+    let (_, db) = pool_with(Some(&aggregate)).await;
     repo.set_document(aggregate);
 
     let vector_search = Arc::new(MockVectorSearch::default());
@@ -427,7 +428,7 @@ async fn test_reindex_with_different_strategy() {
         Arc::new(MockFileStorage::updated()),
         Arc::new(MockEmbedder),
         repo,
-        Database::from(pool.clone()),
+        db,
         vector_search.clone(),
     );
 
@@ -474,7 +475,7 @@ async fn reindex_refreshes_stale_octet_stream_mime_type_and_marks_yaml_chunks_as
     let doc_id = document.id().to_string();
 
     let repo = Arc::new(MockDocumentRepo::new());
-    let pool = pool_with(Some(&document)).await;
+    let (_, db) = pool_with(Some(&document)).await;
     repo.set_document(document);
 
     let use_case = ReindexDocumentUseCase::new(
@@ -483,13 +484,13 @@ async fn reindex_refreshes_stale_octet_stream_mime_type_and_marks_yaml_chunks_as
         }),
         Arc::new(MockEmbedder),
         repo,
-        Database::from(pool.clone()),
+        db.clone(),
         Arc::new(MockVectorSearch::default()),
     );
 
     use_case.execute(doc_id.clone()).await.unwrap();
 
-    let persisted = DocumentRepositoryImpl::new(pool)
+    let persisted = DocumentRepositoryImpl::new(db)
         .find_by_id(&doc_id)
         .await
         .unwrap()
@@ -503,13 +504,13 @@ async fn reindex_does_not_resurrect_a_document_deleted_meanwhile() {
     let repo = Arc::new(MockDocumentRepo::new());
     let (aggregate, _temp_dir) = create_test_aggregate();
     let doc_id = aggregate.id().to_string();
-    let pool = pool_with(None).await;
+    let (pool, db) = pool_with(None).await;
     repo.set_document(aggregate);
     let use_case = ReindexDocumentUseCase::new(
         Arc::new(MockFileStorage::updated()),
         Arc::new(MockEmbedder),
         repo,
-        Database::from(pool.clone()),
+        db,
         Arc::new(MockVectorSearch::default()),
     );
 

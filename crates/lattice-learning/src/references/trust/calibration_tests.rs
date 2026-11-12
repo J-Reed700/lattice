@@ -30,8 +30,8 @@ use lattice_core::domain::provenance::{
     Support, TemporalScope, TemporalValidity, Trust, TrustLevel, TrustOverride, POLICY,
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use serde_json::json;
-use sqlx::SqlitePool;
 
 const MODEL: &str = "qwen3.5-27b";
 const QUOTE: &str = "A conforming parser rejects a trailing comma.";
@@ -165,7 +165,7 @@ pub(super) async fn waiting_lesson(course: &Course) -> Result<String> {
         }
         query.execute(&course.pool).await.unwrap();
     }
-    ClaimReviewRepository::new(course.pool.clone())
+    ClaimReviewRepository::new(course.database.clone())
         .set_lesson_review(
             &lesson_id,
             LessonReview {
@@ -182,13 +182,13 @@ pub(super) async fn waiting_lesson(course: &Course) -> Result<String> {
 }
 
 pub(super) async fn append(
-    pool: &SqlitePool,
+    database: &Database,
     lesson_id: &str,
     claim: &ClaimId,
     actor: Actor,
     event: ClaimEvent,
 ) {
-    let store = ClaimReviewRepository::new(pool.clone());
+    let store = ClaimReviewRepository::new(database.clone());
     let revision = store.load(lesson_id).await.unwrap().revision;
     store
         .append(lesson_id, claim, provenance(actor), event, revision)
@@ -199,7 +199,7 @@ pub(super) async fn append(
 /// A claim the gate held below its bar, handed to the user, as the loop and
 /// the review card record it.
 pub(super) async fn queued_below_the_bar(
-    pool: &SqlitePool,
+    database: &Database,
     lesson_id: &str,
     trust: TrustAssessment,
 ) -> ClaimId {
@@ -254,17 +254,17 @@ pub(super) async fn queued_below_the_bar(
         ),
     ];
     for (actor, event) in events {
-        append(pool, lesson_id, &claim, actor, event).await;
+        append(database, lesson_id, &claim, actor, event).await;
     }
     claim
 }
 
 pub(super) async fn claim_entry(
-    pool: &SqlitePool,
+    database: &Database,
     lesson_id: &str,
     claim: &ClaimId,
 ) -> ClaimLedgerEntry {
-    ClaimReviewRepository::new(pool.clone())
+    ClaimReviewRepository::new(database.clone())
         .load(lesson_id)
         .await
         .unwrap()
@@ -278,8 +278,8 @@ pub(super) async fn claim_entry(
 async fn a_verdict_is_an_outcome_per_cluster_and_undo_forgets_it() -> Result<()> {
     let course = course().await?;
     let lesson_id = waiting_lesson(&course).await?;
-    let claim = queued_below_the_bar(&course.pool, &lesson_id, below_the_bar("v-blog")).await;
-    let before = claim_entry(&course.pool, &lesson_id, &claim).await;
+    let claim = queued_below_the_bar(&course.database, &lesson_id, below_the_bar("v-blog")).await;
+    let before = claim_entry(&course.database, &lesson_id, &claim).await;
     let scope = VerdictScope {
         program_id: &course.program_id,
         lesson_id: &lesson_id,
@@ -309,8 +309,9 @@ async fn a_verdict_is_an_outcome_per_cluster_and_undo_forgets_it() -> Result<()>
 async fn the_verdict_that_relaxes_a_bar_verifies_the_claims_it_held_back() -> Result<()> {
     let course = course().await?;
     let lesson_id = waiting_lesson(&course).await?;
-    let waiting = queued_below_the_bar(&course.pool, &lesson_id, below_the_bar("v-blog")).await;
-    let confirmed = queued_below_the_bar(&course.pool, &lesson_id, below_the_bar("v-other")).await;
+    let waiting = queued_below_the_bar(&course.database, &lesson_id, below_the_bar("v-blog")).await;
+    let confirmed =
+        queued_below_the_bar(&course.database, &lesson_id, below_the_bar("v-other")).await;
     // Every verdict but the last that relaxes the bar, from earlier lessons.
     for at in 0..verdicts_to_relax(&course.program_id) - 1 {
         course
@@ -332,9 +333,9 @@ async fn the_verdict_that_relaxes_a_bar_verifies_the_claims_it_held_back() -> Re
 
     // The user confirms one claim: its outcome is the one that relaxes the
     // bar, and the other claim is verified without a model.
-    let before = claim_entry(&course.pool, &lesson_id, &confirmed).await;
+    let before = claim_entry(&course.database, &lesson_id, &confirmed).await;
     append(
-        &course.pool,
+        &course.database,
         &lesson_id,
         &confirmed,
         Actor::User,
@@ -353,7 +354,7 @@ async fn the_verdict_that_relaxes_a_bar_verifies_the_claims_it_held_back() -> Re
     let redecided = record_verdict(&course.database, scope, &before, TrustVerdict::Confirm).await?;
     assert_eq!(redecided.verified, 1, "{redecided:?}");
     assert_eq!(redecided.lessons, vec![lesson_id.clone()]);
-    let verified = claim_entry(&course.pool, &lesson_id, &waiting).await;
+    let verified = claim_entry(&course.database, &lesson_id, &waiting).await;
     assert_eq!(
         verified.state(),
         &ClaimState::ResolvedByEvidence {
@@ -372,7 +373,7 @@ async fn the_verdict_that_relaxes_a_bar_verifies_the_claims_it_held_back() -> Re
         }
     ));
     assert!(matches!(
-        claim_entry(&course.pool, &lesson_id, &confirmed)
+        claim_entry(&course.database, &lesson_id, &confirmed)
             .await
             .state(),
         ClaimState::Confirmed { .. }
@@ -385,7 +386,7 @@ async fn the_verdict_that_relaxes_a_bar_verifies_the_claims_it_held_back() -> Re
     // Undo puts the bar back, and the claim it verified waits again.
     let undone = forget_verdict(&course.database, &confirmed.0, TrustVerdict::Confirm).await?;
     assert_eq!(undone.reopened, 1, "{undone:?}");
-    let reopened = claim_entry(&course.pool, &lesson_id, &waiting).await;
+    let reopened = claim_entry(&course.database, &lesson_id, &waiting).await;
     assert!(matches!(
         reopened.state(),
         ClaimState::Reopened {
@@ -448,10 +449,14 @@ async fn an_override_re_levels_from_stored_judgements_and_never_guesses() -> Res
         page_signals(unjudged_url, json!({})),
     )
     .await?;
-    let lifted =
-        queued_below_the_bar(&course.pool, &lesson_id, below_the_bar(&judged.version_id)).await;
+    let lifted = queued_below_the_bar(
+        &course.database,
+        &lesson_id,
+        below_the_bar(&judged.version_id),
+    )
+    .await;
     let left = queued_below_the_bar(
-        &course.pool,
+        &course.database,
         &lesson_id,
         below_the_bar(&unjudged.version_id),
     )
@@ -477,7 +482,7 @@ async fn an_override_re_levels_from_stored_judgements_and_never_guesses() -> Res
             assert_eq!(redecided.verified, 0);
         }
     }
-    let verified = claim_entry(&course.pool, &lesson_id, &lifted).await;
+    let verified = claim_entry(&course.database, &lesson_id, &lifted).await;
     assert!(matches!(
         verified.state(),
         ClaimState::ResolvedByEvidence { .. }
@@ -488,7 +493,9 @@ async fn an_override_re_levels_from_stored_judgements_and_never_guesses() -> Res
     // No standing was ever judged for the other page: only a model could
     // level it, so it is left as it was.
     assert!(matches!(
-        claim_entry(&course.pool, &lesson_id, &left).await.state(),
+        claim_entry(&course.database, &lesson_id, &left)
+            .await
+            .state(),
         ClaimState::Queued { .. }
     ));
     Ok(())
@@ -532,7 +539,7 @@ async fn the_menu_counts_the_claims_an_override_re_decides_and_applying_it_re_de
     )
     .await?;
     for version in [&chosen.version_id, &chosen.version_id, &other.version_id] {
-        queued_below_the_bar(&course.pool, &lesson_id, below_the_bar(version)).await;
+        queued_below_the_bar(&course.database, &lesson_id, below_the_bar(version)).await;
     }
 
     // Before the user commits: the claims the ledger would re-decide.
@@ -641,16 +648,16 @@ async fn the_verifier_agreeing_with_an_accepted_claim_is_a_held_outcome() -> Res
             cause: None,
         },
     ] {
-        append(&course.pool, &lesson_id, &claim, Actor::Machine, event).await;
+        append(&course.database, &lesson_id, &claim, Actor::Machine, event).await;
     }
-    let before = ClaimReviewRepository::new(course.pool.clone())
+    let before = ClaimReviewRepository::new(course.database.clone())
         .load(&lesson_id)
         .await?;
     let verifier = Checker::Verifier {
         model: MODEL.into(),
     };
     append(
-        &course.pool,
+        &course.database,
         &lesson_id,
         &claim,
         Actor::Machine,
@@ -670,7 +677,7 @@ async fn the_verifier_agreeing_with_an_accepted_claim_is_a_held_outcome() -> Res
     assert!(outcomes[0].outcome.decision_was_sufficient && outcomes[0].outcome.right);
 
     // Read again with nothing new appended, it records nothing more.
-    let now = ClaimReviewRepository::new(course.pool.clone())
+    let now = ClaimReviewRepository::new(course.database.clone())
         .load(&lesson_id)
         .await?;
     record_verifier_agreements(&course.database, scope, &now).await?;

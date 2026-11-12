@@ -10,7 +10,7 @@ use super::repository::rows::{delete_override, write_override};
 use crate::persistence::db;
 use lattice_core::domain::provenance::{OverrideScope, TrustOverride};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 
 /// One source version an override covers.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

@@ -20,11 +20,12 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         .connect_with(options.clone())
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
+    let db = Database::new(pool.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    let programs = LearningRepository::new(pool.clone());
+    let programs = LearningRepository::new(db.clone());
     let program = crate::tests::fixture();
     programs.create(&program).await?;
     programs
@@ -36,7 +37,7 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         .await?;
     let program = programs.get(&program.summary.id).await?;
     let lesson_id = &program.modules[0].lessons[0].id;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let repo = LearningCurriculumRepository::new(db.clone());
     let job = repo
         .start_job(&StartLearningGenerationJobRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
@@ -47,7 +48,7 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
             progress_total: 1,
         })
         .await?;
-    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
+    assert!(JobStore::new(db.clone()).claim(&job.id).await?.is_some());
     let mut candidate = candidate(GOOD);
     candidate["blocks"] = json!((0..5)
         .map(|i| {
@@ -60,30 +61,24 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         fail_coverage_at: Some(4),
         ..Model::new()
     };
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job.id,
-        lesson_id,
-        async {
-            lesson_drafts::resume("section-fixture".into()).await?;
-            lesson_drafts::save(&candidate.to_string()).await?;
-            let sources = vec![source()];
-            let result = verify_with(
-                &model,
-                &candidate,
-                &ReferenceCollection::lexical(&sources)?,
-                &mut ClaimChecks::default(),
-            )
-            .await;
-            assert!(result.is_err(), "Second batch was deliberately interrupted");
-            assert_eq!(
-                *model.audited_sections.lock().unwrap(),
-                vec![vec![0, 1, 2, 3]]
-            );
-            Ok(())
-        },
-    )
+    lesson_drafts::run(&db, &repo, &job.id, lesson_id, async {
+        lesson_drafts::resume("section-fixture".into()).await?;
+        lesson_drafts::save(&candidate.to_string()).await?;
+        let sources = vec![source()];
+        let result = verify_with(
+            &model,
+            &candidate,
+            &ReferenceCollection::lexical(&sources)?,
+            &mut ClaimChecks::default(),
+        )
+        .await;
+        assert!(result.is_err(), "Second batch was deliberately interrupted");
+        assert_eq!(
+            *model.audited_sections.lock().unwrap(),
+            vec![vec![0, 1, 2, 3]]
+        );
+        Ok(())
+    })
     .await?;
     drop(programs);
     drop(repo);
@@ -93,36 +88,31 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         .connect_with(options)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
-    JobStore::new(pool.clone())
+    let db = Database::new(pool.clone());
+    let repo = LearningCurriculumRepository::new(db.clone());
+    JobStore::new(db.clone())
         .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
         .await?;
-    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
+    assert!(JobStore::new(db.clone()).claim(&job.id).await?.is_some());
     let resumed_model = Model::new();
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job.id,
-        lesson_id,
-        async {
-            lesson_drafts::resume("section-fixture".into()).await?;
-            let sources = vec![source()];
-            verify_with(
-                &resumed_model,
-                &candidate,
-                &ReferenceCollection::lexical(&sources)?,
-                &mut ClaimChecks::default(),
-            )
-            .await?;
-            assert!(resumed_model.extracted_sections.lock().unwrap().is_empty());
-            assert_eq!(
-                *resumed_model.audited_sections.lock().unwrap(),
-                vec![vec![4]],
-                "The aggregate checkpoint predates the first completed audit batch"
-            );
-            Ok(())
-        },
-    )
+    lesson_drafts::run(&db, &repo, &job.id, lesson_id, async {
+        lesson_drafts::resume("section-fixture".into()).await?;
+        let sources = vec![source()];
+        verify_with(
+            &resumed_model,
+            &candidate,
+            &ReferenceCollection::lexical(&sources)?,
+            &mut ClaimChecks::default(),
+        )
+        .await?;
+        assert!(resumed_model.extracted_sections.lock().unwrap().is_empty());
+        assert_eq!(
+            *resumed_model.audited_sections.lock().unwrap(),
+            vec![vec![4]],
+            "The aggregate checkpoint predates the first completed audit batch"
+        );
+        Ok(())
+    })
     .await?;
     // The whole-candidate checkpoint must not bypass the model binding of the
     // individual section receipts or relabel old audits as new-model results.
@@ -130,106 +120,93 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         name: "changed-model",
         ..Model::new()
     };
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job.id,
-        lesson_id,
-        async {
-            lesson_drafts::resume("section-fixture".into()).await?;
-            let sources = vec![source()];
-            verify_with(
-                &changed_model,
-                &candidate,
-                &ReferenceCollection::lexical(&sources)?,
-                &mut ClaimChecks::default(),
-            )
-            .await?;
-            for sections in [
-                &changed_model.extracted_sections,
-                &changed_model.audited_sections,
-            ] {
-                let mut checked: Vec<_> =
-                    sections.lock().unwrap().iter().flatten().copied().collect();
-                checked.sort_unstable();
-                assert_eq!(checked, vec![0, 1, 2, 3, 4]);
-            }
-            Ok(())
-        },
-    )
+    lesson_drafts::run(&db, &repo, &job.id, lesson_id, async {
+        lesson_drafts::resume("section-fixture".into()).await?;
+        let sources = vec![source()];
+        verify_with(
+            &changed_model,
+            &candidate,
+            &ReferenceCollection::lexical(&sources)?,
+            &mut ClaimChecks::default(),
+        )
+        .await?;
+        for sections in [
+            &changed_model.extracted_sections,
+            &changed_model.audited_sections,
+        ] {
+            let mut checked: Vec<_> = sections.lock().unwrap().iter().flatten().copied().collect();
+            checked.sort_unstable();
+            assert_eq!(checked, vec![0, 1, 2, 3, 4]);
+        }
+        Ok(())
+    })
     .await?;
     // A later repair must not restart the four finished, unchanged sections.
     candidate["blocks"][1]["body"] = json!(BAD);
     let model = Model::new();
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job.id,
-        lesson_id,
-        async {
-            let content = units(&candidate)?;
-            let (inventory, coverage) = extract_audited_inventory(
-                &model,
-                &content,
-                (&candidate.to_string(), &candidate),
-                &claim_ledger::Rewrites::default(),
-            )
-            .await?;
-            assert_eq!(
-                *model.extracted_sections.lock().unwrap(),
-                vec![vec![1]],
-                "A changed section extracts only what was written in it"
-            );
-            assert_eq!(*model.audited_sections.lock().unwrap(), vec![vec![1]]);
-            assert_eq!(inventory.units.len(), 5);
-            assert!(coverage.units.iter().all(|unit| unit.complete));
-            let sources = vec![source()];
-            let report = verified(
-                &model,
-                &candidate,
-                &ReferenceCollection::lexical(&sources)?,
-                passes::Extraction {
-                    inventory,
-                    coverage,
-                    executions: vec![],
-                },
-                &mut ClaimChecks::default(),
-            )
-            .await?;
-            let read: Vec<_> = report
-                .findings
-                .iter()
-                .map(|finding| (finding.unit, &finding.statement, &finding.verdict))
-                .collect();
-            let written_over = report
-                .findings
-                .iter()
-                .find(|finding| finding.statement == BAD)
-                .unwrap_or_else(|| panic!("The rewritten sentence has no finding: {read:?}"));
-            assert_eq!(
-                written_over.verdict,
-                ClaimVerdict::Contradicted,
-                "Retained coverage must not approve factual content: {read:?}"
-            );
-            let (retained, _) = section_checkpoints::load(&model, &content).await?;
-            assert_eq!(retained.len(), 5);
-            let different = Model {
-                name: "previously-unused-model",
-                ..Model::new()
-            };
-            assert!(section_checkpoints::load(&different, &content)
-                .await?
-                .0
-                .is_empty());
-            let mut reordered = content.clone();
-            reordered.swap(0, 1);
-            assert_eq!(
-                section_checkpoints::load(&model, &reordered).await?.0.len(),
-                3
-            );
-            Ok(())
-        },
-    )
+    lesson_drafts::run(&db, &repo, &job.id, lesson_id, async {
+        let content = units(&candidate)?;
+        let (inventory, coverage) = extract_audited_inventory(
+            &model,
+            &content,
+            (&candidate.to_string(), &candidate),
+            &claim_ledger::Rewrites::default(),
+        )
+        .await?;
+        assert_eq!(
+            *model.extracted_sections.lock().unwrap(),
+            vec![vec![1]],
+            "A changed section extracts only what was written in it"
+        );
+        assert_eq!(*model.audited_sections.lock().unwrap(), vec![vec![1]]);
+        assert_eq!(inventory.units.len(), 5);
+        assert!(coverage.units.iter().all(|unit| unit.complete));
+        let sources = vec![source()];
+        let report = verified(
+            &model,
+            &candidate,
+            &ReferenceCollection::lexical(&sources)?,
+            passes::Extraction {
+                inventory,
+                coverage,
+                executions: vec![],
+            },
+            &mut ClaimChecks::default(),
+        )
+        .await?;
+        let read: Vec<_> = report
+            .findings
+            .iter()
+            .map(|finding| (finding.unit, &finding.statement, &finding.verdict))
+            .collect();
+        let written_over = report
+            .findings
+            .iter()
+            .find(|finding| finding.statement == BAD)
+            .unwrap_or_else(|| panic!("The rewritten sentence has no finding: {read:?}"));
+        assert_eq!(
+            written_over.verdict,
+            ClaimVerdict::Contradicted,
+            "Retained coverage must not approve factual content: {read:?}"
+        );
+        let (retained, _) = section_checkpoints::load(&model, &content).await?;
+        assert_eq!(retained.len(), 5);
+        let different = Model {
+            name: "previously-unused-model",
+            ..Model::new()
+        };
+        assert!(section_checkpoints::load(&different, &content)
+            .await?
+            .0
+            .is_empty());
+        let mut reordered = content.clone();
+        reordered.swap(0, 1);
+        assert_eq!(
+            section_checkpoints::load(&model, &reordered).await?.0.len(),
+            3
+        );
+        Ok(())
+    })
     .await?;
     pool.close().await;
     Ok(())
@@ -245,11 +222,12 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
         .connect_with(options.clone())
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
+    let db = Database::new(pool.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    let programs = LearningRepository::new(pool.clone());
+    let programs = LearningRepository::new(db.clone());
     let program = crate::tests::fixture();
     programs.create(&program).await?;
     programs
@@ -261,7 +239,7 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
         .await?;
     let program = programs.get(&program.summary.id).await?;
     let lesson_id = &program.modules[0].lessons[0].id;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let repo = LearningCurriculumRepository::new(db.clone());
     let job = repo
         .start_job(&StartLearningGenerationJobRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
@@ -272,7 +250,7 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
             progress_total: 1,
         })
         .await?;
-    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
+    assert!(JobStore::new(db.clone()).claim(&job.id).await?.is_some());
     let content: Vec<_> = (0..5)
         .map(|index| json!({"kind":"teaching","title":format!("Section {index}"),"body":GOOD}))
         .collect();
@@ -293,22 +271,16 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
         fail_coverage_at: Some(4),
         ..Model::new()
     };
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job.id,
-        lesson_id,
-        async {
-            assert!(coverage::audit(&model, &content, &inventory, None)
-                .await
-                .is_err());
-            assert_eq!(
-                *model.audited_sections.lock().unwrap(),
-                vec![vec![0, 1, 2, 3]]
-            );
-            Ok(())
-        },
-    )
+    lesson_drafts::run(&db, &repo, &job.id, lesson_id, async {
+        assert!(coverage::audit(&model, &content, &inventory, None)
+            .await
+            .is_err());
+        assert_eq!(
+            *model.audited_sections.lock().unwrap(),
+            vec![vec![0, 1, 2, 3]]
+        );
+        Ok(())
+    })
     .await?;
     drop(programs);
     drop(repo);
@@ -319,57 +291,52 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
         .connect_with(options)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
-    JobStore::new(pool.clone())
+    let db = Database::new(pool.clone());
+    let repo = LearningCurriculumRepository::new(db.clone());
+    JobStore::new(db.clone())
         .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
         .await?;
-    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job.id,
-        lesson_id,
-        async {
-            let model = Model::new();
-            let coverage = coverage::audit(&model, &content, &inventory, None).await?;
-            assert_eq!(*model.audited_sections.lock().unwrap(), vec![vec![4]]);
-            assert_eq!(coverage.units.len(), 5);
-            assert!(
-                !coverage.units[1].complete,
-                "A saved omission must remain unresolved"
-            );
-            assert_eq!(coverage.units[1].missing_assertions.len(), 1);
-            assert_eq!(
-                coverage.units.iter().filter(|unit| unit.complete).count(),
-                4
-            );
+    assert!(JobStore::new(db.clone()).claim(&job.id).await?.is_some());
+    lesson_drafts::run(&db, &repo, &job.id, lesson_id, async {
+        let model = Model::new();
+        let coverage = coverage::audit(&model, &content, &inventory, None).await?;
+        assert_eq!(*model.audited_sections.lock().unwrap(), vec![vec![4]]);
+        assert_eq!(coverage.units.len(), 5);
+        assert!(
+            !coverage.units[1].complete,
+            "A saved omission must remain unresolved"
+        );
+        assert_eq!(coverage.units[1].missing_assertions.len(), 1);
+        assert_eq!(
+            coverage.units.iter().filter(|unit| unit.complete).count(),
+            4
+        );
 
-            let mut corrected = inventory.clone();
-            corrected.units[1].claims[0]
-                .statement
-                .push_str(" An additional extracted assertion.");
-            let model = Model::new();
-            let checked = coverage::audit(&model, &content, &corrected, None).await?;
-            assert_eq!(*model.audited_sections.lock().unwrap(), vec![vec![1]]);
-            assert!(checked.units.iter().all(|unit| unit.complete));
+        let mut corrected = inventory.clone();
+        corrected.units[1].claims[0]
+            .statement
+            .push_str(" An additional extracted assertion.");
+        let model = Model::new();
+        let checked = coverage::audit(&model, &content, &corrected, None).await?;
+        assert_eq!(*model.audited_sections.lock().unwrap(), vec![vec![1]]);
+        assert!(checked.units.iter().all(|unit| unit.complete));
 
-            let mut changed = content.clone();
-            changed[2]["body"] = json!(format!("{GOOD} Another original assertion."));
-            let model = Model::new();
-            coverage::audit(&model, &changed, &corrected, None).await?;
-            assert_eq!(*model.audited_sections.lock().unwrap(), vec![vec![2]]);
+        let mut changed = content.clone();
+        changed[2]["body"] = json!(format!("{GOOD} Another original assertion."));
+        let model = Model::new();
+        coverage::audit(&model, &changed, &corrected, None).await?;
+        assert_eq!(*model.audited_sections.lock().unwrap(), vec![vec![2]]);
 
-            let model = Model {
-                name: "different-coverage-model",
-                ..Model::new()
-            };
-            coverage::audit(&model, &changed, &corrected, None).await?;
-            let mut batches = model.audited_sections.lock().unwrap().clone();
-            batches.sort();
-            assert_eq!(batches, vec![vec![0, 1, 2, 3], vec![4]]);
-            Ok(())
-        },
-    )
+        let model = Model {
+            name: "different-coverage-model",
+            ..Model::new()
+        };
+        coverage::audit(&model, &changed, &corrected, None).await?;
+        let mut batches = model.audited_sections.lock().unwrap().clone();
+        batches.sort();
+        assert_eq!(batches, vec![vec![0, 1, 2, 3], vec![4]]);
+        Ok(())
+    })
     .await?;
     pool.close().await;
     Ok(())
@@ -385,11 +352,12 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
         .connect_with(options.clone())
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
+    let db = Database::new(pool.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    let programs = LearningRepository::new(pool.clone());
+    let programs = LearningRepository::new(db.clone());
     let program = crate::tests::fixture();
     programs.create(&program).await?;
     programs
@@ -401,7 +369,7 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
         .await?;
     let program = programs.get(&program.summary.id).await?;
     let lesson_id = &program.modules[0].lessons[0].id;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let repo = LearningCurriculumRepository::new(db.clone());
     let job = repo
         .start_job(&StartLearningGenerationJobRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
@@ -412,7 +380,7 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
             progress_total: 1,
         })
         .await?;
-    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
+    assert!(JobStore::new(db.clone()).claim(&job.id).await?.is_some());
     let mut model = Model::new();
     model.hold_bad_claim = true;
     model.batch_unavailable = true;
@@ -441,31 +409,25 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
     // time, and the second never finishes. The first must still be
     // checkpointed; work held until the whole group finished would be lost
     // on interruption here.
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job.id,
-        lesson_id,
-        async {
-            let checks = ClaimChecks::default();
-            let work = paged(&model, &references, &inventory, &checks);
-            tokio::select! {
-                result = work => panic!("The deliberately blocked claim finished: {result:?}"),
-                result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                    loop {
-                        // Retrieval may complete out of order too. Interrupt only
-                        // once the unfinished call has actually started and the
-                        // other comparison has durably finished.
-                        if lesson_drafts::checkpoint(&key).await?.is_some()
-                            && *model.judge_calls.lock().unwrap() == 2
-                        { return Ok::<_, AppError>(()); }
-                        tokio::task::yield_now().await;
-                    }
-                }) => result.expect("completed check was not saved")?,
-            }
-            Ok(())
-        },
-    )
+    lesson_drafts::run(&db, &repo, &job.id, lesson_id, async {
+        let checks = ClaimChecks::default();
+        let work = paged(&model, &references, &inventory, &checks);
+        tokio::select! {
+            result = work => panic!("The deliberately blocked claim finished: {result:?}"),
+            result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    // Retrieval may complete out of order too. Interrupt only
+                    // once the unfinished call has actually started and the
+                    // other comparison has durably finished.
+                    if lesson_drafts::checkpoint(&key).await?.is_some()
+                        && *model.judge_calls.lock().unwrap() == 2
+                    { return Ok::<_, AppError>(()); }
+                    tokio::task::yield_now().await;
+                }
+            }) => result.expect("completed check was not saved")?,
+        }
+        Ok(())
+    })
     .await?;
     assert_eq!(*model.judge_calls.lock().unwrap(), 2);
     let writes = (0..12).map(|i| {
@@ -489,15 +451,16 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
         .connect_with(options)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
-    JobStore::new(pool.clone())
+    let db = Database::new(pool.clone());
+    let repo = LearningCurriculumRepository::new(db.clone());
+    JobStore::new(db.clone())
         .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
         .await?;
     assert_eq!(
         repo.job(&job.id).await?.status,
         LearningGenerationJobStatus::Pending
     );
-    let store = JobStore::new(pool.clone());
+    let store = JobStore::new(db.clone());
     let (left, right) = tokio::join!(store.claim(&job.id), store.claim(&job.id));
     assert_ne!(
         left?.is_some(),
@@ -512,64 +475,58 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
         );
     }
     let model = Model::new();
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job.id,
-        lesson_id,
-        async {
-            let reads = paged(&model, &references, &inventory, &ClaimChecks::default()).await?;
-            assert_eq!(
-                *model.judge_calls.lock().unwrap(),
-                1,
-                "Only the interrupted comparison should repeat"
-            );
-            assert_eq!(reads[0].finding.verdict, ClaimVerdict::Supported);
-            assert_eq!(reads[1].finding.verdict, ClaimVerdict::Contradicted);
-            let mut changed = sources.clone();
-            changed[0]
-                .excerpt
-                .push_str(" Additional evidence changes the judgment input.");
-            paged(
-                &model,
-                &ReferenceCollection::lexical(&changed)?,
-                &inventory,
-                &ClaimChecks::default(),
-            )
-            .await?;
-            assert_eq!(
-                *model.judge_calls.lock().unwrap(),
-                3,
-                "Changed evidence cannot reuse approvals"
-            );
-            let changed_model = Model {
-                name: "different-checker",
-                ..Model::new()
-            };
-            paged(
-                &changed_model,
-                &references,
-                &Inventory {
-                    units: vec![UnitClaims {
-                        index: 0,
-                        claims: vec![Claim {
-                            quote: GOOD.into(),
-                            statement: GOOD.into(),
-                        }],
-                        non_factual_reason: String::new(),
+    lesson_drafts::run(&db, &repo, &job.id, lesson_id, async {
+        let reads = paged(&model, &references, &inventory, &ClaimChecks::default()).await?;
+        assert_eq!(
+            *model.judge_calls.lock().unwrap(),
+            1,
+            "Only the interrupted comparison should repeat"
+        );
+        assert_eq!(reads[0].finding.verdict, ClaimVerdict::Supported);
+        assert_eq!(reads[1].finding.verdict, ClaimVerdict::Contradicted);
+        let mut changed = sources.clone();
+        changed[0]
+            .excerpt
+            .push_str(" Additional evidence changes the judgment input.");
+        paged(
+            &model,
+            &ReferenceCollection::lexical(&changed)?,
+            &inventory,
+            &ClaimChecks::default(),
+        )
+        .await?;
+        assert_eq!(
+            *model.judge_calls.lock().unwrap(),
+            3,
+            "Changed evidence cannot reuse approvals"
+        );
+        let changed_model = Model {
+            name: "different-checker",
+            ..Model::new()
+        };
+        paged(
+            &changed_model,
+            &references,
+            &Inventory {
+                units: vec![UnitClaims {
+                    index: 0,
+                    claims: vec![Claim {
+                        quote: GOOD.into(),
+                        statement: GOOD.into(),
                     }],
-                },
-                &ClaimChecks::default(),
-            )
-            .await?;
-            assert_eq!(
-                *changed_model.judge_calls.lock().unwrap(),
-                1,
-                "A changed model must check again"
-            );
-            Ok(())
-        },
-    )
+                    non_factual_reason: String::new(),
+                }],
+            },
+            &ClaimChecks::default(),
+        )
+        .await?;
+        assert_eq!(
+            *changed_model.judge_calls.lock().unwrap(),
+            1,
+            "A changed model must check again"
+        );
+        Ok(())
+    })
     .await?;
     pool.close().await;
     Ok(())

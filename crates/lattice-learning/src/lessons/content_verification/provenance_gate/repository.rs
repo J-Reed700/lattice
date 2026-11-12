@@ -1,7 +1,7 @@
 //! The library rows the provenance gate reads.
 
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Database;
 use sqlx::Row;
 
 fn db(error: sqlx::Error) -> AppError {
@@ -18,19 +18,20 @@ pub(super) struct VersionRow {
 }
 
 pub(super) async fn version_row(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
     version_id: &str,
 ) -> Result<VersionRow> {
-    let pool = pool.sqlx_pool();
+    let mut read = database.begin_read().await?;
     let row = sqlx::query(
         "SELECT v.source_id, v.full_text, v.acquired_at, l.added_by, l.selection_note FROM learning_source_versions v JOIN learning_source_library l ON l.id = v.source_id AND l.program_id = v.program_id WHERE v.program_id = ? AND v.id = ?",
     )
     .bind(program_id)
     .bind(version_id)
-    .fetch_one(pool)
+    .fetch_one(&mut *read)
     .await
     .map_err(db)?;
+    read.commit().await?;
     Ok(VersionRow {
         source_id: row.try_get("source_id").map_err(db)?,
         full_text: row.try_get("full_text").map_err(db)?,

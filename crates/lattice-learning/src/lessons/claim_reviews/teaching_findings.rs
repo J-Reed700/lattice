@@ -10,7 +10,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

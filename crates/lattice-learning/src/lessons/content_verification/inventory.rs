@@ -371,8 +371,9 @@ mod tests {
     async fn a_failed_section_defers_once_then_fails_and_completed_inventory_is_kept() -> Result<()>
     {
         let pool = crate::tests::pool().await?;
+        let db = Database::new(pool.clone());
         let (repo, job, lesson) =
-            crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+            crate::content_verification::tests::batch_scheduler_tests::setup(&db).await?;
         let content = vec![
             json!({"body":"The first section states a fact."}),
             json!({"body":"The second section states another fact."}),
@@ -382,7 +383,7 @@ mod tests {
             json!({"units":{}}),
         ]);
         let resumed = model(vec![fixture_response(vec![answer(1, "unit-1-passage-0")])]);
-        crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+        crate::lesson_drafts::run(&db, &repo, &job, &lesson, async {
             crate::lesson_drafts::resume("inventory-retry-fixture".into()).await?;
             // The first failure is deferred: a retry may answer differently.
             let error = extract_remaining(&broken, &content, vec![])

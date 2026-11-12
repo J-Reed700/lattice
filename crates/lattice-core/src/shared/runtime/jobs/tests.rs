@@ -24,6 +24,10 @@ async fn pool() -> sqlx::SqlitePool {
     pool
 }
 
+async fn database() -> Database {
+    Database::new(pool().await)
+}
+
 fn new_job(kind: &str, operation: &str, subject: Option<&str>) -> NewJob {
     NewJob {
         kind: kind.into(),
@@ -106,7 +110,7 @@ async fn finished(runtime: &JobRuntime, id: &str) {
 
 #[tokio::test]
 async fn resubmitting_an_operation_returns_the_saved_job() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let first = store
         .submit(&new_job(KIND, "op-1", Some("subject")))
         .await?;
@@ -132,7 +136,7 @@ async fn resubmitting_an_operation_returns_the_saved_job() -> Result<()> {
 
 #[tokio::test]
 async fn reusing_an_operation_id_with_a_different_payload_is_rejected() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     store.submit(&new_job(KIND, "op-1", None)).await?;
     let mut changed = new_job(KIND, "op-1", None);
     changed.payload_hash = "different".into();
@@ -149,7 +153,7 @@ async fn reusing_an_operation_id_with_a_different_payload_is_rejected() -> Resul
 
 #[tokio::test]
 async fn a_job_cancelled_before_it_runs_never_runs() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let (handler, mut started) = gate();
     // Saved before its kind is registered, then cancelled while queued.
     let saved = runtime
@@ -201,7 +205,7 @@ async fn a_job_cancelled_before_it_runs_never_runs() -> Result<()> {
 
 #[tokio::test]
 async fn cancelling_a_running_job_commits_before_signalling_and_late_writes_lose() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let (handler, mut started) = gate();
     runtime
         .register(
@@ -233,7 +237,7 @@ async fn cancelling_a_running_job_commits_before_signalling_and_late_writes_lose
 
 #[tokio::test]
 async fn a_retry_links_a_new_attempt_that_inherits_saved_work() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let first = store.submit(&new_job(KIND, "first", None)).await?.id;
     assert!(matches!(
         store.retry(&first, "too-early", "Retry queued").await,
@@ -311,7 +315,7 @@ async fn deferred_jobs_wait_for_their_retry_time_and_back_off() -> Result<()> {
     let delays: Vec<u64> = (0..6).map(|n| backoff.delay(n).as_secs()).collect();
     assert_eq!(delays, vec![30, 60, 120, 240, 300, 300]);
 
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let outage = Deferral {
         code: "temporarily_unavailable".into(),
         message: "The service is down".into(),
@@ -411,8 +415,7 @@ impl JobHandler for Repeating {
 /// A runtime that redelivers deferred jobs at once, running one [`Repeating`]
 /// job.
 async fn repeating(error: AppError, saves: bool) -> Result<(Arc<JobRuntime>, String)> {
-    let runtime =
-        JobRuntime::with_poll_interval(Database::from(pool().await), Duration::from_millis(10));
+    let runtime = JobRuntime::with_poll_interval(database().await, Duration::from_millis(10));
     runtime
         .register(
             KIND,
@@ -514,8 +517,7 @@ impl JobHandler for Renumbered {
 
 #[tokio::test]
 async fn the_same_failure_in_changing_words_still_ends_the_job() -> Result<()> {
-    let runtime =
-        JobRuntime::with_poll_interval(Database::from(pool().await), Duration::from_millis(10));
+    let runtime = JobRuntime::with_poll_interval(database().await, Duration::from_millis(10));
     runtime
         .register(
             KIND,
@@ -537,8 +539,7 @@ async fn the_same_failure_in_changing_words_still_ends_the_job() -> Result<()> {
 
 #[tokio::test]
 async fn cancelling_a_deferred_job_forgets_its_last_failure() -> Result<()> {
-    let runtime =
-        JobRuntime::with_poll_interval(Database::from(pool().await), Duration::from_millis(10));
+    let runtime = JobRuntime::with_poll_interval(database().await, Duration::from_millis(10));
     runtime
         .register(
             KIND,
@@ -666,7 +667,7 @@ async fn a_job_that_ends_while_the_database_is_busy_is_still_recorded() -> Resul
         .max_connections(1)
         .acquire_timeout(Duration::from_millis(100))
         .connect_lazy_with(options);
-    let runtime = JobRuntime::new(Database::from(busy.clone()));
+    let runtime = JobRuntime::new(Database::new(busy.clone()));
     let retry = Duration::from_millis(20);
     let config = JobKindConfig::new(RecoveryPolicy::Requeue).backoff(Backoff {
         initial: retry,
@@ -679,7 +680,7 @@ async fn a_job_that_ends_while_the_database_is_busy_is_still_recorded() -> Resul
     while_busy(|| runtime.register(KIND, handler.clone(), config)).await?;
     let new = new_job(KIND, "busy-end", None);
     let job = while_busy(|| runtime.submit(&new)).await?;
-    let saved = JobStore::new(setup);
+    let saved = JobStore::new(Database::new(setup));
     let ended = tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             let status = saved.get(&job.id).await?.status;
@@ -712,7 +713,7 @@ async fn transient_errors_defer_and_other_errors_fail() -> Result<()> {
             JobStatus::Failed,
         ),
     ] {
-        let runtime = JobRuntime::new(Database::from(pool().await));
+        let runtime = JobRuntime::new(database().await);
         runtime
             .register(
                 KIND,
@@ -762,7 +763,7 @@ fn an_http_status_is_transient_only_when_waiting_can_change_it() {
 
 #[tokio::test]
 async fn checkpoints_round_trip_and_are_written_only_while_running() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let id = store.submit(&new_job(KIND, "checkpoints", None)).await?.id;
     assert!(!store.put_checkpoint(&id, "lesson/a", &json!(1)).await?);
     store.claim(&id).await?;
@@ -795,7 +796,7 @@ async fn checkpoints_round_trip_and_are_written_only_while_running() -> Result<(
 
 #[tokio::test]
 async fn progress_only_moves_forward_and_drops_stale_activity() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let id = store.submit(&new_job(KIND, "progress", None)).await?.id;
     assert!(!store.progress(&id, 1, "not running", None).await?);
     store.claim(&id).await?;
@@ -827,7 +828,7 @@ async fn progress_only_moves_forward_and_drops_stale_activity() -> Result<()> {
 
 #[tokio::test]
 async fn one_subject_runs_one_job_at_a_time_while_other_subjects_proceed() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let (handler, mut started) = gate();
     runtime
         .register(
@@ -866,7 +867,7 @@ async fn one_subject_runs_one_job_at_a_time_while_other_subjects_proceed() -> Re
 
 #[tokio::test]
 async fn a_kind_runs_no_more_jobs_than_its_concurrency() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let (handler, mut started) = gate();
     runtime
         .register(
@@ -934,7 +935,7 @@ impl JobHandler for Abandons {
 
 #[tokio::test]
 async fn cancellation_drops_in_flight_work_before_the_handler_continues() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let (started, mut receiver) = mpsc::unbounded_channel();
     let (signal, dropped) = tokio::sync::oneshot::channel();
     let observed: Arc<Mutex<Option<bool>>> = Arc::default();
@@ -964,7 +965,7 @@ async fn cancellation_drops_in_flight_work_before_the_handler_continues() -> Res
 
 #[tokio::test]
 async fn startup_recovery_requeues_or_interrupts_by_kind() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let store = runtime.store();
     let resumable = store.submit(&new_job(KIND, "resume", None)).await?.id;
     let single = store.submit(&new_job(ONCE, "once", None)).await?.id;
@@ -1024,7 +1025,7 @@ async fn startup_recovery_requeues_or_interrupts_by_kind() -> Result<()> {
 
 #[tokio::test]
 async fn shutdown_drains_workers_and_keeps_resumable_work_pending() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let (resume_handler, mut resumed) = gate();
     let (once_handler, mut once_started) = gate();
     runtime
@@ -1069,7 +1070,7 @@ async fn shutdown_drains_workers_and_keeps_resumable_work_pending() -> Result<()
 
 #[tokio::test]
 async fn observers_see_each_transition_of_a_job() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let seen: Arc<Mutex<Vec<(String, JobStatus)>>> = Arc::default();
     let sink = seen.clone();
     runtime.observe(move |job| {
@@ -1123,7 +1124,8 @@ async fn startup_recovery_waits_for_a_concurrent_writer() -> Result<()> {
         .run(&pool)
         .await
         .unwrap();
-    let store = JobStore::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let store = JobStore::new(db.clone());
     let id = store.submit(&new_job(KIND, "running", None)).await?.id;
     store.claim(&id).await?;
     let mut writer = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
@@ -1160,7 +1162,7 @@ impl JobHandler for Judged {
 
 #[tokio::test]
 async fn a_handler_can_judge_its_work_failed_without_an_error() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     runtime
         .register(
             ONCE,
@@ -1184,7 +1186,7 @@ async fn a_handler_can_judge_its_work_failed_without_an_error() -> Result<()> {
 
 #[tokio::test]
 async fn a_requeued_job_gives_up_its_turn_to_the_work_already_waiting() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let (handler, mut started) = gate();
     runtime
         .register(
@@ -1228,7 +1230,7 @@ async fn a_requeued_job_gives_up_its_turn_to_the_work_already_waiting() -> Resul
 
 #[tokio::test]
 async fn listings_show_live_jobs_and_each_imports_latest_attempt() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let first = store.submit(&new_job(KIND, "first", None)).await?;
     let second = store.submit(&new_job(KIND, "second", None)).await?;
     store.submit(&new_job(ONCE, "other kind", None)).await?;
@@ -1264,7 +1266,8 @@ async fn listings_show_live_jobs_and_each_imports_latest_attempt() -> Result<()>
 #[tokio::test]
 async fn deleting_a_finished_job_takes_its_earlier_attempts_and_refuses_live_ones() -> Result<()> {
     let pool = pool().await;
-    let store = JobStore::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let store = JobStore::new(db.clone());
     let first = store.submit(&new_job(KIND, "first", None)).await?;
     store.claim(&first.id).await?;
     store.fail(&first.id, "failed", "broken").await?;
@@ -1365,8 +1368,7 @@ async fn a_job_deferred_on_a_busy_database_records_the_database_as_its_cause() -
             "The database is temporarily busy. Saved work is retained.".into(),
         ),
     ] {
-        let runtime =
-            JobRuntime::with_poll_interval(Database::from(pool().await), Duration::from_millis(10));
+        let runtime = JobRuntime::with_poll_interval(database().await, Duration::from_millis(10));
         runtime
             .register(
                 KIND,
@@ -1425,7 +1427,7 @@ async fn ranks_seen_by_a_job(
     config: JobKindConfig,
     rank: Option<i64>,
 ) -> (Vec<Option<i64>>, Option<RankTicket>) {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let (seen, mut receiver) = mpsc::unbounded_channel();
     runtime
         .register(KIND, Arc::new(Peek { seen }), config)
@@ -1482,7 +1484,7 @@ async fn a_ranked_kinds_job_saved_without_a_rank_sees_none() {
 
 #[tokio::test]
 async fn a_jobs_rank_is_saved_and_a_retry_keeps_it() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let admitted = store
         .submit_ranked(&new_job(KIND, "op-1", Some("subject")), 3)
         .await?;
@@ -1496,5 +1498,38 @@ async fn a_jobs_rank_is_saved_and_a_retry_keeps_it() -> Result<()> {
         .submit(&new_job(KIND, "op-3", Some("subject")))
         .await?;
     assert_eq!(store.get(&plain.id).await?.rank, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_heartbeat_recorded_behind_a_long_write_waits_its_turn_and_lands() -> Result<()> {
+    let busy_timeout = Duration::from_millis(100);
+    let directory = tempfile::tempdir().unwrap();
+    let options = crate::shared::testing::sqlite::file_options(
+        directory.path().join("heartbeat-behind-writer.sqlite"),
+    )
+    .busy_timeout(busy_timeout);
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(2)
+        .connect_with(options)
+        .await
+        .unwrap();
+    sqlx::migrate!("../lattice-desktop/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let db = Database::new(pool.clone());
+    let store = JobStore::new(db.clone());
+    let id = store.submit(&new_job(KIND, "heartbeat", None)).await?.id;
+    store.claim(&id).await?;
+    let writer = db.begin_write().await.unwrap();
+    let beat = tokio::spawn({
+        let store = store.clone();
+        let id = id.clone();
+        async move { store.heartbeat(&id).await }
+    });
+    tokio::time::sleep(busy_timeout * 3).await;
+    writer.commit().await.unwrap();
+    assert!(beat.await.unwrap()?);
     Ok(())
 }

@@ -4,6 +4,7 @@ use super::*;
 use crate::infrastructure::vector_index::{manifest_path_for, VectorIndexCompression};
 use lattice_core::application::ports::vector_search_port::VectorIndexEntry;
 use lattice_core::application::ports::VectorSearchPort;
+use sqlx::SqlitePool;
 
 const GENERATION: &str = "model-a";
 const DIM: usize = 4;
@@ -91,11 +92,12 @@ async fn incomplete_streamed_batch_cannot_receive_a_valid_manifest() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("incomplete.usearch");
     let pool = database().await;
+    let db = Database::new(pool.clone());
     add_chunk(&pool, 0).await;
     let index = open(&path);
     let result = open_or_rebuild_streaming(
         &index,
-        &pool,
+        &db,
         &path,
         GENERATION,
         GENERATION,
@@ -123,6 +125,7 @@ async fn startup_rebuild_streams_bounded_pages_and_keeps_text_out_of_index() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("streamed.usearch");
     let pool = database().await;
+    let db = Database::new(pool.clone());
     for i in 0..5 {
         add_chunk(&pool, i).await;
     }
@@ -159,7 +162,7 @@ async fn startup_rebuild_streams_bounded_pages_and_keeps_text_out_of_index() {
         }
     };
     let outcome =
-        open_or_rebuild_streaming(&index, &pool, &path, GENERATION, GENERATION, DIM, restore)
+        open_or_rebuild_streaming(&index, &db, &path, GENERATION, GENERATION, DIM, restore)
             .await
             .unwrap();
     assert!(outcome.rebuilt());
@@ -169,9 +172,13 @@ async fn startup_rebuild_streams_bounded_pages_and_keeps_text_out_of_index() {
     assert_eq!(hits[0].chunk_id, "chunk2");
 }
 
-async fn start(pool: &SqlitePool, path: &Path) -> (Arc<USearchVectorIndex>, StartupPath) {
+async fn start(
+    db: &Database,
+    pool: &SqlitePool,
+    path: &Path,
+) -> (Arc<USearchVectorIndex>, StartupPath) {
     let index = open(path);
-    let outcome = open_or_rebuild(&index, pool, path, GENERATION, GENERATION, DIM, || {
+    let outcome = open_or_rebuild(&index, db, path, GENERATION, GENERATION, DIM, || {
         restore(pool)
     })
     .await
@@ -179,14 +186,10 @@ async fn start(pool: &SqlitePool, path: &Path) -> (Arc<USearchVectorIndex>, Star
     (index, outcome)
 }
 
-fn persistence(
-    index: &Arc<USearchVectorIndex>,
-    pool: &SqlitePool,
-    path: &Path,
-) -> IndexPersistence {
+fn persistence(index: &Arc<USearchVectorIndex>, db: &Database, path: &Path) -> IndexPersistence {
     IndexPersistence::new(
         Arc::clone(index),
-        pool.clone(),
+        db.clone(),
         GENERATION.into(),
         GENERATION.into(),
         DIM,
@@ -199,11 +202,12 @@ async fn a_matching_manifest_skips_the_rebuild_and_still_serves_content() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("index.usearch");
     let pool = database().await;
+    let db = Database::new(pool.clone());
     for i in 0..8 {
         add_chunk(&pool, i).await;
     }
 
-    let (first, outcome) = start(&pool, &path).await;
+    let (first, outcome) = start(&db, &pool, &path).await;
     assert_eq!(
         outcome,
         StartupPath::Rebuilt {
@@ -213,7 +217,7 @@ async fn a_matching_manifest_skips_the_rebuild_and_still_serves_content() {
     );
     drop(first);
 
-    let (second, outcome) = start(&pool, &path).await;
+    let (second, outcome) = start(&db, &pool, &path).await;
     assert_eq!(
         outcome,
         StartupPath::Reused {
@@ -228,7 +232,7 @@ async fn a_matching_manifest_skips_the_rebuild_and_still_serves_content() {
     assert!(hits[0].content.is_empty(), "index metadata retains no text");
     assert_eq!(hits[0].doc_id, "doc");
     let repository =
-        crate::infrastructure::persistence::repositories::ChunkRepository::new(pool.clone());
+        crate::infrastructure::persistence::repositories::ChunkRepository::new(db.clone());
     let text = lattice_core::application::ports::ChunkRepositoryPort::find_content_by_ids(
         &repository,
         std::slice::from_ref(&hits[0].chunk_id),
@@ -243,14 +247,15 @@ async fn a_new_embedding_row_forces_a_rebuild() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("index.usearch");
     let pool = database().await;
+    let db = Database::new(pool.clone());
     for i in 0..4 {
         add_chunk(&pool, i).await;
     }
-    let (first, _) = start(&pool, &path).await;
+    let (first, _) = start(&db, &pool, &path).await;
     drop(first);
 
     add_chunk(&pool, 4).await;
-    let (_, outcome) = start(&pool, &path).await;
+    let (_, outcome) = start(&db, &pool, &path).await;
     assert_eq!(
         outcome,
         StartupPath::Rebuilt {
@@ -268,8 +273,9 @@ async fn a_flush_before_publication_cannot_certify_missing_or_swapped_vectors() 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("index.usearch");
         let pool = database().await;
+        let db = Database::new(pool.clone());
         add_chunk(&pool, 0).await;
-        let (index, _) = start(&pool, &path).await;
+        let (index, _) = start(&db, &pool, &path).await;
 
         add_chunk(&pool, 1).await;
         index
@@ -290,7 +296,7 @@ async fn a_flush_before_publication_cannot_certify_missing_or_swapped_vectors() 
                 .unwrap();
         }
         add_chunk(&pool, 2).await; // committed, deliberately not published
-        persistence(&index, &pool, &path)
+        persistence(&index, &db, &path)
             .flush_if_dirty()
             .await
             .unwrap();
@@ -298,11 +304,11 @@ async fn a_flush_before_publication_cannot_certify_missing_or_swapped_vectors() 
         assert_eq!(saved.vector_count, 2);
         assert_eq!(
             saved.stamp,
-            read_source_stamp(&pool, GENERATION, DIM).await.unwrap()
+            read_source_stamp(&db, GENERATION, DIM).await.unwrap()
         );
         drop(index); // no graceful shutdown/publication
 
-        let (recovered, outcome) = start(&pool, &path).await;
+        let (recovered, outcome) = start(&db, &pool, &path).await;
         assert!(outcome.rebuilt(), "stale snapshot reused: {outcome:?}");
         assert_eq!(recovered.count(), if swap { 2 } else { 3 });
         let hits = VectorSearchPort::search(recovered.as_ref(), &vector(2), 10, 0.0).unwrap();
@@ -311,7 +317,7 @@ async fn a_flush_before_publication_cannot_certify_missing_or_swapped_vectors() 
             assert!(hits.iter().all(|hit| hit.chunk_id != "chunk0"));
         }
         drop(recovered);
-        let (_, outcome) = start(&pool, &path).await;
+        let (_, outcome) = start(&db, &pool, &path).await;
         assert!(!outcome.rebuilt(), "repaired snapshot should be reusable");
     }
 }
@@ -321,15 +327,16 @@ async fn interrupted_snapshot_has_no_old_manifest_to_certify_it() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("index.usearch");
     let pool = database().await;
+    let db = Database::new(pool.clone());
     add_chunk(&pool, 0).await;
-    let (index, _) = start(&pool, &path).await;
+    let (index, _) = start(&db, &pool, &path).await;
     assert!(read_manifest(&path).is_some());
 
     // Stop after writing the snapshot, before its new manifest is written.
     assert_eq!(index.save_snapshot().unwrap(), 1);
     assert!(read_manifest(&path).is_none());
     drop(index);
-    let (_, outcome) = start(&pool, &path).await;
+    let (_, outcome) = start(&db, &pool, &path).await;
     assert!(outcome.rebuilt());
 }
 
@@ -340,10 +347,11 @@ async fn a_swapped_row_forces_a_rebuild_even_though_the_count_is_unchanged() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("index.usearch");
     let pool = database().await;
+    let db = Database::new(pool.clone());
     for i in 0..4 {
         add_chunk(&pool, i).await;
     }
-    let (first, _) = start(&pool, &path).await;
+    let (first, _) = start(&db, &pool, &path).await;
     drop(first);
 
     sqlx::query("DELETE FROM text_embeddings WHERE chunk_id = 'chunk0'")
@@ -357,7 +365,7 @@ async fn a_swapped_row_forces_a_rebuild_even_though_the_count_is_unchanged() {
         .await
         .unwrap();
 
-    let (_, outcome) = start(&pool, &path).await;
+    let (_, outcome) = start(&db, &pool, &path).await;
     assert!(outcome.rebuilt(), "{outcome:?}");
 }
 
@@ -366,12 +374,13 @@ async fn a_different_generation_or_configuration_forces_a_rebuild() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("index.usearch");
     let pool = database().await;
+    let db = Database::new(pool.clone());
     add_chunk(&pool, 0).await;
-    let (first, _) = start(&pool, &path).await;
+    let (first, _) = start(&db, &pool, &path).await;
     drop(first);
 
     let index = open(&path);
-    let outcome = open_or_rebuild(&index, &pool, &path, GENERATION, "other-model", DIM, || {
+    let outcome = open_or_rebuild(&index, &db, &path, GENERATION, "other-model", DIM, || {
         restore(&pool)
     })
     .await
@@ -390,14 +399,15 @@ async fn a_corrupt_manifest_or_index_still_recovers() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("index.usearch");
     let pool = database().await;
+    let db = Database::new(pool.clone());
     for i in 0..4 {
         add_chunk(&pool, i).await;
     }
-    let (first, _) = start(&pool, &path).await;
+    let (first, _) = start(&db, &pool, &path).await;
     drop(first);
 
     std::fs::write(manifest_path_for(&path), b"{ truncated").unwrap();
-    let (_, outcome) = start(&pool, &path).await;
+    let (_, outcome) = start(&db, &pool, &path).await;
     assert_eq!(
         outcome,
         StartupPath::Rebuilt {
@@ -415,10 +425,11 @@ async fn stale_keys_are_gone_after_a_rebuild() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("index.usearch");
     let pool = database().await;
+    let db = Database::new(pool.clone());
     for i in 0..4 {
         add_chunk(&pool, i).await;
     }
-    let (first, _) = start(&pool, &path).await;
+    let (first, _) = start(&db, &pool, &path).await;
     assert_eq!(first.count(), 4);
     drop(first);
 
@@ -433,7 +444,7 @@ async fn stale_keys_are_gone_after_a_rebuild() {
         .await
         .unwrap();
 
-    let (recovered, outcome) = start(&pool, &path).await;
+    let (recovered, outcome) = start(&db, &pool, &path).await;
     assert!(outcome.rebuilt(), "{outcome:?}");
     assert_eq!(recovered.count(), 3);
     let hits = VectorSearchPort::search(recovered.as_ref(), &vector(3), 8, 0.0).unwrap();
@@ -447,9 +458,9 @@ async fn stale_keys_are_gone_after_a_rebuild() {
 async fn many_publications_produce_one_save() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("index.usearch");
-    let pool = database().await;
+    let db = Database::new(database().await);
     let index = open(&path);
-    let persistence = persistence(&index, &pool, &path);
+    let persistence = persistence(&index, &db, &path);
 
     for i in 0..16 {
         index
@@ -479,11 +490,12 @@ async fn a_leftover_temporary_is_ignored_and_cleaned_up() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("index.usearch");
     let pool = database().await;
+    let db = Database::new(pool.clone());
     for i in 0..4 {
         add_chunk(&pool, i).await;
     }
-    let (first, _) = start(&pool, &path).await;
-    persistence(&first, &pool, &path)
+    let (first, _) = start(&db, &pool, &path).await;
+    persistence(&first, &db, &path)
         .flush_if_dirty()
         .await
         .unwrap();
@@ -497,7 +509,7 @@ async fn a_leftover_temporary_is_ignored_and_cleaned_up() {
     });
     std::fs::write(&temp, b"half a graph").unwrap();
 
-    let (second, outcome) = start(&pool, &path).await;
+    let (second, outcome) = start(&db, &pool, &path).await;
     assert_eq!(
         outcome,
         StartupPath::Reused {
@@ -529,6 +541,7 @@ async fn cold_start_against_a_forced_rebuild() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("bench.usearch");
     let pool = database().await;
+    let db = Database::new(pool.clone());
 
     // Deterministic pseudo-random unit vectors, written through the same
     // encoder the real embedding path uses.
@@ -564,10 +577,10 @@ async fn cold_start_against_a_forced_rebuild() {
     }
 
     let restore = || {
-        let pool = pool.clone();
+        let db = db.clone();
         async move {
             crate::infrastructure::persistence::repositories::embedding::generation::restore(
-                &pool, GENERATION, WIDE,
+                &db, GENERATION, WIDE,
             )
             .await
         }
@@ -587,14 +600,14 @@ async fn cold_start_against_a_forced_rebuild() {
     // Build it once, the way a first launch would.
     let index = open();
     let built = Instant::now();
-    let outcome = open_or_rebuild(&index, &pool, &path, GENERATION, GENERATION, WIDE, restore)
+    let outcome = open_or_rebuild(&index, &db, &path, GENERATION, GENERATION, WIDE, restore)
         .await
         .unwrap();
     assert!(outcome.rebuilt());
     let build = built.elapsed();
     IndexPersistence::new(
         Arc::clone(&index),
-        pool.clone(),
+        db.clone(),
         GENERATION.into(),
         GENERATION.into(),
         WIDE,
@@ -607,7 +620,7 @@ async fn cold_start_against_a_forced_rebuild() {
 
     let index = open();
     let reused_at = Instant::now();
-    let outcome = open_or_rebuild(&index, &pool, &path, GENERATION, GENERATION, WIDE, restore)
+    let outcome = open_or_rebuild(&index, &db, &path, GENERATION, GENERATION, WIDE, restore)
         .await
         .unwrap();
     let reused = reused_at.elapsed();
@@ -618,7 +631,7 @@ async fn cold_start_against_a_forced_rebuild() {
     std::fs::remove_file(manifest_path_for(&path)).unwrap();
     let index = open();
     let rebuilt_at = Instant::now();
-    let outcome = open_or_rebuild(&index, &pool, &path, GENERATION, GENERATION, WIDE, restore)
+    let outcome = open_or_rebuild(&index, &db, &path, GENERATION, GENERATION, WIDE, restore)
         .await
         .unwrap();
     let rebuilt = rebuilt_at.elapsed();
@@ -635,7 +648,7 @@ async fn cold_start_against_a_forced_rebuild() {
 async fn a_quiet_index_is_not_flushed_before_its_time() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("index.usearch");
-    let pool = database().await;
+    let db = Database::new(database().await);
     let index = open(&path);
     index
         .publish_embeddings(vec![VectorIndexEntry {
@@ -647,7 +660,7 @@ async fn a_quiet_index_is_not_flushed_before_its_time() {
         }])
         .unwrap();
 
-    let persistence = persistence(&index, &pool, &path);
+    let persistence = persistence(&index, &db, &path);
     assert!(
         !persistence.flush_if_due().await.unwrap(),
         "a run that just mutated the index is still running"

@@ -173,7 +173,7 @@ impl LibraryPassagesPort for NoLibrary {
 /// A course whose lesson waits for the user's review, its job completed: the
 /// Verifier disputes the one claim the local checker verified (§14.5).
 pub(super) struct Waiting {
-    pub(super) pool: sqlx::SqlitePool,
+    pub(super) db: Database,
     pub(super) jobs: LearningCurriculumRepository,
     pub(super) program_id: String,
     pub(super) lesson_id: String,
@@ -194,12 +194,12 @@ impl Waiting {
 
     /// The course, its lesson not prepared yet.
     pub(super) async fn course() -> Result<Self> {
-        let pool = crate::tests::pool().await?;
-        let (jobs, job_id, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+        let db = Database::new(crate::tests::pool().await?);
+        let (jobs, job_id, lesson_id) = batch_scheduler_tests::setup(&db).await?;
         let program_id = jobs.job(&job_id).await?.program_id;
-        install_source(&pool, &program_id, SOURCE).await?;
+        install_source(&db, &program_id, SOURCE).await?;
         Ok(Self {
-            pool,
+            db,
             jobs,
             program_id,
             lesson_id,
@@ -216,7 +216,7 @@ impl Waiting {
         let error = lesson::scope(
             Some(FakeVerifier::local(&verifier)),
             prepare(
-                &Database::from(self.pool.clone()),
+                &self.db,
                 &self.jobs,
                 &self.job_id,
                 &self.lesson_id,
@@ -233,16 +233,12 @@ impl Waiting {
             error.starts_with("Needs your review: 1 statement"),
             "{error}"
         );
-        let held = held_for_review(
-            &Database::from(self.pool.clone()),
-            &self.lesson_id,
-            &self.job_id,
-        )
-        .await?
-        .unwrap();
+        let held = held_for_review(&self.db, &self.lesson_id, &self.job_id)
+            .await?
+            .unwrap();
         let (result_ref, message) = review_outcome(&[held]);
         assert!(
-            JobStore::new(self.pool.clone())
+            JobStore::new(self.db.clone())
                 .complete(&self.job_id, &result_ref, &message)
                 .await?
         );
@@ -250,13 +246,13 @@ impl Waiting {
     }
 
     pub(super) async fn references(&self) -> Result<Vec<LearningSourceDto>> {
-        LearningRepository::new(self.pool.clone())
+        LearningRepository::new(self.db.clone())
             .verification_sources(&self.program_id)
             .await
     }
 
     pub(super) async fn revision(&self) -> Result<i64> {
-        Ok(LearningRepository::new(self.pool.clone())
+        Ok(LearningRepository::new(self.db.clone())
             .get(&self.program_id)
             .await?
             .summary
@@ -264,7 +260,7 @@ impl Waiting {
     }
 
     pub(super) fn service(&self) -> ClaimReviewService {
-        ClaimReviewService::new(Database::from(self.pool.clone()))
+        ClaimReviewService::new(self.db.clone())
     }
 
     pub(super) async fn resume(&self) -> Result<crate::curriculum::LearningGenerationJob> {
@@ -285,12 +281,12 @@ impl Waiting {
         model: &Supporting,
         job_id: &str,
     ) -> Result<PreparedLearningLesson> {
-        assert!(JobStore::new(self.pool.clone())
+        assert!(JobStore::new(self.db.clone())
             .claim(job_id)
             .await?
             .is_some());
         let (raw, report) = prepare(
-            &Database::from(self.pool.clone()),
+            &self.db,
             &self.jobs,
             job_id,
             &self.lesson_id,
@@ -349,7 +345,7 @@ impl Waiting {
     }
 
     pub(super) async fn assert_published(&self, job_id: &str) -> Result<()> {
-        let program = LearningRepository::new(self.pool.clone())
+        let program = LearningRepository::new(self.db.clone())
             .get(&self.program_id)
             .await?;
         let lesson = program
@@ -363,7 +359,7 @@ impl Waiting {
             self.jobs.job(job_id).await?.status,
             LearningGenerationJobStatus::Completed
         );
-        let review = ClaimReviewRepository::new(self.pool.clone())
+        let review = ClaimReviewRepository::new(self.db.clone())
             .load(&self.lesson_id)
             .await?
             .review
@@ -386,7 +382,7 @@ async fn evidence_the_user_links_resolves_the_claim_and_resume_publishes_the_les
     assert_eq!(stopped.status, LearningGenerationJobStatus::Completed);
     let held_ref = format!("needs_review:{}", course.lesson_id);
     assert_eq!(stopped.result_id.as_deref(), Some(held_ref.as_str()));
-    let store = ClaimReviewRepository::new(course.pool.clone());
+    let store = ClaimReviewRepository::new(course.db.clone());
     let ledger = store.load(&course.lesson_id).await?;
     assert_eq!(
         ledger.review.as_ref().unwrap().state,
@@ -404,7 +400,7 @@ async fn evidence_the_user_links_resolves_the_claim_and_resume_publishes_the_les
     };
     let report = attach(
         &AttachDeps {
-            database: &Database::from(course.pool.clone()),
+            database: &course.db,
             store: &store,
             web: &page,
             snapshots: &Frozen,
@@ -442,9 +438,7 @@ async fn evidence_the_user_links_resolves_the_claim_and_resume_publishes_the_les
     assert!(shown[&claim_id]
         .iter()
         .any(|passage| passage.source_version_id == version));
-    let examples = CheckerExamples::new(Database::from(course.pool.clone()))
-        .list(None)
-        .await?;
+    let examples = CheckerExamples::new(course.db.clone()).list(None).await?;
     assert!(examples.is_empty(), "{examples:?}");
     assert!(
         course
@@ -479,7 +473,7 @@ async fn evidence_the_user_links_resolves_the_claim_and_resume_publishes_the_les
 async fn a_confirmed_claim_publishes_on_resume_without_a_check() -> Result<()> {
     let model = Supporting::new();
     let course = Waiting::new(&model).await?;
-    let ledger = ClaimReviewRepository::new(course.pool.clone())
+    let ledger = ClaimReviewRepository::new(course.db.clone())
         .load(&course.lesson_id)
         .await?;
     let claim = waiting(&ledger.claims)[0].claim_id().0.clone();
@@ -497,9 +491,7 @@ async fn a_confirmed_claim_publishes_on_resume_without_a_check() -> Result<()> {
         .await?;
     // The Verifier flagged it, the local checker passed it: no example of the
     // local checker's.
-    let examples = CheckerExamples::new(Database::from(course.pool.clone()))
-        .list(None)
-        .await?;
+    let examples = CheckerExamples::new(course.db.clone()).list(None).await?;
     assert!(examples.is_empty(), "{examples:?}");
 
     let next = course.resume().await?;
@@ -590,7 +582,7 @@ async fn changing_the_checker_unlocks_the_held_review_and_continues_its_job() ->
         next.retry_of_job_id.as_deref(),
         Some(course.job_id.as_str())
     );
-    let ledger = ClaimReviewRepository::new(course.pool.clone())
+    let ledger = ClaimReviewRepository::new(course.db.clone())
         .load(&course.lesson_id)
         .await?;
     assert!(

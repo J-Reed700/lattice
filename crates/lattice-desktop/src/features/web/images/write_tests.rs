@@ -2,7 +2,7 @@
 //! claimer's own.
 use super::repository::{ImageRepository, NewImageRow};
 use lattice_core::application::contracts::images::ImageOrigin;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::Database;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::time::Duration;
 
@@ -56,11 +56,12 @@ async fn a_picture_claimed_by_another_message_meanwhile_leaves_the_numbering_unb
         .await
         .unwrap();
     }
-    let repo = ImageRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ImageRepository::new(db);
     repo.insert(&new_row("img-a")).await.unwrap();
     repo.insert(&new_row("img-b")).await.unwrap();
 
-    let mut tx = pool.begin_write().await.unwrap();
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
     sqlx::query(
         "UPDATE chat_images SET message_id = 'msg-other', request_id = 'req-other', ref = 'att-1' \
          WHERE id = 'img-a'",

@@ -3,13 +3,11 @@
 use std::collections::HashSet;
 
 use chrono::Utc;
-use sqlx::{SqliteConnection, SqlitePool};
+use sqlx::SqliteConnection;
 
 use super::dto::WebPageSnapshotStatus;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::PersistenceError;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, PersistenceError, WriteTx};
 
 fn db(error: impl Into<PersistenceError>) -> AppError {
     AppError::from(error.into())
@@ -169,13 +167,12 @@ async fn reader_text_in(
 
 #[derive(Clone)]
 pub struct SnapshotRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl SnapshotRepository {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     /// The row for `(conversation_id, normalized_url)`, creating a pending one
@@ -187,7 +184,7 @@ impl SnapshotRepository {
         normalized_url: &str,
         requested_url: &str,
     ) -> Result<(SnapshotRow, bool)> {
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let found = Self::insert_or_get_in(
             &mut tx,
             new_id,
@@ -202,7 +199,7 @@ impl SnapshotRepository {
 
     /// [`Self::insert_or_get`] inside the caller's unit of work.
     pub async fn insert_or_get_in(
-        conn: &mut SqliteConnection,
+        tx: &mut WriteTx,
         new_id: &str,
         conversation_id: &str,
         normalized_url: &str,
@@ -219,25 +216,28 @@ impl SnapshotRepository {
         .bind(normalized_url)
         .bind(requested_url)
         .bind(Utc::now().to_rfc3339())
-        .execute(&mut *conn)
+        .execute(&mut **tx)
         .await
         .map_err(db)?
         .rows_affected()
             == 1;
-        let row = snapshot_for_url(&mut *conn, conversation_id, normalized_url)
+        let row = snapshot_for_url(tx, conversation_id, normalized_url)
             .await?
             .ok_or_else(|| AppError::Database("snapshot row vanished after insert".into()))?;
         Ok((row, inserted))
     }
 
     pub async fn get(&self, id: &str) -> Result<Option<SnapshotRow>> {
-        sqlx::query_as::<_, SnapshotRow>(&format!(
+        let mut read = self.db.begin_read().await.map_err(db)?;
+        let row = sqlx::query_as::<_, SnapshotRow>(&format!(
             "SELECT {COLUMNS} FROM web_page_snapshots WHERE id = ?"
         ))
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *read)
         .await
-        .map_err(db)
+        .map_err(db)?;
+        read.commit().await.map_err(db)?;
+        Ok(row)
     }
 
     pub async fn find(
@@ -245,8 +245,10 @@ impl SnapshotRepository {
         conversation_id: &str,
         normalized_url: &str,
     ) -> Result<Option<SnapshotRow>> {
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        snapshot_for_url(&mut connection, conversation_id, normalized_url).await
+        let mut read = self.db.begin_read().await.map_err(db)?;
+        let row = snapshot_for_url(&mut read, conversation_id, normalized_url).await?;
+        read.commit().await.map_err(db)?;
+        Ok(row)
     }
 
     pub async fn find_for_viewer(
@@ -254,7 +256,7 @@ impl SnapshotRepository {
         conversation_id: &str,
         normalized_url: &str,
     ) -> Result<Option<SnapshotRow>> {
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await.map_err(db)?;
         let row = viewer_in(&mut tx, conversation_id, normalized_url).await?;
         tx.commit().await.map_err(db)?;
         Ok(row)
@@ -265,7 +267,7 @@ impl SnapshotRepository {
         conversation_id: &str,
         normalized_url: &str,
     ) -> Result<String> {
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await.map_err(db)?;
         let trimmed = conversation_id.trim();
         if !trimmed.is_empty() {
             let count: i64 =
@@ -310,7 +312,7 @@ impl SnapshotRepository {
     /// The conversation that holds frozen copies no chat cited: pages saved
     /// from the library or as learning references. Created on first use.
     pub async fn library_conversation(&self) -> Result<String> {
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let space_id: Option<String> = sqlx::query_scalar(
             "SELECT id FROM conversation_spaces WHERE id = 'space_general' UNION ALL SELECT id FROM conversation_spaces LIMIT 1"
         )
@@ -340,7 +342,7 @@ impl SnapshotRepository {
         normalized_url: &str,
         requested_url: &str,
     ) -> Result<Option<String>> {
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await.map_err(db)?;
         let text = reader_text_in(&mut tx, conversation_id, normalized_url, requested_url).await?;
         tx.commit().await.map_err(db)?;
         Ok(text)
@@ -352,7 +354,7 @@ impl SnapshotRepository {
         normalized_url: &str,
         requested_url: &str,
     ) -> Result<Option<(Option<String>, String)>> {
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await.map_err(db)?;
         let Some(text) =
             reader_text_in(&mut tx, conversation_id, normalized_url, requested_url).await?
         else {
@@ -397,35 +399,38 @@ impl SnapshotRepository {
     }
 
     pub async fn list(&self, conversation_id: &str) -> Result<Vec<SnapshotRow>> {
-        sqlx::query_as::<_, SnapshotRow>(&format!(
+        let mut read = self.db.begin_read().await.map_err(db)?;
+        let rows = sqlx::query_as::<_, SnapshotRow>(&format!(
             "SELECT {COLUMNS} FROM web_page_snapshots WHERE conversation_id = ? \
              ORDER BY created_at, id"
         ))
         .bind(conversation_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
-        .map_err(db)
+        .map_err(db)?;
+        read.commit().await.map_err(db)?;
+        Ok(rows)
     }
 
     /// Records the job that captures row `id`.
-    pub async fn set_job_in(conn: &mut SqliteConnection, id: &str, job_id: &str) -> Result<()> {
+    pub async fn set_job_in(tx: &mut WriteTx, id: &str, job_id: &str) -> Result<()> {
         sqlx::query("UPDATE web_page_snapshots SET job_id = ? WHERE id = ?")
             .bind(job_id)
             .bind(id)
-            .execute(&mut *conn)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
         Ok(())
     }
 
     /// Resets a row when status IN ('failed', 'ready') back to pending.
-    pub async fn reset_for_retry_in(conn: &mut SqliteConnection, id: &str) -> Result<bool> {
+    pub async fn reset_for_retry_in(tx: &mut WriteTx, id: &str) -> Result<bool> {
         Ok(sqlx::query(
             "UPDATE web_page_snapshots SET status = 'pending', error_code = NULL, \
              error_message = NULL WHERE id = ? AND status IN ('failed', 'ready')",
         )
         .bind(id)
-        .execute(&mut *conn)
+        .execute(&mut **tx)
         .await
         .map_err(db)?
         .rows_affected()
@@ -435,16 +440,19 @@ impl SnapshotRepository {
     /// A failed row goes back to pending for a user's retry. False when the
     /// row is not failed (someone else already retried it).
     pub async fn reset_failed(&self, id: &str) -> Result<bool> {
-        Ok(sqlx::query(
+        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let reset = sqlx::query(
             "UPDATE web_page_snapshots SET status = 'pending', error_code = NULL, \
              error_message = NULL WHERE id = ? AND status = 'failed'",
         )
         .bind(id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(db)?
         .rows_affected()
-            == 1)
+            == 1;
+        tx.commit().await.map_err(db)?;
+        Ok(reset)
     }
 
     /// Flips a pending row to ready with its hash and size, in one
@@ -455,7 +463,7 @@ impl SnapshotRepository {
         } else {
             Some(serde_json::to_string(&capture.partial_reasons)?)
         };
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let updated = sqlx::query(
             "UPDATE web_page_snapshots SET status = 'ready', final_url = ?, title = ?, \
                  method = ?, captured_at = ?, byte_size = ?, sha256 = ?, resource_count = ?, \
@@ -485,39 +493,46 @@ impl SnapshotRepository {
     }
 
     pub async fn mark_failed(&self, id: &str, code: &str, message: &str) -> Result<bool> {
-        Ok(sqlx::query(
+        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let failed = sqlx::query(
             "UPDATE web_page_snapshots SET status = 'failed', error_code = ?, \
              error_message = ? WHERE id = ? AND status = 'pending'",
         )
         .bind(code)
         .bind(message)
         .bind(id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(db)?
         .rows_affected()
-            == 1)
+            == 1;
+        tx.commit().await.map_err(db)?;
+        Ok(failed)
     }
 
     /// Ids of rows whose capture failed: a page left under one is an earlier
     /// capture nothing shows.
     pub async fn failed_ids(&self) -> Result<HashSet<String>> {
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let ids: Vec<String> =
             sqlx::query_scalar("SELECT id FROM web_page_snapshots WHERE status = 'failed'")
-                .fetch_all(&self.pool)
+                .fetch_all(&mut *read)
                 .await
                 .map_err(db)?;
+        read.commit().await.map_err(db)?;
         Ok(ids.into_iter().collect())
     }
 
     /// Ids whose file must stay: pending (may be written any moment) and ready.
     pub async fn live_ids(&self) -> Result<HashSet<String>> {
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let ids: Vec<String> = sqlx::query_scalar(
             "SELECT id FROM web_page_snapshots WHERE status IN ('pending', 'ready')",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(db)?;
+        read.commit().await.map_err(db)?;
         Ok(ids.into_iter().collect())
     }
 }

@@ -111,8 +111,9 @@ async fn live_outline_generation_and_save() -> Result<()> {
             })
             .transpose()?,
     };
-    let pool = pool().await?;
-    let repo = LearningRepository::new(pool);
+    let repo = LearningRepository::new(lattice_core::shared::persistence::Database::new(
+        pool().await?,
+    ));
     let start = std::time::Instant::now();
     let last_stage = std::sync::Mutex::new((None, 0));
     let registry = lattice_learning::outline_progress::OutlineRunRegistry::new();

@@ -35,7 +35,6 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Database;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
@@ -72,13 +71,9 @@ struct Read {
 }
 
 async fn read(course: &Course) -> Result<Read> {
-    let view = lesson_evidence::get(
-        &Database::from(course.pool.clone()),
-        &course.program_id,
-        &course.lesson_id,
-    )
-    .await?
-    .expect("the lesson has its evidence");
+    let view = lesson_evidence::get(&course.db, &course.program_id, &course.lesson_id)
+        .await?
+        .expect("the lesson has its evidence");
     let claims = view
         .teaching_claims
         .iter()
@@ -119,7 +114,7 @@ impl Read {
 }
 
 async fn ledger(course: &Course) -> Result<Ledger> {
-    ClaimReviewRepository::new(course.pool.clone())
+    ClaimReviewRepository::new(course.db.clone())
         .load(&course.lesson_id)
         .await
 }
@@ -153,7 +148,7 @@ async fn extract(
 ) -> Result<ClaimId> {
     let id = ClaimId(id.into());
     let revision = ledger(course).await?.revision;
-    ClaimReviewRepository::new(course.pool.clone())
+    ClaimReviewRepository::new(course.db.clone())
         .append(
             &course.lesson_id,
             &id,
@@ -170,7 +165,7 @@ async fn extract(
 
 async fn act(course: &Course, claim: &ClaimId, action: ClaimActionRequestDto) -> Result<i64> {
     let revision = ledger(course).await?.revision.0;
-    ClaimReviewService::new(Database::from(course.pool.clone()))
+    ClaimReviewService::new(course.db.clone())
         .resolve(&course.lesson_id, &claim.0, action, revision)
         .await
 }
@@ -220,7 +215,7 @@ async fn stored(course: &Course) -> Result<Stored> {
             .fetch_one(&course.pool)
             .await?;
     let ledger = ledger(course).await?;
-    let program = LearningRepository::new(course.pool.clone())
+    let program = LearningRepository::new(course.db.clone())
         .get(&course.program_id)
         .await?;
     Ok(Stored {
@@ -280,7 +275,7 @@ async fn a_verified_statement_a_trust_change_reopened_reads_not_verified_as_unch
     let claim = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
     let revision = ledger(&course).await?.revision;
 
-    ClaimReviewRepository::new(course.pool.clone())
+    ClaimReviewRepository::new(course.db.clone())
         .append(
             &course.lesson_id,
             &claim,
@@ -328,7 +323,7 @@ async fn a_stored_report_without_claim_ids_reads_as_it_was_stored_whatever_its_l
     assert_eq!(before["teachingClaims"][0]["resolution"], json!("verified"));
     let claim = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
     let revision = ledger(&course).await?.revision;
-    ClaimReviewRepository::new(course.pool.clone())
+    ClaimReviewRepository::new(course.db.clone())
         .append(
             &course.lesson_id,
             &claim,
@@ -534,7 +529,7 @@ async fn the_actions_a_published_lesson_offers_never_include_a_research_hint_or_
     )
     .await?;
 
-    let review = ClaimReviewService::new(Database::from(course.pool.clone()))
+    let review = ClaimReviewService::new(course.db.clone())
         .review(&course.program_id, &course.lesson_id)
         .await?
         .expect("the published lesson has its review");
@@ -648,11 +643,11 @@ async fn a_source_the_user_attaches_that_supports_a_published_not_verified_state
     assert_eq!(read(&course).await?.resolution(GOOD), "not_verified");
     let claim = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
     let revision = ledger(&course).await?.revision;
-    let store = ClaimReviewRepository::new(course.pool.clone());
+    let store = ClaimReviewRepository::new(course.db.clone());
 
     attach_to(
         &AttachDeps {
-            database: &Database::from(course.pool.clone()),
+            database: &course.db,
             store: &store,
             web: &NoWeb,
             snapshots: &NoSnapshots,
@@ -714,7 +709,7 @@ async fn act_many(
     action: ClaimActionRequestDto,
     revision: i64,
 ) -> Result<i64> {
-    ClaimReviewService::new(Database::from(course.pool.clone()))
+    ClaimReviewService::new(course.db.clone())
         .resolve_many(&course.lesson_id, ids, action, revision)
         .await
 }
@@ -742,7 +737,7 @@ fn state_of<'a>(ledger: &'a Ledger, id: &str) -> &'a ClaimState {
 }
 
 async fn offered_for(course: &Course, statement: &str) -> Result<Vec<String>> {
-    let review = ClaimReviewService::new(Database::from(course.pool.clone()))
+    let review = ClaimReviewService::new(course.db.clone())
         .review(&course.program_id, &course.lesson_id)
         .await?
         .expect("the published lesson has its review");
@@ -826,7 +821,7 @@ async fn removing_a_published_statement_with_an_old_revision_writes_nothing() ->
     let revision = ledger(&course).await?.revision.0;
     let before = stored(&course).await?;
 
-    let error = ClaimReviewService::new(Database::from(course.pool.clone()))
+    let error = ClaimReviewService::new(course.db.clone())
         .resolve(
             &course.lesson_id,
             &claim.0,
@@ -1343,7 +1338,7 @@ async fn note_about(course: &Course, section: usize, sentence: Option<&str>) -> 
     )
     .with_summary("No source is cited for this sentence.");
     finding.sentence = sentence.map(str::to_owned);
-    TeachingFindingsRepository::new(Database::from(course.pool.clone()))
+    TeachingFindingsRepository::new(course.db.clone())
         .record(
             &course.lesson_id,
             "job",
@@ -1359,7 +1354,7 @@ async fn note_about(course: &Course, section: usize, sentence: Option<&str>) -> 
 
 /// The ids of the claims each note names, by the note's section.
 async fn claim_ids_of_notes(course: &Course) -> Result<Vec<(Option<u32>, Vec<String>)>> {
-    let review = ClaimReviewService::new(Database::from(course.pool.clone()))
+    let review = ClaimReviewService::new(course.db.clone())
         .review(&course.program_id, &course.lesson_id)
         .await?
         .expect("the lesson has its review");
@@ -1460,7 +1455,7 @@ async fn removed_and_edited_claims_are_not_named() -> Result<()> {
             "Field-name whitespace is kept.",
         )
         .await?;
-        let repository = ClaimReviewRepository::new(course.pool.clone());
+        let repository = ClaimReviewRepository::new(course.db.clone());
         let action = if name == "removed" {
             UserAction::Remove
         } else {
@@ -1554,7 +1549,7 @@ async fn a_note_in_a_draft_lesson_names_no_claims_and_shows_removed_for_nothing(
     assert_eq!(claim_ids_of_notes(&course).await?, [(Some(0), vec![])]);
 
     let revision = ledger(&course).await?.revision;
-    ClaimReviewRepository::new(course.pool.clone())
+    ClaimReviewRepository::new(course.db.clone())
         .append(
             &course.lesson_id,
             &target,
@@ -1567,7 +1562,7 @@ async fn a_note_in_a_draft_lesson_names_no_claims_and_shows_removed_for_nothing(
         )
         .await?;
     set_body(&course, 0, "The section no longer holds the sentence.").await?;
-    let review = ClaimReviewService::new(Database::from(course.pool.clone()))
+    let review = ClaimReviewService::new(course.db.clone())
         .review(&course.program_id, &course.lesson_id)
         .await?
         .expect("the lesson has its review");
@@ -1595,7 +1590,7 @@ async fn a_note_shows_removed_while_the_users_removal_of_its_sentence_stands() -
     let target = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
     note_about(&course, 0, Some(GOOD)).await?;
     let notes = || async {
-        ClaimReviewService::new(Database::from(course.pool.clone()))
+        ClaimReviewService::new(course.db.clone())
             .review(&course.program_id, &course.lesson_id)
             .await
             .map(|review| review.expect("the lesson has its review").teaching_findings)
@@ -1621,7 +1616,7 @@ async fn a_note_shows_removed_while_the_users_removal_of_its_sentence_stands() -
     .await?;
     assert_eq!(stored_state, ("waiting".to_owned(), None));
 
-    let store = TeachingFindingsRepository::new(Database::from(course.pool.clone()));
+    let store = TeachingFindingsRepository::new(course.db.clone());
     store
         .settle(
             &course.program_id,
@@ -1842,13 +1837,13 @@ async fn notes_about(course: &Course, notes: &[(usize, FindingKind, &str)]) -> R
             }
         })
         .collect();
-    TeachingFindingsRepository::new(Database::from(course.pool.clone()))
+    TeachingFindingsRepository::new(course.db.clone())
         .record(&course.lesson_id, "job", &candidate, &set_aside, true)
         .await
 }
 
 async fn notes_of(course: &Course) -> Result<Vec<findings::TeachingFindingDto>> {
-    Ok(ClaimReviewService::new(Database::from(course.pool.clone()))
+    Ok(ClaimReviewService::new(course.db.clone())
         .review(&course.program_id, &course.lesson_id)
         .await?
         .expect("the lesson has its review")
@@ -1861,7 +1856,7 @@ async fn remove_notes(
     revision: i64,
 ) -> Result<NoteSentencesRemoved> {
     let keys: Vec<String> = keys.iter().map(|key| (*key).to_owned()).collect();
-    ClaimReviewService::new(Database::from(course.pool.clone()))
+    ClaimReviewService::new(course.db.clone())
         .remove_note_sentences(&course.lesson_id, &keys, revision)
         .await
 }

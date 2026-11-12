@@ -6,7 +6,8 @@ use crate::{key_review, lesson_drafts, teaching_review};
 #[tokio::test]
 async fn completed_review_findings_survive_resume_without_losing_defects() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
     let mut candidate = json!({"blocks":[{"body":"A teaching passage to inspect."}],"questions":[{
         "prompt":"Choose the documented answer.","options":["First","Second"],"correctIndex":0,"quote":"The reference identifies the second option."
     }]});
@@ -29,7 +30,7 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
     };
     for _ in 0..2 {
         // Re-enter the durable task scope, as a worker does after restart.
-        lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+        lesson_drafts::run(&db, &repo, &job, &lesson, async {
             assert_eq!(key_review::check(&model, &candidate).await?.len(), 1);
             assert_eq!(
                 teaching_review::review(
@@ -50,7 +51,7 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
     }
     assert_eq!(model.prompts.lock().unwrap().len(), 2);
     candidate["blocks"][0]["body"] = json!("A changed teaching passage to inspect.");
-    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+    lesson_drafts::run(&db, &repo, &job, &lesson, async {
         assert_eq!(key_review::check(&model, &candidate).await?.len(), 1);
         teaching_review::review(
             &model,
@@ -86,7 +87,8 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
 #[tokio::test]
 async fn incomplete_reviews_are_never_saved_as_completed() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
     let candidate = json!({"blocks":[{"body":"The complete section needs review."}],"questions":[{
         "prompt":"Choose one.","options":["A","B"],"correctIndex":0
     }]});
@@ -95,7 +97,7 @@ async fn incomplete_reviews_are_never_saved_as_completed() -> Result<()> {
         prompts: Default::default(),
     };
     for _ in 0..2 {
-        lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+        lesson_drafts::run(&db, &repo, &job, &lesson, async {
             assert!(key_review::check(&model, &candidate).await.is_err());
             assert!(teaching_review::review(
                 &model,

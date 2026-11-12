@@ -1,8 +1,10 @@
 use super::*;
 use crate::infrastructure::persistence::database::connection::DatabaseConnection;
-use lattice_core::shared::persistence::driver::DriverPool;
+use crate::infrastructure::persistence::database::run_migrations;
+use lattice_core::shared::persistence::Database;
 
-async fn insert_model(pool: &sqlx::SqlitePool, model_id: &str) {
+async fn insert_model(db: &Database, model_id: &str) {
+    let mut tx = db.begin_write().await.unwrap();
     sqlx::query(
         "INSERT INTO models (id, model_name, model_id, model_type, architecture) \
              VALUES (?, ?, ?, 'embedding', 'test')",
@@ -10,12 +12,14 @@ async fn insert_model(pool: &sqlx::SqlitePool, model_id: &str) {
     .bind(format!("row-{model_id}"))
     .bind(model_id)
     .bind(model_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .unwrap();
+    tx.commit().await.unwrap();
 }
 
-async fn insert_model_file(pool: &sqlx::SqlitePool, model_id: &str, status: &str) {
+async fn insert_model_file(db: &Database, model_id: &str, status: &str) {
+    let mut tx = db.begin_write().await.unwrap();
     sqlx::query(
         "INSERT INTO model_files \
              (id, model_id, file_name, file_path, relative_path, size_bytes, download_url, status) \
@@ -25,9 +29,10 @@ async fn insert_model_file(pool: &sqlx::SqlitePool, model_id: &str, status: &str
     .bind(format!("file-{model_id}"))
     .bind(model_id)
     .bind(status)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .unwrap();
+    tx.commit().await.unwrap();
 }
 
 async fn insert_session(
@@ -58,24 +63,14 @@ async fn insert_session(
 #[tokio::test]
 async fn reconciliation_query_returns_only_latest_durable_mismatches() {
     let dir = tempfile::tempdir().unwrap();
-    let connection = Arc::new(
-        DatabaseConnection::new(dir.path().join("downloads.db"))
-            .await
-            .unwrap(),
-    );
-    sqlx::migrate!("./migrations")
-        .run(connection.database().sqlx_pool())
+    let connection = DatabaseConnection::new(dir.path().join("downloads.db"))
         .await
         .unwrap();
-    let repository = SqliteDownloadRepository::new(connection.clone());
+    run_migrations(connection.database()).await.unwrap();
+    let repository = SqliteDownloadRepository::new(connection.database().clone());
 
-    insert_model(connection.database().sqlx_pool(), "failed-mismatch").await;
-    insert_model_file(
-        connection.database().sqlx_pool(),
-        "failed-mismatch",
-        "downloading",
-    )
-    .await;
+    insert_model(connection.database(), "failed-mismatch").await;
+    insert_model_file(connection.database(), "failed-mismatch", "downloading").await;
     insert_session(
         &repository,
         "failed-session",
@@ -84,13 +79,9 @@ async fn reconciliation_query_returns_only_latest_durable_mismatches() {
     )
     .await;
 
-    insert_model(
-        connection.database().sqlx_pool(),
-        "completed-model-mismatch",
-    )
-    .await;
+    insert_model(connection.database(), "completed-model-mismatch").await;
     insert_model_file(
-        connection.database().sqlx_pool(),
+        connection.database(),
         "completed-model-mismatch",
         "completed",
     )
@@ -103,21 +94,18 @@ async fn reconciliation_query_returns_only_latest_durable_mismatches() {
     )
     .await;
 
-    insert_model(connection.database().sqlx_pool(), "already-consistent").await;
+    insert_model(connection.database(), "already-consistent").await;
+    let mut tx = connection.database().begin_write().await.unwrap();
     sqlx::query(
         "UPDATE models SET status = 'completed', storage_path = '/tmp/already-complete' \
              WHERE model_id = ?",
     )
     .bind("already-consistent")
-    .execute(connection.database().sqlx_pool())
+    .execute(&mut *tx)
     .await
     .unwrap();
-    insert_model_file(
-        connection.database().sqlx_pool(),
-        "already-consistent",
-        "completed",
-    )
-    .await;
+    tx.commit().await.unwrap();
+    insert_model_file(connection.database(), "already-consistent", "completed").await;
     insert_session(
         &repository,
         "consistent-session",
@@ -126,18 +114,15 @@ async fn reconciliation_query_returns_only_latest_durable_mismatches() {
     )
     .await;
 
-    insert_model(connection.database().sqlx_pool(), "registry-missing").await;
+    insert_model(connection.database(), "registry-missing").await;
+    let mut tx = connection.database().begin_write().await.unwrap();
     sqlx::query("UPDATE models SET status = 'completed' WHERE model_id = ?")
         .bind("registry-missing")
-        .execute(connection.database().sqlx_pool())
+        .execute(&mut *tx)
         .await
         .unwrap();
-    insert_model_file(
-        connection.database().sqlx_pool(),
-        "registry-missing",
-        "completed",
-    )
-    .await;
+    tx.commit().await.unwrap();
+    insert_model_file(connection.database(), "registry-missing", "completed").await;
     insert_session(
         &repository,
         "registry-missing-session",
@@ -170,20 +155,19 @@ async fn reconciliation_query_uses_terminal_candidate_and_covering_status_indexe
     let connection = DatabaseConnection::new(dir.path().join("downloads.db"))
         .await
         .unwrap();
-    sqlx::migrate!("./migrations")
-        .run(connection.database().sqlx_pool())
-        .await
-        .unwrap();
+    run_migrations(connection.database()).await.unwrap();
 
+    let mut read = connection.database().begin_read().await.unwrap();
     let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(&format!(
         "EXPLAIN QUERY PLAN {TERMINAL_RECONCILIATION_QUERY}"
     ))
     .bind(Option::<String>::None)
     .bind(Option::<String>::None)
     .bind(64_i64)
-    .fetch_all(connection.database().sqlx_pool())
+    .fetch_all(&mut *read)
     .await
     .unwrap();
+    read.commit().await.unwrap();
     let details: Vec<_> = plan.iter().map(|row| row.3.as_str()).collect();
 
     assert!(

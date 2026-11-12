@@ -779,46 +779,34 @@ fn repairs_asked(llm: &DropsAfterRepair) -> usize {
 /// repair saved, after `between` has happened to it. Returns the repairs asked
 /// of the model across both runs and the second run's review.
 async fn cut_short_then_resumed(between: fn(&mut Value)) -> Result<(usize, Reviewed)> {
-    let pool = crate::tests::pool().await?;
+    let db = Database::new(crate::tests::pool().await?);
     let (repo, job, lesson_id) =
-        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+        crate::content_verification::tests::batch_scheduler_tests::setup(&db).await?;
     let llm = DropsAfterRepair {
         model: model(defect_no_repair_fixes()),
         repaired: AtomicBool::new(false),
         dropped: AtomicBool::new(false),
     };
-    let first = lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async {
-            lesson_drafts::resume(INPUT.into()).await?;
-            run(&llm, lesson(EXCERPT)).await
-        },
-    )
+    let first = lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        lesson_drafts::resume(INPUT.into()).await?;
+        run(&llm, lesson(EXCERPT)).await
+    })
     .await;
     assert!(matches!(first, Err(AppError::Network(_))));
     assert_eq!(repairs_asked(&llm), 1, "cut short after the first repair");
-    let second = lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async {
-            let saved = lesson_drafts::resume(INPUT.into())
-                .await?
-                .expect("the repair saved its draft");
-            let mut draft: Value = serde_json::from_str(&saved)?;
-            assert_eq!(draft["blocks"][0]["title"], "Corrected example");
-            let repaired = draft.clone();
-            between(&mut draft);
-            if draft != repaired {
-                lesson_drafts::save(&draft.to_string()).await?;
-            }
-            run(&llm, draft).await
-        },
-    )
+    let second = lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        let saved = lesson_drafts::resume(INPUT.into())
+            .await?
+            .expect("the repair saved its draft");
+        let mut draft: Value = serde_json::from_str(&saved)?;
+        assert_eq!(draft["blocks"][0]["title"], "Corrected example");
+        let repaired = draft.clone();
+        between(&mut draft);
+        if draft != repaired {
+            lesson_drafts::save(&draft.to_string()).await?;
+        }
+        run(&llm, draft).await
+    })
     .await?;
     Ok((repairs_asked(&llm), second))
 }

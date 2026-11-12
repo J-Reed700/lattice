@@ -8,7 +8,7 @@ use chrono::Utc;
 use lattice_core::domain::conversation::memory::compute_digest;
 use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::WriteTx;
 use lattice_core::shared::types::ConversationId;
 use sqlx::SqliteConnection;
 use std::str::FromStr;
@@ -20,15 +20,12 @@ impl ConversationRepository {
     /// reused, so an evidence span is never re-pointed at another message. Two
     /// statements rather than `RETURNING`, so it does not depend on the bundled
     /// SQLite version.
-    pub(super) async fn allocate_sequence(
-        tx: &mut sqlx::SqliteConnection,
-        conversation_id: &str,
-    ) -> Result<i64> {
+    pub(super) async fn allocate_sequence(tx: &mut WriteTx, conversation_id: &str) -> Result<i64> {
         let updated = sqlx::query(
             "UPDATE conversations SET next_message_sequence = next_message_sequence + 1 WHERE id = ?",
         )
         .bind(conversation_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to allocate message sequence: {}", e)))?;
         if updated.rows_affected() != 1 {
@@ -40,7 +37,7 @@ impl ConversationRepository {
         let next: i64 =
             sqlx::query_scalar("SELECT next_message_sequence FROM conversations WHERE id = ?")
                 .bind(conversation_id)
-                .fetch_one(&mut *tx)
+                .fetch_one(&mut **tx)
                 .await
                 .map_err(|e| {
                     AppError::Database(format!("Failed to read message sequence: {}", e))
@@ -66,7 +63,7 @@ impl ConversationRepository {
         let parsed_id = ConversationId::from_str(conversation_id)?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now();
-        let mut tx = self.pool.begin_write().await?;
+        let mut tx = self.db.begin_write().await?;
         let updated = sqlx::query("UPDATE conversation_messages SET status='completed' WHERE id=? AND conversation_id=? AND role='user' AND status='pending'")
             .bind(user_message_id).bind(conversation_id).execute(&mut *tx).await?;
         if updated.rows_affected() != 1 {
@@ -125,7 +122,7 @@ impl ConversationRepository {
         let role_str = role.to_string();
 
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -201,7 +198,7 @@ impl ConversationRepository {
         let role_str = role.to_string();
 
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -269,7 +266,7 @@ impl ConversationRepository {
         let now = Utc::now().to_rfc3339();
 
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -323,12 +320,14 @@ impl ConversationRepository {
     }
 
     pub async fn get_messages(&self, conversation_id: &str) -> Result<Vec<ConversationMessage>> {
-        let mut connection = self
-            .pool
-            .acquire()
+        let mut read = self
+            .db
+            .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to get messages: {}", e)))?;
-        messages_of(&mut connection, conversation_id).await
+        let messages = messages_of(&mut read, conversation_id).await?;
+        read.commit().await?;
+        Ok(messages)
     }
 }
 
