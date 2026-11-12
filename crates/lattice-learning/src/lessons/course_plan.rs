@@ -196,6 +196,21 @@ impl Contract for PlanCourse {
     type Input = PromptInput;
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for PlanCourse
+{
+    type Answer = CoursePlan;
+
+    fn render(answer: &CoursePlan) -> String {
+        serde_json::json!(answer).to_string()
+    }
+
+    fn read(text: &str) -> Result<CoursePlan> {
+        parse_json(text)
+    }
+}
+
 async fn generate(llm: &dyn LLMPort, program: &LearningProgramDto) -> Result<CoursePlan> {
     let lessons = lesson_ids(program).len();
     let prompt = plan_prompt(program)?;

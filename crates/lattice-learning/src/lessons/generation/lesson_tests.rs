@@ -1143,3 +1143,13 @@ fn lesson_drafts_are_keyed_by_versioned_protocols() {
         json!("lesson-draft-v1")
     );
 }
+
+#[test]
+fn the_lesson_writer_contract_reads_what_it_renders() {
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        LessonWriter,
+    >(&json!({
+        "blocks":[block("explanation", "A section", "Its body.", true)],
+        "questions":[question("single_choice", "Which one?", true)]
+    }));
+}

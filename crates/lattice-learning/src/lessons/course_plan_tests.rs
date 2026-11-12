@@ -624,3 +624,25 @@ fn the_course_plan_names_actions_in_no_subjects_terms() {
         "actions, the things the learner does (procedures, techniques, operations) that this lesson teaches"
     );
 }
+
+fn a_plan_to_round_trip() -> CoursePlan {
+    CoursePlan {
+        lessons: ["lesson-1", "lesson-2"]
+            .into_iter()
+            .map(|id| PlannedLesson {
+                lesson_id: id.into(),
+                ideas: vec!["an idea".into()],
+                terms: vec!["a term".into()],
+                actions: vec![],
+                contrast: "a confusion".into(),
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn the_course_plan_contract_reads_what_it_renders() {
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        PlanCourse,
+    >(&a_plan_to_round_trip());
+}

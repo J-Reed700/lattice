@@ -152,12 +152,42 @@ impl Contract for EvidencePlan {
     type Input = PromptInput;
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for EvidencePlan
+{
+    type Answer = Value;
+
+    fn render(answer: &Value) -> String {
+        answer.to_string()
+    }
+
+    fn read(text: &str) -> Result<Value> {
+        parse_json(text)
+    }
+}
+
 /// The model call that judges which gathered passages cover which topics.
 pub(crate) struct EvidenceCoverage;
 
 impl Contract for EvidenceCoverage {
     const ID: ContractId = ContractId::new("evidence-coverage");
     type Input = PromptInput;
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for EvidenceCoverage
+{
+    type Answer = Value;
+
+    fn render(answer: &Value) -> String {
+        answer.to_string()
+    }
+
+    fn read(text: &str) -> Result<Value> {
+        parse_json(text)
+    }
 }
 
 /// The usable topics of a plan answer: each named, with at least one search,

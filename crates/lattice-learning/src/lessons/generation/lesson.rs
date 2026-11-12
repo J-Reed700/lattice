@@ -56,6 +56,21 @@ impl Contract for LessonWriter {
     type Input = PromptInput;
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for LessonWriter
+{
+    type Answer = serde_json::Value;
+
+    fn render(answer: &serde_json::Value) -> String {
+        answer.to_string()
+    }
+
+    fn read(text: &str) -> Result<serde_json::Value> {
+        parse_json(text)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GeneratedLesson {

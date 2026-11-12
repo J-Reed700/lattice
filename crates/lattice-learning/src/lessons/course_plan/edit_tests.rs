@@ -628,3 +628,18 @@ async fn an_undo_that_does_not_apply_is_refused_and_writes_nothing() {
 
     assert_eq!(snapshot(&pool, &program.summary.id).await, before);
 }
+
+#[test]
+fn the_change_contract_reads_what_it_renders() {
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        super::edit::ChangeEntries,
+    >(&CoursePlan {
+        lessons: vec![PlannedLesson {
+            lesson_id: "lesson-1".into(),
+            ideas: vec!["an idea".into()],
+            terms: vec![],
+            actions: vec!["an action".into()],
+            contrast: String::new(),
+        }],
+    });
+}

@@ -23,11 +23,26 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, PoisonError};
 
-struct OutlineDescription;
+pub(super) struct OutlineDescription;
 
 impl Contract for OutlineDescription {
     const ID: ContractId = ContractId::new("outline-description");
     type Input = PromptInput;
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for OutlineDescription
+{
+    type Answer = GeneratedOutline;
+
+    fn render(answer: &GeneratedOutline) -> String {
+        json!(answer).to_string()
+    }
+
+    fn read(text: &str) -> Result<GeneratedOutline> {
+        parse_json(text)
+    }
 }
 
 /// What the prose step of an outline works through before the outline is
@@ -35,12 +50,20 @@ impl Contract for OutlineDescription {
 const OUTLINE_DRAFT_BRIEF: &str = "Decide the final capstone and what evidence each of its deliverables needs. Then lay out the modules in order: each module's title and two-sentence summary, its outcomes, its project milestone with deliverables and success criteria, the earlier modules it builds on, and its lessons with their objectives and estimated minutes.";
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, PartialEq)
+)]
 #[serde(rename_all = "camelCase")]
-struct GeneratedOutline {
+pub(crate) struct GeneratedOutline {
     modules: Vec<GeneratedModule>,
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, PartialEq)
+)]
 #[serde(rename_all = "camelCase")]
 struct GeneratedModule {
     prerequisite_indices: Vec<usize>,
@@ -52,6 +75,10 @@ struct GeneratedModule {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, PartialEq)
+)]
 #[serde(rename_all = "camelCase")]
 struct GeneratedEvidenceText {
     text: String,
@@ -60,6 +87,10 @@ struct GeneratedEvidenceText {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, PartialEq)
+)]
 #[serde(rename_all = "camelCase")]
 struct GeneratedOutlineLesson {
     title: String,

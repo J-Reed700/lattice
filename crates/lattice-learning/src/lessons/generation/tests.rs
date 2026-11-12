@@ -715,3 +715,32 @@ fn the_writer_and_the_teaching_repair_are_told_what_the_lesson_s_own_figures_are
         );
     }
 }
+
+#[test]
+fn the_outline_contract_reads_what_it_renders() {
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<outline::OutlineDescription>(&serde_json::from_value(json!({
+        "modules":[{
+            "title":"A module",
+            "summary":{"text":"What it covers.","sourceIndex":0,"quote":"A quote."},
+            "outcomes":[{"text":"An outcome.","sourceIndex":null,"quote":""}],
+            "prerequisiteIndices":[],
+            "project":{"title":"A project","brief":"Its brief.","deliverables":["One"],"successCriteria":["Works"]},
+            "lessons":[{"title":"A lesson","objective":"Its objective.","estimatedMinutes":20,"sourceIndex":0,"quote":"A quote."}]
+        }]
+    })).unwrap());
+}
+
+#[test]
+fn the_recall_contract_reads_what_it_renders() {
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        recall::RecallDrafts,
+    >(
+        &serde_json::from_value(json!({
+            "cards":[{
+                "question":"What is it?","answer":"This.","explanation":"Because.",
+                "sourceIds":["source-a"],"quote":"A quote."
+            }]
+        }))
+        .unwrap(),
+    );
+}
