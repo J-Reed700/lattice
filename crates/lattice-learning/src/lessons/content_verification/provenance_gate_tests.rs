@@ -867,6 +867,8 @@ struct Judges {
     standing_calls: AtomicUsize,
     standing_now: AtomicUsize,
     standing_most: AtomicUsize,
+    /// The unit title of each profile request.
+    titles: std::sync::Mutex<Vec<String>>,
 }
 
 impl Judges {
@@ -883,6 +885,7 @@ impl Judges {
             standing_calls: AtomicUsize::new(0),
             standing_now: AtomicUsize::new(0),
             standing_most: AtomicUsize::new(0),
+            titles: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -919,6 +922,16 @@ impl LLMPort for Judges {
             self.now.fetch_sub(1, Ordering::SeqCst);
             r#"{"relation":"owner","basis":[{"code":"publisher_is_owner","text":"It publishes the subject."}],"owner_origin_hints":[]}"#.to_owned()
         } else if prompt.contains(PROFILE_PROMPT) {
+            let tail = prompt
+                .split_once(PROFILE_PROMPT)
+                .map_or("", |(_, tail)| tail);
+            let input = tail.find('{').map_or("", |start| &tail[start..]);
+            let title = serde_json::Deserializer::from_str(input)
+                .into_iter::<Value>()
+                .next()
+                .and_then(|value| value.ok())
+                .and_then(|value| value["unit_title"].as_str().map(str::to_owned));
+            self.titles.lock().unwrap().extend(title);
             let subject = if prompt.contains("Section 2") {
                 self.second_subject
             } else {
@@ -1110,5 +1123,19 @@ async fn a_version_cited_by_two_claims_has_its_standing_judged_once() -> Result<
     .await?;
 
     assert_eq!(model.standing_calls.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_question_claim_is_profiled_under_its_question() -> Result<()> {
+    let model = weighed_claims(
+        &[("va", "https://alpha.example.com/docs")],
+        &[(2, "va")],
+        "Alpha",
+        1,
+    )
+    .await?;
+
+    assert_eq!(*model.titles.lock().unwrap(), ["Question 1"]);
     Ok(())
 }
