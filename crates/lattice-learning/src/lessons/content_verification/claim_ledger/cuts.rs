@@ -4,15 +4,16 @@
 
 use super::super::sections::{Going, NOTHING_LEFT};
 use super::*;
+use lattice_core::domain::learning::claim_review::StopCode;
 
 /// The job checkpoint holding the record.
-const CUTS_KEY: &str = "claim-ledger-v1:cuts";
-/// The code of the stop for a lesson its sources do not support enough of.
-pub(super) const UNSUPPORTED: &str = "sources_do_not_support";
+fn cuts_key() -> String {
+    LEDGER_KEYS.key("cuts")
+}
 
 impl ClaimLedger {
     pub(super) async fn load_cuts(&mut self) -> Result<()> {
-        self.cuts = crate::lesson_drafts::checkpoint(CUTS_KEY)
+        self.cuts = crate::lesson_drafts::checkpoint(&cuts_key())
             .await?
             .and_then(|saved| serde_json::from_value(saved).ok())
             .unwrap_or_default();
@@ -20,7 +21,8 @@ impl ClaimLedger {
     }
 
     pub(in crate::lessons::content_verification) async fn save_cuts(&self) -> Result<()> {
-        crate::lesson_drafts::record_checkpoint(CUTS_KEY, serde_json::to_value(&self.cuts)?).await
+        crate::lesson_drafts::record_checkpoint(&cuts_key(), serde_json::to_value(&self.cuts)?)
+            .await
     }
 
     pub(in crate::lessons::content_verification) async fn clear_cuts(&mut self) -> Result<()> {
@@ -62,7 +64,7 @@ impl ClaimLedger {
                 )
             });
         took && self.entries.iter().all(|entry| {
-            is_gone(entry.state())
+            entry.state().is_gone()
                 || cut.contains(entry.claim_id())
                 || self.cuts.going.contains_key(&entry.location().unit_index)
         })
@@ -85,7 +87,7 @@ impl ClaimLedger {
     pub(in crate::lessons::content_verification) fn live_in(&self, unit: usize) -> Vec<ClaimId> {
         self.entries
             .iter()
-            .filter(|entry| !is_gone(entry.state()) && entry.location().unit_index == unit)
+            .filter(|entry| !entry.state().is_gone() && entry.location().unit_index == unit)
             .map(|entry| entry.claim_id().clone())
             .collect()
     }
@@ -113,7 +115,7 @@ impl ClaimLedger {
         let moves: Vec<(ClaimId, ClaimLocation, String)> = self
             .entries
             .iter()
-            .filter(|entry| !is_gone(entry.state()))
+            .filter(|entry| !entry.state().is_gone())
             .filter_map(|entry| {
                 let unit = entry.location().unit_index;
                 let now = going.after(unit).filter(|now| *now != unit)?;
@@ -149,7 +151,7 @@ impl ClaimLedger {
         what: &str,
     ) -> Result<AppError> {
         let reason = StopReason {
-            code: UNSUPPORTED.into(),
+            code: StopCode::SourcesDoNotSupport,
             message: format!("The sources do not support enough of this lesson: {what}."),
             fix: "Add sources that cover what this lesson teaches, or change what its outline asks of it, then prepare it again.".into(),
             at: now(),

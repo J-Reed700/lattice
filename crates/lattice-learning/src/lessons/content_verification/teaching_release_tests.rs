@@ -3,6 +3,7 @@
 //! the user (claim sources design §10.3).
 use super::acceptance_switch_tests::{claim, identified, lesson_of, node_of, open, walk, REASONED};
 use super::class_checks_tests::Classes;
+use super::round::Unsettled;
 use super::*;
 use crate::lessons::call_plan::CallPlan;
 use lattice_core::domain::learning::acceptance::{Goal, Outcome, Reading, Step};
@@ -216,7 +217,7 @@ async fn a_machines_general_knowledge_and_published_not_verified_claims_are_rele
     let unverified = claim(&mut ledger, "unsettled", (FIRST, FIRST), FIRST, REASONED).await?;
     assert_eq!(
         ledger
-            .publish_unverified(std::slice::from_ref(&unverified), None)
+            .publish_unsettled(Unsettled::Waiting(vec![unverified.clone()]), &json!({}))
             .await?,
         1
     );
@@ -243,7 +244,7 @@ async fn the_claims_the_user_decided_and_the_claims_a_repair_is_for_are_not_rele
     // Confirmed by the user.
     let confirmed = claim(&mut ledger, "confirmed", (SECOND, SECOND), SECOND, REASONED).await?;
     ledger
-        .publish_unverified(std::slice::from_ref(&confirmed), None)
+        .publish_unsettled(Unsettled::Waiting(vec![confirmed.clone()]), &json!({}))
         .await?;
     let confirm = UserAction::Confirm {
         bound: HumanBinding::new(SECOND, vec![]),
@@ -261,7 +262,7 @@ async fn the_claims_the_user_decided_and_the_claims_a_repair_is_for_are_not_rele
     // Checked against evidence the user attached.
     let attached = claim(&mut ledger, "attached", (THIRD, THIRD), THIRD, REASONED).await?;
     ledger
-        .publish_unverified(std::slice::from_ref(&attached), None)
+        .publish_unsettled(Unsettled::Waiting(vec![attached.clone()]), &json!({}))
         .await?;
     let check = Check {
         checker: Checker::Local { model: "m".into() },

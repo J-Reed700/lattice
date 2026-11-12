@@ -2,7 +2,9 @@
 //! built into a batch ([`WindowSizer`]), then sent with or without the web
 //! tools ([`ask`]).
 
-use lattice_core::application::ports::llm_port::{InferencePriority, SamplingOverride};
+use lattice_core::application::ports::llm_port::{
+    InferencePriority, SamplingOverride, ANSWER_EFFORT,
+};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::context_assembler::budget::{
     BudgetAllocation, BudgetRequest, ModelCapacity,
@@ -165,7 +167,7 @@ pub(super) async fn ask(
         sampling: Some(SamplingOverride::deterministic()),
         no_time_limit: true,
         json_schema: Some(schema),
-        reasoning_effort: Some("low".into()),
+        reasoning_effort: Some(ANSWER_EFFORT.into()),
         ..Default::default()
     };
     match grounded_generation::generate(llm, request).await {

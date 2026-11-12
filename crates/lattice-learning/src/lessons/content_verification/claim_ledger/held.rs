@@ -3,6 +3,7 @@
 //! row that says why each stopped (§6.1).
 
 use super::*;
+use lattice_core::domain::learning::claim_review::StopCode;
 use lattice_core::shared::persistence::Database;
 
 /// The prefix of a job's result reference when lessons wait for review.
@@ -37,11 +38,8 @@ pub(crate) struct HeldForReview {
     pub lesson_id: String,
     /// Claims waiting for the user, or the checker's answer.
     pub claims: usize,
-    /// The lesson stopped because the checker's answers could not be read,
-    /// rather than waiting for the user's decisions.
-    pub stopped: bool,
-    /// Why it stopped, when its sources do not support enough of it.
-    pub unsupported: Option<String>,
+    /// Why it stopped; `None` when it waits for the user's decisions.
+    pub stop: Option<StopReason>,
 }
 
 /// Whether `lesson_id`'s preparation in `job_id` stopped because the lesson
@@ -70,13 +68,11 @@ pub(crate) async fn held_for_review(
         let counts = ClaimCounts::tally(ledger.claims.iter());
         HeldForReview {
             lesson_id: lesson_id.to_owned(),
-            claims: counts.queued + counts.open,
-            stopped: review.state == LessonReviewState::Stopped,
-            unsupported: review
+            claims: counts.unresolved(),
+            stop: review
                 .stop_reason
-                .as_ref()
-                .filter(|stop| stop.code == cuts::UNSUPPORTED)
-                .map(|stop| stop.message.clone()),
+                .clone()
+                .filter(|_| review.state == LessonReviewState::Stopped),
         }
     }))
 }
@@ -88,31 +84,41 @@ pub(crate) fn review_outcome(held: &[HeldForReview]) -> (String, String) {
     let claims: usize = held.iter().map(|hold| hold.claims).sum();
     let plural =
         |count: usize, word: &str| format!("{count} {word}{}", if count == 1 { "" } else { "s" });
-    let message = if held.iter().all(|hold| hold.stopped) {
-        match held {
-            [only] if only.unsupported.is_some() => {
-                format!(
-                    "Stopped: {}",
-                    only.unsupported.as_deref().unwrap_or_default()
-                )
-            }
-            _ if held.iter().all(|hold| hold.unsupported.is_some()) => format!(
+    let stops: Option<Vec<&StopReason>> = held.iter().map(|hold| hold.stop.as_ref()).collect();
+    let message = match stops.as_deref() {
+        Some([only]) => format!("Stopped: {}", only.message),
+        Some(stops)
+            if stops
+                .iter()
+                .all(|stop| stop.code == StopCode::SourcesDoNotSupport) =>
+        {
+            format!(
                 "Stopped: the sources do not support enough of {}",
                 plural(held.len(), "lesson")
-            ),
-            _ => format!(
+            )
+        }
+        Some(stops)
+            if stops
+                .iter()
+                .all(|stop| stop.code == StopCode::CheckerUnreadable) =>
+        {
+            format!(
                 "Stopped: the checking model's answers could not be read for {}",
                 plural(claims, "statement")
-            ),
+            )
         }
-    } else if held.len() == 1 {
-        format!("Needs your review: {}", plural(claims, "statement"))
-    } else {
-        format!(
+        Some(_) => format!(
+            "Stopped: {} could not go on; each lesson's statement review says why",
+            plural(held.len(), "lesson")
+        ),
+        None if held.len() == 1 => {
+            format!("Needs your review: {}", plural(claims, "statement"))
+        }
+        None => format!(
             "Needs your review: {} in {}",
             plural(claims, "statement"),
             plural(held.len(), "lesson")
-        )
+        ),
     };
     (format!("{NEEDS_REVIEW_REF}{}", ids.join(",")), message)
 }
@@ -121,57 +127,89 @@ pub(crate) fn review_outcome(held: &[HeldForReview]) -> (String, String) {
 mod tests {
     use super::*;
 
-    #[test]
-    fn several_held_lessons_complete_the_job_as_needs_review_for_each() {
-        let held = |lesson: &str, claims| HeldForReview {
+    fn stop(code: StopCode, message: &str) -> StopReason {
+        StopReason {
+            code,
+            message: message.into(),
+            fix: String::new(),
+            at: 0,
+            request: None,
+        }
+    }
+
+    fn stopped(lesson: &str, claims: usize, code: StopCode, message: &str) -> HeldForReview {
+        HeldForReview {
             lesson_id: lesson.into(),
             claims,
-            stopped: false,
-            unsupported: None,
-        };
+            stop: Some(stop(code, message)),
+        }
+    }
+
+    fn waiting(lesson: &str, claims: usize) -> HeldForReview {
+        HeldForReview {
+            lesson_id: lesson.into(),
+            claims,
+            stop: None,
+        }
+    }
+
+    #[test]
+    fn several_held_lessons_complete_the_job_as_needs_review_for_each() {
         assert_eq!(
-            review_outcome(&[held("a", 2), held("b", 3)]),
+            review_outcome(&[waiting("a", 2), waiting("b", 3)]),
             (
                 "needs_review:a,b".to_owned(),
                 "Needs your review: 5 statements in 2 lessons".to_owned()
             )
         );
+        assert_eq!(
+            review_outcome(&[waiting("a", 1)]).1,
+            "Needs your review: 1 statement"
+        );
     }
 
     #[test]
-    fn a_lesson_its_sources_do_not_support_enough_of_says_so() {
+    fn one_stopped_lesson_reports_its_own_stop() {
         const WHY: &str = "The sources do not support enough of this lesson: its first explanation would have to be taken out.";
-        let unsupported = |lesson: &str| HeldForReview {
-            lesson_id: lesson.into(),
-            claims: 0,
-            stopped: true,
-            unsupported: Some(WHY.into()),
-        };
-        assert_eq!(
-            review_outcome(&[unsupported("a")]).1,
-            format!("Stopped: {WHY}")
-        );
+        for code in [StopCode::SourcesDoNotSupport, StopCode::PolicyChanged] {
+            assert_eq!(
+                review_outcome(&[stopped("a", 0, code, WHY)]).1,
+                format!("Stopped: {WHY}")
+            );
+        }
+    }
+
+    #[test]
+    fn lessons_that_stopped_for_one_cause_report_that_cause() {
+        let unsupported = |lesson: &str| stopped(lesson, 0, StopCode::SourcesDoNotSupport, "why");
         assert_eq!(
             review_outcome(&[unsupported("a"), unsupported("b")]).1,
             "Stopped: the sources do not support enough of 2 lessons"
         );
+        let unreadable = |lesson: &str| stopped(lesson, 3, StopCode::CheckerUnreadable, "why");
+        assert_eq!(
+            review_outcome(&[unreadable("a"), unreadable("b")]).1,
+            "Stopped: the checking model's answers could not be read for 6 statements"
+        );
     }
 
     #[test]
-    fn a_lesson_stopped_for_an_unreadable_checker_says_so_not_that_it_needs_review() {
-        let stopped = HeldForReview {
-            lesson_id: "a".into(),
-            claims: 3,
-            stopped: true,
-            unsupported: None,
-        };
+    fn lessons_that_stopped_for_different_causes_say_each_review_tells_why() {
         assert_eq!(
-            review_outcome(&[stopped]),
-            (
-                "needs_review:a".to_owned(),
-                "Stopped: the checking model's answers could not be read for 3 statements"
-                    .to_owned()
-            )
+            review_outcome(&[
+                stopped("a", 0, StopCode::SourcesDoNotSupport, "why"),
+                stopped("b", 3, StopCode::CheckerUnreadable, "why"),
+            ])
+            .1,
+            "Stopped: 2 lessons could not go on; each lesson's statement review says why"
+        );
+        assert_eq!(
+            review_outcome(&[
+                stopped("a", 0, StopCode::NoProgress, "why"),
+                waiting("b", 3)
+            ])
+            .1,
+            "Needs your review: 3 statements in 2 lessons"
         );
     }
 }

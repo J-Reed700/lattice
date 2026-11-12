@@ -24,7 +24,7 @@ use async_trait::async_trait;
 
 use lattice_core::application::ports::{ClaimReviewStore, LLMPort};
 use lattice_core::application::services::chat_model_resolution::cloud_provider_name;
-use lattice_core::domain::learning::claim_review::{ClaimId, StopReason};
+use lattice_core::domain::learning::claim_review::{ClaimId, StopCode, StopReason};
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
 use lattice_core::shared::error::{AppError, Result};
 
@@ -100,15 +100,14 @@ impl AuditStop {
         }
     }
 
-    /// Every code starts with `verifier_`: the review panel tells an audit
-    /// stop from the claims' hold by it.
-    pub(crate) fn code(&self) -> &'static str {
+    /// The stop's code: every one is an audit stop (`StopCode::is_audit`).
+    pub(crate) fn code(&self) -> StopCode {
         match self {
-            Self::TurnedOff => "verifier_turned_off",
-            Self::NoVerifier => "verifier_unset",
-            Self::Unavailable { .. } => "verifier_unavailable",
-            Self::ConsentMissing { .. } => "verifier_consent_missing",
-            Self::ConsentForOtherProvider { .. } => "verifier_consent_changed",
+            Self::TurnedOff => StopCode::VerifierTurnedOff,
+            Self::NoVerifier => StopCode::VerifierUnset,
+            Self::Unavailable { .. } => StopCode::VerifierUnavailable,
+            Self::ConsentMissing { .. } => StopCode::VerifierConsentMissing,
+            Self::ConsentForOtherProvider { .. } => StopCode::VerifierConsentChanged,
         }
     }
 
@@ -162,7 +161,7 @@ impl AuditStop {
     /// The review row's `stop_reason` for this stop.
     pub fn stop_reason(&self, progress: Option<(usize, usize)>, at: i64) -> StopReason {
         StopReason {
-            code: self.code().into(),
+            code: self.code(),
             message: self.message(progress),
             fix: self.fix(),
             at,
@@ -330,7 +329,7 @@ pub(crate) async fn run(
     };
     let previous_failure = deps
         .runs
-        .begin(&key, AUDIT_POLICY_ID, (deps.clock)())
+        .begin(&key, AUDIT_POLICY_ID.as_str(), (deps.clock)())
         .await?
         .last_failure()
         .map(str::to_owned);

@@ -3,43 +3,12 @@
 //! what is wrong and what to do (acceptance design §2.10).
 
 use super::super::*;
-use super::fields::field_text;
-use super::{is_example, is_gone, ClaimLedger, Waiting};
+use super::{ClaimLedger, Waiting};
 use crate::persistence::now;
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Step, Walked};
 use lattice_core::domain::learning::claim_review::{
-    Actor, ClaimEvent, ClaimLedgerEntry, ClaimState, LessonReviewState, StopReason,
+    Actor, ClaimEvent, ClaimLedgerEntry, ClaimState, LessonReviewState, StopCode, StopReason,
 };
-
-/// The code of the stop for statements whose checker answers could not be read.
-pub(in crate::lessons::content_verification) const UNREADABLE: &str = "checker_unreadable";
-
-/// The claims the machine ended whose sentences `candidate` still holds. A
-/// code example's claim ends with its run, and the claims of a section that
-/// goes end with it.
-pub(super) fn standing_ended<'a>(
-    entries: &'a [ClaimLedgerEntry],
-    cuts: &super::super::sections::Cuts,
-    candidate: &Value,
-) -> Vec<&'a ClaimLedgerEntry> {
-    entries
-        .iter()
-        .filter(|entry| {
-            let at = entry.location();
-            matches!(
-                entry.state(),
-                ClaimState::Removed {
-                    by: Actor::Machine,
-                    ..
-                }
-            ) && !is_example(entry)
-                && !cuts.going.contains_key(&at.unit_index)
-                && !at.quote.trim().is_empty()
-                && field_text(candidate, at.unit_index, &at.field)
-                    .is_some_and(|text| text.contains(&at.quote))
-        })
-        .collect()
-}
 
 /// What a statement waits for at a node of `step`, in words.
 fn describe(step: Step) -> &'static str {
@@ -54,6 +23,24 @@ fn describe(step: Step) -> &'static str {
 }
 
 impl ClaimLedger {
+    /// The claims the machine ended whose sentences `candidate` still holds. A
+    /// code example's claim ends with its run, and the claims of a section that
+    /// goes end with it.
+    pub(super) fn standing_ended(&self, candidate: &Value) -> Vec<&ClaimLedgerEntry> {
+        self.entries
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.state(),
+                    ClaimState::Removed {
+                        by: Actor::Machine,
+                        ..
+                    }
+                ) && self.stands(candidate, entry.claim_id())
+            })
+            .collect()
+    }
+
     /// The stop for a lesson whose statements the policy cannot walk: one
     /// decided under another policy than the current, or one whose record
     /// does not fit its graph; and for one whose pass left out a statement
@@ -64,7 +51,7 @@ impl ClaimLedger {
     ) -> Option<StopReason> {
         if let Some(entry) = self.unplaced.iter().find_map(|id| self.entry(id)) {
             return Some(self.stop_reason(
-                "claim_left_out",
+                StopCode::ClaimLeftOut,
                 format!(
                     "The pass named no statement for \"{}\", though the lesson still holds its sentence, \"{}\". The statement is kept as it was, not ended.",
                     entry.statement(),
@@ -74,7 +61,7 @@ impl ClaimLedger {
             ));
         }
         for id in &self.findings {
-            let Some(entry) = self.entry(id).filter(|entry| !is_gone(entry.state())) else {
+            let Some(entry) = self.entry(id).filter(|entry| !entry.state().is_gone()) else {
                 continue;
             };
             let other = entry
@@ -88,7 +75,7 @@ impl ClaimLedger {
                 });
             if let Some(held) = other {
                 return Some(self.stop_reason(
-                    "policy_changed",
+                    StopCode::PolicyChanged,
                     format!(
                         "The checks on this lesson were decided under earlier checking rules ({held}), and this version of the app checks under {}. \"{}\" cannot go on under them.",
                         policy.version(),
@@ -103,7 +90,7 @@ impl ClaimLedger {
                     .node(at.node)
                     .map_or("?", |node| node.name);
                 return Some(self.stop_reason(
-                    "policy_record_fault",
+                    StopCode::PolicyRecordFault,
                     format!(
                         "The record of \"{}\" does not fit the checking rules: at {node}, {:?} came out {:?}, which the rules do not allow there.",
                         entry.statement(),
@@ -125,7 +112,7 @@ impl ClaimLedger {
         &self,
         candidate: &Value,
     ) -> Option<(StopReason, usize)> {
-        let standing = standing_ended(&self.entries, &self.cuts, candidate);
+        let standing = self.standing_ended(candidate);
         let first = standing.first()?;
         let more = match standing.len() {
             1 => String::new(),
@@ -135,7 +122,7 @@ impl ClaimLedger {
             ),
         };
         let reason = self.stop_reason(
-            "ended_claim_stands",
+            StopCode::EndedClaimStands,
             format!(
                 "The lesson still holds \"{}\", which the statement \"{}\" stood on until the machine ended it{more}. A lesson is not published with a sentence no statement answers for.",
                 first.location().quote,
@@ -147,9 +134,9 @@ impl ClaimLedger {
     }
 
     /// A stop with `code`, in the checker's name.
-    pub(super) fn stop_reason(&self, code: &str, message: String, fix: &str) -> StopReason {
+    pub(super) fn stop_reason(&self, code: StopCode, message: String, fix: &str) -> StopReason {
         StopReason {
-            code: code.into(),
+            code,
             message,
             fix: fix.into(),
             at: now(),
@@ -161,7 +148,7 @@ impl ClaimLedger {
     /// checks can use, asked twice.
     pub(super) fn unreadable(&self, claims: usize) -> StopReason {
         self.stop_reason(
-            UNREADABLE,
+            StopCode::CheckerUnreadable,
             format!(
                 "The checking model's answers could not be read for {claims} statement{}: {} gave no answer the checks can use, asked twice.",
                 if claims == 1 { "" } else { "s" },
@@ -217,7 +204,7 @@ impl ClaimLedger {
                 .collect();
             let count = quoted.len();
             self.stop_reason(
-                "no_progress",
+                StopCode::NoProgress,
                 format!(
                     "Research could not reach any search engine or web page, so {count} statement{} still {} for a source: {}.",
                     if count == 1 { "" } else { "s" },
@@ -232,7 +219,7 @@ impl ClaimLedger {
                 .map(|waits| format!("\"{}\" waits {}", statement(waits), describe(waits.step)))
                 .collect();
             self.stop_reason(
-                "no_progress",
+                StopCode::NoProgress,
                 format!(
                     "The checks stopped because a whole pass changed nothing: {}.",
                     waits.join("; ")

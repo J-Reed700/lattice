@@ -9,6 +9,7 @@
 use super::*;
 use crate::lessons::verifier_audit::batches::{Context, Item, Sizer};
 use crate::lessons::verifier_audit::calls::WindowSizer;
+use lattice_core::domain::learning::claim_review::StopCode;
 
 /// The smallest window, in steps of 64 tokens, whose request holds the
 /// first `claims` of the harness's claims, measured as the audit measures.
@@ -382,7 +383,7 @@ async fn a_provider_changed_since_consent_is_refused_before_anything_is_sent() {
         stop.message(None),
         "Consent was for Anthropic; confirm again for OpenAI"
     );
-    assert_eq!(stop.code(), "verifier_consent_changed");
+    assert_eq!(stop.code(), StopCode::VerifierConsentChanged);
     assert!(
         !outcome.publishable(),
         "an audit that is on and cannot run holds the lesson"
@@ -392,7 +393,7 @@ async fn a_provider_changed_since_consent_is_refused_before_anything_is_sent() {
 #[test]
 fn every_stop_says_what_is_wrong_and_the_fix() {
     let unset = AuditStop::NoVerifier.stop_reason(None, 7);
-    assert_eq!(unset.code, "verifier_unset");
+    assert_eq!(unset.code, StopCode::VerifierUnset);
     assert_eq!(unset.message, "Audit cannot run: no Verifier model is set.");
     assert_eq!(
         unset.fix,
@@ -407,7 +408,7 @@ fn every_stop_says_what_is_wrong_and_the_fix() {
         no_key.message(None),
         "Audit cannot run: Your Verifier model Anthropic/claude-x has no API key saved."
     );
-    assert_eq!(no_key.code(), "verifier_unavailable");
+    assert_eq!(no_key.code(), StopCode::VerifierUnavailable);
     assert_eq!(
         no_key.fix(),
         "Fix the Verifier in Settings → Downloaded, or turn the audit off for this course."

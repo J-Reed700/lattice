@@ -3,11 +3,11 @@
 //! the ends; a review supplies the steps. The preparation job is one review
 //! (`repair_loop`); a scripted one in the tests is another, so the loop's end
 //! and its stop are tested without a model.
-use super::claim_ledger::{self, Decision, Waiting};
+use super::claim_ledger::{Decision, Waiting};
 use super::*;
 use async_trait::async_trait;
 use lattice_core::domain::learning::acceptance::AcceptancePolicy;
-use lattice_core::domain::learning::claim_review::StopReason;
+use lattice_core::domain::learning::claim_review::{StopCode, StopReason};
 
 /// What a round of research came to.
 pub(super) enum Researched {
@@ -140,11 +140,7 @@ pub(super) trait Review: Send {
     /// Publishes `unsettled` not verified, with the reason each carries: how
     /// many statements it marked. None means nothing was left to mark and the
     /// lesson ends as it did before.
-    async fn publish_unverified(
-        &mut self,
-        policy: &dyn AcceptancePolicy,
-        unsettled: Unsettled,
-    ) -> Result<usize>;
+    async fn publish_unsettled(&mut self, unsettled: Unsettled) -> Result<usize>;
     /// The last guard (acceptance design §2.9): the stop for a sentence the
     /// lesson still holds that a claim the machine ended stood on, and how
     /// many such claims there are.
@@ -230,9 +226,7 @@ pub(super) async fn run<F>(
                     // moved nothing publishes what waits, not verified.
                     if !unreached {
                         let claims = waiting.iter().map(|waits| waits.claim.clone()).collect();
-                        let marked = review
-                            .publish_unverified(policy, Unsettled::Waiting(claims))
-                            .await?;
+                        let marked = review.publish_unsettled(Unsettled::Waiting(claims)).await?;
                         if marked > 0 {
                             if let Some(finished) = publish(review, policy).await? {
                                 return Ok(finished);
@@ -246,9 +240,9 @@ pub(super) async fn run<F>(
                 review.again(&waiting);
             }
             Decision::Stop(reason) => {
-                if reason.code == claim_ledger::UNREADABLE && !stopped.is_empty() {
+                if reason.code == StopCode::CheckerUnreadable && !stopped.is_empty() {
                     let marked = review
-                        .publish_unverified(policy, Unsettled::Unreadable(stopped.clone()))
+                        .publish_unsettled(Unsettled::Unreadable(stopped.clone()))
                         .await?;
                     if marked > 0 {
                         if let Some(finished) = publish(review, policy).await? {
@@ -273,11 +267,7 @@ pub(super) async fn run<F>(
                         .finish(Verdict::NoProgress { waiting, unreached })
                         .await;
                 }
-                if review
-                    .publish_unverified(policy, Unsettled::AwaitingUser)
-                    .await?
-                    > 0
-                {
+                if review.publish_unsettled(Unsettled::AwaitingUser).await? > 0 {
                     if let Some(finished) = publish(review, policy).await? {
                         return Ok(finished);
                     }
@@ -314,7 +304,7 @@ async fn publish<F>(
     // that a claim the machine ended stood on, or the claim is marked not
     // verified.
     if let Some((reason, claims)) = review.ended_but_standing() {
-        if review.publish_unverified(policy, Unsettled::Ended).await? == 0 {
+        if review.publish_unsettled(Unsettled::Ended).await? == 0 {
             let reason = Some(reason);
             return review
                 .finish(Verdict::Hold { claims, reason })

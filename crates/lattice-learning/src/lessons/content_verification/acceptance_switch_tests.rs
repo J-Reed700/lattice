@@ -23,7 +23,7 @@ use lattice_core::domain::learning::acceptance::{
 use lattice_core::domain::learning::claim_review::{
     text_sha256, Actor, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry,
     ClaimLocation, ClaimState, EvidenceFingerprint, EvidenceSeen, LessonReviewState, ReopenCause,
-    RepairOutcome, UnitKind, UnverifiedReason, VerdictKind,
+    RepairOutcome, StopCode, UnitKind, UnverifiedReason, VerdictKind,
 };
 use lattice_core::shared::persistence::Database;
 use std::collections::VecDeque;
@@ -153,11 +153,7 @@ pub(super) async fn stood(
     let (then, next) = decide(&policy, at, taken).expect("an edge");
     let step = ReadStep {
         reading,
-        read: Read {
-            outcome: Outcome::Stands,
-            finding,
-            reused: false,
-        },
+        read: Read::new(Outcome::Stands, finding, false),
         then,
         rewrite_ahead: next.is_some_and(|next| rewrite_ahead(&policy, next)),
         class: next
@@ -335,11 +331,7 @@ impl Reader for Says {
                 }
                 _ => finding_of(at, ClaimVerdict::Unsupported, "Unstated.".into(), &[], None),
             };
-            reads.push(Read {
-                outcome,
-                finding,
-                reused,
-            });
+            reads.push(Read::new(outcome, finding, reused));
         }
         Ok(reads)
     }
@@ -676,7 +668,7 @@ async fn research_that_reached_nothing_records_nothing_and_a_round_where_nothing
     let review = ledger.review.clone().unwrap();
     assert_eq!(review.state, LessonReviewState::Stopped);
     let reason = review.stop_reason.unwrap();
-    assert_eq!(reason.code, "no_progress");
+    assert_eq!(reason.code, StopCode::NoProgress);
     assert_eq!(
         reason.fix,
         "Check your internet connection and the research settings, then resume this lesson."
@@ -2185,6 +2177,18 @@ async fn a_batch_with_an_example_beside_statements_publishes_the_statements_not_
     )
     .await?;
     walk(&mut ledger, &first, Class::Sourced, &CUTTING).await?;
+    ledger
+        .append(
+            &first,
+            ClaimEvent::Checked(local_check(
+                CheckResult::Failed {
+                    kind: VerdictKind::Unsupported,
+                },
+                "Unstated.",
+                Vec::new(),
+            )),
+        )
+        .await?;
     let example = failed_example(&mut ledger, 1, FENCED).await?;
     ledger
         .begin_repairs(&policy, &lesson, &[first.clone(), example.clone()])
@@ -2616,7 +2620,7 @@ async fn a_record_that_does_not_fit_its_graph_stops_the_lesson_naming_the_claim_
         panic!("a record that does not fit stops the lesson");
     };
 
-    assert_eq!(reason.code, "policy_record_fault");
+    assert_eq!(reason.code, StopCode::PolicyRecordFault);
     for named in [SENTENCE, "s.read", "Knowledge", "Stands"] {
         assert!(reason.message.contains(named), "{}", reason.message);
     }
@@ -2653,7 +2657,7 @@ async fn a_claim_decided_under_another_policy_stops_the_lesson_with_that_reason(
         panic!("decisions of another policy stop the lesson");
     };
 
-    assert_eq!(reason.code, "policy_changed");
+    assert_eq!(reason.code, StopCode::PolicyChanged);
     assert!(reason.message.contains("earlier checking rules"));
     assert!(reason.message.contains("acceptance-v0"));
     Ok(())
@@ -2685,7 +2689,7 @@ async fn a_run_stopped_on_a_second_unreadable_answer_is_resumed_by_the_next_run_
     let Decision::Stop(reason) = ledger.decide(&policy, &stopped) else {
         panic!("the run stops");
     };
-    assert_eq!(reason.code, "checker_unreadable");
+    assert_eq!(reason.code, StopCode::CheckerUnreadable);
     let entry = ledger.entry(&id).unwrap();
     assert_eq!(entry.unjudged(), 2);
     assert_eq!(entry.state(), &ClaimState::Unchecked);

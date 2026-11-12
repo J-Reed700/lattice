@@ -198,7 +198,7 @@ impl ClaimLedger {
         // A claim gone with its sentence makes no more calls, wherever its
         // steps left it. One that ended may still have its sentence rewritten
         // by the teaching review, and its successor read again.
-        let gone = entry.is_some_and(|entry| super::is_gone(entry.state()));
+        let gone = entry.is_some_and(|entry| entry.state().is_gone());
         let at = if gone {
             PlannedAt::Ended(None)
         } else {
@@ -282,7 +282,7 @@ impl ClaimLedger {
     pub(super) fn walks(&self, policy: &dyn AcceptancePolicy) -> HashMap<(usize, String), Walked> {
         let mut walks: HashMap<(usize, String), Walked> = HashMap::new();
         for entry in &self.entries {
-            if super::is_gone(entry.state()) || self.edited_now.contains(entry.claim_id()) {
+            if entry.state().is_gone() || self.edited_now.contains(entry.claim_id()) {
                 continue;
             }
             let Some(here) = self.position(policy, entry.claim_id()) else {
