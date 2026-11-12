@@ -1320,6 +1320,63 @@ fn a_locked_database_is_retried_and_other_database_errors_are_not() {
     ));
 }
 
+/// A driver error that carries only an SQLite result code.
+#[derive(Debug)]
+struct Coded(&'static str);
+
+impl std::fmt::Display for Coded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "driver failure")
+    }
+}
+
+impl std::error::Error for Coded {}
+
+impl sqlx::error::DatabaseError for Coded {
+    fn message(&self) -> &str {
+        "driver failure"
+    }
+
+    fn code(&self) -> Option<std::borrow::Cow<'_, str>> {
+        Some(self.0.into())
+    }
+
+    fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+        self
+    }
+
+    fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+        self
+    }
+
+    fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+        self
+    }
+
+    fn kind(&self) -> sqlx::error::ErrorKind {
+        sqlx::error::ErrorKind::Other
+    }
+}
+
+/// The driver's busy and locked results defer a job whatever their text says.
+#[test]
+fn a_database_the_driver_calls_busy_defers_the_job_by_its_code() {
+    let timed_out = AppError::from(sqlx::Error::PoolTimedOut);
+    let busy_snapshot = AppError::from(sqlx::Error::Database(Box::new(Coded("517"))));
+    let locked = AppError::from(sqlx::Error::Database(Box::new(Coded("6"))));
+    let constraint = AppError::from(sqlx::Error::Database(Box::new(Coded("2067"))));
+    for busy in [timed_out, busy_snapshot, locked] {
+        assert!(
+            matches!(JobFailure::classify(&busy), JobFailure::Defer(_)),
+            "{busy}"
+        );
+    }
+    assert!(
+        matches!(JobFailure::classify(&constraint), JobFailure::Fail { .. }),
+        "{constraint}"
+    );
+}
+
 fn deferral(error: &AppError) -> Deferral {
     let JobFailure::Defer(deferral) = JobFailure::classify(error) else {
         panic!("{error} is waited out, not failed");
