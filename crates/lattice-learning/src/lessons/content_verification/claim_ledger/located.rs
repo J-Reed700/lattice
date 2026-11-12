@@ -3,25 +3,15 @@
 //! hold a whole passage; the review screen and the sync points narrow it
 //! the way the next pass will, so they agree with the pass before it runs.
 
-use super::super::MAX_CLAIM_QUOTE_CHARS;
 use lattice_core::domain::learning::claim_review::ClaimLocation;
 use lattice_core::shared::text::{claim_sentence, sentences};
 
 /// The quote of a claim extracted from `passage`: the sentence `statement`
-/// restates, else the whole passage, cut to what an inventory keeps.
+/// restates, else the whole passage.
 pub(crate) fn claim_quote<'p>(passage: &'p str, statement: &str) -> &'p str {
-    let quote = claim_sentence(passage, (0, passage.len()), statement)
+    claim_sentence(passage, (0, passage.len()), statement)
         .and_then(|(start, end)| passage.get(start..end))
-        .unwrap_or(passage);
-    clip(quote)
-}
-
-/// `text` cut to the longest quote an inventory keeps.
-pub(crate) fn clip(text: &str) -> &str {
-    text.char_indices()
-        .nth(MAX_CLAIM_QUOTE_CHARS)
-        .and_then(|(end, _)| text.get(..end))
-        .unwrap_or(text)
+        .unwrap_or(passage)
 }
 
 /// `location.quote` narrowed to the claim's sentence in `field_text` when the
