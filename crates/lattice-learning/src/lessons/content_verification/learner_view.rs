@@ -1,5 +1,6 @@
 //! The private report owns its public projection. No assessment text is copied
 //! into a learner DTO; malformed data is unavailable, never a checked claim.
+use super::claim_ledger::stands_in_part;
 use super::provenance_gate::FindingTrust;
 use super::resolution::{ended_mark, standing, Placed, Resolution, Standing};
 use super::{ClaimVerdict, Finding, LessonVerificationReport};
@@ -148,6 +149,11 @@ impl LessonVerificationReport {
         versions: &[SavedEvidenceVersion],
         states: &ClaimStates,
     ) -> Result<LearningLessonEvidenceDto> {
+        let blocks = lesson
+            .blocks
+            .iter()
+            .map(serde_json::to_value)
+            .collect::<serde_json::Result<Vec<_>>>()?;
         if self.lesson_id != lesson.id
             || self.policy.is_empty()
             || self.content_sha256.is_empty()
@@ -155,14 +161,9 @@ impl LessonVerificationReport {
             || self.findings.iter().any(|finding| {
                 finding.quote.trim().is_empty()
                     || finding.statement.trim().is_empty()
-                    || lesson.blocks.get(finding.unit).is_some_and(|block| {
-                        !block.body.contains(&finding.quote)
-                            && !block.title.contains(&finding.quote)
-                            && !block.rubric.iter().any(|criterion| {
-                                criterion.title.contains(&finding.quote)
-                                    || criterion.description.contains(&finding.quote)
-                            })
-                    })
+                    || blocks
+                        .get(finding.unit)
+                        .is_some_and(|block| !stands_in_part(block, &finding.quote))
             })
         {
             return Err(unavailable());
