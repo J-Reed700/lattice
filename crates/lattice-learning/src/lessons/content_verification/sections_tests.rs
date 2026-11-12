@@ -1145,3 +1145,88 @@ async fn the_review_after_cuts_with_no_claim_left_asks_for_no_count_the_cuts_spe
         "the whole lesson was asked for again to restore the writer's counts"
     );
 }
+
+/// A model whose window is below any flow repair's prompt.
+struct TinyWindow;
+
+#[async_trait::async_trait]
+impl LLMPort for TinyWindow {
+    async fn complete(
+        &self,
+        _request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        Ok(lattice_core::application::ports::llm_port::CompletionResponse::from_text("{}"))
+    }
+    fn model_name(&self) -> &str {
+        "tiny-window"
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    fn max_context_tokens(&self) -> usize {
+        200
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn a_flow_repair_that_does_not_fit_keeps_the_cut_text() -> Result<()> {
+    let llm = TinyWindow;
+    let mut ledger = ClaimLedger::open(&llm, "{}").await?;
+    let mut lesson = lesson();
+    lesson["blocks"][0]["body"] = json!(AFTER_CUT);
+    standing(&mut ledger, &llm, ("claim", 0), ("Kept claim.", AFTER_CUT)).await?;
+    ledger.cuts.take(
+        0,
+        "First idea".into(),
+        (
+            vec![gap(
+                Some("An intro to the whole idea."),
+                Some("This follows from it."),
+            )],
+            false,
+        ),
+    );
+    let sources = sources();
+    let references = ReferenceCollection::lexical(&sources)?;
+
+    let settled = settle(
+        &llm,
+        ("{}", loose(), 4_000),
+        (&references, &[]),
+        &lesson.to_string(),
+        &mut ledger,
+    )
+    .await;
+
+    assert!(matches!(settled, Ok(Settled::Done)), "{:?}", settled.err());
+    assert!(ledger.cuts.mended[&0].checked);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_flow_repair_whose_edits_do_not_apply_is_asked_again() -> Result<()> {
+    let (_, taken, protected) = mended_section();
+    let absent = json!({"edits":[
+        {"path":"/blocks/0/body","before":"Words the section never had.","after":"Anything."}
+    ]});
+    let applies = json!({"edits":[
+        {"path":"/blocks/0/body","before":"This follows from it.","after":"That follows from the setup."}
+    ]});
+    let llm = model(&[absent, applies]);
+
+    let repaired = mend(&llm, &taken, &protected).await;
+
+    assert_eq!(
+        repaired
+            .ok()
+            .flatten()
+            .map(|section| section["body"].clone()),
+        Some(json!(
+            "An intro to the whole idea. That follows from the setup. Kept claim. Closing note."
+        ))
+    );
+    Ok(())
+}
