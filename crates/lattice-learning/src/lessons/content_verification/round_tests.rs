@@ -104,7 +104,7 @@ struct Call {
 enum Ended {
     Published,
     Held(usize),
-    Stopped(String),
+    Stopped(StopCode),
     /// Each statement that waited, the node it waited at and that node's
     /// step, and whether research reached nothing.
     NoProgress {
@@ -311,7 +311,7 @@ impl Review for ScriptedReview {
     fn decide(&self, policy: &dyn AcceptancePolicy, stopped: &[ClaimId]) -> Decision {
         if !stopped.is_empty() {
             return Decision::Stop(Box::new(StopReason {
-                code: "checker_unreadable".into(),
+                code: StopCode::CheckerUnreadable,
                 message: String::new(),
                 fix: String::new(),
                 at: 0,
@@ -382,12 +382,8 @@ impl Review for ScriptedReview {
         Ok(Settled::Done)
     }
 
-    async fn publish_unverified(
-        &mut self,
-        _policy: &dyn AcceptancePolicy,
-        unsettled: Unsettled,
-    ) -> Result<usize> {
-        self.log("publish_unverified", Vec::new());
+    async fn publish_unsettled(&mut self, unsettled: Unsettled) -> Result<usize> {
+        self.log("publish_unsettled", Vec::new());
         let claims = match unsettled {
             Unsettled::Waiting(claims) | Unsettled::Unreadable(claims) => claims,
             Unsettled::AwaitingUser => {
@@ -503,7 +499,7 @@ fn after_the_mark(review: &ScriptedReview) -> Vec<&'static str> {
     let marked = review
         .calls
         .iter()
-        .position(|call| call.phase == "publish_unverified")
+        .position(|call| call.phase == "publish_unsettled")
         .expect("the round marked statements");
     review.calls[marked + 1..]
         .iter()
@@ -688,7 +684,7 @@ async fn a_claim_the_machine_ended_whose_sentence_stands_is_published_not_verifi
     let standing = || {
         Some((
             StopReason {
-                code: "ended_claim_stands".into(),
+                code: StopCode::EndedClaimStands,
                 message: String::new(),
                 fix: String::new(),
                 at: 0,
