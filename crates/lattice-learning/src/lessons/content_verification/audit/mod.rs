@@ -442,9 +442,10 @@ pub(crate) async fn run(
 /// How a failed batch ends the run (§8.1, §8.3): an outage is deferred,
 /// however often it recurs; any other error is final.
 fn failed(error: AppError, summary: AuditSummary) -> Result<AuditOutcome> {
-    match ErrorClass::of(&error) {
-        ErrorClass::Outage => Ok(AuditOutcome::Deferred { error, summary }),
-        _ => Err(error),
+    if ErrorClass::of(&error).is_temporary() {
+        Ok(AuditOutcome::Deferred { error, summary })
+    } else {
+        Err(error)
     }
 }
 
@@ -522,7 +523,7 @@ impl<'a> Judge<'a> {
                         ];
                         Ok(judged)
                     }
-                    ErrorClass::Outage | ErrorClass::Fault => Err(error),
+                    ErrorClass::Outage | ErrorClass::Unavailable | ErrorClass::Fault => Err(error),
                 },
             }
         })

@@ -637,7 +637,7 @@ fn a_server_that_is_starting_or_unreachable_stays_transient() {
         LLMError::ClientUnavailable("llama-server is still starting".into()),
         LLMError::Network("connection reset".into()),
     ] {
-        assert!(ErrorClass::of(&AppError::from(error)) == ErrorClass::Outage);
+        assert!(ErrorClass::of(&AppError::from(error)).is_temporary());
     }
 }
 

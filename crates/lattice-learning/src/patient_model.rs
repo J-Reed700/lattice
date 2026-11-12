@@ -52,7 +52,7 @@ where
     let mut retries = 0usize;
     loop {
         match attempt(retries).await {
-            Err(error) if ErrorClass::of(&error) == ErrorClass::Outage => {
+            Err(error) if ErrorClass::of(&error).is_temporary() => {
                 let delay = backoff.delay(u32::try_from(retries).unwrap_or(u32::MAX));
                 tracing::warn!(%error, retries, delay_seconds = delay.as_secs(), "The model server is temporarily unavailable; waiting to retry");
                 let until = tokio::time::Instant::now() + delay;

@@ -620,7 +620,7 @@ impl JobRuntime {
         let mut retries = 0;
         loop {
             match write().await {
-                Err(error) if ErrorClass::of(&error) == ErrorClass::Outage => {
+                Err(error) if ErrorClass::of(&error).is_temporary() => {
                     tracing::warn!(job_id = id, retries, %error, "Could not record the end of a job; retrying");
                     let wait = tokio::time::sleep(backoff.delay(retries));
                     if until_cancelled(&shutdown, wait).await.is_none() {
