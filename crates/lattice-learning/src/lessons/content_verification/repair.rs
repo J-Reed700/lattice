@@ -624,6 +624,21 @@ impl Contract for SectionRepair {
     type Input = PromptInput;
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for SectionRepair
+{
+    type Answer = text_edits::Patch;
+
+    fn render(answer: &text_edits::Patch) -> String {
+        serde_json::to_string(answer).unwrap_or_default()
+    }
+
+    fn read(text: &str) -> Result<text_edits::Patch> {
+        text_edits::read_patch(text)
+    }
+}
+
 /// One request's edit of one section, confined to the failed sentences
 /// (`targets`; `protected` must come back byte-identical) and validated
 /// against the lesson schema. Gives the section and the targets whose

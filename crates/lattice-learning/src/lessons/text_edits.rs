@@ -8,6 +8,8 @@ use lattice_core::domain::learning::claim_review::span_of;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::text::same_text;
 use serde::Deserialize;
+#[cfg(any(test, feature = "test-support"))]
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -90,29 +92,41 @@ fn take_back(result: &mut Value, mut uncite: Vec<(String, usize)>) {
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(Serialize, Debug, PartialEq)
+)]
 #[serde(deny_unknown_fields)]
-struct Patch {
+pub(crate) struct Patch {
     #[serde(default)]
-    edits: Vec<Edit>,
+    pub(crate) edits: Vec<Edit>,
     #[serde(default)]
-    citations: Vec<Cite>,
+    pub(crate) citations: Vec<Cite>,
     #[serde(default)]
-    uncite: Vec<Uncite>,
+    pub(crate) uncite: Vec<Uncite>,
 }
 
 /// A citation to take back, as a path alone or with the finding it is for.
 #[derive(Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(Serialize, Debug, PartialEq)
+)]
 #[serde(untagged)]
-enum Uncite {
+pub(crate) enum Uncite {
     Path(String),
     Named(NamedUncite),
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(Serialize, Debug, PartialEq)
+)]
 #[serde(deny_unknown_fields)]
-struct NamedUncite {
-    finding: String,
-    path: String,
+pub(crate) struct NamedUncite {
+    pub(crate) finding: String,
+    pub(crate) path: String,
 }
 
 impl Uncite {
@@ -136,14 +150,18 @@ impl Uncite {
 /// exact span of that excerpt. The quote is checked after the edits, as any
 /// other quotation is.
 #[derive(Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(Serialize, Debug, PartialEq)
+)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Cite {
+pub(crate) struct Cite {
     #[serde(default)]
-    finding: Option<String>,
-    path: String,
-    sentence: String,
-    source_index: Option<u64>,
-    quote: String,
+    pub(crate) finding: Option<String>,
+    pub(crate) path: String,
+    pub(crate) sentence: String,
+    pub(crate) source_index: Option<u64>,
+    pub(crate) quote: String,
 }
 
 /// The fields that teach, of a block and of a question: where a cited
@@ -251,13 +269,17 @@ fn append(lesson: &mut Value, cite: &Cite) -> std::result::Result<(), String> {
     Ok(())
 }
 #[derive(Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(Serialize, Debug, PartialEq)
+)]
 #[serde(deny_unknown_fields)]
-struct Edit {
+pub(crate) struct Edit {
     #[serde(default)]
-    finding: Option<String>,
-    path: String,
-    before: Value,
-    after: Value,
+    pub(crate) finding: Option<String>,
+    pub(crate) path: String,
+    pub(crate) before: Value,
+    pub(crate) after: Value,
 }
 
 /// The part of the input a path belongs to: its block or question, or else
@@ -904,6 +926,11 @@ fn cite_all(
     refused
 }
 
+/// The patch a repair reply holds, before any of it is checked against the input.
+pub(crate) fn read_patch(text: &str) -> Result<Patch> {
+    crate::generation::parse_json(text)
+}
+
 /// Applies a patch whose changes may name the finding they are for. The edits
 /// of one finding to one block or question that has any problem are left out,
 /// and everything else applies. `may_change` says which parts a finding's
@@ -920,7 +947,7 @@ pub(super) fn apply_for(
             "The repair's edits could not be applied: {reason} The draft was preserved."
         ))
     };
-    let patch: Patch = crate::generation::parse_json(patch)?;
+    let patch = read_patch(patch)?;
     if patch.edits.is_empty() && patch.citations.is_empty() && patch.uncite.is_empty() {
         return Err(fail("it gave no edits.".into()));
     }
