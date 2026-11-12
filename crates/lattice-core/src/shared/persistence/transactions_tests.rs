@@ -213,17 +213,14 @@ async fn writers_take_turns_in_the_order_they_asked() {
 
 #[tokio::test]
 async fn readers_go_ahead_while_writers_wait_for_their_turn() {
-    let opened = open_with(
-        SqlitePoolOptions::new()
-            .max_connections(2)
-            .acquire_timeout(HELD),
-        BUSY_TIMEOUT,
-    )
-    .await;
+    let opened = open_with(SqlitePoolOptions::new().max_connections(2), BUSY_TIMEOUT).await;
     let held = opened.db.begin_write().await.unwrap();
     let waiting: Vec<_> = (0..3).map(|_| writer(&opened.db)).collect();
     tokio::task::yield_now().await;
-    let mut read = opened.db.begin_read().await.unwrap();
+    let mut read = tokio::time::timeout(BUSY_TIMEOUT, opened.db.begin_read())
+        .await
+        .expect("the reader waited behind the writers")
+        .unwrap();
     let seen: i64 = sqlx::query_scalar("SELECT count(*) FROM notes")
         .fetch_one(&mut *read)
         .await
