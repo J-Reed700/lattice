@@ -697,9 +697,11 @@ mod loop_bound {
 
     #[tokio::test]
     async fn a_repair_pass_touches_only_the_failed_sentences() -> Result<()> {
+        use super::super::acceptance_switch_tests::{walk, REWRITING};
         use super::super::claim_ledger_tests::{
-            check_findings, identify_findings, only_passage, pass_report, passage_finding,
+            check_findings, identify_findings, only_passage, pass_report, passage_finding, sourced,
         };
+        use lattice_core::domain::learning::claim_review::Class;
         const SOURCE: &str = "Pure water boils at 100 °C at sea level; ice melts at 0 °C.";
         const BOILS: &str = "At sea level, water boils at 100 °C.";
         let lesson = |body: &str| json!({"blocks":[{"kind":"explanation","title":"Boiling","body":body,"rubric":[]}],"questions":[]});
@@ -711,7 +713,7 @@ mod loop_bound {
         let model = Model::new();
         let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
         let before = lesson(&body);
-        let report = pass_report(vec![
+        let report = pass_report(sourced(vec![
             passage_finding(&body, BOILS, true, SOURCE),
             passage_finding(&body, ALSO_VERIFIED, true, SOURCE),
             passage_finding(
@@ -720,9 +722,10 @@ mod loop_bound {
                 false,
                 SOURCE,
             ),
-        ]);
+        ]));
         let ids = identify_findings(&mut ledger, &before, &report).await?;
         check_findings(&mut ledger, &ids, &report.findings).await?;
+        walk(&mut ledger, &ids[2], Class::Sourced, &REWRITING).await?;
         let quotes: Vec<String> = ids
             .iter()
             .map(|id| ledger.entry(id).unwrap().location().quote.clone())
