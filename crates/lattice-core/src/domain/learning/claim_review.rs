@@ -25,7 +25,8 @@ mod tests;
 mod trust;
 
 pub use ledger::{
-    CheckBasis, ClaimActionKind, ClaimLedgerEntry, EventProvenance, LedgerError, RecordedEvent,
+    CheckBasis, ClaimActionKind, ClaimLedgerEntry, EventProvenance, LedgerError, MachineRepair,
+    RecordedEvent,
 };
 pub use rules::{
     cited_source_versions, end_state, identities, new_information, relitigate, reopen_cause,
@@ -88,6 +89,19 @@ impl UnitKind {
         [Self::Block, Self::Question, Self::AnswerKey]
             .into_iter()
             .find(|kind| kind.as_str() == value)
+    }
+
+    /// The kind of unit that field `field` of a section (`section`) or of a
+    /// question belongs to: a question's explanation and choice reasons are
+    /// its answer key.
+    pub fn of(section: bool, field: &str) -> Self {
+        if section {
+            Self::Block
+        } else if field == "explanation" || field.starts_with("rationales/") {
+            Self::AnswerKey
+        } else {
+            Self::Question
+        }
     }
 }
 
@@ -270,6 +284,25 @@ pub struct EvidenceSeen {
     pub text_sha256: String,
 }
 
+impl EvidenceSeen {
+    /// The record of a passage: its version, span and the digest of its text.
+    pub fn of(source_version_id: &str, start_byte: usize, end_byte: usize, text: &str) -> Self {
+        Self {
+            source_version_id: source_version_id.to_owned(),
+            start_byte,
+            end_byte,
+            text_sha256: text_sha256(text),
+        }
+    }
+
+    /// The recorded passage's text in `version_text`; `None` when the span or
+    /// its digest no longer match.
+    pub fn text_in<'t>(&self, version_text: &'t str) -> Option<&'t str> {
+        let text = version_text.get(self.start_byte..self.end_byte)?;
+        (text_sha256(text) == self.text_sha256).then_some(text)
+    }
+}
+
 /// What a check depended on: the policy, the checker model and the passages
 /// compared, in any order. Equal fingerprints mean nothing new to judge.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -367,6 +400,46 @@ pub enum UnverifiedReason {
     Contradicted,
 }
 
+impl UnverifiedReason {
+    /// Why a statement whose last failure is `kind` is published not verified.
+    pub fn of(kind: &VerdictKind) -> Self {
+        match kind {
+            kind if kind.is_contradiction() => Self::Contradicted,
+            VerdictKind::CouldNotJudge => Self::Unchecked,
+            _ => Self::Unsupported,
+        }
+    }
+}
+
+/// A state the Verifier audits (§14.5): a pass by evidence, the user's
+/// confirmation, or general knowledge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditedState {
+    Verified,
+    Confirmed,
+    GeneralKnowledge,
+}
+
+impl AuditedState {
+    /// Whether a Verifier failure of `kind` disputes a claim in this state.
+    pub fn disputed_by(self, kind: &VerdictKind) -> bool {
+        match self {
+            Self::Verified => matches!(
+                kind,
+                VerdictKind::Unsupported
+                    | VerdictKind::Contradicted
+                    | VerdictKind::NoSource
+                    | VerdictKind::CouldNotJudge
+            ),
+            Self::Confirmed => matches!(
+                kind,
+                VerdictKind::Unsupported | VerdictKind::Contradicted | VerdictKind::NoSource
+            ),
+            Self::GeneralKnowledge => *kind == VerdictKind::Contradicted,
+        }
+    }
+}
+
 impl ClaimState {
     /// Unchecked or Open: the machine has work left on this claim.
     pub fn is_machine_owned(&self) -> bool {
@@ -389,10 +462,51 @@ impl ClaimState {
     /// gone. Only [`ClaimEvent::Reopened`], a Verifier dispute or the user
     /// moves it.
     pub fn is_settled(&self) -> bool {
+        matches!(self, Self::Confirmed { .. }) || self.is_gone()
+    }
+
+    /// The claim's sentence is gone from the lesson: removed, or edited away.
+    pub fn is_gone(&self) -> bool {
+        matches!(self, Self::Removed { .. } | Self::Edited { .. })
+    }
+
+    /// Passed by the machine: verified by evidence, found consistent, or
+    /// passed as common knowledge.
+    pub fn is_verified(&self) -> bool {
         matches!(
             self,
-            Self::Confirmed { .. } | Self::Removed { .. } | Self::Edited { .. }
+            Self::ResolvedByEvidence { .. }
+                | Self::Consistent { .. }
+                | Self::GeneralKnowledge { .. }
         )
+    }
+
+    /// The Verifier disputed the claim and the user has not resolved it since.
+    pub fn verifier_disputed(&self) -> bool {
+        matches!(
+            self,
+            Self::Open {
+                kind: VerdictKind::Disputed { .. },
+                ..
+            } | Self::Queued {
+                kind: VerdictKind::Disputed { .. },
+                ..
+            } | Self::Reopened {
+                cause: ReopenCause::VerifierDispute,
+                ..
+            }
+        )
+    }
+
+    /// What the Verifier audits of this state; `None` for every state it does
+    /// not.
+    pub fn audited_state(&self) -> Option<AuditedState> {
+        match self {
+            Self::ResolvedByEvidence { .. } => Some(AuditedState::Verified),
+            Self::Confirmed { .. } => Some(AuditedState::Confirmed),
+            Self::GeneralKnowledge { .. } => Some(AuditedState::GeneralKnowledge),
+            _ => None,
+        }
     }
 
     /// Holds a decision of the user's: settled, or reopened from one. A queued
@@ -530,6 +644,19 @@ pub enum CheckResult {
 }
 
 impl CheckResult {
+    /// The check passed: any result but `Failed`.
+    pub fn passed(&self) -> bool {
+        !matches!(self, Self::Failed { .. })
+    }
+
+    /// The failure a failed check records.
+    pub fn failure(&self) -> Option<&VerdictKind> {
+        match self {
+            Self::Failed { kind } => Some(kind),
+            _ => None,
+        }
+    }
+
     /// The checker gave no answer: its reply could not be read, or the claim
     /// and its passage did not fit its window. Nothing is learned about the
     /// claim, which keeps its text and its attempts (claim classes design
@@ -696,11 +823,94 @@ impl SourceAddedBy {
 /// `stop_reason_json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StopReason {
-    pub code: String,
+    pub code: StopCode,
     pub message: String,
     pub fix: String,
     pub at: i64,
     pub request: Option<RequestFacts>,
+}
+
+/// Why a lesson's preparation stopped: `StopReason::code`, saved as its string.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
+pub enum StopCode {
+    ClaimLeftOut,
+    PolicyChanged,
+    PolicyRecordFault,
+    EndedClaimStands,
+    CheckerUnreadable,
+    NoProgress,
+    SourcesDoNotSupport,
+    VerifierTurnedOff,
+    VerifierUnset,
+    VerifierUnavailable,
+    VerifierConsentMissing,
+    VerifierConsentChanged,
+    /// A code this version no longer writes, kept as it was saved.
+    Retired(String),
+}
+
+impl StopCode {
+    /// Every code this version writes.
+    const KNOWN: [Self; 12] = [
+        Self::ClaimLeftOut,
+        Self::PolicyChanged,
+        Self::PolicyRecordFault,
+        Self::EndedClaimStands,
+        Self::CheckerUnreadable,
+        Self::NoProgress,
+        Self::SourcesDoNotSupport,
+        Self::VerifierTurnedOff,
+        Self::VerifierUnset,
+        Self::VerifierUnavailable,
+        Self::VerifierConsentMissing,
+        Self::VerifierConsentChanged,
+    ];
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::ClaimLeftOut => "claim_left_out",
+            Self::PolicyChanged => "policy_changed",
+            Self::PolicyRecordFault => "policy_record_fault",
+            Self::EndedClaimStands => "ended_claim_stands",
+            Self::CheckerUnreadable => "checker_unreadable",
+            Self::NoProgress => "no_progress",
+            Self::SourcesDoNotSupport => "sources_do_not_support",
+            Self::VerifierTurnedOff => "verifier_turned_off",
+            Self::VerifierUnset => "verifier_unset",
+            Self::VerifierUnavailable => "verifier_unavailable",
+            Self::VerifierConsentMissing => "verifier_consent_missing",
+            Self::VerifierConsentChanged => "verifier_consent_changed",
+            Self::Retired(code) => code,
+        }
+    }
+
+    /// A stop of the Verifier audit, which holds a lesson its checks passed.
+    pub fn is_audit(&self) -> bool {
+        matches!(
+            self,
+            Self::VerifierTurnedOff
+                | Self::VerifierUnset
+                | Self::VerifierUnavailable
+                | Self::VerifierConsentMissing
+                | Self::VerifierConsentChanged
+        )
+    }
+}
+
+impl From<String> for StopCode {
+    fn from(code: String) -> Self {
+        Self::KNOWN
+            .into_iter()
+            .find(|known| known.as_str() == code)
+            .unwrap_or(Self::Retired(code))
+    }
+}
+
+impl From<StopCode> for String {
+    fn from(code: StopCode) -> Self {
+        code.as_str().to_owned()
+    }
 }
 
 /// The numbers that explain a refused or rejected model request.
@@ -868,6 +1078,26 @@ pub enum ClaimEvent {
     /// event that follows: editing the section again takes that back, an
     /// undo of the claim alone does not.
     SectionEdited {},
+    /// The claim stands for the run of the code example `observation`.
+    CodeExample {
+        observation: String,
+    },
+    /// A fault in the machine's handling of the statement; it holds the
+    /// statement back and moves no state.
+    Faulted {
+        stage: FaultStage,
+        message: String,
+    },
+}
+
+/// Where in a statement's handling a fault happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FaultStage {
+    Read,
+    Take,
+    Ask,
+    Record,
 }
 
 impl ClaimEvent {
@@ -895,6 +1125,8 @@ impl ClaimEvent {
             Self::SentenceCut { .. } => "sentence_cut",
             Self::TextRemoved { .. } => "text_removed",
             Self::SectionEdited { .. } => "section_edited",
+            Self::CodeExample { .. } => "code_example",
+            Self::Faulted { .. } => "statement_fault",
         }
     }
 }
