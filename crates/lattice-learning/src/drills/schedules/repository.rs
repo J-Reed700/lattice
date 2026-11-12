@@ -4,6 +4,7 @@
 use crate::persistence::db;
 use crate::recall::schedule::CardSchedule;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 
 /// The columns of a schedule row, after its key.
@@ -59,10 +60,10 @@ pub(super) async fn schedule_in(
     table: &Table,
     key: (&str, &str),
 ) -> Result<Option<CardSchedule>> {
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {SCHEDULE_COLUMNS} FROM {} WHERE ({}) = (?,?)",
         table.name, table.keys
-    ))
+    )))
     .bind(key.0)
     .bind(key.1)
     .fetch_optional(&mut *connection)
@@ -73,17 +74,17 @@ pub(super) async fn schedule_in(
 
 /// Writes a reviewed schedule at `key`, replacing the one there.
 pub(super) async fn write_schedule_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     table: &Table,
     key: (&str, &str),
     memory: &Memory,
     schedule: &CardSchedule,
 ) -> Result<()> {
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO {name}({keys},{SCHEDULE_COLUMNS}) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT({keys}) DO UPDATE SET stability=excluded.stability,difficulty=excluded.difficulty,last_reviewed_at=excluded.last_reviewed_at,due_at=excluded.due_at,interval_days=excluded.interval_days,review_count=excluded.review_count,lapses=excluded.lapses",
         name = table.name,
         keys = table.keys
-    ))
+    )))
     .bind(key.0)
     .bind(key.1)
     .bind(memory.stability)
@@ -93,7 +94,7 @@ pub(super) async fn write_schedule_in(
     .bind(schedule.interval_days)
     .bind(schedule.review_count)
     .bind(schedule.lapses)
-    .execute(&mut *connection)
+    .execute(&mut **tx)
     .await
     .map(drop)
     .map_err(db)
@@ -258,7 +259,7 @@ pub(super) async fn active_source_versions_in(
 /// Records whether the lesson fits `material` (`code` or `passage`), and the basis the decision rests on, replacing an
 /// earlier record; nothing, when the lesson is no longer one of the course's.
 pub(super) async fn record_fit_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     lesson_id: &str,
     material: &str,
@@ -273,7 +274,7 @@ pub(super) async fn record_fit_in(
         .bind(i64::from(fits))
         .bind(basis)
         .bind(now)
-        .execute(&mut *connection)
+        .execute(&mut **tx)
         .await
         .map(drop)
         .map_err(db)

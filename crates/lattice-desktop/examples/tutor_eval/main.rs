@@ -47,7 +47,6 @@ use lattice::features::learning::tutor::{bind_conversation, SetConversationCours
 use lattice::infrastructure::passage_index::EmbedderSource;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::error::AppError;
-use lattice_core::shared::persistence::driver::DriverPool;
 use learner::Turn;
 use parking_lot::Mutex;
 use serde::Deserialize;
@@ -404,8 +403,8 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
 }
 
 async fn run_session(bench: &Bench<'_>, session: &Session) -> Res<(Value, Option<String>)> {
-    let pool = bench.container.database().sqlx_pool();
-    let seeded = course::seed(pool, bench.course).await?;
+    let db = bench.container.database();
+    let seeded = course::seed(db, bench.course).await?;
     let mode = bench
         .courses
         .ensure_current(&seeded.program_id, &CancellationToken::new(), &mut Quiet)
@@ -432,7 +431,7 @@ async fn run_session(bench: &Bench<'_>, session: &Session) -> Res<(Value, Option
     )
     .await?;
 
-    let course_before = course::read_back(pool, &seeded).await?;
+    let course_before = course::read_back(db, &seeded).await?;
     let mut turns = Vec::new();
     let mut session_error = None;
     let mut tutor_said = String::new();
@@ -460,10 +459,7 @@ async fn run_session(bench: &Bench<'_>, session: &Session) -> Res<(Value, Option
         let mut row = row;
         if let Some(row) = row.as_object_mut() {
             row.insert("played".into(), json!(played));
-            row.insert(
-                "course_after".into(),
-                course::read_back(pool, &seeded).await?,
-            );
+            row.insert("course_after".into(), course::read_back(db, &seeded).await?);
         }
         turns.push(row);
         if let Some(response) = response {

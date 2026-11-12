@@ -6,10 +6,8 @@ use chrono::Utc;
 use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
 use lattice_core::domain::value_objects::ContextualizedChunk;
 use lattice_core::shared::fs::path::path_to_string;
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, WriteTx};
 use serde::Deserialize;
-use sqlx::SqliteConnection;
 use std::path::Path;
 use uuid::Uuid;
 
@@ -139,7 +137,7 @@ pub async fn read_document_facts(path: &Path) -> Result<DocumentFacts> {
 /// `RETURNING id` closes that gap: children are always bound to the surviving
 /// row.
 async fn insert_document_metadata(
-    tx: &mut SqliteConnection,
+    tx: &mut WriteTx,
     doc_id: &str,
     facts: &DocumentFacts,
     mime_type: &str,
@@ -172,7 +170,7 @@ async fn insert_document_metadata(
     .bind(&facts.modified_at_str)
     .bind(&indexed_at)
     .bind(&facts.checksum)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
 
     if actual_id != doc_id {
@@ -189,14 +187,14 @@ async fn insert_document_metadata(
 
 /// Helper to insert chunks and embeddings.
 async fn insert_chunks_and_embeddings(
-    tx: &mut SqliteConnection,
+    tx: &mut WriteTx,
     doc_id: &str,
     chunks: &[ContextualizedChunk],
     embeddings: &[Vec<f32>],
 ) -> Result<()> {
     sqlx::query("DELETE FROM text_chunks WHERE document_id = ?")
         .bind(doc_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
     for (idx, chunk) in chunks.iter().enumerate() {
@@ -219,7 +217,7 @@ async fn insert_chunks_and_embeddings(
         .bind(idx as i32)
         .bind(chunk.start_idx as i32)
         .bind(chunk.end_idx as i32)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
         let embedding = embeddings.get(idx).ok_or_else(|| {
@@ -248,7 +246,7 @@ async fn insert_chunks_and_embeddings(
             DEFAULT_EMBEDDING_MODEL_NAME,
             dimension,
         )
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     }
 
@@ -257,13 +255,12 @@ async fn insert_chunks_and_embeddings(
 
 /// Store document with contextualized chunks.
 pub async fn store_document_with_context(
-    pool: &impl DriverPool,
+    db: &Database,
     path: &Path,
     mime_type: &str,
     chunks: Vec<ContextualizedChunk>,
     embeddings: Vec<Vec<f32>>,
 ) -> Result<String> {
-    let pool = pool.sqlx_pool();
     if chunks.len() != embeddings.len() {
         return Err(IndexingError::InvalidConfig(format!(
             "Chunks and embeddings must have same length: {} chunks vs {} embeddings",
@@ -273,7 +270,7 @@ pub async fn store_document_with_context(
     }
 
     let facts = read_document_facts(path).await?;
-    let mut tx = pool.begin_write().await?;
+    let mut tx = db.begin_write().await?;
     let doc_id = Uuid::new_v4().to_string();
 
     let doc_id = insert_document_metadata(&mut tx, &doc_id, &facts, mime_type).await?;
@@ -286,14 +283,13 @@ pub async fn store_document_with_context(
 
 /// Store document with context and file ID.
 pub async fn store_document_with_context_and_file(
-    pool: &impl DriverPool,
+    db: &Database,
     path: &Path,
     _file_id: &str,
     mime_type: &str,
     chunks: Vec<ContextualizedChunk>,
     embeddings: Vec<Vec<f32>>,
 ) -> Result<String> {
-    let pool = pool.sqlx_pool();
     if chunks.len() != embeddings.len() {
         return Err(IndexingError::InvalidConfig(format!(
             "Chunks and embeddings must have same length: {} chunks vs {} embeddings",
@@ -303,7 +299,7 @@ pub async fn store_document_with_context_and_file(
     }
 
     let facts = read_document_facts(path).await?;
-    let mut tx = pool.begin_write().await?;
+    let mut tx = db.begin_write().await?;
     let doc_id = Uuid::new_v4().to_string();
 
     let doc_id = insert_document_metadata(&mut tx, &doc_id, &facts, mime_type).await?;
@@ -316,7 +312,7 @@ pub async fn store_document_with_context_and_file(
 
 /// Store document with context using external transaction.
 pub async fn store_document_with_context_and_file_tx(
-    tx: &mut SqliteConnection,
+    tx: &mut WriteTx,
     facts: &DocumentFacts,
     _file_id: &str,
     mime_type: &str,
@@ -380,7 +376,7 @@ mod tests {
     }
 
     async fn count(pool: &SqlitePool, sql: &str) -> i64 {
-        sqlx::query_scalar::<_, i64>(sql)
+        sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql))
             .fetch_one(pool)
             .await
             .expect("count query")
@@ -391,12 +387,13 @@ mod tests {
     #[tokio::test]
     async fn reindexing_a_modified_file_replaces_its_chunks() {
         let pool = setup_pool().await;
+        let db = Database::new(pool.clone());
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("note.md");
 
         std::fs::write(&path, "first version").expect("write file");
         let first_id = store_document_with_context(
-            &pool,
+            &db,
             &path,
             "text/markdown",
             vec![chunk("first version", 0)],
@@ -411,7 +408,7 @@ mod tests {
         // Modify and re-index the same path.
         std::fs::write(&path, "second version, longer").expect("rewrite file");
         let second_id = store_document_with_context(
-            &pool,
+            &db,
             &path,
             "text/markdown",
             vec![chunk("second version, longer", 0), chunk("extra chunk", 1)],
@@ -460,12 +457,13 @@ mod tests {
     #[tokio::test]
     async fn reindexing_rewrites_embeddings_in_the_canonical_encoding() {
         let pool = setup_pool().await;
+        let db = Database::new(pool.clone());
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("note.md");
 
         std::fs::write(&path, "v1").expect("write file");
         store_document_with_context(
-            &pool,
+            &db,
             &path,
             "text/markdown",
             vec![chunk("v1", 0)],
@@ -476,7 +474,7 @@ mod tests {
 
         std::fs::write(&path, "v2").expect("rewrite file");
         store_document_with_context(
-            &pool,
+            &db,
             &path,
             "text/markdown",
             vec![chunk("v2", 0)],

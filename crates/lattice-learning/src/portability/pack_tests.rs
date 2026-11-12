@@ -32,8 +32,8 @@ pub(super) fn id() -> String {
 
 /// A repository whose app data directory is `dir`, with packs in its
 /// `learning-packs` folder, as the plugin builds it.
-pub(super) fn packs(pool: &sqlx::SqlitePool, dir: &std::path::Path) -> LearningPackRepository {
-    LearningPackRepository::new(pool.clone(), dir.join("learning-packs"), dir.to_path_buf())
+pub(super) fn packs(db: &Database, dir: &std::path::Path) -> LearningPackRepository {
+    LearningPackRepository::new(db.clone(), dir.join("learning-packs"), dir.to_path_buf())
 }
 
 /// The move defaults: evidence and practical work, no full source bodies.
@@ -196,11 +196,10 @@ async fn export_copy(
 #[tokio::test]
 async fn create_copy_preserves_tombstones_versions_selectors_and_curriculum_links() -> Result<()> {
     let pool = pool().await?;
+    let db = Database::new(pool.clone());
     let mut program = fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
-    LearningRepository::new(pool.clone())
-        .create(&program)
-        .await?;
+    LearningRepository::new(db.clone()).create(&program).await?;
     let lesson_id = program.modules[0].lessons[0].id.clone();
     let replacement_id = program.modules[0].lessons[1].id.clone();
     sqlx::query("UPDATE learning_lessons SET curriculum_state='replaced',replacement_lesson_id=? WHERE program_id=? AND id=?")
@@ -211,7 +210,7 @@ async fn create_copy_preserves_tombstones_versions_selectors_and_curriculum_link
         .await
         .expect("lesson state set");
 
-    let sources = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let sources = LearningSourceLibraryRepository::new(db.clone());
     let source_id = id();
     let first_version_id = id();
     sources
@@ -240,7 +239,7 @@ async fn create_copy_preserves_tombstones_versions_selectors_and_curriculum_link
         .find("quoted rule")
         .expect("test quote offset");
     let selector_id = id();
-    LearningRecallRepository::new(pool.clone())
+    LearningRecallRepository::new(db.clone())
         .create_selector(&CreateLearningSourceSelectorRequestDto {
             operation_id: id(),
             selector_id: selector_id.clone(),
@@ -275,7 +274,7 @@ async fn create_copy_preserves_tombstones_versions_selectors_and_curriculum_link
 
     let workspace = tempfile::tempdir().expect("pack workspace");
     let packs = LearningPackRepository::new(
-        pool.clone(),
+        db.clone(),
         workspace.path().join("learning-packs"),
         workspace.path().to_path_buf(),
     );
@@ -368,9 +367,10 @@ async fn create_copy_preserves_tombstones_versions_selectors_and_curriculum_link
             .fetch_one(&pool)
             .await?;
     let elsewhere = self::pool().await?;
+    let elsewhere_db = Database::new(elsewhere.clone());
     let elsewhere_dir = tempfile::tempdir()?;
     r#move::import(
-        &self::packs(&elsewhere, elsewhere_dir.path()),
+        &self::packs(&elsewhere_db, elsewhere_dir.path()),
         &pack_path,
         LearningPackConflictPolicy::MergeSafe,
     )
@@ -388,10 +388,9 @@ async fn create_copy_preserves_tombstones_versions_selectors_and_curriculum_link
 async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_history() -> Result<()>
 {
     let pool = pool().await?;
+    let db = Database::new(pool.clone());
     let program = fixture();
-    LearningRepository::new(pool.clone())
-        .create(&program)
-        .await?;
+    LearningRepository::new(db.clone()).create(&program).await?;
     let program_id = &program.summary.id;
     let lesson_id = &program.modules[0].lessons[0].id;
     let module_id = &program.modules[0].id;
@@ -625,7 +624,7 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
 
     let workspace = tempfile::tempdir().expect("pack workspace");
     let packs = LearningPackRepository::new(
-        pool.clone(),
+        db.clone(),
         workspace.path().join("learning-packs"),
         workspace.path().to_path_buf(),
     );
@@ -713,7 +712,7 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
         .expect("copied review identifier");
     assert_ne!(copied_review_id, review_id);
 
-    let activities = crate::practical_repository::LearningPracticalRepository::new(pool.clone())
+    let activities = crate::practical_repository::LearningPracticalRepository::new(db.clone())
         .workspace(&copy_id)
         .await?
         .with_capabilities(Vec::new(), Vec::new());
@@ -790,10 +789,9 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
 #[tokio::test]
 async fn an_outcome_longer_than_an_import_once_allowed_round_trips() -> Result<()> {
     let pool = pool().await?;
+    let db = Database::new(pool.clone());
     let program = fixture();
-    LearningRepository::new(pool.clone())
-        .create(&program)
-        .await?;
+    LearningRepository::new(db.clone()).create(&program).await?;
     let program_id = &program.summary.id;
     let sentence =
         "Reason from the stated evidence to a conclusion and name what would change it. ";
@@ -812,7 +810,7 @@ async fn an_outcome_longer_than_an_import_once_allowed_round_trips() -> Result<(
 
     let workspace = tempfile::tempdir().expect("pack workspace");
     let packs = LearningPackRepository::new(
-        pool.clone(),
+        db.clone(),
         workspace.path().join("learning-packs"),
         workspace.path().to_path_buf(),
     );
@@ -832,11 +830,10 @@ async fn an_outcome_longer_than_an_import_once_allowed_round_trips() -> Result<(
 #[tokio::test]
 async fn a_canvas_the_app_may_save_round_trips_through_a_pack() -> Result<()> {
     let pool = pool().await?;
+    let db = Database::new(pool.clone());
     let mut program = fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
-    LearningRepository::new(pool.clone())
-        .create(&program)
-        .await?;
+    LearningRepository::new(db.clone()).create(&program).await?;
     let program_id = &program.summary.id;
     let scene = serde_json::json!({
         "type": "excalidraw",
@@ -847,7 +844,7 @@ async fn a_canvas_the_app_may_save_round_trips_through_a_pack() -> Result<()> {
     });
     let checked = crate::canvas_repository::validate_scene(&scene)?;
     assert!(checked.json.len() > 2_000_000, "past the old import bound");
-    crate::canvas_repository::LearningCanvasRepository::new(pool.clone())
+    crate::canvas_repository::LearningCanvasRepository::new(db.clone())
         .create(
             &crate::dto::CreateLearningCanvasRequestDto {
                 operation_id: id(),
@@ -864,7 +861,7 @@ async fn a_canvas_the_app_may_save_round_trips_through_a_pack() -> Result<()> {
 
     let workspace = tempfile::tempdir().expect("pack workspace");
     let packs = LearningPackRepository::new(
-        pool.clone(),
+        db.clone(),
         workspace.path().join("learning-packs"),
         workspace.path().to_path_buf(),
     );
@@ -882,17 +879,16 @@ async fn a_canvas_the_app_may_save_round_trips_through_a_pack() -> Result<()> {
 #[tokio::test]
 async fn a_source_body_past_a_million_bytes_round_trips_through_a_pack() -> Result<()> {
     let pool = pool().await?;
+    let db = Database::new(pool.clone());
     let mut program = fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
-    LearningRepository::new(pool.clone())
-        .create(&program)
-        .await?;
+    LearningRepository::new(db.clone()).create(&program).await?;
     let program_id = &program.summary.id;
     let body = "A long source states one more fact in every sentence it has. ".repeat(20_000);
     let body = body.trim();
     assert!(body.len() > 1_000_000, "past the old import bound");
     let url = "https://example.org/a-long-source";
-    LearningSourceLibraryRepository::new(Database::from(pool.clone()))
+    LearningSourceLibraryRepository::new(db.clone())
         .add_by(
             crate::source_library::NewLearningSource {
                 operation_id: &id(),
@@ -913,7 +909,7 @@ async fn a_source_body_past_a_million_bytes_round_trips_through_a_pack() -> Resu
 
     let workspace = tempfile::tempdir().expect("pack workspace");
     let packs = LearningPackRepository::new(
-        pool.clone(),
+        db.clone(),
         workspace.path().join("learning-packs"),
         workspace.path().to_path_buf(),
     );

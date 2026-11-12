@@ -240,29 +240,24 @@ async fn a_statement_at_the_retry_of_a_rewrite_is_told_why_its_first_correction_
 async fn the_repair_history_does_not_carry_a_statement_that_waits_at_a_node_that_is_no_repair(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     let body = section(&format!("{REWRITING_SENTENCE} {WAITING_SENTENCE}"));
     let raw = lesson_of(&body).to_string();
     // One statement stands at `s.rewrite`; the other failed and waits at
     // `s.research`.
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async {
-            lesson_drafts::resume(INPUT.into()).await?;
-            lesson_drafts::save(&raw).await?;
-            let mut ledger = open().await?;
-            let rewriting = (REWRITING_SENTENCE, REWRITING_SENTENCE);
-            let id = claim(&mut ledger, "rewriting", rewriting, &body, SOURCED).await?;
-            walk(&mut ledger, &id, Class::Sourced, &AT_REWRITE).await?;
-            let waiting = (WAITING_SENTENCE, WAITING_SENTENCE);
-            let id = claim(&mut ledger, "waiting", waiting, &body, SOURCED).await?;
-            walk(&mut ledger, &id, Class::Sourced, &RESEARCHING).await?;
-            Ok(())
-        },
-    )
+    lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        lesson_drafts::resume(INPUT.into()).await?;
+        lesson_drafts::save(&raw).await?;
+        let mut ledger = open().await?;
+        let rewriting = (REWRITING_SENTENCE, REWRITING_SENTENCE);
+        let id = claim(&mut ledger, "rewriting", rewriting, &body, SOURCED).await?;
+        walk(&mut ledger, &id, Class::Sourced, &AT_REWRITE).await?;
+        let waiting = (WAITING_SENTENCE, WAITING_SENTENCE);
+        let id = claim(&mut ledger, "waiting", waiting, &body, SOURCED).await?;
+        walk(&mut ledger, &id, Class::Sourced, &RESEARCHING).await?;
+        Ok(())
+    })
     .await?;
     let program_id = repo.job(&job).await?.program_id;
     let model = Stopping::new(&[REWRITING_SENTENCE, WAITING_SENTENCE]);
@@ -270,19 +265,11 @@ async fn the_repair_history_does_not_carry_a_statement_that_waits_at_a_node_that
     // Research reaches nothing, so the second statement stays where it is,
     // and the first is repaired.
     let ended = research::run(
-        Database::from(pool.clone()),
+        db.clone(),
         program_id,
         "Research methods".into(),
         Some(research::tests::web(false)),
-        prepare(
-            &Database::from(pool.clone()),
-            &repo,
-            &job,
-            &lesson_id,
-            &model,
-            Some(raw),
-            &[source()],
-        ),
+        prepare(&db, &repo, &job, &lesson_id, &model, Some(raw), &[source()]),
     )
     .await
     .err()
@@ -317,7 +304,9 @@ async fn a_verification_repair_is_told_the_shape_the_lesson_is_kept_with() -> Re
     );
     let words: Vec<&str> = lines.iter().filter_map(Value::as_str).collect();
     assert!(
-        words.join("\n").contains("at least one question."),
+        words
+            .join("\n")
+            .contains("at least one question of each kind"),
         "{words:?}"
     );
     Ok(())

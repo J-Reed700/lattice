@@ -38,7 +38,7 @@ async fn memory_pool() -> SqlitePool {
 
 async fn exec(pool: &SqlitePool, statements: &[&str]) {
     for statement in statements {
-        sqlx::query(statement)
+        sqlx::query(sqlx::AssertSqlSafe(*statement))
             .execute(pool)
             .await
             .unwrap_or_else(|e| panic!("{statement}: {e}"));
@@ -46,11 +46,14 @@ async fn exec(pool: &SqlitePool, statements: &[&str]) {
 }
 
 async fn refused(pool: &SqlitePool, statement: &str) -> bool {
-    sqlx::query(statement).execute(pool).await.is_err()
+    sqlx::query(sqlx::AssertSqlSafe(statement))
+        .execute(pool)
+        .await
+        .is_err()
 }
 
 async fn count(pool: &SqlitePool, table: &str) -> i64 {
-    sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))
         .fetch_one(pool)
         .await
         .unwrap()
@@ -269,12 +272,14 @@ async fn the_migration_keeps_a_populated_database_and_its_rows_go_with_their_par
     let migrator = migrator();
     {
         let mut conn = pool.acquire().await.unwrap();
-        conn.ensure_migrations_table().await.unwrap();
+        conn.ensure_migrations_table("_sqlx_migrations")
+            .await
+            .unwrap();
         for migration in migrator
             .iter()
             .filter(|m| m.version < SOURCE_TRUST && !m.migration_type.is_down_migration())
         {
-            conn.apply(migration).await.unwrap();
+            conn.apply("_sqlx_migrations", migration).await.unwrap();
         }
     }
     exec(&pool, COURSE).await;

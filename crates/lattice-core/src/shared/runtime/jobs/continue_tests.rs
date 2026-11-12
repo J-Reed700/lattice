@@ -3,6 +3,7 @@
 //! failed, interrupted or cancelled jobs.
 use super::*;
 use crate::shared::error::{AppError, Result};
+use crate::shared::persistence::Database;
 use serde_json::json;
 
 async fn pool() -> sqlx::SqlitePool {
@@ -19,13 +20,13 @@ async fn pool() -> sqlx::SqlitePool {
 }
 
 async fn continued(
-    pool: &sqlx::SqlitePool,
+    db: &Database,
     id: &str,
     operation: &str,
     requested: &serde_json::Value,
     total: u32,
 ) -> Result<Admitted> {
-    let mut tx = pool.begin().await.unwrap();
+    let mut tx = db.begin_write().await.unwrap();
     let admitted =
         JobStore::continue_in(&mut tx, id, operation, "Resume queued", requested, total).await?;
     tx.commit().await.unwrap();
@@ -34,8 +35,8 @@ async fn continued(
 
 #[tokio::test]
 async fn a_completed_job_continues_with_its_saved_work_for_what_is_left() -> Result<()> {
-    let pool = pool().await;
-    let store = JobStore::new(pool.clone());
+    let db = Database::new(pool().await);
+    let store = JobStore::new(db.clone());
     let first = store
         .submit(&NewJob {
             kind: "test.work".into(),
@@ -50,7 +51,7 @@ async fn a_completed_job_continues_with_its_saved_work_for_what_is_left() -> Res
         .id;
     let left = json!({"targets": ["b"]});
     assert!(matches!(
-        continued(&pool, &first, "too-early", &left, 1).await,
+        continued(&db, &first, "too-early", &left, 1).await,
         Err(AppError::InvalidState(_))
     ));
     assert!(store.claim(&first).await?.is_some());
@@ -71,7 +72,7 @@ async fn a_completed_job_continues_with_its_saved_work_for_what_is_left() -> Res
         Err(AppError::InvalidState(_))
     ));
 
-    let next = continued(&pool, &first, "resume-1", &left, 1).await?;
+    let next = continued(&db, &first, "resume-1", &left, 1).await?;
     assert!(next.created);
     let child = store.get(&next.id).await?;
     assert_eq!(child.retry_of_job_id.as_deref(), Some(first.as_str()));
@@ -86,7 +87,7 @@ async fn a_completed_job_continues_with_its_saved_work_for_what_is_left() -> Res
         Some(json!({"done": 1}))
     );
     // One live attempt per job: replaying or continuing again returns it.
-    let again = continued(&pool, &first, "resume-2", &left, 1).await?;
+    let again = continued(&db, &first, "resume-2", &left, 1).await?;
     assert_eq!(
         (again.id.as_str(), again.created),
         (next.id.as_str(), false)

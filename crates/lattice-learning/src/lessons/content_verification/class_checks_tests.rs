@@ -544,7 +544,8 @@ async fn a_class_a_later_pass_gives_a_held_statement_is_recorded_only_when_it_pr
 async fn a_rewritten_statement_is_checked_as_its_parent_was_and_the_calls_are_the_plans(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     // Sorted again, the rewrite would be Common and meet no consistency check.
     let model = Classes::new(&[REASONED, REWRITTEN])
         .classed(&[(REASONED, "reasoning"), (REWRITTEN, "common")])
@@ -552,7 +553,7 @@ async fn a_rewritten_statement_is_checked_as_its_parent_was_and_the_calls_are_th
         .rewrites(REASONED, REWRITTEN);
 
     let (prepared, trace) = crate::lesson_progress::traced(prepare(
-        &Database::from(pool.clone()),
+        &db,
         &repo,
         &job,
         &lesson_id,
@@ -574,7 +575,7 @@ async fn a_rewritten_statement_is_checked_as_its_parent_was_and_the_calls_are_th
     assert_eq!(model.calls("repair"), 1);
     assert_eq!(model.calls("consistency"), 2);
     assert_eq!(model.calls("knowledge"), 3);
-    let ledger = ClaimReviewRepository::new(pool.clone())
+    let ledger = ClaimReviewRepository::new(db.clone())
         .load(&lesson_id)
         .await?;
     let [claim] = ledger.claims.as_slice() else {
@@ -603,55 +604,50 @@ async fn a_rewritten_statement_is_checked_as_its_parent_was_and_the_calls_are_th
 #[tokio::test]
 async fn a_judgment_is_asked_once_and_a_resumed_pass_restores_it() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     let model = Classes::new(&[COMMON, REASONED, GOOD])
         .classed(&[(COMMON, "common"), (REASONED, "reasoning")]);
     let body = format!("{COMMON} {REASONED} {GOOD}");
     let sources = [source()];
 
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async {
-            lesson_drafts::resume("class-fixture".into()).await?;
-            verify_and_repair(
-                &model,
-                "{}",
-                &json!({}),
-                lesson(&body).to_string(),
-                &sources,
-                3000,
-            )
-            .await?;
-            let asked = (
+    lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        lesson_drafts::resume("class-fixture".into()).await?;
+        verify_and_repair(
+            &model,
+            "{}",
+            &json!({}),
+            lesson(&body).to_string(),
+            &sources,
+            3000,
+        )
+        .await?;
+        let asked = (
+            model.calls("sort"),
+            model.calls("consistency"),
+            model.calls("knowledge"),
+        );
+        assert_eq!(asked, (1, 1, 6));
+        verify_and_repair(
+            &model,
+            "{}",
+            &json!({}),
+            lesson(&body).to_string(),
+            &sources,
+            3000,
+        )
+        .await?;
+        assert_eq!(
+            (
                 model.calls("sort"),
                 model.calls("consistency"),
                 model.calls("knowledge"),
-            );
-            assert_eq!(asked, (1, 1, 6));
-            verify_and_repair(
-                &model,
-                "{}",
-                &json!({}),
-                lesson(&body).to_string(),
-                &sources,
-                3000,
-            )
-            .await?;
-            assert_eq!(
-                (
-                    model.calls("sort"),
-                    model.calls("consistency"),
-                    model.calls("knowledge"),
-                ),
-                asked,
-                "the sorting and both judges are receipts"
-            );
-            Ok(())
-        },
-    )
+            ),
+            asked,
+            "the sorting and both judges are receipts"
+        );
+        Ok(())
+    })
     .await
 }
 
@@ -794,7 +790,8 @@ async fn a_cited_sentence_whose_every_part_is_common_stays_loses_its_own_citatio
 ) -> Result<()> {
     // §1 #1 of the acceptance policy design
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     let model = Reads::new(
         Classes::new(&[COMMON, REWORDED, GOOD])
             .knows(&[(COMMON, ["true_common"; 3])])
@@ -804,7 +801,7 @@ async fn a_cited_sentence_whose_every_part_is_common_stays_loses_its_own_citatio
     .finds_unstated(&[COMMON]);
 
     let (raw, _) = prepare(
-        &Database::from(pool.clone()),
+        &db,
         &repo,
         &job,
         &lesson_id,
@@ -830,7 +827,7 @@ async fn a_cited_sentence_whose_every_part_is_common_stays_loses_its_own_citatio
         "the sentence loses its own citation entry: {}",
         block["citations"]
     );
-    let ledger = ClaimReviewRepository::new(pool.clone())
+    let ledger = ClaimReviewRepository::new(db.clone())
         .load(&lesson_id)
         .await?;
     let claim = ledger
@@ -853,7 +850,8 @@ async fn a_cited_sentence_whose_every_part_is_common_stays_loses_its_own_citatio
 async fn a_sourced_statement_the_passages_do_not_state_but_every_sample_confirms_is_general_knowledge_and_never_rewritten(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     let model = Reads::new(
         Classes::new(&[COMMON, REWORDED, GOOD])
             .knows(&[(COMMON, ["true_common"; 3])])
@@ -863,7 +861,7 @@ async fn a_sourced_statement_the_passages_do_not_state_but_every_sample_confirms
     .finds_unstated(&[COMMON]);
 
     let (raw, _) = prepare(
-        &Database::from(pool.clone()),
+        &db,
         &repo,
         &job,
         &lesson_id,
@@ -876,7 +874,7 @@ async fn a_sourced_statement_the_passages_do_not_state_but_every_sample_confirms
     assert_eq!(model.inner.calls("repair"), 0);
     let written: Value = serde_json::from_str(&raw)?;
     assert_eq!(written["blocks"][0]["body"], section(COMMON));
-    let ledger = ClaimReviewRepository::new(pool.clone())
+    let ledger = ClaimReviewRepository::new(db.clone())
         .load(&lesson_id)
         .await?;
     let claim = ledger
@@ -899,7 +897,8 @@ async fn a_common_statement_every_sample_calls_false_stays_and_passes_when_its_s
 ) -> Result<()> {
     // §1 #5 of the acceptance policy design
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     let model = Reads::new(
         Classes::new(&[SKIPPED, GOOD])
             .classed(&[(SKIPPED, "common")])
@@ -908,7 +907,7 @@ async fn a_common_statement_every_sample_calls_false_stays_and_passes_when_its_s
     );
 
     let (raw, _) = prepare(
-        &Database::from(pool.clone()),
+        &db,
         &repo,
         &job,
         &lesson_id,
@@ -926,7 +925,7 @@ async fn a_common_statement_every_sample_calls_false_stays_and_passes_when_its_s
         "the statement stays in the lesson, but its section now reads: {}",
         written["blocks"][0]["body"]
     );
-    let ledger = ClaimReviewRepository::new(pool.clone())
+    let ledger = ClaimReviewRepository::new(db.clone())
         .load(&lesson_id)
         .await?;
     let claim = ledger
@@ -949,7 +948,8 @@ async fn a_consistent_statement_every_sample_calls_false_stays_and_passes_when_i
 ) -> Result<()> {
     // §1 #4 of the acceptance policy design
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     let model = Reads::new(
         Classes::new(&[REASONED, REWRITTEN, GOOD])
             .classed(&[(REASONED, "reasoning")])
@@ -960,7 +960,7 @@ async fn a_consistent_statement_every_sample_calls_false_stays_and_passes_when_i
     .finds_unstated(&[REASONED]);
 
     let (raw, _) = prepare(
-        &Database::from(pool.clone()),
+        &db,
         &repo,
         &job,
         &lesson_id,
@@ -978,7 +978,7 @@ async fn a_consistent_statement_every_sample_calls_false_stays_and_passes_when_i
         "the statement stays in the lesson, but its section now reads: {}",
         written["blocks"][0]["body"]
     );
-    let ledger = ClaimReviewRepository::new(pool.clone())
+    let ledger = ClaimReviewRepository::new(db.clone())
         .load(&lesson_id)
         .await?;
     let claim = ledger
@@ -1292,68 +1292,63 @@ async fn a_statement_a_repair_wrote_keeps_its_parents_class_with_no_sort_and_is_
 async fn the_class_a_rewrite_took_is_kept_by_a_resumed_pass_after_the_repairs_record_is_gone(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     // Sorted again, the rewrite would be Common.
     let model = Classes::new(&[]).classed(&[(REWRITTEN, "common")]);
     let policy = StandardPolicy::new();
 
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async {
-            lesson_drafts::resume("class-fixture".into()).await?;
-            let mut ledger = open().await?;
-            let parent = claim(
-                &mut ledger,
-                "parent",
-                (REASONED, REASONED),
-                REASONED,
-                (Class::Reasoning, ClassifiedBy::Model),
-            )
+    lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        lesson_drafts::resume("class-fixture".into()).await?;
+        let mut ledger = open().await?;
+        let parent = claim(
+            &mut ledger,
+            "parent",
+            (REASONED, REASONED),
+            REASONED,
+            (Class::Reasoning, ClassifiedBy::Model),
+        )
+        .await?;
+        walk(
+            &mut ledger,
+            &parent,
+            Class::Reasoning,
+            &[(CONSISTENCY, Outcome::Refuted)],
+        )
+        .await?;
+        ledger
+            .begin_repairs(&policy, &lesson(REASONED), std::slice::from_ref(&parent))
             .await?;
-            walk(
-                &mut ledger,
-                &parent,
-                Class::Reasoning,
-                &[(CONSISTENCY, Outcome::Refuted)],
-            )
-            .await?;
-            ledger
-                .begin_repairs(&policy, &lesson(REASONED), std::slice::from_ref(&parent))
-                .await?;
-            let first = identified(
-                &mut ledger,
-                &model,
-                &lesson(REWRITTEN),
-                &[(REWRITTEN, REWRITTEN)],
-                &[],
-            )
-            .await?;
-            assert_eq!(first.statements[0].id, parent);
+        let first = identified(
+            &mut ledger,
+            &model,
+            &lesson(REWRITTEN),
+            &[(REWRITTEN, REWRITTEN)],
+            &[],
+        )
+        .await?;
+        assert_eq!(first.statements[0].id, parent);
 
-            // After a restart the repair's record is gone.
-            let mut resumed = open().await?;
-            assert!(resumed.pending.repairs.is_empty());
-            let again = identified(
-                &mut resumed,
-                &model,
-                &lesson(REWRITTEN),
-                &[(REWRITTEN, REWRITTEN)],
-                &[],
-            )
-            .await?;
+        // After a restart the repair's record is gone.
+        let mut resumed = open().await?;
+        assert!(resumed.pending.repairs.is_empty());
+        let again = identified(
+            &mut resumed,
+            &model,
+            &lesson(REWRITTEN),
+            &[(REWRITTEN, REWRITTEN)],
+            &[],
+        )
+        .await?;
 
-            assert_eq!(again.statements[0].id, parent);
-            assert_eq!(
-                resumed.entry(&parent).unwrap().classified(),
-                Some((Class::Reasoning, ClassifiedBy::Model))
-            );
-            assert_eq!(model.calls("sort"), 0);
-            Ok(())
-        },
-    )
+        assert_eq!(again.statements[0].id, parent);
+        assert_eq!(
+            resumed.entry(&parent).unwrap().classified(),
+            Some((Class::Reasoning, ClassifiedBy::Model))
+        );
+        assert_eq!(model.calls("sort"), 0);
+        Ok(())
+    })
     .await
 }
 
@@ -1361,7 +1356,8 @@ async fn the_class_a_rewrite_took_is_kept_by_a_resumed_pass_after_the_repairs_re
 async fn a_resumed_pass_whose_readings_are_all_restored_counts_each_statement_reused() -> Result<()>
 {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     let model = Classes::new(&[COMMON, REASONED, GOOD])
         .classed(&[(COMMON, "common"), (REASONED, "reasoning")]);
     let cited_section = json!({"kind":"explanation","title":"Cited","body":GOOD,"rubric":[],
@@ -1372,32 +1368,41 @@ async fn a_resumed_pass_whose_readings_are_all_restored_counts_each_statement_re
     let policy = StandardPolicy::new();
     let readers = readings::Readers::standard();
 
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async {
-            lesson_drafts::resume("class-fixture".into()).await?;
-            let references = ReferenceCollection::lexical(&sources)?;
-            let mut checks = ClaimChecks::default();
-            let mut ledger = claim_ledger::ClaimLedger::open(&model, &lesson.to_string()).await?;
-            let extraction =
-                passes::extract(&model, &BuiltinRuntimes::for_tests(), &lesson, &checks).await?;
-            let pass = passes::identify(
-                &model,
-                &policy,
-                &mut ledger,
-                (&lesson, &references),
-                extraction,
-                &checks,
-            )
-            .await?;
-            let due = ledger.due(&policy);
-            assert_eq!(due.len(), 3);
-            // A run that read the statements and stopped before it recorded them
-            // leaves its judgments as saved checks.
-            passes::read_steps(
+    lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        lesson_drafts::resume("class-fixture".into()).await?;
+        let references = ReferenceCollection::lexical(&sources)?;
+        let mut checks = ClaimChecks::default();
+        let mut ledger = claim_ledger::ClaimLedger::open(&model, &lesson.to_string()).await?;
+        let extraction =
+            passes::extract(&model, &BuiltinRuntimes::for_tests(), &lesson, &checks).await?;
+        let pass = passes::identify(
+            &model,
+            &policy,
+            &mut ledger,
+            (&lesson, &references),
+            extraction,
+            &checks,
+        )
+        .await?;
+        let due = ledger.due(&policy);
+        assert_eq!(due.len(), 3);
+        // A run that read the statements and stopped before it recorded them
+        // leaves its judgments as saved checks.
+        passes::read_steps(
+            &model,
+            &policy,
+            &readers,
+            &ledger,
+            &checks,
+            (&lesson, &references),
+            (&pass, &due),
+        )
+        .await?;
+        let asked = (model.calls("knowledge"), model.calls("consistency"));
+
+        // The run that resumes it reads them again, and records.
+        let (recorded, trace) = crate::lesson_progress::traced(async {
+            let readings = passes::read_steps(
                 &model,
                 &policy,
                 &readers,
@@ -1407,34 +1412,19 @@ async fn a_resumed_pass_whose_readings_are_all_restored_counts_each_statement_re
                 (&pass, &due),
             )
             .await?;
-            let asked = (model.calls("knowledge"), model.calls("consistency"));
+            passes::record_readings(&policy, &mut ledger, &mut checks, readings).await
+        })
+        .await;
 
-            // The run that resumes it reads them again, and records.
-            let (recorded, trace) = crate::lesson_progress::traced(async {
-                let readings = passes::read_steps(
-                    &model,
-                    &policy,
-                    &readers,
-                    &ledger,
-                    &checks,
-                    (&lesson, &references),
-                    (&pass, &due),
-                )
-                .await?;
-                passes::record_readings(&policy, &mut ledger, &mut checks, readings).await
-            })
-            .await;
-
-            assert!(recorded?.is_empty());
-            assert_eq!(
-                (model.calls("knowledge"), model.calls("consistency")),
-                asked,
-                "nothing was asked again"
-            );
-            assert_eq!((trace.checked, trace.reused), (3, 3));
-            Ok(())
-        },
-    )
+        assert!(recorded?.is_empty());
+        assert_eq!(
+            (model.calls("knowledge"), model.calls("consistency")),
+            asked,
+            "nothing was asked again"
+        );
+        assert_eq!((trace.checked, trace.reused), (3, 3));
+        Ok(())
+    })
     .await
 }
 
@@ -1489,11 +1479,12 @@ async fn a_statement_the_model_calls_internal_that_its_samples_do_not_call_false
 ) -> Result<()> {
     // §1 #15 of the acceptance policy design
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     let model = Classes::new(&[SCENARIO]).classed(&[(SCENARIO, "internal")]);
 
     let (raw, report) = prepare(
-        &Database::from(pool.clone()),
+        &db,
         &repo,
         &job,
         &lesson_id,
@@ -1519,7 +1510,7 @@ async fn a_statement_the_model_calls_internal_that_its_samples_do_not_call_false
         outcomes(&report),
         vec![(SCENARIO, ClaimVerdict::Supported, Some(Class::Internal))]
     );
-    let ledger = ClaimReviewRepository::new(pool.clone())
+    let ledger = ClaimReviewRepository::new(db.clone())
         .load(&lesson_id)
         .await?;
     let claim = ledger
@@ -1792,7 +1783,8 @@ async fn a_sentence_that_only_names_the_documentation_is_the_models_to_sort() ->
 async fn a_saved_class_is_the_models_answer_and_is_settled_where_it_is_restored() -> Result<()> {
     const CASE: &str = "5 documents have confidence scores below 0.70.";
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     let model = Classes::new(&[CASE]).classed(&[(CASE, "internal")]);
     let example = json!({"blocks":[{"kind":"worked_example","title":"Thresholds",
         "body":CASE,"rubric":[]}],"questions":[]});
@@ -1805,52 +1797,46 @@ async fn a_saved_class_is_the_models_answer_and_is_settled_where_it_is_restored(
     )];
     let nothing = claim_ledger::Rewrites::default();
 
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async {
-            lesson_drafts::resume("class-fixture".into()).await?;
-            // An explanation settles what the model calls Internal to Reasoning.
-            let stated = class_checks::sort(
-                &model,
-                &StandardPolicy::new(),
-                &lesson(CASE),
-                &claims,
-                &[None],
-                &nothing,
-                &Citations::default(),
-            )
-            .await?;
-            assert_eq!(
-                stated,
-                [Classed {
-                    class: Class::Reasoning,
-                    by: ClassifiedBy::Model
-                }]
-            );
-            // A worked example's ruling leaves it as the model sorted it.
-            let hypothetical = class_checks::sort(
-                &model,
-                &StandardPolicy::new(),
-                &example,
-                &claims,
-                &[None],
-                &nothing,
-                &Citations::default(),
-            )
-            .await?;
-            assert_eq!(
-                hypothetical,
-                [Classed {
-                    class: Class::Internal,
-                    by: ClassifiedBy::Model
-                }]
-            );
-            assert_eq!(model.calls("sort"), 1);
-            Ok(())
-        },
-    )
+    lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        lesson_drafts::resume("class-fixture".into()).await?;
+        // An explanation settles what the model calls Internal to Reasoning.
+        let stated = class_checks::sort(
+            &model,
+            &StandardPolicy::new(),
+            &lesson(CASE),
+            &claims,
+            &[None],
+            &nothing,
+            &Citations::default(),
+        )
+        .await?;
+        assert_eq!(
+            stated,
+            [Classed {
+                class: Class::Reasoning,
+                by: ClassifiedBy::Model
+            }]
+        );
+        // A worked example's ruling leaves it as the model sorted it.
+        let hypothetical = class_checks::sort(
+            &model,
+            &StandardPolicy::new(),
+            &example,
+            &claims,
+            &[None],
+            &nothing,
+            &Citations::default(),
+        )
+        .await?;
+        assert_eq!(
+            hypothetical,
+            [Classed {
+                class: Class::Internal,
+                by: ClassifiedBy::Model
+            }]
+        );
+        assert_eq!(model.calls("sort"), 1);
+        Ok(())
+    })
     .await
 }

@@ -15,7 +15,7 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use serde_json::Value;
 
 use super::actions::{in_section_body, refusal, ONLY_SECTION};

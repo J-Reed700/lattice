@@ -234,7 +234,6 @@ fn each_rule_has_the_remedy_its_fix_needs() {
         (Rule::BlockBody, Whole),
         (Rule::PracticeRubric, Whole),
         (Rule::Quotation, Edits),
-        (Rule::QuoteChecks, Whole),
         (Rule::TitleMissing, Whole),
         (Rule::TitleRepeated, Edits),
         (Rule::CheckHoldback, Edits),
@@ -244,7 +243,6 @@ fn each_rule_has_the_remedy_its_fix_needs() {
         (Rule::ExplanationMissing, Whole),
         (Rule::Choices, Whole),
         (Rule::KeyLongest, Edits),
-        (Rule::KeyGivenAway, Edits),
         (Rule::RationaleCount, Whole),
         (Rule::RationaleMissing, Whole),
         (Rule::Uncited, Edits),
@@ -256,10 +254,8 @@ fn each_rule_has_the_remedy_its_fix_needs() {
         (Rule::SectionMix, Whole),
         (Rule::QuestionCount, Whole),
         (Rule::NoExplanation, Whole),
-        (Rule::NoQuestion, Whole),
+        (Rule::QuestionKinds, Whole),
         (Rule::CopiedWording, Edits),
-        (Rule::SentenceCitation, Edits),
-        (Rule::PartCitation, Edits),
     ];
     for (rule, remedy) in table {
         assert_eq!(rule.remedy(), remedy, "{rule:?}");

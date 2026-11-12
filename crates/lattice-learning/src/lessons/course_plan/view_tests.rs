@@ -9,42 +9,33 @@ use std::sync::Arc;
 #[tokio::test]
 async fn the_state_goes_from_none_to_planning_to_planned() {
     let pool = crate::tests::pool().await.unwrap();
-    let program = saved_program(&pool).await;
+    let db = Database::new(pool.clone());
+    let program = saved_program(&db).await;
     let model = Arc::new(Topics::new());
 
-    let before = view(&Database::from(pool.clone()), &program.summary.id)
-        .await
-        .unwrap();
+    let before = view(&db, &program.summary.id).await.unwrap();
     assert_eq!(before.state, CoursePlanStateDto::None);
     assert!(before.entries.is_empty());
     assert_eq!(before.error, None);
 
-    let id = queue(&Database::from(pool.clone()), &program.summary.id)
-        .await
-        .unwrap();
+    let id = queue(&db, &program.summary.id).await.unwrap();
     assert!(id.is_some(), "a job is queued");
     let id = id.unwrap();
-    let waiting = view(&Database::from(pool.clone()), &program.summary.id)
-        .await
-        .unwrap();
+    let waiting = view(&db, &program.summary.id).await.unwrap();
     assert_eq!(waiting.state, CoursePlanStateDto::Planning);
     assert!(
         waiting.entries.is_empty(),
         "no topics are shown before they are all planned"
     );
 
-    run_plan_job(&pool, model.clone(), &id).await;
+    run_plan_job(&db, model.clone(), &id).await;
 
-    let planned = view(&Database::from(pool.clone()), &program.summary.id)
-        .await
-        .unwrap();
+    let planned = view(&db, &program.summary.id).await.unwrap();
     assert_eq!(planned.state, CoursePlanStateDto::Planned);
     assert_eq!(planned.program_id, program.summary.id);
     assert_eq!(
         planned.outline_revision,
-        outline_revision(&Database::from(pool.clone()), &program.summary.id)
-            .await
-            .unwrap()
+        outline_revision(&db, &program.summary.id).await.unwrap()
     );
     let order: Vec<_> = planned
         .entries
@@ -63,22 +54,19 @@ async fn the_state_goes_from_none_to_planning_to_planned() {
 #[tokio::test]
 async fn a_failed_plan_job_shows_failed_with_its_error() {
     let pool = crate::tests::pool().await.unwrap();
-    let program = saved_program(&pool).await;
-    let id = queue(&Database::from(pool.clone()), &program.summary.id)
-        .await
-        .unwrap();
+    let db = Database::new(pool.clone());
+    let program = saved_program(&db).await;
+    let id = queue(&db, &program.summary.id).await.unwrap();
     assert!(id.is_some(), "a job is queued");
     let id = id.unwrap();
-    let store = JobStore::new(pool.clone());
+    let store = JobStore::new(db.clone());
     assert!(store.claim(&id).await.unwrap().is_some());
     store
         .fail(&id, "model_failed", "The model gave up on the plan")
         .await
         .unwrap();
 
-    let failed = view(&Database::from(pool.clone()), &program.summary.id)
-        .await
-        .unwrap();
+    let failed = view(&db, &program.summary.id).await.unwrap();
 
     assert_eq!(failed.state, CoursePlanStateDto::Failed);
     assert_eq!(
@@ -91,17 +79,14 @@ async fn a_failed_plan_job_shows_failed_with_its_error() {
 #[tokio::test]
 async fn a_plan_for_an_earlier_outline_does_not_make_the_current_one_planned() {
     let pool = crate::tests::pool().await.unwrap();
-    let (program, _) = planned_program(&pool, &Topics::new()).await;
-    let before = view(&Database::from(pool.clone()), &program.summary.id)
-        .await
-        .unwrap();
+    let db = Database::new(pool.clone());
+    let (program, _) = planned_program(&db, &Topics::new()).await;
+    let before = view(&db, &program.summary.id).await.unwrap();
     assert_eq!(before.state, CoursePlanStateDto::Planned);
 
     change_outline(&pool, &program.summary.id).await;
 
-    let after = view(&Database::from(pool.clone()), &program.summary.id)
-        .await
-        .unwrap();
+    let after = view(&db, &program.summary.id).await.unwrap();
     assert_eq!(after.state, CoursePlanStateDto::None);
     assert!(after.entries.is_empty());
 }
@@ -109,13 +94,12 @@ async fn a_plan_for_an_earlier_outline_does_not_make_the_current_one_planned() {
 #[tokio::test]
 async fn a_queued_lesson_stays_editable_and_a_running_one_is_locked() {
     let pool = crate::tests::pool().await.unwrap();
-    let (program, _) = planned_program(&pool, &Topics::new()).await;
+    let db = Database::new(pool.clone());
+    let (program, _) = planned_program(&db, &Topics::new()).await;
     let order = ids(&program);
 
-    let job = lesson_job(&pool, &program, &order[1], false).await;
-    let pending = view(&Database::from(pool.clone()), &program.summary.id)
-        .await
-        .unwrap();
+    let job = lesson_job(&db, &program, &order[1], false).await;
+    let pending = view(&db, &program.summary.id).await.unwrap();
     let queued: Vec<_> = pending.entries.iter().map(|entry| entry.editable).collect();
     assert_eq!(
         queued,
@@ -123,14 +107,12 @@ async fn a_queued_lesson_stays_editable_and_a_running_one_is_locked() {
         "a queued job leaves its lesson editable"
     );
 
-    assert!(JobStore::new(pool.clone())
+    assert!(JobStore::new(db.clone())
         .claim(&job)
         .await
         .unwrap()
         .is_some());
-    let running = view(&Database::from(pool.clone()), &program.summary.id)
-        .await
-        .unwrap();
+    let running = view(&db, &program.summary.id).await.unwrap();
     let editable: Vec<_> = running.entries.iter().map(|entry| entry.editable).collect();
     assert_eq!(editable, vec![true, false, true, true]);
 }
@@ -138,7 +120,8 @@ async fn a_queued_lesson_stays_editable_and_a_running_one_is_locked() {
 #[tokio::test]
 async fn a_ready_lesson_and_a_completed_lesson_are_locked() {
     let pool = crate::tests::pool().await.unwrap();
-    let (program, _) = planned_program(&pool, &Topics::new()).await;
+    let db = Database::new(pool.clone());
+    let (program, _) = planned_program(&db, &Topics::new()).await;
     let order = ids(&program);
     sqlx::query("UPDATE learning_lessons SET preparation='ready' WHERE id=?")
         .bind(&order[0])
@@ -151,9 +134,7 @@ async fn a_ready_lesson_and_a_completed_lesson_are_locked() {
         .await
         .unwrap();
 
-    let shown = view(&Database::from(pool.clone()), &program.summary.id)
-        .await
-        .unwrap();
+    let shown = view(&db, &program.summary.id).await.unwrap();
 
     let editable: Vec<_> = shown.entries.iter().map(|entry| entry.editable).collect();
     assert_eq!(editable, vec![false, true, false, true]);

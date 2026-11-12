@@ -8,8 +8,8 @@ fn id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-async fn program(pool: &SqlitePool) -> String {
-    let repo = LearningRepository::new(pool.clone());
+async fn program(database: &Database) -> String {
+    let repo = LearningRepository::new(database.clone());
     let program = tests::fixture();
     repo.create(&program).await.unwrap();
     repo.accept(&AcceptLearningProgramRequestDto {
@@ -66,8 +66,9 @@ async fn add_web(
 #[tokio::test]
 async fn sources_record_who_added_them() {
     let pool = tests::pool().await.unwrap();
-    let program_id = program(&pool).await;
-    let repo = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let database = Database::new(pool.clone());
+    let program_id = program(&database).await;
+    let repo = LearningSourceLibraryRepository::new(database.clone());
     let by_user = add_web(
         &repo,
         &program_id,
@@ -102,8 +103,9 @@ async fn sources_record_who_added_them() {
 #[tokio::test]
 async fn a_saved_source_is_found_by_address_text_and_version() {
     let pool = tests::pool().await.unwrap();
-    let program_id = program(&pool).await;
-    let repo = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let database = Database::new(pool.clone());
+    let program_id = program(&database).await;
+    let repo = LearningSourceLibraryRepository::new(database.clone());
     let text = "Water boils sooner up high.";
     let version = add_web(&repo, &program_id, text, Some(SourceAddedBy::User)).await;
 
@@ -144,8 +146,9 @@ async fn a_saved_source_is_found_by_address_text_and_version() {
 #[tokio::test]
 async fn a_frozen_page_is_recorded_on_its_version() {
     let pool = tests::pool().await.unwrap();
-    let program_id = program(&pool).await;
-    let repo = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let database = Database::new(pool.clone());
+    let program_id = program(&database).await;
+    let repo = LearningSourceLibraryRepository::new(database.clone());
     let version = add_web(
         &repo,
         &program_id,

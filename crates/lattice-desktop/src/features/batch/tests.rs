@@ -26,7 +26,7 @@ use crate::infrastructure::{
 use async_trait::async_trait;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::fs::SweepGate;
-use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::{
     error::{AppError, Result},
     runtime::jobs::{JobRuntime, JobStatus, JobStore, NewJob},
@@ -74,7 +74,7 @@ impl EmbeddingPort for GatedEmbedding {
 
 /// Ingests a URL as a document row of its own, the way a real page would.
 struct RecordingIngestion {
-    pool: sqlx::SqlitePool,
+    db: Database,
     ingested: parking_lot::Mutex<Vec<String>>,
 }
 
@@ -86,12 +86,20 @@ impl WebIngestionServiceTrait for RecordingIngestion {
             return Err(AppError::Network("connection refused".into()));
         }
         let id = uuid::Uuid::new_v4().to_string();
+        let mut tx = self
+            .db
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
         sqlx::query("INSERT INTO documents (id,file_path,file_name,size_bytes,modified_at,checksum,source_type) VALUES (?,?,?,100,'2026-10-09',?,'web')")
             .bind(&id)
             .bind(url)
             .bind(url)
             .bind(&id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.commit()
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(WebIngestionResult {
@@ -155,7 +163,7 @@ impl ImportHarness {
             .with_library_gc(library_gc),
         ));
         let ingestion = Arc::new(RecordingIngestion {
-            pool: db.database().sqlx_pool().clone(),
+            db: db.database().clone(),
             ingested: parking_lot::Mutex::new(Vec::new()),
         });
         let jobs = JobRuntime::with_poll_interval(db.database().clone(), Duration::from_millis(50));
@@ -259,9 +267,21 @@ impl ImportHarness {
     }
 
     async fn count(&self, sql: &str) -> anyhow::Result<i64> {
-        Ok(sqlx::query_scalar::<_, i64>(sql)
-            .fetch_one(self.db.database().sqlx_pool())
-            .await?)
+        let mut read = self.db.database().begin_read().await?;
+        let count = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql))
+            .fetch_one(&mut *read)
+            .await?;
+        read.commit().await?;
+        Ok(count)
+    }
+
+    async fn execute(&self, sql: &str) -> anyhow::Result<()> {
+        let mut tx = self.db.database().begin_write().await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     /// Blob directories currently on disk.
@@ -324,7 +344,7 @@ async fn each_file_is_committed_before_the_next_and_a_later_failure_keeps_them(
 ) -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
     let harness = ImportHarness::new(dir.path()).await?;
-    sqlx::query("INSERT OR IGNORE INTO conversation_spaces (id, name) VALUES ('retry-space', 'Patent Training')").execute(harness.db.database().sqlx_pool()).await?;
+    harness.execute("INSERT OR IGNORE INTO conversation_spaces (id, name) VALUES ('retry-space', 'Patent Training')").await?;
     let mut paths = write_files(
         dir.path(),
         &[
@@ -334,7 +354,7 @@ async fn each_file_is_committed_before_the_next_and_a_later_failure_keeps_them(
         ],
     );
     // Fail after the document is inserted, while saving its embeddings.
-    sqlx::query("CREATE TRIGGER fail_third_embedding BEFORE INSERT ON text_embeddings WHEN EXISTS (SELECT 1 FROM text_chunks c JOIN documents d ON c.document_id = d.id WHERE c.id = NEW.chunk_id AND d.file_name = 'fail.txt') BEGIN SELECT RAISE(ABORT, 'injected embedding save failure'); END").execute(harness.db.database().sqlx_pool()).await?;
+    harness.execute("CREATE TRIGGER fail_third_embedding BEFORE INSERT ON text_embeddings WHEN EXISTS (SELECT 1 FROM text_chunks c JOIN documents d ON c.document_id = d.id WHERE c.id = NEW.chunk_id AND d.file_name = 'fail.txt') BEGIN SELECT RAISE(ABORT, 'injected embedding save failure'); END").await?;
     paths.push(paths[0].clone());
     let job_id = harness.files(&paths, Some("retry-space")).await?;
     tokio::time::timeout(WAIT, harness.embedding.entered.notified()).await?;
@@ -504,7 +524,7 @@ async fn an_import_the_app_left_running_resumes_with_its_unfinished_files() -> a
         .iter()
         .map(|path| path.to_string_lossy().into_owned())
         .collect();
-    let mut tx = harness.db.database().sqlx_pool().begin().await?;
+    let mut tx = harness.db.database().begin_write().await?;
     let admitted = JobStore::submit_in(
         &mut tx,
         &NewJob {
@@ -531,10 +551,12 @@ async fn an_import_the_app_left_running_resumes_with_its_unfinished_files() -> a
             None,
         )
         .await?;
+    let mut tx = harness.db.database().begin_write().await?;
     sqlx::query("UPDATE batch_import_items SET status='processing' WHERE id=?")
         .bind(&saved[1].id)
-        .execute(harness.db.database().sqlx_pool())
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
 
     harness.restart().await?;
     let status = harness.wait(&admitted.id).await?;
@@ -676,7 +698,7 @@ async fn an_import_reads_its_status_and_its_files_from_one_snapshot() -> anyhow:
     let writer = async {
         for n in 0..250 {
             let done = n % 2 == 0;
-            let mut tx = harness.db.database().sqlx_pool().begin().await?;
+            let mut tx = harness.db.database().begin_write().await?;
             sqlx::query("UPDATE jobs SET status=?, finished_at=?, result_ref=? WHERE id=?")
                 .bind(if done { "completed" } else { "pending" })
                 .bind(done.then_some(1_i64))
@@ -826,10 +848,12 @@ async fn search_publication_failure_is_retryable_and_does_not_block_chat() -> an
     tokio::time::timeout(Duration::from_secs(2), search.entered.notified()).await?;
     // Publication must not hold the database, so chat can still write.
     let conversation_id = uuid::Uuid::new_v4().to_string();
+    let mut tx = harness.db.database().begin_write().await?;
     sqlx::query("INSERT INTO conversations (id, title) VALUES (?, 'During import')")
         .bind(&conversation_id)
-        .execute(harness.db.database().sqlx_pool())
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     let conversations = crate::features::conversation::repository::ConversationRepository::new(
         harness.db.database().clone(),
     );
@@ -902,12 +926,14 @@ async fn related_source_rebuild_preserves_identity_context_order_and_failed_inde
         .iter()
         .map(|i| i.document_id.clone().unwrap())
         .collect();
+    let mut read = harness.db.database().begin_read().await?;
     let original_chunks: Vec<String> =
         sqlx::query_scalar("SELECT id FROM text_chunks WHERE document_id = ? ORDER BY chunk_index")
             .bind(&ids[1])
-            .fetch_all(harness.db.database().sqlx_pool())
+            .fetch_all(&mut *read)
             .await?;
-    sqlx::raw_sql("CREATE TRIGGER fail_context_rebuild BEFORE INSERT ON text_embeddings WHEN EXISTS (SELECT 1 FROM text_chunks c JOIN documents d ON d.id=c.document_id WHERE c.id=NEW.chunk_id AND d.file_name='chapter2.md') BEGIN SELECT RAISE(ABORT,'injected'); END").execute(harness.db.database().sqlx_pool()).await?;
+    read.commit().await?;
+    harness.execute("CREATE TRIGGER fail_context_rebuild BEFORE INSERT ON text_embeddings WHEN EXISTS (SELECT 1 FROM text_chunks c JOIN documents d ON d.id=c.document_id WHERE c.id=NEW.chunk_id AND d.file_name='chapter2.md') BEGIN SELECT RAISE(ABORT,'injected'); END").await?;
     let group = SourceGroup {
         id: uuid::Uuid::new_v4().to_string(),
         title: "Zirconium Handbook".into(),
@@ -933,18 +959,16 @@ async fn related_source_rebuild_preserves_identity_context_order_and_failed_inde
     let status = harness.wait(&second).await?;
     assert_eq!((status.completed_items, status.failed_items), (1, 1));
     assert_eq!(harness.count("SELECT count(*) FROM documents").await?, 2);
-    assert_eq!(
-        original_chunks,
-        sqlx::query_scalar::<_, String>(
-            "SELECT id FROM text_chunks WHERE document_id = ? ORDER BY chunk_index"
-        )
-        .bind(&ids[1])
-        .fetch_all(harness.db.database().sqlx_pool())
-        .await?
-    );
-    sqlx::raw_sql("DROP TRIGGER fail_context_rebuild")
-        .execute(harness.db.database().sqlx_pool())
-        .await?;
+    let mut read = harness.db.database().begin_read().await?;
+    let kept_chunks = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM text_chunks WHERE document_id = ? ORDER BY chunk_index",
+    )
+    .bind(&ids[1])
+    .fetch_all(&mut *read)
+    .await?;
+    read.commit().await?;
+    assert_eq!(original_chunks, kept_chunks);
+    harness.execute("DROP TRIGGER fail_context_rebuild").await?;
     let failed = status.items.iter().find(|i| i.status == "failed").unwrap();
     let replacement = dir.path().join("replacement.md");
     std::fs::copy(&paths[1], &replacement)?;
@@ -1010,19 +1034,22 @@ async fn related_source_rebuild_preserves_identity_context_order_and_failed_inde
 async fn attaching_an_already_indexed_file_follows_the_owner_rule() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
     let harness = ImportHarness::new(dir.path()).await?;
-    let pool = harness.db.database().sqlx_pool().clone();
-    sqlx::query("INSERT INTO conversations (id, title) VALUES ('chat-a', 'A'), ('chat-b', 'B')")
-        .execute(&pool)
+    let database = harness.db.database().clone();
+    harness
+        .execute("INSERT INTO conversations (id, title) VALUES ('chat-a', 'A'), ('chat-b', 'B')")
         .await?;
     let owner_of = |name: &'static str| {
-        let pool = pool.clone();
+        let database = database.clone();
         async move {
-            sqlx::query_scalar::<_, Option<String>>(
+            let mut read = database.begin_read().await?;
+            let owner = sqlx::query_scalar::<_, Option<String>>(
                 "SELECT owner_conversation_id FROM documents WHERE file_name = ?",
             )
             .bind(name)
-            .fetch_one(&pool)
-            .await
+            .fetch_one(&mut *read)
+            .await?;
+            read.commit().await?;
+            Ok::<_, anyhow::Error>(owner)
         }
     };
     let import = |path: &Path, owner: Option<&str>| {
@@ -1054,8 +1081,8 @@ async fn attaching_an_already_indexed_file_follows_the_owner_rule() -> anyhow::R
     assert_eq!(owner_of("filed.txt").await?, None);
 
     // The stamp fails after the commit; the retry finishes it.
-    sqlx::query("CREATE TRIGGER fail_owner_stamp BEFORE UPDATE OF owner_conversation_id ON documents BEGIN SELECT RAISE(ABORT, 'injected owner stamp failure'); END")
-        .execute(&pool)
+    harness
+        .execute("CREATE TRIGGER fail_owner_stamp BEFORE UPDATE OF owner_conversation_id ON documents BEGIN SELECT RAISE(ABORT, 'injected owner stamp failure'); END")
         .await?;
     let late = dir.path().join("late.txt");
     std::fs::write(&late, "a file whose owner stamp fails once")?;
@@ -1063,9 +1090,7 @@ async fn attaching_an_already_indexed_file_follows_the_owner_rule() -> anyhow::R
     let status = harness.wait(&job_id).await?;
     assert_eq!(status.failed_items, 1);
     assert_eq!(owner_of("late.txt").await?, None);
-    sqlx::query("DROP TRIGGER fail_owner_stamp")
-        .execute(&pool)
-        .await?;
+    harness.execute("DROP TRIGGER fail_owner_stamp").await?;
     let (attempt, _) = harness.imports.retry(&job_id, None, None).await?;
     let status = harness.wait(&attempt).await?;
     assert_eq!(status.completed_items, 1);
@@ -1078,12 +1103,11 @@ async fn a_refused_space_assignment_leaves_the_owner_unstamped_and_the_retry_fil
 ) -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
     let harness = ImportHarness::new(dir.path()).await?;
-    let pool = harness.db.database().sqlx_pool().clone();
-    sqlx::query("INSERT INTO conversations (id, title) VALUES ('chat-a', 'A')")
-        .execute(&pool)
+    harness
+        .execute("INSERT INTO conversations (id, title) VALUES ('chat-a', 'A')")
         .await?;
-    sqlx::query("CREATE TRIGGER refuse_space BEFORE INSERT ON document_space_memberships BEGIN SELECT RAISE(ABORT, 'injected space failure'); END")
-        .execute(&pool)
+    harness
+        .execute("CREATE TRIGGER refuse_space BEFORE INSERT ON document_space_memberships BEGIN SELECT RAISE(ABORT, 'injected space failure'); END")
         .await?;
     let file = dir.path().join("attached.txt");
     std::fs::write(&file, "a file attached to a chat and filed in a space")?;
@@ -1095,11 +1119,15 @@ async fn a_refused_space_assignment_leaves_the_owner_unstamped_and_the_retry_fil
             indexing: None,
         })
     };
-    let owner = || {
-        sqlx::query_scalar::<_, Option<String>>(
+    let owner = || async {
+        let mut read = harness.db.database().begin_read().await?;
+        let owner = sqlx::query_scalar::<_, Option<String>>(
             "SELECT owner_conversation_id FROM documents WHERE file_name = 'attached.txt'",
         )
-        .fetch_one(&pool)
+        .fetch_one(&mut *read)
+        .await?;
+        read.commit().await?;
+        Ok::<_, anyhow::Error>(owner)
     };
 
     let job_id = import().await?;
@@ -1113,9 +1141,7 @@ async fn a_refused_space_assignment_leaves_the_owner_unstamped_and_the_retry_fil
         0
     );
 
-    sqlx::query("DROP TRIGGER refuse_space")
-        .execute(&pool)
-        .await?;
+    harness.execute("DROP TRIGGER refuse_space").await?;
     let (attempt, _) = harness.imports.retry(&job_id, None, None).await?;
     let status = harness.wait(&attempt).await?;
     assert_eq!(status.completed_items, 1);

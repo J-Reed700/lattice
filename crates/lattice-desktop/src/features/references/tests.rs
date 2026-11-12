@@ -14,11 +14,12 @@ use super::dto::CreatePassageReferenceRequestDto;
 use super::repository::PassageReferenceRepository;
 use lattice_core::application::contracts::references::PassageReferenceRecord;
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::persistence::Database;
 
 async fn fresh_repository() -> PassageReferenceRepository {
     let pool = SqlitePool::connect(":memory:").await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    PassageReferenceRepository::new(pool)
+    PassageReferenceRepository::new(Database::new(pool))
 }
 
 fn record(id: &str, created_at: &str) -> PassageReferenceRecord {

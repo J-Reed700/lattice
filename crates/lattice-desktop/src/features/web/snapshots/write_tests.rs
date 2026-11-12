@@ -1,7 +1,7 @@
 //! The library conversation is filed into a space that still exists once the
 //! write lock is the writer's own.
 use super::repository::SnapshotRepository;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::Database;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::time::Duration;
 
@@ -16,12 +16,13 @@ async fn the_library_conversation_follows_a_space_replaced_meanwhile() {
         .await
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let db = Database::new(pool.clone());
     sqlx::query("INSERT INTO conversation_spaces (id, name) VALUES ('space_other', 'Other')")
         .execute(&pool)
         .await
         .unwrap();
 
-    let mut tx = pool.begin_write().await.unwrap();
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
     sqlx::query("DELETE FROM conversation_spaces WHERE id = 'space_general'")
         .execute(&mut *tx)
         .await
@@ -31,7 +32,7 @@ async fn the_library_conversation_follows_a_space_replaced_meanwhile() {
         tx.commit().await.unwrap();
     });
 
-    let id = SnapshotRepository::new(pool.clone())
+    let id = SnapshotRepository::new(db)
         .library_conversation()
         .await
         .unwrap();

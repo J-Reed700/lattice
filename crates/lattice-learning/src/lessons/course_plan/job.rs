@@ -9,7 +9,7 @@ use crate::persistence::db;
 use crate::quiz_bank_jobs::ModelLoader;
 use crate::repository::LearningRepository;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{
     Backoff, JobContext, JobHandler, JobKindConfig, JobOutcome, JobStatus, JobStore, NewJob,
     RecoveryPolicy,

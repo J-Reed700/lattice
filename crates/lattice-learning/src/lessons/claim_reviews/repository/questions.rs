@@ -1,6 +1,7 @@
 //! A lesson's own questions in the quiz bank.
 
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::SqliteConnection;
 
 use crate::persistence::db;
@@ -72,7 +73,7 @@ pub(in crate::lessons::claim_reviews) async fn token_taken_by_another(
 }
 
 pub(in crate::lessons::claim_reviews) async fn write_question(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     candidate_id: &str,
     prompt: &str,
     options_json: Option<&str>,
@@ -85,14 +86,14 @@ pub(in crate::lessons::claim_reviews) async fn write_question(
     .bind(options_json)
     .bind(token)
     .bind(candidate_id)
-    .execute(&mut *connection)
+    .execute(&mut **tx)
     .await
     .map_err(db)?;
     Ok(())
 }
 
 pub(in crate::lessons::claim_reviews) async fn write_answer_key(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     candidate_id: &str,
     explanation: &str,
     key_json: Option<&str>,
@@ -106,7 +107,7 @@ pub(in crate::lessons::claim_reviews) async fn write_answer_key(
     .bind(key_json)
     .bind(rationales_json)
     .bind(candidate_id)
-    .execute(&mut *connection)
+    .execute(&mut **tx)
     .await
     .map_err(db)?;
     Ok(())

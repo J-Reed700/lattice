@@ -1,7 +1,6 @@
 //! Stored practice-fit verdicts: one per course and kind of work, on the basis they were decided on.
 use super::*;
 use crate::practice::practice_fit::{CourseOutline, OutlineLesson, OutlineModule};
-use lattice_core::shared::persistence::Transactions;
 
 /// A verdict as stored.
 pub(crate) struct StoredFit {
@@ -28,7 +27,7 @@ pub(crate) struct FitState {
 impl LearningPracticeRepository {
     pub(crate) async fn fit_state(&self, program_id: &str) -> Result<FitState> {
         uuid(program_id, "program")?;
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await.map_err(db)?;
         let title: String = sqlx::query_scalar("SELECT title FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut *tx)
@@ -97,8 +96,7 @@ impl LearningPracticeRepository {
         now: i64,
     ) -> Result<()> {
         uuid(program_id, "program")?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         sqlx::query("DELETE FROM learning_practice_fits WHERE program_id=?")
             .bind(program_id)
             .execute(&mut *tx)

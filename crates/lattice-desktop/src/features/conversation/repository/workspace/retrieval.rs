@@ -1,6 +1,5 @@
 use super::*;
 use lattice_core::shared::persistence::bind_limit::rows_per_statement;
-use lattice_core::shared::persistence::Transactions;
 use sqlx::SqliteConnection;
 
 type PassageRow = (
@@ -39,6 +38,7 @@ impl ConversationRepository {
             return Ok(Vec::new());
         }
         let scope = serde_json::to_string(allowed_ids)?;
+        let mut read = self.db.begin_read().await?;
         // Keep each document's bounded headings in one row. Returning a row
         // per heading adds thousands of SQLx row decodes to a large catalog.
         let rows: Vec<(String, String, String, Option<String>, String)> = sqlx::query_as(
@@ -55,8 +55,9 @@ impl ConversationRepository {
              ORDER BY d.file_name,d.id",
         )
         .bind(&scope)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await?;
+        read.commit().await?;
         let mut catalog = Vec::new();
         for (id, name, opening, source_context, headings) in rows {
             let sections = serde_json::from_str(&headings)?;
@@ -107,13 +108,15 @@ impl ConversationRepository {
         }
         let scope = serde_json::to_string(allowed_ids)
             .map_err(|error| AppError::InternalError(format!("scope is not JSON: {error}")))?;
+        let mut read = self.db.begin_read().await?;
         let (chars, chunks): (Option<i64>, Option<i64>) = sqlx::query_as(
             "SELECT SUM(content_chars), SUM(chunks) FROM document_chunk_stats \
              WHERE document_id IN (SELECT value FROM json_each(?))",
         )
         .bind(scope)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *read)
         .await?;
+        read.commit().await?;
         let (Some(chars), Some(chunks)) = (chars, chunks) else {
             return Ok(None);
         };
@@ -140,6 +143,7 @@ impl ConversationRepository {
         if selected.is_empty() || chunks_per_document == 0 {
             return Ok(Vec::new());
         }
+        let mut read = self.db.begin_read().await?;
         // Probe each document's ordered chunk index for only its first K ids,
         // then fetch those bodies. A window over chunk content would read every
         // passage of a large document just to return its opening.
@@ -152,7 +156,8 @@ impl ConversationRepository {
         )
         .bind(serde_json::to_string(&selected)?)
         .bind(i64::try_from(chunks_per_document).unwrap_or(i64::MAX))
-        .fetch_all(&self.pool).await?;
+        .fetch_all(&mut *read).await?;
+        read.commit().await?;
         Ok(rows
             .into_iter()
             .map(
@@ -193,6 +198,7 @@ impl ConversationRepository {
         // Reserve evidence for each requested identifier. One long section or
         // edition must not consume the entire budget of a comparison request.
         let per_identifier = 12 / identifiers.len();
+        let mut read = self.db.begin_read().await?;
         let mut passages = Vec::new();
         let mut seen = HashSet::new();
         for identifier in identifiers {
@@ -235,7 +241,7 @@ impl ConversationRepository {
                 .push_bind(&scope)
                 .push("))) WHERE tier = 0 OR body_hit ORDER BY tier, ROW_NUMBER() OVER (PARTITION BY document_id, tier ORDER BY chunk_index, id), document_id LIMIT ")
                 .push_bind(per_identifier as i64);
-            let rows: Vec<PassageRow> = q.build_query_as().fetch_all(&self.pool).await?;
+            let rows: Vec<PassageRow> = q.build_query_as().fetch_all(&mut *read).await?;
             passages.extend(
                 rows.into_iter()
                     .filter(|row| seen.insert(row.0.clone()))
@@ -256,6 +262,7 @@ impl ConversationRepository {
                     ),
             );
         }
+        read.commit().await?;
         Ok(passages)
     }
 
@@ -266,7 +273,7 @@ impl ConversationRepository {
         chunk_id: &str,
         allowed: &HashSet<String>,
     ) -> Result<Vec<lattice_core::application::contracts::search::CorpusPassage>, AppError> {
-        let mut tx = self.pool.begin_read().await?;
+        let mut tx = self.db.begin_read().await?;
         let anchor: Option<(String, i64, Option<String>)> = sqlx::query_as(
             "SELECT document_id, chunk_index, section FROM text_chunks WHERE id = ?",
         )
@@ -310,7 +317,7 @@ impl ConversationRepository {
         &self,
         conversation_id: &str,
     ) -> Result<Option<(String, HashSet<String>)>, AppError> {
-        let mut tx = self.pool.begin_read().await?;
+        let mut tx = self.db.begin_read().await?;
         let scope = Self::retrieval_document_scope_on(&mut tx, conversation_id).await?;
         tx.commit().await?;
         Ok(scope)
@@ -350,8 +357,10 @@ impl ConversationRepository {
     /// attachment belongs to no space and is excluded here;
     /// `retrieval_document_scope` adds back the asking conversation's own.
     pub async fn space_document_scope(&self, space_id: &str) -> Result<HashSet<String>, AppError> {
-        let mut connection = self.pool.acquire().await?;
-        Self::space_document_scope_on(&mut connection, space_id).await
+        let mut read = self.db.begin_read().await?;
+        let ids = Self::space_document_scope_on(&mut read, space_id).await?;
+        read.commit().await?;
+        Ok(ids)
     }
 
     async fn space_document_scope_on(
@@ -401,7 +410,7 @@ impl ConversationRepository {
             .unwrap_or(DEFAULT_SPACE_ID);
         let limit = limit.clamp(1, MAX_RESULTS);
         let conversation_id = conversation_id.map(str::trim).filter(|id| !id.is_empty());
-        let mut tx = self.pool.begin_read().await?;
+        let mut tx = self.db.begin_read().await?;
         let allowed = match conversation_id {
             Some(conversation) => {
                 match Self::retrieval_document_scope_on(&mut tx, conversation).await? {
@@ -471,6 +480,7 @@ impl ConversationRepository {
     ) -> Result<std::collections::HashMap<String, (Option<String>, Option<u32>, bool)>, AppError>
     {
         let mut locations = std::collections::HashMap::new();
+        let mut read = self.db.begin_read().await?;
         for batch in chunk_ids.chunks(rows_per_statement(1, 0)) {
             if batch.is_empty() {
                 continue;
@@ -484,7 +494,7 @@ impl ConversationRepository {
             }
             query.push(")");
             let rows: Vec<(String, Option<String>, Option<i64>, bool)> =
-                query.build_query_as().fetch_all(&self.pool).await?;
+                query.build_query_as().fetch_all(&mut *read).await?;
             for (id, section, page, from_ocr) in rows {
                 locations.insert(
                     id,
@@ -492,6 +502,7 @@ impl ConversationRepository {
                 );
             }
         }
+        read.commit().await?;
         Ok(locations)
     }
 }

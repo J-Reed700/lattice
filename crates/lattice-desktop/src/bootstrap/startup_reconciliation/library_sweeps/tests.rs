@@ -12,7 +12,6 @@ use async_trait::async_trait;
 use reqwest::header::HeaderMap;
 use sha2::{Digest, Sha256};
 use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::SqlitePool;
 use tempfile::TempDir;
 
 use super::super::reconcile_orphaned_files;
@@ -33,7 +32,6 @@ use crate::infrastructure::storage::{ContentAddressedStorage, FileIntents};
 use lattice_core::application::ports::ChatImagesPort;
 use lattice_core::shared::constants::RERANKER_MODEL_DIR;
 use lattice_core::shared::fs::SweepGate;
-use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use lattice_core::shared::runtime::jobs::JobRuntime;
 
@@ -56,7 +54,7 @@ impl ImageNetwork for NoNetwork {
     }
 }
 
-async fn migrated_pool() -> SqlitePool {
+async fn migrated_database() -> Database {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .idle_timeout(None)
@@ -65,7 +63,7 @@ async fn migrated_pool() -> SqlitePool {
         .await
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    pool
+    Database::new(pool)
 }
 
 fn files_in(home: &Path) -> LibraryFiles {
@@ -77,23 +75,23 @@ fn files_in(home: &Path) -> LibraryFiles {
     }
 }
 
-/// The three collectors over `pool`'s database and the files under `home`,
+/// The three collectors over `database` and the files under `home`,
 /// the two services holding `gate` as the container gives it to them.
 fn sweeps_over(
-    pool: &SqlitePool,
+    database: &Database,
     home: &Path,
     gate: &Arc<SweepGate>,
     background: &Arc<BackgroundTasks>,
 ) -> LibrarySweeps {
-    let database = Database::from(pool.clone());
+    let database = database.clone();
     LibrarySweeps {
         library_gc: Arc::new(
             LibraryGc::new(
                 Arc::new(ContentAddressedStorage::with_root(home.join("files"))),
-                Arc::new(DocumentRepositoryImpl::new(pool.clone())),
+                Arc::new(DocumentRepositoryImpl::new(database.clone())),
                 Arc::clone(gate),
             )
-            .with_intents(FileIntents::new(pool.clone())),
+            .with_intents(FileIntents::new(database.clone())),
         ),
         snapshots: Arc::new(WebPageSnapshotService::new(
             database.clone(),
@@ -120,13 +118,13 @@ struct Run {
     sweeps: LibrarySweeps,
 }
 
-/// A start over `pool`'s database and the files under `home`: decide who owns
+/// A start over `database` and the files under `home`: decide who owns
 /// the files, start the sweeps, and wait for them to finish.
-async fn start_up(pool: &SqlitePool, home: &Path) -> Run {
+async fn start_up(database: &Database, home: &Path) -> Run {
     let gate = Arc::new(SweepGate::default());
     let background = Arc::new(BackgroundTasks::default());
-    let sweeps = sweeps_over(pool, home, &gate, &background);
-    open_gate_if_owner(&Database::from(pool.clone()), &files_in(home), &gate).await;
+    let sweeps = sweeps_over(database, home, &gate, &background);
+    open_gate_if_owner(database, &files_in(home), &gate).await;
     sweeps.start(&gate, &background, async { Ok(HashSet::new()) });
     background.close();
     background.wait().await;
@@ -136,18 +134,20 @@ async fn start_up(pool: &SqlitePool, home: &Path) -> Run {
 impl Run {
     /// The user deletes a chat: its rows go by cascade, and the app sweeps the
     /// frozen pages and, as after a truncate, the pictures nothing names.
-    async fn delete_a_chat(&self, pool: &SqlitePool) {
+    async fn delete_a_chat(&self, db: &Database) {
+        let mut tx = db.begin_write().await.unwrap();
         sqlx::query(
             "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \
              VALUES ('chat', 'A chat', 'space_general', '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z')",
         )
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .unwrap();
         sqlx::query("DELETE FROM conversations WHERE id = 'chat'")
-            .execute(pool)
+            .execute(&mut *tx)
             .await
             .unwrap();
+        tx.commit().await.unwrap();
         self.sweeps.snapshots.sweep().await.unwrap();
         self.sweeps.images.remove_unclaimed_files().await.unwrap();
     }
@@ -205,7 +205,8 @@ fn model_directory(models: &Path, id: &str) -> PathBuf {
 }
 
 /// The row of a model that finished downloading into `<models>/<id>`.
-async fn installed(pool: &SqlitePool, models: &Path, id: &str) {
+async fn installed(db: &Database, models: &Path, id: &str) {
+    let mut tx = db.begin_write().await.unwrap();
     sqlx::query(
         "INSERT INTO models (id, model_id, model_name, base_path, total_size_bytes, status, \
          model_type, architecture, storage_kind, storage_path) \
@@ -215,13 +216,15 @@ async fn installed(pool: &SqlitePool, models: &Path, id: &str) {
     .bind(id)
     .bind(id)
     .bind(models.join(id).to_string_lossy().to_string())
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .unwrap();
+    tx.commit().await.unwrap();
 }
 
 /// The row of the document that imported the file with `hash`.
-async fn reference(pool: &SqlitePool, hash: &str, path: &Path) {
+async fn reference(db: &Database, hash: &str, path: &Path) {
+    let mut tx = db.begin_write().await.unwrap();
     sqlx::query(
         "INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, checksum) \
          VALUES (?, ?, 'paper.txt', 1, '2026-11-01T00:00:00Z', ?)",
@@ -229,30 +232,36 @@ async fn reference(pool: &SqlitePool, hash: &str, path: &Path) {
     .bind(format!("doc-{hash}"))
     .bind(path.to_string_lossy().to_string())
     .bind(hash)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .unwrap();
+    tx.commit().await.unwrap();
 }
 
-async fn record(pool: &SqlitePool, id: &str) {
+async fn record(db: &Database, id: &str) {
+    let mut tx = db.begin_write().await.unwrap();
     sqlx::query("INSERT INTO library_owner (id, owner_id) VALUES (1, ?)")
         .bind(id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .unwrap();
+    tx.commit().await.unwrap();
 }
 
 /// This database owns the library: it holds `id` and so does the owner file.
-async fn own(pool: &SqlitePool, home: &Path, id: &str) {
-    record(pool, id).await;
+async fn own(db: &Database, home: &Path, id: &str) {
+    record(db, id).await;
     std::fs::write(home.join("owner"), id).unwrap();
 }
 
-async fn recorded(pool: &SqlitePool) -> Option<String> {
-    sqlx::query_scalar("SELECT owner_id FROM library_owner WHERE id = 1")
-        .fetch_optional(pool)
+async fn recorded(db: &Database) -> Option<String> {
+    let mut read = db.begin_read().await.unwrap();
+    let owner = sqlx::query_scalar("SELECT owner_id FROM library_owner WHERE id = 1")
+        .fetch_optional(&mut *read)
         .await
-        .unwrap()
+        .unwrap();
+    read.commit().await.unwrap();
+    owner
 }
 
 /// What the owner file holds, if it exists.
@@ -263,16 +272,18 @@ fn filed(home: &Path) -> Option<String> {
 }
 
 /// A record a process that has since ended wrote.
-async fn earlier_record(pool: &SqlitePool, store: &str, kind: &str, name: &str) {
+async fn earlier_record(db: &Database, store: &str, kind: &str, name: &str) {
+    let mut tx = db.begin_write().await.unwrap();
     sqlx::query(
         "INSERT INTO file_intents (store, kind, name, run_id) VALUES (?, ?, ?, 'an earlier run')",
     )
     .bind(store)
     .bind(kind)
     .bind(name)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .unwrap();
+    tx.commit().await.unwrap();
 }
 
 /// The file name's stem: the id a page or picture is stored under.
@@ -283,17 +294,18 @@ fn id_of(path: &Path) -> String {
 /// A chat, a tangent of `parent` when given, with one frozen page and one
 /// picture, rows and files.
 async fn chat_with_files(
-    pool: &SqlitePool,
+    db: &Database,
     home: &Path,
     chat: &str,
     parent: Option<&str>,
 ) -> [PathBuf; 2] {
+    let mut tx = db.begin_write().await.unwrap();
     sqlx::query(
         "INSERT INTO conversations (id, title, space_id, created_at, updated_at, tangent_parent_id)          VALUES (?, 'A chat', 'space_general', '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', ?)",
     )
     .bind(chat)
     .bind(parent)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .unwrap();
     let page = snapshot(home);
@@ -302,7 +314,7 @@ async fn chat_with_files(
     )
     .bind(id_of(&page))
     .bind(chat)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .unwrap();
     let picture = picture(home);
@@ -312,9 +324,10 @@ async fn chat_with_files(
     .bind(id_of(&picture))
     .bind(chat)
     .bind(chat)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .unwrap();
+    tx.commit().await.unwrap();
     [page, picture]
 }
 
@@ -325,32 +338,32 @@ fn deleted(paths: &[PathBuf]) -> Vec<&PathBuf> {
 #[tokio::test]
 async fn a_fresh_database_beside_a_library_leaves_every_file_alone() {
     let home = TempDir::new().unwrap();
-    let pool = migrated_pool().await;
+    let db = migrated_database().await;
     let (_, paper) = imported_file(home.path(), "an imported paper");
     let library = [paper, snapshot(home.path()), picture(home.path())];
 
-    start_up(&pool, home.path()).await;
+    start_up(&db, home.path()).await;
 
     let gone = deleted(&library);
     assert!(gone.is_empty(), "the startup sweep deleted {gone:?}");
-    assert_eq!(recorded(&pool).await, None);
+    assert_eq!(recorded(&db).await, None);
     assert_eq!(filed(home.path()), None);
 }
 
 #[tokio::test]
 async fn a_fresh_database_beside_another_installs_library_leaves_every_file_alone() {
     let home = TempDir::new().unwrap();
-    let pool = migrated_pool().await;
+    let db = migrated_database().await;
     std::fs::create_dir_all(home.path()).unwrap();
     std::fs::write(home.path().join("owner"), A).unwrap();
     let (_, paper) = imported_file(home.path(), "an imported paper");
     let library = [paper, snapshot(home.path()), picture(home.path())];
 
-    start_up(&pool, home.path()).await;
+    start_up(&db, home.path()).await;
 
     let gone = deleted(&library);
     assert!(gone.is_empty(), "the startup sweep deleted {gone:?}");
-    assert_eq!(recorded(&pool).await, None);
+    assert_eq!(recorded(&db).await, None);
     assert_eq!(filed(home.path()).as_deref(), Some(A));
 }
 
@@ -362,21 +375,21 @@ async fn the_library_survives_corruption_recovery_even_once_the_new_database_has
 
     // The database that imported the library takes it at its first start.
     let database = setup_database(db_path.clone()).await.unwrap();
-    start_up(database.database().sqlx_pool(), home.path()).await;
+    start_up(database.database(), home.path()).await;
     let (_, paper) = imported_file(home.path(), "an imported paper");
     let library = [paper, snapshot(home.path()), picture(home.path())];
     let owner = filed(home.path());
 
     let database = corrupt_and_recover(database, &db_path).await;
 
-    start_up(database.database().sqlx_pool(), home.path()).await;
+    start_up(database.database(), home.path()).await;
     let gone = deleted(&library);
     assert!(gone.is_empty(), "the sweep after recovery deleted {gone:?}");
 
     // A document is added to the new database; it is not one of the library's.
     let (hash, newer) = imported_file(home.path(), "a paper imported since");
-    reference(database.database().sqlx_pool(), &hash, &newer).await;
-    start_up(database.database().sqlx_pool(), home.path()).await;
+    reference(database.database(), &hash, &newer).await;
+    start_up(database.database(), home.path()).await;
     let gone = deleted(&library);
     assert!(
         gone.is_empty(),
@@ -384,7 +397,7 @@ async fn the_library_survives_corruption_recovery_even_once_the_new_database_has
     );
     assert!(newer.exists());
     assert_eq!(filed(home.path()), owner, "the owner file is untouched");
-    assert_eq!(recorded(database.database().sqlx_pool()).await, None);
+    assert_eq!(recorded(database.database()).await, None);
     database.close().await.unwrap();
 }
 
@@ -396,16 +409,16 @@ async fn deleting_a_chat_after_corruption_recovery_leaves_the_old_snapshots_and_
 
     // The database that imported the library takes it at its first start.
     let database = setup_database(db_path.clone()).await.unwrap();
-    start_up(database.database().sqlx_pool(), home.path()).await;
+    start_up(database.database(), home.path()).await;
     let library = [snapshot(home.path()), picture(home.path())];
 
     let database = corrupt_and_recover(database, &db_path).await;
 
-    let run = start_up(database.database().sqlx_pool(), home.path()).await;
+    let run = start_up(database.database(), home.path()).await;
     let gone = deleted(&library);
     assert!(gone.is_empty(), "the start after recovery deleted {gone:?}");
 
-    run.delete_a_chat(database.database().sqlx_pool()).await;
+    run.delete_a_chat(database.database()).await;
 
     let gone = deleted(&library);
     assert!(gone.is_empty(), "deleting a chat deleted {gone:?}");
@@ -415,11 +428,11 @@ async fn deleting_a_chat_after_corruption_recovery_leaves_the_old_snapshots_and_
 #[tokio::test]
 async fn a_database_whose_files_name_another_owner_sweeps_nothing() {
     let home = TempDir::new().unwrap();
-    let pool = migrated_pool().await;
-    record(&pool, B).await;
+    let db = migrated_database().await;
+    record(&db, B).await;
     std::fs::write(home.path().join("owner"), A).unwrap();
     let (hash, referenced) = imported_file(home.path(), "referenced here");
-    reference(&pool, &hash, &referenced).await;
+    reference(&db, &hash, &referenced).await;
     let (_, unreferenced) = imported_file(home.path(), "referenced nowhere");
     let library = [
         referenced,
@@ -428,11 +441,11 @@ async fn a_database_whose_files_name_another_owner_sweeps_nothing() {
         picture(home.path()),
     ];
 
-    start_up(&pool, home.path()).await;
+    start_up(&db, home.path()).await;
 
     let gone = deleted(&library);
     assert!(gone.is_empty(), "the startup sweep deleted {gone:?}");
-    assert_eq!(recorded(&pool).await.as_deref(), Some(B));
+    assert_eq!(recorded(&db).await.as_deref(), Some(B));
     assert_eq!(filed(home.path()).as_deref(), Some(A));
 }
 
@@ -442,13 +455,13 @@ async fn a_database_whose_files_name_another_owner_sweeps_nothing() {
 #[tokio::test]
 async fn the_owning_database_keeps_an_imported_file_its_rows_no_longer_name() {
     let home = TempDir::new().unwrap();
-    let pool = migrated_pool().await;
-    own(&pool, home.path(), A).await;
+    let db = migrated_database().await;
+    own(&db, home.path(), A).await;
     let (hash, referenced) = imported_file(home.path(), "referenced here");
-    reference(&pool, &hash, &referenced).await;
+    reference(&db, &hash, &referenced).await;
     let (_, unnamed) = imported_file(home.path(), "imported after the backup");
 
-    start_up(&pool, home.path()).await;
+    start_up(&db, home.path()).await;
 
     assert!(
         unnamed.exists(),
@@ -460,11 +473,11 @@ async fn the_owning_database_keeps_an_imported_file_its_rows_no_longer_name() {
 #[tokio::test]
 async fn the_owning_database_keeps_a_frozen_page_its_rows_no_longer_name() {
     let home = TempDir::new().unwrap();
-    let pool = migrated_pool().await;
-    own(&pool, home.path(), A).await;
+    let db = migrated_database().await;
+    own(&db, home.path(), A).await;
     let page = snapshot(home.path());
 
-    start_up(&pool, home.path()).await;
+    start_up(&db, home.path()).await;
 
     assert!(
         page.exists(),
@@ -475,11 +488,11 @@ async fn the_owning_database_keeps_a_frozen_page_its_rows_no_longer_name() {
 #[tokio::test]
 async fn the_owning_database_keeps_a_picture_its_rows_no_longer_name() {
     let home = TempDir::new().unwrap();
-    let pool = migrated_pool().await;
-    own(&pool, home.path(), A).await;
+    let db = migrated_database().await;
+    own(&db, home.path(), A).await;
     let picture = picture(home.path());
 
-    start_up(&pool, home.path()).await;
+    start_up(&db, home.path()).await;
 
     assert!(
         picture.exists(),
@@ -490,13 +503,13 @@ async fn the_owning_database_keeps_a_picture_its_rows_no_longer_name() {
 #[tokio::test]
 async fn deleting_a_chat_keeps_the_pages_and_pictures_no_row_names() {
     let home = TempDir::new().unwrap();
-    let pool = migrated_pool().await;
-    own(&pool, home.path(), A).await;
-    let run = start_up(&pool, home.path()).await;
+    let db = migrated_database().await;
+    own(&db, home.path(), A).await;
+    let run = start_up(&db, home.path()).await;
     // Files whose rows went some other way than this chat's delete.
     let unnamed = [snapshot(home.path()), picture(home.path())];
 
-    run.delete_a_chat(&pool).await;
+    run.delete_a_chat(&db).await;
 
     let gone = deleted(&unnamed);
     assert!(gone.is_empty(), "deleting a chat deleted {gone:?}");
@@ -505,16 +518,16 @@ async fn deleting_a_chat_keeps_the_pages_and_pictures_no_row_names() {
 #[tokio::test]
 async fn an_existing_install_takes_its_files_on_upgrade_and_keeps_what_no_record_names() {
     let home = TempDir::new().unwrap();
-    let pool = migrated_pool().await;
+    let db = migrated_database().await;
     // Before this version nothing recorded who owns the files, or which of
     // them an import left behind.
     let (hash, referenced) = imported_file(home.path(), "referenced here");
-    reference(&pool, &hash, &referenced).await;
+    reference(&db, &hash, &referenced).await;
     let (_, unexplained) = imported_file(home.path(), "copied, never committed");
 
-    start_up(&pool, home.path()).await;
+    start_up(&db, home.path()).await;
 
-    let id = recorded(&pool).await.expect("the database took the files");
+    let id = recorded(&db).await.expect("the database took the files");
     assert_eq!(filed(home.path()).as_deref(), Some(id.as_str()));
     assert!(unexplained.exists(), "a file no record names is kept");
     assert!(referenced.exists());
@@ -524,14 +537,14 @@ async fn an_existing_install_takes_its_files_on_upgrade_and_keeps_what_no_record
 async fn a_fresh_database_beside_a_models_directory_keeps_every_model() {
     let home = TempDir::new().unwrap();
     let models = TempDir::new().unwrap();
-    let pool = migrated_pool().await;
+    let db = migrated_database().await;
     // The install's earlier database named itself the owner; this one has no id.
     std::fs::write(home.path().join("owner"), A).unwrap();
     let kept = ["chat-model", "embedding-model"].map(|id| model_directory(models.path(), id));
 
-    let run = start_up(&pool, home.path()).await;
+    let run = start_up(&db, home.path()).await;
     let removed = reconcile_orphaned_files(
-        Arc::new(DownloadedModelRepository::new(pool)),
+        Arc::new(DownloadedModelRepository::new(db)),
         models.path(),
         &run.gate,
     )
@@ -547,9 +560,9 @@ async fn a_fresh_database_beside_a_models_directory_keeps_every_model() {
 async fn the_owning_database_keeps_a_model_directory_no_row_names() {
     let home = TempDir::new().unwrap();
     let models = TempDir::new().unwrap();
-    let pool = migrated_pool().await;
-    own(&pool, home.path(), A).await;
-    installed(&pool, models.path(), "installed").await;
+    let db = migrated_database().await;
+    own(&db, home.path(), A).await;
+    installed(&db, models.path(), "installed").await;
     let kept = [
         model_directory(models.path(), "installed"),
         // The model manager downloads the reranker here with no row of its own.
@@ -557,9 +570,9 @@ async fn the_owning_database_keeps_a_model_directory_no_row_names() {
         model_directory(models.path(), "row-lost"),
     ];
 
-    let run = start_up(&pool, home.path()).await;
+    let run = start_up(&db, home.path()).await;
     let removed = reconcile_orphaned_files(
-        Arc::new(DownloadedModelRepository::new(pool)),
+        Arc::new(DownloadedModelRepository::new(db)),
         models.path(),
         &run.gate,
     )
@@ -577,46 +590,48 @@ async fn the_owning_database_keeps_a_model_directory_no_row_names() {
 #[tokio::test]
 async fn the_owning_database_collects_what_its_records_name() {
     let home = TempDir::new().unwrap();
-    let pool = migrated_pool().await;
-    own(&pool, home.path(), A).await;
+    let db = migrated_database().await;
+    own(&db, home.path(), A).await;
     let (hash, crashed) = imported_file(home.path(), "copied, never committed");
-    earlier_record(&pool, "library", "import", &hash).await;
+    earlier_record(&db, "library", "import", &hash).await;
     let page = snapshot(home.path());
-    earlier_record(&pool, "web_snapshot", "release", &id_of(&page)).await;
+    earlier_record(&db, "web_snapshot", "release", &id_of(&page)).await;
     let released_picture = picture(home.path());
     let name = released_picture
         .file_name()
         .unwrap()
         .to_string_lossy()
         .into_owned();
-    earlier_record(&pool, "chat_image", "release", &name).await;
+    earlier_record(&db, "chat_image", "release", &name).await;
     let collected = [crashed, page, released_picture];
     let (_, unnamed_file) = imported_file(home.path(), "no record names me");
     let unnamed = [unnamed_file, snapshot(home.path()), picture(home.path())];
 
-    start_up(&pool, home.path()).await;
+    start_up(&db, home.path()).await;
 
     let left: Vec<_> = collected.iter().filter(|path| path.exists()).collect();
     assert!(left.is_empty(), "the owner's sweep left {left:?}");
     let gone = deleted(&unnamed);
     assert!(gone.is_empty(), "the owner's sweep deleted {gone:?}");
+    let mut read = db.begin_read().await.unwrap();
     let records: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM file_intents")
-        .fetch_one(&pool)
+        .fetch_one(&mut *read)
         .await
         .unwrap();
+    read.commit().await.unwrap();
     assert_eq!(records, 0);
 }
 
 #[tokio::test]
 async fn deleting_a_chat_through_the_app_frees_its_pages_and_pictures() {
     let home = TempDir::new().unwrap();
-    let pool = migrated_pool().await;
-    own(&pool, home.path(), A).await;
-    let run = start_up(&pool, home.path()).await;
-    let chats_files = chat_with_files(&pool, home.path(), "chat", None).await;
+    let db = migrated_database().await;
+    own(&db, home.path(), A).await;
+    let run = start_up(&db, home.path()).await;
+    let chats_files = chat_with_files(&db, home.path(), "chat", None).await;
     let unnamed = [snapshot(home.path()), picture(home.path())];
 
-    ConversationRepository::new(pool.clone())
+    ConversationRepository::new(db.clone())
         .delete("chat")
         .await
         .unwrap();
@@ -632,16 +647,16 @@ async fn deleting_a_chat_through_the_app_frees_its_pages_and_pictures() {
 #[tokio::test]
 async fn deleting_a_chat_frees_the_pages_and_pictures_of_its_tangents() {
     let home = TempDir::new().unwrap();
-    let pool = migrated_pool().await;
-    own(&pool, home.path(), A).await;
-    let run = start_up(&pool, home.path()).await;
-    let mut files = chat_with_files(&pool, home.path(), "chat", None)
+    let db = migrated_database().await;
+    own(&db, home.path(), A).await;
+    let run = start_up(&db, home.path()).await;
+    let mut files = chat_with_files(&db, home.path(), "chat", None)
         .await
         .to_vec();
-    files.extend(chat_with_files(&pool, home.path(), "tangent", Some("chat")).await);
-    files.extend(chat_with_files(&pool, home.path(), "nested", Some("tangent")).await);
+    files.extend(chat_with_files(&db, home.path(), "tangent", Some("chat")).await);
+    files.extend(chat_with_files(&db, home.path(), "nested", Some("tangent")).await);
 
-    ConversationRepository::new(pool.clone())
+    ConversationRepository::new(db.clone())
         .delete("chat")
         .await
         .unwrap();
@@ -660,10 +675,10 @@ async fn deleting_a_chat_frees_the_pages_and_pictures_of_its_tangents() {
 #[tokio::test]
 async fn a_database_that_does_not_own_the_library_removes_no_blob_it_lets_go_of() {
     let home = TempDir::new().unwrap();
-    let pool = migrated_pool().await;
+    let db = migrated_database().await;
     std::fs::write(home.path().join("owner"), A).unwrap();
     let (hash, shared) = imported_file(home.path(), "a document both databases hold");
-    let run = start_up(&pool, home.path()).await;
+    let run = start_up(&db, home.path()).await;
     assert!(!run.gate.is_open());
 
     run.sweeps.library_gc.release(&hash).await.unwrap();
@@ -677,31 +692,33 @@ async fn a_database_that_does_not_own_the_library_removes_no_blob_it_lets_go_of(
 #[tokio::test]
 async fn a_database_that_does_not_own_the_library_clears_its_records_and_keeps_the_files() {
     let home = TempDir::new().unwrap();
-    let pool = migrated_pool().await;
+    let db = migrated_database().await;
     std::fs::write(home.path().join("owner"), A).unwrap();
     let (hash, blob) = imported_file(home.path(), "let go of here");
-    earlier_record(&pool, "library", "release", &hash).await;
+    earlier_record(&db, "library", "release", &hash).await;
     let page = snapshot(home.path());
-    earlier_record(&pool, "web_snapshot", "release", &id_of(&page)).await;
+    earlier_record(&db, "web_snapshot", "release", &id_of(&page)).await;
     let released_picture = picture(home.path());
     let name = released_picture
         .file_name()
         .unwrap()
         .to_string_lossy()
         .into_owned();
-    earlier_record(&pool, "chat_image", "release", &name).await;
+    earlier_record(&db, "chat_image", "release", &name).await;
     let files = [blob, page, released_picture];
 
-    start_up(&pool, home.path()).await;
+    start_up(&db, home.path()).await;
 
     let gone = deleted(&files);
     assert!(
         gone.is_empty(),
         "a database that does not own them deleted {gone:?}"
     );
+    let mut read = db.begin_read().await.unwrap();
     let records: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM file_intents")
-        .fetch_one(&pool)
+        .fetch_one(&mut *read)
         .await
         .unwrap();
+    read.commit().await.unwrap();
     assert_eq!(records, 0);
 }

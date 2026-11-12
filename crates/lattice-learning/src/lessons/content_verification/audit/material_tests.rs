@@ -7,12 +7,13 @@ use lattice_core::shared::persistence::Database;
 #[tokio::test]
 async fn the_published_lessons_units_keep_each_questions_place() -> Result<()> {
     let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
     let program = crate::tests::fixture();
-    let programs = LearningRepository::new(pool.clone());
+    let programs = LearningRepository::new(db.clone());
     programs.create(&program).await?;
     programs
         .accept(&AcceptLearningProgramRequestDto {
@@ -31,7 +32,7 @@ async fn the_published_lessons_units_keep_each_questions_place() -> Result<()> {
             &crate::tests::prepared_with_questions(&lesson_id, &placed_questions()),
         )
         .await?;
-    let draft = published(&Database::from(pool.clone()), &program_id, &lesson_id).await?;
+    let draft = published(&db, &program_id, &lesson_id).await?;
     let sections = draft["blocks"].as_array().map_or(0, Vec::len);
     let units = units(&draft);
     let title = |unit: usize| units.get(unit).map(|u| u.title.as_str());

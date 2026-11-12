@@ -8,7 +8,7 @@ use super::repository::{
 use super::PlannedLesson;
 use crate::persistence::db;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::JobStatus;
 use serde::{Deserialize, Serialize};
 

@@ -90,7 +90,7 @@ async fn create_test_pool() -> (SqlitePool, PathBuf, tempfile::TempDir) {
 
 async fn test_create_backup() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     let backup_path = adapter.create_backup(None).await.unwrap();
 
@@ -104,7 +104,7 @@ async fn test_create_backup() {
 
 async fn test_create_backup_custom_path() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     let backup_root = db_path.parent().unwrap().join("backups");
     fs::create_dir_all(&backup_root).unwrap();
@@ -128,7 +128,7 @@ async fn test_create_backup_custom_path() {
 
 async fn test_list_backups() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     let _ = adapter.create_backup(None).await.unwrap();
     // Sleep 1 second to avoid timestamp collision (backups use second-precision timestamps)
@@ -149,7 +149,7 @@ async fn test_list_backups() {
 
 async fn test_validate_backup() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     let backup_path = adapter.create_backup(None).await.unwrap();
     let backup_pathbuf = PathBuf::from(backup_path);
@@ -164,7 +164,7 @@ async fn test_validate_backup() {
 
 async fn test_validate_invalid_backup() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     let invalid_path = PathBuf::from("/nonexistent/backup.db");
     let result = adapter.validate_backup(&invalid_path).await;
@@ -178,7 +178,7 @@ async fn test_validate_invalid_backup() {
 
 async fn test_backup_file_count() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     let backup_path = adapter.create_backup(None).await.unwrap();
     let backup_pathbuf = PathBuf::from(backup_path);
@@ -193,7 +193,7 @@ async fn test_backup_file_count() {
 
 async fn test_create_backup_rejects_parent_directory_traversal() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     // Attempt to traverse to parent directory
     let malicious_path = db_path
@@ -221,7 +221,7 @@ async fn test_create_backup_rejects_parent_directory_traversal() {
 
 async fn test_create_backup_rejects_absolute_system_path() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     // Attempt to write to system directory
     #[cfg(unix)]
@@ -248,7 +248,7 @@ async fn test_create_backup_rejects_absolute_system_path() {
 async fn a_backup_name_with_two_dots_or_percent_signs_is_a_plain_name() {
     for name in ["notes..db", "%2e%2e%2fetc.db"] {
         let (pool, db_path, _dir) = create_test_pool().await;
-        let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+        let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
         let backup_dir = db_path.parent().unwrap().join("backups");
         fs::create_dir_all(&backup_dir).unwrap();
@@ -267,7 +267,7 @@ async fn a_backup_name_with_two_dots_or_percent_signs_is_a_plain_name() {
 
 async fn test_create_backup_allows_valid_path_in_backup_dir() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     let backup_dir = db_path.parent().unwrap().join("backups");
     fs::create_dir_all(&backup_dir).unwrap();
@@ -284,7 +284,7 @@ async fn test_create_backup_allows_valid_path_in_backup_dir() {
 
 async fn create_backup_rejects_a_link_escape(kind: LinkKind) {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     let backup_dir = db_path.parent().unwrap().join("backups");
     fs::create_dir_all(&backup_dir).unwrap();
@@ -323,7 +323,7 @@ async fn test_create_backup_rejects_junction_escape() {
 
 async fn test_create_backup_handles_directory_input() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     let backup_dir = db_path.parent().unwrap().join("backups");
     fs::create_dir_all(&backup_dir).unwrap();
@@ -344,7 +344,7 @@ async fn test_create_backup_handles_directory_input() {
 
 async fn test_create_backup_defense_in_depth() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     // Even if initial validation were bypassed, canonicalization
     // and final check should catch traversal
@@ -378,7 +378,7 @@ async fn test_create_backup_defense_in_depth() {
 
 async fn test_restore_backup_success() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     // User-created collections live in ordinary SQLite tables. Include both
     // collection metadata and normalized memberships in this database copy
@@ -469,7 +469,7 @@ async fn a_restored_database_keeps_no_file_records_of_the_one_it_came_from() {
     .execute(&pool)
     .await
     .unwrap();
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
     let backup = PathBuf::from(adapter.create_backup(None).await.unwrap());
 
     adapter.restore_backup(backup).await.unwrap();
@@ -492,7 +492,7 @@ async fn a_restored_database_keeps_no_file_records_of_the_one_it_came_from() {
 
 async fn test_restore_backup_validates_integrity() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     let invalid_backup = tempdir().unwrap();
     let invalid_path = invalid_backup.path().join("corrupt.db");
@@ -542,7 +542,7 @@ async fn safety_backup_includes_rows_still_in_the_wal() {
     .execute(&pool)
     .await
     .unwrap();
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
     let backup = PathBuf::from(adapter.create_backup(None).await.unwrap());
 
     sqlx::query("INSERT INTO documents (id, title, content) VALUES ('late', 'Late', 'committed just before restore')")
@@ -571,7 +571,7 @@ async fn safety_backup_includes_rows_still_in_the_wal() {
 
 async fn test_restore_backup_creates_safety_backup() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     let backup_path = adapter.create_backup(None).await.unwrap();
     let backup_pathbuf = PathBuf::from(backup_path);
@@ -600,29 +600,9 @@ async fn test_restore_backup_creates_safety_backup() {
 }
 
 #[tokio::test]
-async fn failed_safety_snapshot_keeps_the_previous_recovery_copy() {
-    let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
-    // An invalid SQLite output path makes snapshot preparation fail before
-    // VACUUM INTO. The existing copy must survive all preparation errors.
-    let invalid_destination = db_path.parent().unwrap().join("unsafe;destination.db");
-    fs::write(&invalid_destination, b"last known-good recovery copy").unwrap();
-    assert!(adapter
-        .write_safety_copy(&invalid_destination)
-        .await
-        .is_err());
-    assert_eq!(
-        fs::read(&invalid_destination).unwrap(),
-        b"last known-good recovery copy"
-    );
-
-    pool.close().await;
-}
-
-#[tokio::test]
 async fn failed_vacuum_keeps_the_previous_recovery_copy() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
     let safety_path = db_path.with_extension("db.pre_restore");
     fs::write(&safety_path, b"last known-good recovery copy").unwrap();
     pool.close().await;
@@ -646,7 +626,7 @@ async fn failed_vacuum_keeps_the_previous_recovery_copy() {
 #[tokio::test]
 async fn successful_safety_snapshot_replaces_the_previous_copy() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
     let safety_path = db_path.with_extension("db.pre_restore");
     fs::write(&safety_path, b"stale recovery copy").unwrap();
 
@@ -665,7 +645,7 @@ async fn successful_safety_snapshot_replaces_the_previous_copy() {
 
 async fn test_restore_backup_rolls_back_on_failure() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     let original_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents")
         .fetch_one(&pool)
@@ -680,7 +660,7 @@ async fn test_restore_backup_rolls_back_on_failure() {
 
     let new_pool = connect_fixture_pool(&db_path).await;
 
-    let adapter2 = BackupAdapter::new(Database::from(new_pool.clone()), db_path.clone());
+    let adapter2 = BackupAdapter::new(Database::new(new_pool.clone()), db_path.clone());
 
     // Restores create sibling safety and temporary files. Make the parent
     // directory read-only so the failure is portable across Unix filesystems;
@@ -733,7 +713,7 @@ async fn test_restore_backup_rolls_back_on_failure() {
 
 async fn test_restore_backup_handles_missing_file() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     let missing_path = PathBuf::from("/nonexistent/backup.db");
     let result = adapter.restore_backup(missing_path).await;
@@ -760,7 +740,7 @@ async fn test_restore_backup_handles_missing_file() {
 
 async fn test_restore_backup_atomic_operation() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     let backup_path = adapter.create_backup(None).await.unwrap();
     let backup_pathbuf = PathBuf::from(backup_path);
@@ -789,154 +769,87 @@ async fn test_restore_backup_atomic_operation() {
     new_pool.close().await;
 }
 
+/// `VACUUM INTO` takes the path as a bound value, so a folder named with `;`
+/// and `--` is an ordinary folder.
 #[tokio::test]
-
-async fn test_sql_injection_semicolon_statement_terminator() {
+async fn a_backup_into_a_folder_named_with_semicolons_and_dashes_succeeds() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
-    // Attempt SQL injection with semicolon
-    let backup_dir = db_path.parent().unwrap().join("backups");
-    fs::create_dir_all(&backup_dir).unwrap();
+    let folder = db_path.parent().unwrap().join("backups").join("a;b--c");
+    fs::create_dir_all(&folder).unwrap();
+    let target = folder.join("my_backup.db");
 
-    let malicious_path = backup_dir.join("backup.db'; DROP TABLE documents; --");
+    let backup_path = adapter.create_backup(Some(target.clone())).await.unwrap();
 
-    let result = adapter.create_backup(Some(malicious_path)).await;
-
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(
-        matches!(err, AppError::Security(_)),
-        "Expected Security error, got: {:?}",
-        err
+    assert_eq!(
+        PathBuf::from(&backup_path).canonicalize().unwrap(),
+        target.canonicalize().unwrap()
     );
-
-    let count: Result<(i64,), _> = sqlx::query_as("SELECT COUNT(*) FROM documents")
-        .fetch_one(&pool)
-        .await;
-    assert!(count.is_ok(), "documents table should still exist");
+    adapter.validate_backup(&target).await.unwrap();
 
     pool.close().await;
 }
 
+/// Backup names that look like SQL are only names: the backup is written
+/// under exactly that name and the live database is untouched.
 #[tokio::test]
-
-async fn test_sql_injection_comment_sequences() {
+async fn test_sql_looking_backup_names_are_plain_names() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     let backup_dir = db_path.parent().unwrap().join("backups");
     fs::create_dir_all(&backup_dir).unwrap();
 
-    let comment_patterns = vec![
+    let names = [
+        "backup.db'; DROP TABLE documents; --",
         "backup.db--comment",
-        "backup.db/* comment */",
-        "backup/**/file.db",
+        "backup' UNION SELECT id FROM documents; --",
+        "backup' DROP TABLE documents CASCADE; --",
+        "backup'; INSERT INTO documents VALUES ('evil', 'bad'); --",
+        "backup'; EXEC sp_executesql; --",
+        "backup'; EXECUTE ('DROP TABLE documents'); --",
+        "user's_backup.db",
     ];
 
-    for pattern in comment_patterns {
-        let malicious_path = backup_dir.join(pattern);
-        let result = adapter.create_backup(Some(malicious_path.clone())).await;
+    for name in names {
+        let target = backup_dir.join(name);
+        let backup_path = adapter
+            .create_backup(Some(target.clone()))
+            .await
+            .unwrap_or_else(|error| panic!("name '{name}' should be a plain name: {error:?}"));
 
-        assert!(result.is_err(), "Pattern '{}' should be rejected", pattern);
-
-        if let Err(err) = result {
-            assert!(
-                matches!(err, AppError::Security(_)),
-                "Pattern '{}' should trigger Security error, got: {:?}",
-                pattern,
-                err
-            );
-        }
+        assert_eq!(
+            PathBuf::from(&backup_path).file_name().unwrap(),
+            std::ffi::OsStr::new(name)
+        );
+        adapter.validate_backup(&target).await.unwrap();
     }
 
-    pool.close().await;
-}
-
-#[tokio::test]
-
-async fn test_sql_injection_union_attack() {
-    let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
-
-    let backup_dir = db_path.parent().unwrap().join("backups");
-    fs::create_dir_all(&backup_dir).unwrap();
-
-    // Attempt UNION injection
-    let malicious_path = backup_dir.join("backup' UNION SELECT * FROM documents; --");
-
-    let result = adapter.create_backup(Some(malicious_path)).await;
-
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(
-        matches!(err, AppError::Security(_)),
-        "Expected Security error for UNION injection, got: {:?}",
-        err
-    );
-
-    pool.close().await;
-}
-
-#[tokio::test]
-
-async fn test_sql_injection_drop_table() {
-    let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
-
-    let backup_dir = db_path.parent().unwrap().join("backups");
-    fs::create_dir_all(&backup_dir).unwrap();
-
-    // Attempt DROP TABLE injection
-    let malicious_path = backup_dir.join("backup' DROP TABLE documents CASCADE; --");
-
-    let result = adapter.create_backup(Some(malicious_path)).await;
-
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(
-        matches!(err, AppError::Security(_)),
-        "Expected Security error for DROP TABLE, got: {:?}",
-        err
-    );
-
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(count.0, 1, "documents table should still have data");
+    assert_eq!(count.0, 1, "documents table should still have its data");
 
     pool.close().await;
 }
 
+/// Comment markers that contain a path separator name a folder that is not
+/// there, so nothing is written.
 #[tokio::test]
-
-async fn test_sql_injection_insert_attack() {
+async fn test_backup_into_a_missing_folder_is_rejected() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     let backup_dir = db_path.parent().unwrap().join("backups");
     fs::create_dir_all(&backup_dir).unwrap();
 
-    // Attempt INSERT injection
-    let malicious_path =
-        backup_dir.join("backup'; INSERT INTO documents VALUES ('evil', 'bad'); --");
+    for pattern in ["backup.db/* comment */", "backup/**/file.db"] {
+        let result = adapter.create_backup(Some(backup_dir.join(pattern))).await;
 
-    let result = adapter.create_backup(Some(malicious_path)).await;
-
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(
-        matches!(err, AppError::Security(_)),
-        "Expected Security error for INSERT, got: {:?}",
-        err
-    );
-
-    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(count.0, 1, "Should still have only 1 document");
+        assert!(result.is_err(), "Pattern '{}' should be rejected", pattern);
+    }
 
     pool.close().await;
 }
@@ -945,7 +858,7 @@ async fn test_sql_injection_insert_attack() {
 
 async fn test_sql_injection_null_byte() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+    let adapter = BackupAdapter::new(Database::new(pool.clone()), db_path.clone());
 
     let backup_dir = db_path.parent().unwrap().join("backups");
     fs::create_dir_all(&backup_dir).unwrap();
@@ -957,65 +870,7 @@ async fn test_sql_injection_null_byte() {
     let result = adapter.create_backup(Some(malicious_path)).await;
 
     assert!(result.is_err());
-    // Will fail either in path validation or SQL validation
-    // Either way, it should not succeed
+    // Will fail in the file name validation; either way it should not succeed
 
     pool.close().await;
-}
-
-#[tokio::test]
-
-async fn test_sql_injection_exec_execute() {
-    let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
-
-    let backup_dir = db_path.parent().unwrap().join("backups");
-    fs::create_dir_all(&backup_dir).unwrap();
-
-    // Attempt EXEC/EXECUTE injection
-    let patterns = vec![
-        "backup'; EXEC sp_executesql; --",
-        "backup'; EXECUTE ('DROP TABLE documents'); --",
-    ];
-
-    for pattern in patterns {
-        let malicious_path = backup_dir.join(pattern);
-        let result = adapter.create_backup(Some(malicious_path.clone())).await;
-
-        assert!(result.is_err(), "Pattern '{}' should be rejected", pattern);
-    }
-
-    pool.close().await;
-}
-
-#[test]
-fn test_sql_safe_path_validator() {
-    // Valid paths
-    assert!(validate_sql_safe_path("/backup/file.db").is_ok());
-    assert!(validate_sql_safe_path("/Users/user/backup_20240101.db").is_ok());
-    assert!(validate_sql_safe_path("C:\\Backups\\my_backup.db").is_ok());
-
-    // Invalid: semicolon
-    assert!(validate_sql_safe_path("/backup/file.db;").is_err());
-    assert!(validate_sql_safe_path("/backup;DROP TABLE users;").is_err());
-
-    // Invalid: SQL comments
-    assert!(validate_sql_safe_path("/backup/file--comment.db").is_err());
-    assert!(validate_sql_safe_path("/backup/*comment*/file.db").is_err());
-
-    // SQL keywords in paths are allowed.
-    // Valid: paths that happen to contain SQL keywords (e.g., "Dropbox", "update_v2")
-    assert!(validate_sql_safe_path("/backup/DROP.db").is_ok());
-    assert!(validate_sql_safe_path("/backup/DELETE_backup.db").is_ok());
-    assert!(validate_sql_safe_path("/backup/INSERT.db").is_ok());
-    assert!(validate_sql_safe_path("/backup/SELECT.db").is_ok());
-    assert!(validate_sql_safe_path("/backup/UNION.db").is_ok());
-    assert!(validate_sql_safe_path("/Users/Dropbox/backup.db").is_ok());
-    assert!(validate_sql_safe_path("/projects/update_v2/backup.db").is_ok());
-
-    // Invalid: null byte
-    assert!(validate_sql_safe_path("/backup/file\0.db").is_err());
-
-    // Valid: path with single quote (will be escaped during use)
-    assert!(validate_sql_safe_path("/backup/user's_backup.db").is_ok());
 }

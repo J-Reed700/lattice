@@ -1,5 +1,5 @@
 //! Coding sessions: their rows, events, examples, cues, clock and debrief. Every statement the coding tables need is
-//! here, so a run, a turn and a stage move share one pool, one writer lock and one operation ledger.
+//! here, so a run, a turn and a stage move share one database, one write queue and one operation ledger.
 use super::{
     decode, invalid, json, practical_operation, uuid, InternalActivitySnapshot,
     LearningPracticalRepository,
@@ -21,7 +21,7 @@ use crate::practice::session::policy::Cue;
 use lattice_core::domain::learning::practice::work::{Form, Hidden, KindId, Setting, Stage};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::shared::persistence::{Transactions, WriteTx};
+use lattice_core::shared::persistence::WriteTx;
 use serde::{de::DeserializeOwned, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 
@@ -134,7 +134,7 @@ fn check_revision(row: &CodingRow, expected: i64) -> Result<()> {
 
 /// Adds an event after the session's last one and returns its ordinal.
 pub(super) async fn add_event(
-    connection: &mut SqliteConnection,
+    connection: &mut WriteTx,
     session_id: &str,
     kind: &str,
     payload: &serde_json::Value,
@@ -144,7 +144,7 @@ pub(super) async fn add_event(
         "SELECT coalesce(max(ordinal),-1)+1 FROM learning_exercise_session_events WHERE session_id=?",
     )
     .bind(session_id)
-    .fetch_one(&mut *connection)
+    .fetch_one(&mut **connection)
     .await
     .map_err(db)?;
     sqlx::query("INSERT INTO learning_exercise_session_events(session_id,ordinal,kind,payload_json,at) VALUES(?,?,?,?,?)")
@@ -153,16 +153,16 @@ pub(super) async fn add_event(
         .bind(kind)
         .bind(json(payload)?)
         .bind(at)
-        .execute(&mut *connection)
+        .execute(&mut **connection)
         .await
         .map_err(db)?;
     to_u32(ordinal)
 }
 
-async fn bump_revision(connection: &mut SqliteConnection, session_id: &str) -> Result<()> {
+async fn bump_revision(connection: &mut WriteTx, session_id: &str) -> Result<()> {
     sqlx::query("UPDATE learning_exercise_sessions SET revision=revision+1 WHERE id=?")
         .bind(session_id)
-        .execute(&mut *connection)
+        .execute(&mut **connection)
         .await
         .map_err(db)?;
     Ok(())
@@ -170,7 +170,7 @@ async fn bump_revision(connection: &mut SqliteConnection, session_id: &str) -> R
 
 /// Appends a turn to the session's transcript.
 pub(super) async fn add_turn(
-    connection: &mut SqliteConnection,
+    connection: &mut WriteTx,
     program_id: &str,
     session_id: &str,
     speaker: &str,
@@ -182,7 +182,7 @@ pub(super) async fn add_turn(
         "SELECT coalesce(max(ordinal),-1)+1 FROM learning_simulation_turns WHERE session_id=?",
     )
     .bind(session_id)
-    .fetch_one(&mut *connection)
+    .fetch_one(&mut **connection)
     .await
     .map_err(db)?;
     sqlx::query("INSERT INTO learning_simulation_turns(id,program_id,session_id,operation_id,payload_hash,ordinal,speaker,content,citations_json,model_name,created_at) VALUES(?,?,?,?,?,?,?,?,'[]',?,?)")
@@ -196,7 +196,7 @@ pub(super) async fn add_turn(
         .bind(content)
         .bind(model)
         .bind(at)
-        .execute(&mut *connection)
+        .execute(&mut **connection)
         .await
         .map_err(db)?;
     Ok(())
@@ -212,13 +212,6 @@ fn problem_of(activity: &InternalActivitySnapshot) -> Result<Problem> {
 }
 
 impl LearningPracticalRepository {
-    async fn begin_coding_write(&self, program_id: &str) -> Result<WriteTx> {
-        uuid(program_id, "program")?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, program_id).await?;
-        Ok(tx)
-    }
-
     /// Whether this request was already answered, for a command whose slow work should not start twice.
     pub async fn coding_operation_seen(
         &self,
@@ -227,10 +220,10 @@ impl LearningPracticalRepository {
         op: &CodingOp<'_>,
     ) -> Result<bool> {
         uuid(op.operation_id, "operation")?;
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        op.operation(program_id, subject_id)
-            .seen(&mut connection)
-            .await
+        let mut read = self.db.begin_read().await.map_err(db)?;
+        let seen = op.operation(program_id, subject_id).seen(&mut read).await?;
+        read.commit().await.map_err(db)?;
+        Ok(seen)
     }
 
     /// Creates the simulation session and the coding session on it. Returns the session's id and whether this call
@@ -243,7 +236,8 @@ impl LearningPracticalRepository {
     ) -> Result<(String, bool)> {
         uuid(op.operation_id, "operation")?;
         uuid(new.activity_id, "activity")?;
-        let mut tx = self.begin_coding_write(new.program_id).await?;
+        uuid(new.program_id, "program")?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = op.operation(new.program_id, new.activity_id);
         if let Some(session_id) = operation.replay::<String>(&mut tx).await? {
             tx.commit().await.map_err(db)?;
@@ -323,7 +317,8 @@ impl LearningPracticalRepository {
     ) -> Result<Applied<StageMove>> {
         uuid(session_id, "coding session")?;
         uuid(op.operation_id, "operation")?;
-        let mut tx = self.begin_coding_write(program_id).await?;
+        uuid(program_id, "program")?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = op.operation(program_id, session_id);
         if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
@@ -388,7 +383,8 @@ impl LearningPracticalRepository {
     ) -> Result<Applied<u32>> {
         uuid(session_id, "coding session")?;
         uuid(op.operation_id, "operation")?;
-        let mut tx = self.begin_coding_write(program_id).await?;
+        uuid(program_id, "program")?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = op.operation(program_id, session_id);
         if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
@@ -449,7 +445,8 @@ impl LearningPracticalRepository {
     ) -> Result<Applied<()>> {
         uuid(session_id, "coding session")?;
         uuid(op.operation_id, "operation")?;
-        let mut tx = self.begin_coding_write(program_id).await?;
+        uuid(program_id, "program")?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = op.operation(program_id, session_id);
         if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
@@ -486,7 +483,8 @@ impl LearningPracticalRepository {
         files: &[LearningLabFile],
     ) -> Result<()> {
         uuid(session_id, "coding session")?;
-        let mut tx = self.begin_coding_write(program_id).await?;
+        uuid(program_id, "program")?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         open_row_on(&mut tx, program_id, session_id).await?;
         sqlx::query("UPDATE learning_exercise_sessions SET draft_json=? WHERE id=?")
             .bind(json(files)?)
@@ -508,7 +506,8 @@ impl LearningPracticalRepository {
         at: i64,
     ) -> Result<bool> {
         uuid(session_id, "coding session")?;
-        let mut tx = self.begin_coding_write(program_id).await?;
+        uuid(program_id, "program")?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         open_row_on(&mut tx, program_id, session_id).await?;
         let recorded: Option<i64> = sqlx::query_scalar(
             "SELECT 1 FROM learning_exercise_session_events WHERE session_id=? AND kind='check' AND json_extract(payload_json,'$.runId')=?",
@@ -553,7 +552,8 @@ impl LearningPracticalRepository {
         cue: &Cue,
     ) -> Result<bool> {
         uuid(session_id, "coding session")?;
-        let mut tx = self.begin_coding_write(program_id).await?;
+        uuid(program_id, "program")?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let row = row_on(&mut tx, program_id, session_id).await?;
         let replaces = row.finished_at.is_none()
             && row
@@ -576,7 +576,8 @@ impl LearningPracticalRepository {
     /// twice.
     pub async fn take_coding_cue(&self, program_id: &str, session_id: &str) -> Result<Option<Cue>> {
         uuid(session_id, "coding session")?;
-        let mut tx = self.begin_coding_write(program_id).await?;
+        uuid(program_id, "program")?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let taken: Option<String> = sqlx::query_scalar(
             "SELECT pending_cue_json FROM learning_exercise_sessions WHERE id=? AND program_id=?",
         )
@@ -608,7 +609,8 @@ impl LearningPracticalRepository {
         cue: &Cue,
     ) -> Result<()> {
         uuid(session_id, "coding session")?;
-        let mut tx = self.begin_coding_write(program_id).await?;
+        uuid(program_id, "program")?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         sqlx::query("UPDATE learning_exercise_sessions SET pending_cue_json=? WHERE id=? AND program_id=? AND pending_cue_json IS NULL AND finished_at IS NULL")
             .bind(json(cue)?)
             .bind(session_id)
@@ -632,7 +634,8 @@ impl LearningPracticalRepository {
         at: i64,
     ) -> Result<()> {
         uuid(session_id, "coding session")?;
-        let mut tx = self.begin_coding_write(program_id).await?;
+        uuid(program_id, "program")?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let row = open_row_on(&mut tx, program_id, session_id).await?;
         if let Some(content) = reply {
             let speaker = match row.setting {
@@ -675,7 +678,8 @@ impl LearningPracticalRepository {
     ) -> Result<Applied<()>> {
         uuid(session_id, "coding session")?;
         uuid(op.operation_id, "operation")?;
-        let mut tx = self.begin_coding_write(program_id).await?;
+        uuid(program_id, "program")?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = op.operation(program_id, session_id);
         if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
@@ -712,7 +716,8 @@ impl LearningPracticalRepository {
     ) -> Result<Applied<StoredHint>> {
         uuid(session_id, "coding session")?;
         uuid(op.operation_id, "operation")?;
-        let mut tx = self.begin_coding_write(program_id).await?;
+        uuid(program_id, "program")?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = op.operation(program_id, session_id);
         if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
@@ -789,7 +794,8 @@ impl LearningPracticalRepository {
         at: i64,
     ) -> Result<ClockDto> {
         uuid(session_id, "coding session")?;
-        let mut tx = self.begin_coding_write(program_id).await?;
+        uuid(program_id, "program")?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let row = row_on(&mut tx, program_id, session_id).await?;
         let mut active_ms = row.active_ms;
         let mut opened_at = row.opened_at;
@@ -844,7 +850,8 @@ impl LearningPracticalRepository {
     ) -> Result<Applied<()>> {
         uuid(session_id, "coding session")?;
         uuid(op.operation_id, "operation")?;
-        let mut tx = self.begin_coding_write(program_id).await?;
+        uuid(program_id, "program")?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = op.operation(program_id, session_id);
         if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
@@ -898,7 +905,8 @@ impl LearningPracticalRepository {
     ) -> Result<Applied<()>> {
         uuid(session_id, "coding session")?;
         uuid(op.operation_id, "operation")?;
-        let mut tx = self.begin_coding_write(program_id).await?;
+        uuid(program_id, "program")?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = op.operation(program_id, session_id);
         if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;

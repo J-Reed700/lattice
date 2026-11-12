@@ -199,7 +199,7 @@ mod tests {
     #[tokio::test]
     async fn test_bm25_search() {
         let pool = setup_test_db().await.unwrap();
-        let search = BM25Search::new(Database::from(pool));
+        let search = BM25Search::new(Database::new(pool));
 
         let results = search.search("programming", 10).await.unwrap();
 
@@ -211,7 +211,7 @@ mod tests {
     #[tokio::test]
     async fn test_bm25_exact_keyword() {
         let pool = setup_test_db().await.unwrap();
-        let search = BM25Search::new(Database::from(pool));
+        let search = BM25Search::new(Database::new(pool));
 
         let results = search.search("Rust", 10).await.unwrap();
 
@@ -239,7 +239,7 @@ mod tests {
         .await
         .unwrap();
 
-        let results = BM25Search::new(Database::from(pool))
+        let results = BM25Search::new(Database::new(pool))
             .search("Rust", 1)
             .await
             .unwrap();
@@ -251,7 +251,7 @@ mod tests {
     #[tokio::test]
     async fn test_bm25_multiple_terms() {
         let pool = setup_test_db().await.unwrap();
-        let search = BM25Search::new(Database::from(pool));
+        let search = BM25Search::new(Database::new(pool));
 
         let results = search.search("Python neural", 10).await.unwrap();
 
@@ -270,7 +270,7 @@ mod tests {
     #[tokio::test]
     async fn a_digits_only_query_finds_its_chunk() {
         let pool = setup_test_db().await.unwrap();
-        let search = BM25Search::new(Database::from(pool));
+        let search = BM25Search::new(Database::new(pool));
 
         for query in ["4012", "429", "2026"] {
             let results = search.search(query, 10).await.unwrap();
@@ -285,7 +285,7 @@ mod tests {
     #[tokio::test]
     async fn an_identifier_keeps_both_halves() {
         let pool = setup_test_db().await.unwrap();
-        let results = BM25Search::new(Database::from(pool))
+        let results = BM25Search::new(Database::new(pool))
             .search("ERR-4012", 10)
             .await
             .unwrap();
@@ -295,7 +295,7 @@ mod tests {
     #[tokio::test]
     async fn a_cyrillic_query_finds_its_chunk() {
         let pool = setup_test_db().await.unwrap();
-        let results = BM25Search::new(Database::from(pool))
+        let results = BM25Search::new(Database::new(pool))
             .search("политика хранения", 10)
             .await
             .unwrap();
@@ -307,7 +307,7 @@ mod tests {
     #[tokio::test]
     async fn a_japanese_substring_query_finds_its_chunk() {
         let pool = setup_test_db().await.unwrap();
-        let search = BM25Search::new(Database::from(pool));
+        let search = BM25Search::new(Database::new(pool));
         for query in ["日本語サポート", "担当チーム", "金曜日"] {
             let results = search.search(query, 10).await.unwrap();
             assert_eq!(
@@ -321,7 +321,7 @@ mod tests {
     #[tokio::test]
     async fn a_two_character_cjk_query_returns_nothing_rather_than_failing() {
         let pool = setup_test_db().await.unwrap();
-        let results = BM25Search::new(Database::from(pool))
+        let results = BM25Search::new(Database::new(pool))
             .search("設定", 10)
             .await
             .unwrap();
@@ -331,7 +331,7 @@ mod tests {
     #[tokio::test]
     async fn hostile_and_empty_queries_do_not_error() {
         let pool = setup_test_db().await.unwrap();
-        let search = BM25Search::new(Database::from(pool));
+        let search = BM25Search::new(Database::new(pool));
         for query in [
             "",
             "   ",
@@ -367,7 +367,7 @@ mod tests {
         .await
         .unwrap();
 
-        let search = BM25Search::new(Database::from(pool.clone()));
+        let search = BM25Search::new(Database::new(pool.clone()));
         assert_eq!(
             search
                 .search("日本語サポート", 10)
@@ -400,7 +400,7 @@ mod tests {
     #[tokio::test]
     async fn maintenance_commands_cover_both_indexes() {
         let pool = setup_test_db().await.unwrap();
-        let search = BM25Search::new(Database::from(pool));
+        let search = BM25Search::new(Database::new(pool));
         search.rebuild_index().await.unwrap();
         search.optimize_index().await.unwrap();
         assert!(!search
@@ -447,7 +447,7 @@ mod tests {
         let pool = pool_with_only_the_words_index().await;
         let commits = count_commits(&pool).await;
 
-        assert!(BM25Search::new(Database::from(pool))
+        assert!(BM25Search::new(Database::new(pool))
             .optimize_index()
             .await
             .is_err());
@@ -460,7 +460,7 @@ mod tests {
         let pool = pool_with_only_the_words_index().await;
         let commits = count_commits(&pool).await;
 
-        assert!(BM25Search::new(Database::from(pool))
+        assert!(BM25Search::new(Database::new(pool))
             .rebuild_index()
             .await
             .is_err());

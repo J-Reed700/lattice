@@ -59,6 +59,7 @@ mod tests {
     use super::*;
     use crate::features::transcription::engine::WhisperTranscriptionService;
     use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
+    use lattice_core::shared::persistence::Database;
 
     async fn empty_pool() -> sqlx::SqlitePool {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -70,7 +71,7 @@ mod tests {
     async fn reports_not_ready_without_a_model() {
         let pool = empty_pool().await;
         let port = Arc::new(WhisperTranscriptionService::new(
-            Arc::new(DownloadedModelRepository::new(pool)),
+            Arc::new(DownloadedModelRepository::new(Database::new(pool))),
             Arc::default(),
         )) as Arc<dyn TranscriptionPort>;
 
@@ -87,7 +88,7 @@ mod tests {
     async fn offers_the_small_model_for_a_voice_conversation() {
         let pool = empty_pool().await;
         let port = Arc::new(WhisperTranscriptionService::new(
-            Arc::new(DownloadedModelRepository::new(pool)),
+            Arc::new(DownloadedModelRepository::new(Database::new(pool))),
             Arc::default(),
         )) as Arc<dyn TranscriptionPort>;
 

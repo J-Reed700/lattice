@@ -44,7 +44,8 @@ impl LLMPort for PlansThenStops {
 #[tokio::test]
 async fn a_lesson_job_makes_the_course_plan_before_the_lesson_is_written() {
     let pool = crate::tests::pool().await.unwrap();
-    let (_, job) = repository_tests::queued_job(&pool).await;
+    let db = Database::new(pool.clone());
+    let (_, job) = repository_tests::queued_job(&db).await;
     let model = Arc::new(PlansThenStops {
         tasks: Mutex::new(Vec::new()),
     });
@@ -52,7 +53,7 @@ async fn a_lesson_job_makes_the_course_plan_before_the_lesson_is_written() {
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        database: Database::from(pool.clone()),
+        database: db.clone(),
         load_llm: Arc::new(move || {
             let llm = llm.clone();
             Box::pin(async move { Ok(pinned_for_test(llm)) })
@@ -75,12 +76,9 @@ async fn a_lesson_job_makes_the_course_plan_before_the_lesson_is_written() {
         tasks.len() > 1 && tasks[1..].iter().all(|task| task != PLAN_TASK),
         "the plan is made once, then the lesson's own calls follow: {tasks:?}"
     );
-    let revision = crate::lessons::course_plan::outline_revision(
-        &Database::from(pool.clone()),
-        &job.program_id,
-    )
-    .await
-    .unwrap();
+    let revision = crate::lessons::course_plan::outline_revision(&db, &job.program_id)
+        .await
+        .unwrap();
     let saved: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM learning_course_plan_lessons WHERE program_id=? AND outline_revision=?",
     )
@@ -134,28 +132,21 @@ async fn a_lesson_job_writes_from_the_entry_the_learner_edited() {
         edit_entry, ensure, outline_revision, EditCoursePlanEntryRequestDto, PlannedLesson,
     };
     let pool = crate::tests::pool().await.unwrap();
-    let (_, job) = repository_tests::queued_job(&pool).await;
-    let program = LearningRepository::new(pool.clone())
+    let db = Database::new(pool.clone());
+    let (_, job) = repository_tests::queued_job(&db).await;
+    let program = LearningRepository::new(db.clone())
         .get(&job.program_id)
         .await
         .unwrap();
-    let revision = outline_revision(&Database::from(pool.clone()), &job.program_id)
-        .await
-        .unwrap();
+    let revision = outline_revision(&db, &job.program_id).await.unwrap();
     let planner = PlansThenStops {
         tasks: Mutex::new(Vec::new()),
     };
-    ensure(
-        &Database::from(pool.clone()),
-        &planner,
-        &program,
-        revision,
-        &Default::default(),
-    )
-    .await
-    .unwrap();
+    ensure(&db, &planner, &program, revision, &Default::default())
+        .await
+        .unwrap();
     edit_entry(
-        &Database::from(pool.clone()),
+        &db,
         EditCoursePlanEntryRequestDto {
             program_id: job.program_id.clone(),
             outline_revision: revision,
@@ -178,7 +169,7 @@ async fn a_lesson_job_writes_from_the_entry_the_learner_edited() {
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        database: Database::from(pool.clone()),
+        database: db.clone(),
         load_llm: Arc::new(move || {
             let llm = llm.clone();
             Box::pin(async move { Ok(pinned_for_test(llm)) })
@@ -207,11 +198,11 @@ async fn a_lesson_job_writes_from_the_entry_the_learner_edited() {
     );
 }
 
-fn worker_on(pool: &SqlitePool, llm: Arc<dyn LLMPort>) -> LessonGenerationWorker {
+fn worker_on(db: &Database, llm: Arc<dyn LLMPort>) -> LessonGenerationWorker {
     LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        database: Database::from(pool.clone()),
+        database: db.clone(),
         load_llm: Arc::new(move || {
             let llm = llm.clone();
             Box::pin(async move { Ok(pinned_for_test(llm)) })
@@ -226,19 +217,19 @@ fn worker_on(pool: &SqlitePool, llm: Arc<dyn LLMPort>) -> LessonGenerationWorker
 /// A lesson job that stopped before it published: claimed, then suspended,
 /// with the course planned and, when `verified`, its first lesson prepared
 /// and verified. Returns the job's id, its course and the lesson.
-async fn stopped_job(pool: &SqlitePool, verified: bool) -> (String, String, String) {
-    let (_, job) = repository_tests::queued_job(pool).await;
-    let store = lattice_core::shared::runtime::jobs::JobStore::new(pool.clone());
+async fn stopped_job(db: &Database, verified: bool) -> (String, String, String) {
+    let (_, job) = repository_tests::queued_job(db).await;
+    let store = lattice_core::shared::runtime::jobs::JobStore::new(db.clone());
     assert!(store.claim(&job.id).await.unwrap().is_some());
     let planner = PlansThenStops {
         tasks: Mutex::new(Vec::new()),
     };
     let lesson = if verified {
-        overlap_tests::save_verified(pool, &job.id, &job.program_id, &planner)
+        overlap_tests::save_verified(db, &job.id, &job.program_id, &planner)
             .await
             .unwrap()
     } else {
-        let program = overlap_tests::plan_course(pool, &job.program_id, &planner)
+        let program = overlap_tests::plan_course(db, &job.program_id, &planner)
             .await
             .unwrap();
         program.modules[0].lessons[0].id.clone()
@@ -247,15 +238,13 @@ async fn stopped_job(pool: &SqlitePool, verified: bool) -> (String, String, Stri
     (job.id, job.program_id, lesson)
 }
 
-async fn learner_rewrites(pool: &SqlitePool, program_id: &str, lesson_id: &str) {
+async fn learner_rewrites(db: &Database, program_id: &str, lesson_id: &str) {
     use crate::lessons::course_plan::{
         edit_entry, outline_revision, EditCoursePlanEntryRequestDto, PlannedLesson,
     };
-    let revision = outline_revision(&Database::from(pool.clone()), program_id)
-        .await
-        .unwrap();
+    let revision = outline_revision(db, program_id).await.unwrap();
     edit_entry(
-        &Database::from(pool.clone()),
+        db,
         EditCoursePlanEntryRequestDto {
             program_id: program_id.to_owned(),
             outline_revision: revision,
@@ -295,13 +284,14 @@ async fn ready_lessons(pool: &SqlitePool, lesson_id: &str) -> i64 {
 #[tokio::test]
 async fn a_verified_lesson_is_written_again_when_its_entry_was_edited_before_the_retry() {
     let pool = crate::tests::pool().await.unwrap();
-    let (job, program_id, lesson) = stopped_job(&pool, true).await;
-    learner_rewrites(&pool, &program_id, &lesson).await;
+    let db = Database::new(pool.clone());
+    let (job, program_id, lesson) = stopped_job(&db, true).await;
+    learner_rewrites(&db, &program_id, &lesson).await;
     let model = Arc::new(AnswersEvidenceThenStops {
         asked: Mutex::new(Vec::new()),
     });
 
-    run_attempt(worker_on(&pool, model.clone()), &job)
+    run_attempt(worker_on(&db, model.clone()), &job)
         .await
         .unwrap();
 
@@ -316,12 +306,13 @@ async fn a_verified_lesson_is_written_again_when_its_entry_was_edited_before_the
 #[tokio::test]
 async fn a_verified_lesson_is_reused_when_the_plan_is_unchanged() {
     let pool = crate::tests::pool().await.unwrap();
-    let (job, _, lesson) = stopped_job(&pool, true).await;
+    let db = Database::new(pool.clone());
+    let (job, _, lesson) = stopped_job(&db, true).await;
     let model = Arc::new(AnswersEvidenceThenStops {
         asked: Mutex::new(Vec::new()),
     });
 
-    run_attempt(worker_on(&pool, model.clone()), &job)
+    run_attempt(worker_on(&db, model.clone()), &job)
         .await
         .unwrap();
 
@@ -332,13 +323,14 @@ async fn a_verified_lesson_is_reused_when_the_plan_is_unchanged() {
 #[tokio::test]
 async fn a_lesson_stopped_while_drafting_is_written_from_the_edited_entry() {
     let pool = crate::tests::pool().await.unwrap();
-    let (job, program_id, lesson) = stopped_job(&pool, false).await;
-    learner_rewrites(&pool, &program_id, &lesson).await;
+    let db = Database::new(pool.clone());
+    let (job, program_id, lesson) = stopped_job(&db, false).await;
+    learner_rewrites(&db, &program_id, &lesson).await;
     let model = Arc::new(AnswersEvidenceThenStops {
         asked: Mutex::new(Vec::new()),
     });
 
-    run_attempt(worker_on(&pool, model.clone()), &job)
+    run_attempt(worker_on(&db, model.clone()), &job)
         .await
         .unwrap();
 

@@ -212,18 +212,15 @@ async fn a_contradiction_with_a_quote_not_in_the_lesson_is_not_put_to_the_model(
 #[tokio::test]
 async fn a_saved_confirming_answer_is_reused() -> Result<()> {
     let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
     let (repo, job, lesson_id) =
-        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+        crate::content_verification::tests::batch_scheduler_tests::setup(&db).await?;
     let model = Sweep::new(EMPTY, FULL, upheld(CASE));
     let mut standing = Vec::new();
     for _ in 0..2 {
-        let result = lesson_drafts::run(
-            &Database::from(pool.clone()),
-            &repo,
-            &job,
-            &lesson_id,
-            async { found(&model, &[], &[]).await },
-        )
+        let result = lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+            found(&model, &[], &[]).await
+        })
         .await?;
         standing.push(clashes(&result).len());
     }

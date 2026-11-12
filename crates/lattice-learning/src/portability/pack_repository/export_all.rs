@@ -7,7 +7,6 @@ use super::{
     validate_uuid, Destination, LearningPackRepository,
 };
 use crate::{
-    persistence::db,
     portability_dto::{
         ExportAllLearningPacksRequestDto, ExportAllLearningPacksResultDto,
         ExportLearningPackRequestDto, ExportedLearningPackDto, FailedLearningPackExportDto,
@@ -57,11 +56,11 @@ impl LearningPackRepository {
     ) -> Result<ExportAllLearningPacksResultDto> {
         validate_uuid(&req.operation_id, "operation")?;
         let payload = hash(req)?;
-        let mut connection = self.pool.acquire().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let replayed = pack_operation(&req.operation_id, KIND, &payload)
-            .replay(&mut connection)
+            .replay(&mut read)
             .await?;
-        drop(connection);
+        read.commit().await?;
         if let Some(done) = replayed {
             return Ok(done);
         }
@@ -72,7 +71,7 @@ impl LearningPackRepository {
             .map_err(|_| AppError::InvalidInput("Invalid operation ID.".into()))?;
         let dir = chosen_folder(&self.app_data_dir, &chosen).await?;
         let (mut exported, mut failed) = (Vec::new(), Vec::new());
-        for course in LearningRepository::new(self.pool.clone()).list().await? {
+        for course in LearningRepository::new(self.db.clone()).list().await? {
             let request = ExportLearningPackRequestDto {
                 operation_id: course_operation_id(&batch, &dir, &course.id),
                 program_id: course.id.clone(),
@@ -101,10 +100,11 @@ impl LearningPackRepository {
             exported,
             failed,
         };
-        let mut connection = self.pool.acquire().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         pack_operation(&req.operation_id, KIND, &payload)
-            .record(&mut connection, &result)
+            .record(&mut tx, &result)
             .await?;
+        tx.commit().await?;
         Ok(result)
     }
 }

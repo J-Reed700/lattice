@@ -616,14 +616,10 @@ pub(super) fn binary_unusable_message(
     )
 }
 
-/// `tauri-plugin-shell` could not start the sidecar at all.
-pub(super) fn spawn_failure(
-    binary: SidecarBinary,
-    err: &tauri_plugin_shell::Error,
-) -> AttemptError {
+/// The sidecar could not be started at all.
+pub(super) fn spawn_failure(binary: SidecarBinary, err: &std::io::Error) -> AttemptError {
     let path = resolved_sidecar_path(binary);
-    let missing = matches!(err, tauri_plugin_shell::Error::Io(io) if io.kind() == std::io::ErrorKind::NotFound)
-        && !path.exists();
+    let missing = err.kind() == std::io::ErrorKind::NotFound && !path.exists();
     let detail = if missing {
         format!("{} does not exist", path.display())
     } else {
@@ -640,23 +636,14 @@ pub(super) fn spawn_failure(
     }
 }
 
-/// Where tauri-plugin-shell looks for a sidecar: next to the app
-/// executable, with `.exe` on Windows.
-///
-/// The result is only ever shown to somebody — it goes into the "reinstall
-/// Lattice" error text and the preflight log line — so it is deliberately
+/// Where the sidecar is installed, spelled for people: it goes into the
+/// "reinstall Lattice" error text and the preflight log line, so it is
 /// [`plainly_spelled`], never Windows' verbatim form.
 pub(super) fn resolved_sidecar_path(binary: SidecarBinary) -> PathBuf {
-    let file_name = format!(
-        "{}{}",
-        binary.label(),
-        if cfg!(windows) { ".exe" } else { "" }
-    );
-    tauri::utils::platform::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join(&file_name)))
+    binary
+        .installed_path()
         .map(plainly_spelled)
-        .unwrap_or_else(|| PathBuf::from(file_name))
+        .unwrap_or_else(|_| PathBuf::from(binary.file_name()))
 }
 
 /// A path spelled the way a person writes it, for messages and logs: Windows

@@ -4,7 +4,7 @@ use super::ConversationRepository;
 use chrono::Utc;
 use lattice_core::domain::conversation::memory::compute_digest;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::WriteTx;
 
 impl ConversationRepository {
     /// Creates a sibling conversation in the same space and copies messages up to
@@ -36,7 +36,7 @@ impl ConversationRepository {
         tangent_selection: Option<&str>,
     ) -> Result<(String, u32)> {
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin fork: {}", e)))?;
@@ -263,7 +263,7 @@ impl ConversationRepository {
         metadata: &str,
     ) -> Result<()> {
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin continuation: {}", e)))?;
@@ -337,7 +337,7 @@ impl ConversationRepository {
     /// Copy a conversation's linked documents and web sources to another, so
     /// a thread that carries on from it can still open what it drew on.
     pub(super) async fn copy_sources(
-        tx: &mut sqlx::SqliteConnection,
+        tx: &mut WriteTx,
         conversation_id: &str,
         new_id: &str,
     ) -> Result<()> {
@@ -352,7 +352,7 @@ impl ConversationRepository {
         )
         .bind(new_id)
         .bind(conversation_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to copy linked documents: {}", e)))?;
 
@@ -378,7 +378,7 @@ impl ConversationRepository {
             "#,
         )
         .bind(conversation_id)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut **tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to read web sources to copy: {}", e)))?;
 
@@ -403,7 +403,7 @@ impl ConversationRepository {
             .bind(&source.content)
             .bind(&source.content_fetched_at)
             .bind(source.content_truncated)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to copy web source: {}", e)))?;
         }

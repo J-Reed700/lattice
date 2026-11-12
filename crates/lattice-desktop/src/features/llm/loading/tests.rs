@@ -2,6 +2,7 @@ use super::*;
 use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use lattice_core::application::services::credentials::memory::InMemoryCredentials;
 use lattice_core::shared::error::ErrorClass;
+use lattice_core::shared::persistence::Database;
 
 #[test]
 fn generation_settings_are_preserved() {
@@ -54,7 +55,7 @@ async fn loader_with(rows: &[lattice_core::domain::DownloadedModel]) -> ModelLoa
         .await
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    let models = Arc::new(DownloadedModelRepository::new(pool));
+    let models = Arc::new(DownloadedModelRepository::new(Database::new(pool)));
     for row in rows {
         models.save(row).await.unwrap();
     }
@@ -76,7 +77,7 @@ fn loader_with_credentials(credentials: Arc<InMemoryCredentials>) -> ModelLoader
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .connect_lazy("sqlite::memory:")
         .unwrap();
-    let models = Arc::new(DownloadedModelRepository::new(pool));
+    let models = Arc::new(DownloadedModelRepository::new(Database::new(pool)));
     ModelLoader::new(
         models.clone(),
         models,

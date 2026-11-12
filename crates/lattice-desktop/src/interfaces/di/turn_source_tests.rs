@@ -5,20 +5,17 @@ use crate::features::conversation::chat::ports::ChatStorage;
 use crate::features::learning::tutor::{bind_conversation, SetConversationCourseRequestDto};
 use crate::infrastructure::persistence::database::{initialize_database, DatabaseConnection};
 use lattice_core::application::contracts::tools::FunctionCall;
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Database;
 use serde_json::json;
 use std::sync::Arc;
 
 #[tokio::test]
 async fn a_turn_gets_the_course_or_folder_its_chat_is_bound_to() -> anyhow::Result<()> {
     let data = tempfile::tempdir()?;
-    let database = Arc::new(DatabaseConnection::new(data.path().join("app.db")).await?);
+    let database = DatabaseConnection::new(data.path().join("app.db")).await?;
     initialize_database(database.database()).await?;
-    let pool = database.database().sqlx_pool().clone();
+    let db = database.database().clone();
     let container = Container::new(
-        pool.clone().into(),
-        database,
+        db.clone(),
         None,
         "http://127.0.0.1:1",
         "test-model",
@@ -27,21 +24,25 @@ async fn a_turn_gets_the_course_or_folder_its_chat_is_bound_to() -> anyhow::Resu
     )
     .await?;
     let program = uuid::Uuid::new_v4().to_string();
+    let mut tx = db.begin_write().await?;
     sqlx::query("INSERT INTO learning_programs(id,title,goal,status,revision,prior_knowledge,minutes_per_session,model_name,created_at) VALUES(?,'Bound course','Learn it','active',1,'',30,'test',1)")
         .bind(&program)
-        .execute(&pool)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     let folder = data.path().to_string_lossy().into_owned();
+    let mut tx = db.begin_write().await?;
     for (id, root) in [("plain", None), ("tutor", None), ("folder", Some(&folder))] {
         sqlx::query("INSERT INTO conversations (id,title,explorer_root) VALUES (?,?,?)")
             .bind(id)
             .bind(id)
             .bind(root)
-            .execute(&pool)
+            .execute(&mut *tx)
             .await?;
     }
+    tx.commit().await?;
     bind_conversation(
-        &Database::from(pool.clone()),
+        &db,
         &SetConversationCourseRequestDto {
             conversation_id: "tutor".into(),
             program_id: program,

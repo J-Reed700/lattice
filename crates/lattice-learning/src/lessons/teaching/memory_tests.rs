@@ -68,21 +68,16 @@ async fn two_reviews(
     after: &[LearningSourceDto],
 ) -> Result<(Reviewed, Reviewed)> {
     let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
     let (repo, job, lesson_id) =
-        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async {
-            lesson_drafts::resume(INPUT.into()).await?;
-            let one = review(model, context, first, before).await?;
-            let next = then(serde_json::from_str::<Value>(&one.candidate)?);
-            let two = review(model, context, &next, after).await?;
-            Ok((one, two))
-        },
-    )
+        crate::content_verification::tests::batch_scheduler_tests::setup(&db).await?;
+    lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        lesson_drafts::resume(INPUT.into()).await?;
+        let one = review(model, context, first, before).await?;
+        let next = then(serde_json::from_str::<Value>(&one.candidate)?);
+        let two = review(model, context, &next, after).await?;
+        Ok((one, two))
+    })
     .await
 }
 
@@ -223,31 +218,26 @@ async fn a_later_review_does_not_ask_the_plan_check_about_an_item_it_found_taugh
 #[tokio::test]
 async fn teaching_state_follows_the_job_input_not_the_exact_draft() -> Result<()> {
     let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
     let (repo, job, lesson_id) =
-        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+        crate::content_verification::tests::batch_scheduler_tests::setup(&db).await?;
     let (one, two, three) = (r#"{"draft":1}"#, r#"{"draft":2}"#, r#"{"draft":3}"#);
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async {
-            lesson_drafts::resume(INPUT.into()).await?;
-            lesson_drafts::save(one).await?;
-            lesson_drafts::save_with_passes(one, "kept state".into()).await?;
-            lesson_drafts::record_pending_repair(one, "a repair".into()).await?;
-            lesson_drafts::save(two).await?;
-            assert_eq!(
-                lesson_drafts::teaching_passes().await?.as_deref(),
-                Some("kept state")
-            );
-            assert_eq!(lesson_drafts::pending_repair(two).await?, None);
-            lesson_drafts::resume("another-input".into()).await?;
-            lesson_drafts::save(three).await?;
-            assert_eq!(lesson_drafts::teaching_passes().await?, None);
-            Ok(())
-        },
-    )
+    lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        lesson_drafts::resume(INPUT.into()).await?;
+        lesson_drafts::save(one).await?;
+        lesson_drafts::save_with_passes(one, "kept state".into()).await?;
+        lesson_drafts::record_pending_repair(one, "a repair".into()).await?;
+        lesson_drafts::save(two).await?;
+        assert_eq!(
+            lesson_drafts::teaching_passes().await?.as_deref(),
+            Some("kept state")
+        );
+        assert_eq!(lesson_drafts::pending_repair(two).await?, None);
+        lesson_drafts::resume("another-input".into()).await?;
+        lesson_drafts::save(three).await?;
+        assert_eq!(lesson_drafts::teaching_passes().await?, None);
+        Ok(())
+    })
     .await
 }
 

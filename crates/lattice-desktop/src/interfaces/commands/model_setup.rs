@@ -233,15 +233,13 @@ mod tests {
 
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
 
-        let db_conn = std::sync::Arc::new(
+        let db_conn =
             crate::infrastructure::persistence::database::DatabaseConnection::new(db_path.clone())
                 .await
-                .unwrap(),
-        );
+                .unwrap();
 
         let container = Container::new(
-            pool.into(),
-            db_conn,
+            db_conn.database().clone(),
             None, // No embedding model for tests
             "http://localhost:11434",
             "llama3.1:8b",

@@ -13,6 +13,7 @@ use crate::{
     tests::{fixture, pool},
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use sqlx::SqlitePool;
 
 #[track_caller]
@@ -38,11 +39,9 @@ async fn programs(pool: &SqlitePool) -> Result<i64> {
 }
 
 /// Creates a program, exports it and returns the pack path.
-async fn exported_pack(pool: &SqlitePool, packs: &LearningPackRepository) -> Result<String> {
+async fn exported_pack(db: &Database, packs: &LearningPackRepository) -> Result<String> {
     let program = fixture();
-    LearningRepository::new(pool.clone())
-        .create(&program)
-        .await?;
+    LearningRepository::new(db.clone()).create(&program).await?;
     let exported = packs
         .export(&ExportLearningPackRequestDto {
             operation_id: id(),
@@ -89,13 +88,14 @@ fn apply_request(preview: &LearningPackImportPreviewDto) -> ApplyLearningPackImp
 #[tokio::test]
 async fn only_a_pending_preview_can_be_cancelled_or_applied() -> Result<()> {
     let pool = pool().await?;
+    let db = Database::new(pool.clone());
     let dir = tempfile::tempdir().expect("pack workspace");
     let packs = LearningPackRepository::new(
-        pool.clone(),
+        db.clone(),
         dir.path().join("learning-packs"),
         dir.path().to_path_buf(),
     );
-    let path = exported_pack(&pool, &packs).await?;
+    let path = exported_pack(&db, &packs).await?;
     let before = programs(&pool).await?;
 
     let cancelled = preview(&packs, &path).await?;
@@ -176,14 +176,15 @@ async fn only_a_pending_preview_can_be_cancelled_or_applied() -> Result<()> {
 #[tokio::test]
 async fn a_pack_rewritten_after_preview_is_not_applied() -> Result<()> {
     let pool = pool().await?;
+    let db = Database::new(pool.clone());
     let dir = tempfile::tempdir().expect("pack workspace");
     let packs = LearningPackRepository::new(
-        pool.clone(),
+        db.clone(),
         dir.path().join("learning-packs"),
         dir.path().to_path_buf(),
     );
-    let path = exported_pack(&pool, &packs).await?;
-    let other_path = exported_pack(&pool, &packs).await?;
+    let path = exported_pack(&db, &packs).await?;
+    let other_path = exported_pack(&db, &packs).await?;
     let previewed = preview(&packs, &path).await?;
     let before = programs(&pool).await?;
 

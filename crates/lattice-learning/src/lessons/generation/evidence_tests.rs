@@ -156,8 +156,8 @@ async fn coverage_ignores_unknown_ids_and_a_missing_topic_is_uncovered() -> Resu
 
 #[tokio::test]
 async fn an_uncovered_topic_triggers_one_research_round_before_writing() -> Result<()> {
-    let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     program.sources[0].excerpt = "Random numbers decide the lottery draws in this course.".into();
@@ -178,7 +178,7 @@ async fn an_uncovered_topic_triggers_one_research_round_before_writing() -> Resu
     ]);
 
     let gathered = research::run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(research_tests::web(false)),

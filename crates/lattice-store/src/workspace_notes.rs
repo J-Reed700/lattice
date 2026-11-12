@@ -9,10 +9,9 @@ use lattice_core::application::contracts::notes::{
 };
 use lattice_core::application::ports::WorkspaceNotesPort;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, WriteTx};
 use sqlx::sqlite::SqliteRow;
-use sqlx::{Row, SqlitePool};
+use sqlx::Row;
 
 pub const NOTE_COLUMNS: &str = r#"
     id,
@@ -61,26 +60,27 @@ pub fn timestamp_from_row(row: SqliteRow) -> std::result::Result<NoteTimestampRe
 
 #[derive(Debug, Clone)]
 pub struct DailyNotesRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl DailyNotesRepository {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     pub async fn get(&self, note_id: &str) -> Result<WorkspaceNoteRecord> {
         let query = format!("SELECT {NOTE_COLUMNS} FROM daily_notes_workspace WHERE id = ?");
-        sqlx::query(&query)
+        let mut read = self.db.begin_read().await?;
+        let note = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(note_id)
             .try_map(note_from_row)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *read)
             .await
             .map_err(|error| {
                 AppError::Database(format!("Failed to fetch workspace note {note_id}: {error}"))
-            })?
-            .ok_or_else(|| AppError::NotFound(format!("Workspace note not found: {note_id}")))
+            })?;
+        read.commit().await?;
+        note.ok_or_else(|| AppError::NotFound(format!("Workspace note not found: {note_id}")))
     }
 
     /// Persist read-time source enrichment only if the row has not changed
@@ -94,6 +94,7 @@ impl DailyNotesRepository {
         expected_updated_at: &str,
         sources_json: &str,
     ) -> Result<bool> {
+        let mut tx = self.db.begin_write().await?;
         let result = sqlx::query(
             "UPDATE daily_notes_workspace SET sources_json = ? WHERE id = ? AND sources_json = ? AND updated_at = ?",
         )
@@ -101,11 +102,12 @@ impl DailyNotesRepository {
         .bind(note_id)
         .bind(expected_sources_json)
         .bind(expected_updated_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|error| {
             AppError::Database(format!("Failed to persist hydrated note sources {note_id}: {error}"))
         })?;
+        tx.commit().await?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -114,11 +116,16 @@ impl DailyNotesRepository {
     pub async fn list(&self) -> Result<Vec<WorkspaceNoteRecord>> {
         let query =
             format!("SELECT {NOTE_COLUMNS} FROM daily_notes_workspace ORDER BY updated_at DESC");
-        sqlx::query(&query)
+        let mut read = self.db.begin_read().await?;
+        let notes = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .try_map(note_from_row)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *read)
             .await
-            .map_err(|error| AppError::Database(format!("Failed to list workspace notes: {error}")))
+            .map_err(|error| {
+                AppError::Database(format!("Failed to list workspace notes: {error}"))
+            })?;
+        read.commit().await?;
+        Ok(notes)
     }
 
     /// The pages one journal owns. This is what a journal's sidebar lists:
@@ -129,12 +136,17 @@ impl DailyNotesRepository {
             "SELECT {NOTE_COLUMNS} FROM daily_notes_workspace \
              WHERE journal_id = ? ORDER BY updated_at DESC"
         );
-        sqlx::query(&query)
+        let mut read = self.db.begin_read().await?;
+        let notes = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(journal_id)
             .try_map(note_from_row)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *read)
             .await
-            .map_err(|error| AppError::Database(format!("Failed to list journal pages: {error}")))
+            .map_err(|error| {
+                AppError::Database(format!("Failed to list journal pages: {error}"))
+            })?;
+        read.commit().await?;
+        Ok(notes)
     }
 
     /// The page with this exact title inside one journal (or among the pages no
@@ -153,24 +165,28 @@ impl DailyNotesRepository {
             "SELECT {NOTE_COLUMNS} FROM daily_notes_workspace \
              WHERE title = ? AND journal_id IS ? ORDER BY updated_at DESC LIMIT 1"
         );
-        sqlx::query(&query)
+        let mut read = self.db.begin_read().await?;
+        let note = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(title)
             .bind(journal_id)
             .try_map(note_from_row)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *read)
             .await
             .map_err(|error| {
                 AppError::Database(format!(
                     "Failed to fetch workspace note titled {title}: {error}"
                 ))
-            })
+            })?;
+        read.commit().await?;
+        Ok(note)
     }
 
     /// The journal a capture with no journal of its own belongs to: the one
     /// written to last, else the first in the sidebar; `None` only when no
     /// journal exists. A page no journal owns could not be opened from anywhere.
     pub async fn capture_journal_id(&self) -> Result<Option<String>> {
-        sqlx::query_scalar::<_, String>(
+        let mut read = self.db.begin_read().await?;
+        let id = sqlx::query_scalar::<_, String>(
             "SELECT j.id FROM journals j \
              LEFT JOIN daily_notes_workspace n ON n.journal_id = j.id \
              WHERE j.is_archived = 0 \
@@ -178,22 +194,29 @@ impl DailyNotesRepository {
              ORDER BY MAX(n.updated_at) DESC, j.sort_order, j.created_at, j.id \
              LIMIT 1",
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *read)
         .await
-        .map_err(|error| AppError::Database(format!("Failed to choose a capture journal: {error}")))
+        .map_err(|error| {
+            AppError::Database(format!("Failed to choose a capture journal: {error}"))
+        })?;
+        read.commit().await?;
+        Ok(id)
     }
 
     pub async fn most_recent(&self) -> Result<Option<WorkspaceNoteRecord>> {
         let query = format!(
             "SELECT {NOTE_COLUMNS} FROM daily_notes_workspace ORDER BY updated_at DESC LIMIT 1"
         );
-        sqlx::query(&query)
+        let mut read = self.db.begin_read().await?;
+        let note = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .try_map(note_from_row)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *read)
             .await
             .map_err(|error| {
                 AppError::Database(format!("Failed to fetch latest workspace note: {error}"))
-            })
+            })?;
+        read.commit().await?;
+        Ok(note)
     }
 
     pub async fn list_in_date_range(
@@ -206,13 +229,18 @@ impl DailyNotesRepository {
              WHERE date(updated_at) BETWEEN date(?) AND date(?) \
              ORDER BY updated_at DESC"
         );
-        sqlx::query(&query)
+        let mut read = self.db.begin_read().await?;
+        let notes = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(start_date)
             .bind(end_date)
             .try_map(note_from_row)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *read)
             .await
-            .map_err(|error| AppError::Database(format!("Failed to fetch notes by range: {error}")))
+            .map_err(|error| {
+                AppError::Database(format!("Failed to fetch notes by range: {error}"))
+            })?;
+        read.commit().await?;
+        Ok(notes)
     }
 
     pub async fn previous_before(&self, date: &str) -> Result<Option<WorkspaceNoteRecord>> {
@@ -236,17 +264,21 @@ impl DailyNotesRepository {
              WHERE date(updated_at) {comparison} date(?) \
              ORDER BY updated_at {direction} LIMIT 1"
         );
-        sqlx::query(&query)
+        let mut read = self.db.begin_read().await?;
+        let note = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(date)
             .try_map(note_from_row)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *read)
             .await
             .map_err(|error| {
                 AppError::Database(format!("Failed to fetch adjacent workspace note: {error}"))
-            })
+            })?;
+        read.commit().await?;
+        Ok(note)
     }
 
     pub async fn insert(&self, note: &WorkspaceNoteRecord) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query(
             r#"
             INSERT INTO daily_notes_workspace (
@@ -268,18 +300,16 @@ impl DailyNotesRepository {
         .bind(&note.sources_json)
         .bind(&note.created_at)
         .bind(&note.updated_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
-        .map(|_| ())
-        .map_err(|error| AppError::Database(format!("Failed to create workspace note: {error}")))
+        .map_err(|error| AppError::Database(format!("Failed to create workspace note: {error}")))?;
+        tx.commit().await?;
+        Ok(())
     }
 
     /// Insert a canonical workspace note inside a caller-owned transaction.
     /// Learning Studio uses this to commit a lesson-note link and page together.
-    pub async fn insert_in_transaction(
-        tx: &mut sqlx::SqliteConnection,
-        note: &WorkspaceNoteRecord,
-    ) -> Result<()> {
+    pub async fn insert_in_transaction(tx: &mut WriteTx, note: &WorkspaceNoteRecord) -> Result<()> {
         sqlx::query(
             r#"INSERT INTO daily_notes_workspace (
                 id,title,journal_id,content,linked_document_ids,linked_conversation_ids,
@@ -299,17 +329,17 @@ impl DailyNotesRepository {
         .bind(&note.sources_json)
         .bind(&note.created_at)
         .bind(&note.updated_at)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map(|_| ())
         .map_err(|error| AppError::Database(format!("Failed to create workspace note: {error}")))
     }
 
     pub async fn update(&self, note: &WorkspaceNoteRecord) -> Result<WorkspaceNoteRecord> {
-        let mut tx = self.pool.begin_write().await?;
+        let mut tx = self.db.begin_write().await?;
         Self::update_in_transaction(&mut tx, note).await?;
         let query = format!("SELECT {NOTE_COLUMNS} FROM daily_notes_workspace WHERE id = ?");
-        let saved = sqlx::query(&query)
+        let saved = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(&note.id)
             .try_map(note_from_row)
             .fetch_one(&mut *tx)
@@ -318,10 +348,7 @@ impl DailyNotesRepository {
         Ok(saved)
     }
 
-    pub async fn update_in_transaction(
-        tx: &mut sqlx::SqliteConnection,
-        note: &WorkspaceNoteRecord,
-    ) -> Result<()> {
+    pub async fn update_in_transaction(tx: &mut WriteTx, note: &WorkspaceNoteRecord) -> Result<()> {
         let result = sqlx::query(
             r#"
             UPDATE daily_notes_workspace
@@ -342,7 +369,7 @@ impl DailyNotesRepository {
         .bind(&note.updated_at)
         .bind(&note.id)
         .bind(note.revision)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(|error| {
             AppError::Database(format!(
@@ -355,7 +382,7 @@ impl DailyNotesRepository {
                 "SELECT EXISTS(SELECT 1 FROM daily_notes_workspace WHERE id = ?)",
             )
             .bind(&note.id)
-            .fetch_one(&mut *tx)
+            .fetch_one(&mut **tx)
             .await?;
             return Err(if exists {
                 AppError::InvalidState("This page changed elsewhere. Your draft is still here; reload the saved page before merging your edits.".into())
@@ -372,13 +399,14 @@ impl DailyNotesRepository {
         content: &str,
         updated_at: &str,
     ) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         let result = sqlx::query(
             "UPDATE daily_notes_workspace SET content = ?, updated_at = ? WHERE id = ?",
         )
         .bind(content)
         .bind(updated_at)
         .bind(note_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|error| {
             AppError::Database(format!("Failed to update daily note content: {error}"))
@@ -388,20 +416,24 @@ impl DailyNotesRepository {
                 "Workspace note not found: {note_id}"
             )));
         }
+        tx.commit().await?;
         Ok(())
     }
 
     pub async fn delete(&self, note_id: &str) -> Result<bool> {
-        sqlx::query("DELETE FROM daily_notes_workspace WHERE id = ?")
+        let mut tx = self.db.begin_write().await?;
+        let deleted = sqlx::query("DELETE FROM daily_notes_workspace WHERE id = ?")
             .bind(note_id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map(|result| result.rows_affected() > 0)
             .map_err(|error| {
                 AppError::Database(format!(
                     "Failed to delete workspace note {note_id}: {error}"
                 ))
-            })
+            })?;
+        tx.commit().await?;
+        Ok(deleted)
     }
 
     /// Delete only when no application write/delete is waiting to reach the
@@ -409,18 +441,21 @@ impl DailyNotesRepository {
     /// external filesystem event cannot pass a stale outbox preflight and
     /// erase a newer application edit.
     pub async fn delete_from_vault_if_unqueued(&self, note_id: &str) -> Result<bool> {
+        let mut tx = self.db.begin_write().await?;
         let result = sqlx::query(
             "DELETE FROM daily_notes_workspace WHERE id = ? AND NOT EXISTS (SELECT 1 FROM vault_write_outbox WHERE note_id = ? AND mirror_complete = 0)",
         )
         .bind(note_id)
         .bind(note_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|error| AppError::Database(format!("Failed to import vault deletion {note_id}: {error}")))?;
+        tx.commit().await?;
         Ok(result.rows_affected() > 0)
     }
 
     pub async fn upsert_from_vault(&self, note: VaultNoteUpsert<'_>) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query(
             r#"
             INSERT INTO daily_notes_workspace (id, title, content, created_at, updated_at)
@@ -436,17 +471,19 @@ impl DailyNotesRepository {
         .bind(note.content)
         .bind(note.created_at)
         .bind(note.updated_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
-        .map(|_| ())
         .map_err(|error| {
             AppError::Database(format!("Failed to import vault note {}: {error}", note.id))
-        })
+        })?;
+        tx.commit().await?;
+        Ok(())
     }
 
     /// Import external markdown only while no application-owned mirror intent
     /// exists. The INSERT and conflict update are both guarded atomically.
     pub async fn upsert_from_vault_if_unqueued(&self, note: VaultNoteUpsert<'_>) -> Result<bool> {
+        let mut tx = self.db.begin_write().await?;
         let result = sqlx::query(
             r#"
             INSERT INTO daily_notes_workspace (id, title, content, created_at, updated_at)
@@ -466,35 +503,45 @@ impl DailyNotesRepository {
         .bind(note.updated_at)
         .bind(note.id)
         .bind(note.id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|error| {
             AppError::Database(format!("Failed to import vault note {}: {error}", note.id))
         })?;
+        tx.commit().await?;
         Ok(result.rows_affected() > 0)
     }
 
     pub async fn get_timestamp(&self, note_id: &str) -> Result<Option<NoteTimestampRecord>> {
-        sqlx::query("SELECT id, updated_at, created_at FROM daily_notes_workspace WHERE id = ?")
-            .bind(note_id)
-            .try_map(timestamp_from_row)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|error| {
-                AppError::Database(format!(
-                    "Failed to fetch workspace note timestamp {note_id}: {error}"
-                ))
-            })
+        let mut read = self.db.begin_read().await?;
+        let timestamp = sqlx::query(
+            "SELECT id, updated_at, created_at FROM daily_notes_workspace WHERE id = ?",
+        )
+        .bind(note_id)
+        .try_map(timestamp_from_row)
+        .fetch_optional(&mut *read)
+        .await
+        .map_err(|error| {
+            AppError::Database(format!(
+                "Failed to fetch workspace note timestamp {note_id}: {error}"
+            ))
+        })?;
+        read.commit().await?;
+        Ok(timestamp)
     }
 
     pub async fn list_timestamps(&self) -> Result<Vec<NoteTimestampRecord>> {
-        sqlx::query("SELECT id, updated_at, created_at FROM daily_notes_workspace")
-            .try_map(timestamp_from_row)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| {
-                AppError::Database(format!("Failed to list workspace note timestamps: {error}"))
-            })
+        let mut read = self.db.begin_read().await?;
+        let timestamps =
+            sqlx::query("SELECT id, updated_at, created_at FROM daily_notes_workspace")
+                .try_map(timestamp_from_row)
+                .fetch_all(&mut *read)
+                .await
+                .map_err(|error| {
+                    AppError::Database(format!("Failed to list workspace note timestamps: {error}"))
+                })?;
+        read.commit().await?;
+        Ok(timestamps)
     }
 }
 
@@ -520,6 +567,7 @@ impl WorkspaceNotesPort for DailyNotesRepository {
 #[cfg(test)]
 mod vault_race_tests {
     use super::*;
+    use sqlx::SqlitePool;
 
     #[tokio::test]
     async fn vault_import_and_delete_guards_are_atomic_with_outbox_state() {
@@ -536,7 +584,7 @@ mod vault_race_tests {
         .execute(&pool)
         .await
         .unwrap();
-        let repository = DailyNotesRepository::new(pool.clone());
+        let repository = DailyNotesRepository::new(Database::new(pool.clone()));
         let note = VaultNoteUpsert {
             id: "note",
             title: "external",

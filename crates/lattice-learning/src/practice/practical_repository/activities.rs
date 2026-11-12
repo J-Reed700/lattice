@@ -15,7 +15,6 @@ use crate::practice::coding::problem::{Problem, PROBLEM_FILE_PATH};
 use crate::practice::interview_answers::{InterviewAnswerGuides, INTERVIEW_ANSWERS_FILE_PATH};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashSet;
 
@@ -30,8 +29,7 @@ impl LearningPracticalRepository {
         uuid(&request.operation_id, "operation")?;
         uuid(&request.program_id, "program")?;
         uuid(&request.profile_id, "runtime profile")?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &request.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         Self::active_program(&mut tx, &request.program_id).await?;
         let operation = practical_operation(
             "runtime_profile",
@@ -88,8 +86,7 @@ impl LearningPracticalRepository {
             read_only_paths: vec![],
             limits: request.limits.clone(),
         })?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &request.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         Self::active_program(&mut tx, &request.program_id).await?;
         let operation = practical_operation(
             "runtime_profile",
@@ -241,8 +238,7 @@ impl LearningPracticalRepository {
                 "Practical generation must record a model identity.",
             ));
         }
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &request.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = practical_operation(
             "practical_activity",
             &request.operation_id,
@@ -360,7 +356,7 @@ impl LearningPracticalRepository {
         program_id: &str,
         lesson_id: Option<&str>,
     ) -> Result<BuildLesson> {
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await.map_err(db)?;
         let wanted = match lesson_id {
             Some(id) => Some(id.to_owned()),
             None => sqlx::query_scalar::<_, Option<String>>(
@@ -400,7 +396,7 @@ impl LearningPracticalRepository {
 
     /// The revision an activity saved for this program must name.
     pub async fn program_revision(&self, program_id: &str) -> Result<i64> {
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await.map_err(db)?;
         let revision = Self::active_program(&mut tx, program_id).await;
         tx.commit().await.map_err(db)?;
         revision
@@ -412,7 +408,7 @@ impl LearningPracticalRepository {
         program_id: &str,
         activity_id: &str,
     ) -> Result<StoredProblem> {
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await.map_err(db)?;
         let activity = Self::internal_activity(&mut tx, program_id, activity_id).await;
         tx.commit().await.map_err(db)?;
         let activity = activity?;

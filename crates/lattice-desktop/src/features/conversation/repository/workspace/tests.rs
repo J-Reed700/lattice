@@ -1,17 +1,21 @@
 use super::*;
 use crate::features::conversation::space_repository::ConversationSpaceRepository;
-use crate::infrastructure::persistence::database::{initialize_database, DatabaseConnection};
+use crate::infrastructure::persistence::database::initialize_database;
+use crate::tests::sqlite::file_options;
+use lattice_core::shared::persistence::Database;
+use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::SqlitePool;
 
-async fn repository() -> (tempfile::TempDir, ConversationRepository) {
+async fn repository() -> (tempfile::TempDir, SqlitePool, ConversationRepository) {
     let directory = tempfile::tempdir().unwrap();
-    let database = DatabaseConnection::new(directory.path().join("workspace.db"))
+    let pool = SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(file_options(directory.path().join("workspace.db")))
         .await
         .unwrap();
-    initialize_database(database.database()).await.unwrap();
-    (
-        directory,
-        ConversationRepository::new(database.database().clone()),
-    )
+    let db = Database::new(pool.clone());
+    initialize_database(&db).await.unwrap();
+    (directory, pool, ConversationRepository::new(db))
 }
 
 fn journal(name: &str) -> CreateConversationJournalRequestDto {
@@ -27,7 +31,7 @@ fn journal(name: &str) -> CreateConversationJournalRequestDto {
 
 #[tokio::test]
 async fn journal_membership_is_idempotent_and_preserves_conversation_space() {
-    let (_directory, repo) = repository().await;
+    let (_directory, pool, repo) = repository().await;
     let conversation = repo.create("Research", None).await.unwrap();
     let journal = repo.create_journal(journal("Reading")).await.unwrap();
     for _ in 0..2 {
@@ -42,7 +46,7 @@ async fn journal_membership_is_idempotent_and_preserves_conversation_space() {
         "SELECT COUNT(*) FROM journal_conversation_entries WHERE journal_space_id = ?",
     )
     .bind(&journal.id)
-    .fetch_one(&repo.pool)
+    .fetch_one(&pool)
     .await
     .unwrap();
     assert_eq!(count, 1);
@@ -72,7 +76,7 @@ async fn journal_membership_is_idempotent_and_preserves_conversation_space() {
 /// drops the pin.
 #[tokio::test]
 async fn a_journal_pin_is_kept_per_journal_entry() {
-    let (_directory, repo) = repository().await;
+    let (_directory, pool, repo) = repository().await;
     let conversation = repo.create("Research", None).await.unwrap();
     let id = conversation.id.to_string();
     let reading = repo.create_journal(journal("Reading")).await.unwrap();
@@ -106,7 +110,7 @@ async fn a_journal_pin_is_kept_per_journal_entry() {
     let sidebar_pinned: bool =
         sqlx::query_scalar("SELECT is_pinned FROM conversations WHERE id = ?")
             .bind(&id)
-            .fetch_one(&repo.pool)
+            .fetch_one(&pool)
             .await
             .unwrap();
     assert!(!sidebar_pinned);
@@ -146,7 +150,7 @@ async fn a_journal_pin_is_kept_per_journal_entry() {
 
 #[tokio::test]
 async fn invalid_membership_does_not_write_and_default_space_cannot_be_archived() {
-    let (_directory, repo) = repository().await;
+    let (_directory, pool, repo) = repository().await;
     let journal = repo.create_journal(journal("Reading")).await.unwrap();
     let result = repo
         .add_conversation_to_journal(AddConversationToJournalRequestDto {
@@ -163,7 +167,7 @@ async fn invalid_membership_does_not_write_and_default_space_cannot_be_archived(
         .await
         .is_err());
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM journal_conversation_entries")
-        .fetch_one(&repo.pool)
+        .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(count, 0);
@@ -173,19 +177,19 @@ async fn invalid_membership_does_not_write_and_default_space_cannot_be_archived(
 /// space, where all the other chats then searched them.
 #[tokio::test]
 async fn moving_a_conversation_does_not_file_its_documents_into_the_destination() {
-    let (_directory, repo) = repository().await;
+    let (_directory, pool, repo) = repository().await;
     let conversation = repo.create("Research", None).await.unwrap();
     sqlx::query(
         "INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, checksum) \
          VALUES ('doc-cited', '/vault/cited.pdf', 'cited.pdf', 1, '2026-09-01T10:00:00Z', 'sum')",
     )
-    .execute(&repo.pool)
+    .execute(&pool)
     .await
     .unwrap();
     repo.add_document_reference(&conversation.id.to_string(), "doc-cited", None, Some(0.9))
         .await
         .unwrap();
-    let target = ConversationSpaceRepository::new(repo.pool.clone())
+    let target = ConversationSpaceRepository::new(repo.db.clone())
         .create(CreateConversationSpaceRequestDto {
             name: "Destination".into(),
             description: None,
@@ -215,7 +219,7 @@ async fn moving_a_conversation_does_not_file_its_documents_into_the_destination(
     let filed_in_destination: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM document_space_memberships WHERE space_id = ?")
             .bind(&target.id)
-            .fetch_one(&repo.pool)
+            .fetch_one(&pool)
             .await
             .unwrap();
     assert_eq!(filed_in_destination, 0);
@@ -223,7 +227,7 @@ async fn moving_a_conversation_does_not_file_its_documents_into_the_destination(
 
 #[tokio::test]
 async fn deleting_another_conversations_message_is_rejected_without_changing_totals() {
-    let (_directory, repo) = repository().await;
+    let (_directory, _, repo) = repository().await;
     let first = repo.create("First", None).await.unwrap();
     let second = repo.create("Second", None).await.unwrap();
     let message = repo
@@ -265,7 +269,7 @@ async fn deleting_another_conversations_message_is_rejected_without_changing_tot
     assert_eq!(stored.total_tokens, 0);
 }
 
-async fn seed_listing(repo: &ConversationRepository) -> Vec<String> {
+async fn seed_listing(pool: &SqlitePool, repo: &ConversationRepository) -> Vec<String> {
     let mut ids = Vec::new();
     for (index, title) in ["Alpha one", "Alpha two", "Alpha six", "Beta note"]
         .into_iter()
@@ -276,14 +280,14 @@ async fn seed_listing(repo: &ConversationRepository) -> Vec<String> {
         sqlx::query("UPDATE conversations SET updated_at = ? WHERE id = ?")
             .bind(format!("2026-01-0{}T00:00:00Z", index + 1))
             .bind(&id)
-            .execute(&repo.pool)
+            .execute(pool)
             .await
             .unwrap();
         ids.push(id);
     }
     sqlx::query("UPDATE conversations SET is_archived = 1 WHERE id = ?")
         .bind(&ids[2])
-        .execute(&repo.pool)
+        .execute(pool)
         .await
         .unwrap();
     ids
@@ -319,8 +323,8 @@ fn explorer_query(
 
 #[tokio::test]
 async fn the_explorer_listing_searches_hides_archived_and_pages() {
-    let (_directory, repo) = repository().await;
-    seed_listing(&repo).await;
+    let (_directory, pool, repo) = repository().await;
+    seed_listing(&pool, &repo).await;
 
     let found = repo
         .list_conversations_explorer(explorer_query(Some("alpha"), false, None, None))
@@ -373,8 +377,8 @@ fn journal_query(
 
 #[tokio::test]
 async fn the_journal_listing_searches_hides_archived_pages_and_stays_in_its_journal() {
-    let (_directory, repo) = repository().await;
-    let ids = seed_listing(&repo).await;
+    let (_directory, pool, repo) = repository().await;
+    let ids = seed_listing(&pool, &repo).await;
     let reading = repo.create_journal(journal("Reading")).await.unwrap();
     for id in &ids[..3] {
         repo.add_conversation_to_journal(AddConversationToJournalRequestDto {
@@ -431,6 +435,7 @@ async fn the_journal_listing_searches_hides_archived_pages_and_stays_in_its_jour
 }
 
 async fn bookmarked_message(
+    pool: &SqlitePool,
     repo: &ConversationRepository,
     conversation_id: &str,
     content: &str,
@@ -458,7 +463,7 @@ async fn bookmarked_message(
     sqlx::query("UPDATE conversation_message_bookmarks SET created_at = ? WHERE message_id = ?")
         .bind(created_at)
         .bind(&message_id)
-        .execute(&repo.pool)
+        .execute(pool)
         .await
         .unwrap();
     message_id
@@ -475,10 +480,11 @@ fn bookmark_query(query: Option<&str>) -> ListMessageBookmarksQueryDto {
 
 #[tokio::test]
 async fn bookmark_search_ranks_each_bookmark_by_its_own_match() {
-    let (_directory, repo) = repository().await;
+    let (_directory, pool, repo) = repository().await;
     let field_log = repo.create("Field log", None).await.unwrap().id.to_string();
     let shopping = repo.create("Shopping", None).await.unwrap().id.to_string();
     let strong = bookmarked_message(
+        &pool,
         &repo,
         &field_log,
         "kestrel kestrel kestrel",
@@ -486,14 +492,21 @@ async fn bookmark_search_ranks_each_bookmark_by_its_own_match() {
     )
     .await;
     let weak = bookmarked_message(
+        &pool,
         &repo,
         &field_log,
         "a kestrel flew over the quiet harbor today",
         "2026-01-02T00:00:00Z",
     )
     .await;
-    let unrelated =
-        bookmarked_message(&repo, &shopping, "bread and milk", "2026-01-03T00:00:00Z").await;
+    let unrelated = bookmarked_message(
+        &pool,
+        &repo,
+        &shopping,
+        "bread and milk",
+        "2026-01-03T00:00:00Z",
+    )
+    .await;
     let message_ids = |response: ListMessageBookmarksResponseDto| {
         response
             .bookmarks
@@ -523,7 +536,7 @@ async fn bookmark_search_ranks_each_bookmark_by_its_own_match() {
 
 #[tokio::test]
 async fn a_better_match_lists_before_a_newer_weaker_one() {
-    let (_directory, repo) = repository().await;
+    let (_directory, pool, repo) = repository().await;
     let older = repo
         .create("Kestrel kestrel kestrel", None)
         .await
@@ -555,7 +568,7 @@ async fn a_better_match_lists_before_a_newer_weaker_one() {
         sqlx::query("UPDATE conversations SET updated_at = ? WHERE id = ?")
             .bind(updated_at)
             .bind(id)
-            .execute(&repo.pool)
+            .execute(&pool)
             .await
             .unwrap();
     }
@@ -570,8 +583,8 @@ async fn a_better_match_lists_before_a_newer_weaker_one() {
 
 #[tokio::test]
 async fn each_explorer_scope_filter_lists_only_its_own_conversations() {
-    let (_directory, repo) = repository().await;
-    let space = ConversationSpaceRepository::new(repo.pool.clone())
+    let (_directory, pool, repo) = repository().await;
+    let space = ConversationSpaceRepository::new(repo.db.clone())
         .create(CreateConversationSpaceRequestDto {
             name: "Destination".into(),
             description: None,
@@ -587,7 +600,7 @@ async fn each_explorer_scope_filter_lists_only_its_own_conversations() {
             (id, title, goal, status, revision, prior_knowledge, minutes_per_session, model_name, created_at)
          VALUES ('program-1', 'Course', 'Learn', 'active', 1, 'none', 30, 'model', 0)",
     )
-    .execute(&repo.pool)
+    .execute(&pool)
     .await
     .unwrap();
     let mut ids = std::collections::HashMap::new();
@@ -607,12 +620,12 @@ async fn each_explorer_scope_filter_lists_only_its_own_conversations() {
         ("In space", "space_id", space.id.as_str()),
         ("In program", "program_id", "program-1"),
     ] {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE conversations SET {column} = ? WHERE id = ?"
-        ))
+        )))
         .bind(value)
         .bind(&ids[title])
-        .execute(&repo.pool)
+        .execute(&pool)
         .await
         .unwrap();
     }
@@ -621,15 +634,16 @@ async fn each_explorer_scope_filter_lists_only_its_own_conversations() {
         ("Bookmarked", "is_bookmarked"),
         ("Pinned", "is_pinned"),
     ] {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE conversations SET {column} = 1 WHERE id = ?"
-        ))
+        )))
         .bind(&ids[title])
-        .execute(&repo.pool)
+        .execute(&pool)
         .await
         .unwrap();
     }
     bookmarked_message(
+        &pool,
         &repo,
         &ids["Message bookmark"],
         "remember this",

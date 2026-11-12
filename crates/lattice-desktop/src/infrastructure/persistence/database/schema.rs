@@ -2,28 +2,15 @@
 //! All table creation is handled by migrations
 
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::Database;
 
 pub const SCHEMA_VERSION: i32 = 18;
 
-/// Initializes the database schema by running migrations.
-pub async fn initialize_schema(pool: &impl DriverPool) -> Result<()> {
-    let pool = pool.sqlx_pool();
-    sqlx::migrate!("./migrations")
-        .run(pool)
-        .await
-        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
-
-    Ok(())
-}
-
 /// Rebuild FTS5 index from scratch
-pub async fn rebuild_fts5_index(pool: &impl DriverPool) -> Result<()> {
-    let pool = pool.sqlx_pool();
+pub async fn rebuild_fts5_index(db: &Database) -> Result<()> {
     tracing::info!("Rebuilding FTS5 index...");
 
-    let mut tx = pool.begin_write().await?;
+    let mut tx = db.begin_write().await?;
 
     sqlx::query("DELETE FROM documents_fts")
         .execute(&mut *tx)

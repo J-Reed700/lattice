@@ -8,7 +8,7 @@
 //! margin: the writer is asked for more than a lesson needs (a mix of
 //! sections, two questions of each kind) so that verification has something to
 //! spend. A lesson verification has begun to cut is held to the floor: a first
-//! explanation, at least one question, a third of the drafted sections at
+//! explanation, a question of every kind, a third of the drafted sections at
 //! most gone, and the order rules (each check after a worked example shown
 //! since the previous check, but the last of two or more checks). The phase
 //! is the caller's to name; nothing infers it from the lesson.
@@ -147,7 +147,7 @@ const SECTION_MIX: [(LearningBlockKind, usize, bool); 8] = [
 ];
 
 /// Questions the writer is asked for of each kind (`LessonQuestionKind::ALL`),
-/// so that a cut can spend one; a kept lesson needs one question of any kind.
+/// so that a cut can spend one; a kept lesson needs one question of each kind.
 const QUESTIONS_PER_KIND: usize = 2;
 
 /// The fewest sections the writer is asked for: the mix at its least.
@@ -193,12 +193,12 @@ const KEPT_RULES: [KeptRule; 4] = [
 ];
 
 impl KeptRule {
-    fn words(self) -> &'static str {
+    fn words(self) -> String {
         match self {
             Self::Explanation => "at least one explanation",
             Self::ShownBeforeCheck => "each check after a worked example shown since the previous check, except the last of two or more checks, which mixes the lesson's ideas",
             Self::RecapAfterReflection => "the recap after the reflection when it has both",
-            Self::Question => "at least one question",
+            Self::Question => format!("at least one question of each kind: {}", question_kinds()),
         }
     }
 
@@ -208,7 +208,7 @@ impl KeptRule {
             Self::Explanation => explanation_finding(blocks).into_iter().collect(),
             Self::ShownBeforeCheck => unshown_check_findings(blocks),
             Self::RecapAfterReflection => recap_findings(blocks),
-            Self::Question => question_finding(items(lesson, "questions"))
+            Self::Question => question_kinds_finding(items(lesson, "questions"))
                 .into_iter()
                 .collect(),
         }
@@ -217,7 +217,7 @@ impl KeptRule {
 
 /// The words a kept lesson is held to, joined as a sentence's list.
 fn kept_words() -> String {
-    let words: Vec<&str> = KEPT_RULES.iter().map(|rule| rule.words()).collect();
+    let words: Vec<String> = KEPT_RULES.iter().map(|rule| rule.words()).collect();
     match words.split_last() {
         Some((last, rest)) => format!("{}; and {last}", rest.join("; ")),
         None => String::new(),
@@ -251,7 +251,7 @@ impl ShapePolicy for StandardShape {
         let asked = QUESTIONS_PER_KIND * kinds;
         let (sections, questions) = match phase {
             Phase::Draft => (SECTIONS, (asked, asked)),
-            Phase::Kept => ((1, SECTIONS.1), (1, asked)),
+            Phase::Kept => ((1, SECTIONS.1), (kinds, asked)),
         };
         LessonSchema {
             phase,
@@ -301,19 +301,28 @@ impl ShapePolicy for StandardShape {
             .iter()
             .position(|block| text(block, "kind") == LearningBlockKind::Explanation.as_str());
         let questions = items(lesson, "questions");
-        let questions_lost = (sections..sections + questions.len())
-            .filter(|unit| going.contains(unit))
-            .count();
+        let lacking = kinds_lacking(questions);
+        let kept = questions
+            .iter()
+            .enumerate()
+            .filter(|(at, _)| !going.contains(&(sections + at)))
+            .map(|(_, question)| question);
+        let kind_lost = kinds_lacking(kept)
+            .into_iter()
+            .find(|kind| !lacking.contains(kind));
         if first.is_some_and(|unit| going.contains(&unit)) {
             Some("its first explanation would have to be taken out".to_owned())
         } else if 3 * lost > sections {
             Some(format!(
                 "{lost} of its {sections} sections would have to be taken out"
             ))
-        } else if !questions.is_empty() && questions_lost == questions.len() {
-            Some("all of its questions would have to be taken out".to_owned())
         } else {
-            None
+            kind_lost.map(|kind| {
+                format!(
+                    "its last {} question would have to be taken out",
+                    kind_name(kind.as_str())
+                )
+            })
         }
     }
 }
@@ -374,6 +383,18 @@ fn kind_count(items: &[Value], kind: &str) -> usize {
         .iter()
         .filter(|item| text(item, "kind") == kind)
         .count()
+}
+
+/// The kinds of `LessonQuestionKind::ALL` that none of `questions` is.
+fn kinds_lacking<'a>(questions: impl IntoIterator<Item = &'a Value>) -> Vec<LessonQuestionKind> {
+    let asked: BTreeSet<&str> = questions
+        .into_iter()
+        .map(|question| text(question, "kind"))
+        .collect();
+    LessonQuestionKind::ALL
+        .into_iter()
+        .filter(|kind| !asked.contains(kind.as_str()))
+        .collect()
 }
 
 /// "2 checks", "1 contrast": `count` of `noun`, in the plural unless it is one.
@@ -624,15 +645,25 @@ fn explanation_finding(blocks: &[Value]) -> Option<ReviewFinding> {
     ))
 }
 
-fn question_finding(questions: &[Value]) -> Option<ReviewFinding> {
-    if !questions.is_empty() {
+fn question_kinds_finding(questions: &[Value]) -> Option<ReviewFinding> {
+    let missing: Vec<String> = kinds_lacking(questions)
+        .iter()
+        .map(|kind| kind.as_str().to_owned())
+        .collect();
+    if missing.is_empty() {
         return None;
     }
     Some(structure(
-        Rule::NoQuestion,
+        Rule::QuestionKinds,
         FindingSite::Lesson,
-        "The lesson has no question.".to_owned(),
-        "The lesson has no question; it needs at least one.".to_owned(),
+        format!(
+            "The lesson has no {} question, and it needs one of each kind.",
+            join_plain(&missing)
+        ),
+        format!(
+            "The lesson has no {} question; it needs at least one question of each kind.",
+            join_plain(&missing)
+        ),
     ))
 }
 

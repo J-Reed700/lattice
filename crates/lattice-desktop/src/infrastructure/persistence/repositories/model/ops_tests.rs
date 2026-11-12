@@ -5,11 +5,10 @@ use lattice_core::domain::entities::model::Model;
 use lattice_core::domain::entities::model_file::ModelFile;
 use lattice_core::domain::value_objects::model_status::{FileStatus, ModelStatus};
 use lattice_core::shared::error::AppError;
-use sqlx::pool::PoolConnection;
+use lattice_core::shared::persistence::Database;
 use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::Sqlite;
 
-async fn connection() -> PoolConnection<Sqlite> {
+async fn connection() -> Database {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect(":memory:")
@@ -30,7 +29,8 @@ async fn connection() -> PoolConnection<Sqlite> {
         .execute(&mut *conn)
         .await
         .expect("remove built-in model from the fixture");
-    conn
+    drop(conn);
+    Database::new(pool)
 }
 
 fn model(model_id: &str, name: &str) -> Model {
@@ -72,7 +72,8 @@ fn file(model_id: &str, name: &str, minute: u32) -> ModelFile {
 
 #[tokio::test]
 async fn upsert_round_trips_and_updates_by_model_id_keeping_the_row_id() {
-    let mut conn = connection().await;
+    let db = connection().await;
+    let mut conn = db.begin_write().await.unwrap();
     let original = model("mistral-7b", "Mistral 7B");
     ops::upsert_model(&mut conn, &original).await.unwrap();
 
@@ -110,7 +111,8 @@ async fn upsert_round_trips_and_updates_by_model_id_keeping_the_row_id() {
 
 #[tokio::test]
 async fn status_updates_report_missing_models() {
-    let mut conn = connection().await;
+    let db = connection().await;
+    let mut conn = db.begin_write().await.unwrap();
     ops::upsert_model(&mut conn, &model("phi-3", "Phi 3"))
         .await
         .unwrap();
@@ -156,7 +158,8 @@ async fn status_updates_report_missing_models() {
 
 #[tokio::test]
 async fn chat_activation_and_deletion_respect_the_active_flag() {
-    let mut conn = connection().await;
+    let db = connection().await;
+    let mut conn = db.begin_write().await.unwrap();
     ops::upsert_model(&mut conn, &model("llama-3", "Llama 3"))
         .await
         .unwrap();
@@ -227,7 +230,8 @@ async fn chat_activation_and_deletion_respect_the_active_flag() {
 
 #[tokio::test]
 async fn an_active_local_embedding_model_needs_its_artifact_identity() {
-    let mut conn = connection().await;
+    let db = connection().await;
+    let mut conn = db.begin_write().await.unwrap();
     let mut embedding = model("nomic-embed", "Nomic Embed");
     embedding.is_active_for_embedding = true;
     let refused = ops::upsert_model(&mut conn, &embedding).await;
@@ -241,7 +245,8 @@ async fn an_active_local_embedding_model_needs_its_artifact_identity() {
 
 #[tokio::test]
 async fn model_files_upsert_by_id_and_list_oldest_first() {
-    let mut conn = connection().await;
+    let db = connection().await;
+    let mut conn = db.begin_write().await.unwrap();
     ops::upsert_model(&mut conn, &model("whisper", "Whisper"))
         .await
         .unwrap();
@@ -277,7 +282,8 @@ async fn model_files_upsert_by_id_and_list_oldest_first() {
 
 #[tokio::test]
 async fn rows_the_domain_cannot_read_are_skipped_in_lists_and_refused_by_lookup() {
-    let mut conn = connection().await;
+    let db = connection().await;
+    let mut conn = db.begin_write().await.unwrap();
     ops::upsert_model(&mut conn, &model("qwen", "Qwen"))
         .await
         .unwrap();

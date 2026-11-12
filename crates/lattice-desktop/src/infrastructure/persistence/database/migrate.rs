@@ -4,8 +4,7 @@
 //! Migrations are automatically discovered from the migrations/ directory.
 
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, WriteTx};
 use sha2::{Digest, Sha384};
 use sqlx::migrate::Migrator;
 use std::collections::HashMap;
@@ -15,49 +14,57 @@ use std::collections::HashMap;
 /// This function uses sqlx::migrate!() to automatically discover and run
 /// migration files from the migrations/ directory at compile time. Stored
 /// checksums that differ from the embedded ones only in line endings are
-/// reconciled first.
-pub async fn run_migrations(pool: &impl DriverPool) -> Result<()> {
-    let pool = pool.sqlx_pool();
+/// reconciled first. It is all one write unit: a start that fails changes nothing.
+pub async fn run_migrations(db: &Database) -> Result<()> {
     tracing::info!("Starting database migrations...");
 
     let migrator = sqlx::migrate!("./migrations");
-    reconcile_line_endings(pool, &migrator).await?;
-    migrator.run(pool).await.map_err(|error| {
-        let error_text = error.to_string();
-        tracing::error!("Migration failed: {}", error_text);
-        AppError::Database(format!("Migration failed: {}", error_text))
-    })?;
+    let mut tx = db.begin_write().await?;
+    let reconciled = reconcile_line_endings(&mut tx, &migrator).await?;
+    migrator
+        .run_direct(None, &mut *tx, false)
+        .await
+        .map_err(|error| {
+            let error_text = error.to_string();
+            tracing::error!("Migration failed: {}", error_text);
+            AppError::Database(format!("Migration failed: {}", error_text))
+        })?;
 
     // Migrations may create or change indexes; let SQLite refresh only the
     // planner statistics that its bounded optimizer considers useful.
-    sqlx::query("PRAGMA optimize").execute(pool).await?;
+    sqlx::query("PRAGMA optimize").execute(&mut *tx).await?;
+    tx.commit().await?;
 
+    for version in reconciled {
+        tracing::info!(
+            version,
+            "Migration checksum updated to this build's line endings"
+        );
+    }
     tracing::info!("All migrations completed successfully");
     Ok(())
 }
 
 /// Rewrites the stored checksum of an applied migration to the embedded one when it is the
-/// checksum of the same SQL with the other line endings. Any other difference is left for sqlx
-/// to refuse. Does nothing before `_sqlx_migrations` exists.
+/// checksum of the same SQL with the other line endings, and returns the versions it rewrote.
+/// Any other difference is left for sqlx to refuse. Does nothing before `_sqlx_migrations`
+/// exists.
 pub(crate) async fn reconcile_line_endings(
-    pool: &impl DriverPool,
+    tx: &mut WriteTx,
     migrator: &Migrator,
-) -> Result<()> {
-    let pool = pool.sqlx_pool();
-    let mut tx = pool.begin_write().await?;
-
+) -> Result<Vec<i64>> {
     let has_table: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
     if has_table == 0 {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     let stored: HashMap<i64, Vec<u8>> =
         sqlx::query_as::<_, (i64, Vec<u8>)>("SELECT version, checksum FROM _sqlx_migrations")
-            .fetch_all(&mut *tx)
+            .fetch_all(&mut **tx)
             .await?
             .into_iter()
             .collect();
@@ -71,7 +78,7 @@ pub(crate) async fn reconcile_line_endings(
             continue;
         };
         if checksum.as_slice() == &*migration.checksum
-            || !is_line_ending_variant(checksum, &migration.sql)
+            || !is_line_ending_variant(checksum, migration.sql.as_str())
         {
             continue;
         }
@@ -81,21 +88,13 @@ pub(crate) async fn reconcile_line_endings(
         .bind(&*migration.checksum)
         .bind(migration.version)
         .bind(checksum.as_slice())
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
         if updated.rows_affected() == 1 {
             reconciled.push(migration.version);
         }
     }
-    tx.commit().await?;
-
-    for version in reconciled {
-        tracing::info!(
-            version,
-            "Migration checksum updated to this build's line endings"
-        );
-    }
-    Ok(())
+    Ok(reconciled)
 }
 
 /// Whether `checksum` is the SHA-384 of `sql` with every line ending LF or with every one CRLF.

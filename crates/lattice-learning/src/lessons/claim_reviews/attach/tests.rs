@@ -420,7 +420,8 @@ impl LLMPort for Judge {
 }
 
 struct World {
-    pool: lattice_core::shared::persistence::Database,
+    db: lattice_core::shared::persistence::Database,
+    pool: sqlx::SqlitePool,
     program_id: String,
     ledger: MemoryLedger,
 }
@@ -435,7 +436,8 @@ async fn world() -> World {
 
 async fn world_with(claims: Vec<ClaimLedgerEntry>) -> World {
     let pool = tests::pool().await.unwrap();
-    let repo = LearningRepository::new(pool.clone());
+    let db = lattice_core::shared::persistence::Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let program = tests::fixture();
     repo.create(&program).await.unwrap();
     repo.accept(&crate::dto::AcceptLearningProgramRequestDto {
@@ -448,7 +450,8 @@ async fn world_with(claims: Vec<ClaimLedgerEntry>) -> World {
     let program_id = program.summary.id.clone();
     let ledger = MemoryLedger::new(&program_id, claims);
     World {
-        pool: pool.into(),
+        db,
+        pool,
         program_id,
         ledger,
     }
@@ -466,7 +469,7 @@ impl World {
         let library = EmptyLibrary;
         attach(
             &AttachDeps {
-                database: &self.pool,
+                database: &self.db,
                 store: &self.ledger,
                 web,
                 snapshots,
@@ -504,7 +507,7 @@ impl World {
         let progress = |stage: ClaimAttachProgressDto| stages.lock().unwrap().push(stage);
         let report = attach_to(
             &AttachDeps {
-                database: &self.pool,
+                database: &self.db,
                 store: &self.ledger,
                 web: &web,
                 snapshots: &snapshots,
@@ -545,7 +548,7 @@ impl World {
         let progress = |stage: ClaimAttachProgressDto| stages.lock().unwrap().push(stage);
         let report = attach_to_lesson(
             &AttachDeps {
-                database: &self.pool,
+                database: &self.db,
                 store: &self.ledger,
                 web,
                 snapshots: &snapshots,
@@ -573,7 +576,7 @@ impl World {
     }
 
     async fn source_count(&self) -> usize {
-        LearningSourceLibraryRepository::new(self.pool.clone())
+        LearningSourceLibraryRepository::new(self.db.clone())
             .workspace(&self.program_id)
             .await
             .unwrap()
@@ -696,7 +699,7 @@ async fn pasted_text_that_supports_the_claim_verifies_it_and_checks_the_others()
     assert_eq!(world.ledger.claim("mercury").events().len(), 2);
     assert_eq!(*web.fetched.lock().unwrap(), 0);
 
-    let saved = LearningSourceLibraryRepository::new(world.pool.clone())
+    let saved = LearningSourceLibraryRepository::new(world.db.clone())
         .saved_version(&world.program_id, &source.source_version_id)
         .await
         .unwrap()
@@ -839,7 +842,7 @@ async fn a_link_is_saved_as_the_users_and_frozen() {
     assert_eq!(report.snapshot, SnapshotNoteDto::Ready);
     assert_eq!(*snapshots.requested.lock().unwrap(), vec![url.clone()]);
     let source = report.source.unwrap();
-    let saved = LearningSourceLibraryRepository::new(world.pool.clone())
+    let saved = LearningSourceLibraryRepository::new(world.db.clone())
         .saved_version(&world.program_id, &source.source_version_id)
         .await
         .unwrap()
@@ -893,7 +896,7 @@ async fn a_stale_review_is_refused_before_anything_is_saved() {
     let library = EmptyLibrary;
     let refused = attach(
         &AttachDeps {
-            database: &world.pool,
+            database: &world.db,
             store: &world.ledger,
             web: &web,
             snapshots: &snapshots,
@@ -974,7 +977,7 @@ async fn a_new_source_is_checked_for_the_waiting_claims_by_the_machine() {
     let library = EmptyLibrary;
     let judge = Judge::says("supported");
     let deps = AttachDeps {
-        database: &world.pool,
+        database: &world.db,
         store: &world.ledger,
         web: &web,
         snapshots: &snapshots,

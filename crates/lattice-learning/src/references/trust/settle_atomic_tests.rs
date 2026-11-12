@@ -51,14 +51,14 @@ async fn flagged_claim(course: &Course, lesson_id: &str) -> ClaimId {
         }),
     ];
     for event in events {
-        append(&course.pool, lesson_id, &claim, Actor::Machine, event).await;
+        append(&course.database, lesson_id, &claim, Actor::Machine, event).await;
     }
     claim
 }
 
 /// A claim the gate held below its bar, waiting for the user.
 async fn held_claim(course: &Course, lesson_id: &str) -> ClaimId {
-    queued_below_the_bar(&course.pool, lesson_id, below_the_bar("v-blog")).await
+    queued_below_the_bar(&course.database, lesson_id, below_the_bar("v-blog")).await
 }
 
 fn confirm() -> ClaimActionRequestDto {
@@ -74,7 +74,7 @@ async fn act(
     claim: &ClaimId,
     action: ClaimActionRequestDto,
 ) -> Result<i64> {
-    let revision = ClaimReviewRepository::new(course.pool.clone())
+    let revision = ClaimReviewRepository::new(course.database.clone())
         .load(lesson_id)
         .await?
         .revision
@@ -94,13 +94,13 @@ struct Stored {
 }
 
 async fn stored(course: &Course, lesson_id: &str, claim: &ClaimId) -> Result<Stored> {
-    let revision = ClaimReviewRepository::new(course.pool.clone())
+    let revision = ClaimReviewRepository::new(course.database.clone())
         .load(lesson_id)
         .await?
         .revision
         .0;
     Ok(Stored {
-        events: claim_entry(&course.pool, lesson_id, claim)
+        events: claim_entry(&course.database, lesson_id, claim)
             .await
             .events()
             .len(),
@@ -114,9 +114,9 @@ async fn stored(course: &Course, lesson_id: &str, claim: &ClaimId) -> Result<Sto
 }
 
 async fn refuse(course: &Course, statement: &str, table: &str) {
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE TRIGGER refuse_for_test BEFORE {statement} ON {table} BEGIN SELECT RAISE(ABORT, 'refused for the test'); END"
-    ))
+    )))
     .execute(&course.pool)
     .await
     .unwrap();

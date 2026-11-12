@@ -65,8 +65,8 @@ pub enum LessonQuestionKind {
 }
 
 impl LessonQuestionKind {
-    /// Every kind the writer is asked for; a prepared lesson is saved with
-    /// questions of any of them, as few as one.
+    /// Every kind a prepared lesson asks: it is saved only with a question of
+    /// each.
     pub const ALL: [Self; 3] = [Self::Practice, Self::Quiz, Self::Test];
 
     pub fn as_str(&self) -> &'static str {

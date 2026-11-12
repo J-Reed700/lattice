@@ -486,7 +486,8 @@ async fn a_verdict_the_challenge_overturned_is_checked_again_under_the_trust_pol
 {
     use crate::lesson_drafts;
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
     let sources = marker_collection();
     let references = ReferenceCollection::lexical(&sources)?;
     let model = PagingModel::new(6_000);
@@ -529,7 +530,7 @@ async fn a_verdict_the_challenge_overturned_is_checked_again_under_the_trust_pol
             )
         )
     );
-    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+    lesson_drafts::run(&db, &repo, &job, &lesson, async {
         lesson_drafts::record_checkpoint(
             &earlier,
             serde_json::to_value(ClaimReceipt {

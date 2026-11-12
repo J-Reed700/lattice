@@ -26,6 +26,10 @@ async fn pool() -> sqlx::SqlitePool {
     pool
 }
 
+async fn database() -> Database {
+    Database::new(pool().await)
+}
+
 fn new_job(operation: &str) -> NewJob {
     NewJob {
         kind: KIND.into(),
@@ -56,7 +60,7 @@ async fn status(store: &JobStore, id: &str) -> JobStatus {
 
 #[tokio::test]
 async fn progress_messages_alone_are_not_saved_work() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let id = submitted(&store, "reads").await;
     for launch in 0..2 {
         left_running(&store, &id).await;
@@ -79,7 +83,7 @@ async fn progress_messages_alone_are_not_saved_work() -> Result<()> {
 
 #[tokio::test]
 async fn progress_that_rose_is_saved_work_and_a_message_after_it_is_not() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let id = submitted(&store, "advances").await;
     left_running(&store, &id).await;
     let context = JobContext::detached(&store, &id).await?;
@@ -107,7 +111,7 @@ async fn progress_that_rose_is_saved_work_and_a_message_after_it_is_not() -> Res
 
 #[tokio::test]
 async fn rewriting_a_checkpoint_with_the_same_content_is_not_saved_work() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let id = submitted(&store, "scratch").await;
     left_running(&store, &id).await;
     assert!(
@@ -133,7 +137,7 @@ async fn rewriting_a_checkpoint_with_the_same_content_is_not_saved_work() -> Res
 
 #[tokio::test]
 async fn changing_a_checkpoint_is_saved_work() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let id = submitted(&store, "scratch").await;
     left_running(&store, &id).await;
     assert!(
@@ -165,7 +169,7 @@ async fn changing_a_checkpoint_is_saved_work() -> Result<()> {
 
 #[tokio::test]
 async fn restaging_the_same_result_is_not_saved_work_and_a_new_one_is() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let id = submitted(&store, "staged").await;
     left_running(&store, &id).await;
     assert!(
@@ -211,7 +215,7 @@ impl JobHandler for Deaf {
 #[tokio::test]
 async fn an_orderly_shutdown_suspends_a_job_that_was_slow_to_stop_without_counting_it() -> Result<()>
 {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let store = runtime.store();
     let id = submitted(store, "long").await;
     // One earlier launch already found it running.
@@ -277,7 +281,7 @@ impl JobHandler for PanicsWhenCancelled {
 
 #[tokio::test]
 async fn a_panic_while_the_job_is_being_cancelled_is_a_stop_not_a_failure() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let (started, mut running) = mpsc::unbounded_channel();
     runtime
         .register(
@@ -345,7 +349,7 @@ async fn told(handler: &Reports) -> Vec<(String, String, JobStatus)> {
 
 #[tokio::test]
 async fn a_handler_is_told_when_the_runtime_fails_its_job_for_a_panic() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let handler = Arc::new(Reports {
         store: runtime.store().clone(),
         panics: true,
@@ -368,7 +372,7 @@ async fn a_handler_is_told_when_the_runtime_fails_its_job_for_a_panic() -> Resul
 
 #[tokio::test]
 async fn a_handler_is_told_when_recovery_fails_its_job_for_stopping_the_app() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let store = runtime.store();
     let id = submitted(store, "crashes").await;
     left_running(store, &id).await;
@@ -396,7 +400,7 @@ async fn a_handler_is_told_when_recovery_fails_its_job_for_stopping_the_app() ->
 
 #[tokio::test]
 async fn progress_climbing_back_to_a_height_already_reached_is_not_saved_work() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let id = submitted(&store, "regrades").await;
     for attempt in 0..2 {
         left_running(&store, &id).await;
@@ -421,7 +425,7 @@ async fn progress_climbing_back_to_a_height_already_reached_is_not_saved_work() 
 
 #[tokio::test]
 async fn progress_past_the_highest_value_ever_reached_is_saved_work() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let id = submitted(&store, "advances").await;
     for (reached, expected) in [(1, JobStatus::Pending), (1, JobStatus::Failed)] {
         left_running(&store, &id).await;
@@ -450,7 +454,7 @@ async fn progress_past_the_highest_value_ever_reached_is_saved_work() -> Result<
 
 #[tokio::test]
 async fn an_orderly_shutdown_leaves_a_job_of_an_interrupt_kind_to_be_interrupted() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let store = runtime.store();
     let (started, mut running) = mpsc::unbounded_channel();
     runtime

@@ -18,6 +18,7 @@ use lattice_core::application::contracts::search::{
 use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult, ToolDefinition};
 use lattice_core::application::ports::hybrid_search::HybridSearchTrait;
 use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::persistence::Database;
 use std::sync::Mutex;
 
 const CONVERSATION: &str = "fallback-chat";
@@ -45,7 +46,7 @@ async fn handbook_records() -> Arc<dyn ChatRecords> {
     .execute(&pool)
     .await
     .unwrap();
-    Arc::new(ConversationRepository::new(pool))
+    Arc::new(ConversationRepository::new(Database::new(pool)))
 }
 
 fn passage(index: usize, content: &str) -> SearchResultDto {

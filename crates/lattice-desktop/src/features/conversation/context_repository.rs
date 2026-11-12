@@ -4,17 +4,15 @@ use lattice_core::application::ports::conversation_context::{
     ConversationContextPort, LinkedConversationSource,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 
 pub struct SqliteConversationContext {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl SqliteConversationContext {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 }
 
@@ -28,7 +26,8 @@ struct SourceRow {
 #[async_trait::async_trait]
 impl ConversationContextPort for SqliteConversationContext {
     async fn space_prompt(&self, conversation_id: &str) -> Result<Option<String>> {
-        sqlx::query_scalar::<_, Option<String>>(
+        let mut read = self.db.begin_read().await?;
+        let prompt = sqlx::query_scalar::<_, Option<String>>(
             "SELECT COALESCE(NULLIF(TRIM(f.instructions), ''), s.space_prompt)
              FROM conversations c
              LEFT JOIN conversation_spaces s ON s.id = c.space_id
@@ -36,10 +35,12 @@ impl ConversationContextPort for SqliteConversationContext {
              WHERE c.id = ? LIMIT 1",
         )
         .bind(conversation_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *read)
         .await
         .map(Option::flatten)
-        .map_err(|e| AppError::Database(format!("Failed to load space prompt: {}", e)))
+        .map_err(|e| AppError::Database(format!("Failed to load space prompt: {}", e)))?;
+        read.commit().await?;
+        Ok(prompt)
     }
 
     async fn linked_sources(
@@ -48,6 +49,7 @@ impl ConversationContextPort for SqliteConversationContext {
         offset: usize,
         limit: usize,
     ) -> Result<Vec<LinkedConversationSource>> {
+        let mut read = self.db.begin_read().await?;
         let rows = sqlx::query_as::<_, SourceRow>(
             "SELECT title, url, excerpt FROM conversation_web_sources WHERE conversation_id = ? \
              ORDER BY added_at DESC, rowid DESC LIMIT ? OFFSET ?",
@@ -55,7 +57,7 @@ impl ConversationContextPort for SqliteConversationContext {
         .bind(conversation_id)
         .bind(i64::try_from(limit).unwrap_or(i64::MAX))
         .bind(i64::try_from(offset).unwrap_or(i64::MAX))
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| {
             AppError::Database(format!(
@@ -63,6 +65,7 @@ impl ConversationContextPort for SqliteConversationContext {
                 e
             ))
         })?;
+        read.commit().await?;
         Ok(rows
             .into_iter()
             .map(|row| LinkedConversationSource {
@@ -74,13 +77,15 @@ impl ConversationContextPort for SqliteConversationContext {
     }
 
     async fn linked_source_count(&self, conversation_id: &str) -> Result<usize> {
+        let mut read = self.db.begin_read().await?;
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM conversation_web_sources WHERE conversation_id = ?",
         )
         .bind(conversation_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("Failed to count linked web sources: {e}")))?;
+        read.commit().await?;
         Ok(usize::try_from(count).unwrap_or(0))
     }
 }
@@ -88,6 +93,7 @@ impl ConversationContextPort for SqliteConversationContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::SqlitePool;
 
     #[tokio::test]
     async fn context_reads_are_scoped_ordered_and_bounded() {
@@ -102,7 +108,7 @@ mod tests {
                 ('folder', 'space', '/plugin'), ('blank', 'space', '/blank'), ('unlisted', 'space', '/gone');
             INSERT INTO conversation_web_sources VALUES ('chat', 'old', 'old-url', NULL, '2026-01-01'), ('chat', NULL, 'new-url', 'excerpt', '2026-02-01'), ('other', 'other', 'other-url', NULL, '2026-03-01');")
             .execute(&pool).await.unwrap();
-        let adapter = SqliteConversationContext::new(pool);
+        let adapter = SqliteConversationContext::new(Database::new(pool.clone()));
         assert_eq!(
             adapter.space_prompt("chat").await.unwrap().as_deref(),
             Some("prompt")
@@ -141,7 +147,7 @@ mod tests {
     #[tokio::test]
     async fn context_database_failures_are_reported() {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        let adapter = SqliteConversationContext::new(pool);
+        let adapter = SqliteConversationContext::new(Database::new(pool));
         assert!(matches!(
             adapter.space_prompt("chat").await,
             Err(AppError::Database(_))

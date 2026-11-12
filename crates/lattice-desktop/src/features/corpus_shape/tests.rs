@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use lattice_core::shared::persistence::Database;
 use parking_lot::Mutex;
 use sqlx::SqlitePool;
 
@@ -136,11 +137,11 @@ fn make_document(id: &str, file_name: &str) -> Document {
 /// Returns a pool with document + embedding rows populated via mock repos
 /// (real SQLite holds the cluster_runs tables; embeddings are in-memory).
 async fn seed_three_blob_vault() -> (
-    SqlitePool,
+    Database,
     Arc<MockDocumentRepository>,
     Arc<MockEmbeddingRepository>,
 ) {
-    let pool = fresh_sqlite_pool().await;
+    let db = Database::new(fresh_sqlite_pool().await);
     let doc_repo = Arc::new(MockDocumentRepository::new());
     let emb_repo = Arc::new(MockEmbeddingRepository::new());
 
@@ -176,7 +177,7 @@ async fn seed_three_blob_vault() -> (
         }
     }
 
-    (pool, doc_repo, emb_repo)
+    (db, doc_repo, emb_repo)
 }
 
 fn jittered(center: &[f32], jitter: f32, seed: u64) -> Vec<f32> {
@@ -198,14 +199,14 @@ fn jittered(center: &[f32], jitter: f32, seed: u64) -> Vec<f32> {
 }
 
 fn build_use_case(
-    pool: SqlitePool,
+    db: Database,
     doc_repo: Arc<MockDocumentRepository>,
     emb_repo: Arc<MockEmbeddingRepository>,
     llm: Arc<dyn LLMPort>,
 ) -> RunClusteringUseCase {
     let doc_port: Arc<dyn DocumentRepositoryPort> = doc_repo;
     let emb_port: Arc<dyn lattice_core::application::ports::EmbeddingRepositoryPort> = emb_repo;
-    let cluster_repo: Arc<dyn ClusterRepositoryPort> = Arc::new(SqliteClusterRepository::new(pool));
+    let cluster_repo: Arc<dyn ClusterRepositoryPort> = Arc::new(SqliteClusterRepository::new(db));
     let preview: Arc<dyn DocumentContentPreviewPort> = Arc::new(StubPreview);
 
     RunClusteringUseCase::new(doc_port, emb_port, cluster_repo, preview, Some(llm)).with_params(
@@ -218,12 +219,12 @@ fn build_use_case(
 
 #[tokio::test]
 async fn full_pipeline_finds_three_clusters_on_synthetic_vault() {
-    let (pool, doc_repo, emb_repo) = seed_three_blob_vault().await;
+    let (db, doc_repo, emb_repo) = seed_three_blob_vault().await;
     let llm = CountingMockLlm::new();
     let counter = llm.counter();
     let llm_arc: Arc<dyn LLMPort> = Arc::new(llm);
 
-    let use_case = build_use_case(pool.clone(), doc_repo, emb_repo, llm_arc);
+    let use_case = build_use_case(db.clone(), doc_repo, emb_repo, llm_arc);
     let outcome = use_case.execute().await.unwrap();
 
     assert_eq!(
@@ -243,12 +244,12 @@ async fn full_pipeline_finds_three_clusters_on_synthetic_vault() {
 
 #[tokio::test]
 async fn rerun_on_identical_input_triggers_zero_llm_calls() {
-    let (pool, doc_repo, emb_repo) = seed_three_blob_vault().await;
+    let (db, doc_repo, emb_repo) = seed_three_blob_vault().await;
 
     let llm1 = Arc::new(CountingMockLlm::new());
     let counter1 = llm1.counter();
     let llm1_port: Arc<dyn LLMPort> = llm1;
-    let uc1 = build_use_case(pool.clone(), doc_repo.clone(), emb_repo.clone(), llm1_port);
+    let uc1 = build_use_case(db.clone(), doc_repo.clone(), emb_repo.clone(), llm1_port);
     let first = uc1.execute().await.unwrap();
     assert_eq!(*counter1.lock(), first.clusters.len());
 
@@ -256,7 +257,7 @@ async fn rerun_on_identical_input_triggers_zero_llm_calls() {
     let llm2 = Arc::new(CountingMockLlm::new());
     let counter2 = llm2.counter();
     let llm2_port: Arc<dyn LLMPort> = llm2;
-    let uc2 = build_use_case(pool.clone(), doc_repo, emb_repo, llm2_port);
+    let uc2 = build_use_case(db.clone(), doc_repo, emb_repo, llm2_port);
     let second = uc2.execute().await.unwrap();
     assert_eq!(
         *counter2.lock(),
@@ -272,14 +273,14 @@ async fn rerun_on_identical_input_triggers_zero_llm_calls() {
 
 #[tokio::test]
 async fn sqlite_round_trip_preserves_clusters() {
-    let (pool, doc_repo, emb_repo) = seed_three_blob_vault().await;
+    let (db, doc_repo, emb_repo) = seed_three_blob_vault().await;
     let llm = Arc::new(CountingMockLlm::new());
     let llm_port: Arc<dyn LLMPort> = llm;
 
-    let uc = build_use_case(pool.clone(), doc_repo, emb_repo, llm_port);
+    let uc = build_use_case(db.clone(), doc_repo, emb_repo, llm_port);
     let outcome = uc.execute().await.unwrap();
 
-    let repo = SqliteClusterRepository::new(pool);
+    let repo = SqliteClusterRepository::new(db);
     let latest = repo.get_latest_run().await.unwrap().unwrap();
     assert_eq!(latest.id, outcome.run.id);
     assert_eq!(latest.cluster_count, outcome.clusters.len() as i64);

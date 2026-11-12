@@ -23,6 +23,7 @@ use lattice_core::application::contracts::sources::{
     SourceChunkExcerptDto, SourceDto, WebSnapshotDto,
 };
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::persistence::Database;
 
 fn source(citation_id: u32, document_id: &str) -> SourceDto {
     SourceDto {
@@ -77,7 +78,7 @@ async fn fresh_pool() -> SqlitePool {
 }
 
 async fn fresh_repository() -> DailyNotesRepository {
-    DailyNotesRepository::new(fresh_pool().await)
+    DailyNotesRepository::new(Database::new(fresh_pool().await))
 }
 
 async fn insert_journal(pool: &SqlitePool, id: &str, name: &str) {
@@ -189,8 +190,9 @@ async fn vault_updates_preserve_saved_source_metadata() {
 #[tokio::test]
 async fn opening_an_old_page_hydrates_and_persists_its_web_snapshot() {
     let pool = fresh_pool().await;
-    let notes = DailyNotesRepository::new(pool.clone());
-    let conversations = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let notes = DailyNotesRepository::new(db.clone());
+    let conversations = ConversationRepository::new(db.clone());
     let archive = RepositoryArchive(&conversations);
     let conversation = conversations
         .create_conversation("Archived source", None)
@@ -249,9 +251,9 @@ async fn opening_an_old_page_hydrates_and_persists_its_web_snapshot() {
 
 #[tokio::test]
 async fn hydration_skips_conflicting_archives_and_preserves_existing_snapshots() {
-    let pool = fresh_pool().await;
-    let notes = DailyNotesRepository::new(pool.clone());
-    let conversations = ConversationRepository::new(pool.clone());
+    let db = Database::new(fresh_pool().await);
+    let notes = DailyNotesRepository::new(db.clone());
+    let conversations = ConversationRepository::new(db.clone());
     let archive = RepositoryArchive(&conversations);
     let first = conversations
         .create_conversation("First", None)
@@ -354,7 +356,8 @@ async fn hydration_skips_conflicting_archives_and_preserves_existing_snapshots()
 #[tokio::test]
 async fn hydration_compare_and_swap_does_not_overwrite_a_concurrent_note_edit() {
     let pool = fresh_pool().await;
-    let repository = DailyNotesRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repository = DailyNotesRepository::new(db.clone());
     let note = record("racing", "Before", "Before edit", "2026-09-20T00:00:00Z");
     repository.insert(&note).await.unwrap();
     sqlx::query(
@@ -543,9 +546,10 @@ async fn find_by_title_matches_exactly_and_lists_newest_first() {
 #[tokio::test]
 async fn a_journal_lists_only_its_own_pages() {
     let pool = fresh_pool().await;
+    let db = Database::new(pool.clone());
     insert_journal(&pool, "journal_one", "Journal 1").await;
     insert_journal(&pool, "journal_two", "Journal 2").await;
-    let repository = DailyNotesRepository::new(pool);
+    let repository = DailyNotesRepository::new(db.clone());
 
     let mut mine = record("mine", "My page", "", "2026-09-17T10:00:00.000Z");
     mine.journal_id = Some("journal_one".to_string());
@@ -572,9 +576,10 @@ async fn a_journal_lists_only_its_own_pages() {
 #[tokio::test]
 async fn deleting_a_journal_deletes_the_pages_it_owns() {
     let pool = fresh_pool().await;
+    let db = Database::new(pool.clone());
     insert_journal(&pool, "journal_one", "Journal 1").await;
     insert_journal(&pool, "journal_two", "Journal 2").await;
-    let repository = DailyNotesRepository::new(pool.clone());
+    let repository = DailyNotesRepository::new(db.clone());
 
     let mut doomed = record("doomed", "Page", "", "2026-09-17T10:00:00.000Z");
     doomed.journal_id = Some("journal_one".to_string());
@@ -613,9 +618,10 @@ async fn deleting_a_journal_deletes_the_pages_it_owns() {
 #[tokio::test]
 async fn a_capture_lands_in_the_journal_written_to_last() {
     let pool = fresh_pool().await;
+    let db = Database::new(pool.clone());
     insert_journal(&pool, "journal_one", "Journal 1").await;
     insert_journal(&pool, "journal_two", "Journal 2").await;
-    let repository = DailyNotesRepository::new(pool);
+    let repository = DailyNotesRepository::new(db.clone());
 
     let mut older = record("older", "Page", "", "2026-09-17T10:00:00.000Z");
     older.journal_id = Some("journal_one".to_string());
@@ -636,7 +642,8 @@ async fn a_capture_lands_in_the_journal_written_to_last() {
 #[tokio::test]
 async fn a_capture_prefers_any_open_journal_to_none_and_skips_archived_ones() {
     let pool = fresh_pool().await;
-    let repository = DailyNotesRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repository = DailyNotesRepository::new(db.clone());
     assert_eq!(repository.capture_journal_id().await.unwrap(), None);
 
     insert_journal(&pool, "journal_archived", "Old").await;
@@ -662,9 +669,10 @@ async fn a_capture_prefers_any_open_journal_to_none_and_skips_archived_ones() {
 #[tokio::test]
 async fn todays_page_is_looked_up_inside_one_journal() {
     let pool = fresh_pool().await;
+    let db = Database::new(pool.clone());
     insert_journal(&pool, "journal_one", "Journal 1").await;
     insert_journal(&pool, "journal_two", "Journal 2").await;
-    let repository = DailyNotesRepository::new(pool);
+    let repository = DailyNotesRepository::new(db.clone());
 
     let title = "Daily Notes · Friday, September 18";
     let mut theirs = record("theirs", title, "", "2026-09-18T10:00:00.000Z");
@@ -716,11 +724,11 @@ fn capture_request(message_id: &str) -> super::dto::CaptureReferenceRequestDto {
 
 #[tokio::test]
 async fn overlapping_captures_share_one_note_and_preserve_both_additions() {
-    let pool = fresh_pool().await;
-    let left = DailyNotesRepository::new(pool.clone());
+    let db = Database::new(fresh_pool().await);
+    let left = DailyNotesRepository::new(db.clone());
     let (first, second) = tokio::join!(
-        capture_reference(&pool, capture_request("first")),
-        capture_reference(&pool, capture_request("second"))
+        capture_reference(&db, capture_request("first")),
+        capture_reference(&db, capture_request("second"))
     );
     let first = first.unwrap();
     let second = second.unwrap();
@@ -731,7 +739,7 @@ async fn overlapping_captures_share_one_note_and_preserve_both_additions() {
     assert_eq!(note.conversation_snapshots.len(), 2);
     assert_eq!(note.linked_document_ids.len(), 2);
     assert_eq!(left.list().await.unwrap().len(), 1);
-    capture_reference(&pool, capture_request("first"))
+    capture_reference(&db, capture_request("first"))
         .await
         .unwrap();
     let replay = row_to_dto(left.get(&first.note_id).await.unwrap()).unwrap();
@@ -741,13 +749,13 @@ async fn overlapping_captures_share_one_note_and_preserve_both_additions() {
 
 #[tokio::test]
 async fn stale_full_edits_cannot_overwrite_captures_or_vault_writes() {
-    let pool = fresh_pool().await;
-    let repository = DailyNotesRepository::new(pool.clone());
-    let first = capture_reference(&pool, capture_request("first"))
+    let db = Database::new(fresh_pool().await);
+    let repository = DailyNotesRepository::new(db.clone());
+    let first = capture_reference(&db, capture_request("first"))
         .await
         .unwrap();
     let mut stale = repository.get(&first.note_id).await.unwrap();
-    capture_reference(&pool, capture_request("second"))
+    capture_reference(&db, capture_request("second"))
         .await
         .unwrap();
     stale.content = "Stale editor draft".into();
@@ -775,16 +783,16 @@ async fn stale_full_edits_cannot_overwrite_captures_or_vault_writes() {
 
 #[tokio::test]
 async fn capture_preserves_markdown_and_replaces_legacy_wrappers() {
-    let pool = fresh_pool().await;
-    let repository = DailyNotesRepository::new(pool.clone());
+    let db = Database::new(fresh_pool().await);
+    let repository = DailyNotesRepository::new(db.clone());
     let request = capture_request("first");
-    let first = capture_reference(&pool, request.clone()).await.unwrap();
+    let first = capture_reference(&db, request.clone()).await.unwrap();
     let mut row = repository.get(&first.note_id).await.unwrap();
     row.content = "<!-- lattice-capture-start:conversation-1::first -->old content<!-- lattice-capture-end:conversation-1::first -->".into();
     repository.update(&row).await.unwrap();
     let table = "| Name | Score |\n| --- | ---: |\n| Alpha | 10 |";
     capture_reference(
-        &pool,
+        &db,
         super::dto::CaptureReferenceRequestDto {
             message_content: table.into(),
             ..request

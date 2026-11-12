@@ -215,6 +215,7 @@ async fn archive_round_trip_restores_database() {
 
     let db_path = app_data.join("lattice.db");
     let pool = seeded_pool(&db_path, 3).await;
+    let db = Database::new(pool.clone());
     // An import in flight when the backup is taken.
     sqlx::raw_sql(
         "CREATE TABLE file_intents (id INTEGER PRIMARY KEY, store TEXT, kind TEXT, name TEXT,          run_id TEXT);          INSERT INTO file_intents (store, kind, name, run_id)          VALUES ('library', 'import', 'blob', 'the run that took the backup');",
@@ -230,7 +231,7 @@ async fn archive_round_trip_restores_database() {
     let key_store = isolated_key_store(&app_data);
     let service = ArchiveService::new(
         Arc::new(ArchiveWriter::new(
-            Database::from(pool.clone()),
+            db.clone(),
             app_data.clone(),
             settings.clone(),
             key_store.clone(),
@@ -238,7 +239,7 @@ async fn archive_round_trip_restores_database() {
             Some(web_archive_root.clone()),
         )),
         Arc::new(ArchiveRestorer::new(
-            Database::from(pool.clone()),
+            db.clone(),
             db_path.clone(),
             app_data.clone(),
             settings.clone(),
@@ -316,7 +317,7 @@ async fn archive_round_trip_restores_database() {
     let target_key_store = isolated_key_store(&target_app_data);
     let target_settings: Arc<dyn SettingsRepositoryPort> = Arc::new(MockSettingsRepository::new());
     let restorer = ArchiveRestorer::new(
-        Database::from(target_pool.clone()),
+        Database::new(target_pool.clone()),
         target_db.clone(),
         target_app_data.clone(),
         target_settings,

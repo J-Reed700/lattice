@@ -8,6 +8,7 @@ fn found(path: &str, source: &str) -> Vec<String> {
     let ast = syn::parse_file(source).unwrap();
     file_violations(path, &ast)
         .iter()
+        .filter(|violation| violation.rule != 6)
         .map(ToString::to_string)
         .collect()
 }

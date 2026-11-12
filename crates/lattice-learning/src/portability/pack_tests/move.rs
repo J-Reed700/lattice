@@ -19,6 +19,7 @@ use crate::{
     tests::{pool, ready_program},
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use sqlx::SqlitePool;
 
 type LessonRow = (String, i64, String, Option<String>);
@@ -77,8 +78,8 @@ async fn resume_state(pool: &SqlitePool, program_id: &str) -> Result<ResumeState
     })
 }
 
-async fn complete(pool: &SqlitePool, program_id: &str, lesson_id: &str) -> Result<()> {
-    let repo = LearningRepository::new(pool.clone());
+async fn complete(db: &Database, program_id: &str, lesson_id: &str) -> Result<()> {
+    let repo = LearningRepository::new(db.clone());
     let revision = repo.get(program_id).await?.summary.revision;
     repo.complete(&CompleteLearningLessonRequestDto {
         program_id: program_id.into(),
@@ -90,14 +91,12 @@ async fn complete(pool: &SqlitePool, program_id: &str, lesson_id: &str) -> Resul
 
 /// Take the module's test, or one lesson's quiz, leaving every answer blank.
 async fn submit(
-    pool: &SqlitePool,
+    db: &Database,
     program_id: &str,
     module: usize,
     lesson: Option<usize>,
 ) -> Result<()> {
-    let program: LearningProgramDto = LearningRepository::new(pool.clone())
-        .get(program_id)
-        .await?;
+    let program: LearningProgramDto = LearningRepository::new(db.clone()).get(program_id).await?;
     let module = &program.modules[module];
     let scope = match lesson {
         Some(index) => LearningQuizScopeDto {
@@ -109,7 +108,7 @@ async fn submit(
             id: Some(module.id.clone()),
         },
     };
-    crate::assessment::assessment_tests::take_quiz(pool, program_id, &scope).await?;
+    crate::assessment::assessment_tests::take_quiz(db, program_id, &scope).await?;
     Ok(())
 }
 
@@ -137,8 +136,8 @@ async fn review(pool: &SqlitePool, review: Review<'_>) -> Result<()> {
 
 /// A course part-way through: two lessons done, one skipped, a quiz and a
 /// module test taken, a lesson note written and two flashcards reviewed.
-async fn studied_course(pool: &SqlitePool) -> Result<String> {
-    let repo = LearningRepository::new(pool.clone());
+async fn studied_course(pool: &SqlitePool, db: &Database) -> Result<String> {
+    let repo = LearningRepository::new(db.clone());
     let program = ready_program(&repo).await?;
     let id = program.summary.id.clone();
     let lessons: Vec<String> = program
@@ -146,8 +145,8 @@ async fn studied_course(pool: &SqlitePool) -> Result<String> {
         .iter()
         .flat_map(|module| module.lessons.iter().map(|lesson| lesson.id.clone()))
         .collect();
-    complete(pool, &id, &lessons[0]).await?;
-    complete(pool, &id, &lessons[1]).await?;
+    complete(db, &id, &lessons[0]).await?;
+    complete(db, &id, &lessons[1]).await?;
     sqlx::query(
         "UPDATE learning_lessons SET curriculum_state='skipped' WHERE program_id=? AND id=?",
     )
@@ -155,8 +154,8 @@ async fn studied_course(pool: &SqlitePool) -> Result<String> {
     .bind(&lessons[3])
     .execute(pool)
     .await?;
-    submit(pool, &id, 0, Some(0)).await?;
-    submit(pool, &id, 0, None).await?;
+    submit(db, &id, 0, Some(0)).await?;
+    submit(db, &id, 0, None).await?;
     // The note creates the course's notebook and flashcard deck.
     repo.ensure_lesson_note(&id, &lessons[0], "Lesson notes", "My own words")
         .await?;
@@ -257,9 +256,10 @@ async fn note_link(pool: &SqlitePool, program_id: &str) -> Result<Vec<(String, S
 #[tokio::test]
 async fn merge_safe_moves_a_studied_course_to_a_fresh_computer_exactly() -> Result<()> {
     let home = pool().await?;
-    let course = studied_course(&home).await?;
+    let home_db = Database::new(home.clone());
+    let course = studied_course(&home, &home_db).await?;
     let home_dir = tempfile::tempdir()?;
-    let home_packs = packs(&home, home_dir.path());
+    let home_packs = packs(&home_db, home_dir.path());
     let notice = home_packs.workspace(&course).await?.export_notice;
     assert!(notice
         .stays_behind
@@ -269,12 +269,13 @@ async fn merge_safe_moves_a_studied_course_to_a_fresh_computer_exactly() -> Resu
     let pack = export_pack(&home_packs, &course).await?;
 
     let fresh = pool().await?;
-    assert!(LearningRepository::new(fresh.clone())
+    let fresh_db = Database::new(fresh.clone());
+    assert!(LearningRepository::new(fresh_db.clone())
         .list()
         .await?
         .is_empty());
     let fresh_dir = tempfile::tempdir()?;
-    let fresh_packs = packs(&fresh, fresh_dir.path());
+    let fresh_packs = packs(&fresh_db, fresh_dir.path());
     let request = preview_request(&pack, LearningPackConflictPolicy::MergeSafe);
     let previewed = fresh_packs.preview(&request).await?;
     let preview = preview_for(&previewed, &request);
@@ -308,10 +309,11 @@ async fn merge_safe_moves_a_studied_course_to_a_fresh_computer_exactly() -> Resu
 #[tokio::test]
 async fn replace_moves_newer_progress_back_and_keeps_the_lesson_note() -> Result<()> {
     let home = pool().await?;
-    let course = studied_course(&home).await?;
+    let home_db = Database::new(home.clone());
+    let course = studied_course(&home, &home_db).await?;
     let home_dir = tempfile::tempdir()?;
-    let home_packs = packs(&home, home_dir.path());
-    let title = LearningRepository::new(home.clone())
+    let home_packs = packs(&home_db, home_dir.path());
+    let title = LearningRepository::new(home_db.clone())
         .get(&course)
         .await?
         .summary
@@ -328,8 +330,9 @@ async fn replace_moves_newer_progress_back_and_keeps_the_lesson_note() -> Result
 
     // Keep studying on the second computer.
     let away = pool().await?;
+    let away_db = Database::new(away.clone());
     let away_dir = tempfile::tempdir()?;
-    let away_packs = packs(&away, away_dir.path());
+    let away_packs = packs(&away_db, away_dir.path());
     import(
         &away_packs,
         &outbound,
@@ -338,8 +341,8 @@ async fn replace_moves_newer_progress_back_and_keeps_the_lesson_note() -> Result
     .await?;
     let lessons: Vec<String> = sqlx::query_scalar("SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? ORDER BY m.ordinal,l.ordinal")
         .bind(&course).fetch_all(&away).await?;
-    complete(&away, &course, &lessons[2]).await?;
-    submit(&away, &course, 1, Some(0)).await?;
+    complete(&away_db, &course, &lessons[2]).await?;
+    submit(&away_db, &course, 1, Some(0)).await?;
     review(
         &away,
         Review {
@@ -430,9 +433,10 @@ async fn add_job(pool: &SqlitePool, program_id: &str) -> Result<String> {
 #[tokio::test]
 async fn replace_and_export_wait_for_a_pending_generation_job() -> Result<()> {
     let home = pool().await?;
-    let course = studied_course(&home).await?;
+    let home_db = Database::new(home.clone());
+    let course = studied_course(&home, &home_db).await?;
     let home_dir = tempfile::tempdir()?;
-    let home_packs = packs(&home, home_dir.path());
+    let home_packs = packs(&home_db, home_dir.path());
     let pack = export_pack(&home_packs, &course).await?;
 
     let job = add_job(&home, &course).await?;
@@ -498,9 +502,10 @@ async fn replace_and_export_wait_for_a_pending_generation_job() -> Result<()> {
 #[tokio::test]
 async fn a_pack_from_a_different_schema_is_blocked_at_preview() -> Result<()> {
     let home = pool().await?;
-    let course = studied_course(&home).await?;
+    let home_db = Database::new(home.clone());
+    let course = studied_course(&home, &home_db).await?;
     let home_dir = tempfile::tempdir()?;
-    let home_packs = packs(&home, home_dir.path());
+    let home_packs = packs(&home_db, home_dir.path());
     let pack = export_pack(&home_packs, &course).await?;
     let decoded = decode_learning_pack(&tokio::fs::read(&pack).await?)?;
     let other_build = repack(&decoded, |input| input.schema_version += 1)?;
@@ -508,8 +513,9 @@ async fn a_pack_from_a_different_schema_is_blocked_at_preview() -> Result<()> {
     tokio::fs::write(&other_path, other_build).await?;
 
     let fresh = pool().await?;
+    let fresh_db = Database::new(fresh.clone());
     let fresh_dir = tempfile::tempdir()?;
-    let fresh_packs = packs(&fresh, fresh_dir.path());
+    let fresh_packs = packs(&fresh_db, fresh_dir.path());
     for policy in [
         LearningPackConflictPolicy::MergeSafe,
         LearningPackConflictPolicy::ReplaceAfterBackup,
@@ -546,7 +552,7 @@ async fn a_pack_from_a_different_schema_is_blocked_at_preview() -> Result<()> {
             "{error}"
         );
     }
-    assert!(LearningRepository::new(fresh.clone())
+    assert!(LearningRepository::new(fresh_db.clone())
         .list()
         .await?
         .is_empty());

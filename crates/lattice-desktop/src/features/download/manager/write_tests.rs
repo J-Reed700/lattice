@@ -4,11 +4,11 @@ use crate::features::download::download_repository::{
 use crate::features::download::engine::mock::MockDownloadEngine;
 use crate::features::download::manager::DownloadManagerService;
 use crate::infrastructure::persistence::database::connection::DatabaseConnection;
+use crate::infrastructure::persistence::database::run_migrations;
 use lattice_core::application::ports::download_manager::{
     DownloadBatchItem, DownloadManager, DownloadRequest,
 };
 use lattice_core::domain::download::DownloadSession;
-use lattice_core::shared::persistence::driver::DriverPool;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -28,11 +28,8 @@ async fn fixture() -> Fixture {
             .await
             .unwrap(),
     );
-    sqlx::migrate!("./migrations")
-        .run(connection.database().sqlx_pool())
-        .await
-        .unwrap();
-    let repository = Arc::new(SqliteDownloadRepository::new(connection.clone()));
+    run_migrations(connection.database()).await.unwrap();
+    let repository = Arc::new(SqliteDownloadRepository::new(connection.database().clone()));
     let manager = DownloadManagerService::new(
         repository.clone(),
         Arc::new(MockDownloadEngine::new()),
@@ -64,13 +61,15 @@ fn request(destination: PathBuf) -> DownloadRequest {
 }
 
 async fn refuse(connection: &DatabaseConnection, event: &str) {
-    sqlx::query(&format!(
+    let mut tx = connection.database().begin_write().await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE TRIGGER refuse_{event} BEFORE {event} ON download_sessions
          BEGIN SELECT RAISE(ABORT, 'injected'); END"
-    ))
-    .execute(connection.database().sqlx_pool())
+    )))
+    .execute(&mut *tx)
     .await
     .unwrap();
+    tx.commit().await.unwrap();
 }
 
 fn earlier_session(id: &str, destination: &Path) -> DownloadSession {

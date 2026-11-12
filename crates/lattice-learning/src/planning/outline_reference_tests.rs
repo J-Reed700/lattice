@@ -838,8 +838,7 @@ async fn only_a_subtopic_with_nothing_saved_gets_later_rounds() -> Result<()> {
 #[tokio::test]
 async fn references_are_gathered_before_drafting_and_saved_in_full_with_the_program() -> Result<()>
 {
-    let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let deep = "Random assignment limits confounding when treatment groups are compared.";
     let full = format!(
         "{}\n\n{deep}\n\n{}",
@@ -930,7 +929,7 @@ async fn references_are_gathered_before_drafting_and_saved_in_full_with_the_prog
 #[tokio::test]
 async fn zero_gathered_pages_is_a_references_finding_that_repair_resolves_by_gathering(
 ) -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let llm = model(vec![
         plan_output(&[("Random assignment", &["random assignment confounding"])]),
         candidate(),
@@ -1007,7 +1006,7 @@ async fn zero_gathered_pages_is_a_references_finding_that_repair_resolves_by_gat
 
 #[tokio::test]
 async fn user_sources_are_supplemented_and_the_planner_sees_their_catalog() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let web = ResearchWeb::new(&[ADDITIONAL]);
     let llm = model(vec![
         plan_output(&[("Random assignment", &["random assignment confounding"])]),
@@ -1043,7 +1042,7 @@ async fn user_sources_are_supplemented_and_the_planner_sees_their_catalog() -> R
 
 #[tokio::test]
 async fn offline_topic_drafts_still_pass_without_a_references_finding() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let llm = model(vec![candidate(), clean()]);
     let drafts = DraftRunRegistry::new();
     let program = service::generate(
@@ -1065,7 +1064,7 @@ async fn offline_topic_drafts_still_pass_without_a_references_finding() -> Resul
 #[tokio::test]
 async fn typography_only_mismatches_are_restored_before_the_author_citation_is_offered(
 ) -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let exact = "The cell’s response changes when experimental conditions differ.";
     let mut source = original_source();
     source.excerpt = exact.into();
@@ -1246,9 +1245,9 @@ async fn the_reference_plan_schema_bounds_no_text_but_a_blank_one() -> Result<()
 
 /// A course made from a document the user chose and a page the outline's own
 /// research found, both short.
-async fn a_choice_and_a_find() -> Result<(sqlx::SqlitePool, String)> {
-    let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+async fn a_choice_and_a_find() -> Result<(Database, String)> {
+    let db = Database::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(db.clone());
     let web = ResearchWeb::new(&[ADDITIONAL]);
     let llm = model(vec![
         plan_output(&[("Random assignment", &["random assignment confounding"])]),
@@ -1258,21 +1257,20 @@ async fn a_choice_and_a_find() -> Result<(sqlx::SqlitePool, String)> {
         clean(),
     ]);
     let program = generate_online(&repo, &llm, &web, vec![original_source()]).await?;
-    Ok((pool, program.summary.id))
+    Ok((db, program.summary.id))
 }
 
 #[tokio::test]
 async fn a_short_source_the_user_chose_for_the_course_is_not_swept() -> Result<()> {
-    let (pool, program_id) = a_choice_and_a_find().await?;
+    let (db, program_id) = a_choice_and_a_find().await?;
 
-    let refused =
-        crate::source_library::LearningSourceLibraryRepository::new(Database::from(pool.clone()))
-            .sweep_admission(&program_id)
-            .await?;
+    let refused = crate::source_library::LearningSourceLibraryRepository::new(db.clone())
+        .sweep_admission(&program_id)
+        .await?;
 
     let titles: Vec<&str> = refused.iter().map(|page| page.title.as_str()).collect();
     assert!(!titles.contains(&"Brief reference overview"), "{refused:?}");
-    let held = LearningRepository::new(pool)
+    let held = LearningRepository::new(db)
         .verification_sources(&program_id)
         .await?;
     assert!(held
@@ -1283,12 +1281,11 @@ async fn a_short_source_the_user_chose_for_the_course_is_not_swept() -> Result<(
 
 #[tokio::test]
 async fn a_short_page_the_outline_research_found_is_still_swept() -> Result<()> {
-    let (pool, program_id) = a_choice_and_a_find().await?;
+    let (db, program_id) = a_choice_and_a_find().await?;
 
-    let refused =
-        crate::source_library::LearningSourceLibraryRepository::new(Database::from(pool.clone()))
-            .sweep_admission(&program_id)
-            .await?;
+    let refused = crate::source_library::LearningSourceLibraryRepository::new(db.clone())
+        .sweep_admission(&program_id)
+        .await?;
 
     let found: Vec<_> = refused
         .iter()
@@ -1300,7 +1297,7 @@ async fn a_short_page_the_outline_research_found_is_still_swept() -> Result<()> 
         "{}",
         found[0].reason
     );
-    let held = LearningRepository::new(pool)
+    let held = LearningRepository::new(db)
         .verification_sources(&program_id)
         .await?;
     assert!(held

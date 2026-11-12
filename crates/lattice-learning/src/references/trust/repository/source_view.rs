@@ -4,8 +4,8 @@ use lattice_core::domain::provenance::{
     AddedBy, AuthorityAssessment, ClaimProfile, StandingAssessment,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use sqlx::{Row, SqlitePool};
+use lattice_core::shared::persistence::Database;
+use sqlx::Row;
 
 /// One version as the trust view reads it.
 #[derive(Debug, Clone)]
@@ -27,13 +27,12 @@ fn version(row: &sqlx::sqlite::SqliteRow) -> Result<Version> {
 }
 
 pub(in crate::references::trust) async fn latest_claim_profile(
-    pool: &impl DriverPool,
+    database: &Database,
     input_sha256: &str,
     policy: &str,
 ) -> Result<Option<ClaimProfile>> {
-    let pool = pool.sqlx_pool();
     latest(
-        pool,
+        database,
         "SELECT profile_json AS judgement FROM claim_profiles WHERE input_sha256=? AND policy=? ORDER BY assessed_at DESC LIMIT 1",
         &[input_sha256, policy],
         "profile_json",
@@ -42,13 +41,12 @@ pub(in crate::references::trust) async fn latest_claim_profile(
 }
 
 pub(in crate::references::trust) async fn latest_standing(
-    pool: &impl DriverPool,
+    database: &Database,
     signals_sha256: &str,
     policy: &str,
 ) -> Result<Option<StandingAssessment>> {
-    let pool = pool.sqlx_pool();
     latest(
-        pool,
+        database,
         "SELECT judgement_json AS judgement FROM source_standing_assessments WHERE signals_sha256=? AND policy=? ORDER BY assessed_at DESC LIMIT 1",
         &[signals_sha256, policy],
         "judgement_json",
@@ -57,15 +55,14 @@ pub(in crate::references::trust) async fn latest_standing(
 }
 
 pub(in crate::references::trust) async fn latest_authority(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
     origin_key: &str,
     subject_key: &str,
     policy: &str,
 ) -> Result<Option<AuthorityAssessment>> {
-    let pool = pool.sqlx_pool();
     latest(
-        pool,
+        database,
         "SELECT judgement_json AS judgement FROM source_subject_authority WHERE program_id=? AND origin_key=? AND subject_key=? AND policy=? ORDER BY assessed_at DESC LIMIT 1",
         &[program_id, origin_key, subject_key, policy],
         "judgement_json",
@@ -74,56 +71,55 @@ pub(in crate::references::trust) async fn latest_authority(
 }
 
 async fn latest<T: serde::de::DeserializeOwned>(
-    pool: &SqlitePool,
+    database: &Database,
     sql: &str,
     binds: &[&str],
     column: &str,
 ) -> Result<Option<T>> {
-    let mut query = sqlx::query(sql);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
     for value in binds {
         query = query.bind(*value);
     }
-    query
-        .fetch_optional(pool)
-        .await
-        .map_err(db)?
-        .map(|row| from_json(&row.get::<String, _>("judgement"), column))
+    let mut read = database.begin_read().await.map_err(db)?;
+    let row = query.fetch_optional(&mut *read).await.map_err(db)?;
+    read.commit().await.map_err(db)?;
+    row.map(|row| from_json(&row.get::<String, _>("judgement"), column))
         .transpose()
 }
 
 pub(in crate::references::trust) async fn active_versions(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
 ) -> Result<Vec<Version>> {
-    let pool = pool.sqlx_pool();
+    let mut read = database.begin_read().await.map_err(db)?;
     let rows = sqlx::query(
         "SELECT id AS source_id, active_version_id AS version_id, added_by FROM learning_source_library \
          WHERE program_id=? AND deleted_at IS NULL AND active_version_id IS NOT NULL ORDER BY created_at, id",
     )
     .bind(program_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *read)
     .await
     .map_err(db)?;
+    read.commit().await.map_err(db)?;
     rows.iter().map(version).collect()
 }
 
 pub(in crate::references::trust) async fn version_of(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
     version_id: &str,
 ) -> Result<Option<Version>> {
-    let pool = pool.sqlx_pool();
-    sqlx::query(
+    let mut read = database.begin_read().await.map_err(db)?;
+    let row = sqlx::query(
         "SELECT v.source_id, v.id AS version_id, l.added_by FROM learning_source_versions v \
          JOIN learning_source_library l ON l.id = v.source_id AND l.program_id = v.program_id \
          WHERE v.program_id=? AND v.id=?",
     )
     .bind(program_id)
     .bind(version_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *read)
     .await
-    .map_err(db)?
-    .as_ref()
-    .map(version)
-    .transpose()
+    .map_err(db)?;
+    read.commit().await.map_err(db)?;
+    row.as_ref().map(version).transpose()
 }

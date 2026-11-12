@@ -8,15 +8,16 @@ use crate::references::trust::pack::{
 };
 use lattice_core::domain::provenance::{ProvenanceRecord, SourceRelation, TrustOverride};
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::{Row, SqliteConnection};
 
 pub(in crate::references::trust) async fn provenance(
     conn: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<Vec<ProvenanceRecord>> {
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {PROVENANCE_COLUMNS} FROM source_provenance WHERE program_id=? ORDER BY source_version_id"
-    ))
+    )))
     .bind(program_id)
     .fetch_all(&mut *conn)
     .await
@@ -31,9 +32,9 @@ pub(in crate::references::trust) async fn relations(
     conn: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<Vec<(SourceRelation, i64)>> {
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {RELATION_COLUMNS},detected_at FROM source_relations WHERE program_id=? ORDER BY from_version_id,kind,COALESCE(to_version_id,to_url)"
-    ))
+    )))
     .bind(program_id)
     .fetch_all(&mut *conn)
     .await
@@ -47,9 +48,9 @@ pub(in crate::references::trust) async fn source_overrides(
     conn: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<Vec<TrustOverride>> {
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {OVERRIDE_COLUMNS} FROM source_trust_overrides WHERE scope='source' AND program_id=? ORDER BY source_id"
-    ))
+    )))
     .bind(program_id)
     .fetch_all(&mut *conn)
     .await
@@ -82,25 +83,19 @@ impl SourceTrustPackEntry {
 
     /// Writes the rows in the import's transaction, after the versions they
     /// hang from.
-    pub async fn write(&self, conn: &mut SqliteConnection, program_id: &str) -> Result<()> {
+    pub async fn write(&self, tx: &mut WriteTx, program_id: &str) -> Result<()> {
         for record in &self.provenance {
-            write_provenance(conn, record).await?;
+            write_provenance(tx, record).await?;
         }
         for PackRelation {
             relation,
             detected_at,
         } in &self.relations
         {
-            write_relations(
-                conn,
-                program_id,
-                std::slice::from_ref(relation),
-                *detected_at,
-            )
-            .await?;
+            write_relations(tx, program_id, std::slice::from_ref(relation), *detected_at).await?;
         }
         for entry in &self.overrides {
-            write_override(conn, entry).await?;
+            write_override(tx, entry).await?;
         }
         Ok(())
     }

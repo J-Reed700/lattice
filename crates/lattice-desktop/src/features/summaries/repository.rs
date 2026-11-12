@@ -9,13 +9,12 @@ use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection, SqlitePool};
+use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 
 use crate::features::summaries::entity::DocumentSummary;
 use lattice_core::application::ports::summary_search::SummaryLevel;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::Database;
 
 /// Port for persisting and reading document/section summaries.
 ///
@@ -101,14 +100,12 @@ pub fn document_level_text(summaries: &[DocumentSummary]) -> HashMap<String, Str
 }
 
 pub struct SqliteSummaryRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl SqliteSummaryRepository {
-    pub fn new(pool: impl DriverPool) -> Self {
-        Self {
-            pool: pool.sqlx_pool().clone(),
-        }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     fn row_to_summary(row: &sqlx::sqlite::SqliteRow) -> Result<DocumentSummary> {
@@ -156,7 +153,7 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
         summaries: &[DocumentSummary],
     ) -> Result<Vec<String>> {
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("begin summary tx: {e}")))?;
@@ -226,11 +223,13 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
             separated.push_bind(id.clone());
         }
         query.push(") ORDER BY document_id, level, section");
+        let mut read = self.db.begin_read().await?;
         let rows = query
             .build()
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *read)
             .await
             .map_err(|e| AppError::Database(format!("list summaries: {e}")))?;
+        read.commit().await?;
         rows.iter().map(Self::row_to_summary).collect()
     }
 
@@ -245,11 +244,13 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
             separated.push_bind(id.clone());
         }
         query.push(")");
+        let mut read = self.db.begin_read().await?;
         let rows = query
             .build()
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *read)
             .await
             .map_err(|e| AppError::Database(format!("find summaries: {e}")))?;
+        read.commit().await?;
         rows.iter().map(Self::row_to_summary).collect()
     }
 
@@ -259,7 +260,7 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
         model_identity: &str,
     ) -> Result<Vec<String>> {
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("begin summary delete tx: {e}")))?;
@@ -298,14 +299,17 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
         model_identity: &str,
         limit: u32,
     ) -> Result<Vec<String>> {
-        sqlx::query_scalar(
+        let mut read = self.db.begin_read().await?;
+        let pending = sqlx::query_scalar(
             "SELECT vector_id FROM summary_vector_cleanup WHERE model_identity = ? ORDER BY requested_at, vector_id LIMIT ?",
         )
         .bind(model_identity)
         .bind(i64::from(limit))
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
-        .map_err(|e| AppError::Database(format!("read summary vector cleanup: {e}")))
+        .map_err(|e| AppError::Database(format!("read summary vector cleanup: {e}")))?;
+        read.commit().await?;
+        Ok(pending)
     }
 
     async fn acknowledge_vector_cleanup(
@@ -326,29 +330,37 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
             separated.push_bind(id);
         }
         query.push(")");
+        let mut tx = self.db.begin_write().await?;
         query
             .build()
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| AppError::Database(format!("acknowledge summary vector cleanup: {e}")))?;
+        tx.commit().await?;
         Ok(())
     }
 
     async fn prune_other_identities(&self, model_identity: &str) -> Result<usize> {
+        let mut tx = self.db.begin_write().await?;
         let result = sqlx::query("DELETE FROM document_summaries WHERE model_identity != ?")
             .bind(model_identity)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| AppError::Database(format!("prune summaries: {e}")))?;
+        tx.commit().await?;
         Ok(result.rows_affected() as usize)
     }
 
     async fn count_for_identity(&self, model_identity: &str) -> Result<i64> {
-        sqlx::query_scalar("SELECT COUNT(*) FROM document_summaries WHERE model_identity = ?")
-            .bind(model_identity)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| AppError::Database(format!("count summaries: {e}")))
+        let mut read = self.db.begin_read().await?;
+        let count =
+            sqlx::query_scalar("SELECT COUNT(*) FROM document_summaries WHERE model_identity = ?")
+                .bind(model_identity)
+                .fetch_one(&mut *read)
+                .await
+                .map_err(|e| AppError::Database(format!("count summaries: {e}")))?;
+        read.commit().await?;
+        Ok(count)
     }
 
     async fn load_progress(
@@ -356,15 +368,17 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
         document_id: &str,
         revision: &str,
     ) -> Result<HashMap<String, String>> {
+        let mut read = self.db.begin_read().await?;
         let rows: Vec<(String, String)> = sqlx::query_as(
             "SELECT call_id, summary_text FROM summary_work_progress \
              WHERE document_id = ? AND revision = ?",
         )
         .bind(document_id)
         .bind(revision)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("load summary progress: {e}")))?;
+        read.commit().await?;
         Ok(rows.into_iter().collect())
     }
 
@@ -375,6 +389,7 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
         call_id: &str,
         summary_text: &str,
     ) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query(
             "INSERT INTO summary_work_progress (document_id, call_id, revision, summary_text) \
              VALUES (?, ?, ?, ?) ON CONFLICT(document_id, call_id) DO UPDATE SET \
@@ -384,95 +399,85 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
         .bind(call_id)
         .bind(revision)
         .bind(summary_text)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("save summary progress: {e}")))?;
+        tx.commit().await?;
         Ok(())
     }
 
     async fn clear_progress(&self, document_id: &str) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query("DELETE FROM summary_work_progress WHERE document_id = ?")
             .bind(document_id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| AppError::Database(format!("clear summary progress: {e}")))?;
+        tx.commit().await?;
         Ok(())
     }
 }
 
 /// Queue identities only; repeated indexing replaces one revision atomically.
-pub(crate) async fn enqueue_work(
-    pool: &impl DriverPool,
-    id: &str,
-) -> lattice_core::shared::error::Result<()> {
-    let pool = pool.sqlx_pool();
+pub(crate) async fn enqueue_work(db: &Database, id: &str) -> Result<()> {
+    let mut tx = db.begin_write().await?;
     sqlx::query("INSERT INTO summary_work_queue(document_id, revision, requested_at) SELECT id, lower(hex(randomblob(16))), unixepoch() FROM documents WHERE id = ? ON CONFLICT(document_id) DO UPDATE SET revision = excluded.revision, requested_at = excluded.requested_at, retry_at = 0")
-        .bind(id).execute(pool).await?;
+        .bind(id).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(())
 }
-pub(crate) async fn next_work(
-    pool: &impl DriverPool,
-) -> lattice_core::shared::error::Result<Option<(String, String)>> {
-    let pool = pool.sqlx_pool();
-    Ok(sqlx::query_as("SELECT document_id, revision FROM summary_work_queue WHERE retry_at <= unixepoch() ORDER BY requested_at, document_id LIMIT 1").fetch_optional(pool).await?)
+pub(crate) async fn next_work(db: &Database) -> Result<Option<(String, String)>> {
+    let mut read = db.begin_read().await?;
+    let work = sqlx::query_as("SELECT document_id, revision FROM summary_work_queue WHERE retry_at <= unixepoch() ORDER BY requested_at, document_id LIMIT 1").fetch_optional(&mut *read).await?;
+    read.commit().await?;
+    Ok(work)
 }
-pub(crate) async fn acknowledge_work(
-    pool: &impl DriverPool,
-    id: &str,
-    revision: &str,
-) -> lattice_core::shared::error::Result<()> {
-    let pool = pool.sqlx_pool();
+pub(crate) async fn acknowledge_work(db: &Database, id: &str, revision: &str) -> Result<()> {
+    let mut tx = db.begin_write().await?;
     sqlx::query("DELETE FROM summary_work_queue WHERE document_id = ? AND revision = ?")
         .bind(id)
         .bind(revision)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(())
 }
-pub(crate) async fn remove_work(
-    pool: &impl DriverPool,
-    id: &str,
-) -> lattice_core::shared::error::Result<()> {
-    let pool = pool.sqlx_pool();
+pub(crate) async fn remove_work(db: &Database, id: &str) -> Result<()> {
+    let mut tx = db.begin_write().await?;
     sqlx::query("DELETE FROM summary_work_queue WHERE document_id = ?")
         .bind(id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(())
 }
 pub(crate) async fn document_id_at_path(
-    pool: &impl DriverPool,
+    db: &Database,
     path: &std::path::Path,
-) -> lattice_core::shared::error::Result<Option<String>> {
-    let pool = pool.sqlx_pool();
-    Ok(
-        sqlx::query_scalar("SELECT id FROM documents WHERE file_path = ?")
-            .bind(path.to_string_lossy().as_ref())
-            .fetch_optional(pool)
-            .await?,
-    )
+) -> Result<Option<String>> {
+    let mut read = db.begin_read().await?;
+    let id = sqlx::query_scalar("SELECT id FROM documents WHERE file_path = ?")
+        .bind(path.to_string_lossy().as_ref())
+        .fetch_optional(&mut *read)
+        .await?;
+    read.commit().await?;
+    Ok(id)
 }
 
 /// A run that did its share of the work and stopped: the document goes to
 /// the back of the queue, so other documents get their turn before it
 /// resumes.
-pub(crate) async fn requeue_work(
-    pool: &impl DriverPool,
-    id: &str,
-    revision: &str,
-) -> lattice_core::shared::error::Result<()> {
-    let pool = pool.sqlx_pool();
-    sqlx::query("UPDATE summary_work_queue SET requested_at = unixepoch(), retry_at = 0 WHERE document_id = ? AND revision = ?").bind(id).bind(revision).execute(pool).await?;
+pub(crate) async fn requeue_work(db: &Database, id: &str, revision: &str) -> Result<()> {
+    let mut tx = db.begin_write().await?;
+    sqlx::query("UPDATE summary_work_queue SET requested_at = unixepoch(), retry_at = 0 WHERE document_id = ? AND revision = ?").bind(id).bind(revision).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(())
 }
 
-pub(crate) async fn defer_work(
-    pool: &impl DriverPool,
-    id: &str,
-    revision: &str,
-) -> lattice_core::shared::error::Result<()> {
-    let pool = pool.sqlx_pool();
-    sqlx::query("UPDATE summary_work_queue SET retry_at = unixepoch() + 60 WHERE document_id = ? AND revision = ?").bind(id).bind(revision).execute(pool).await?;
+pub(crate) async fn defer_work(db: &Database, id: &str, revision: &str) -> Result<()> {
+    let mut tx = db.begin_write().await?;
+    sqlx::query("UPDATE summary_work_queue SET retry_at = unixepoch() + 60 WHERE document_id = ? AND revision = ?").bind(id).bind(revision).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -486,12 +491,8 @@ pub(crate) struct SourceParts {
 /// The document's title, newest cluster label and chunks, from one read
 /// unit so a re-index between them cannot mix two versions. `None` when the
 /// document is gone.
-pub(crate) async fn source_parts(
-    pool: &impl DriverPool,
-    document_id: &str,
-) -> Result<Option<SourceParts>> {
-    let pool = pool.sqlx_pool();
-    let mut tx = pool
+pub(crate) async fn source_parts(db: &Database, document_id: &str) -> Result<Option<SourceParts>> {
+    let mut tx = db
         .begin_read()
         .await
         .map_err(|e| AppError::Database(format!("summary source read: {e}")))?;
@@ -558,6 +559,7 @@ mod work_queue_tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
+        let db = Database::new(pool.clone());
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&pool)
             .await
@@ -576,12 +578,12 @@ mod work_queue_tests {
             .execute(&pool)
             .await
             .unwrap();
-        enqueue_work(&pool, "doc").await.unwrap();
-        let (id, revision) = next_work(&pool).await.unwrap().unwrap();
+        enqueue_work(&db, "doc").await.unwrap();
+        let (id, revision) = next_work(&db).await.unwrap().unwrap();
         for _ in 0..1000 {
-            enqueue_work(&pool, "doc").await.unwrap();
+            enqueue_work(&db, "doc").await.unwrap();
         }
-        acknowledge_work(&pool, &id, &revision).await.unwrap();
+        acknowledge_work(&db, &id, &revision).await.unwrap();
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM summary_work_queue")
             .fetch_one(&pool)
             .await
@@ -591,7 +593,7 @@ mod work_queue_tests {
             .execute(&pool)
             .await
             .unwrap();
-        assert!(next_work(&pool).await.unwrap().is_none());
+        assert!(next_work(&db).await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -601,6 +603,7 @@ mod work_queue_tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
+        let db = Database::new(pool.clone());
         sqlx::query("CREATE TABLE documents(id TEXT PRIMARY KEY, status TEXT NOT NULL)")
             .execute(&pool)
             .await
@@ -618,7 +621,7 @@ mod work_queue_tests {
             .await
             .unwrap();
         tx.rollback().await.unwrap();
-        assert!(next_work(&pool).await.unwrap().is_none());
+        assert!(next_work(&db).await.unwrap().is_none());
 
         sqlx::query("INSERT INTO documents VALUES ('doc', 'pending')")
             .execute(&pool)
@@ -628,7 +631,7 @@ mod work_queue_tests {
             .execute(&pool)
             .await
             .unwrap();
-        let (id, revision) = next_work(&pool).await.unwrap().unwrap();
+        let (id, revision) = next_work(&db).await.unwrap().unwrap();
         assert_eq!(id, "doc");
         assert!(!revision.is_empty());
     }
@@ -643,6 +646,7 @@ mod work_queue_tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
+        let db = Database::new(pool.clone());
         sqlx::query(
             "CREATE TABLE documents(id TEXT PRIMARY KEY, file_path TEXT UNIQUE NOT NULL, \
              checksum TEXT, status TEXT NOT NULL)",
@@ -668,13 +672,13 @@ mod work_queue_tests {
             .bind(checksum)
         };
         index("doc", "one").execute(&pool).await.unwrap();
-        let (id, first) = next_work(&pool).await.unwrap().unwrap();
+        let (id, first) = next_work(&db).await.unwrap().unwrap();
         assert_eq!(id, "doc");
-        acknowledge_work(&pool, &id, &first).await.unwrap();
-        assert!(next_work(&pool).await.unwrap().is_none());
+        acknowledge_work(&db, &id, &first).await.unwrap();
+        assert!(next_work(&db).await.unwrap().is_none());
 
         index("fresh-uuid", "two").execute(&pool).await.unwrap();
-        let (id, second) = next_work(&pool)
+        let (id, second) = next_work(&db)
             .await
             .unwrap()
             .expect("re-indexing queues it");
@@ -689,6 +693,7 @@ mod work_queue_tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
+        let db = Database::new(pool.clone());
         sqlx::query("CREATE TABLE documents(id TEXT PRIMARY KEY)")
             .execute(&pool)
             .await
@@ -713,7 +718,7 @@ mod work_queue_tests {
             .execute(&pool)
             .await
             .unwrap();
-        let repository = SqliteSummaryRepository::new(pool.clone());
+        let repository = SqliteSummaryRepository::new(db.clone());
 
         repository
             .delete_for_document("doc", "model-a")
@@ -745,6 +750,7 @@ mod work_queue_tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
+        let db = Database::new(pool.clone());
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&pool)
             .await
@@ -778,7 +784,7 @@ mod work_queue_tests {
             .await
             .unwrap();
 
-        let repository = SqliteSummaryRepository::new(pool);
+        let repository = SqliteSummaryRepository::new(db);
         assert_eq!(
             repository
                 .pending_vector_cleanup("model-a", 256)

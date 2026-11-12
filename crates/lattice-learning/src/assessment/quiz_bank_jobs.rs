@@ -22,7 +22,7 @@ use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::PinnedModel;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{
     Backoff, JobContext, JobFailure, JobHandler, JobKindConfig, JobOutcome, JobRecord, JobStatus,
     JobStore, RecoveryPolicy,

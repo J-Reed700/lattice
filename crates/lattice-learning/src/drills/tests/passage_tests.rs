@@ -55,26 +55,24 @@ use tokio_util::sync::CancellationToken;
 
 /// The course's sources as stored: each version's id, title and whole text.
 async fn stored_sources(
-    pool: &SqlitePool,
+    database: &Database,
     program_id: &str,
 ) -> Result<Vec<(String, String, String)>> {
-    Ok(
-        LearningSourceLibraryRepository::new(Database::from(pool.clone()))
-            .verification_sources(program_id)
-            .await?
-            .into_iter()
-            .map(|source| (source.id, source.title, source.excerpt))
-            .collect(),
-    )
+    Ok(LearningSourceLibraryRepository::new(database.clone())
+        .verification_sources(program_id)
+        .await?
+        .into_iter()
+        .map(|source| (source.id, source.title, source.excerpt))
+        .collect())
 }
 
 /// The version id and the text of the source of the course with `title`.
 async fn source_titled(
-    pool: &SqlitePool,
+    database: &Database,
     program_id: &str,
     title: &str,
 ) -> Result<(String, String)> {
-    stored_sources(pool, program_id)
+    stored_sources(database, program_id)
         .await?
         .into_iter()
         .find(|(_, found, _)| found == title)
@@ -144,7 +142,7 @@ fn clean_review() -> CleanReview {
 
 /// Puts a ready drill on `source`, built from the lesson `lesson_id` of the course `program_id`, into the bank.
 pub(super) async fn drilled(
-    pool: &SqlitePool,
+    database: &Database,
     id: &str,
     program_id: &str,
     lesson_id: &str,
@@ -167,9 +165,9 @@ pub(super) async fn drilled(
         &unchecked(),
         &quiet(),
     );
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     repository::insert_in(
-        &mut connection,
+        &mut tx,
         &NewDrill {
             drill: &drill,
             clean_files: &explanation_files(),
@@ -182,7 +180,9 @@ pub(super) async fn drilled(
             evidence: &evidence,
         },
     )
-    .await
+    .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 async fn at(pool: &SqlitePool, id: &str, created_at: i64) -> Result<()> {
@@ -234,13 +234,14 @@ fn a_passage_spec_names_its_course() {
 async fn a_drill_explains_the_passage_of_the_lessons_best_source_sized_to_its_sentences(
 ) -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
-    let (version, text) = source_titled(&pool, &program, "Spacing and memory").await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
+    let (version, text) = source_titled(&database, &program, "Spacing and memory").await?;
     let model = ScriptedModel::new([teaches_answer(true), explanation_answer()]);
     let check = spacing_check();
     let grader = idle_grader();
     let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
-    let code = passage_build(&pool, &model, &check, &grader)
+    let code = passage_build(&database, &model, &check, &grader)
         .clean_code(&spec)
         .await?;
 
@@ -288,14 +289,14 @@ async fn a_drill_explains_the_passage_of_the_lessons_best_source_sized_to_its_se
 
 /// The clean stage of a drill built to `spec` with the model answering `answers`, and the model.
 async fn clean_with(
-    pool: &SqlitePool,
+    database: &Database,
     spec: &DrillSpec,
     answers: Vec<String>,
 ) -> (ScriptedModel, Result<CleanCode>) {
     let model = ScriptedModel::new(answers);
     let check = spacing_check();
     let grader = idle_grader();
-    let built = passage_build(pool, &model, &check, &grader)
+    let built = passage_build(database, &model, &check, &grader)
         .clean_code(spec)
         .await;
     (model, built)
@@ -303,11 +304,11 @@ async fn clean_with(
 
 /// The passage the clean stage of a drill built to `spec` takes when the model answers `answers`.
 async fn passage_with(
-    pool: &SqlitePool,
+    database: &Database,
     spec: &DrillSpec,
     answers: Vec<String>,
 ) -> Result<SourcePassage> {
-    clean_with(pool, spec, answers)
+    clean_with(database, spec, answers)
         .await
         .1?
         .source
@@ -315,16 +316,22 @@ async fn passage_with(
 }
 
 /// The passage the clean stage of a drill built to `spec` takes when the passage check says yes to the first place.
-async fn next_passage(pool: &SqlitePool, spec: &DrillSpec) -> Result<SourcePassage> {
-    passage_with(pool, spec, vec![teaches_answer(true), explanation_answer()]).await
+async fn next_passage(database: &Database, spec: &DrillSpec) -> Result<SourcePassage> {
+    passage_with(
+        database,
+        spec,
+        vec![teaches_answer(true), explanation_answer()],
+    )
+    .await
 }
 
 #[tokio::test]
 async fn the_next_drill_of_a_lesson_takes_the_passage_drilled_longest_ago_and_never_the_same_twice_running(
 ) -> Result<()> {
     let pool = pool().await?;
-    let program = course_of(&pool, &[("Spacing and memory", SPACING)]).await?;
-    let (_, text) = source_titled(&pool, &program, "Spacing and memory").await?;
+    let database = Database::new(pool.clone());
+    let program = course_of(&database, &[("Spacing and memory", SPACING)]).await?;
+    let (_, text) = source_titled(&database, &program, "Spacing and memory").await?;
     let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
     let opening = text
         .find("\n\nSpacing works best")
@@ -336,15 +343,15 @@ async fn the_next_drill_of_a_lesson_takes_the_passage_drilled_longest_ago_and_ne
         .and_then(|(start, end)| text.get(start..end))
         .expect("the third and fourth paragraphs");
 
-    let first = next_passage(&pool, &spec).await?;
+    let first = next_passage(&database, &spec).await?;
     assert_eq!(
         first.text, opening,
         "the first two paragraphs: four sentences"
     );
     let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
-    drilled(&pool, "first", &program, &lesson, &first).await?;
+    drilled(&database, "first", &program, &lesson, &first).await?;
 
-    let second = next_passage(&pool, &spec).await?;
+    let second = next_passage(&database, &spec).await?;
     assert_eq!(
         second.text, later,
         "the paragraphs no drill touched: the third and the fourth"
@@ -354,9 +361,9 @@ async fn the_next_drill_of_a_lesson_takes_the_passage_drilled_longest_ago_and_ne
         text.get(second.start_byte..second.end_byte),
         Some(second.text.as_str())
     );
-    drilled(&pool, "second", &program, &lesson, &second).await?;
+    drilled(&database, "second", &program, &lesson, &second).await?;
 
-    let third = passage_with(&pool, &spec, vec![explanation_answer()]).await?;
+    let third = passage_with(&database, &spec, vec![explanation_answer()]).await?;
     assert_eq!(
         third.text, opening,
         "every place is used, so the one used longest ago, and it was judged to teach the lesson before"
@@ -367,13 +374,14 @@ async fn the_next_drill_of_a_lesson_takes_the_passage_drilled_longest_ago_and_ne
 #[tokio::test]
 async fn another_lesson_of_the_course_takes_the_passage_its_own_words_find() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
-    let (sleep, sleep_text) = source_titled(&pool, &program, "Sleep and memory").await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
+    let (sleep, sleep_text) = source_titled(&database, &program, "Sleep and memory").await?;
     let model = ScriptedModel::new([teaches_answer(true), explanation_answer()]);
     let check = spacing_check();
     let grader = idle_grader();
     let spec = passage_lesson_spec(&pool, &program, SLEEP_LESSON).await?;
-    let code = passage_build(&pool, &model, &check, &grader)
+    let code = passage_build(&database, &model, &check, &grader)
         .clean_code(&spec)
         .await?;
     let source = code.source.expect("the passage");
@@ -388,15 +396,16 @@ async fn another_lesson_of_the_course_takes_the_passage_its_own_words_find() -> 
 #[tokio::test]
 async fn a_passage_drill_takes_the_paragraph_of_a_hit_its_lessons_words_are_in() -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let opening = "The committee met on a Tuesday to discuss a study. Members reviewed the agenda with care. Minutes were circulated to everyone afterwards. Nothing was decided about the catering.";
     let closing = "Spacing sessions apart helps recall. Learners who study across several sessions improve their recall. Spreading the work out lets them explain the concept. Short gaps between sessions help much less.";
     let text = [opening, closing].join("\n\n");
     assert!(text.len() < 1200, "{}", text.len());
-    let program = course_of(&pool, &[("Meeting notes", text.as_str())]).await?;
+    let program = course_of(&database, &[("Meeting notes", text.as_str())]).await?;
     let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
-    let (version, _) = source_titled(&pool, &program, "Meeting notes").await?;
+    let (version, _) = source_titled(&database, &program, "Meeting notes").await?;
 
-    let picked = next_passage(&pool, &spec).await?;
+    let picked = next_passage(&database, &spec).await?;
     assert_eq!(picked.text, closing);
     assert!(
         !picked.text.contains("Nothing was decided"),
@@ -411,6 +420,7 @@ async fn a_passage_drill_takes_the_paragraph_of_a_hit_its_lessons_words_are_in()
 async fn a_hits_paragraph_is_taken_by_the_weight_of_the_words_it_holds_and_not_their_count(
 ) -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let common = "The spacing study sessions began in March. Staff booked the hall for each date. Tea was served at the break. Attendance was recorded by the clerk.";
     let rare = "Every recall of a stored concept left a trace. Researchers logged each trace with a timestamp. The logs were archived in the basement. Nobody opened the archive for years.";
     let text = [common, rare].join("\n\n");
@@ -428,11 +438,11 @@ async fn a_hits_paragraph_is_taken_by_the_weight_of_the_words_it_holds_and_not_t
             .iter()
             .map(|(title, body)| (title.as_str(), body.as_str())),
     );
-    let program = course_of(&pool, &sources).await?;
+    let program = course_of(&database, &sources).await?;
     let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
-    let (version, _) = source_titled(&pool, &program, "Meeting notes").await?;
+    let (version, _) = source_titled(&database, &program, "Meeting notes").await?;
 
-    let picked = next_passage(&pool, &spec).await?;
+    let picked = next_passage(&database, &spec).await?;
     assert_eq!(picked.version_id, version);
     assert_eq!(picked.text, rare);
     Ok(())
@@ -516,6 +526,7 @@ fn paragraph_of(
 async fn the_unrelated_paragraph_beside_a_drilled_one_gives_way_to_a_lower_hit_about_the_lesson(
 ) -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let mut fill = filler_sentences(60).into_iter();
     let own = (0..4).map(lesson_sentence).collect::<Vec<_>>().join(" ");
     let unrelated = paragraph_of(None, &mut fill, 4);
@@ -542,16 +553,16 @@ async fn the_unrelated_paragraph_beside_a_drilled_one_gives_way_to_a_lower_hit_a
             .iter()
             .map(|(title, body)| (title.as_str(), body.as_str())),
     );
-    let program = course_of(&pool, &sources).await?;
+    let program = course_of(&database, &sources).await?;
     let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
     let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
-    let (side, _) = source_titled(&pool, &program, "Side notes").await?;
+    let (side, _) = source_titled(&database, &program, "Side notes").await?;
 
-    let first = next_passage(&pool, &spec).await?;
+    let first = next_passage(&database, &spec).await?;
     assert_eq!(first.text, own);
-    drilled(&pool, "first", &program, &lesson, &first).await?;
+    drilled(&database, "first", &program, &lesson, &first).await?;
 
-    let second = next_passage(&pool, &spec).await?;
+    let second = next_passage(&database, &spec).await?;
     assert_eq!(second.version_id, side);
     assert_eq!(second.text, about);
     assert!(!second.text.contains(&unrelated), "{}", second.text);
@@ -562,6 +573,7 @@ async fn the_unrelated_paragraph_beside_a_drilled_one_gives_way_to_a_lower_hit_a
 async fn of_the_places_the_hits_overlap_the_heaviest_comes_first_and_not_the_best_ranked_hits(
 ) -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let mut fill = filler_sentences(120).into_iter();
     let repeated = "The spacing log said spacing was kept, spacing was logged, spacing was seen and spacing was shown.";
     let two_terms =
@@ -593,11 +605,11 @@ async fn of_the_places_the_hits_overlap_the_heaviest_comes_first_and_not_the_bes
             .chain(plain.iter())
             .map(|(title, body)| (title.as_str(), body.as_str())),
     );
-    let program = course_of(&pool, &sources).await?;
+    let program = course_of(&database, &sources).await?;
     let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
-    let (version, _) = source_titled(&pool, &program, "Notes Y").await?;
+    let (version, _) = source_titled(&database, &program, "Notes Y").await?;
 
-    let picked = next_passage(&pool, &spec).await?;
+    let picked = next_passage(&database, &spec).await?;
     assert_eq!(picked.version_id, version);
     assert_eq!(picked.text, heavier);
     assert!(!picked.text.contains("spacing log"), "{}", picked.text);
@@ -607,13 +619,14 @@ async fn of_the_places_the_hits_overlap_the_heaviest_comes_first_and_not_the_bes
 #[tokio::test]
 async fn a_long_paragraph_gives_a_run_of_as_many_sentences_as_the_explanation() -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let (line, spans) = one_line_of(30, &[12, 13, 14, 15], &[]);
     assert!(!line.contains('\n') && line.len() > 2000, "{}", line.len());
     assert_eq!(sentences(&line).len(), 30);
-    let program = course_of(&pool, &[("Harbour log", line.as_str())]).await?;
+    let program = course_of(&database, &[("Harbour log", line.as_str())]).await?;
     let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
 
-    let picked = next_passage(&pool, &spec).await?;
+    let picked = next_passage(&database, &spec).await?;
     assert_eq!(picked.text, run_of(&line, &spans, 12, 15));
     assert_eq!(sentences(&picked.text).len(), 4);
     assert_eq!(
@@ -626,12 +639,13 @@ async fn a_long_paragraph_gives_a_run_of_as_many_sentences_as_the_explanation() 
 #[tokio::test]
 async fn the_last_run_of_a_long_paragraph_takes_the_sentences_left_over() -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let (line, spans) = one_line_of(30, &[26, 27, 28], &[]);
     assert!(!line.contains('\n') && line.len() > 2000, "{}", line.len());
-    let program = course_of(&pool, &[("Harbour log", line.as_str())]).await?;
+    let program = course_of(&database, &[("Harbour log", line.as_str())]).await?;
     let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
 
-    let picked = next_passage(&pool, &spec).await?;
+    let picked = next_passage(&database, &spec).await?;
     assert_eq!(picked.text, run_of(&line, &spans, 24, 29));
     assert_eq!(sentences(&picked.text).len(), 6);
     assert_eq!(
@@ -644,17 +658,18 @@ async fn the_last_run_of_a_long_paragraph_takes_the_sentences_left_over() -> Res
 #[tokio::test]
 async fn a_second_drill_of_a_long_paragraph_takes_another_run_of_it() -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let (line, spans) = one_line_of(30, &[12, 13, 14, 15], &[21]);
     assert!(!line.contains('\n') && line.len() > 2000, "{}", line.len());
-    let program = course_of(&pool, &[("Harbour log", line.as_str())]).await?;
+    let program = course_of(&database, &[("Harbour log", line.as_str())]).await?;
     let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
     let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
 
-    let first = next_passage(&pool, &spec).await?;
+    let first = next_passage(&database, &spec).await?;
     assert_eq!(first.text, run_of(&line, &spans, 12, 15));
-    drilled(&pool, "first", &program, &lesson, &first).await?;
+    drilled(&database, "first", &program, &lesson, &first).await?;
 
-    let second = next_passage(&pool, &spec).await?;
+    let second = next_passage(&database, &spec).await?;
     let held = sentences(&second.text).len();
     assert!((4..=7).contains(&held), "{held}: {second:?}");
     assert_eq!(
@@ -672,6 +687,7 @@ async fn a_second_drill_of_a_long_paragraph_takes_another_run_of_it() -> Result<
 async fn a_hard_wrapped_paragraph_is_cut_at_sentence_ends_into_runs_as_long_as_the_explanation(
 ) -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let mut words = String::new();
     for (number, filler) in filler_sentences(16).into_iter().enumerate() {
         let sentence = if (6..=9).contains(&number) {
@@ -701,10 +717,10 @@ async fn a_hard_wrapped_paragraph_is_cut_at_sentence_ends_into_runs_as_long_as_t
         text.len()
     );
     assert_eq!(text.matches('.').count(), 16);
-    let program = course_of(&pool, &[("Harbour log", text.as_str())]).await?;
+    let program = course_of(&database, &[("Harbour log", text.as_str())]).await?;
     let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
 
-    let picked = next_passage(&pool, &spec).await?;
+    let picked = next_passage(&database, &spec).await?;
     assert!(picked.text.len() < text.trim().len(), "{picked:?}");
     let ends = picked.text.matches('.').count();
     assert!((4..=7).contains(&ends), "{ends} sentences: {}", picked.text);
@@ -719,16 +735,17 @@ async fn a_hard_wrapped_paragraph_is_cut_at_sentence_ends_into_runs_as_long_as_t
 }
 
 /// The id of the active version of the source of the course `program_id` titled `title`.
-async fn version_of(pool: &SqlitePool, program_id: &str, title: &str) -> Result<String> {
-    Ok(source_titled(pool, program_id, title).await?.0)
+async fn version_of(database: &Database, program_id: &str, title: &str) -> Result<String> {
+    Ok(source_titled(database, program_id, title).await?.0)
 }
 
 #[tokio::test]
 async fn a_prepared_lessons_passage_comes_only_from_the_sources_its_blocks_cite() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
-    let spacing = version_of(&pool, &program, "Spacing and memory").await?;
-    let sleep = version_of(&pool, &program, "Sleep and memory").await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
+    let spacing = version_of(&database, &program, "Spacing and memory").await?;
+    let sleep = version_of(&database, &program, "Sleep and memory").await?;
     let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
     prepare_lesson(
         &pool,
@@ -737,7 +754,7 @@ async fn a_prepared_lessons_passage_comes_only_from_the_sources_its_blocks_cite(
     )
     .await?;
     let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
-    let source = next_passage(&pool, &spec).await?;
+    let source = next_passage(&database, &spec).await?;
     assert_eq!(
         source.version_id, sleep,
         "the query ranks the spacing source first ({spacing}), the block cites the other"
@@ -749,8 +766,9 @@ async fn a_prepared_lessons_passage_comes_only_from_the_sources_its_blocks_cite(
 async fn a_block_citing_an_older_version_of_a_source_takes_the_passage_from_its_active_version(
 ) -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
-    let older = version_of(&pool, &program, "Sleep and memory").await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
+    let older = version_of(&database, &program, "Sleep and memory").await?;
     sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) SELECT 'newer-sleep',program_id,source_id,2,title,publisher,requested_url,resolved_url,full_text,excerpt,'newer-sha',word_count,truncated,extraction_version,acquired_at+1 FROM learning_source_versions WHERE id=?")
         .bind(&older)
         .execute(&pool)
@@ -769,7 +787,7 @@ async fn a_block_citing_an_older_version_of_a_source_takes_the_passage_from_its_
     )
     .await?;
     let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
-    let source = next_passage(&pool, &spec).await?;
+    let source = next_passage(&database, &spec).await?;
     assert_eq!(
         source.version_id, "newer-sleep",
         "the spacing source ranks first; the block cites an older version of the sleep source"
@@ -781,14 +799,15 @@ async fn a_block_citing_an_older_version_of_a_source_takes_the_passage_from_its_
 async fn a_prepared_lesson_whose_blocks_cite_no_source_gives_no_drill_and_is_recorded_as_not_fitting(
 ) -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
     let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
     prepare_lesson(&pool, &lesson, &[("explanation", "Gaps help.", &[])]).await?;
     let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
     let model = ScriptedModel::new([explanation_answer()]);
     let check = spacing_check();
     let grader = idle_grader();
-    let error = passage_build(&pool, &model, &check, &grader)
+    let error = passage_build(&database, &model, &check, &grader)
         .clean_code(&spec)
         .await
         .unwrap_err();
@@ -825,13 +844,14 @@ async fn assert_not_fitting(pool: &SqlitePool, program: &str, lesson: &str) -> R
 async fn a_course_without_sources_gives_no_drill_and_records_the_lesson_as_not_fitting(
 ) -> Result<()> {
     let pool = pool().await?;
-    let program = course_of(&pool, &[]).await?;
+    let database = Database::new(pool.clone());
+    let program = course_of(&database, &[]).await?;
     let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
     let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
     let model = ScriptedModel::new([explanation_answer()]);
     let check = spacing_check();
     let grader = idle_grader();
-    let error = passage_build(&pool, &model, &check, &grader)
+    let error = passage_build(&database, &model, &check, &grader)
         .clean_code(&spec)
         .await
         .unwrap_err();
@@ -847,8 +867,9 @@ async fn a_course_without_sources_gives_no_drill_and_records_the_lesson_as_not_f
 async fn a_passage_spec_without_a_lesson_or_with_one_of_another_course_fails_before_any_model_call(
 ) -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
-    let other = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
+    let other = course(&database).await?;
     let foreign = lesson_titled(&pool, &other, SPACING_LESSON).await?;
     let without = passage_spec(&program);
     let elsewhere = DrillSpec {
@@ -859,7 +880,7 @@ async fn a_passage_spec_without_a_lesson_or_with_one_of_another_course_fails_bef
         let model = ScriptedModel::new([explanation_answer()]);
         let check = spacing_check();
         let grader = idle_grader();
-        let error = passage_build(&pool, &model, &check, &grader)
+        let error = passage_build(&database, &model, &check, &grader)
             .clean_code(&spec)
             .await
             .unwrap_err();
@@ -872,12 +893,13 @@ async fn a_passage_spec_without_a_lesson_or_with_one_of_another_course_fails_bef
 #[tokio::test]
 async fn an_explanation_too_short_for_its_patterns_is_asked_for_again() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
     let short = json!({"title": "Spacing", "paragraphs": [FIRST]}).to_string();
     let model = ScriptedModel::new([teaches_answer(true), short, explanation_answer()]);
     let check = spacing_check();
     let grader = idle_grader();
-    let code = passage_build(&pool, &model, &check, &grader)
+    let code = passage_build(&database, &model, &check, &grader)
         .clean_code(&passage_lesson_spec(&pool, &program, SPACING_LESSON).await?)
         .await?;
     assert_eq!(code.files, explanation_files());
@@ -957,7 +979,7 @@ struct TwoPlaces {
     text: String,
 }
 
-async fn two_places(pool: &SqlitePool) -> Result<TwoPlaces> {
+async fn two_places(pool: &SqlitePool, database: &Database) -> Result<TwoPlaces> {
     let mut fill = filler_sentences(20).into_iter();
     let lighter = paragraph_of(Some(touched_sentence(9)), &mut fill, 4);
     let heavier = (0..4).map(lesson_sentence).collect::<Vec<_>>().join(" ");
@@ -966,7 +988,7 @@ async fn two_places(pool: &SqlitePool) -> Result<TwoPlaces> {
     }
     let text = [lighter.as_str(), heavier.as_str()].join("\n\n");
     assert!(text.len() < 1200, "{}", text.len());
-    let program = course_of(pool, &[("Harbour notes", text.as_str())]).await?;
+    let program = course_of(database, &[("Harbour notes", text.as_str())]).await?;
     Ok(TwoPlaces {
         lesson: lesson_titled(pool, &program, SPACING_LESSON).await?,
         spec: passage_lesson_spec(pool, &program, SPACING_LESSON).await?,
@@ -980,12 +1002,13 @@ async fn two_places(pool: &SqlitePool) -> Result<TwoPlaces> {
 #[tokio::test]
 async fn before_the_explanation_the_passage_is_asked_whether_it_teaches_the_lesson() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
     let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
     let facts = lesson_facts(&pool, &lesson).await?;
     let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
     let (model, built) = clean_with(
-        &pool,
+        &database,
         &spec,
         vec![teaches_answer(true), explanation_answer()],
     )
@@ -1032,10 +1055,11 @@ async fn before_the_explanation_the_passage_is_asked_whether_it_teaches_the_less
 async fn a_place_that_does_not_teach_the_lesson_gives_way_to_the_next_place_in_the_picks_order(
 ) -> Result<()> {
     let pool = pool().await?;
-    let places = two_places(&pool).await?;
+    let database = Database::new(pool.clone());
+    let places = two_places(&pool, &database).await?;
     let facts = lesson_facts(&pool, &places.lesson).await?;
     let (model, built) = clean_with(
-        &pool,
+        &database,
         &places.spec,
         vec![
             teaches_answer(false),
@@ -1100,9 +1124,10 @@ async fn a_place_that_does_not_teach_the_lesson_gives_way_to_the_next_place_in_t
 #[tokio::test]
 async fn a_place_judged_before_for_the_lesson_is_not_asked_about_again() -> Result<()> {
     let pool = pool().await?;
-    let places = two_places(&pool).await?;
+    let database = Database::new(pool.clone());
+    let places = two_places(&pool, &database).await?;
     let (_, first) = clean_with(
-        &pool,
+        &database,
         &places.spec,
         vec![
             teaches_answer(false),
@@ -1113,7 +1138,7 @@ async fn a_place_judged_before_for_the_lesson_is_not_asked_about_again() -> Resu
     .await;
     first?;
 
-    let (model, second) = clean_with(&pool, &places.spec, vec![explanation_answer()]).await;
+    let (model, second) = clean_with(&database, &places.spec, vec![explanation_answer()]).await;
     let source = second?.source.expect("the passage");
     assert_eq!(source.text, places.lighter);
     assert_eq!(model.purposes(), ["clean explanation"]);
@@ -1124,10 +1149,11 @@ async fn a_place_judged_before_for_the_lesson_is_not_asked_about_again() -> Resu
 #[tokio::test]
 async fn a_verdict_made_on_another_basis_is_asked_again() -> Result<()> {
     let pool = pool().await?;
-    let places = two_places(&pool).await?;
+    let database = Database::new(pool.clone());
+    let places = two_places(&pool, &database).await?;
     let facts = lesson_facts(&pool, &places.lesson).await?;
     let (_, first) = clean_with(
-        &pool,
+        &database,
         &places.spec,
         vec![
             teaches_answer(false),
@@ -1143,7 +1169,7 @@ async fn a_verdict_made_on_another_basis_is_asked_again() -> Result<()> {
         .map_err(db)?;
 
     let (model, second) = clean_with(
-        &pool,
+        &database,
         &places.spec,
         vec![teaches_answer(true), explanation_answer()],
     )
@@ -1174,9 +1200,10 @@ async fn a_verdict_made_on_another_basis_is_asked_again() -> Result<()> {
 #[tokio::test]
 async fn changing_the_lessons_objective_asks_again() -> Result<()> {
     let pool = pool().await?;
-    let places = two_places(&pool).await?;
+    let database = Database::new(pool.clone());
+    let places = two_places(&pool, &database).await?;
     let (_, first) = clean_with(
-        &pool,
+        &database,
         &places.spec,
         vec![
             teaches_answer(false),
@@ -1196,7 +1223,7 @@ async fn changing_the_lessons_objective_asks_again() -> Result<()> {
         .map_err(db)?;
 
     let (model, second) = clean_with(
-        &pool,
+        &database,
         &places.spec,
         vec![teaches_answer(true), explanation_answer()],
     )
@@ -1214,9 +1241,10 @@ async fn changing_the_lessons_objective_asks_again() -> Result<()> {
 async fn when_no_place_teaches_the_lesson_no_drill_is_built_and_the_lesson_is_recorded_as_not_fitting(
 ) -> Result<()> {
     let pool = pool().await?;
-    let places = two_places(&pool).await?;
+    let database = Database::new(pool.clone());
+    let places = two_places(&pool, &database).await?;
     let (model, built) = clean_with(
-        &pool,
+        &database,
         &places.spec,
         vec![teaches_answer(false), teaches_answer(false)],
     )
@@ -1247,9 +1275,10 @@ fn blank_reason_answer() -> String {
 #[tokio::test]
 async fn a_blank_reason_is_asked_for_again_once() -> Result<()> {
     let pool = pool().await?;
-    let places = two_places(&pool).await?;
+    let database = Database::new(pool.clone());
+    let places = two_places(&pool, &database).await?;
     let (model, built) = clean_with(
-        &pool,
+        &database,
         &places.spec,
         vec![
             blank_reason_answer(),
@@ -1278,9 +1307,10 @@ async fn a_blank_reason_is_asked_for_again_once() -> Result<()> {
 #[tokio::test]
 async fn an_answer_refused_twice_fails_the_clean_stage_and_stores_nothing() -> Result<()> {
     let pool = pool().await?;
-    let places = two_places(&pool).await?;
+    let database = Database::new(pool.clone());
+    let places = two_places(&pool, &database).await?;
     let (model, built) = clean_with(
-        &pool,
+        &database,
         &places.spec,
         vec![blank_reason_answer(), blank_reason_answer()],
     )
@@ -1299,8 +1329,9 @@ async fn an_answer_refused_twice_fails_the_clean_stage_and_stores_nothing() -> R
 #[tokio::test]
 async fn a_failing_passage_check_call_fails_the_clean_stage_and_stores_nothing() -> Result<()> {
     let pool = pool().await?;
-    let places = two_places(&pool).await?;
-    let (model, built) = clean_with(&pool, &places.spec, Vec::new()).await;
+    let database = Database::new(pool.clone());
+    let places = two_places(&pool, &database).await?;
+    let (model, built) = clean_with(&database, &places.spec, Vec::new()).await;
     let error = built.unwrap_err();
 
     assert!(
@@ -1325,13 +1356,13 @@ fn assert_contiguous(text: &str) {
 
 #[tokio::test]
 async fn a_blank_line_a_stored_explanation_has_is_not_kept_by_the_review() -> Result<()> {
-    let pool = pool().await?;
+    let database = Database::new(pool().await?);
     let model = ScriptedModel::new(Vec::<String>::new());
     let check = spacing_check();
     let grader = idle_grader();
     let mut code = passage_code();
     code.files[0].text = format!("{FIRST}\n{SECOND}\n\n{THIRD}\n{FOURTH}\n");
-    let reviewed = passage_build(&pool, &model, &check, &grader)
+    let reviewed = passage_build(&database, &model, &check, &grader)
         .clean_review(&passage_spec("course"), &code)
         .await?;
     assert_eq!(reviewed.files, explanation_files());
@@ -1342,11 +1373,11 @@ async fn a_blank_line_a_stored_explanation_has_is_not_kept_by_the_review() -> Re
 #[tokio::test]
 async fn every_sentence_the_source_supports_stays_and_nothing_is_asked_of_the_model() -> Result<()>
 {
-    let pool = pool().await?;
+    let database = Database::new(pool().await?);
     let model = ScriptedModel::new(Vec::<String>::new());
     let check = spacing_check();
     let grader = idle_grader();
-    let reviewed = passage_build(&pool, &model, &check, &grader)
+    let reviewed = passage_build(&database, &model, &check, &grader)
         .clean_review(&passage_spec("course"), &passage_code())
         .await?;
     assert_eq!(reviewed.files, explanation_files());
@@ -1387,7 +1418,7 @@ fn rewriting_check() -> ScriptedCheck {
 #[tokio::test]
 async fn a_sentence_the_source_does_not_support_is_rewritten_once_and_dropped_when_still_unsupported(
 ) -> Result<()> {
-    let pool = pool().await?;
+    let database = Database::new(pool().await?);
     let model = ScriptedModel::new([
         json!({"sentence": REWRITTEN}).to_string(),
         json!({"sentence": STILL_WRONG}).to_string(),
@@ -1398,7 +1429,7 @@ async fn a_sentence_the_source_does_not_support_is_rewritten_once_and_dropped_wh
         patterns: vec![FIGURE.into()],
         ..passage_spec("course")
     };
-    let reviewed = passage_build(&pool, &model, &check, &grader)
+    let reviewed = passage_build(&database, &model, &check, &grader)
         .clean_review(&spec, &passage_code())
         .await?;
     assert_eq!(
@@ -1452,14 +1483,14 @@ async fn a_sentence_the_source_does_not_support_is_rewritten_once_and_dropped_wh
 #[tokio::test]
 async fn an_explanation_left_with_fewer_sentences_than_its_patterns_need_fails_the_build(
 ) -> Result<()> {
-    let pool = pool().await?;
+    let database = Database::new(pool().await?);
     let model = ScriptedModel::new([
         json!({"sentence": STILL_WRONG}).to_string(),
         json!({"sentence": STILL_WRONG}).to_string(),
     ]);
     let check = rewriting_check();
     let grader = idle_grader();
-    let error = passage_build(&pool, &model, &check, &grader)
+    let error = passage_build(&database, &model, &check, &grader)
         .clean_review(&passage_spec("course"), &passage_code())
         .await
         .unwrap_err();
@@ -1472,12 +1503,12 @@ async fn an_explanation_left_with_fewer_sentences_than_its_patterns_need_fails_t
 
 #[tokio::test]
 async fn a_source_check_that_fails_fails_the_review() -> Result<()> {
-    let pool = pool().await?;
+    let database = Database::new(pool().await?);
     let model = ScriptedModel::new(Vec::<String>::new());
     let check =
         ScriptedCheck::new(|_| Err(AppError::ServiceNotAvailable("The checker is down.".into())));
     let grader = idle_grader();
-    let error = passage_build(&pool, &model, &check, &grader)
+    let error = passage_build(&database, &model, &check, &grader)
         .clean_review(&passage_spec("course"), &passage_code())
         .await
         .unwrap_err();
@@ -1536,11 +1567,11 @@ fn planted_of(mutations: Vec<Mutation>) -> Planted {
 #[tokio::test]
 async fn a_planted_error_the_source_contradicts_is_proven_with_the_quote_and_raised_to_its_floor(
 ) -> Result<()> {
-    let pool = pool().await?;
+    let database = Database::new(pool().await?);
     let model = ScriptedModel::new(Vec::<String>::new());
     let check = spacing_check();
     let grader = idle_grader();
-    let proved = passage_build(&pool, &model, &check, &grader)
+    let proved = passage_build(&database, &model, &check, &grader)
         .prove(
             &passage_spec("course"),
             &passage_baseline(),
@@ -1588,7 +1619,7 @@ async fn a_planted_error_the_source_contradicts_is_proven_with_the_quote_and_rai
 
 #[tokio::test]
 async fn a_mutation_whose_clean_sentence_the_source_does_not_support_is_dropped() -> Result<()> {
-    let pool = pool().await?;
+    let database = Database::new(pool().await?);
     let model = ScriptedModel::new(Vec::<String>::new());
     let check = ScriptedCheck::new(|sentence| {
         if sentence == FIRST {
@@ -1598,7 +1629,7 @@ async fn a_mutation_whose_clean_sentence_the_source_does_not_support_is_dropped(
         }
     });
     let grader = idle_grader();
-    let proved = passage_build(&pool, &model, &check, &grader)
+    let proved = passage_build(&database, &model, &check, &grader)
         .prove(
             &passage_spec("course"),
             &passage_baseline(),
@@ -1625,11 +1656,11 @@ async fn a_mutation_whose_clean_sentence_the_source_does_not_support_is_dropped(
 
 #[tokio::test]
 async fn a_mutation_whose_planted_sentence_the_source_supports_is_dropped() -> Result<()> {
-    let pool = pool().await?;
+    let database = Database::new(pool().await?);
     let model = ScriptedModel::new(Vec::<String>::new());
     let check = ScriptedCheck::new(|_| supported(FIGURE_QUOTE));
     let grader = idle_grader();
-    let proved = passage_build(&pool, &model, &check, &grader)
+    let proved = passage_build(&database, &model, &check, &grader)
         .prove(
             &passage_spec("course"),
             &passage_baseline(),
@@ -1650,12 +1681,12 @@ async fn a_mutation_whose_planted_sentence_the_source_supports_is_dropped() -> R
 
 #[tokio::test]
 async fn a_source_check_whose_call_fails_is_an_error_and_never_a_proof() -> Result<()> {
-    let pool = pool().await?;
+    let database = Database::new(pool().await?);
     let model = ScriptedModel::new(Vec::<String>::new());
     let grader = idle_grader();
     let check =
         ScriptedCheck::new(|_| Err(AppError::ServiceNotAvailable("The checker is down.".into())));
-    let proved = passage_build(&pool, &model, &check, &grader)
+    let proved = passage_build(&database, &model, &check, &grader)
         .prove(
             &passage_spec("course"),
             &passage_baseline(),
@@ -1677,7 +1708,7 @@ async fn a_source_check_whose_call_fails_is_an_error_and_never_a_proof() -> Resu
 #[tokio::test]
 async fn a_planted_sentence_the_checker_gave_no_verdict_on_drops_only_that_mutation() -> Result<()>
 {
-    let pool = pool().await?;
+    let database = Database::new(pool().await?);
     let model = ScriptedModel::new(Vec::<String>::new());
     let grader = idle_grader();
     let check = ScriptedCheck::new(|sentence| {
@@ -1689,7 +1720,7 @@ async fn a_planted_sentence_the_checker_gave_no_verdict_on_drops_only_that_mutat
             supported(FIGURE_QUOTE)
         }
     });
-    let proved = passage_build(&pool, &model, &check, &grader)
+    let proved = passage_build(&database, &model, &check, &grader)
         .prove(
             &passage_spec("course"),
             &passage_baseline(),
@@ -1720,7 +1751,7 @@ async fn a_planted_sentence_the_checker_gave_no_verdict_on_drops_only_that_mutat
 #[tokio::test]
 async fn a_clean_sentence_the_checker_gave_no_verdict_on_is_rewritten_and_the_build_goes_on(
 ) -> Result<()> {
-    let pool = pool().await?;
+    let database = Database::new(pool().await?);
     let model = ScriptedModel::new([
         json!({"sentence": REWRITTEN}).to_string(),
         json!({"sentence": STILL_WRONG}).to_string(),
@@ -1734,7 +1765,7 @@ async fn a_clean_sentence_the_checker_gave_no_verdict_on_is_rewritten_and_the_bu
         patterns: vec![FIGURE.into()],
         ..passage_spec("course")
     };
-    let reviewed = passage_build(&pool, &model, &check, &grader)
+    let reviewed = passage_build(&database, &model, &check, &grader)
         .clean_review(&spec, &passage_code())
         .await?;
     assert_eq!(
@@ -1763,7 +1794,7 @@ async fn a_clean_sentence_the_checker_gave_no_verdict_on_is_rewritten_and_the_bu
 
 #[tokio::test]
 async fn a_contradiction_within_the_explanation_is_judged_on_the_explanation() -> Result<()> {
-    let pool = pool().await?;
+    let database = Database::new(pool().await?);
     let model = ScriptedModel::new([json!({
         "reason": "Sentence 4 now says the opposite of sentence 2.",
         "editIntroducesIt": true,
@@ -1789,7 +1820,7 @@ async fn a_contradiction_within_the_explanation_is_judged_on_the_explanation() -
         verification: Verification::NotAsked,
         lesson_sentences: vec![],
     };
-    let proved = passage_build(&pool, &model, &check, &grader)
+    let proved = passage_build(&database, &model, &check, &grader)
         .prove(&spec, &passage_baseline(), &planted_of(vec![contradiction]))
         .await?;
     assert_eq!(
@@ -1837,7 +1868,7 @@ fn proved_figure() -> Proved {
 #[tokio::test]
 async fn the_blind_reviewer_reads_the_explanation_with_its_source_and_an_extra_it_finds_joins_the_key(
 ) -> Result<()> {
-    let pool = pool().await?;
+    let database = Database::new(pool().await?);
     let blind = json!({"findings": [
         {"path": "explanation.md", "quote": "improved recall by 40%", "comment": "The study found 14%, not 40%.", "severity": "major"},
         {"path": "explanation.md", "quote": SECOND, "comment": "The source says the benefit held for adults in the laboratory only.", "severity": "minor"}
@@ -1874,7 +1905,7 @@ async fn the_blind_reviewer_reads_the_explanation_with_its_source_and_an_extra_i
         ],
     });
     let proved = proved_figure();
-    let reviewed = passage_build(&pool, &model, &check, &grader)
+    let reviewed = passage_build(&database, &model, &check, &grader)
         .blind_review(
             &passage_spec("course"),
             &passage_baseline(),
@@ -1932,11 +1963,12 @@ async fn the_blind_reviewer_reads_the_explanation_with_its_source_and_an_extra_i
 #[tokio::test]
 async fn a_passage_drill_builds_end_to_end_and_is_stored_with_its_source() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
-    let (_, text) = source_titled(&pool, &program, "Spacing and memory").await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
+    let (_, text) = source_titled(&database, &program, "Spacing and memory").await?;
     let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
-    let job = bank::queue_build(&Database::from(pool.clone()), &spec, "passage").await?;
-    let store = JobStore::new(pool.clone());
+    let job = bank::queue_build(&database, &spec, "passage").await?;
+    let store = JobStore::new(database.clone());
     store
         .claim(&job)
         .await?
@@ -1970,7 +2002,7 @@ async fn a_passage_drill_builds_end_to_end_and_is_stored_with_its_source() -> Re
             "It is the figure.".into(),
         )],
     });
-    let outcome = passage_build(&pool, &model, &check, &grader)
+    let outcome = passage_build(&database, &model, &check, &grader)
         .run(&context, &spec)
         .await?;
     assert_eq!(outcome, JobOutcome::Committed);
@@ -2380,10 +2412,11 @@ async fn a_check_whose_model_is_not_there_is_an_outage() {
 #[tokio::test]
 async fn a_passage_drill_comes_back_as_it_went_in() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
     let source = spacing_passage();
     let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
-    drilled(&pool, "passage", &program, &lesson, &source).await?;
+    drilled(&database, "passage", &program, &lesson, &source).await?;
     let mut connection = pool.acquire().await.map_err(db)?;
     let stored = repository::find_in(&mut connection, "passage")
         .await?
@@ -2407,7 +2440,7 @@ async fn a_passage_drill_comes_back_as_it_went_in() -> Result<()> {
     assert_eq!(material, "passage");
     assert_eq!(language, None);
     assert_eq!(
-        repository::drilled_passages(&pool, &program).await?,
+        repository::drilled_passages(&database, &program).await?,
         [source]
     );
     Ok(())
@@ -2415,7 +2448,7 @@ async fn a_passage_drill_comes_back_as_it_went_in() -> Result<()> {
 
 #[tokio::test]
 async fn a_passage_drill_without_its_source_is_not_stored() -> Result<()> {
-    let pool = pool().await?;
+    let database = Database::new(pool().await?);
     let drill = planted_drill("passage");
     let spec = passage_spec("course");
     let planted = Planted {
@@ -2430,9 +2463,9 @@ async fn a_passage_drill_without_its_source_is_not_stored() -> Result<()> {
         &unchecked(),
         &quiet(),
     );
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     let error = repository::insert_in(
-        &mut connection,
+        &mut tx,
         &NewDrill {
             drill: &drill,
             clean_files: &explanation_files(),
@@ -2580,15 +2613,15 @@ fn a_clean_stage_saved_before_passages_still_loads() {
 #[tokio::test]
 async fn the_bank_keeps_passage_drills_on_a_shelf_for_each_course() -> Result<()> {
     let pool = pool().await?;
-    let database = Database::from(pool.clone());
-    let first = course(&pool).await?;
-    let second = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let first = course(&database).await?;
+    let second = course(&database).await?;
     let first_lessons = lessons_of(&pool, &first).await?;
     let second_lessons = lessons_of(&pool, &second).await?;
     let source = spacing_passage();
-    drilled(&pool, "first-new", &first, &first_lessons[0], &source).await?;
-    drilled(&pool, "first-old", &first, &first_lessons[0], &source).await?;
-    drilled(&pool, "second", &second, &second_lessons[0], &source).await?;
+    drilled(&database, "first-new", &first, &first_lessons[0], &source).await?;
+    drilled(&database, "first-old", &first, &first_lessons[0], &source).await?;
+    drilled(&database, "second", &second, &second_lessons[0], &source).await?;
     at(&pool, "first-new", 20).await?;
     at(&pool, "first-old", 10).await?;
     let python = Material::code("python");
@@ -2632,7 +2665,7 @@ async fn the_bank_keeps_passage_drills_on_a_shelf_for_each_course() -> Result<()
     .expect("a ready drill of the second course");
     assert_eq!(taken.drill.drill.id, "second");
     let next = taken.next_build.as_deref().expect("a build was queued");
-    let job = JobStore::new(pool.clone()).get(next).await?;
+    let job = JobStore::new(database.clone()).get(next).await?;
     assert_eq!(job.subject_id, Some(format!("drill:{second}:passage")));
     let expected: Vec<String> = targets(&Material::Passage, &held_back(&taken.drill.drill), 0, 2)
         .iter()
@@ -2682,9 +2715,9 @@ async fn the_bank_keeps_passage_drills_on_a_shelf_for_each_course() -> Result<()
 #[tokio::test]
 async fn a_build_under_way_for_a_course_is_found_again_and_another_course_gets_its_own(
 ) -> Result<()> {
-    let pool = pool().await?;
-    let one = course(&pool).await?;
-    let two = course(&pool).await?;
+    let database = Database::new(pool().await?);
+    let one = course(&database).await?;
+    let two = course(&database).await?;
     let passages = Material::Passage;
     let on_one = Shelf {
         program_id: &one,
@@ -2694,14 +2727,14 @@ async fn a_build_under_way_for_a_course_is_found_again_and_another_course_gets_i
         program_id: &two,
         material: &passages,
     };
-    let first = bank::ensure_build(&Database::from(pool.clone()), on_one, None, 4, 2).await?;
+    let first = bank::ensure_build(&database, on_one, None, 4, 2).await?;
     assert_eq!(
-        bank::ensure_build(&Database::from(pool.clone()), on_one, None, 4, 2).await?,
+        bank::ensure_build(&database, on_one, None, 4, 2).await?,
         first
     );
-    let other = bank::ensure_build(&Database::from(pool.clone()), on_two, None, 4, 2).await?;
+    let other = bank::ensure_build(&database, on_two, None, 4, 2).await?;
     assert_ne!(other, first);
-    let store = JobStore::new(pool.clone());
+    let store = JobStore::new(database.clone());
     assert_eq!(
         store.get(&first).await?.subject_id,
         Some(format!("drill:{one}:passage"))
@@ -2729,7 +2762,7 @@ const UNSURE: &str =
 
 #[tokio::test]
 async fn a_planted_sentence_the_checker_is_unsure_of_drops_the_mutation() -> Result<()> {
-    let pool = pool().await?;
+    let database = Database::new(pool().await?);
     let model = ScriptedModel::new(Vec::<String>::new());
     let check = ScriptedCheck::new(|sentence| {
         if sentence == FIRST {
@@ -2739,7 +2772,7 @@ async fn a_planted_sentence_the_checker_is_unsure_of_drops_the_mutation() -> Res
         }
     });
     let grader = idle_grader();
-    let proved = passage_build(&pool, &model, &check, &grader)
+    let proved = passage_build(&database, &model, &check, &grader)
         .prove(
             &passage_spec("course"),
             &passage_baseline(),
@@ -2760,7 +2793,7 @@ async fn a_planted_sentence_the_checker_is_unsure_of_drops_the_mutation() -> Res
 #[tokio::test]
 async fn a_clean_sentence_the_checker_is_unsure_of_drops_the_mutation_before_the_planted_one_is_asked(
 ) -> Result<()> {
-    let pool = pool().await?;
+    let database = Database::new(pool().await?);
     let model = ScriptedModel::new(Vec::<String>::new());
     let check = ScriptedCheck::new(|sentence| {
         if sentence == FIRST {
@@ -2770,7 +2803,7 @@ async fn a_clean_sentence_the_checker_is_unsure_of_drops_the_mutation_before_the
         }
     });
     let grader = idle_grader();
-    let proved = passage_build(&pool, &model, &check, &grader)
+    let proved = passage_build(&database, &model, &check, &grader)
         .prove(
             &passage_spec("course"),
             &passage_baseline(),
@@ -2785,7 +2818,7 @@ async fn a_clean_sentence_the_checker_is_unsure_of_drops_the_mutation_before_the
 #[tokio::test]
 async fn a_planted_sentence_the_source_confidently_does_not_support_proves_the_error() -> Result<()>
 {
-    let pool = pool().await?;
+    let database = Database::new(pool().await?);
     let model = ScriptedModel::new(Vec::<String>::new());
     let check = ScriptedCheck::new(|sentence| {
         if sentence == FIRST {
@@ -2795,7 +2828,7 @@ async fn a_planted_sentence_the_source_confidently_does_not_support_proves_the_e
         }
     });
     let grader = idle_grader();
-    let proved = passage_build(&pool, &model, &check, &grader)
+    let proved = passage_build(&database, &model, &check, &grader)
         .prove(
             &passage_spec("course"),
             &passage_baseline(),
@@ -2822,7 +2855,7 @@ async fn a_planted_sentence_the_source_confidently_does_not_support_proves_the_e
 #[tokio::test]
 async fn a_clean_sentence_the_checker_is_unsure_of_is_rewritten_as_an_unsupported_one_is(
 ) -> Result<()> {
-    let pool = pool().await?;
+    let database = Database::new(pool().await?);
     let model = ScriptedModel::new([
         json!({"sentence": REWRITTEN}).to_string(),
         json!({"sentence": STILL_WRONG}).to_string(),
@@ -2838,7 +2871,7 @@ async fn a_clean_sentence_the_checker_is_unsure_of_is_rewritten_as_an_unsupporte
         patterns: vec![FIGURE.into()],
         ..passage_spec("course")
     };
-    let reviewed = passage_build(&pool, &model, &check, &grader)
+    let reviewed = passage_build(&database, &model, &check, &grader)
         .clean_review(&spec, &passage_code())
         .await?;
     assert_eq!(
@@ -2990,9 +3023,10 @@ async fn a_stored_passage_drill_records_that_the_lesson_fits_passages() -> Resul
     use super::support::Harness;
     use crate::drills::build::store::Built;
     let pool = pool().await?;
-    let program = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
     let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
-    let harness = Harness::on(pool, &spec).await?;
+    let harness = Harness::on(pool, database, &spec).await?;
     let (model, grader) = (ScriptedModel::new([]), FakeGrader::failing("unused"));
     let code = CleanCode {
         basis: Some("basis-1".into()),
@@ -3065,8 +3099,9 @@ fn picks_within_the_deadline(already_drilled: bool) {
         runtime.block_on(async move {
             let setup = async {
                 let pool = pool().await?;
-                let program = course_of(&pool, &[("Large source", body.as_str())]).await?;
-                let (version, _) = source_titled(&pool, &program, "Large source").await?;
+                let database = Database::new(pool.clone());
+                let program = course_of(&database, &[("Large source", body.as_str())]).await?;
+                let (version, _) = source_titled(&database, &program, "Large source").await?;
                 let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
                 if already_drilled {
                     let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
@@ -3077,11 +3112,11 @@ fn picks_within_the_deadline(already_drilled: bool) {
                         title: "Large source".to_owned(),
                         text: body.clone(),
                     };
-                    drilled(&pool, "whole", &program, &lesson, &whole).await?;
+                    drilled(&database, "whole", &program, &lesson, &whole).await?;
                 }
-                Ok::<_, AppError>((pool, spec, version))
+                Ok::<_, AppError>((database, spec, version))
             };
-            let (pool, spec, version) = match setup.await {
+            let (database, spec, version) = match setup.await {
                 Ok(done) => done,
                 Err(error) => {
                     let _ = ready_sender.send(Err(format!("{error:?}")));
@@ -3090,7 +3125,7 @@ fn picks_within_the_deadline(already_drilled: bool) {
             };
             let _ = ready_sender.send(Ok(version));
             let started = Instant::now();
-            let picked = next_passage(&pool, &spec).await;
+            let picked = next_passage(&database, &spec).await;
             let _ = done_sender.send((
                 picked.map_err(|error| format!("{error:?}")),
                 started.elapsed(),

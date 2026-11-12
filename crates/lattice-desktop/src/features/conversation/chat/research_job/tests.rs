@@ -191,8 +191,8 @@ impl JobHandler for SavesThenWaits {
 }
 
 /// Runs the research job until it has saved a round, then closes the app.
-async fn closed_after_one_round(pool: &sqlx::SqlitePool, attempt: &FirstAttempt) -> String {
-    let before = JobRuntime::new(Database::from(pool.clone()));
+async fn closed_after_one_round(db: &Database, attempt: &FirstAttempt) -> String {
+    let before = JobRuntime::new(db.clone());
     let saved = Arc::new(Notify::new());
     before
         .register(
@@ -241,19 +241,18 @@ async fn question_status(runtime: &FakeRuntime, attempt: &FirstAttempt) -> Strin
 
 #[tokio::test]
 async fn a_research_turn_stopped_by_a_restart_resumes_from_its_last_round() {
-    let pool = pool().await;
+    let db = Database::new(pool().await);
     let llm = Scripted::new([CompletionResponse::from_text(
         "Shredding, then leaching recovers most of the lithium.",
     )]);
-    let jobs =
-        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
+    let jobs = JobRuntime::with_poll_interval(db.clone(), Duration::from_millis(50));
     let runtime = FakeRuntime {
         llm: Some(llm.clone()),
         jobs: Some(jobs.clone()),
         ..FakeRuntime::default()
     };
     let attempt = first_attempt(&runtime).await;
-    let job_id = closed_after_one_round(&pool, &attempt).await;
+    let job_id = closed_after_one_round(&db, &attempt).await;
 
     // The app opens again.
     jobs.register(
@@ -348,12 +347,11 @@ impl JobHandler for SavesThroughJournal {
 /// resumes from that text after a restart.
 #[tokio::test]
 async fn a_research_turn_with_a_picture_saves_and_resumes_from_captions_only() {
-    let pool = pool().await;
+    let db = Database::new(pool().await);
     let llm = Scripted::new([CompletionResponse::from_text(
         "The teardown shows the cathode being shredded.",
     )]);
-    let jobs =
-        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
+    let jobs = JobRuntime::with_poll_interval(db.clone(), Duration::from_millis(50));
     let runtime = FakeRuntime {
         llm: Some(llm.clone()),
         jobs: Some(jobs.clone()),
@@ -366,7 +364,7 @@ async fn a_research_turn_with_a_picture_saves_and_resumes_from_captions_only() {
         .transcript
         .push(with_picture("A second picture, seen in a round."));
 
-    let before = JobRuntime::new(Database::from(pool.clone()));
+    let before = JobRuntime::new(db.clone());
     let saved = Arc::new(Notify::new());
     let stored: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
     before
@@ -424,18 +422,17 @@ async fn a_research_turn_with_a_picture_saves_and_resumes_from_captions_only() {
 
 #[tokio::test]
 async fn the_chat_stop_cancels_a_running_research_job() {
-    let pool = pool().await;
+    let db = Database::new(pool().await);
     // Never answers: the turn runs until it is stopped.
     let llm = Scripted::new([]);
-    let jobs =
-        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
+    let jobs = JobRuntime::with_poll_interval(db.clone(), Duration::from_millis(50));
     let runtime = FakeRuntime {
         llm: Some(llm.clone()),
         jobs: Some(jobs.clone()),
         ..FakeRuntime::default()
     };
     let attempt = first_attempt(&runtime).await;
-    let job_id = closed_after_one_round(&pool, &attempt).await;
+    let job_id = closed_after_one_round(&db, &attempt).await;
     jobs.register(
         DEEP_RESEARCH,
         Arc::new(DeepResearchJob::new(runtime.share(), silent())),
@@ -496,8 +493,8 @@ impl JobHandler for Holds {
 
 #[tokio::test]
 async fn stopping_a_research_turn_still_queued_answers_its_command() {
-    let pool = pool().await;
-    let jobs = JobRuntime::with_poll_interval(Database::from(pool), Duration::from_millis(50));
+    let db = Database::new(pool().await);
+    let jobs = JobRuntime::with_poll_interval(db.clone(), Duration::from_millis(50));
     jobs.register(DEEP_RESEARCH, Arc::new(Holds), job_config())
         .await
         .unwrap();
@@ -545,7 +542,7 @@ async fn stopping_a_research_turn_still_queued_answers_its_command() {
 /// one has nothing left to resume.
 #[tokio::test]
 async fn a_pending_research_turn_keeps_its_request_for_the_picture_sweep() {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(Database::new(pool().await));
     let pending = research("conversation-a");
     let finished = research("conversation-b");
     store
@@ -568,10 +565,10 @@ async fn a_pending_research_turn_keeps_its_request_for_the_picture_sweep() {
 /// The question is read from the checkpoint a real turn saves.
 #[tokio::test]
 async fn a_pending_research_turn_keeps_its_question_for_the_turn_sweep() {
-    let pool = pool().await;
+    let db = Database::new(pool().await);
     let attempt = first_attempt(&FakeRuntime::default()).await;
-    let job_id = closed_after_one_round(&pool, &attempt).await;
-    let store = JobStore::new(pool);
+    let job_id = closed_after_one_round(&db, &attempt).await;
+    let store = JobStore::new(db.clone());
 
     let kept = resumable_question_ids(&store).await.unwrap();
     assert_eq!(
@@ -587,7 +584,7 @@ async fn a_pending_research_turn_keeps_its_question_for_the_turn_sweep() {
 
 #[tokio::test]
 async fn a_saved_research_question_that_cannot_be_read_is_left_out() {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(Database::new(pool().await));
     let job = store
         .submit(&research_job(&research("conversation-a")).unwrap())
         .await
@@ -637,11 +634,10 @@ fn model_b() -> ModelRef {
 /// The research runtime with `default` as the Settings default, and the
 /// first attempt's chat set to model B.
 async fn chat_on_model_b(
-    pool: &sqlx::SqlitePool,
+    db: &Database,
     default: Arc<Scripted>,
 ) -> (FakeRuntime, Arc<JobRuntime>, FirstAttempt) {
-    let jobs =
-        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
+    let jobs = JobRuntime::with_poll_interval(db.clone(), Duration::from_millis(50));
     let runtime = FakeRuntime {
         llm: Some(default),
         jobs: Some(jobs.clone()),
@@ -660,12 +656,12 @@ async fn chat_on_model_b(
 
 #[tokio::test]
 async fn a_resumed_research_turn_answers_with_the_chats_model_and_records_it() {
-    let pool = pool().await;
+    let db = Database::new(pool().await);
     let default = Scripted::new([]);
     let chosen = Scripted::new([CompletionResponse::from_text(
         "Shredding, then leaching recovers most of the lithium.",
     )]);
-    let (mut runtime, jobs, attempt) = chat_on_model_b(&pool, default.clone()).await;
+    let (mut runtime, jobs, attempt) = chat_on_model_b(&db, default.clone()).await;
     let conversation_id = attempt.request.conversation_id.clone().unwrap();
     runtime.models = vec![(
         model_b(),
@@ -675,7 +671,7 @@ async fn a_resumed_research_turn_answers_with_the_chats_model_and_records_it() {
             conversation_id: conversation_id.clone(),
         }),
     )];
-    let job_id = closed_after_one_round(&pool, &attempt).await;
+    let job_id = closed_after_one_round(&db, &attempt).await;
 
     jobs.register(
         DEEP_RESEARCH,
@@ -718,11 +714,11 @@ async fn a_resumed_research_turn_answers_with_the_chats_model_and_records_it() {
 
 #[tokio::test]
 async fn a_research_turn_resumed_after_its_model_was_deleted_fails_and_never_falls_back() {
-    let pool = pool().await;
+    let db = Database::new(pool().await);
     let default = Scripted::new([]);
     // Model B is chosen but no longer downloaded.
-    let (runtime, jobs, attempt) = chat_on_model_b(&pool, default.clone()).await;
-    let job_id = closed_after_one_round(&pool, &attempt).await;
+    let (runtime, jobs, attempt) = chat_on_model_b(&db, default.clone()).await;
+    let job_id = closed_after_one_round(&db, &attempt).await;
 
     jobs.register(
         DEEP_RESEARCH,
@@ -772,17 +768,16 @@ async fn reopened(
 /// loads, ends it.
 #[tokio::test]
 async fn a_resumed_research_turn_stopped_before_it_registers_fails_its_question() {
-    let pool = pool().await;
+    let db = Database::new(pool().await);
     let llm = Scripted::new([]);
-    let jobs =
-        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
+    let jobs = JobRuntime::with_poll_interval(db.clone(), Duration::from_millis(50));
     let runtime = FakeRuntime {
         llm: Some(llm.clone()),
         jobs: Some(jobs.clone()),
         ..FakeRuntime::default()
     };
     let attempt = first_attempt(&runtime).await;
-    let job_id = closed_after_one_round(&pool, &attempt).await;
+    let job_id = closed_after_one_round(&db, &attempt).await;
     assert!(runtime.turn_cancellation.request_cancel(
         attempt.request.conversation_id.as_deref().unwrap(),
         attempt.request.request_id.as_deref(),
@@ -808,16 +803,15 @@ async fn a_resumed_research_turn_stopped_before_it_registers_fails_its_question(
 /// A turn cannot start when another holds its request id.
 #[tokio::test]
 async fn a_resumed_research_turn_that_finds_its_request_in_flight_fails_its_question() {
-    let pool = pool().await;
-    let jobs =
-        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
+    let db = Database::new(pool().await);
+    let jobs = JobRuntime::with_poll_interval(db.clone(), Duration::from_millis(50));
     let runtime = FakeRuntime {
         llm: Some(Scripted::new([])),
         jobs: Some(jobs.clone()),
         ..FakeRuntime::default()
     };
     let attempt = first_attempt(&runtime).await;
-    let job_id = closed_after_one_round(&pool, &attempt).await;
+    let job_id = closed_after_one_round(&db, &attempt).await;
     assert!(runtime.turn_cancellation.begin_turn_within(
         attempt.request.request_id.as_deref().unwrap(),
         attempt.request.conversation_id.as_deref().unwrap(),
@@ -846,9 +840,8 @@ async fn a_resumed_research_turn_that_finds_its_request_in_flight_fails_its_ques
 /// A saved request that names no request id cannot be resumed.
 #[tokio::test]
 async fn a_saved_research_request_that_names_no_request_fails_its_question() {
-    let pool = pool().await;
-    let jobs =
-        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
+    let db = Database::new(pool().await);
+    let jobs = JobRuntime::with_poll_interval(db.clone(), Duration::from_millis(50));
     let runtime = FakeRuntime {
         llm: Some(Scripted::new([])),
         jobs: Some(jobs.clone()),
@@ -856,7 +849,7 @@ async fn a_saved_research_request_that_names_no_request_fails_its_question() {
     };
     let mut attempt = first_attempt(&runtime).await;
     attempt.request.request_id = None;
-    let job_id = closed_after_one_round(&pool, &attempt).await;
+    let job_id = closed_after_one_round(&db, &attempt).await;
 
     let job = reopened(&runtime, &jobs, &job_id).await;
 
@@ -963,7 +956,7 @@ async fn save_live_job(
 /// it: its request, its `assembled` checkpoint and its last round.
 #[tokio::test]
 async fn a_question_is_kept_only_if_the_whole_saved_turn_can_be_read() {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(Database::new(pool().await));
     let saved = |name: &str| saved_by_a_turn("conversation-a", name, &format!("question-{name}"));
     let (requested, assembled) = saved("readable");
     save_live_job(&store, "readable", requested, assembled, None).await;
@@ -991,16 +984,16 @@ async fn a_question_is_kept_only_if_the_whole_saved_turn_can_be_read() {
 #[tokio::test]
 async fn a_research_job_whose_saved_turn_cannot_be_read_fails_with_its_question() {
     let pool = pool().await;
+    let db = Database::new(pool.clone());
     let llm = Scripted::new([]);
-    let jobs =
-        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
+    let jobs = JobRuntime::with_poll_interval(db.clone(), Duration::from_millis(50));
     let runtime = FakeRuntime {
         llm: Some(llm.clone()),
         jobs: Some(jobs.clone()),
         ..FakeRuntime::default()
     };
     let attempt = first_attempt(&runtime).await;
-    let job_id = closed_after_one_round(&pool, &attempt).await;
+    let job_id = closed_after_one_round(&db, &attempt).await;
     // Saved by an older build: the checkpoint lacks a field this one saves.
     let mut assembled = jobs
         .store()
@@ -1068,7 +1061,7 @@ async fn question_failed(runtime: &FakeRuntime, attempt: &FirstAttempt) {
 #[tokio::test]
 async fn a_research_turn_whose_job_panics_answers_its_waiting_command() {
     let jobs =
-        JobRuntime::with_poll_interval(Database::from(pool().await), Duration::from_millis(50));
+        JobRuntime::with_poll_interval(Database::new(pool().await), Duration::from_millis(50));
     let runtime = FakeRuntime {
         jobs: Some(jobs.clone()),
         ..FakeRuntime::default()
@@ -1096,15 +1089,14 @@ async fn a_research_turn_whose_job_panics_answers_its_waiting_command() {
 
 #[tokio::test]
 async fn a_research_turn_whose_job_panics_fails_its_saved_question() {
-    let pool = pool().await;
-    let jobs =
-        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
+    let db = Database::new(pool().await);
+    let jobs = JobRuntime::with_poll_interval(db.clone(), Duration::from_millis(50));
     let runtime = FakeRuntime {
         jobs: Some(jobs.clone()),
         ..FakeRuntime::default()
     };
     let attempt = first_attempt(&runtime).await;
-    let job_id = closed_after_one_round(&pool, &attempt).await;
+    let job_id = closed_after_one_round(&db, &attempt).await;
 
     jobs.register(
         DEEP_RESEARCH,
@@ -1123,15 +1115,14 @@ async fn a_research_turn_whose_job_panics_fails_its_saved_question() {
 
 #[tokio::test]
 async fn a_research_turn_the_runtime_failed_for_stopping_the_app_fails_its_saved_question() {
-    let pool = pool().await;
-    let jobs =
-        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
+    let db = Database::new(pool().await);
+    let jobs = JobRuntime::with_poll_interval(db.clone(), Duration::from_millis(50));
     let runtime = FakeRuntime {
         jobs: Some(jobs.clone()),
         ..FakeRuntime::default()
     };
     let attempt = first_attempt(&runtime).await;
-    let job_id = closed_after_one_round(&pool, &attempt).await;
+    let job_id = closed_after_one_round(&db, &attempt).await;
     // The app was closed from under it once already, and is again.
     let store = jobs.store();
     store.claim(&job_id).await.unwrap().unwrap();
@@ -1160,15 +1151,14 @@ async fn a_research_turn_the_runtime_failed_for_stopping_the_app_fails_its_saved
 /// question it saved is left retryable.
 #[tokio::test]
 async fn stopping_a_research_job_that_never_started_fails_its_question() {
-    let pool = pool().await;
-    let jobs =
-        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
+    let db = Database::new(pool().await);
+    let jobs = JobRuntime::with_poll_interval(db.clone(), Duration::from_millis(50));
     let runtime = FakeRuntime {
         jobs: Some(jobs.clone()),
         ..FakeRuntime::default()
     };
     let attempt = first_attempt(&runtime).await;
-    let job_id = closed_after_one_round(&pool, &attempt).await;
+    let job_id = closed_after_one_round(&db, &attempt).await;
 
     let stopped = stop(
         &runtime,

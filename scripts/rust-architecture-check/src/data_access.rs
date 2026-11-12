@@ -1,7 +1,9 @@
-//! The five data-access rules, held at zero: one way to begin a transaction,
+//! The six data-access rules, held at zero: one way to begin a transaction,
 //! SQL only in data modules, one transaction for a function that runs several statements
-//! or is a unit of work, sqlx named only in data modules, and the driver's handles kept
-//! inside data modules (no handout, and `sqlx_pool()` called only there).
+//! or is a unit of work, sqlx named only in data modules, the driver's handles kept
+//! inside data modules (no handout, and `sqlx_pool()` called only there), and every
+//! statement in a unit of work (a statement that writes on a write unit, and only the
+//! openers creating a pool or a `Database`).
 use crate::{
     item_attrs,
     ratchet::{impl_item_attrs, production_files, token_paths, trait_item_attrs},
@@ -9,6 +11,7 @@ use crate::{
 };
 mod handouts;
 mod rule3;
+mod rule6;
 mod sqlx_types;
 mod unit_of_work;
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
@@ -21,7 +24,6 @@ use syn::{
 type Error = Box<dyn std::error::Error>;
 
 const TRANSACTIONS: &str = "crates/lattice-core/src/shared/persistence/transactions.rs";
-const DRIVER: &str = "crates/lattice-core/src/shared/persistence/driver.rs";
 const POSTGRES: &str = "crates/lattice-sync/";
 const STORE_CRATE: &str = "crates/lattice-store/";
 const DATA_NAMES: [&str; 7] = [
@@ -61,12 +63,6 @@ pub type Exception<'a> = (&'a str, &'a str, Exempt, &'a str);
 
 pub const EXCEPTIONS: &[Exception<'static>] = &[
     (
-        "crates/lattice-desktop/src/infrastructure/persistence/database/migrate.rs",
-        "run_migrations",
-        Exempt::Shape,
-        "sqlx's migrator runs each migration in its own transaction, and PRAGMA optimize after it refreshes planner statistics only",
-    ),
-    (
         "crates/lattice-desktop/src/features/indexing/library_owner.rs",
         "adopt",
         Exempt::Awaits,
@@ -82,46 +78,28 @@ pub type Exemption<'a> = (&'a str, &'a str, &'a str, &'a str);
 
 pub const HANDOUT_EXEMPTIONS: &[Exemption<'static>] = &[
     (
-        DRIVER,
-        "trait DriverPool",
-        "sqlx_pool",
-        "the one sanctioned door to the driver's pool; rule 4 keeps the trait out of code outside data modules",
-    ),
-    (
-        DRIVER,
-        "impl DriverPool for Database",
-        "sqlx_pool",
-        "the one sanctioned door to the pool inside a Database",
-    ),
-    (
-        DRIVER,
-        "impl DriverPool for SqlitePool",
-        "sqlx_pool",
-        "the one sanctioned door to a raw pool, for tests and data modules",
-    ),
-    (
         TRANSACTIONS,
         "impl Deref for WriteTx",
         "*",
-        "the unit-of-work guard: data functions take &mut SqliteConnection and services pass &mut tx by coercion, because services cannot name the type",
+        "the unit-of-work guard: read functions take &mut SqliteConnection and a unit passed as &mut tx coerces to it; write functions take &mut WriteTx",
     ),
     (
         TRANSACTIONS,
         "impl DerefMut for WriteTx",
         "*",
-        "the unit-of-work guard: data functions take &mut SqliteConnection and services pass &mut tx by coercion, because services cannot name the type",
+        "the unit-of-work guard: read functions take &mut SqliteConnection and a unit passed as &mut tx coerces to it; write functions take &mut WriteTx",
     ),
     (
         TRANSACTIONS,
         "impl Deref for ReadTx",
         "*",
-        "the unit-of-work guard: data functions take &mut SqliteConnection and services pass &mut tx by coercion, because services cannot name the type",
+        "the unit-of-work guard: read functions take &mut SqliteConnection and a unit passed as &mut tx coerces to it; write functions take &mut WriteTx",
     ),
     (
         TRANSACTIONS,
         "impl DerefMut for ReadTx",
         "*",
-        "the unit-of-work guard: data functions take &mut SqliteConnection and services pass &mut tx by coercion, because services cannot name the type",
+        "the unit-of-work guard: read functions take &mut SqliteConnection and a unit passed as &mut tx coerces to it; write functions take &mut WriteTx",
     ),
     (
         "crates/lattice-sync/src/persistence/db.rs",
@@ -221,6 +199,7 @@ fn scan_file(
     }
     found.extend(rule3::violations(path, ast, exceptions, data));
     found.extend(unit_of_work::violations(path, ast, exceptions));
+    found.extend(rule6::violations(path, ast));
     found.sort_by_key(|violation| (violation.rule, violation.line));
     found
 }
@@ -573,6 +552,10 @@ impl<'ast> Visit<'ast> for Scan<'_> {
 
 #[cfg(test)]
 mod driver_tests;
+#[cfg(test)]
+mod rule6_openers_tests;
+#[cfg(test)]
+mod rule6_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

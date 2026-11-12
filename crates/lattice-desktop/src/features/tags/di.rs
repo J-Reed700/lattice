@@ -180,11 +180,11 @@ mod tests {
         let chunk = Chunk::new(metadata.id().clone(), "Ownership in Rust".into(), 0);
         let document = metadata.from_parts(vec![chunk], vec![]).unwrap();
         let document_id = document.id().as_str().to_string();
-        DocumentRepository::new(pool.clone())
+        let database = Database::new(pool);
+        DocumentRepository::new(database.clone())
             .save_batch(std::slice::from_ref(&document))
             .await
             .unwrap();
-        let database = Database::from(pool);
         let tag_service = build_service(database.clone());
         let tags = build(tag_service.clone());
         let ai = build_ai(database, tag_service, Arc::new(Loaded));

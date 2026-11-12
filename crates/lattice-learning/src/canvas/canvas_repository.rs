@@ -5,10 +5,9 @@ use crate::{
     persistence::{db, hash, now},
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, WriteTx};
 use serde::Serialize;
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use sqlx::{Row, SqliteConnection};
 use std::collections::HashMap;
 
 /// The most a canvas scene may hold, saved or imported.
@@ -17,7 +16,7 @@ const MAX_ELEMENTS: usize = 5_000;
 
 #[derive(Clone)]
 pub struct LearningCanvasRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 #[derive(Clone)]
@@ -136,14 +135,13 @@ fn validate_text(value: &str, label: &str, max: usize, required: bool) -> Result
 }
 
 impl LearningCanvasRepository {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     pub async fn workspace(&self, program_id: &str) -> Result<LearningCanvasWorkspaceDto> {
         validate_uuid(program_id, "program")?;
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await.map_err(db)?;
         let exists: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_one(&mut *tx)
@@ -203,7 +201,7 @@ impl LearningCanvasRepository {
         validate_text(&request.title, "Canvas title", 120, true)?;
         validate_text(&request.description, "Canvas description", 2000, false)?;
         let payload_hash = hash(&(request, &scene.json))?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &request.program_id).await?;
         if operation(
             &request.operation_id,
@@ -268,7 +266,7 @@ impl LearningCanvasRepository {
             ));
         }
         let payload_hash = hash(&(request, &scene.json))?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &request.program_id).await?;
         if operation(
             &request.operation_id,
@@ -329,7 +327,7 @@ impl LearningCanvasRepository {
         }
         validate_text(&request.name, "Snapshot name", 120, true)?;
         let payload_hash = hash(request)?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &request.program_id).await?;
         if operation(
             &request.operation_id,
@@ -407,7 +405,7 @@ impl LearningCanvasRepository {
             ));
         }
         let payload_hash = hash(request)?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &request.program_id).await?;
         if operation(
             &request.operation_id,
@@ -530,11 +528,11 @@ async fn validate_active_program(
 
 /// Upgrade SQLite's deferred transaction to a writer before checking operation IDs.
 /// Concurrent retries then wait for the winning transaction and observe its receipt.
-async fn lock_active_program(tx: &mut SqliteConnection, program_id: &str) -> Result<()> {
+async fn lock_active_program(tx: &mut WriteTx, program_id: &str) -> Result<()> {
     let result =
         sqlx::query("UPDATE learning_programs SET status=status WHERE id=? AND status='active'")
             .bind(program_id)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
     if result.rows_affected() == 1 {
@@ -543,7 +541,7 @@ async fn lock_active_program(tx: &mut SqliteConnection, program_id: &str) -> Res
     let status: Option<String> =
         sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
             .bind(program_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(db)?;
     match status.as_deref() {
@@ -596,7 +594,7 @@ async fn canvas_for_update(
 }
 
 async fn insert_snapshot(
-    tx: &mut SqliteConnection,
+    tx: &mut WriteTx,
     snapshot_id: &str,
     program_id: &str,
     canvas_id: &str,
@@ -604,7 +602,7 @@ async fn insert_snapshot(
     canvas: &sqlx::sqlite::SqliteRow,
 ) -> Result<()> {
     sqlx::query("INSERT INTO learning_canvas_snapshots(id,program_id,canvas_id,name,title,description,scene_json,element_count,canvas_revision,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
-        .bind(snapshot_id).bind(program_id).bind(canvas_id).bind(name).bind(canvas.get::<String,_>("title")).bind(canvas.get::<String,_>("description")).bind(canvas.get::<String,_>("scene_json")).bind(canvas.get::<i64,_>("element_count")).bind(canvas.get::<i64,_>("revision")).bind(now()).execute(&mut *tx).await.map_err(db)?;
+        .bind(snapshot_id).bind(program_id).bind(canvas_id).bind(name).bind(canvas.get::<String,_>("title")).bind(canvas.get::<String,_>("description")).bind(canvas.get::<String,_>("scene_json")).bind(canvas.get::<i64,_>("element_count")).bind(canvas.get::<i64,_>("revision")).bind(now()).execute(&mut **tx).await.map_err(db)?;
     Ok(())
 }
 

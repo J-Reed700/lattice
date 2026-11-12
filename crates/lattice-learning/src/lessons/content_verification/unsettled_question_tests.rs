@@ -30,6 +30,16 @@ fn a_question_whose_finding_waits_is_chosen_when_the_lesson_can_spare_it() {
 }
 
 #[test]
+fn of_two_waiting_questions_of_one_kind_only_the_first_is_chosen() {
+    let lesson = shaped_lesson();
+    let waiting = waiting_on(&lesson, &[0, 1]);
+    assert_eq!(
+        chosen(&lesson, &waiting, &Cuts::default()),
+        [(11, "P1?".to_owned())]
+    );
+}
+
+#[test]
 fn a_hash_that_matches_no_question_chooses_nothing() {
     let lesson = shaped_lesson();
     let waiting = BTreeSet::from(["not a question's hash".to_owned()]);
@@ -82,8 +92,9 @@ fn cuts_saved_without_the_unsettled_field_load() {
 #[tokio::test]
 async fn a_waiting_question_finding_sends_the_question_out_of_the_lesson() -> Result<()> {
     let pool = crate::test_support::pool().await?;
-    let (repo, job, lesson_id) = crate::content_verification::test_support::setup(&pool).await?;
-    let database = Database::from(pool.clone());
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = crate::content_verification::test_support::setup(&db).await?;
+    let database = db.clone();
     let lesson = shaped_lesson();
     let finding =
         ReviewFinding::reviewer(1, Some(FindingSite::Question(2)), "Alpha holds the line");
@@ -125,15 +136,7 @@ async fn a_floor_failure_with_an_unsettled_question_going_puts_it_back() -> Resu
     let llm = model(&[]);
     let mut ledger = ClaimLedger::open(&llm, "{}").await?;
     ledger.cuts.go_unsettled(11, "P1?".into());
-    for (unit, label) in [
-        (12, "P2?"),
-        (13, "Q1?"),
-        (14, "Q2?"),
-        (15, "T1?"),
-        (16, "T2?"),
-    ] {
-        ledger.cuts.go(unit, label.into());
-    }
+    ledger.cuts.go(12, "P2?".into());
     let sources = sources();
     let references = ReferenceCollection::lexical(&sources)?;
 
@@ -147,10 +150,7 @@ async fn a_floor_failure_with_an_unsettled_question_going_puts_it_back() -> Resu
     .await?;
 
     assert!(matches!(settled, Settled::Again(_)));
-    assert_eq!(
-        ledger.cuts.going.keys().copied().collect::<Vec<_>>(),
-        [12, 13, 14, 15, 16]
-    );
+    assert_eq!(ledger.cuts.going.keys().copied().collect::<Vec<_>>(), [12]);
     assert!(ledger.cuts.unsettled.is_empty());
     Ok(())
 }
@@ -179,8 +179,9 @@ fn the_last_question_of_the_lesson_is_never_chosen() {
 #[tokio::test]
 async fn a_finding_that_waits_after_the_review_sends_its_question_out() -> Result<()> {
     let pool = crate::test_support::pool().await?;
-    let (repo, job, lesson_id) = crate::content_verification::test_support::setup(&pool).await?;
-    let database = Database::from(pool.clone());
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = crate::content_verification::test_support::setup(&db).await?;
+    let database = db.clone();
     let lesson = shaped_lesson();
     let finding =
         ReviewFinding::reviewer(1, Some(FindingSite::Question(2)), "Alpha holds the line");

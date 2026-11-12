@@ -490,12 +490,13 @@ async fn insert_failed_question(
 mod tests {
     use super::*;
     use crate::features::conversation::repository::ConversationRepository;
+    use lattice_core::shared::persistence::Database;
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn thread() -> (ConversationRepository, String) {
         let pool = SqlitePoolOptions::new().connect(":memory:").await.unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        let repo = ConversationRepository::new(pool);
+        let repo = ConversationRepository::new(Database::new(pool));
         let id = repo.create("Thread", None).await.unwrap().id.to_string();
         (repo, id)
     }

@@ -5,9 +5,7 @@ use async_trait::async_trait;
 use lattice_core::application::ports::EmbeddingRepositoryPort;
 use lattice_core::domain::entities::Embedding as DomainEmbedding;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 
 /// Embedding entity from database
 #[derive(Debug, Clone)]
@@ -21,13 +19,12 @@ pub struct Embedding {
 
 /// Production embedding repository backed by SQLite
 pub struct EmbeddingRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl EmbeddingRepository {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 }
 
@@ -47,8 +44,10 @@ impl EmbeddingRepositoryPort for EmbeddingRepository {
     }
 
     async fn save(&self, entity: &DomainEmbedding, vector: Vec<f32>) -> Result<()> {
-        let mut conn = self.pool.acquire().await?;
-        ops::save(&mut conn, entity, vector).await
+        let mut tx = self.db.begin_write().await?;
+        ops::save(&mut tx, entity, vector).await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     async fn save_batch(&self, entries: Vec<(DomainEmbedding, Vec<f32>)>) -> Result<()> {
@@ -56,7 +55,7 @@ impl EmbeddingRepositoryPort for EmbeddingRepository {
             return Ok(());
         }
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -74,43 +73,53 @@ impl EmbeddingRepositoryPort for EmbeddingRepository {
         &self,
         chunk_id: &str,
     ) -> Result<Option<(DomainEmbedding, Vec<f32>)>> {
-        let mut conn = self.pool.acquire().await?;
-        ops::find_by_chunk_id(&mut conn, chunk_id).await
+        let mut read = self.db.begin_read().await?;
+        let found = ops::find_by_chunk_id(&mut read, chunk_id).await?;
+        read.commit().await?;
+        Ok(found)
     }
 
     async fn find_by_document_id(
         &self,
         document_id: &str,
     ) -> Result<Vec<(DomainEmbedding, Vec<f32>)>> {
-        let mut conn = self.pool.acquire().await?;
-        ops::find_by_document_id(&mut conn, document_id).await
+        let mut read = self.db.begin_read().await?;
+        let found = ops::find_by_document_id(&mut read, document_id).await?;
+        read.commit().await?;
+        Ok(found)
     }
 
     async fn vectors_by_document_ids(
         &self,
         document_ids: &[String],
     ) -> Result<lattice_core::application::ports::embedding_repository_port::DocumentVectors> {
-        let mut conn = self.pool.acquire().await?;
-        crate::infrastructure::persistence::repositories::embedding::ops::vectors_by_document_ids(
-            &mut conn,
-            document_ids,
-        )
-        .await
+        let mut read = self.db.begin_read().await?;
+        let vectors =
+            crate::infrastructure::persistence::repositories::embedding::ops::vectors_by_document_ids(
+                &mut read,
+                document_ids,
+            )
+            .await?;
+        read.commit().await?;
+        Ok(vectors)
     }
 
     async fn delete_by_chunk_id(&self, chunk_id: &str) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query!(
             r#"DELETE FROM text_embeddings WHERE chunk_id = ?"#,
             chunk_id
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to delete embedding: {}", e)))?;
+        tx.commit().await?;
 
         Ok(())
     }
 
     async fn delete_by_document_id(&self, document_id: &str) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query(
             r#"
             DELETE FROM text_embeddings
@@ -120,18 +129,22 @@ impl EmbeddingRepositoryPort for EmbeddingRepository {
             "#,
         )
         .bind(document_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to delete embeddings: {}", e)))?;
+        tx.commit().await?;
 
         Ok(())
     }
 
     async fn count(&self) -> Result<i64> {
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM text_embeddings")
-            .fetch_one(&self.pool)
+        let mut read = self.db.begin_read().await?;
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM text_embeddings")
+            .fetch_one(&mut *read)
             .await
-            .map_err(|e| AppError::Database(format!("Failed to count embeddings: {}", e)))
+            .map_err(|e| AppError::Database(format!("Failed to count embeddings: {}", e)))?;
+        read.commit().await?;
+        Ok(count)
     }
 
     async fn create_batch(&self, entries: Vec<(DomainEmbedding, Vec<f32>)>) -> Result<Vec<String>> {

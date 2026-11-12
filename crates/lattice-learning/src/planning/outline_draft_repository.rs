@@ -1,9 +1,10 @@
 //! Atomic draft checkpoints, including raw citations and their review state.
 use crate::{dto::*, outline_draft::OutlineDraft};
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::WriteTx;
 
 pub(crate) async fn insert(
-    tx: &mut sqlx::SqliteConnection,
+    tx: &mut WriteTx,
     program: &LearningProgramDto,
     draft: &OutlineDraft,
 ) -> Result<()> {
@@ -13,8 +14,8 @@ pub(crate) async fn insert(
     sqlx::query("INSERT INTO learning_outline_drafts(program_id,state_json) VALUES(?,?)")
         .bind(&program.summary.id)
         .bind(&state)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
-    sqlx::query("INSERT INTO learning_outline_checkpoints(program_id,revision,state_json,created_at) VALUES(?,?,?,?)").bind(&program.summary.id).bind(program.summary.revision).bind(&state).bind(draft.review.updated_at).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO learning_outline_checkpoints(program_id,revision,state_json,created_at) VALUES(?,?,?,?)").bind(&program.summary.id).bind(program.summary.revision).bind(&state).bind(draft.review.updated_at).execute(&mut **tx).await?;
     Ok(())
 }

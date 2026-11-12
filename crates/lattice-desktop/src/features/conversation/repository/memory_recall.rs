@@ -12,7 +12,6 @@ use lattice_core::application::ports::conversation_memory::{
 };
 use lattice_core::domain::conversation::memory::{MemoryId, SourceRole};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
 use std::str::FromStr;
 
 /// Cap on terms in one `MATCH` expression (§9.1 rule 1).
@@ -103,7 +102,7 @@ impl ConversationRepository {
         let mut out = RecallCandidates::default();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut tx = self
-            .pool
+            .db
             .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin recall read: {}", e)))?;
@@ -220,7 +219,7 @@ impl ConversationRepository {
         terms: &[String],
     ) -> Result<TermHolders> {
         let mut tx = self
-            .pool
+            .db
             .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin term read: {}", e)))?;
@@ -270,6 +269,7 @@ impl ConversationRepository {
         if needle.is_empty() {
             return Ok(Vec::new());
         }
+        let mut read = self.db.begin_read().await?;
         let ids: Vec<String> = sqlx::query_scalar(
             "SELECT id FROM conversation_memory_items \
              WHERE conversation_id = ? AND instr(lower(label), lower(?)) > 0 \
@@ -278,9 +278,10 @@ impl ConversationRepository {
         .bind(conversation_id)
         .bind(needle)
         .bind(limit.clamp(1, 64) as i64)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("Failed to search memory labels: {}", e)))?;
+        read.commit().await?;
 
         Ok(ids
             .into_iter()

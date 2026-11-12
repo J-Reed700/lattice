@@ -1,6 +1,6 @@
 use crate::persistence::db;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Database;
 use sqlx::Row;
 
 /// What a claim's re-profile reads: its statement and where it sits.
@@ -13,37 +13,39 @@ pub(in crate::references::trust) struct ClaimContext {
 }
 
 pub(in crate::references::trust) async fn active_version_id(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
     source_id: &str,
 ) -> Result<Option<String>> {
-    let pool = pool.sqlx_pool();
-    Ok(sqlx::query_scalar::<_, Option<String>>(
+    let mut read = database.begin_read().await.map_err(db)?;
+    let version = sqlx::query_scalar::<_, Option<String>>(
         "SELECT active_version_id FROM learning_source_library WHERE program_id=? AND id=? AND deleted_at IS NULL",
     )
     .bind(program_id)
     .bind(source_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *read)
     .await
-    .map_err(db)?
-    .flatten())
+    .map_err(db)?;
+    read.commit().await.map_err(db)?;
+    Ok(version.flatten())
 }
 
 pub(in crate::references::trust) async fn claim_context(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
     claim_id: &str,
 ) -> Result<Option<ClaimContext>> {
-    let pool = pool.sqlx_pool();
-    let Some(row) = sqlx::query(
+    let mut read = database.begin_read().await.map_err(db)?;
+    let row = sqlx::query(
         "SELECT c.statement, c.unit_index, (SELECT COUNT(*) FROM learning_blocks b WHERE b.lesson_id = c.lesson_id) AS sections, l.title AS lesson_title, p.goal          FROM learning_lesson_claims c          JOIN learning_lesson_reviews r ON r.lesson_id = c.lesson_id          JOIN learning_lessons l ON l.id = c.lesson_id AND l.program_id = r.program_id          JOIN learning_programs p ON p.id = r.program_id          WHERE c.claim_id=? AND r.program_id=?",
     )
     .bind(claim_id)
     .bind(program_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *read)
     .await
-    .map_err(db)?
-    else {
+    .map_err(db)?;
+    read.commit().await.map_err(db)?;
+    let Some(row) = row else {
         return Ok(None);
     };
     Ok(Some(ClaimContext {

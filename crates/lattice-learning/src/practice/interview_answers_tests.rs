@@ -881,9 +881,10 @@ async fn researched_answers_are_captured_hidden_and_frozen_with_each_attempt() -
     use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchResult};
     use lattice_core::application::ports::MockWebService;
     let pool = crate::tests::pool().await?;
+    let database = Database::new(pool.clone());
     let program = crate::tests::fixture();
     let program_id = &program.summary.id;
-    let programs = LearningRepository::new(pool.clone());
+    let programs = LearningRepository::new(database.clone());
     programs.create(&program).await?;
     programs
         .accept(&AcceptLearningProgramRequestDto {
@@ -892,7 +893,7 @@ async fn researched_answers_are_captured_hidden_and_frozen_with_each_attempt() -
             title: program.summary.title.clone(),
         })
         .await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let library = LearningSourceLibraryRepository::new(database.clone());
     let web = MockWebService::new();
     let url = "https://spec.example/idempotency";
     let text = source().full_text;
@@ -986,7 +987,7 @@ async fn researched_answers_are_captured_hidden_and_frozen_with_each_attempt() -
         builtin_runtime: None,
         interview_target: None,
     };
-    let repository = LearningPracticalRepository::new(pool.clone());
+    let repository = LearningPracticalRepository::new(database.clone());
     let public = repository
         .save_generated_activity(&request, &generated, "test-author", "saved-interview")
         .await?;
@@ -1021,7 +1022,7 @@ async fn researched_answers_are_captured_hidden_and_frozen_with_each_attempt() -
         };
         let directory = tempfile::tempdir()?;
         let packs = LearningPackRepository::new(
-            pool.clone(),
+            database.clone(),
             directory.path().join("packs"),
             directory.path().join("app"),
         );

@@ -22,7 +22,7 @@ pub(in super::super) async fn adoption_state(
 
 /// Whether the source still had `expected_revision` and took the version.
 pub(in super::super) async fn adopt_version(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     source_id: &str,
     version_id: &str,
@@ -30,7 +30,7 @@ pub(in super::super) async fn adopt_version(
     updated_at: i64,
 ) -> Result<bool> {
     let result=sqlx::query("UPDATE learning_source_library SET active_version_id=?,pending_version_id=NULL,revision=?,updated_at=? WHERE program_id=? AND id=? AND revision=?")
-        .bind(version_id).bind(revision).bind(updated_at).bind(program_id).bind(source_id).bind(expected_revision).execute(connection).await.map_err(db)?;
+        .bind(version_id).bind(revision).bind(updated_at).bind(program_id).bind(source_id).bind(expected_revision).execute(&mut **tx).await.map_err(db)?;
     Ok(result.rows_affected() == 1)
 }
 
@@ -56,7 +56,7 @@ pub(in super::super) async fn policy_state(
 
 /// Whether the source still had `expected_revision` and took the policy.
 pub(in super::super) async fn set_policy(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     source_id: &str,
     freshness_policy: &str,
@@ -64,7 +64,7 @@ pub(in super::super) async fn set_policy(
     updated_at: i64,
 ) -> Result<bool> {
     let result=sqlx::query("UPDATE learning_source_library SET freshness_policy=?,revision=?,updated_at=? WHERE program_id=? AND id=? AND revision=?")
-        .bind(freshness_policy).bind(revision).bind(updated_at).bind(program_id).bind(source_id).bind(expected_revision).execute(connection).await.map_err(db)?;
+        .bind(freshness_policy).bind(revision).bind(updated_at).bind(program_id).bind(source_id).bind(expected_revision).execute(&mut **tx).await.map_err(db)?;
     Ok(result.rows_affected() == 1)
 }
 
@@ -94,7 +94,7 @@ pub(in super::super) async fn deletion_state(
 
 /// Whether the source still had `expected_revision` and was live to delete.
 pub(in super::super) async fn mark_deleted(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     source_id: &str,
     reason: &str,
@@ -108,7 +108,7 @@ pub(in super::super) async fn mark_deleted(
         .bind(program_id)
         .bind(source_id)
         .bind(expected_revision)
-        .execute(connection)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
     Ok(updated.rows_affected() == 1)
@@ -212,7 +212,7 @@ pub(in super::super) async fn version_id_in_use(
 
 /// Whether the source still had `expected_revision` and was removed.
 pub(in super::super) async fn restore_source(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     source_id: &str,
     active_version_id: &str,
@@ -225,7 +225,7 @@ pub(in super::super) async fn restore_source(
         .bind(program_id)
         .bind(source_id)
         .bind(expected_revision)
-        .execute(connection)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
     Ok(updated.rows_affected() == 1)

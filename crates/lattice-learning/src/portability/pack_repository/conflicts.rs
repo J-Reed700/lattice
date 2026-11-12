@@ -21,8 +21,8 @@ use crate::{
     },
 };
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::driver::DriverPool;
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use lattice_core::shared::persistence::Database;
+use sqlx::{Row, SqliteConnection};
 use std::{borrow::Cow, collections::HashSet};
 
 impl LearningPackConflictKind {
@@ -120,12 +120,12 @@ impl IdClaim {
 
     async fn conflict(
         &self,
-        pool: &SqlitePool,
+        connection: &mut SqliteConnection,
         program_id: &str,
     ) -> Result<Option<LearningPackConflictDto>> {
-        let Some(row) = sqlx::query(&self.owner_sql)
+        let Some(row) = sqlx::query(sqlx::AssertSqlSafe(&*self.owner_sql))
             .bind(&self.id)
-            .fetch_optional(pool)
+            .fetch_optional(connection)
             .await
             .map_err(db)?
         else {
@@ -152,17 +152,17 @@ impl IdClaim {
 /// the course itself, then every record another course owns. A copy remaps
 /// every identifier, so its claims are read for validation only.
 pub(super) async fn scan(
-    pool: &impl DriverPool,
+    database: &Database,
     program: &LearningProgramDto,
     policy: LearningPackConflictPolicy,
     checked: CheckedPack,
 ) -> Result<PreviewRecord> {
-    let pool = pool.sqlx_pool();
+    let mut read = database.begin_read().await?;
     let id = &program.summary.id;
     let local_title: Option<String> =
         sqlx::query_scalar("SELECT title FROM learning_programs WHERE id=?")
             .bind(id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *read)
             .await
             .map_err(db)?;
     let mut conflicts = Vec::new();
@@ -172,9 +172,8 @@ pub(super) async fn scan(
         (None, ExistingAction::Replace) => action = "create",
         (None, _) => {}
         (Some(title), ExistingAction::Replace) => {
-            let mut connection = pool.acquire().await.map_err(db)?;
-            conflicts.extend(replace_conflicts(&mut connection, id, &title).await?);
-            warnings.extend(replace_warnings(&mut connection, id).await?);
+            conflicts.extend(replace_conflicts(&mut read, id, &title).await?);
+            warnings.extend(replace_warnings(&mut read, id).await?);
         }
         (Some(title), _) => conflicts.push(conflict(
             LearningPackConflictKind::Program,
@@ -187,10 +186,11 @@ pub(super) async fn scan(
         let mut seen = HashSet::new();
         for claim in &checked.claims {
             if seen.insert((claim.namespace, claim.id.as_str())) {
-                conflicts.extend(claim.conflict(pool, id).await?);
+                conflicts.extend(claim.conflict(&mut read, id).await?);
             }
         }
     }
+    read.commit().await?;
     Ok(PreviewRecord {
         program_id: id.clone(),
         title: program.summary.title.clone(),
@@ -274,21 +274,21 @@ fn schema_conflict(pack: &DecodedLearningPack, local_schema: i64) -> Result<Opti
 
 /// The blocked preview of a pack written by another build, if it is one.
 pub(super) async fn schema_mismatch(
-    pool: &impl DriverPool,
+    database: &Database,
     pack: &DecodedLearningPack,
 ) -> Result<Option<PreviewRecord>> {
-    let pool = pool.sqlx_pool();
-    let local = super::guards::schema_version(&mut *pool.acquire().await.map_err(db)?).await?;
+    let mut read = database.begin_read().await?;
+    let local = super::guards::schema_version(&mut read).await?;
+    read.commit().await?;
     schema_conflict(pack, local)
 }
 
 /// Apply checks the stamp again: a preview never authorizes changed data.
 pub(super) async fn require_same_schema(
-    pool: &impl DriverPool,
+    database: &Database,
     pack: &DecodedLearningPack,
 ) -> Result<()> {
-    let pool = pool.sqlx_pool();
-    match schema_mismatch(pool, pack).await? {
+    match schema_mismatch(database, pack).await? {
         Some(mut blocked) => Err(invalid(
             blocked
                 .conflicts

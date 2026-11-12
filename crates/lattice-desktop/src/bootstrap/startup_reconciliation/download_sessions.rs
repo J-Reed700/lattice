@@ -142,6 +142,7 @@ mod tests {
     use super::*;
     use crate::features::download::download_repository::mock::MockDownloadRepository;
     use lattice_core::domain::download::DownloadSession;
+    use lattice_core::shared::persistence::Database;
 
     fn downloading(id: &str) -> DownloadSession {
         let mut session = DownloadSession::new(
@@ -228,7 +229,7 @@ mod tests {
 
         reconcile_orphaned_sessions(
             repository.clone(),
-            Arc::new(DownloadedModelRepository::new(pool)),
+            Arc::new(DownloadedModelRepository::new(Database::new(pool))),
         )
         .await
         .unwrap();
@@ -247,19 +248,16 @@ mod tests {
     async fn sqlite_session_interrupted_before_relaunch_is_reconciled() {
         use crate::features::download::download_repository::SqliteDownloadRepository;
         use crate::infrastructure::persistence::database::connection::DatabaseConnection;
-        use lattice_core::shared::persistence::driver::DriverPool;
 
         let dir = tempfile::tempdir().unwrap();
-        let conn = Arc::new(
-            DatabaseConnection::new(dir.path().join("reconcile.db"))
-                .await
-                .unwrap(),
-        );
-        sqlx::migrate!("./migrations")
-            .run(conn.database().sqlx_pool())
+        let conn = DatabaseConnection::new(dir.path().join("reconcile.db"))
             .await
             .unwrap();
-        let repository: Arc<dyn DownloadRepository> = Arc::new(SqliteDownloadRepository::new(conn));
+        crate::infrastructure::persistence::database::run_migrations(conn.database())
+            .await
+            .unwrap();
+        let repository: Arc<dyn DownloadRepository> =
+            Arc::new(SqliteDownloadRepository::new(conn.database().clone()));
 
         let mut session = downloading("sqlite-interrupted");
         session.update_progress(500, 100.0);

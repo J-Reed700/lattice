@@ -4,6 +4,7 @@
 use crate::dto::LearningQuizSettingsDto;
 use crate::persistence::db;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::{Row, SqliteConnection};
 
 /// A lesson of the course as its rows keep it.
@@ -125,7 +126,7 @@ pub(super) struct NewLessonOutcome<'a> {
 
 /// Stores a lesson-level outcome.
 pub(super) async fn insert_lesson_outcome_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     outcome: &NewLessonOutcome<'_>,
 ) -> Result<()> {
     sqlx::query("INSERT INTO learning_outcome_definitions(id,program_id,module_id,lesson_id,title,description,ordinal,created_at) VALUES(?,?,NULL,?,?,?,?,?)")
@@ -136,7 +137,7 @@ pub(super) async fn insert_lesson_outcome_in(
         .bind(outcome.description)
         .bind(outcome.ordinal)
         .bind(outcome.created_at)
-        .execute(&mut *connection)
+        .execute(&mut **tx)
         .await
         .map(drop)
         .map_err(db)
@@ -319,7 +320,7 @@ pub(super) async fn slot_requirements_in(
 
 /// Stores a blueprint revision.
 pub(super) async fn insert_blueprint_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     blueprint: &NewBlueprint<'_>,
 ) -> Result<()> {
     sqlx::query("INSERT INTO learning_assessment_blueprints(id,program_id,revision,predecessor_revision,purpose,title,instructions,expected_minutes,allowed_aids_json,passing_score,rubric_json,feedback_timing,source_version_ids_json,status,change_reason,created_at,scope_kind,scope_id) VALUES(?,?,?,?,?,?,?,?,'[]',?,'[]','after_submission',?,'accepted',?,?,?,?)")
@@ -337,17 +338,14 @@ pub(super) async fn insert_blueprint_in(
         .bind(blueprint.created_at)
         .bind(blueprint.scope_kind)
         .bind(blueprint.scope_id)
-        .execute(&mut *connection)
+        .execute(&mut **tx)
         .await
         .map(drop)
         .map_err(db)
 }
 
 /// Stores a slot of a blueprint revision.
-pub(super) async fn insert_slot_in(
-    connection: &mut SqliteConnection,
-    slot: &NewSlot<'_>,
-) -> Result<()> {
+pub(super) async fn insert_slot_in(tx: &mut WriteTx, slot: &NewSlot<'_>) -> Result<()> {
     sqlx::query("INSERT INTO learning_assessment_blueprint_slots(blueprint_id,blueprint_revision,ordinal,outcome_id,format,difficulty,difficulty_max,points) VALUES(?,?,?,?,?,?,?,?)")
         .bind(slot.blueprint_id)
         .bind(slot.revision)
@@ -357,7 +355,7 @@ pub(super) async fn insert_slot_in(
         .bind(slot.difficulty)
         .bind(slot.difficulty_max)
         .bind(slot.points)
-        .execute(&mut *connection)
+        .execute(&mut **tx)
         .await
         .map(drop)
         .map_err(db)

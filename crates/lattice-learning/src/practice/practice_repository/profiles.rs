@@ -1,7 +1,6 @@
 //! Preparing for: course-level practice profiles.
 use super::*;
 use crate::recall::{study_repository::set_target_in, study_service};
-use lattice_core::shared::persistence::{Database, Transactions};
 use sqlx::SqliteConnection;
 
 async fn require_program(connection: &mut SqliteConnection, program_id: &str) -> Result<()> {
@@ -20,7 +19,7 @@ impl LearningPracticeRepository {
     /// A course's practice profile; the empty profile at revision 0 when none was saved.
     pub async fn get_profile(&self, program_id: &str) -> Result<LearningPracticeProfileDto> {
         uuid(program_id, "program")?;
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await.map_err(db)?;
         require_program(&mut tx, program_id).await?;
         let profile = course_profile(&mut tx, program_id).await?;
         tx.commit().await.map_err(db)?;
@@ -35,12 +34,9 @@ impl LearningPracticeRepository {
     ) -> Result<LearningPracticeProfileDto> {
         let program_id = request.program_id.as_str();
         uuid(program_id, "program")?;
-        let decks =
-            study_service::interview_deck_ids(&Database::from(self.pool.clone()), program_id)
-                .await?;
+        let decks = study_service::interview_deck_ids(&self.db, program_id).await?;
         let now = now();
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         require_program(&mut tx, program_id).await?;
         let current = profile_in(&mut tx, program_id).await?;
         let current_revision = current.as_ref().map_or(0, |profile| profile.revision);

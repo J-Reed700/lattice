@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use lattice_core::domain::learning::claim_review::{LessonReview, LessonReviewState};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::Database;
 use lattice_learning::repository::LearningRepository;
 use sqlx::SqlitePool;
 
@@ -14,10 +14,10 @@ use crate::features::learning::lessons::verifier_audit::AuditSummary;
 
 const MODEL: &str = "qwen3.5-27b";
 
-async fn ready_review(pool: &SqlitePool) -> String {
+async fn ready_review(pool: &SqlitePool, db: &Database) -> String {
     let mut program = lattice_learning::test_support::fixture();
     program.summary.status = lattice_learning::dto::LearningProgramStatus::Active;
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(db.clone())
         .create(&program)
         .await
         .unwrap();
@@ -37,7 +37,7 @@ async fn ready_review(pool: &SqlitePool) -> String {
             .await
             .unwrap();
     }
-    ClaimReviewRepository::new(pool.clone())
+    ClaimReviewRepository::new(db.clone())
         .set_lesson_review(
             &lesson_id,
             LessonReview {
@@ -65,10 +65,11 @@ async fn a_new_draft_written_while_the_hold_waits_for_the_write_lock_is_kept() {
         .await
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    let lesson_id = ready_review(&pool).await;
-    let store = ClaimReviewRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let lesson_id = ready_review(&pool, &db).await;
+    let store = ClaimReviewRepository::new(db.clone());
 
-    let mut tx = pool.begin_write().await.unwrap();
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
     let holding = {
         let store = store.clone();
         let lesson_id = lesson_id.clone();

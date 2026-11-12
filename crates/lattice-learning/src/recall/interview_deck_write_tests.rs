@@ -35,7 +35,7 @@ const PLAN: &str = r#"{
     ]
 }"#;
 
-async fn open() -> (tempfile::TempDir, SqlitePool) {
+async fn open() -> (tempfile::TempDir, SqlitePool, Database) {
     let dir = tempfile::tempdir().unwrap();
     let pool = SqlitePoolOptions::new()
         .max_connections(8)
@@ -44,6 +44,7 @@ async fn open() -> (tempfile::TempDir, SqlitePool) {
         )
         .await
         .unwrap();
+    let db = Database::new(pool.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
         .await
@@ -58,7 +59,7 @@ async fn open() -> (tempfile::TempDir, SqlitePool) {
         .execute(&pool)
         .await
         .unwrap();
-    (dir, pool)
+    (dir, pool, db)
 }
 
 fn request(target_at: Option<i64>) -> CreateInterviewStudyDeckRequestDto {
@@ -70,7 +71,7 @@ fn request(target_at: Option<i64>) -> CreateInterviewStudyDeckRequestDto {
 }
 
 async fn count(pool: &SqlitePool, table: &str) -> i64 {
-    sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))
         .fetch_one(pool)
         .await
         .unwrap()
@@ -82,18 +83,13 @@ fn tomorrow() -> i64 {
 
 #[tokio::test]
 async fn a_target_that_cannot_be_saved_leaves_no_deck_behind() {
-    let (_dir, pool) = open().await;
+    let (_dir, pool, db) = open().await;
     sqlx::query("CREATE TRIGGER refuse_target BEFORE INSERT ON study_deck_targets BEGIN SELECT RAISE(ABORT, 'injected'); END")
         .execute(&pool)
         .await
         .unwrap();
-    let repo = StudyRepository::new(pool.clone());
-    let result = create_interview_deck(
-        &repo,
-        &Database::from(pool.clone()),
-        request(Some(tomorrow())),
-    )
-    .await;
+    let repo = StudyRepository::new(db.clone());
+    let result = create_interview_deck(&repo, &db, request(Some(tomorrow()))).await;
     assert!(result.is_err());
     assert_eq!(count(&pool, "study_decks").await, 0);
     assert_eq!(count(&pool, "study_cards").await, 0);
@@ -101,14 +97,14 @@ async fn a_target_that_cannot_be_saved_leaves_no_deck_behind() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn making_the_same_deck_at_once_makes_one_deck() {
-    let (_dir, pool) = open().await;
+    let (_dir, pool, db) = open().await;
     let target = tomorrow();
     let mut calls = tokio::task::JoinSet::new();
     for _ in 0..6 {
-        let pool = pool.clone();
+        let db = db.clone();
         calls.spawn(async move {
-            let repo = StudyRepository::new(pool.clone());
-            create_interview_deck(&repo, &Database::from(pool.clone()), request(Some(target))).await
+            let repo = StudyRepository::new(db.clone());
+            create_interview_deck(&repo, &db, request(Some(target))).await
         });
     }
     while let Some(done) = calls.join_next().await {

@@ -1,12 +1,12 @@
 use crate::features::search::engine::fts_query::{self, FtsIndex, FtsQuery};
-use crate::infrastructure::persistence::database::connection::{
-    query_with_heavy_timeout, query_with_timeout,
-};
 use lattice_core::application::contracts::search::engine::BM25Result;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::Database;
 use sqlx::Row;
+
+fn query_failed(error: sqlx::Error) -> AppError {
+    AppError::Database(format!("Database query failed: {}", error))
+}
 
 /// One statement per index. Written out rather than built by string
 /// concatenation so `scripts/check-sql-contracts.py` can prepare both against
@@ -52,27 +52,25 @@ const TRIGRAM_SQL: &str = "SELECT
      LIMIT ?";
 
 pub(super) async fn bm25_results(
-    pool: &impl DriverPool,
+    db: &Database,
     query: &FtsQuery,
     top_k: usize,
 ) -> Result<Vec<BM25Result>> {
-    let pool = pool.sqlx_pool();
-    let pool = pool.clone();
     let sql = match query.index {
         FtsIndex::Words => WORDS_SQL,
         FtsIndex::Trigram => TRIGRAM_SQL,
     };
     let match_expression = query.match_expression.clone();
 
-    let rows = query_with_timeout(move || async move {
-        sqlx::query(sql)
-            .bind(fts_query::HEADER_BM25_WEIGHT)
-            .bind(match_expression)
-            .bind(top_k as i64)
-            .fetch_all(&pool)
-            .await
-    })
-    .await?;
+    let mut read = db.begin_read().await?;
+    let rows = sqlx::query(sql)
+        .bind(fts_query::HEADER_BM25_WEIGHT)
+        .bind(match_expression)
+        .bind(top_k as i64)
+        .fetch_all(&mut *read)
+        .await
+        .map_err(query_failed)?;
+    read.commit().await?;
 
     Ok(rows
         .into_iter()
@@ -100,43 +98,38 @@ pub(super) async fn bm25_results(
         .collect())
 }
 
-pub(super) async fn optimize_chunk_indexes(pool: &impl DriverPool) -> Result<()> {
-    let pool = pool.sqlx_pool();
-    query_with_heavy_timeout(|| async {
-        let mut tx = pool.begin_write().await?;
-        sqlx::query("INSERT INTO chunks_fts(chunks_fts) VALUES('optimize')")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("INSERT INTO chunks_trigram(chunks_trigram) VALUES('optimize')")
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        Ok(())
-    })
-    .await
+pub(super) async fn optimize_chunk_indexes(db: &Database) -> Result<()> {
+    let mut tx = db.begin_write().await?;
+    sqlx::query("INSERT INTO chunks_fts(chunks_fts) VALUES('optimize')")
+        .execute(&mut *tx)
+        .await
+        .map_err(query_failed)?;
+    sqlx::query("INSERT INTO chunks_trigram(chunks_trigram) VALUES('optimize')")
+        .execute(&mut *tx)
+        .await
+        .map_err(query_failed)?;
+    tx.commit().await?;
+    Ok(())
 }
 
-pub(super) async fn rebuild_chunk_indexes(pool: &impl DriverPool) -> Result<()> {
-    let pool = pool.sqlx_pool();
-    query_with_heavy_timeout(|| async {
-        let mut tx = pool.begin_write().await?;
-        sqlx::query("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("INSERT INTO chunks_trigram(chunks_trigram) VALUES('rebuild')")
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        Ok(())
-    })
-    .await
+pub(super) async fn rebuild_chunk_indexes(db: &Database) -> Result<()> {
+    let mut tx = db.begin_write().await?;
+    sqlx::query("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')")
+        .execute(&mut *tx)
+        .await
+        .map_err(query_failed)?;
+    sqlx::query("INSERT INTO chunks_trigram(chunks_trigram) VALUES('rebuild')")
+        .execute(&mut *tx)
+        .await
+        .map_err(query_failed)?;
+    tx.commit().await?;
+    Ok(())
 }
 
 pub(super) async fn document_updated_at(
-    pool: &impl DriverPool,
+    db: &Database,
     document_ids: &[String],
 ) -> Result<Vec<(String, String)>> {
-    let pool = pool.sqlx_pool();
     let placeholders = document_ids
         .iter()
         .map(|_| "?")
@@ -152,15 +145,17 @@ pub(super) async fn document_updated_at(
         placeholders
     );
 
-    let mut query_builder = sqlx::query(&query);
+    let mut query_builder = sqlx::query(sqlx::AssertSqlSafe(query.as_str()));
     for id in document_ids {
         query_builder = query_builder.bind(id);
     }
 
+    let mut read = db.begin_read().await?;
     let rows = query_builder
-        .fetch_all(pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("Failed to fetch timestamps: {}", e)))?;
+    read.commit().await?;
 
     rows.into_iter()
         .map(|row| {

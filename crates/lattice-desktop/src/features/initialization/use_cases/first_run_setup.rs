@@ -143,6 +143,7 @@ mod tests {
     use super::*;
     use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
     use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
+    use lattice_core::shared::persistence::Database;
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn setup_repo() -> Arc<DownloadedModelRepository> {
@@ -155,7 +156,7 @@ mod tests {
             .run(&pool)
             .await
             .expect("run migrations");
-        Arc::new(DownloadedModelRepository::new(pool))
+        Arc::new(DownloadedModelRepository::new(Database::new(pool)))
     }
 
     fn make_local_embedding_model(model_id: &str) -> DownloadedModel {
@@ -274,7 +275,7 @@ mod tests {
         .await
         .expect("insert pending embedding row");
 
-        let pending_repo = Arc::new(DownloadedModelRepository::new(pool));
+        let pending_repo = Arc::new(DownloadedModelRepository::new(Database::new(pool)));
         let use_case = CheckFirstRunStatusUseCase::new(pending_repo, processor_only_probe());
         let response = use_case.execute().await.expect("execute should succeed");
 

@@ -6,6 +6,7 @@ use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimId, ClaimLocation, Class, ClassifiedBy, EventProvenance, LessonReview,
     LessonReviewState, UnitKind,
 };
+use lattice_core::shared::persistence::Database;
 use sqlx::sqlite::SqlitePoolOptions;
 
 use super::repository::ClaimReviewRepository;
@@ -38,9 +39,10 @@ async fn a_code_example_claim_saved_before_its_run_was_recorded_reads_back_as_th
         .run(&pool)
         .await
         .unwrap();
+    let database = Database::new(pool.clone());
     let mut program = crate::test_support::fixture();
     program.summary.status = LearningProgramStatus::Active;
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(database.clone())
         .create(&program)
         .await
         .unwrap();
@@ -57,7 +59,7 @@ async fn a_code_example_claim_saved_before_its_run_was_recorded_reads_back_as_th
         .execute(&pool)
         .await
         .unwrap();
-    let store = ClaimReviewRepository::new(pool.clone());
+    let store = ClaimReviewRepository::new(database.clone());
     store
         .set_lesson_review(
             &lesson_id,

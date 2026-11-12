@@ -5,9 +5,8 @@
 use chrono::Utc;
 use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use lattice_core::shared::persistence::{Database, WriteTx};
+use sqlx::{Row, SqliteConnection};
 use std::path::PathBuf;
 use tracing::{debug, error, info};
 
@@ -26,14 +25,13 @@ use rows::{
 /// Handles conversion between domain entities and database rows.
 #[derive(Clone)]
 pub struct DownloadedModelRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl DownloadedModelRepository {
     /// Create a new repository instance
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     /// Save a downloaded model (insert or update)
@@ -52,7 +50,7 @@ impl DownloadedModelRepository {
     /// Returns error if database operation fails
     pub async fn save(&self, model: &DownloadedModel) -> Result<()> {
         let model_id = model.model_id().to_string();
-        let mut tx = self.pool.begin_write().await.map_err(|e| {
+        let mut tx = self.db.begin_write().await.map_err(|e| {
             error!(error = %e, model_id = %model_id, "Failed to begin transaction for model save");
             AppError::Database(format!("Failed to begin transaction: {}", e))
         })?;
@@ -69,14 +67,23 @@ impl DownloadedModelRepository {
     /// Find a downloaded model by its record ID
     pub async fn find_by_id(&self, id: &str) -> Result<Option<DownloadedModel>> {
         let query = build_model_select_query("WHERE m.id = ?1");
-        let record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
-            .bind(id)
-            .fetch_optional(&self.pool)
+        let mut read = self
+            .db
+            .begin_read()
             .await
-            .map_err(|e| {
-                error!(error = %e, id = %id, "Failed to find downloaded model by id");
-                AppError::Database(format!("Failed to find downloaded model: {}", e))
-            })?;
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
+        let record =
+            sqlx::query_as::<_, DownloadedModelRecord>(sqlx::AssertSqlSafe(query.as_str()))
+                .bind(id)
+                .fetch_optional(&mut *read)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, id = %id, "Failed to find downloaded model by id");
+                    AppError::Database(format!("Failed to find downloaded model: {}", e))
+                })?;
+        read.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         match record {
             Some(row) => Ok(Some(row.try_into()?)),
@@ -86,11 +93,15 @@ impl DownloadedModelRepository {
 
     /// Find a downloaded model by its model_id
     pub async fn find_by_model_id(&self, model_id: &str) -> Result<Option<DownloadedModel>> {
-        let mut connection =
-            self.pool.acquire().await.map_err(|e| {
+        let mut read =
+            self.db.begin_read().await.map_err(|e| {
                 AppError::Database(format!("Failed to find downloaded model: {}", e))
             })?;
-        model_by_model_id(&mut connection, model_id).await
+        let model = model_by_model_id(&mut read, model_id).await?;
+        read.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to find downloaded model: {}", e)))?;
+        Ok(model)
     }
 
     /// List all downloaded models
@@ -99,17 +110,18 @@ impl DownloadedModelRepository {
             "WHERE m.status = 'completed' ORDER BY m.downloaded_at DESC, m.created_at DESC",
         );
         let mut tx = self
-            .pool
+            .db
             .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
-        let records = sqlx::query_as::<_, DownloadedModelRecord>(&query)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(|e| {
-                error!(error = %e, "Failed to list downloaded models");
-                AppError::Database(format!("Failed to list downloaded models: {}", e))
-            })?;
+        let records =
+            sqlx::query_as::<_, DownloadedModelRecord>(sqlx::AssertSqlSafe(query.as_str()))
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, "Failed to list downloaded models");
+                    AppError::Database(format!("Failed to list downloaded models: {}", e))
+                })?;
 
         // A completed record can outlive its files (for example, after moving
         // to another computer). Use the same verification as model loading so
@@ -149,7 +161,7 @@ impl DownloadedModelRepository {
     /// - If no row deleted, queries again to distinguish "not found" vs "active"
     pub async fn delete_if_not_active(&self, id: &str) -> Result<Option<DownloadedModel>> {
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -230,6 +242,11 @@ impl DownloadedModelRepository {
     /// - Removes the record from database
     /// - Does NOT delete the file from filesystem (caller's responsibility)
     pub async fn delete_by_id(&self, id: &str) -> Result<()> {
+        let mut tx = self
+            .db
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         sqlx::query!(
             r#"
             DELETE FROM models
@@ -237,12 +254,15 @@ impl DownloadedModelRepository {
             "#,
             id
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             error!(error = %e, id = %id, "Failed to delete downloaded model");
             AppError::Database(format!("Failed to delete downloaded model: {}", e))
         })?;
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         debug!(id = %id, "Downloaded model deleted");
         Ok(())
@@ -251,7 +271,7 @@ impl DownloadedModelRepository {
     /// Check if a model is already downloaded
     pub async fn is_downloaded(&self, model_id: &str) -> Result<bool> {
         let mut tx = self
-            .pool
+            .db
             .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -265,7 +285,7 @@ impl DownloadedModelRepository {
 
 /// [`DownloadedModelRepository::save`] inside the caller's unit of work: the
 /// model row, and a synthesized file row when it has none.
-pub(crate) async fn save_in(conn: &mut SqliteConnection, model: &DownloadedModel) -> Result<()> {
+pub(crate) async fn save_in(tx: &mut WriteTx, model: &DownloadedModel) -> Result<()> {
     // Bind all values to variables to satisfy borrow checker
     let id = model.id().to_string();
     let model_name = model.model_name().to_string();
@@ -351,7 +371,7 @@ pub(crate) async fn save_in(conn: &mut SqliteConnection, model: &DownloadedModel
     .bind(backend_str)
     .bind(is_active_utility)
     .bind(embedding_artifact_identity)
-    .execute(&mut *conn)
+    .execute(&mut **tx)
     .await
     .map_err(|e| {
         error!(error = %e, model_id = %model_id, "Failed to save downloaded model");
@@ -363,7 +383,7 @@ pub(crate) async fn save_in(conn: &mut SqliteConnection, model: &DownloadedModel
     let existing_file_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM model_files WHERE model_id = ?1")
             .bind(&model_id)
-            .fetch_one(&mut *conn)
+            .fetch_one(&mut **tx)
             .await
             .map_err(|e| {
                 error!(error = %e, model_id = %model_id, "Failed to count model files");
@@ -421,7 +441,7 @@ pub(crate) async fn save_in(conn: &mut SqliteConnection, model: &DownloadedModel
         .bind(&now)
         .bind(&now)
         .bind(model.downloaded_at().to_rfc3339())
-        .execute(&mut *conn)
+        .execute(&mut **tx)
         .await
         .map_err(|e| {
             error!(error = %e, model_id = %model_id, "Failed to upsert fallback model_file");
@@ -437,7 +457,7 @@ async fn model_by_model_id(
     model_id: &str,
 ) -> Result<Option<DownloadedModel>> {
     let query = build_model_select_query("WHERE m.model_id = ?1");
-    let record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
+    let record = sqlx::query_as::<_, DownloadedModelRecord>(sqlx::AssertSqlSafe(query.as_str()))
         .bind(model_id)
         .fetch_optional(connection)
         .await

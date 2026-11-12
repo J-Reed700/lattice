@@ -44,13 +44,12 @@ fn page(url: &str, text: &str) -> ReferencePage {
 #[tokio::test]
 async fn a_copy_carries_provenance_relations_and_source_overrides_under_new_ids() -> Result<()> {
     let pool = pool().await?;
+    let db = Database::new(pool.clone());
     let mut program = fixture();
     program.summary.status = LearningProgramStatus::Active;
-    LearningRepository::new(pool.clone())
-        .create(&program)
-        .await?;
+    LearningRepository::new(db.clone()).create(&program).await?;
     let program_id = program.summary.id.clone();
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let library = LearningSourceLibraryRepository::new(db.clone());
     let text = (0..30)
         .map(|n| format!("High water on day {n} falls at the hour the tide office tabulates."))
         .collect::<Vec<_>>()
@@ -80,7 +79,7 @@ async fn a_copy_carries_provenance_relations_and_source_overrides_under_new_ids(
             .await?;
         sources.push((source_id, version_id));
     }
-    let store = SqliteSourceTrustStore::new(pool.clone());
+    let store = SqliteSourceTrustStore::new(db.clone());
     store
         .set_override(&TrustOverride::Source {
             program_id: program_id.clone(),
@@ -103,7 +102,7 @@ async fn a_copy_carries_provenance_relations_and_source_overrides_under_new_ids(
 
     let workspace = tempfile::tempdir().expect("pack workspace");
     let packs = LearningPackRepository::new(
-        pool.clone(),
+        db.clone(),
         workspace.path().join("learning-packs"),
         workspace.path().to_path_buf(),
     );

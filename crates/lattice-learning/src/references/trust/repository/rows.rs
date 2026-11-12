@@ -10,9 +10,10 @@ use lattice_core::domain::provenance::{
     SubjectClass, TrustLevel, TrustOverride,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::WriteTx;
 use serde::{de::DeserializeOwned, Serialize};
 use sqlx::sqlite::SqliteRow;
-use sqlx::{Row, SqliteConnection};
+use sqlx::Row;
 
 /// The columns `provenance_from_row` reads.
 pub(in crate::references::trust) const PROVENANCE_COLUMNS: &str = "program_id,source_version_id,origin_json,signals_json,signals_sha256,sketch,links_json,extracted_from,extraction_version,extracted_at";
@@ -53,7 +54,7 @@ pub(in crate::references::trust) fn tokens_from_column(count: i64) -> Result<u64
 
 /// Creates or replaces one version's provenance row.
 pub(in crate::references::trust) async fn write_provenance(
-    conn: &mut SqliteConnection,
+    tx: &mut WriteTx,
     record: &ProvenanceRecord,
 ) -> Result<()> {
     sqlx::query(
@@ -72,7 +73,7 @@ pub(in crate::references::trust) async fn write_provenance(
     .bind(record.extracted_from.as_str())
     .bind(&record.extraction_version)
     .bind(record.extracted_at)
-    .execute(&mut *conn)
+    .execute(&mut **tx)
     .await
     .map_err(db)?;
     Ok(())
@@ -102,7 +103,7 @@ pub(in crate::references::trust) fn provenance_from_row(
 /// Adds relations; an edge already recorded (`from`, `kind`, `to`) is
 /// replaced with the new evidence and time.
 pub(in crate::references::trust) async fn write_relations(
-    conn: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     relations: &[SourceRelation],
     detected_at: i64,
@@ -122,7 +123,7 @@ pub(in crate::references::trust) async fn write_relations(
         .bind(relation.kind.as_str())
         .bind(to_json(&relation.evidence)?)
         .bind(detected_at)
-        .execute(&mut *conn)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
     }
@@ -174,25 +175,25 @@ pub(in crate::references::trust) fn scope_filter(
 
 /// Removes the override at `scope`; `false` when there was none.
 pub(in crate::references::trust) async fn delete_override(
-    conn: &mut SqliteConnection,
+    tx: &mut WriteTx,
     scope: &OverrideScope,
 ) -> Result<bool> {
     let (filter, binds) = scope_filter(scope);
     let sql = format!("DELETE FROM source_trust_overrides WHERE {filter}");
-    let mut query = sqlx::query(&sql);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
     for bind in &binds {
         query = query.bind(bind);
     }
-    let done = query.execute(&mut *conn).await.map_err(db)?;
+    let done = query.execute(&mut **tx).await.map_err(db)?;
     Ok(done.rows_affected() > 0)
 }
 
 /// Creates or replaces the override at its scope.
 pub(in crate::references::trust) async fn write_override(
-    conn: &mut SqliteConnection,
+    tx: &mut WriteTx,
     trust_override: &TrustOverride,
 ) -> Result<()> {
-    delete_override(conn, &trust_override.scope()).await?;
+    delete_override(tx, &trust_override.scope()).await?;
     let insert = "INSERT INTO source_trust_overrides(scope,program_id,source_id,registrable_domain,class_key,class_json,level,standing,note,set_at) VALUES(?,?,?,?,?,?,?,?,?,?)";
     let query = match trust_override {
         TrustOverride::Source {
@@ -246,7 +247,7 @@ pub(in crate::references::trust) async fn write_override(
             .bind(note)
             .bind(set_at),
     };
-    query.execute(&mut *conn).await.map_err(db)?;
+    query.execute(&mut **tx).await.map_err(db)?;
     Ok(())
 }
 

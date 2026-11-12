@@ -7,15 +7,13 @@
 //! This repository implements the FavoritesRepositoryPort trait,
 //! providing operations for managing document favorites.
 
-use crate::infrastructure::persistence::database::query_with_timeout;
 use async_trait::async_trait;
 use chrono::Utc;
 use lattice_core::application::contracts::favorites::FavoriteRecord as FavoriteDto;
 use lattice_core::application::ports::FavoritesRepositoryPort;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
-use sqlx::{Row, SqlitePool};
+use lattice_core::shared::persistence::Database;
+use sqlx::Row;
 use uuid::Uuid;
 
 /// SQLite implementation of favorites repository.
@@ -24,166 +22,147 @@ use uuid::Uuid;
 ///
 /// # Thread Safety
 ///
-/// This repository is thread-safe through SQLitePool's internal connection management.
+/// This repository is thread-safe through the Database's connection management.
 #[derive(Debug, Clone)]
 pub struct FavoritesRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl FavoritesRepository {
     /// Create a new favorites repository.
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 }
 
 #[async_trait]
 impl FavoritesRepositoryPort for FavoritesRepository {
     async fn add_favorite(&self, document_id: &str) -> Result<FavoriteDto> {
-        let pool = self.pool.clone();
-        let document_id = document_id.to_string();
-
         let favorite_id = Uuid::new_v4().to_string();
         let added_at = Utc::now().to_rfc3339();
 
-        let favorite = query_with_timeout(|| async {
-            let mut tx = pool.begin_write().await?;
-            let exists: bool =
-                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM documents WHERE id = ?)")
-                    .bind(&document_id)
-                    .fetch_one(&mut *tx)
-                    .await?;
-            if !exists {
-                return Ok(None);
-            }
-            sqlx::query!(
-                r#"
+        let mut tx = self.db.begin_write().await?;
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM documents WHERE id = ?)")
+                .bind(document_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if !exists {
+            return Err(AppError::NotFound("Document not found".into()));
+        }
+        sqlx::query!(
+            r#"
                 INSERT INTO favorites (id, document_id, added_at)
                 VALUES (?, ?, ?)
                 ON CONFLICT(document_id) DO NOTHING
                 "#,
-                favorite_id,
-                document_id,
-                added_at
-            )
-            .execute(&mut *tx)
-            .await?;
-
-            // Retrieve favorite with document details
-            let result = sqlx::query(
-                r#"
-                SELECT
-                    f.id as favorite_id,
-                    f.document_id,
-                    f.added_at,
-                    d.file_name,
-                    d.file_path,
-                    d.mime_type as file_type
-                FROM favorites f
-                INNER JOIN documents d ON f.document_id = d.id
-                WHERE f.document_id = ?
-                "#,
-            )
-            .bind(&document_id)
-            .fetch_one(&mut *tx)
-            .await?;
-
-            let favorite = FavoriteDto {
-                id: result.try_get("favorite_id")?,
-                document_id: result.try_get("document_id")?,
-                document_name: result.try_get("file_name")?,
-                document_path: result.try_get("file_path")?,
-                file_type: result.try_get("file_type")?,
-                added_at: result.try_get("added_at")?,
-            };
-            tx.commit().await?;
-            Ok(Some(favorite))
-        })
+            favorite_id,
+            document_id,
+            added_at
+        )
+        .execute(&mut *tx)
         .await?;
-        favorite.ok_or_else(|| AppError::NotFound("Document not found".into()))
+
+        // Retrieve favorite with document details
+        let result = sqlx::query(
+            r#"
+            SELECT
+                f.id as favorite_id,
+                f.document_id,
+                f.added_at,
+                d.file_name,
+                d.file_path,
+                d.mime_type as file_type
+            FROM favorites f
+            INNER JOIN documents d ON f.document_id = d.id
+            WHERE f.document_id = ?
+            "#,
+        )
+        .bind(document_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        let favorite = FavoriteDto {
+            id: result.try_get("favorite_id")?,
+            document_id: result.try_get("document_id")?,
+            document_name: result.try_get("file_name")?,
+            document_path: result.try_get("file_path")?,
+            file_type: result.try_get("file_type")?,
+            added_at: result.try_get("added_at")?,
+        };
+        tx.commit().await?;
+        Ok(favorite)
     }
 
     async fn remove_favorite(&self, document_id: &str) -> Result<()> {
-        let pool = self.pool.clone();
-        let document_id = document_id.to_string();
-
-        tokio::time::timeout(std::time::Duration::from_secs(30), async {
-            let result = sqlx::query!(
-                r#"
+        let mut tx = self.db.begin_write().await?;
+        let result = sqlx::query!(
+            r#"
                     DELETE FROM favorites
                     WHERE document_id = ?
                     "#,
-                document_id
-            )
-            .execute(&pool)
-            .await
-            .map_err(|e| AppError::Database(format!("Failed to remove favorite: {}", e)))?;
-
-            if result.rows_affected() == 0 {
-                return Err(AppError::NotFound(format!(
-                    "Favorite not found for document_id: {}",
-                    document_id
-                )));
-            }
-
-            Ok(())
-        })
+            document_id
+        )
+        .execute(&mut *tx)
         .await
-        .map_err(|_| AppError::InternalError("Delete favorite operation timed out".to_string()))?
+        .map_err(|e| AppError::Database(format!("Failed to remove favorite: {}", e)))?;
+
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound(format!(
+                "Favorite not found for document_id: {}",
+                document_id
+            )));
+        }
+
+        tx.commit().await?;
+        Ok(())
     }
 
     async fn list_favorites(&self) -> Result<Vec<FavoriteDto>> {
-        let pool = self.pool.clone();
+        let mut read = self.db.begin_read().await?;
+        let results = sqlx::query(
+            r#"
+            SELECT
+                f.id as favorite_id,
+                f.document_id,
+                f.added_at,
+                d.file_name,
+                d.file_path,
+                d.mime_type as file_type
+            FROM favorites f
+            INNER JOIN documents d ON f.document_id = d.id
+            ORDER BY f.added_at DESC
+            "#,
+        )
+        .fetch_all(&mut *read)
+        .await?;
+        read.commit().await?;
 
-        query_with_timeout(|| async {
-            let results = sqlx::query(
-                r#"
-                SELECT
-                    f.id as favorite_id,
-                    f.document_id,
-                    f.added_at,
-                    d.file_name,
-                    d.file_path,
-                    d.mime_type as file_type
-                FROM favorites f
-                INNER JOIN documents d ON f.document_id = d.id
-                ORDER BY f.added_at DESC
-                "#,
-            )
-            .fetch_all(&pool)
-            .await?;
-
-            results
-                .into_iter()
-                .map(|row| {
-                    Ok(FavoriteDto {
-                        id: row.try_get("favorite_id")?,
-                        document_id: row.try_get("document_id")?,
-                        document_name: row.try_get("file_name")?,
-                        document_path: row.try_get("file_path")?,
-                        file_type: row.try_get("file_type")?,
-                        added_at: row.try_get("added_at")?,
-                    })
+        results
+            .into_iter()
+            .map(|row| {
+                Ok(FavoriteDto {
+                    id: row.try_get("favorite_id")?,
+                    document_id: row.try_get("document_id")?,
+                    document_name: row.try_get("file_name")?,
+                    document_path: row.try_get("file_path")?,
+                    file_type: row.try_get("file_type")?,
+                    added_at: row.try_get("added_at")?,
                 })
-                .collect()
-        })
-        .await
+            })
+            .collect()
     }
 
     async fn is_favorite(&self, document_id: &str) -> Result<bool> {
-        let pool = self.pool.clone();
-        let document_id = document_id.to_string();
-
-        query_with_timeout(|| async {
-            sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM favorites WHERE document_id = ?)",
-            )
-            .bind(document_id)
-            .fetch_one(&pool)
-            .await
-        })
-        .await
+        let mut read = self.db.begin_read().await?;
+        let favorite = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM favorites WHERE document_id = ?)",
+        )
+        .bind(document_id)
+        .fetch_one(&mut *read)
+        .await?;
+        read.commit().await?;
+        Ok(favorite)
     }
 }
 
@@ -191,6 +170,7 @@ impl FavoritesRepositoryPort for FavoritesRepository {
 mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
+    use sqlx::SqlitePool;
 
     async fn create_test_pool() -> SqlitePool {
         SqlitePoolOptions::new().connect(":memory:").await.unwrap()
@@ -220,7 +200,7 @@ mod tests {
     async fn test_add_favorite() {
         let pool = create_test_pool().await;
         setup_schema(&pool).await;
-        let repo = FavoritesRepository::new(pool);
+        let repo = FavoritesRepository::new(Database::new(pool.clone()));
 
         let favorite = repo.add_favorite("doc1").await.unwrap();
 
@@ -235,7 +215,7 @@ mod tests {
     async fn test_add_favorite_duplicate() {
         let pool = create_test_pool().await;
         setup_schema(&pool).await;
-        let repo = FavoritesRepository::new(pool);
+        let repo = FavoritesRepository::new(Database::new(pool.clone()));
 
         // First add should succeed
         repo.add_favorite("doc1").await.unwrap();
@@ -249,7 +229,7 @@ mod tests {
     async fn failed_metadata_read_does_not_commit_favorite() {
         let pool = create_test_pool().await;
         setup_schema(&pool).await;
-        let repo = FavoritesRepository::new(pool.clone());
+        let repo = FavoritesRepository::new(Database::new(pool.clone()));
         assert!(matches!(
             repo.add_favorite("missing").await,
             Err(AppError::NotFound(_))
@@ -273,7 +253,7 @@ mod tests {
     async fn test_remove_favorite() {
         let pool = create_test_pool().await;
         setup_schema(&pool).await;
-        let repo = FavoritesRepository::new(pool.clone());
+        let repo = FavoritesRepository::new(Database::new(pool.clone()));
 
         repo.add_favorite("doc1").await.unwrap();
 
@@ -288,7 +268,7 @@ mod tests {
     async fn test_remove_favorite_not_found() {
         let pool = create_test_pool().await;
         setup_schema(&pool).await;
-        let repo = FavoritesRepository::new(pool);
+        let repo = FavoritesRepository::new(Database::new(pool.clone()));
 
         let result = repo.remove_favorite("nonexistent").await;
         assert!(result.is_err());
@@ -299,7 +279,7 @@ mod tests {
     async fn test_list_favorites() {
         let pool = create_test_pool().await;
         setup_schema(&pool).await;
-        let repo = FavoritesRepository::new(pool.clone());
+        let repo = FavoritesRepository::new(Database::new(pool.clone()));
 
         // Initially empty
         let favorites = repo.list_favorites().await.unwrap();
@@ -316,7 +296,7 @@ mod tests {
     async fn test_is_favorite() {
         let pool = create_test_pool().await;
         setup_schema(&pool).await;
-        let repo = FavoritesRepository::new(pool);
+        let repo = FavoritesRepository::new(Database::new(pool.clone()));
 
         // Not a favorite initially
         assert!(!repo.is_favorite("doc1").await.unwrap());
@@ -344,7 +324,7 @@ mod tests {
         .await
         .unwrap();
 
-        let repo = FavoritesRepository::new(pool);
+        let repo = FavoritesRepository::new(Database::new(pool.clone()));
 
         repo.add_favorite("doc1").await.unwrap();
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;

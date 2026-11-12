@@ -19,6 +19,7 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::shared::error::Result;
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::shared::persistence::Database;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -62,12 +63,12 @@ impl PreparedRun {
     /// The run of `lesson_id`, its ledger and shown passages loaded through
     /// the production store.
     pub(in crate::lessons::content_verification) async fn load(
-        pool: &sqlx::SqlitePool,
+        database: &Database,
         lesson_id: &str,
         lesson: Value,
         report: LessonVerificationReport,
     ) -> Result<Self> {
-        let store = ClaimReviewRepository::new(pool.clone());
+        let store = ClaimReviewRepository::new(database.clone());
         let ledger = store.load(lesson_id).await?;
         let shown = store.shown_passages(lesson_id).await?;
         Self::assemble(lesson, ledger, shown, report)
@@ -77,13 +78,13 @@ impl PreparedRun {
 /// [`assert_pipeline_invariants`] on the lesson `raw` and its `report`, with
 /// the rest loaded from the store.
 pub(in crate::lessons::content_verification) async fn assert_prepared(
-    pool: &sqlx::SqlitePool,
+    database: &Database,
     lesson_id: &str,
     raw: &str,
     report: &LessonVerificationReport,
 ) -> Result<()> {
     let lesson = serde_json::from_str(raw)?;
-    let run = PreparedRun::load(pool, lesson_id, lesson, report.clone()).await?;
+    let run = PreparedRun::load(database, lesson_id, lesson, report.clone()).await?;
     assert_pipeline_invariants(&run);
     Ok(())
 }

@@ -15,7 +15,6 @@ use lattice_core::domain::conversation::memory::{
     MAX_ACTIVE_ITEMS, MAX_RELATED_ITEMS,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
 use std::str::FromStr;
 
 mod source_reads;
@@ -216,7 +215,7 @@ const SOURCE_COLUMNS: &str =
 impl ConversationRepository {
     /// One consistent read of everything the memory layer needs.
     pub async fn load_memory_snapshot(&self, conversation_id: &str) -> Result<MemorySnapshot> {
-        let mut tx = self.pool.begin_read().await.map_err(|e| {
+        let mut tx = self.db.begin_read().await.map_err(|e| {
             AppError::Database(format!("Failed to begin memory snapshot read: {}", e))
         })?;
 
@@ -367,7 +366,7 @@ impl ConversationRepository {
         conversation_id: &str,
     ) -> Result<ConversationMemoryState> {
         let mut tx = self
-            .pool
+            .db
             .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin state read: {}", e)))?;
@@ -410,7 +409,7 @@ impl ConversationRepository {
     ) -> Result<Vec<MemoryItem>> {
         let limit = limit.clamp(1, MAX_ACTIVE_ITEMS as i64);
         let mut tx = self
-            .pool
+            .db
             .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin history read: {}", e)))?;
@@ -438,7 +437,7 @@ impl ConversationRepository {
                     purpose FROM conversation_memory_evidence \
              WHERE item_id IN ({placeholders}) ORDER BY item_id ASC, ordinal ASC"
         );
-        let mut query = sqlx::query_as::<_, EvidenceRow>(&sql);
+        let mut query = sqlx::query_as::<_, EvidenceRow>(sqlx::AssertSqlSafe(sql.as_str()));
         for row in &item_rows {
             query = query.bind(&row.id);
         }

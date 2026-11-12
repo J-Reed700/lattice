@@ -17,6 +17,7 @@ use crate::{
     repository::LearningRepository,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use sqlx::SqlitePool;
 use std::collections::BTreeSet;
 
@@ -629,11 +630,11 @@ static ITEMS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::n
 
 /// Fill a quiz's bank with one valid item per question its form asks.
 pub(crate) async fn fill_bank(
-    pool: &SqlitePool,
+    database: &Database,
     program_id: &str,
     scope: &LearningQuizScopeDto,
 ) -> Result<usize> {
-    let mut tx = pool.begin().await.map_err(db)?;
+    let mut tx = database.begin_write().await.map_err(db)?;
     let (blueprint, _) = quiz_blueprints::ensure_blueprint_in(&mut tx, program_id, scope)
         .await?
         .ok_or_else(|| AppError::InvalidState("this quiz has nothing to ask".into()))?;
@@ -669,12 +670,12 @@ pub(crate) async fn fill_bank(
 
 /// Take a quiz with every answer left blank: graded at once, not passed.
 pub(crate) async fn take_quiz(
-    pool: &SqlitePool,
+    database: &Database,
     program_id: &str,
     scope: &LearningQuizScopeDto,
 ) -> Result<String> {
-    fill_bank(pool, program_id, scope).await?;
-    let repo = LearningAssessmentRepository::new(pool.clone());
+    fill_bank(database, program_id, scope).await?;
+    let repo = LearningAssessmentRepository::new(database.clone());
     let form_id = id();
     let form = repo
         .start_quiz(
@@ -705,8 +706,9 @@ pub(crate) async fn take_quiz(
 #[tokio::test]
 async fn a_quiz_that_changed_since_it_was_loaded_is_reported_as_a_conflict() -> Result<()> {
     let pool = migrated().await?;
+    let database = Database::new(pool);
     let program = crate::tests::fixture();
-    let programs = LearningRepository::new(pool.clone());
+    let programs = LearningRepository::new(database.clone());
     programs.create(&program).await?;
     programs
         .accept(&AcceptLearningProgramRequestDto {
@@ -729,8 +731,8 @@ async fn a_quiz_that_changed_since_it_was_loaded_is_reported_as_a_conflict() -> 
         kind: LearningQuizScopeKind::Lesson,
         id: Some(lesson_id),
     };
-    fill_bank(&pool, &program_id, &scope).await?;
-    let repo = LearningAssessmentRepository::new(pool.clone());
+    fill_bank(&database, &program_id, &scope).await?;
+    let repo = LearningAssessmentRepository::new(database.clone());
     let form_id = id();
     let form = repo
         .start_quiz(
@@ -774,8 +776,9 @@ async fn a_quiz_that_changed_since_it_was_loaded_is_reported_as_a_conflict() -> 
 #[tokio::test]
 async fn a_lesson_quiz_grades_keyed_answers_at_once_and_waits_for_written_ones() -> Result<()> {
     let pool = migrated().await?;
+    let database = Database::new(pool);
     let program = crate::tests::fixture();
-    let programs = LearningRepository::new(pool.clone());
+    let programs = LearningRepository::new(database.clone());
     programs.create(&program).await?;
     programs
         .accept(&AcceptLearningProgramRequestDto {
@@ -798,8 +801,8 @@ async fn a_lesson_quiz_grades_keyed_answers_at_once_and_waits_for_written_ones()
         kind: LearningQuizScopeKind::Lesson,
         id: Some(lesson_id.clone()),
     };
-    let asked = fill_bank(&pool, &program_id, &scope).await?;
-    let repo = LearningAssessmentRepository::new(pool.clone());
+    let asked = fill_bank(&database, &program_id, &scope).await?;
+    let repo = LearningAssessmentRepository::new(database.clone());
     let overview = repo.overview(&program_id).await?;
     let status = &overview.modules[0].lessons[0].quiz;
     assert_eq!(status.bank_status, LearningQuizBankStatus::Ready);
@@ -973,8 +976,9 @@ async fn a_lesson_quiz_grades_keyed_answers_at_once_and_waits_for_written_ones()
 #[tokio::test]
 async fn a_long_grade_summary_is_kept_whole_in_the_evidence_ledger() -> Result<()> {
     let pool = migrated().await?;
+    let database = Database::new(pool.clone());
     let program = crate::tests::fixture();
-    let programs = LearningRepository::new(pool.clone());
+    let programs = LearningRepository::new(database.clone());
     programs.create(&program).await?;
     programs
         .accept(&AcceptLearningProgramRequestDto {
@@ -997,8 +1001,8 @@ async fn a_long_grade_summary_is_kept_whole_in_the_evidence_ledger() -> Result<(
         kind: LearningQuizScopeKind::Lesson,
         id: Some(lesson_id.clone()),
     };
-    fill_bank(&pool, &program_id, &scope).await?;
-    let repo = LearningAssessmentRepository::new(pool.clone());
+    fill_bank(&database, &program_id, &scope).await?;
+    let repo = LearningAssessmentRepository::new(database.clone());
     let form_id = id();
     let form = repo
         .start_quiz(
@@ -1086,9 +1090,9 @@ struct GradedQuiz {
 }
 
 /// A lesson quiz taken once, its written answer graded provisionally.
-async fn graded_quiz(pool: &SqlitePool) -> Result<GradedQuiz> {
+async fn graded_quiz(database: &Database) -> Result<GradedQuiz> {
     let program = crate::tests::fixture();
-    let programs = LearningRepository::new(pool.clone());
+    let programs = LearningRepository::new(database.clone());
     programs.create(&program).await?;
     programs
         .accept(&AcceptLearningProgramRequestDto {
@@ -1111,8 +1115,8 @@ async fn graded_quiz(pool: &SqlitePool) -> Result<GradedQuiz> {
         kind: LearningQuizScopeKind::Lesson,
         id: Some(lesson_id),
     };
-    fill_bank(pool, &program_id, &scope).await?;
-    let repo = LearningAssessmentRepository::new(pool.clone());
+    fill_bank(database, &program_id, &scope).await?;
+    let repo = LearningAssessmentRepository::new(database.clone());
     let form_id = id();
     let form = repo
         .start_quiz(
@@ -1192,8 +1196,9 @@ async fn graded_quiz(pool: &SqlitePool) -> Result<GradedQuiz> {
 async fn a_learners_long_note_is_held_to_the_chat_limit() -> Result<()> {
     use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
     let pool = migrated().await?;
-    let quiz = graded_quiz(&pool).await?;
-    let repo = LearningAssessmentRepository::new(pool.clone());
+    let database = Database::new(pool);
+    let quiz = graded_quiz(&database).await?;
+    let repo = LearningAssessmentRepository::new(database.clone());
     let pasted = "I read the question as asking about the rate, not the yield. ".repeat(100);
     assert!(pasted.chars().count() > 2_000);
     let contest = |note: String| ContestLearningQuizGradeRequestDto {
@@ -1243,9 +1248,9 @@ impl OpenQuiz {
     }
 }
 
-async fn lesson_program(pool: &SqlitePool) -> Result<(String, LearningQuizScopeDto)> {
+async fn lesson_program(database: &Database) -> Result<(String, LearningQuizScopeDto)> {
     let program = crate::tests::fixture();
-    let programs = LearningRepository::new(pool.clone());
+    let programs = LearningRepository::new(database.clone());
     programs.create(&program).await?;
     programs
         .accept(&AcceptLearningProgramRequestDto {
@@ -1267,7 +1272,7 @@ async fn lesson_program(pool: &SqlitePool) -> Result<(String, LearningQuizScopeD
         kind: LearningQuizScopeKind::Lesson,
         id: Some(lesson_id),
     };
-    fill_bank(pool, &program.summary.id, &scope).await?;
+    fill_bank(database, &program.summary.id, &scope).await?;
     Ok((program.summary.id, scope))
 }
 
@@ -1358,8 +1363,9 @@ async fn answer_and_submit(
 #[tokio::test]
 async fn a_changed_right_answer_does_not_regrade_an_open_quiz() -> Result<()> {
     let pool = migrated().await?;
-    let (program_id, scope) = lesson_program(&pool).await?;
-    let repo = LearningAssessmentRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let (program_id, scope) = lesson_program(&database).await?;
+    let repo = LearningAssessmentRepository::new(database.clone());
     let quiz = start_lesson_quiz(&repo, &program_id, &scope).await?;
     sqlx::query("UPDATE learning_assessment_answer_keys SET key_json=? WHERE candidate_id=?")
         .bind(r#"{"kind":"choice","value":1}"#)
@@ -1376,8 +1382,9 @@ async fn a_changed_right_answer_does_not_regrade_an_open_quiz() -> Result<()> {
 #[tokio::test]
 async fn a_removed_choice_does_not_break_or_regrade_an_open_quiz() -> Result<()> {
     let pool = migrated().await?;
-    let (program_id, scope) = lesson_program(&pool).await?;
-    let repo = LearningAssessmentRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let (program_id, scope) = lesson_program(&database).await?;
+    let repo = LearningAssessmentRepository::new(database.clone());
     let quiz = start_lesson_quiz(&repo, &program_id, &scope).await?;
     sqlx::query("UPDATE learning_assessment_candidates SET options_json=? WHERE id=?")
         .bind(r#"["Alpha","Bravo","Charlie"]"#)
@@ -1398,8 +1405,9 @@ async fn a_removed_choice_does_not_break_or_regrade_an_open_quiz() -> Result<()>
 #[tokio::test]
 async fn a_quiz_drawn_after_a_change_uses_the_changed_question() -> Result<()> {
     let pool = migrated().await?;
-    let (program_id, scope) = lesson_program(&pool).await?;
-    let repo = LearningAssessmentRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let (program_id, scope) = lesson_program(&database).await?;
+    let repo = LearningAssessmentRepository::new(database.clone());
     let first = start_lesson_quiz(&repo, &program_id, &scope).await?;
     sqlx::query("UPDATE learning_assessment_candidates SET options_json=? WHERE id=?")
         .bind(r#"["Alpha","Bravo","Charlie"]"#)
@@ -1445,8 +1453,9 @@ fn reveal_of(form: &LearningAssessmentFormDto, item_id: &str) -> LearningKeyReve
 #[tokio::test]
 async fn a_submitted_quiz_reveals_the_explanation_it_was_drawn_with() -> Result<()> {
     let pool = migrated().await?;
-    let (program_id, scope) = lesson_program(&pool).await?;
-    let repo = LearningAssessmentRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let (program_id, scope) = lesson_program(&database).await?;
+    let repo = LearningAssessmentRepository::new(database.clone());
     let quiz = start_lesson_quiz(&repo, &program_id, &scope).await?;
     sqlx::query(
         "UPDATE learning_assessment_answer_keys SET key_json=?,explanation=? WHERE candidate_id=?",
@@ -1467,8 +1476,9 @@ async fn a_submitted_quiz_reveals_the_explanation_it_was_drawn_with() -> Result<
 #[tokio::test]
 async fn a_submitted_quiz_reveals_the_wrong_choice_reasons_it_was_drawn_with() -> Result<()> {
     let pool = migrated().await?;
-    let (program_id, scope) = lesson_program(&pool).await?;
-    let repo = LearningAssessmentRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let (program_id, scope) = lesson_program(&database).await?;
+    let repo = LearningAssessmentRepository::new(database.clone());
     let reasons = [
         "",
         "Bravo fails here.",
@@ -1544,9 +1554,9 @@ pub(crate) fn placed_questions() -> Vec<(&'static str, [&'static str; 4], usize)
 }
 
 /// A program with its first lesson published with `placed_questions`.
-async fn placed_lesson(pool: &SqlitePool) -> Result<(String, String)> {
+async fn placed_lesson(database: &Database) -> Result<(String, String)> {
     let program = crate::tests::fixture();
-    let programs = LearningRepository::new(pool.clone());
+    let programs = LearningRepository::new(database.clone());
     programs.create(&program).await?;
     programs
         .accept(&AcceptLearningProgramRequestDto {
@@ -1571,7 +1581,8 @@ async fn placed_lesson(pool: &SqlitePool) -> Result<(String, String)> {
 #[tokio::test]
 async fn a_lesson_question_the_bank_rejects_keeps_its_place_as_dropped() -> Result<()> {
     let pool = migrated().await?;
-    let (_, lesson_id) = placed_lesson(&pool).await?;
+    let database = Database::new(pool.clone());
+    let (_, lesson_id) = placed_lesson(&database).await?;
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT prompt,review_status FROM learning_assessment_candidates WHERE lesson_id=? AND origin='lesson' ORDER BY rowid",
     )
@@ -1591,7 +1602,8 @@ async fn a_lesson_question_the_bank_rejects_keeps_its_place_as_dropped() -> Resu
 #[tokio::test]
 async fn a_quiz_never_draws_the_dropped_lesson_question() -> Result<()> {
     let pool = migrated().await?;
-    let (program_id, lesson_id) = placed_lesson(&pool).await?;
+    let database = Database::new(pool.clone());
+    let (program_id, lesson_id) = placed_lesson(&database).await?;
     let dropped: Option<String> = sqlx::query_scalar(
         "SELECT id FROM learning_assessment_candidates WHERE lesson_id=? AND review_status='dropped'",
     )
@@ -1608,12 +1620,12 @@ async fn a_quiz_never_draws_the_dropped_lesson_question() -> Result<()> {
         kind: LearningQuizScopeKind::Lesson,
         id: Some(lesson_id),
     };
-    fill_bank(&pool, &program_id, &scope).await?;
-    let mut connection = pool.acquire().await.map_err(db)?;
-    let bank = LearningAssessmentRepository::bank_in(&mut connection, &program_id).await?;
+    fill_bank(&database, &program_id, &scope).await?;
+    let mut read = database.begin_read().await.map_err(db)?;
+    let bank = LearningAssessmentRepository::bank_in(&mut read, &program_id).await?;
     assert!(bank.iter().all(|c| c.candidate.id != dropped));
-    drop(connection);
-    let form = LearningAssessmentRepository::new(pool.clone())
+    read.commit().await.map_err(db)?;
+    let form = LearningAssessmentRepository::new(database.clone())
         .start_quiz(
             &StartLearningQuizRequestDto {
                 operation_id: id(),
@@ -1633,8 +1645,11 @@ async fn a_quiz_never_draws_the_dropped_lesson_question() -> Result<()> {
 
 /// The lesson's own question ids in order, with the middle one agreed and a
 /// bank-origin item added; and the ids `bank_in` returns.
-async fn three_own_questions(pool: &SqlitePool) -> Result<(String, String, Vec<String>)> {
-    let (program_id, lesson_id) = placed_lesson(pool).await?;
+async fn three_own_questions(
+    pool: &SqlitePool,
+    database: &Database,
+) -> Result<(String, String, Vec<String>)> {
+    let (program_id, lesson_id) = placed_lesson(database).await?;
     sqlx::query("UPDATE learning_assessment_candidates SET review_status='agreed' WHERE lesson_id=? AND origin='lesson'")
         .bind(&lesson_id)
         .execute(pool)
@@ -1644,7 +1659,7 @@ async fn three_own_questions(pool: &SqlitePool) -> Result<(String, String, Vec<S
         kind: LearningQuizScopeKind::Lesson,
         id: Some(lesson_id.clone()),
     };
-    fill_bank(pool, &program_id, &scope).await?;
+    fill_bank(database, &program_id, &scope).await?;
     let own: Vec<String> = sqlx::query_scalar(
         "SELECT id FROM learning_assessment_candidates WHERE lesson_id=? AND origin='lesson' ORDER BY rowid",
     )
@@ -1688,7 +1703,8 @@ async fn drawn_ids(pool: &SqlitePool, program_id: &str) -> Result<Vec<String>> {
 #[tokio::test]
 async fn a_lesson_question_with_a_waiting_finding_is_not_drawn() -> Result<()> {
     let pool = migrated().await?;
-    let (program_id, lesson_id, own) = three_own_questions(&pool).await?;
+    let database = Database::new(pool.clone());
+    let (program_id, lesson_id, own) = three_own_questions(&pool, &database).await?;
     add_finding(&pool, &lesson_id, "question", 1, "waiting", None).await?;
     let drawn = drawn_ids(&pool, &program_id).await?;
     assert!(!drawn.contains(&own[1]));
@@ -1707,7 +1723,8 @@ async fn a_lesson_question_with_a_waiting_finding_is_not_drawn() -> Result<()> {
 #[tokio::test]
 async fn a_kept_finding_leaves_the_question_drawn() -> Result<()> {
     let pool = migrated().await?;
-    let (program_id, lesson_id, own) = three_own_questions(&pool).await?;
+    let database = Database::new(pool.clone());
+    let (program_id, lesson_id, own) = three_own_questions(&pool, &database).await?;
     add_finding(&pool, &lesson_id, "question", 1, "kept", None).await?;
     assert!(drawn_ids(&pool, &program_id).await?.contains(&own[1]));
     Ok(())
@@ -1716,7 +1733,8 @@ async fn a_kept_finding_leaves_the_question_drawn() -> Result<()> {
 #[tokio::test]
 async fn an_edited_question_with_a_waiting_finding_is_drawn() -> Result<()> {
     let pool = migrated().await?;
-    let (program_id, lesson_id, own) = three_own_questions(&pool).await?;
+    let database = Database::new(pool.clone());
+    let (program_id, lesson_id, own) = three_own_questions(&pool, &database).await?;
     add_finding(&pool, &lesson_id, "question", 1, "waiting", Some(5)).await?;
     assert!(drawn_ids(&pool, &program_id).await?.contains(&own[1]));
     Ok(())
@@ -1725,7 +1743,8 @@ async fn an_edited_question_with_a_waiting_finding_is_drawn() -> Result<()> {
 #[tokio::test]
 async fn a_waiting_section_finding_leaves_the_question_drawn() -> Result<()> {
     let pool = migrated().await?;
-    let (program_id, lesson_id, own) = three_own_questions(&pool).await?;
+    let database = Database::new(pool.clone());
+    let (program_id, lesson_id, own) = three_own_questions(&pool, &database).await?;
     add_finding(&pool, &lesson_id, "section", 1, "waiting", None).await?;
     assert!(drawn_ids(&pool, &program_id).await?.contains(&own[1]));
     Ok(())
@@ -1734,7 +1753,8 @@ async fn a_waiting_section_finding_leaves_the_question_drawn() -> Result<()> {
 #[tokio::test]
 async fn the_finding_index_counts_a_dropped_question() -> Result<()> {
     let pool = migrated().await?;
-    let (program_id, lesson_id, own) = three_own_questions(&pool).await?;
+    let database = Database::new(pool.clone());
+    let (program_id, lesson_id, own) = three_own_questions(&pool, &database).await?;
     sqlx::query("UPDATE learning_assessment_candidates SET review_status='dropped' WHERE id=?")
         .bind(&own[0])
         .execute(&pool)
@@ -1748,9 +1768,9 @@ async fn the_finding_index_counts_a_dropped_question() -> Result<()> {
 }
 
 /// A program accepted at revision 1, its lessons not yet published.
-async fn accepted_program(pool: &SqlitePool) -> Result<LearningProgramDto> {
+async fn accepted_program(database: &Database) -> Result<LearningProgramDto> {
     let program = crate::tests::fixture();
-    let programs = LearningRepository::new(pool.clone());
+    let programs = LearningRepository::new(database.clone());
     programs.create(&program).await?;
     programs
         .accept(&AcceptLearningProgramRequestDto {
@@ -1763,13 +1783,13 @@ async fn accepted_program(pool: &SqlitePool) -> Result<LearningProgramDto> {
 }
 
 async fn publish_questions(
-    pool: &SqlitePool,
+    database: &Database,
     program_id: &str,
     lesson_id: &str,
     revision: i64,
     questions: &[(&str, [&str; 4], usize)],
 ) -> Result<()> {
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(database.clone())
         .prepare(
             program_id,
             lesson_id,
@@ -1800,7 +1820,8 @@ fn rows_of(prompts: &[&str], statuses: &[&str]) -> Vec<(String, String)> {
 #[tokio::test]
 async fn near_duplicate_lesson_questions_all_stay_in_the_bank_in_order() -> Result<()> {
     let pool = migrated().await?;
-    let program = accepted_program(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = accepted_program(&database).await?;
     let lesson_id = program.modules[0].lessons[0].id.clone();
     let prompts = [
         "What does the pwd command print?",
@@ -1808,7 +1829,7 @@ async fn near_duplicate_lesson_questions_all_stay_in_the_bank_in_order() -> Resu
         "Which command shows the owner of every file in the current directory?",
     ];
     publish_questions(
-        &pool,
+        &database,
         &program.summary.id,
         &lesson_id,
         1,
@@ -1838,8 +1859,9 @@ async fn near_duplicate_lesson_questions_all_stay_in_the_bank_in_order() -> Resu
 #[tokio::test]
 async fn bank_items_sharing_most_of_their_words_are_both_stored() -> Result<()> {
     let pool = migrated().await?;
-    let program = accepted_program(&pool).await?;
-    let mut setup = pool.begin().await.map_err(db)?;
+    let database = Database::new(pool.clone());
+    let program = accepted_program(&database).await?;
+    let mut setup = database.begin_write().await.map_err(db)?;
     LearningAssessmentRepository::ensure_outcomes(&mut setup, &program.summary.id).await?;
     setup.commit().await.map_err(db)?;
     let outcome: String = sqlx::query_scalar("SELECT id FROM learning_outcome_definitions LIMIT 1")
@@ -1865,7 +1887,7 @@ async fn bank_items_sharing_most_of_their_words_are_both_stored() -> Result<()> 
             }
         })
         .collect();
-    let mut tx = pool.begin().await.map_err(db)?;
+    let mut tx = database.begin_write().await.map_err(db)?;
     let stored =
         insert_bank_items_in(&mut tx, &program.summary.id, &items, Some("test-model")).await?;
     tx.commit().await.map_err(db)?;
@@ -1884,15 +1906,16 @@ async fn bank_items_sharing_most_of_their_words_are_both_stored() -> Result<()> 
 #[tokio::test]
 async fn a_lesson_question_repeated_from_the_program_stays_in_its_place_as_dropped() -> Result<()> {
     let pool = migrated().await?;
-    let program = accepted_program(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = accepted_program(&database).await?;
     let program_id = program.summary.id.clone();
     let earlier = program.modules[0].lessons[1].id.clone();
     let lesson_id = program.modules[0].lessons[0].id.clone();
     // The first copy of the biased question is stored unshuffled, so the
     // second one has the same content.
     let questions = placed_questions();
-    publish_questions(&pool, &program_id, &earlier, 1, &questions[1..2]).await?;
-    publish_questions(&pool, &program_id, &lesson_id, 2, &questions).await?;
+    publish_questions(&database, &program_id, &earlier, 1, &questions[1..2]).await?;
+    publish_questions(&database, &program_id, &lesson_id, 2, &questions).await?;
     assert_eq!(
         lesson_rows(&pool, &lesson_id).await?,
         rows_of(&PLACED_PROMPTS, &["agreed", "dropped", "agreed"])

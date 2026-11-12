@@ -6,7 +6,6 @@ use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
 use lattice_core::domain::entities::Tag as TagEntity;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::bind_limit::rows_per_statement;
-use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::types::TagName;
 
 use super::TagRepository;
@@ -18,6 +17,7 @@ impl TagRepository {
     ///
     /// - `AppError::Database` if query fails
     pub async fn get_tags_for_document(&self, document_id: &str) -> Result<Vec<TagEntity>> {
+        let mut read = self.db.begin_read().await?;
         let db_models = sqlx::query_as!(
             TagModel,
             r#"
@@ -29,9 +29,10 @@ impl TagRepository {
             "#,
             document_id
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("Failed to get tags for document: {}", e)))?;
+        read.commit().await?;
 
         Ok(TagMapper::to_entities(&db_models))
     }
@@ -42,14 +43,16 @@ impl TagRepository {
     ///
     /// - `AppError::Database` if insert fails
     pub async fn add_tag_to_document(&self, document_id: &str, tag_id: &str) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query!(
             "INSERT OR IGNORE INTO document_tags (document_id, tag_id) VALUES (?, ?)",
             document_id,
             tag_id
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to add tag to document: {}", e)))?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -59,14 +62,16 @@ impl TagRepository {
     ///
     /// - `AppError::Database` if delete fails
     pub async fn remove_tag_from_document(&self, document_id: &str, tag_id: &str) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query!(
             "DELETE FROM document_tags WHERE document_id = ? AND tag_id = ?",
             document_id,
             tag_id
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to remove tag from document: {}", e)))?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -76,13 +81,15 @@ impl TagRepository {
     ///
     /// - `AppError::Database` if query fails
     pub async fn find_documents_by_tag(&self, tag_id: &str) -> Result<Vec<String>> {
+        let mut read = self.db.begin_read().await?;
         let records = sqlx::query!(
             "SELECT document_id FROM document_tags WHERE tag_id = ?",
             tag_id
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("Failed to find documents by tag: {}", e)))?;
+        read.commit().await?;
 
         Ok(records.into_iter().map(|r| r.document_id).collect())
     }
@@ -93,6 +100,7 @@ impl TagRepository {
     ///
     /// - `AppError::Database` if query fails
     pub async fn find_documents_by_tag_name(&self, tag_name: &str) -> Result<Vec<String>> {
+        let mut read = self.db.begin_read().await?;
         let records = sqlx::query!(
             r#"
             SELECT dt.document_id
@@ -102,9 +110,10 @@ impl TagRepository {
             "#,
             tag_name
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("Failed to find documents by tag name: {}", e)))?;
+        read.commit().await?;
 
         Ok(records.into_iter().map(|r| r.document_id).collect())
     }
@@ -144,7 +153,7 @@ impl TagRepository {
                     .map_err(|error| AppError::InvalidInput(format!("Invalid tag name: {error}")))
             })
             .collect::<Result<Vec<_>>>()?;
-        let mut tx = self.pool.begin_write().await?;
+        let mut tx = self.db.begin_write().await?;
         sqlx::query("DELETE FROM document_tags WHERE document_id = ?")
             .bind(document_id)
             .execute(&mut *tx)
@@ -195,6 +204,7 @@ impl TagRepository {
 
         const BATCH_SIZE: usize = rows_per_statement(1, 0);
         let mut all_results = HashMap::new();
+        let mut read = self.db.begin_read().await?;
 
         for chunk in document_ids.chunks(BATCH_SIZE) {
             let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
@@ -209,12 +219,12 @@ impl TagRepository {
                 placeholders
             );
 
-            let mut query_builder = sqlx::query(&query);
+            let mut query_builder = sqlx::query(sqlx::AssertSqlSafe(query.as_str()));
             for id in chunk {
                 query_builder = query_builder.bind(id);
             }
 
-            let rows = query_builder.fetch_all(&self.pool).await.map_err(|e| {
+            let rows = query_builder.fetch_all(&mut *read).await.map_err(|e| {
                 AppError::Database(format!("Failed to get tags for documents: {}", e))
             })?;
 
@@ -237,6 +247,7 @@ impl TagRepository {
             }
         }
 
+        read.commit().await?;
         Ok(all_results)
     }
 
@@ -246,15 +257,17 @@ impl TagRepository {
     ///
     /// - `AppError::Database` if delete fails
     pub async fn remove_all_tags_from_document(&self, document_id: &str) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query!(
             "DELETE FROM document_tags WHERE document_id = ?",
             document_id
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             AppError::Database(format!("Failed to remove all tags from document: {}", e))
         })?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -263,15 +276,20 @@ impl TagRepository {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        sqlx::query_scalar(
+        let mut read = self.db.begin_read().await?;
+        let ids = sqlx::query_scalar(
             "SELECT d.id FROM documents d
              WHERE NOT EXISTS (SELECT 1 FROM document_tags dt WHERE dt.document_id=d.id)
              ORDER BY d.indexed_at DESC,d.id LIMIT ?",
         )
         .bind(i64::try_from(limit).unwrap_or(i64::MAX))
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
-        .map_err(|error| AppError::Database(format!("Failed to find untagged documents: {error}")))
+        .map_err(|error| {
+            AppError::Database(format!("Failed to find untagged documents: {error}"))
+        })?;
+        read.commit().await?;
+        Ok(ids)
     }
 
     /// Bulk add tags to multiple documents.

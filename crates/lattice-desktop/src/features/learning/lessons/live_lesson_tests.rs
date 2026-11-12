@@ -506,13 +506,13 @@ async fn live_source_passage_judgments() -> Result<()> {
             )
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
-        Some((pool, program))
+        Some((Database::new(pool), program))
     } else {
         None
     };
     // The course index lives in the app; these runners rank by keyword.
-    let references = if let Some((pool, program)) = &retrieval {
-        let sources = LearningRepository::new(pool.clone())
+    let references = if let Some((db, program)) = &retrieval {
+        let sources = LearningRepository::new(db.clone())
             .verification_sources(program)
             .await?;
         Some(
@@ -848,7 +848,7 @@ async fn live_review_findings_require_evidence() -> Result<()> {
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
     let program = std::env::var("LATTICE_REVIEW_PROGRAM").unwrap();
-    let sources = LearningRepository::new(pool.clone())
+    let sources = LearningRepository::new(Database::new(pool))
         .verification_sources(&program)
         .await?;
     let references = ReferenceCollection::lexical(&sources)?;
@@ -932,7 +932,8 @@ async fn live_enqueue_saved_lesson_for_native_resume() -> Result<()> {
         .run(&pool)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let db = Database::new(pool);
+    let repo = LearningCurriculumRepository::new(db.clone());
     let old = repo
         .job(&std::env::var("LATTICE_LESSON_JOB").unwrap())
         .await?;
@@ -948,7 +949,7 @@ async fn live_enqueue_saved_lesson_for_native_resume() -> Result<()> {
             .any(|job| matches!(job.status, Status::Pending | Status::Running)),
         "Another job is active"
     );
-    let program = LearningRepository::new(pool.clone())
+    let program = LearningRepository::new(db.clone())
         .get(&old.program_id)
         .await?;
     let job = repo
@@ -961,7 +962,7 @@ async fn live_enqueue_saved_lesson_for_native_resume() -> Result<()> {
         .await?;
     assert_eq!(job.status, Status::Pending);
     println!("Native lesson retry queued: {}", job.id);
-    pool.close().await;
+    db.close().await;
     Ok(())
 }
 
@@ -996,7 +997,8 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         .run(&pool)
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningCurriculumRepository::new(db.clone());
     let old = repo
         .job(&std::env::var("LATTICE_LESSON_JOB").unwrap())
         .await?;
@@ -1004,11 +1006,11 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
     // Never run this option while its original worker is still alive.
     if std::env::var("LATTICE_LESSON_RECOVER_ORPHAN").as_deref() == Ok("1") {
         assert_eq!(old.status, LearningGenerationJobStatus::Running);
-        lattice_core::shared::runtime::jobs::JobStore::new(pool.clone())
+        lattice_core::shared::runtime::jobs::JobStore::new(db.clone())
             .interrupt(&old.id)
             .await?;
     }
-    let program = LearningRepository::new(pool.clone())
+    let program = LearningRepository::new(db.clone())
         .get(&old.program_id)
         .await?;
     assert!(
@@ -1027,7 +1029,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         > = serde_json::from_slice(&std::fs::read(path)?)?;
         let library =
             crate::features::learning::source_library::LearningSourceLibraryRepository::new(
-                Database::from(pool.clone()),
+                db.clone(),
             );
         for removal in removals {
             assert_eq!(removal.program_id, old.program_id);
@@ -1035,7 +1037,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
             println!("Removed irrelevant research capture {}", removal.source_id);
         }
     }
-    let source_pool = pool.clone();
+    let source_db = db.clone();
     let web_dir = tempfile::tempdir()?;
     // A copied index and the configured embedding artifact exercise the same
     // hybrid retrieval as the app. Never point these at the live index.
@@ -1046,14 +1048,13 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         let model =
             crate::interfaces::di::modules::standalone::open_gguf(std::path::Path::new(&gguf))
                 .await?;
-        let database = Database::from(pool.clone());
         Some(
             crate::features::learning::references::course_index::CourseIndexes::new(
                 indexes.into(),
-                database.clone(),
+                db.clone(),
                 Arc::new(GivenModel(Some(Arc::new(model)))),
                 Arc::new(crate::features::search::trait_def::HybridSearchUseCaseFactory),
-                lattice_core::shared::runtime::jobs::JobRuntime::new(database),
+                lattice_core::shared::runtime::jobs::JobRuntime::new(db.clone()),
                 Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),
                 Arc::default(),
             ),
@@ -1072,16 +1073,16 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
             crate::features::web::services::web::WebService::new(web_dir.path())?,
         )),
         verifier: None,
-        database: pool.clone().into(),
+        database: db.clone(),
         load_llm: Arc::new(move || {
             let llm = llm.clone();
             Box::pin(async move { Ok(pinned_for_test(llm)) })
         }),
         courses,
         refresh_sources: Arc::new(move |program_id| {
-            let pool = source_pool.clone();
+            let db = source_db.clone();
             Box::pin(async move {
-                let workspace = crate::features::learning::source_library::LearningSourceLibraryRepository::new(Database::from(pool)).workspace(&program_id).await?;
+                let workspace = crate::features::learning::source_library::LearningSourceLibraryRepository::new(db).workspace(&program_id).await?;
                 assert!(
                     workspace
                         .sources
@@ -1104,7 +1105,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
             })?;
         let service =
             crate::features::learning::lessons::claim_reviews::service::ClaimReviewService::new(
-                Database::from(pool.clone()),
+                db.clone(),
             )
             .with_checker_model(Some(checker_name));
         let review = service.review(&old.program_id, lesson_id).await?.unwrap();
@@ -1178,7 +1179,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
     for lesson in &held {
         let review =
             crate::features::learning::lessons::claim_reviews::service::ClaimReviewService::new(
-                Database::from(pool.clone()),
+                db.clone(),
             )
             .review(&job.program_id, lesson)
             .await?;
@@ -1194,7 +1195,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         result
     );
     assert!(held.is_empty(), "Completed with held lessons is not successful publication: {held:?}; see review-after files");
-    let published = LearningRepository::new(pool).get(&job.program_id).await?;
+    let published = LearningRepository::new(db).get(&job.program_id).await?;
     std::fs::write(
         directory.join("program.json"),
         serde_json::to_vec_pretty(&published)?,

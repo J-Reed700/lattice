@@ -32,7 +32,7 @@ async fn service() -> (SqlitePool, Arc<WebPageSnapshotService>, tempfile::TempDi
     let dir = tempfile::tempdir().unwrap();
     let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
     sweep_gate.open();
-    let database = Database::from(pool.clone());
+    let database = Database::new(pool.clone());
     let service = Arc::new(WebPageSnapshotService::new(
         database.clone(),
         dir.path().join("web-snapshots"),
@@ -46,7 +46,7 @@ async fn service() -> (SqlitePool, Arc<WebPageSnapshotService>, tempfile::TempDi
 }
 
 async fn count(pool: &SqlitePool, table: &str) -> i64 {
-    sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
         .fetch_one(pool)
         .await
         .unwrap()

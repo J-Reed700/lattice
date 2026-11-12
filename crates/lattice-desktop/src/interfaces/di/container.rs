@@ -183,8 +183,8 @@ pub struct Container {
 
     /// Tauri AppHandle, populated at app boot via
     /// `with_app_handle()`. Required by the LLM factory's sidecar
-    /// dispatch — `tauri-plugin-shell` needs it to spawn the bundled
-    /// `llama-server` child process. `None` only in test fixtures
+    /// dispatch, which registers the bundled `llama-server` child
+    /// process with the shutdown sweep. `None` only in test fixtures
     /// (MockAppContainer covers most test paths); LLM-load-time
     /// `InvalidConfig` errors fire if a real path tries to use the
     /// LLM with no handle attached.
@@ -210,7 +210,6 @@ impl Container {
     /// **Architecture**: Layer 0 (raw params) → Layer 1 (CoreModule) → Layer 2 (Features)
     pub async fn new(
         database: Database,
-        db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
         app_handle: Option<tauri::AppHandle>,
         llm_endpoint: &str,
         llm_model: &str,
@@ -270,13 +269,7 @@ impl Container {
         // CoreModule builds shared singletons (security, runtime, credentials)
         // Stack frame for this construction is freed before Layer 2 begins
         let core = Arc::new(
-            super::modules::CoreModule::new(
-                database.clone(),
-                db_conn.clone(),
-                data_dir.clone(),
-                background,
-            )
-            .await?,
+            super::modules::CoreModule::new(database.clone(), data_dir.clone(), background).await?,
         );
 
         tracing::debug!("CoreModule initialized");

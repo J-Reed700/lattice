@@ -8,12 +8,13 @@ use crate::practice::session::dto::{DueItemDto, DueKind, PracticeDueDto};
 use lattice_core::domain::learning::drills::{Material, PatternRating};
 use lattice_core::domain::learning::practice::{problem_pattern, ProblemPattern, PROBLEM_PATTERNS};
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::SqliteConnection;
 
 /// Moves the schedule of each of `pattern_ids` on by one review rated `rating` at `now`, landing before `target`
 /// (the interview) while it is ahead. Ids the catalogue no longer holds are left out.
 pub async fn record_ratings_in(
-    connection: &mut SqliteConnection,
+    connection: &mut WriteTx,
     _program_id: &str,
     language: &str,
     pattern_ids: &[String],

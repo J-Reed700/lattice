@@ -21,7 +21,6 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::shared::persistence::Database;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
@@ -53,7 +52,7 @@ async fn verified() -> Result<Course> {
 }
 
 async fn ledger(course: &Course) -> Result<Ledger> {
-    ClaimReviewRepository::new(course.pool.clone())
+    ClaimReviewRepository::new(course.db.clone())
         .load(&course.lesson_id)
         .await
 }
@@ -148,7 +147,7 @@ async fn rewrite(
     dry_run: bool,
 ) -> Result<SectionEditOutcome> {
     let before = text_of(course, i64::try_from(section).unwrap()).await?;
-    ClaimReviewService::new(Database::from(course.pool.clone()))
+    ClaimReviewService::new(course.db.clone())
         .edit_section(request(course, section, before, title, body, dry_run))
         .await
 }
@@ -435,7 +434,7 @@ async fn a_section_changed_since_it_was_opened_is_refused_and_nothing_is_written
         .await?;
     let seen = snapshot(&course).await?;
 
-    let error = ClaimReviewService::new(Database::from(course.pool.clone()))
+    let error = ClaimReviewService::new(course.db.clone())
         .edit_section(request(
             &course,
             0,
@@ -572,7 +571,7 @@ async fn a_lesson_from_another_course_is_refused() -> Result<()> {
     let mut edit = request(&course, 0, before, "Section 0", &written_over(), false);
     edit.program_id = "another-course".into();
 
-    let error = ClaimReviewService::new(Database::from(course.pool.clone()))
+    let error = ClaimReviewService::new(course.db.clone())
         .edit_section(edit)
         .await
         .unwrap_err();
@@ -606,7 +605,7 @@ async fn a_lesson_still_being_prepared_is_refused() -> Result<()> {
 }
 
 async fn three_notes(course: &Course) -> Result<TeachingFindingsRepository> {
-    let store = TeachingFindingsRepository::new(Database::from(course.pool.clone()));
+    let store = TeachingFindingsRepository::new(course.db.clone());
     let candidate = json!({"blocks":[
         {"title":"Section 0","body":section(GOOD)},
         {"title":"Section 1","body":section(&figure(7))}
@@ -832,7 +831,7 @@ async fn a_title_whose_statement_is_edited_is_written_as_a_statement_confirmed_b
         ClaimEvent, ClaimLocation, EventProvenance, UnitKind, UnverifiedReason,
     };
     let course = unchecked().await?;
-    let store = ClaimReviewRepository::new(course.pool.clone());
+    let store = ClaimReviewRepository::new(course.db.clone());
     let id = ClaimId("on-the-title".into());
     let machine = EventProvenance {
         actor: Actor::Machine,
@@ -884,7 +883,7 @@ const EDITED_THE_SECTION: &str =
     "This changed when you edited the section. Edit the section again to change it back.";
 
 async fn offered_for(course: &Course, claim: &ClaimId) -> Result<Vec<String>> {
-    let review = ClaimReviewService::new(Database::from(course.pool.clone()))
+    let review = ClaimReviewService::new(course.db.clone())
         .review(&course.program_id, &course.lesson_id)
         .await?
         .expect("the published lesson has its review");
@@ -905,7 +904,7 @@ async fn offered_for(course: &Course, claim: &ClaimId) -> Result<Vec<String>> {
 
 async fn undo(course: &Course, claim: &ClaimId) -> Result<i64> {
     let revision = ledger(course).await?.revision.0;
-    ClaimReviewService::new(Database::from(course.pool.clone()))
+    ClaimReviewService::new(course.db.clone())
         .resolve(
             &course.lesson_id,
             &claim.0,

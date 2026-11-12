@@ -42,7 +42,10 @@ async fn read_only_pool(db_path: &Path) -> SqlitePool {
 }
 
 async fn count(pool: &SqlitePool, sql: &str) -> i64 {
-    sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .fetch_one(pool)
+        .await
+        .unwrap()
 }
 
 fn write_file(path: &Path, contents: &[u8]) {
@@ -95,7 +98,7 @@ async fn snapshot_clears_derivable_tables_and_keeps_everything_else() {
     .unwrap();
 
     let dest = dir.path().join("snapshot.db");
-    let report = snapshot_database(&Database::from(pool.clone()), &dest)
+    let report = snapshot_database(&Database::new(pool.clone()), &dest)
         .await
         .unwrap();
     pool.close().await;
@@ -148,23 +151,30 @@ async fn snapshot_clears_derivable_tables_and_keeps_everything_else() {
 }
 
 #[tokio::test]
-async fn snapshot_refuses_an_existing_destination_and_unsafe_paths() {
+async fn snapshot_refuses_an_existing_destination_and_takes_sql_looking_names() {
     let dir = tempdir().unwrap();
     let live = dir.path().join("lattice.db");
     let pool = migrated_pool(&live).await;
+    let db = Database::new(pool.clone());
 
     let taken = dir.path().join("taken.db");
     std::fs::write(&taken, b"x").unwrap();
     assert!(matches!(
-        snapshot_database(&Database::from(pool.clone()), &taken).await,
+        snapshot_database(&db, &taken).await,
         Err(ArchiveError::Other(_))
     ));
 
     let nasty = dir.path().join("evil'; DROP TABLE documents; --.db");
-    assert!(matches!(
-        snapshot_database(&Database::from(pool.clone()), &nasty).await,
-        Err(ArchiveError::Other(_))
-    ));
+    snapshot_database(&db, &nasty).await.unwrap();
+    assert!(nasty.is_file());
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'documents'"
+        )
+        .await,
+        1
+    );
     pool.close().await;
 }
 
@@ -218,7 +228,7 @@ async fn referenced_blobs_come_from_the_snapshot_not_the_live_database() {
     }
 
     let dest = dir.path().join("snapshot.db");
-    snapshot_database(&Database::from(pool.clone()), &dest)
+    snapshot_database(&Database::new(pool.clone()), &dest)
         .await
         .unwrap();
 
@@ -853,7 +863,7 @@ async fn validate_snapshot_rejects_non_databases_and_truncated_files() {
     let live = dir.path().join("lattice.db");
     let pool = migrated_pool(&live).await;
     let good = dir.path().join("good.db");
-    snapshot_database(&Database::from(pool.clone()), &good)
+    snapshot_database(&Database::new(pool.clone()), &good)
         .await
         .unwrap();
     pool.close().await;
@@ -874,6 +884,7 @@ async fn a_snapshot_reports_the_memory_layout_it_stores_so_restore_can_refuse_it
     let dir = tempdir().unwrap();
     let live = dir.path().join("lattice.db");
     let pool = migrated_pool(&live).await;
+    let db = Database::new(pool.clone());
 
     // A conversation with memory state written by *this* build.
     sqlx::query("INSERT INTO conversations (id, title) VALUES ('c1', 'T')")
@@ -890,9 +901,7 @@ async fn a_snapshot_reports_the_memory_layout_it_stores_so_restore_can_refuse_it
     .unwrap();
 
     let dest = dir.path().join("current.db");
-    snapshot_database(&Database::from(pool.clone()), &dest)
-        .await
-        .unwrap();
+    snapshot_database(&db, &dest).await.unwrap();
     let info = validate_snapshot(&dest).await.unwrap();
     assert!(info.memory_tables_present);
     assert_eq!(
@@ -908,9 +917,7 @@ async fn a_snapshot_reports_the_memory_layout_it_stores_so_restore_can_refuse_it
         .await
         .unwrap();
     let future = dir.path().join("future.db");
-    snapshot_database(&Database::from(pool.clone()), &future)
-        .await
-        .unwrap();
+    snapshot_database(&db, &future).await.unwrap();
     pool.close().await;
 
     let future_info = validate_snapshot(&future).await.unwrap();
@@ -930,7 +937,7 @@ async fn a_backup_without_a_memory_ledger_is_restorable_rather_than_rejected() {
     // No memory rows at all: the state every conversation is in before its
     // first compaction, and the state every pre-feature backup is in.
     let dest = dir.path().join("empty-memory.db");
-    snapshot_database(&Database::from(pool.clone()), &dest)
+    snapshot_database(&Database::new(pool.clone()), &dest)
         .await
         .unwrap();
     pool.close().await;
@@ -987,7 +994,7 @@ async fn a_snapshot_that_fails_while_clearing_keeps_the_tables_it_cleared_first(
     .unwrap();
 
     let dest = dir.path().join("snapshot.db");
-    let outcome = snapshot_database(&Database::from(pool.clone()), &dest).await;
+    let outcome = snapshot_database(&Database::new(pool.clone()), &dest).await;
     pool.close().await;
     assert!(
         outcome.is_err(),

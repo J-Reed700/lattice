@@ -4,8 +4,10 @@ use crate::outline_draft::OutlineDraft;
 
 impl LearningRepository {
     pub async fn outline_draft(&self, id: &str) -> Result<Option<OutlineDraft>> {
-        let mut connection = self.pool.acquire().await?;
-        Self::outline_draft_on(&mut connection, id).await
+        let mut read = self.db.begin_read().await?;
+        let draft = Self::outline_draft_on(&mut read, id).await?;
+        read.commit().await?;
+        Ok(draft)
     }
 
     pub(crate) async fn outline_draft_on(
@@ -32,8 +34,8 @@ impl LearningRepository {
         draft.stamp();
         let state = serde_json::to_string(draft)?;
         let comparisons =
-            compare_sources(&self.pool, &program.summary.id, sources, references).await?;
-        let mut tx = self.pool.begin_write().await?;
+            compare_sources(&self.db, &program.summary.id, sources, references).await?;
+        let mut tx = self.db.begin_write().await?;
         let changed = sqlx::query("UPDATE learning_programs SET revision=revision+1,current_lesson_id=? WHERE id=? AND revision=? AND status='draft'")
             .bind(program.modules.first().and_then(|m|m.lessons.first()).map(|l|&l.id)).bind(&program.summary.id).bind(program.summary.revision).execute(&mut *tx).await?;
         if changed.rows_affected() != 1 {
