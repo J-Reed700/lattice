@@ -5,6 +5,7 @@
 
 mod align;
 mod code;
+mod fences;
 mod measure;
 mod pack;
 mod prose;
@@ -13,14 +14,18 @@ mod suppressions;
 #[cfg(test)]
 mod align_tests;
 #[cfg(test)]
+mod fences_tests;
+#[cfg(test)]
 mod golden;
 #[cfg(test)]
 mod tests;
 
 pub use align::{align, common_subsequence, Alignment, Fate};
 pub use code::{is_blank, opens_item, Code};
+pub(crate) use fences::block_content;
+pub use fences::{code_fences, in_code_fence, CodeFence};
 pub use measure::{Bytes, Chars, Measure, Words};
-pub use pack::{partition, windows, Overflow, Plan, Rung};
+pub use pack::{partition, widen, windows, Overflow, Plan, Rung};
 pub use prose::{code_spans, item_marker_end, Flowed, Prose};
 
 /// A byte range of a text, both ends on char boundaries.

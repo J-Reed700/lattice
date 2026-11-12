@@ -337,6 +337,24 @@ fn a_shorter_run_inside_a_fence_keeps_its_lines_code() {
 }
 
 #[test]
+fn widen_reaches_the_farthest_sentence_break_on_each_side() {
+    let text = "One two. Three four. Five six. Seven eight. Nine ten.";
+    let ladder = [Strength::Sentence, Strength::Word];
+    let at = text.find("Five six").unwrap();
+    let widened = widen(text, &Prose, at..at + 8, 15, &ladder);
+    assert_eq!(&text[widened], "Three four. Five six.");
+}
+
+#[test]
+fn widen_falls_back_to_word_breaks_and_keeps_the_texts_edges() {
+    let text = "alpha beta gamma delta epsilon";
+    let ladder = [Strength::Sentence, Strength::Word];
+    let widened = widen(text, &Prose, 11..16, 7, &ladder);
+    assert_eq!(&text[widened], "beta gamma");
+    assert_eq!(widen(text, &Prose, 6..10, 100, &ladder), 0..text.len());
+}
+
+#[test]
 fn the_next_window_starts_no_later_than_the_end_of_a_cut_made_by_a_stronger_rung() {
     let text = "aaa\n\nbbb ccc ddd eee fff ggg";
     let plan = Plan {
