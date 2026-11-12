@@ -1524,3 +1524,16 @@ fn a_code_example_event_records_its_run_in_any_state_and_moves_nothing() {
     assert_eq!(entry.code_example(), Some("run-1"));
     assert!(matches!(entry.state(), ClaimState::Unverified { .. }));
 }
+
+#[test]
+fn a_fault_event_moves_no_state_and_is_named_statement_fault() {
+    let mut entry = claim("c1");
+    let before = entry.state().clone();
+    let fault = ClaimEvent::Faulted {
+        stage: FaultStage::Record,
+        message: "its check named no passage".into(),
+    };
+    assert_eq!(fault.kind_name(), "statement_fault");
+    entry.append(machine(2), fault).unwrap();
+    assert_eq!(entry.state(), &before);
+}

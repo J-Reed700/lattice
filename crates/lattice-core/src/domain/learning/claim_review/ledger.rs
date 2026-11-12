@@ -606,7 +606,8 @@ impl ClaimLedgerEntry {
             | ClaimEvent::Stopped { .. }
             | ClaimEvent::SentenceCut { .. }
             | ClaimEvent::TextRemoved { .. }
-            | ClaimEvent::SectionEdited { .. } => {}
+            | ClaimEvent::SectionEdited { .. }
+            | ClaimEvent::Faulted { .. } => {}
             ClaimEvent::PublishedUnverified { reason } => {
                 if !matches!(
                     next.state,

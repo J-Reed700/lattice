@@ -1082,6 +1082,22 @@ pub enum ClaimEvent {
     CodeExample {
         observation: String,
     },
+    /// A fault in the machine's handling of the statement; it holds the
+    /// statement back and moves no state.
+    Faulted {
+        stage: FaultStage,
+        message: String,
+    },
+}
+
+/// Where in a statement's handling a fault happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FaultStage {
+    Read,
+    Take,
+    Ask,
+    Record,
 }
 
 impl ClaimEvent {
@@ -1110,6 +1126,7 @@ impl ClaimEvent {
             Self::TextRemoved { .. } => "text_removed",
             Self::SectionEdited { .. } => "section_edited",
             Self::CodeExample { .. } => "code_example",
+            Self::Faulted { .. } => "statement_fault",
         }
     }
 }
