@@ -8,9 +8,10 @@ use crate::assessment_engine::{
 };
 use crate::assessment_generation::text_call;
 use crate::key_review::{self, KeyVerdict, Solution};
-use crate::model_call;
+use crate::lessons::structured_call::complete_checked_request;
+use crate::model_call::{self, ErrorClass};
 use lattice_core::{
-    application::ports::{llm_port::Finish, LLMPort},
+    application::ports::LLMPort,
     application::services::grounded_generation::GroundedRequest,
     application::services::model_contract::{Contract, ContractId, PromptInput},
     shared::error::{AppError, Result},
@@ -305,10 +306,10 @@ impl Judge<'_> {
         )
     }
 
-    /// One check per item of the chunk, asked for again once when the answer
-    /// misses an item or reports a defect without saying what it is. None
-    /// when the answer was cut off at the reservation for more than one item:
-    /// the caller then asks for fewer.
+    /// One check per item of the chunk, corrected once by the shared driver
+    /// when the answer misses an item or reports a defect without saying what
+    /// it is. None when the answer was cut off for more than one item: the
+    /// caller then asks for fewer.
     async fn checks(
         &self,
         llm: &dyn LLMPort,
@@ -316,46 +317,51 @@ impl Judge<'_> {
         size: usize,
     ) -> Result<Option<Vec<Check>>> {
         let wanted = self.ids(start, size);
-        for attempt in 0..2 {
-            let request = self.request(start, size);
-            let call = text_call::<QuizItemReview>(&request)?;
-            let response = model_call::send(
-                llm,
-                &call,
-                request,
-                None,
-                model_call::TooLarge::Window("one quiz question with its review"),
-            )
-            .await?;
-            if Finish::of(Some(&response.finish_reason)) == Finish::CutOff {
-                if size == 1 {
-                    break;
-                }
-                return Ok(None);
-            }
-            let checks: Option<Vec<Check>> = crate::generation::parse_json::<Value>(&response.text)
-                .ok()
-                .and_then(|parsed| parsed.get("checks").cloned())
-                .and_then(|checks| serde_json::from_value(checks).ok());
-            if let Some(checks) = checks.filter(|checks| complete(checks, &wanted)) {
-                return Ok(Some(checks));
-            }
-            tracing::warn!(attempt, "Quiz item review answer was incomplete");
+        let request = self.request(start, size);
+        let call = text_call::<QuizItemReview>(&request)?;
+        let read = |text: &str| read_checks(text, &wanted);
+        match complete_checked_request(llm, &call, request, None, None, read).await {
+            Ok(checks) => Ok(Some(checks)),
+            Err(error) if size > 1 && ErrorClass::of(&error) == ErrorClass::DoesNotFit => Ok(None),
+            Err(error) => Err(error),
         }
-        Err(AppError::ModelAnswerUnusable(
-            "The model could not complete the quiz item review.".into(),
-        ))
     }
 }
 
-fn complete(checks: &[Check], wanted: &[String]) -> bool {
-    checks.len() == wanted.len()
-        && wanted
-            .iter()
-            .all(|id| checks.iter().filter(|c| &c.id == id).count() == 1)
-        && checks
-            .iter()
-            .all(|c| !c.has_defect || !c.finding.trim().is_empty())
+/// The checks a reply holds, or what is missing from it.
+fn read_checks(text: &str, wanted: &[String]) -> Result<Vec<Check>> {
+    let checks: Vec<Check> = crate::generation::parse_json::<Value>(text)
+        .ok()
+        .and_then(|parsed| parsed.get("checks").cloned())
+        .and_then(|checks| serde_json::from_value(checks).ok())
+        .ok_or_else(|| AppError::InvalidInput("The reply has no readable checks list.".into()))?;
+    let missing: Vec<&str> = wanted
+        .iter()
+        .filter(|id| checks.iter().filter(|c| &c.id == *id).count() != 1)
+        .map(String::as_str)
+        .collect();
+    if !missing.is_empty() {
+        return Err(AppError::InvalidInput(format!(
+            "The checks must hold exactly one check for each of {}; missing or repeated: {}.",
+            wanted.join(", "),
+            missing.join(", ")
+        )));
+    }
+    if checks.len() != wanted.len() {
+        return Err(AppError::InvalidInput(
+            "The checks hold items that were not asked about.".into(),
+        ));
+    }
+    if let Some(check) = checks
+        .iter()
+        .find(|c| c.has_defect && c.finding.trim().is_empty())
+    {
+        return Err(AppError::InvalidInput(format!(
+            "The check for {} reports a defect without saying what it is.",
+            check.id
+        )));
+    }
+    Ok(checks)
 }
 
 /// What is wrong with each entry, in entry order; no findings is a sound

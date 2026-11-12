@@ -171,7 +171,7 @@ async fn batched<C: Contract<Input = PromptInput>>(
             model_call::TooLarge::Window("one answer with its rubric"),
         )
         .await?;
-        let cut_off = Finish::of(Some(&response.finish_reason)) != Finish::Complete;
+        let cut_off = Finish::of(&response.finish_reason) != Finish::Complete;
         let parsed = (!cut_off)
             .then(|| crate::generation::parse_json::<Value>(&response.text).ok())
             .flatten();
