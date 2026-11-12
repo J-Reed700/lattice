@@ -547,7 +547,10 @@ async fn a_lesson_stopped_on_checks_made_under_other_rules_completes_its_job_as_
         .unwrap();
     assert_eq!(review.state, LessonReviewState::Stopped);
     let stop = review.stop_reason.clone().unwrap();
-    assert_eq!(stop.code, "policy_changed");
+    assert_eq!(
+        stop.code,
+        lattice_core::domain::learning::claim_review::StopCode::PolicyChanged
+    );
     // The worker completes the job as held, not failed.
     let held = held_for_review(&Database::from(pool.clone()), &lesson_id, &job)
         .await?
@@ -1025,7 +1028,11 @@ async fn human_verdicts_on_flagged_claims_are_labelled_examples_that_export_as_c
             },
             result: CheckResult::Failed { kind: kind.clone() },
             reason: "The reference does not say so.".into(),
-            fingerprint: EvidenceFingerprint::of(evidence_policy(), "figures-fixture", &seen),
+            fingerprint: EvidenceFingerprint::of(
+                Judged::Passages.policy(),
+                "figures-fixture",
+                &seen,
+            ),
             evidence: seen.clone(),
             window_tokens: 128_000,
         };
@@ -1208,7 +1215,7 @@ async fn the_tally_counts_a_claim_as_searching_only_where_the_policy_sends_it_to
     let check = local_check(failed, "The reference does not say so.", vec![]);
     ledger.append(&outside, ClaimEvent::Checked(check)).await?;
 
-    let tally = ledger.tally();
+    let tally = ledger.tally(&policy);
 
     assert_eq!(
         (
@@ -1535,7 +1542,11 @@ async fn a_location_that_narrows_in_unchanged_text_changes_nothing_but_the_locat
                     supporting_quote: CELL_SOURCE.into(),
                 },
                 reason: "compared".into(),
-                fingerprint: EvidenceFingerprint::of(evidence_policy(), model.model_name(), &seen),
+                fingerprint: EvidenceFingerprint::of(
+                    Judged::Passages.policy(),
+                    model.model_name(),
+                    &seen,
+                ),
                 evidence: seen,
                 window_tokens: model.max_context_tokens(),
             }),
@@ -1655,7 +1666,11 @@ async fn a_claim_that_passed_on_a_sentence_cut_for_another_is_removed_by_the_mac
         panic!("the failed claim is repaired");
     };
     assert_eq!(targets, std::slice::from_ref(&shared));
-    assert!(ledger.entry(&shared).unwrap().next_repair_escalates());
+    assert!(ledger
+        .entry(&shared)
+        .unwrap()
+        .next_machine_repair()
+        .is_some_and(|repair| repair.last));
 
     // Its last attempt cuts the sentence: no repair record rides on it, and
     // the claim that passed goes with the sentence.
@@ -1768,7 +1783,11 @@ async fn remove_and_edit_act_on_the_located_sentence() -> Result<()> {
                 kind: VerdictKind::Unsupported,
             },
             reason: "The reference does not say so.".into(),
-            fingerprint: EvidenceFingerprint::of(evidence_policy(), "figures-fixture", &seen),
+            fingerprint: EvidenceFingerprint::of(
+                Judged::Passages.policy(),
+                "figures-fixture",
+                &seen,
+            ),
             evidence: seen.clone(),
             window_tokens: 128_000,
         };
@@ -2506,6 +2525,10 @@ async fn a_code_examples_ended_claim_blocks_nothing() -> Result<()> {
         statement: "The code example example-0 runs to completion with the output it shows.".into(),
     };
     assert!(ledger.append(&example, extracted).await?);
+    let run = ClaimEvent::CodeExample {
+        observation: "example-0".into(),
+    };
+    assert!(ledger.append(&example, run).await?);
     let ended = ClaimEvent::Superseded {
         successor: None,
         by: Actor::Machine,
@@ -2622,12 +2645,14 @@ impl Course {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|block| LearningBlockDto {
-                    kind: LearningBlockKind::Explanation,
-                    title: block["title"].as_str().unwrap().into(),
-                    body: block["body"].as_str().unwrap().into(),
-                    source_ids: Vec::new(),
-                    rubric: Vec::new(),
+                .map(|block| {
+                    LearningBlockDto::new(
+                        LearningBlockKind::Explanation,
+                        block["title"].as_str().unwrap().to_owned(),
+                        block["body"].as_str().unwrap().to_owned(),
+                        Vec::new(),
+                        Vec::new(),
+                    )
                 })
                 .collect(),
             questions: Vec::new(),
