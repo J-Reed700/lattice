@@ -16,6 +16,7 @@
 //!
 //! `--check` compares both against the committed files and writes neither.
 
+mod contracts;
 mod routes;
 mod settings;
 
@@ -605,6 +606,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
         .map_err(|error| format!("cannot read {}: {error}", capabilities_path.display()))?;
     let owners = routes::command_owners(&capabilities)?;
     let (bindings, command_routes) = routes::qualify_commands(&bindings, &owners)?;
+    let bindings = format!("{bindings}\n{}", contracts::render_contracts(&bindings)?);
 
     Ok(vec![
         (

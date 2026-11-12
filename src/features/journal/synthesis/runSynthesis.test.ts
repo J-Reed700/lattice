@@ -18,6 +18,8 @@ vi.mock('@/lib/api', () => {
 });
 vi.mock('@/shared/ipc/transport', () => ({ apiCall: vi.fn() }));
 
+const apiCallMock = vi.mocked(apiCall as unknown as (command: string, args?: unknown) => Promise<unknown>);
+
 const result = { synthesis: 'Decisions from the discussion.', entryCount: 2, chunkCount: 3, scope: 'conversation', conversationIds: ['first', 'second'], citations: [], sources: [] };
 const options = { title: 'Research', heading: 'Research', request: { conversationIds: ['first', 'second'], scope: 'conversation' }, destination: { kind: 'capture' as const } };
 const page = (id: string): WorkspaceNote => ({ id, title: id, content: 'Existing notes.', revision: 1, createdAt: '', updatedAt: '', journalId: 'journal', linkedDocumentIds: [], linkedConversationIds: [], highlights: [], stickyNotes: [], sources: [], conversationSnapshots: [] });
@@ -33,7 +35,7 @@ function synthesis(overrides: Partial<JournalSynthesisDto> = {}, job: Parameters
 
 /** The backend's synthesis commands, with what each was asked. */
 function backend(list: JournalSynthesisDto[] = []) {
-  vi.mocked(apiCall).mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+  apiCallMock.mockImplementation(async (command: string, args?: unknown) => {
     switch (command) {
       case 'list_journal_syntheses': return { ok: true, data: list };
       case 'synthesize_journal_entries': return { ok: true, data: synthesis({}, { id: 'started', status: 'pending', finishedAt: null, resultRef: null }) };
@@ -44,7 +46,7 @@ function backend(list: JournalSynthesisDto[] = []) {
   });
 }
 
-const calls = (command: string) => vi.mocked(apiCall).mock.calls.filter(([name]) => name === command);
+const calls = (command: string) => apiCallMock.mock.calls.filter(([name]) => name === command);
 
 describe('synthesis workflow', () => {
   beforeEach(() => {
@@ -92,7 +94,7 @@ describe('synthesis workflow', () => {
       chunkIndex: null, chunkExcerpts: null, webSnapshot: null,
     }));
     backend([synthesis()]);
-    vi.mocked(apiCall).mockImplementation(async (command: string) => command === 'get_journal_synthesis_result'
+    apiCallMock.mockImplementation(async (command: string) => command === 'get_journal_synthesis_result'
       ? { ok: true, data: { ...result, synthesis: 'First claim [1]. Last claim [25].', conversationIds: ['conversation-1'], sources } }
       : { ok: true, data: true });
 

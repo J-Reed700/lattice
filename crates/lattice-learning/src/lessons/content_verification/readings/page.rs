@@ -223,7 +223,7 @@ async fn open(
         reach: selected.reach,
         cited,
     };
-    Ok((page, restored(at, pending).await?))
+    Ok((page, restored(pending).await?))
 }
 
 /// What the judge's finding on a statement's page comes to: it stands when the

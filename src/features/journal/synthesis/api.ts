@@ -5,7 +5,6 @@ import type {
   JournalSynthesisDto,
   StartJournalSynthesisRequestDto,
   SynthesisActivityDto,
-  SynthesizeJournalEntriesResponseDto,
 } from '@/lib/bindings';
 import { apiCall } from '@/shared/ipc/transport';
 import { unwrapApiResult } from '@/types/api/result';
@@ -21,28 +20,28 @@ export const synthesisKeys = {
 
 /** Starts a synthesis as a job. Its destination is fixed now, whatever happens before it finishes. */
 export const startSynthesis = async (request: StartJournalSynthesisRequestDto) =>
-  unwrapApiResult(await apiCall<JournalSynthesisDto>('synthesize_journal_entries', { request }));
+  unwrapApiResult(await apiCall('synthesize_journal_entries', { request }));
 
 /** The result a finished synthesis staged, for the renderer to save. */
 export const synthesisResult = async (jobId: string) =>
-  unwrapApiResult(await apiCall<SynthesizeJournalEntriesResponseDto>('get_journal_synthesis_result', { jobId }));
+  unwrapApiResult(await apiCall('get_journal_synthesis_result', { jobId }));
 
 /** Records that a finished synthesis was saved; false when it already had been. */
 export const markSynthesisApplied = async (jobId: string) =>
-  unwrapApiResult(await apiCall<boolean>('mark_journal_synthesis_applied', { jobId }));
+  unwrapApiResult(await apiCall('mark_journal_synthesis_applied', { jobId }));
 
 /** Removes a synthesis that ended without a result. */
 export const dismissSynthesis = async (jobId: string) =>
-  unwrapApiResult(await apiCall<null>('dismiss_journal_synthesis', { jobId }));
+  unwrapApiResult(await apiCall('dismiss_journal_synthesis', { jobId }));
 
 /** Runs a failed or interrupted synthesis again, keeping the parts it wrote. */
 export const retrySynthesis = async (jobId: string) =>
-  unwrapApiResult(await apiCall<JournalSynthesisDto>('retry_journal_synthesis', { jobId }));
+  unwrapApiResult(await apiCall('retry_journal_synthesis', { jobId }));
 
 export const synthesesQueryOptions = () =>
   queryOptions({
     queryKey: synthesisKeys.list,
-    queryFn: async () => unwrapApiResult(await apiCall<JournalSynthesisDto[]>('list_journal_syntheses')),
+    queryFn: async () => unwrapApiResult(await apiCall('list_journal_syntheses')),
     // Kept current by the job status event, not by refetching.
     staleTime: Infinity,
   });

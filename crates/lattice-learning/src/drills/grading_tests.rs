@@ -1052,7 +1052,7 @@ async fn a_drill_and_review_the_window_cannot_hold_fail_without_a_call() {
     let llm = ScriptedJudge::answering(vec![valid().to_string()]).with_window(1_200);
     let error = grade(&llm, &Scene::new()).await.unwrap_err();
     assert!(
-        matches!(&error, AppError::InvalidConfig(message) if message.starts_with("The drill and the review do not fit in scripted-judge's 1200-token context window.")),
+        matches!(&error, AppError::WindowTooSmall(message) if message.starts_with("The drill and the review do not fit in scripted-judge's 1200-token context window.")),
         "{error:?}"
     );
     assert!(llm.sent().is_empty(), "a review is never cut to fit");

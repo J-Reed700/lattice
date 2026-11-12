@@ -764,7 +764,7 @@ async fn one_claim_the_window_cannot_hold_by_exact_count_names_the_window() {
     let error = super::study_generation::generate_from_conversation(&llm, &claims, "deck", 10)
         .await
         .err();
-    let Some(lattice_core::shared::error::AppError::InvalidConfig(message)) = error else {
+    let Some(lattice_core::shared::error::AppError::WindowTooSmall(message)) = error else {
         panic!("expected the window to be named, got {error:?}");
     };
     assert!(

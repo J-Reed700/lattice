@@ -14,6 +14,10 @@ pub(super) const CLOZE_BLANKS_ASKED: RangeInclusive<usize> = 1..=4;
 pub(super) const ORDERING_ASKED: RangeInclusive<usize> = 3..=8;
 
 #[derive(Deserialize, Default)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, Debug, PartialEq)
+)]
 #[serde(rename_all = "camelCase", default)]
 struct RawPair {
     left: String,
@@ -21,14 +25,22 @@ struct RawPair {
 }
 
 #[derive(Deserialize, Default)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, Debug, PartialEq)
+)]
 #[serde(rename_all = "camelCase", default)]
 struct RawBlank {
     accepted_answers: Vec<String>,
 }
 
 #[derive(Deserialize, Default)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, Debug, PartialEq)
+)]
 #[serde(rename_all = "camelCase", default)]
-pub(super) struct RawItem {
+pub(crate) struct RawItem {
     prompt: String,
     options: Vec<String>,
     answer_index: usize,

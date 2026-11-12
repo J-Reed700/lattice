@@ -10,6 +10,8 @@ use serde_json::{json, Value};
 
 use super::{data_prompt, judge, names, sanitised, CallOutcome};
 use crate::application::ports::LLMPort;
+#[cfg(any(test, feature = "test-support"))]
+use crate::application::services::model_contract::test_support::RenderAnswer;
 use crate::application::services::model_contract::{
     Contract, ContractCall, ContractId, PromptInput,
 };
@@ -134,38 +136,60 @@ pub fn profile_schema() -> Value {
     })
 }
 
+/// The reply as the model wrote it, before it is checked against the claims asked about.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Answer {
-    claims: Vec<AnswerClaim>,
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, Debug, PartialEq)
+)]
+pub(crate) struct Answer {
+    pub(crate) claims: Vec<AnswerClaim>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AnswerClaim {
-    id: String,
-    kind: ClaimKind,
-    subject: Option<AnswerSubject>,
-    temporal: AnswerTemporal,
-    measurement_origin: Option<String>,
-    attributed_to: Option<String>,
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, Debug, PartialEq)
+)]
+pub(crate) struct AnswerClaim {
+    pub(crate) id: String,
+    pub(crate) kind: ClaimKind,
+    pub(crate) subject: Option<AnswerSubject>,
+    pub(crate) temporal: AnswerTemporal,
+    pub(crate) measurement_origin: Option<String>,
+    pub(crate) attributed_to: Option<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AnswerSubject {
-    name: String,
-    kind: SubjectKind,
-    aliases: Vec<String>,
-    classes: Vec<String>,
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, Debug, PartialEq, Clone)
+)]
+pub(crate) struct AnswerSubject {
+    pub(crate) name: String,
+    pub(crate) kind: SubjectKind,
+    pub(crate) aliases: Vec<String>,
+    pub(crate) classes: Vec<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AnswerTemporal {
-    scope: String,
-    version: Option<String>,
-    date: Option<String>,
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, Debug, PartialEq)
+)]
+pub(crate) struct AnswerTemporal {
+    pub(crate) scope: String,
+    pub(crate) version: Option<String>,
+    pub(crate) date: Option<String>,
+}
+
+/// The claims a reply holds, when it is the schema's JSON.
+pub(crate) fn read_profile_answer(text: &str) -> std::result::Result<Answer, String> {
+    serde_json::from_str(text.trim()).map_err(|error| format!("not the schema: {error}"))
 }
 
 /// Validates a batch answer: every claim at most once, no claim that was
@@ -176,8 +200,7 @@ pub(super) fn parse_profiles(
     claims: &[ClaimToProfile],
     model: &str,
 ) -> std::result::Result<Vec<Option<ClaimProfile>>, String> {
-    let answer: Answer =
-        serde_json::from_str(text.trim()).map_err(|error| format!("not the schema: {error}"))?;
+    let answer = read_profile_answer(text)?;
     let mut by_id: HashMap<String, ClaimProfile> = HashMap::new();
     for claim in answer.claims {
         if !claims.iter().any(|asked| asked.id == claim.id) {
@@ -290,7 +313,8 @@ pub async fn profile_claims(
         let call = ContractCall::of::<ProfileCall>(&PromptInput {
             system: CLAIM_PROFILE_SYSTEM.to_owned(),
             prompt: prompt.clone(),
-        })?;
+        })?
+        .splitting(claims.len() > 1);
         let outcome = judge(
             llm,
             &call,
@@ -383,4 +407,17 @@ fn shares(input: u64, output: u64, parts: usize) -> Vec<(u64, u64)> {
             (input / parts + extra(input), output / parts + extra(output))
         })
         .collect()
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl RenderAnswer for ProfileCall {
+    type Answer = Answer;
+
+    fn render(answer: &Answer) -> String {
+        serde_json::to_string(answer).unwrap_or_default()
+    }
+
+    fn read(text: &str) -> Result<Answer> {
+        read_profile_answer(text).map_err(crate::shared::error::AppError::InvalidInput)
+    }
 }

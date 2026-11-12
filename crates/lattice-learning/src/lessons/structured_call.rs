@@ -16,7 +16,7 @@ use lattice_core::application::services::grounded_generation::{
     self, GroundedOutput, GroundedRequest, HistoryItem, Streaming,
 };
 use lattice_core::application::services::model_contract::{
-    answer, ContractCall, Transport, CORRECTION_LEAD,
+    answer, ContractCall, CutOffRemedy, Transport, CORRECTION_LEAD,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::protocol::Protocol;
@@ -467,27 +467,27 @@ impl Transport for Learning<'_> {
     }
 
     /// An answer cut off at its output reservation is asked for once more with
-    /// the reservation doubled, unless it already had the whole window or the
-    /// doubled request does not fit.
-    async fn larger(
+    /// the reservation doubled; when it already had the whole window or the
+    /// doubled request does not fit, the call ends cut off.
+    async fn cut_off(
         &self,
         llm: &dyn LLMPort,
         request: &GroundedRequest,
-    ) -> Option<GroundedRequest> {
+    ) -> CutOffRemedy<GroundedRequest> {
         if fills_window(self.progress, self.step) {
-            return None;
+            return CutOffRemedy::Stop;
         }
         let mut larger = request.clone();
         larger.output_tokens = request.output_tokens.saturating_mul(2);
         if !model_call::fits(llm, &larger).await {
-            return None;
+            return CutOffRemedy::Stop;
         }
         tracing::warn!(
             step = self.step.name(),
             output_tokens = request.output_tokens,
             "An answer reached its output limit; asking once more with twice the room"
         );
-        Some(larger)
+        CutOffRemedy::Larger(larger)
     }
 }
 

@@ -235,7 +235,7 @@ describe('BackupSection', () => {
       ok: true,
       data: { count: 12, outputDir: '/data/exports/lattice-export-20260906-140200' },
     });
-    mockShowInFolder.mockResolvedValue({ ok: true, data: undefined });
+    mockShowInFolder.mockResolvedValue({ ok: true, data: null });
     mockGetIndexProgress.mockResolvedValue({ ok: true, data: snapshot() });
 
     mockGetArchiveStatus.mockResolvedValue({ ok: true, data: archiveStatus() });

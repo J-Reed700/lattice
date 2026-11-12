@@ -62,7 +62,6 @@ pub(super) async fn review_material(
         let quote_checks = subject.quote_checks(&value, &authoring);
         // review
         let pass = Pass {
-            attempt,
             candidate: &candidate,
             value: &value,
             authoring: &authoring,
@@ -154,7 +153,9 @@ impl Repairs<'_> {
             let settled = match made {
                 Ok(settled) => settled,
                 Err(error) => match ErrorClass::of(&error) {
-                    ErrorClass::Outage | ErrorClass::Fault => return Err(error),
+                    ErrorClass::Outage | ErrorClass::Unavailable | ErrorClass::Fault => {
+                        return Err(error)
+                    }
                     _ if self.edits && group.len() > 1 => {
                         let (first, second) = group.split_at(group.len() / 2);
                         tracing::info!(%error, findings = group.len(), "The teaching repair could not be made for these findings together; each half is repaired on its own");

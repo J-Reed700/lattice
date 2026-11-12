@@ -576,6 +576,26 @@ fn a_quotation_after_a_short_one_is_found_whole() {
 }
 
 #[test]
+fn a_quotation_inside_another_is_part_of_it() {
+    for (sentence, wording) in [
+        (
+            "The guide says \u{201c}keep descriptions action-oriented (\u{201c}Retrieve X given Y\u{201d}) in every tool\u{201d} today.",
+            "keep descriptions action-oriented (\u{201c}Retrieve X given Y\u{201d}) in every tool",
+        ),
+        (
+            "The guide says \u{201c}keep descriptions action-oriented (\"Retrieve X given Y\") in every tool\u{201d} today.",
+            "keep descriptions action-oriented (\"Retrieve X given Y\") in every tool",
+        ),
+    ] {
+        assert_eq!(
+            quoted_wording(sentence).collect::<Vec<_>>(),
+            [wording],
+            "{sentence}"
+        );
+    }
+}
+
+#[test]
 fn a_mark_at_the_start_of_the_text_or_after_an_opening_bracket_opens() {
     assert_eq!(
         quoted_wording("\"The shell keeps a working directory,\" the guide begins.")
@@ -648,4 +668,16 @@ fn the_classifier_is_told_what_the_lesson_s_own_figures_are() {
         ),
         "{SYSTEM}"
     );
+}
+
+#[test]
+fn the_sort_contract_reads_what_it_renders() {
+    let answer: BTreeMap<String, String> = ["sourced", "reasoning", "common", "internal"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, class)| (format!("s{index}"), class.to_owned()))
+        .collect();
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        SortStatements,
+    >(&answer);
 }

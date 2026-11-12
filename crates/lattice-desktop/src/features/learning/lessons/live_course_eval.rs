@@ -387,7 +387,7 @@ pub(super) fn quiz_job_step(status: JobStatus) -> QuizJobStep {
 }
 
 /// Whether a job's error text is the display of an error the job runtime
-/// treats as an outage (`ErrorClass::Outage`).
+/// treats as temporary (`ErrorClass::is_temporary`).
 pub(super) fn transient_text(error: &str) -> bool {
     let variants: [fn(String) -> AppError; 3] = [
         AppError::Network,

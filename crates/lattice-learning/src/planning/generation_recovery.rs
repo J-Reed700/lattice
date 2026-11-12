@@ -28,7 +28,7 @@ pub fn lesson_job_config() -> JobKindConfig {
 /// and the job runtime ends a job whose other failure comes back with nothing
 /// saved in between, so a lesson never retries forever unseen.
 pub(crate) fn lesson_failure(job: &JobRecord, error: &AppError) -> JobFailure {
-    if ErrorClass::of(error) != ErrorClass::Outage {
+    if !ErrorClass::of(error).is_temporary() {
         return JobFailure::Fail {
             code: "generation_failed".into(),
             message: error.to_string(),

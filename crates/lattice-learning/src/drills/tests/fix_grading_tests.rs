@@ -588,10 +588,7 @@ async fn a_cancelled_run_stops_the_grading_and_grades_nothing() -> Result<()> {
         &operator_fixed(),
     )
     .await;
-    assert!(
-        matches!(result, Err(AppError::InvalidState(_))),
-        "{result:?}"
-    );
+    assert!(matches!(result, Err(AppError::Cancelled(_))), "{result:?}");
     assert!(model.requests().is_empty());
     Ok(())
 }

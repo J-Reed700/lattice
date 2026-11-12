@@ -109,7 +109,7 @@ enum Ended {
     /// step, and whether research reached nothing.
     NoProgress {
         waiting: Vec<(String, &'static str, Step)>,
-        unreached: bool,
+        unresearched: Option<Unresearched>,
     },
 }
 
@@ -286,7 +286,7 @@ impl Review for ScriptedReview {
         if !due || stuck {
             self.log("research", Vec::new());
             return Ok(if due {
-                Researched::Unreached
+                Researched::Unresearched(Unresearched::Unreached)
             } else {
                 Researched::Nothing
             });
@@ -435,12 +435,15 @@ impl Review for ScriptedReview {
             Verdict::Publish => Ended::Published,
             Verdict::Hold { claims, .. } => Ended::Held(claims),
             Verdict::Stop(reason) => Ended::Stopped(reason.code),
-            Verdict::NoProgress { waiting, unreached } => Ended::NoProgress {
+            Verdict::NoProgress {
+                waiting,
+                unresearched,
+            } => Ended::NoProgress {
                 waiting: waiting
                     .into_iter()
                     .map(|waits| (waits.claim.0, waits.node, waits.step))
                     .collect(),
-                unreached,
+                unresearched,
             },
         })
     }
@@ -566,7 +569,7 @@ async fn a_round_that_moves_nothing_stops_naming_what_each_statement_waits_for()
                 ("unreached".to_owned(), "s.research", Step::Research),
                 ("deferred".to_owned(), "s.recite", Step::Recite),
             ],
-            unreached: true,
+            unresearched: Some(Unresearched::Unreached),
         }
     );
     assert_eq!(review.rounds, 3);
@@ -659,7 +662,7 @@ async fn a_round_that_cannot_mark_what_waits_stops_as_it_did() {
         ended,
         Ended::NoProgress {
             waiting: vec![("deferred".to_owned(), "s.recite", Step::Recite)],
-            unreached: false,
+            unresearched: None,
         }
     );
     assert!(review.unverified.is_empty());

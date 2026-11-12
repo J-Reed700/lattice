@@ -163,7 +163,7 @@ impl JobFailure {
     /// Outages are deferred; anything else fails the attempt.
     pub fn classify(error: &crate::shared::error::AppError) -> Self {
         use crate::shared::error::{AppError, ErrorClass};
-        if ErrorClass::of(error) == ErrorClass::Outage {
+        if ErrorClass::of(error).is_temporary() {
             let progress_message = if matches!(error, AppError::DatabaseBusy(_)) {
                 "Waiting for another task to finish with the database"
             } else {

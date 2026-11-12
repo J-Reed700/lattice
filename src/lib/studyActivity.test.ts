@@ -175,7 +175,7 @@ describe('Study request activity', () => {
   it('leaves the shared transport feature-neutral: a plain apiCall publishes no receipt', async () => {
     let resolve!: (value: unknown) => void;
     vi.mocked(invoke).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
-    const result = apiCall('start_learning_diagnostic', { request: { programId: 'course' } });
+    const result = apiCall('start_learning_diagnostic', { request: { operationId: 'operation', programId: 'course', expectedRevision: 1 } });
     await vi.advanceTimersByTimeAsync(5_000);
     expect(activities()).toEqual([]);
     resolve(null);

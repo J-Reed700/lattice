@@ -470,7 +470,7 @@ mod tests {
             feedback: "You chose the right first step and said why.".into(),
             evidence_quote: Some("I\u{2019}d index the join column first".into()),
         };
-        assert!(validate_findings(&attempt(), &responses, &[finding.clone()]).is_ok());
+        assert!(validate_findings(&attempt(), &responses, std::slice::from_ref(&finding)).is_ok());
         let mut findings = [finding];
         unquoted_are_uncertain(&responses, &mut findings);
         assert_eq!(

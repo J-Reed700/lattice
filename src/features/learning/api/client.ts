@@ -1,17 +1,17 @@
 import { Channel } from '@tauri-apps/api/core';
 
 import type * as Wire from '@/lib/bindings';
-import type { CommandName } from '@/shared/ipc/transport';
+import type { CommandArgList, CommandName } from '@/shared/ipc/transport';
 import type { ApiResult } from '@/types';
 
 import { learningCall } from './learningCall';
 import { lessonReviewApi } from './lessonReview';
 
-async function invokeCommand<T>(
-  command: CommandName,
-  args?: Record<string, unknown>,
-): Promise<T> {
-  const result = await learningCall<T>(command, args);
+async function invokeCommand<C extends CommandName>(
+  command: C,
+  ...args: CommandArgList<C>
+): Promise<Wire.CommandResults[C]> {
+  const result = await learningCall(command, ...args);
   if (!result.ok) {
     throw new Error(result.error);
   }
@@ -265,7 +265,7 @@ export const learningApi = {
   ): Promise<ApiResult<Wire.LearningProgramDto>> =>
     learningCall('complete_learning_lesson', { request }),
 
-  deleteLearningProgram: (id: string): Promise<ApiResult<void>> =>
+  deleteLearningProgram: (id: string): Promise<ApiResult<null>> =>
     learningCall('delete_learning_program', { id }),
 
   getLearningMemory: (id: string): Promise<ApiResult<Wire.LearningMemoryDto>> =>
@@ -439,14 +439,14 @@ export const learningApi = {
   getLearningAssessmentForm: (
     id: string,
   ): Promise<ApiResult<Wire.LearningAssessmentFormDto>> =>
-    learningCall<Wire.LearningAssessmentFormDto>('get_learning_assessment_form', {
+    learningCall('get_learning_assessment_form', {
       id,
     }),
 
   saveLearningAssessmentResponse: (
     request: Wire.SaveLearningAssessmentResponseRequestDto,
   ): Promise<ApiResult<Wire.LearningAssessmentFormDto>> =>
-    learningCall<Wire.LearningAssessmentFormDto>(
+    learningCall(
       'save_learning_assessment_response',
       { request },
     ),
@@ -454,7 +454,7 @@ export const learningApi = {
   interruptLearningAssessmentForm: (
     request: Wire.MutateLearningAssessmentFormRequestDto,
   ): Promise<ApiResult<Wire.LearningAssessmentFormDto>> =>
-    learningCall<Wire.LearningAssessmentFormDto>(
+    learningCall(
       'interrupt_learning_assessment_form',
       { request },
     ),
@@ -462,69 +462,69 @@ export const learningApi = {
   submitLearningAssessmentForm: (
     request: Wire.MutateLearningAssessmentFormRequestDto,
   ): Promise<ApiResult<Wire.LearningAssessmentFormDto>> =>
-    learningCall<Wire.LearningAssessmentFormDto>('submit_learning_assessment_form', {
+    learningCall('submit_learning_assessment_form', {
       request,
     }),
 
   acceptLearningFollowUp: (
     request: Wire.DecideLearningFollowUpRequestDto,
   ): Promise<ApiResult<Wire.LearningQuizOverviewDto>> =>
-    learningCall<Wire.LearningQuizOverviewDto>('accept_learning_follow_up', { request }),
+    learningCall('accept_learning_follow_up', { request }),
 
   dismissLearningFollowUp: (
     request: Wire.DecideLearningFollowUpRequestDto,
   ): Promise<ApiResult<Wire.LearningQuizOverviewDto>> =>
-    learningCall<Wire.LearningQuizOverviewDto>('dismiss_learning_follow_up', { request }),
+    learningCall('dismiss_learning_follow_up', { request }),
 
   getLearningQuizOverview: (
     programId: string,
   ): Promise<ApiResult<Wire.LearningQuizOverviewDto>> =>
-    learningCall<Wire.LearningQuizOverviewDto>('get_learning_quiz_overview', { programId }),
+    learningCall('get_learning_quiz_overview', { programId }),
 
   updateLearningQuizSettings: (
     request: Wire.UpdateLearningQuizSettingsRequestDto,
   ): Promise<ApiResult<Wire.LearningQuizOverviewDto>> =>
-    learningCall<Wire.LearningQuizOverviewDto>('update_learning_quiz_settings', { request }),
+    learningCall('update_learning_quiz_settings', { request }),
 
   prepareLearningQuizBank: (
     request: Wire.PrepareLearningQuizBankRequestDto,
   ): Promise<ApiResult<Wire.LearningGenerationJob>> =>
-    learningCall<Wire.LearningGenerationJob>('prepare_learning_quiz_bank', { request }),
+    learningCall('prepare_learning_quiz_bank', { request }),
 
   startLearningQuiz: (
     request: Wire.StartLearningQuizRequestDto,
   ): Promise<ApiResult<Wire.LearningAssessmentFormDto>> =>
-    learningCall<Wire.LearningAssessmentFormDto>('start_learning_quiz', { request }),
+    learningCall('start_learning_quiz', { request }),
 
   resumeLearningQuizGrading: (
     request: Wire.ResumeLearningQuizGradingRequestDto,
   ): Promise<ApiResult<Wire.LearningAssessmentFormDto>> =>
-    learningCall<Wire.LearningAssessmentFormDto>('resume_learning_quiz_grading', { request }),
+    learningCall('resume_learning_quiz_grading', { request }),
 
   contestLearningQuizGrade: (
     request: Wire.ContestLearningQuizGradeRequestDto,
   ): Promise<ApiResult<Wire.LearningAssessmentFormDto>> =>
-    learningCall<Wire.LearningAssessmentFormDto>('contest_learning_quiz_grade', { request }),
+    learningCall('contest_learning_quiz_grade', { request }),
 
   overrideLearningQuizGrade: (
     request: Wire.OverrideLearningQuizGradeRequestDto,
   ): Promise<ApiResult<Wire.LearningAssessmentFormDto>> =>
-    learningCall<Wire.LearningAssessmentFormDto>('override_learning_quiz_grade', { request }),
+    learningCall('override_learning_quiz_grade', { request }),
 
   reportLearningQuizItem: (
     request: Wire.ReportLearningQuizItemRequestDto,
   ): Promise<ApiResult<Wire.LearningAssessmentFormDto>> =>
-    learningCall<Wire.LearningAssessmentFormDto>('report_learning_quiz_item', { request }),
+    learningCall('report_learning_quiz_item', { request }),
 
   addLearningQuizMissesToRecall: (
     request: Wire.AddLearningQuizMissesToRecallRequestDto,
   ): Promise<ApiResult<Wire.LearningQuizMissesToRecallDto>> =>
-    learningCall<Wire.LearningQuizMissesToRecallDto>('add_learning_quiz_misses_to_recall', { request }),
+    learningCall('add_learning_quiz_misses_to_recall', { request }),
 
   getLearningPracticalWorkspace: (
     programId: string,
   ): Promise<ApiResult<Wire.LearningPracticalWorkspaceDto>> =>
-    learningCall<Wire.LearningPracticalWorkspaceDto>(
+    learningCall(
       'get_learning_practical_workspace',
       { programId },
     ),
@@ -541,12 +541,12 @@ export const learningApi = {
 
   getLearningRuntimeCatalog: (): Promise<
     ApiResult<Wire.LearningRuntimePresetDto[]>
-  > => learningCall<Wire.LearningRuntimePresetDto[]>('get_learning_runtime_catalog'),
+  > => learningCall('get_learning_runtime_catalog'),
 
   prepareLearningRuntimePreset: (
     request: Wire.PrepareLearningRuntimePresetRequestDto,
   ): Promise<ApiResult<Wire.LearningPracticalWorkspaceDto>> =>
-    learningCall<Wire.LearningPracticalWorkspaceDto>(
+    learningCall(
       'prepare_learning_runtime_preset',
       { request },
     ),
@@ -554,7 +554,7 @@ export const learningApi = {
   saveLearningRuntimeProfile: (
     request: Wire.SaveLearningRuntimeProfileRequestDto,
   ): Promise<ApiResult<Wire.LearningPracticalWorkspaceDto>> =>
-    learningCall<Wire.LearningPracticalWorkspaceDto>(
+    learningCall(
       'save_learning_runtime_profile',
       { request },
     ),
@@ -562,7 +562,7 @@ export const learningApi = {
   generateLearningPracticalActivity: (
     request: Wire.GenerateLearningPracticalActivityRequestDto,
   ): Promise<ApiResult<Wire.LearningPracticalWorkspaceDto>> =>
-    learningCall<Wire.LearningPracticalWorkspaceDto>(
+    learningCall(
       'generate_learning_practical_activity',
       { request },
     ),
@@ -570,28 +570,28 @@ export const learningApi = {
   startLearningPracticalRun: (
     request: Wire.StartLearningPracticalRunRequestDto,
   ): Promise<ApiResult<Wire.LearningPracticalRunDto>> =>
-    learningCall<Wire.LearningPracticalRunDto>('start_learning_practical_run', {
+    learningCall('start_learning_practical_run', {
       request,
     }),
 
   cancelLearningPracticalRun: (
     request: Wire.CancelLearningPracticalRunRequestDto,
   ): Promise<ApiResult<Wire.LearningPracticalRunDto>> =>
-    learningCall<Wire.LearningPracticalRunDto>('cancel_learning_practical_run', {
+    learningCall('cancel_learning_practical_run', {
       request,
     }),
 
   startLearningSimulation: (
     request: Wire.StartLearningSimulationRequestDto,
   ): Promise<ApiResult<Wire.LearningSimulationSessionDto>> =>
-    learningCall<Wire.LearningSimulationSessionDto>('start_learning_simulation', {
+    learningCall('start_learning_simulation', {
       request,
     }),
 
   sendLearningSimulationTurn: (
     request: Wire.SendLearningSimulationTurnRequestDto,
   ): Promise<ApiResult<Wire.LearningSimulationSessionDto>> =>
-    learningCall<Wire.LearningSimulationSessionDto>(
+    learningCall(
       'send_learning_simulation_turn',
       { request },
     ),
@@ -599,14 +599,14 @@ export const learningApi = {
   finishLearningSimulation: (
     request: Wire.FinishLearningSimulationRequestDto,
   ): Promise<ApiResult<Wire.LearningSimulationSessionDto>> =>
-    learningCall<Wire.LearningSimulationSessionDto>('finish_learning_simulation', {
+    learningCall('finish_learning_simulation', {
       request,
     }),
 
   getLearningPortabilityWorkspace: (
     programId: string,
   ): Promise<ApiResult<Wire.LearningPortabilityWorkspaceDto>> =>
-    learningCall<Wire.LearningPortabilityWorkspaceDto>(
+    learningCall(
       'get_learning_portability_workspace',
       { programId },
     ),
@@ -614,14 +614,14 @@ export const learningApi = {
   exportLearningPack: (
     request: Wire.ExportLearningPackRequestDto,
   ): Promise<ApiResult<Wire.LearningPortabilityWorkspaceDto>> =>
-    learningCall<Wire.LearningPortabilityWorkspaceDto>('export_learning_pack', {
+    learningCall('export_learning_pack', {
       request,
     }),
 
   previewLearningPackImport: (
     request: Wire.PreviewLearningPackImportRequestDto,
   ): Promise<ApiResult<Wire.LearningPortabilityWorkspaceDto>> =>
-    learningCall<Wire.LearningPortabilityWorkspaceDto>(
+    learningCall(
       'preview_learning_pack_import',
       { request },
     ),
@@ -629,7 +629,7 @@ export const learningApi = {
   applyLearningPackImport: (
     request: Wire.ApplyLearningPackImportRequestDto,
   ): Promise<ApiResult<Wire.LearningPortabilityWorkspaceDto>> =>
-    learningCall<Wire.LearningPortabilityWorkspaceDto>(
+    learningCall(
       'apply_learning_pack_import',
       { request },
     ),
@@ -637,7 +637,7 @@ export const learningApi = {
   cancelLearningPackImportPreview: (
     request: Wire.CancelLearningPackImportPreviewRequestDto,
   ): Promise<ApiResult<Wire.LearningPortabilityWorkspaceDto>> =>
-    learningCall<Wire.LearningPortabilityWorkspaceDto>(
+    learningCall(
       'cancel_learning_pack_import_preview',
       { request },
     ),
@@ -646,7 +646,7 @@ export const learningApi = {
   saveLearningPackAs: (
     request: Wire.ExportLearningPackRequestDto,
   ): Promise<ApiResult<Wire.SaveLearningPackAsResultDto>> =>
-    learningCall<Wire.SaveLearningPackAsResultDto>('save_learning_pack_as', {
+    learningCall('save_learning_pack_as', {
       request,
     }),
 
@@ -654,7 +654,7 @@ export const learningApi = {
   exportAllLearningPacks: (
     request: Wire.ExportAllLearningPacksRequestDto,
   ): Promise<ApiResult<Wire.ExportAllLearningPacksResultDto>> =>
-    learningCall<Wire.ExportAllLearningPacksResultDto>(
+    learningCall(
       'export_all_learning_packs',
       { request },
     ),
@@ -662,21 +662,21 @@ export const learningApi = {
   deleteLearningSource: (
     request: Wire.DeleteLearningSourceRequestDto,
   ): Promise<ApiResult<Wire.LearningSourceWorkspaceDto>> =>
-    learningCall<Wire.LearningSourceWorkspaceDto>('delete_learning_source', {
+    learningCall('delete_learning_source', {
       request,
     }),
 
   reimportLearningSource: (
     request: Wire.ReimportLearningSourceRequestDto,
   ): Promise<ApiResult<Wire.LearningSourceWorkspaceDto>> =>
-    learningCall<Wire.LearningSourceWorkspaceDto>('reimport_learning_source', {
+    learningCall('reimport_learning_source', {
       request,
     }),
 
   createLearningSourceSelector: (
     request: Wire.CreateLearningSourceSelectorRequestDto,
   ): Promise<ApiResult<Wire.LearningSourceSelectorDto>> =>
-    learningCall<Wire.LearningSourceSelectorDto>('create_learning_source_selector', {
+    learningCall('create_learning_source_selector', {
       request,
     }),
 
@@ -684,7 +684,7 @@ export const learningApi = {
     programId: string,
     selectorId: string,
   ): Promise<ApiResult<Wire.LearningSourceSelectorDto>> =>
-    learningCall<Wire.LearningSourceSelectorDto>('get_learning_source_selector', {
+    learningCall('get_learning_source_selector', {
       programId,
       selectorId,
     }),
@@ -692,7 +692,7 @@ export const learningApi = {
   matchLearningSourceSelector: (
     request: Wire.MatchLearningSourceSelectorRequestDto,
   ): Promise<ApiResult<Wire.LearningQuoteMatch>> =>
-    learningCall<Wire.LearningQuoteMatch>('match_learning_source_selector', {
+    learningCall('match_learning_source_selector', {
       request,
     }),
 
@@ -700,20 +700,20 @@ export const learningApi = {
   courseIndexStatus: (
     programId: string,
   ): Promise<ApiResult<Wire.CourseIndexStatusDto>> =>
-    learningCall<Wire.CourseIndexStatusDto>('course_index_status', { programId }),
+    learningCall('course_index_status', { programId }),
 
   /** The course workspace opened: its index embeds ahead of every other until it closes. */
-  courseIndexOpen: (programId: string): Promise<ApiResult<void>> =>
+  courseIndexOpen: (programId: string): Promise<ApiResult<null>> =>
     learningCall('course_index_open', { programId }),
 
   /** The course workspace closed: its index takes turns with the others again. */
-  courseIndexClose: (programId: string): Promise<ApiResult<void>> =>
+  courseIndexClose: (programId: string): Promise<ApiResult<null>> =>
     learningCall('course_index_close', { programId }),
 
   searchLearningSourcesSemantically: (
     request: Wire.SearchLearningSourcesSemanticallyRequestDto,
   ): Promise<ApiResult<Wire.LearningSourceSemanticSearchResultDto[]>> =>
-    learningCall<Wire.LearningSourceSemanticSearchResultDto[]>(
+    learningCall(
       'search_learning_sources_semantically',
       { request },
     ),
@@ -721,21 +721,21 @@ export const learningApi = {
   getLearningRecallWorkspace: (
     programId: string,
   ): Promise<ApiResult<Wire.LearningRecallWorkspaceDto>> =>
-    learningCall<Wire.LearningRecallWorkspaceDto>('get_learning_recall_workspace', {
+    learningCall('get_learning_recall_workspace', {
       programId,
     }),
 
   saveLearningRecallCard: (
     request: Wire.SaveLearningRecallCardRequestDto,
   ): Promise<ApiResult<Wire.LearningRecallWorkspaceDto>> =>
-    learningCall<Wire.LearningRecallWorkspaceDto>('save_learning_recall_card', {
+    learningCall('save_learning_recall_card', {
       request,
     }),
 
   decideLearningRecallDuplicate: (
     request: Wire.DecideLearningRecallDuplicateRequestDto,
   ): Promise<ApiResult<Wire.LearningRecallWorkspaceDto>> =>
-    learningCall<Wire.LearningRecallWorkspaceDto>(
+    learningCall(
       'decide_learning_recall_duplicate',
       { request },
     ),
@@ -743,7 +743,7 @@ export const learningApi = {
   reviewLearningRecallCard: (
     request: Wire.ReviewLearningRecallCardRequestDto,
   ): Promise<ApiResult<Wire.LearningRecallWorkspaceDto>> =>
-    learningCall<Wire.LearningRecallWorkspaceDto>('review_learning_recall_card', {
+    learningCall('review_learning_recall_card', {
       request,
     }),
 
@@ -761,7 +761,7 @@ export const learningApi = {
 
   setConversationCourse: (
     request: Wire.SetConversationCourseRequestDto,
-  ): Promise<void> =>
+  ): Promise<null> =>
     invokeCommand('set_conversation_course', { request }),
 };
 

@@ -21,8 +21,12 @@ struct Answer {
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, Debug, PartialEq)
+)]
 #[serde(deny_unknown_fields)]
-struct Entry {
+pub(crate) struct Entry {
     finding: String,
     plan: String,
     #[serde(default)]
@@ -33,7 +37,7 @@ struct Entry {
     uncite: Vec<Value>,
 }
 
-fn entries(raw: &str) -> Result<Vec<Entry>> {
+pub(super) fn entries(raw: &str) -> Result<Vec<Entry>> {
     crate::generation::parse_json::<Answer>(raw).map(|answer| answer.answers)
 }
 
@@ -105,9 +109,11 @@ fn flatten(entries: Vec<Entry>) -> Answered {
         );
         plans.insert(entry.finding, entry.plan);
     }
+    let patch = json!({"edits":edits,"citations":citations,"uncite":uncite}).to_string();
     Answered {
-        changed: !(edits.is_empty() && citations.is_empty() && uncite.is_empty()),
-        patch: json!({"edits":edits,"citations":citations,"uncite":uncite}).to_string(),
+        changed: !crate::lessons::text_edits::read_patch(&patch)
+            .is_ok_and(|read| read.asks_nothing()),
+        patch,
         plans,
     }
 }

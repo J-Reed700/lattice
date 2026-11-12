@@ -57,9 +57,9 @@ fn verification_windows_restore_conditions_without_changing_source_bytes() -> Re
 #[test]
 fn merging_context_keeps_both_partly_overlapping_hits() -> Result<()> {
     let text = format!(
-        "{}first matching fact\n{}second matching caveat\n{}",
+        "{}first matching fact. {}second matching caveat. {}",
         "préfixe ".repeat(400),
-        "background ".repeat(250),
+        "Background sentence here. ".repeat(105),
         "suffix ".repeat(400)
     );
     let source = LearningSourceDto {

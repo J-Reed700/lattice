@@ -151,9 +151,9 @@ fn a_block_without_a_body_is_a_finding_at_its_place() {
     assert_eq!(
         notes,
         [
-            "Teaching block 2 has no body.",
-            "Teaching block 3 has no body.",
-            "Practice block 3 needs 2 to 4 observable, task-specific rubric criteria."
+            "Section 2 (candidate blocks-1) has no body.",
+            "Section 3 (candidate blocks-2) has no body.",
+            "Section 3 (candidate blocks-2) needs 2 to 4 observable, task-specific rubric criteria."
         ]
     );
     let sites: Vec<_> = found.iter().map(|finding| finding.place().site).collect();

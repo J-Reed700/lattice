@@ -8,26 +8,9 @@
  * Daily note representation
  * TODO: Define proper fields when backend is implemented
  */
-export interface DailyNote {
-  id: string;
-  date: string;
-  content: string;
-  createdAt: string;
-  updatedAt: string;
-}
+export type DailyNote = import('../../lib/bindings').DailyNoteCompatDto;
 
-export interface NoteHighlight {
-  id: string;
-  text: string;
-  createdAt: string;
-}
-
-export interface StickyItem {
-  id: string;
-  text: string;
-  color: string;
-  createdAt: string;
-}
+export type NoteHighlight = import('../../lib/bindings').NoteHighlightDto;
 
 export type SnapshotMessage = import('../../lib/bindings').SnapshotMessageDto;
 

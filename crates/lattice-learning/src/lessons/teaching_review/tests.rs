@@ -987,3 +987,24 @@ async fn a_blank_issue_left_after_the_correction_is_dropped_in_an_outline_review
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0].note, long);
 }
+
+#[test]
+fn the_review_contract_reads_what_it_renders() {
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        TeachingReview,
+    >(&Review {
+        issues: vec![
+            Issue::Plain("A step is missing.".into()),
+            Issue::Continuing {
+                note: "Still missing.".into(),
+                continues: Some("finding-1".into()),
+            },
+            Issue::Continuing {
+                note: "A new gap.".into(),
+                continues: None,
+            },
+        ],
+        block_checks: vec![json!({"sectionId":"section-1","hasDefect":false})],
+        open_findings: vec![json!({"id":"finding-1","quote":"","verdict":"resolved"})],
+    });
+}

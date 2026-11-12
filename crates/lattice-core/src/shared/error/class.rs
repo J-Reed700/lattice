@@ -3,8 +3,10 @@ use super::AppError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorClass {
-    /// Waiting can change the outcome: the service or database was not reached.
+    /// The service or database was not reached.
     Outage,
+    /// The service was reached and said it cannot answer now.
+    Unavailable,
     /// A model answered, but not usably, or refused the request.
     Unusable,
     /// The request does not fit the configured context window.
@@ -13,16 +15,25 @@ pub enum ErrorClass {
     Fault,
 }
 
+/// Whether the same work may succeed when sent in smaller parts.
+pub fn smaller_parts_may_succeed(error: &AppError) -> bool {
+    ErrorClass::of(error) == ErrorClass::DoesNotFit || matches!(error, AppError::AnswerCutOff(_))
+}
+
 impl ErrorClass {
     /// The one classification of an error, for every caller.
     pub fn of(error: &AppError) -> Self {
         match error {
-            AppError::Network(_)
-            | AppError::RateLimitExceeded(_)
-            | AppError::ServiceNotAvailable(_)
-            | AppError::DatabaseBusy(_) => Self::Outage,
-            AppError::HttpStatus { status, .. } if is_retry_later_status(*status) => Self::Outage,
-            AppError::ModelAnswerUnusable(_) | AppError::ModelRejected(_) => Self::Unusable,
+            AppError::Network(_) | AppError::RateLimitExceeded(_) | AppError::DatabaseBusy(_) => {
+                Self::Outage
+            }
+            AppError::ServiceNotAvailable(_) => Self::Unavailable,
+            AppError::HttpStatus { status, .. } if is_retry_later_status(*status) => {
+                Self::Unavailable
+            }
+            AppError::ModelAnswerUnusable(_)
+            | AppError::AnswerCutOff(_)
+            | AppError::ModelRejected(_) => Self::Unusable,
             AppError::PromptExceedsWindow { .. } | AppError::WindowTooSmall(_) => Self::DoesNotFit,
             AppError::HttpStatus { .. }
             | AppError::Io { .. }
@@ -69,6 +80,11 @@ impl ErrorClass {
             | AppError::Other(_) => Self::Fault,
         }
     }
+
+    /// Whether waiting may change the outcome.
+    pub fn is_temporary(self) -> bool {
+        matches!(self, Self::Outage | Self::Unavailable)
+    }
 }
 
 /// Whether a web server's status says to try again later: too many requests,
@@ -90,21 +106,40 @@ mod tests {
     }
 
     #[test]
-    fn waiting_changes_the_outcome_only_for_an_unreached_service() {
+    fn an_unreached_service_is_an_outage() {
         for outage in [
             AppError::Network("reset".into()),
             AppError::RateLimitExceeded("slow down".into()),
-            AppError::ServiceNotAvailable("down".into()),
             AppError::DatabaseBusy("locked".into()),
+        ] {
+            assert_eq!(ErrorClass::of(&outage), ErrorClass::Outage, "{outage}");
+            assert!(ErrorClass::of(&outage).is_temporary(), "{outage}");
+        }
+    }
+
+    #[test]
+    fn a_service_that_says_it_cannot_answer_now_is_unavailable() {
+        for unavailable in [
+            AppError::ServiceNotAvailable("down".into()),
             answered(429),
             answered(502),
             answered(503),
             answered(504),
         ] {
-            assert_eq!(ErrorClass::of(&outage), ErrorClass::Outage, "{outage}");
+            assert_eq!(
+                ErrorClass::of(&unavailable),
+                ErrorClass::Unavailable,
+                "{unavailable}"
+            );
+            assert!(ErrorClass::of(&unavailable).is_temporary(), "{unavailable}");
         }
+    }
+
+    #[test]
+    fn a_settled_answer_is_a_fault_that_waiting_does_not_change() {
         for settled in [answered(400), answered(403), answered(404), answered(500)] {
             assert_eq!(ErrorClass::of(&settled), ErrorClass::Fault, "{settled}");
+            assert!(!ErrorClass::of(&settled).is_temporary(), "{settled}");
         }
     }
 
@@ -112,6 +147,7 @@ mod tests {
     fn a_model_that_answered_badly_or_refused_is_unusable() {
         for unusable in [
             AppError::ModelAnswerUnusable("no".into()),
+            AppError::AnswerCutOff("no".into()),
             AppError::ModelRejected("no".into()),
         ] {
             assert_eq!(ErrorClass::of(&unusable), ErrorClass::Unusable);

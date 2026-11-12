@@ -102,9 +102,9 @@ describe('FailedItemsList', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockIndexFile.mockResolvedValue({ ok: true, data: {} });
-    mockReindexFile.mockResolvedValue({ ok: true, data: undefined });
-    mockRemoveIndexedFile.mockResolvedValue({ ok: true, data: undefined });
-    mockClearIndexingFailure.mockResolvedValue({ ok: true, data: undefined });
+    mockReindexFile.mockResolvedValue({ ok: true, data: null });
+    mockRemoveIndexedFile.mockResolvedValue({ ok: true, data: null });
+    mockClearIndexingFailure.mockResolvedValue({ ok: true, data: null });
   });
 
   it('renders the file name, the reason, and both verbs per row', () => {

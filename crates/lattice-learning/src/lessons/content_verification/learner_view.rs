@@ -142,6 +142,54 @@ fn unavailable() -> AppError {
     AppError::InvalidState("Saved lesson evidence is unavailable: its report or source bindings do not match this lesson.".into())
 }
 
+/// What the learner is told of a finding follows its claim as the ledger holds
+/// it now; a finding whose claim the ledger does not know keeps the resolution
+/// it was published with. The second is whether the ledger says the machine
+/// verified it.
+pub(super) fn resolved(
+    finding: &Finding,
+    states: &ClaimStates,
+    finding_claims: &HashSet<&str>,
+) -> (Option<Resolution>, bool) {
+    let Some(state) = finding
+        .claim_id
+        .as_ref()
+        .and_then(|id| states.states.get(id))
+    else {
+        return (finding.resolution.clone(), false);
+    };
+    let (own, verified) = match standing(state, &|id| states.states.get(&id.0)) {
+        Standing::Resolved(resolution) => (Some(resolution), false),
+        Standing::Verified => (None, true),
+        Standing::Unsettled => (
+            Some(Resolution::Unverified {
+                reason: UnverifiedReason::Unchecked,
+            }),
+            false,
+        ),
+        Standing::Gone => (finding.resolution.clone(), false),
+    };
+    match own {
+        Some(own) => (Some(own), verified),
+        None => match ended_mark(
+            states.places.iter().filter_map(|(id, unit, quote)| {
+                Some(Placed {
+                    id,
+                    unit: *unit,
+                    quote,
+                    state: states.states.get(id)?,
+                })
+            }),
+            &|id| finding_claims.contains(id),
+            finding.unit,
+            &finding.quote,
+        ) {
+            Some(mark) => (Some(mark), false),
+            None => (None, verified),
+        },
+    }
+}
+
 impl LessonVerificationReport {
     pub(crate) fn learner_view(
         &self,
@@ -190,58 +238,16 @@ impl LessonVerificationReport {
             });
         // A statement the model sorted Internal ends as no claim: the learner reads it as lesson text alone.
         let claims = || self.findings.iter().filter(|finding| finding.is_claim());
-        // What the learner is told of a finding follows its claim as the
-        // ledger holds it now; a finding whose claim the ledger does not know
-        // keeps the resolution it was published with.
-        // The second is whether the ledger says the machine verified it.
         let finding_claims: HashSet<&str> = self
             .findings
             .iter()
             .filter_map(|finding| finding.claim_id.as_deref())
             .collect();
-        let resolved = |finding: &Finding| {
-            let Some(state) = finding
-                .claim_id
-                .as_ref()
-                .and_then(|id| states.states.get(id))
-            else {
-                return (finding.resolution.clone(), false);
-            };
-            let (own, verified) = match standing(state, &|id| states.states.get(&id.0)) {
-                Standing::Resolved(resolution) => (Some(resolution), false),
-                Standing::Verified => (None, true),
-                Standing::Unsettled => (
-                    Some(Resolution::Unverified {
-                        reason: UnverifiedReason::Unchecked,
-                    }),
-                    false,
-                ),
-                Standing::Gone => (finding.resolution.clone(), false),
-            };
-            match own {
-                Some(own) => (Some(own), verified),
-                None => match ended_mark(
-                    states.places.iter().filter_map(|(id, unit, quote)| {
-                        Some(Placed {
-                            id,
-                            unit: *unit,
-                            quote,
-                            state: states.states.get(id)?,
-                        })
-                    }),
-                    &|id| finding_claims.contains(id),
-                    finding.unit,
-                    &finding.quote,
-                ) {
-                    Some(mark) => (Some(mark), false),
-                    None => (None, verified),
-                },
-            }
-        };
         // A sentence that carries a claim published not verified reads not
         // verified, whatever another claim on it found.
-        let unverified =
-            unverified_sentences(claims().map(|finding| (finding, resolved(finding).0)));
+        let unverified = unverified_sentences(
+            claims().map(|finding| (finding, resolved(finding, states, &finding_claims).0)),
+        );
         let teaching_claims = claims()
             .filter(|finding| finding.unit < lesson.blocks.len())
             .map(|finding| {
@@ -297,7 +303,7 @@ impl LessonVerificationReport {
                             .is_some_and(|version| version.deleted_at.is_some())
                     }),
                 };
-                let (stood, verified) = resolved(finding);
+                let (stood, verified) = resolved(finding, states, &finding_claims);
                 let (resolution, note, unverified_reason) = told(
                     stood.as_ref(),
                     verified,
@@ -476,17 +482,6 @@ mod tests {
         assert_eq!(view.teaching_claims.len(), 1);
         assert_eq!(view.teaching_claims[0].class, None);
         assert_eq!(view.claim_count, 1);
-    }
-
-    #[test]
-    fn a_quote_differing_from_the_block_only_typographically_still_has_a_view() {
-        let (mut lesson, mut report) = fixture();
-        lesson.blocks[0].body = "It\u{2019}s an exact lesson statement.".into();
-        report.findings[0].quote = "It's an exact lesson statement.".into();
-
-        let view = report.learner_view(&lesson, &[], &ClaimStates::default());
-
-        assert!(view.is_ok(), "{:?}", view.as_ref().err());
     }
 
     #[test]

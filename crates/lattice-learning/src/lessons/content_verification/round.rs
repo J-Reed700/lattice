@@ -4,6 +4,7 @@
 //! (`repair_loop`); a scripted one in the tests is another, so the loop's end
 //! and its stop are tested without a model.
 use super::claim_ledger::{Decision, Waiting};
+use super::research::Unresearched;
 use super::*;
 use async_trait::async_trait;
 use lattice_core::domain::learning::acceptance::AcceptancePolicy;
@@ -13,9 +14,9 @@ use lattice_core::domain::learning::claim_review::{StopCode, StopReason};
 pub(super) enum Researched {
     /// No statement waits for research and no hint names a claim.
     Nothing,
-    /// It reached no search engine or page, so it recorded nothing and the
-    /// statements stay where they are.
-    Unreached,
+    /// It could not research, so it recorded nothing and the statements stay
+    /// where they are.
+    Unresearched(Unresearched),
     /// It searched and read what it saved: whether it saved a source, and the
     /// statements whose reading of it stopped.
     Searched { saved: bool, stopped: Vec<ClaimId> },
@@ -71,10 +72,10 @@ pub(super) enum Verdict {
     /// The lesson stops for this reason.
     Stop(StopReason),
     /// A round moved no statement and left the draft as it was: the
-    /// statements that wait, and whether the round's research reached nothing.
+    /// statements that wait, and why the round's research could not run.
     NoProgress {
         waiting: Vec<Waiting>,
-        unreached: bool,
+        unresearched: Option<Unresearched>,
     },
 }
 
@@ -195,12 +196,12 @@ pub(super) async fn run<F>(
         // user's: it takes no step, and the page that reads what the round
         // saved answers the hint. A round that reaches nothing records
         // nothing, and the claims stay where they are.
-        let mut unreached = false;
+        let mut unresearched = None;
         while stopped.is_empty() {
             match review.research(policy).await? {
                 Researched::Nothing => break,
-                Researched::Unreached => {
-                    unreached = true;
+                Researched::Unresearched(cause) => {
+                    unresearched = Some(cause);
                     break;
                 }
                 Researched::Searched {
@@ -224,7 +225,7 @@ pub(super) async fn run<F>(
                 if review.stepped() == stepped && review.draft() == draft {
                     // An outage is a stop; a round that reached the web and
                     // moved nothing publishes what waits, not verified.
-                    if !unreached {
+                    if unresearched.is_none() {
                         let claims = waiting.iter().map(|waits| waits.claim.clone()).collect();
                         let marked = review.publish_unsettled(Unsettled::Waiting(claims)).await?;
                         if marked > 0 {
@@ -234,7 +235,10 @@ pub(super) async fn run<F>(
                             continue;
                         }
                     }
-                    let verdict = Verdict::NoProgress { waiting, unreached };
+                    let verdict = Verdict::NoProgress {
+                        waiting,
+                        unresearched,
+                    };
                     return review.finish(verdict).await;
                 }
                 review.again(&waiting);
@@ -262,9 +266,12 @@ pub(super) async fn run<F>(
                 // An outage passes: a hint the round could not search stays
                 // pending for the next run, as a machine statement's does.
                 let waiting = review.hinted_waiting();
-                if unreached && !waiting.is_empty() {
+                if unresearched.is_some() && !waiting.is_empty() {
                     return review
-                        .finish(Verdict::NoProgress { waiting, unreached })
+                        .finish(Verdict::NoProgress {
+                            waiting,
+                            unresearched,
+                        })
                         .await;
                 }
                 if review.publish_unsettled(Unsettled::AwaitingUser).await? > 0 {

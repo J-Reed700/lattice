@@ -68,10 +68,6 @@ struct Context {
 }
 tokio::task_local! { static CURRENT: Context; }
 
-pub(crate) fn active() -> bool {
-    CURRENT.try_with(|_| ()).is_ok()
-}
-
 /// The lesson a running preparation is writing, for logs.
 pub(crate) fn lesson_id() -> Option<String> {
     CURRENT.try_with(|context| context.lesson_id.clone()).ok()

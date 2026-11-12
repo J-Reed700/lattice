@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 
-import type { commands } from '../../src/lib/bindings';
+import type { CommandResults } from '../../src/lib/bindings';
 import type { CommandName } from '../../src/shared/ipc/routes.generated';
 
 /**
@@ -14,23 +14,8 @@ import type { CommandName } from '../../src/shared/ipc/routes.generated';
  * fixture names a command or a field the backend no longer has.
  */
 
-type SnakeToCamel<Name extends string> = Name extends `${infer Head}_${infer Tail}`
-  ? `${Head}${Capitalize<SnakeToCamel<Tail>>}`
-  : Name;
-type Generated = typeof commands;
-type Returned<C extends CommandName> = SnakeToCamel<C> extends keyof Generated
-  ? Awaited<ReturnType<Generated[SnakeToCamel<C>]>>
-  : never;
-type ResultData<R> = R extends { status: 'ok'; data: infer Data } ? Data : R extends { status: 'error' } ? never : R;
-
 /** What a command resolves with in the renderer. */
-export type CommandResult<C extends CommandName> = ResultData<Returned<C>>;
-
-// Every generated command must map to a generated wrapper; a naming mismatch
-// would silently leave its results unchecked.
-type Unmapped = { [C in CommandName]: SnakeToCamel<C> extends keyof Generated ? never : C }[CommandName];
-const everyCommandHasAContract: [Unmapped] extends [never] ? true : Unmapped = true;
-void everyCommandHasAContract;
+export type CommandResult<C extends CommandName> = CommandResults[C];
 
 /**
  * A fixture value: it may leave out fields its flow never reads, but every

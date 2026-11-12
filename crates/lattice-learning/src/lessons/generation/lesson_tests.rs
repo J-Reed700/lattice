@@ -1143,3 +1143,75 @@ fn lesson_drafts_are_keyed_by_versioned_protocols() {
         json!("lesson-draft-v1")
     );
 }
+
+#[test]
+fn the_lesson_writer_contract_reads_what_it_renders() {
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        LessonWriter,
+    >(
+        &serde_json::from_value(json!({
+            "blocks": ([
+                "explanation", "worked_example", "contrast", "check", "guided_practice",
+                "independent_practice", "recap", "reflection"
+            ].map(|kind| block(kind, "A section", "Its body.", true))),
+            "questions": (["practice", "quiz", "test"].map(|kind| question(kind, "Which one?", true)))
+        }))
+        .unwrap(),
+    );
+}
+
+#[test]
+fn a_draft_without_sections_is_refused_by_the_lesson_reader() {
+    assert!(read_lesson(&json!({"blocks":[],"questions":[]}).to_string()).is_err());
+}
+
+#[test]
+fn a_rendered_lesson_meets_the_writers_schema() {
+    let cited = || json!([{"sentence":"Water boils.","sourceIndex":0,"quote":EXCERPT}]);
+    let rubric = json!([{"title":"Clear","description":"States the result.","dimension":"recall"}]);
+    let blocks: Vec<Value> = [
+        "explanation",
+        "worked_example",
+        "contrast",
+        "check",
+        "guided_practice",
+        "independent_practice",
+        "recap",
+        "reflection",
+    ]
+    .iter()
+    .map(|kind| {
+        let practice = kind.ends_with("practice");
+        json!({"kind":kind,"title":"A section","body":"Its body.",
+            "rubric":if practice { rubric.clone() } else { json!([]) },
+            "sourceIndex":0,"quote":EXCERPT,"citations":cited()})
+    })
+    .collect();
+    let questions: Vec<Value> = ["practice", "quiz", "test"]
+        .iter()
+        .map(|kind| {
+            json!({"kind":kind,"prompt":"Which one?",
+                "options":vec!["One"; CHOICES_PER_QUESTION],
+                "correctIndex":1,
+                "rationales":vec!["Fails."; CHOICES_PER_QUESTION],
+                "explanation":"Two follows.","sourceIndex":0,"quote":EXCERPT,"citations":cited()})
+        })
+        .collect();
+    let lesson: GeneratedLesson =
+        serde_json::from_value(json!({"blocks":blocks,"questions":questions})).unwrap();
+    let rendered: Value = serde_json::from_str(&<LessonWriter as lattice_core::application::services::model_contract::test_support::RenderAnswer>::render(&lesson)).unwrap();
+    let schema = lesson_schema_counting(1, (1, 20), (1, 20));
+    let validator = jsonschema::JSONSchema::compile(&schema).unwrap();
+    let errors: Vec<String> = validator
+        .validate(&rendered)
+        .err()
+        .into_iter()
+        .flatten()
+        .map(|error| error.to_string())
+        .collect();
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(
+        rendered["blocks"][0]["citations"][0]["sentence"],
+        "Water boils."
+    );
+}

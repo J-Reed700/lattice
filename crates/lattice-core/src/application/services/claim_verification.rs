@@ -5,8 +5,10 @@ use crate::application::ports::llm_port::{
     ANSWER_EFFORT,
 };
 use crate::application::ports::LLMPort;
+#[cfg(any(test, feature = "test-support"))]
+use crate::application::services::model_contract::test_support::RenderAnswer;
 use crate::application::services::model_contract::{
-    answer, refusal, Contract, ContractCall, ContractId, Plain, PromptInput, Transport,
+    answer, refusal, Contract, ContractCall, ContractId, CutOffRemedy, Plain, Transport,
 };
 use crate::domain::learning::acceptance::Outcome;
 use crate::domain::learning::claim_review::{CheckResult, VerdictKind};
@@ -31,7 +33,11 @@ mod batch;
 mod bridge;
 mod classes;
 mod prompt;
+mod reading;
 mod rooms;
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 
 #[cfg(test)]
 mod bridge_tests;
@@ -42,12 +48,23 @@ mod field_emphasis_tests;
 #[cfg(test)]
 mod judgment_tests;
 
-pub use batch::{render_batch_evidence, LocatedClaim};
-pub use bridge::{BridgeOutcome, BridgePart, PartKind, BRIDGE_SYSTEM};
+#[cfg(any(test, feature = "test-support"))]
+pub use batch::BatchReply;
+pub use batch::{
+    render_batch_evidence, BatchClaim, BatchInput, BatchPassage, ClaimBatch, LocatedClaim,
+};
+pub use bridge::{BridgeOutcome, BridgePart, ClaimParts, PartKind, PartsInput, BRIDGE_SYSTEM};
 pub use classes::{
-    ClassJudgment, ConsistencyOutcome, ConsistencyVerdict, KnowledgeOutcome, KnowledgeSample,
-    KnowledgeVerdict, CONSISTENCY_POLICY, CONSISTENCY_SYSTEM, KNOWLEDGE_CASE, KNOWLEDGE_POLICY,
-    KNOWLEDGE_SYSTEM,
+    ClassJudgment, Consistency, ConsistencyInput, ConsistencyOutcome, ConsistencyVerdict,
+    Knowledge, KnowledgeInput, KnowledgeOutcome, KnowledgeSample, KnowledgeVerdict,
+    CONSISTENCY_POLICY, CONSISTENCY_SYSTEM, KNOWLEDGE_CASE, KNOWLEDGE_POLICY, KNOWLEDGE_SYSTEM,
+};
+use reading::{
+    final_verdict, is_empty_quote, judge_reply, labeled_value, located_quote,
+    normalize_reasoned_fields, read_reasoned, strip_wrapping_quotes, without_field_emphasis,
+};
+pub use reading::{
+    parse_judge_explanation, parse_verdict_word, verdict_from_logprobs, JudgeExplanation,
 };
 
 /// Judgments and the output tokens the model spent writing them, across
@@ -235,7 +252,7 @@ impl<T> Judgment<T> {
                 warn!(reason = %refusal(&error), "Judge call unusable, leaving this statement unjudged");
                 Self::Unusable
             }
-            ErrorClass::Outage | ErrorClass::Fault => Self::Failed(error),
+            ErrorClass::Outage | ErrorClass::Unavailable | ErrorClass::Fault => Self::Failed(error),
         }
     }
 }
@@ -315,21 +332,31 @@ impl Transport for Judging<'_> {
         .await
     }
 
-    async fn larger(
+    async fn cut_off(
         &self,
         _llm: &dyn LLMPort,
         _request: &CompletionRequest,
-    ) -> Option<CompletionRequest> {
-        None
+    ) -> CutOffRemedy<CompletionRequest> {
+        CutOffRemedy::Correct
     }
 }
 
 /// The model call of a claim check, single or located.
-pub(crate) struct ClaimCheck;
+pub struct ClaimCheck;
+
+/// What a claim check is asked: the claim, the passages it is shown, and how the reply is laid out.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckInput {
+    pub claim: String,
+    /// The passages shown, in order; the one evidence text when the check is not located.
+    pub passages: Vec<String>,
+    pub located: bool,
+    pub reasoned: bool,
+}
 
 impl Contract for ClaimCheck {
     const ID: ContractId = ContractId::new("claim-check");
-    type Input = PromptInput;
+    type Input = CheckInput;
 }
 
 /// A reply the judge cannot use, as the correction quotes it.
@@ -508,7 +535,12 @@ impl<'a> ClaimChecker<'a> {
         let prompt = self.compose_prompt(claim, evidence, reasoned, locations.is_some(), context);
         let system = self.system_prompt(locations.is_some(), reasoned);
         let request = self.request(&system, &prompt, reasoned);
-        let call = ContractCall::of::<ClaimCheck>(&PromptInput { system, prompt })?;
+        let call = ContractCall::of::<ClaimCheck>(&CheckInput {
+            claim: claim.to_owned(),
+            passages: locations.map_or_else(|| vec![evidence.text.clone()], <[String]>::to_vec),
+            located: locations.is_some(),
+            reasoned,
+        })?;
         let judging = Judging::default();
         let outcome = answer(self.llm, &call, &judging, request, |text| {
             self.read_judgment(text, judging.logprobs(), evidence, locations)
@@ -526,25 +558,12 @@ impl<'a> ClaimChecker<'a> {
         evidence: &ClaimEvidence,
         locations: Option<&[String]>,
     ) -> Result<JudgeOutcome> {
-        let reasoned = locations.is_some() && self.policy.strict();
+        if let Some(passages) = locations.filter(|_| self.policy.strict()) {
+            return read_reasoned(text, passages);
+        }
         let strict = self.policy.strict();
         let text = without_field_emphasis(text);
-        let text = if reasoned {
-            normalize_reasoned_fields(&text).unwrap_or(text)
-        } else {
-            text
-        };
-        let verdict_of = |text: &str| {
-            if reasoned {
-                final_verdict(text)
-            } else {
-                parse_verdict_word(text)
-            }
-        };
-        let written = verdict_of(&text);
-        // First-token probabilities concern the comparison (or hidden model
-        // reasoning), not the final verdict in this protocol.
-        let logprobs = if reasoned { None } else { logprobs };
+        let written = parse_verdict_word(&text);
         let decided = logprobs
             .as_deref()
             .and_then(verdict_from_logprobs)
@@ -622,298 +641,142 @@ impl<'a> ClaimChecker<'a> {
     }
 }
 
-/// The labels of the fields a judge writes.
-const FIELD_LABELS: [&str; 8] = [
-    "Label",
-    "Reason",
-    "Explanation",
-    "Source passage",
-    "Source quote",
-    "Quote",
-    "Evidence",
-    "Verdict",
-];
+/// The three labelled lines a located, reasoned claim check answers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckReply {
+    pub verdict: ClaimVerdict,
+    pub reason: String,
+    /// The `Source passage:` value as written (`passage-N` or `none`), when it has one.
+    pub source: Option<String>,
+}
 
-/// The reply with markdown emphasis taken off its field lines (`**Reason:** …`,
-/// `**Verdict**: **unsupported**`), which some models add and the field
-/// parsing does not expect. Any other line is left as written.
-fn without_field_emphasis(text: &str) -> String {
-    text.lines()
-        .map(|line| {
-            let emphasis = |c: char| c == '*' || c == '_' || c.is_whitespace();
-            let bare = line.trim_start_matches(emphasis);
-            let Some((label, value)) = bare.split_once(':') else {
-                return line.to_owned();
-            };
-            let label = label.trim_end_matches(emphasis);
-            if !FIELD_LABELS
-                .iter()
-                .any(|field| label.eq_ignore_ascii_case(field))
-            {
-                return line.to_owned();
-            }
-            format!("{label}: {}", value.trim_matches(emphasis))
+impl CheckReply {
+    /// The reply a located, reasoned check reads, before its passage is looked up.
+    pub fn read(text: &str) -> std::result::Result<Self, &'static str> {
+        let text = without_field_emphasis(text);
+        let text = normalize_reasoned_fields(&text).unwrap_or(text);
+        let verdict = final_verdict(&text).ok_or("the reply holds no verdict")?;
+        let reason = labeled_value(&text, &["Reason", "Explanation"])
+            .map(|reason| strip_wrapping_quotes(&reason))
+            .filter(|reason| !reason.trim().is_empty())
+            .ok_or("the reply gives no reason")?;
+        Ok(Self {
+            verdict,
+            reason,
+            source: labeled_value(&text, &["Source passage"]),
         })
-        .collect::<Vec<_>>()
-        .join("\n")
+    }
 }
 
-/// Providers sometimes join the three labeled fields onto one line. Recover
-/// only their whitespace layout: each label must occur exactly once, in order,
-/// with a single final verdict. Evidence locations are still checked below.
-fn normalize_reasoned_fields(text: &str) -> Option<String> {
-    const REASON: &str = "reason:";
-    const SOURCE: &str = "source passage:";
-    const VERDICT: &str = "verdict:";
-    let text = text.trim();
-    // Explicit line boundaries take precedence over label-like prose inside
-    // the explanation (for example, "maps to a source passage: ..."). Only
-    // attempt the conservative inline recovery for a noncanonical layout.
-    if final_verdict(text).is_some() {
-        return Some(text.to_owned());
-    }
-    let lower = text.to_ascii_lowercase();
-    if !lower.starts_with(REASON)
-        || [REASON, SOURCE, VERDICT]
-            .iter()
-            .any(|label| lower.matches(label).count() != 1)
-    {
-        return None;
-    }
-    let source = lower.find(SOURCE)?;
-    let verdict = lower.find(VERDICT)?;
-    if source <= REASON.len() || verdict <= source + SOURCE.len() {
-        return None;
-    }
-    if !text.get(..source)?.ends_with(char::is_whitespace)
-        || !text.get(..verdict)?.ends_with(char::is_whitespace)
-    {
-        return None;
-    }
-    let reason = text
-        .get(REASON.len()..source)?
-        .lines()
-        .map(str::trim)
-        .collect::<Vec<_>>()
-        .join(" ");
-    let normalized = format!(
-        "Reason: {}\nSource passage: {}\nVerdict: {}",
-        reason.trim(),
-        text.get(source + SOURCE.len()..verdict)?.trim(),
-        text.get(verdict + VERDICT.len()..)?.trim()
-    );
-    final_verdict(&normalized)?;
-    Some(normalized)
-}
-
-fn final_verdict(text: &str) -> Option<ClaimVerdict> {
-    let lower = text.to_ascii_lowercase();
-    if lower.matches("reason:").count() != 1 {
-        return None;
-    }
-    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
-    let mut reason = None;
-    for expected in ["Reason", "Source passage"] {
-        let (label, value) = lines.next()?.split_once(':')?;
-        if !label.trim().eq_ignore_ascii_case(expected) || value.trim().is_empty() {
-            return None;
-        }
-        if expected == "Reason" {
-            reason = Some(value.to_ascii_lowercase());
+#[cfg(any(test, feature = "test-support"))]
+impl CheckReply {
+    /// A reply that cites the passage at `passage`, or none.
+    pub fn on(verdict: ClaimVerdict, reason: &str, passage: Option<usize>) -> Self {
+        Self {
+            verdict,
+            reason: reason.to_owned(),
+            source: Some(passage.map_or_else(|| "none".to_owned(), |at| format!("passage-{at}"))),
         }
     }
-    let (label, value) = lines.next()?.split_once(':')?;
-    if !label.trim().eq_ignore_ascii_case("Verdict") || lines.next().is_some() {
-        return None;
+
+    /// The reply's lines; the source line only when it has one.
+    pub fn render(&self) -> String {
+        let source = self
+            .source
+            .as_ref()
+            .map(|source| format!("\nSource passage: {source}"))
+            .unwrap_or_default();
+        format!(
+            "Reason: {}{source}\nVerdict: {}",
+            self.reason,
+            self.verdict.as_str()
+        )
     }
-    let value = value.trim().trim_end_matches('.').to_ascii_lowercase();
-    // A canonical three-line response may echo its final decision at the end
-    // of the explanation. Accept only the identical value, never conflicting
-    // decisions, extra result lines or ambiguous inline field layouts.
-    if lower.matches("verdict:").count() != 1 {
-        let reason = reason?;
-        let (comparison, repeated) = reason.rsplit_once("verdict:")?;
-        if lower.matches("verdict:").count() != 2
-            || comparison.trim().is_empty()
-            || repeated.trim() != value
-        {
-            return None;
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl RenderAnswer for ClaimCheck {
+    type Answer = CheckReply;
+
+    fn render(answer: &CheckReply) -> String {
+        answer.render()
+    }
+
+    fn read(text: &str) -> Result<CheckReply> {
+        CheckReply::read(text).map_err(unreadable)
+    }
+}
+
+#[cfg(test)]
+mod round_trips {
+    use super::*;
+    use crate::application::services::model_contract::test_support::assert_round_trip;
+
+    #[test]
+    fn a_check_reads_what_it_renders_for_every_verdict() {
+        for (verdict, passage) in [
+            (ClaimVerdict::Supported, Some(2)),
+            (ClaimVerdict::Contradicted, Some(0)),
+            (ClaimVerdict::Unsupported, None),
+        ] {
+            assert_round_trip::<ClaimCheck>(&CheckReply::on(
+                verdict,
+                "The passage says so.",
+                passage,
+            ));
         }
     }
-    match value.as_str() {
-        "supported" => Some(ClaimVerdict::Supported),
-        "contradicted" => Some(ClaimVerdict::Contradicted),
-        "unsupported" => Some(ClaimVerdict::Unsupported),
-        _ => None,
+}
+
+#[cfg(test)]
+mod reply_readings {
+    use super::*;
+
+    fn passages() -> Vec<String> {
+        vec!["The mill closed in 1887.".into()]
     }
-}
 
-fn located_quote(text: &str, passages: &[String]) -> Option<String> {
-    let value = labeled_value(text, &["Source passage"])?;
-    let value = strip_wrapping_quotes(&value);
-    let index: usize = value
-        .trim_matches(['[', ']'])
-        .strip_prefix("passage-")?
-        .parse()
-        .ok()?;
-    passages
-        .get(index)
-        .filter(|text| !text.trim().is_empty())
-        .cloned()
-}
-
-#[derive(Debug, Default)]
-pub struct JudgeExplanation {
-    pub reason: Option<String>,
-    pub quote: Option<String>,
-}
-
-/// Read a value from the small labeled section after the first verdict word.
-/// The verdict itself is still parsed independently so first-token logprobs
-/// remain meaningful and an explanation can never change the classification.
-fn labeled_value(text: &str, labels: &[&str]) -> Option<String> {
-    text.lines().find_map(|line| {
-        let (label, value) = line.split_once(':')?;
-        if !labels
-            .iter()
-            .any(|expected| label.trim().eq_ignore_ascii_case(expected))
-        {
-            return None;
-        }
-        let value = value.trim().trim_matches('`').trim();
-        (!value.is_empty()).then(|| value.to_string())
-    })
-}
-
-fn strip_wrapping_quotes(value: &str) -> String {
-    let mut value = value.trim();
-    if value.len() >= 2 {
-        let first = value.chars().next();
-        let last = value.chars().next_back();
-        let starts = matches!(first, Some('"' | '“' | '`' | '\''));
-        let ends = matches!(last, Some('"' | '”' | '`' | '\''));
-        if starts && ends {
-            let start = first.map_or(0, char::len_utf8);
-            let end = last.map_or(0, char::len_utf8);
-            value = &value[start..value.len() - end];
-        }
+    fn refused(text: &str) -> String {
+        refusal(&read_reasoned(text, &passages()).unwrap_err())
     }
-    value.trim().to_string()
-}
 
-fn is_empty_quote(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "" | "none" | "n/a" | "not available" | "no exact quote"
-    )
-}
-
-pub fn parse_judge_explanation(
-    text: &str,
-    evidence: &ClaimEvidence,
-    verdict: ClaimVerdict,
-) -> JudgeExplanation {
-    let reason = labeled_value(text, &["Reason", "Explanation"])
-        .map(|reason| strip_wrapping_quotes(&reason))
-        .filter(|reason| !reason.is_empty());
-    let quote = labeled_value(text, &["Source quote", "Quote", "Evidence"])
-        .map(|quote| strip_wrapping_quotes(&quote))
-        .filter(|quote| !is_empty_quote(quote))
-        .and_then(|quote| quote_in(&evidence.text, &quote).map(str::to_owned))
-        .map(|quote| truncate_chars(&quote, MAX_QUOTE_CHARS));
-
-    let reason = reason.or_else(|| match verdict {
-        ClaimVerdict::Unsupported => {
-            Some("The cited passage did not state or directly entail the claim.".to_string())
-        }
-        ClaimVerdict::Supported | ClaimVerdict::Contradicted | ClaimVerdict::Unverified => None,
-    });
-
-    JudgeExplanation { reason, quote }
-}
-
-/// The label a first token begins, if it begins one.
-///
-/// The three labels start with three different letters, so a tokenizer that
-/// splits "unsupported" as "uns" + "upported" still names it in its first
-/// piece. A token must be a prefix of its label: "so" begins no label.
-fn label_of_token(token: &str) -> Option<ClaimVerdict> {
-    let word: String = token
-        .chars()
-        .skip_while(|c| !c.is_alphabetic())
-        .take_while(|c| c.is_alphabetic())
-        .flat_map(char::to_lowercase)
-        .collect();
-    if word.is_empty() {
-        return None;
+    #[test]
+    fn an_unsupported_reply_whose_source_value_is_blank_is_judged_without_a_quote() {
+        let outcome = read_reasoned(
+            "Reason: Not stated.\nSource passage: ``\nVerdict: unsupported",
+            &passages(),
+        )
+        .unwrap();
+        assert_eq!(outcome.verdict, ClaimVerdict::Unsupported);
+        assert_eq!(outcome.quote, None);
     }
-    [
-        ("supported", ClaimVerdict::Supported),
-        ("contradicted", ClaimVerdict::Contradicted),
-        ("unsupported", ClaimVerdict::Unsupported),
-    ]
-    .into_iter()
-    .find(|(label, _)| label.starts_with(&word) || word.starts_with(label))
-    .map(|(_, verdict)| verdict)
-}
 
-/// The verdict and its probability among the three labels.
-///
-/// `None` unless the most likely first token begins a label: when the model
-/// was about to write something else ("The claim…", a markdown star), the
-/// labels' share of the distribution says nothing and the text is read instead.
-pub fn verdict_from_logprobs(alternatives: &[(String, f32)]) -> Option<(ClaimVerdict, f32)> {
-    let top = alternatives.iter().max_by(|a, b| a.1.total_cmp(&b.1))?;
-    label_of_token(&top.0)?;
+    #[test]
+    fn a_reply_missing_a_line_or_its_reason_is_refused_with_the_true_cause() {
+        assert_eq!(
+            refused("Reason: Not stated.\nVerdict: unsupported"),
+            "the reply holds no verdict"
+        );
+        assert_eq!(
+            refused("Source passage: none\nVerdict: unsupported"),
+            "the reply holds no verdict"
+        );
+        assert_eq!(refused("It is fine."), "the reply holds no verdict");
+        assert_eq!(
+            refused("Reason: ``\nSource passage: none\nVerdict: unsupported"),
+            "the reply gives no reason"
+        );
+    }
 
-    let mut mass: Vec<(ClaimVerdict, f32)> = Vec::new();
-    for (token, logprob) in alternatives {
-        let Some(verdict) = label_of_token(token) else {
-            continue;
-        };
-        let p = logprob.exp();
-        match mass.iter_mut().find(|(known, _)| *known == verdict) {
-            Some((_, total)) => *total += p,
-            None => mass.push((verdict, p)),
-        }
+    #[test]
+    fn a_supported_reply_needs_a_passage_it_may_cite() {
+        let text = "Reason: Stated.\nSource passage: passage-3\nVerdict: supported";
+        assert_eq!(
+            refused(text),
+            "the reply names no valid supporting evidence location"
+        );
+        let ok = "Reason: Stated.\nSource passage: passage-0\nVerdict: supported";
+        let outcome = read_reasoned(ok, &passages()).unwrap();
+        assert_eq!(outcome.quote.as_deref(), Some("The mill closed in 1887."));
     }
-    let total: f32 = mass.iter().map(|(_, p)| p).sum();
-    if !(total.is_finite() && total > 0.0) {
-        return None;
-    }
-    mass.into_iter()
-        .max_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(verdict, p)| (verdict, (p / total).clamp(0.0, 1.0)))
-}
-
-/// The verdict a reply's text opens with, for providers without logprobs.
-pub fn parse_verdict_word(text: &str) -> Option<ClaimVerdict> {
-    let lowered = text.trim().to_lowercase();
-    let lowered = lowered.trim_start_matches(|c: char| !c.is_alphabetic());
-    let lowered = lowered
-        .strip_prefix("label:")
-        .or_else(|| lowered.strip_prefix("verdict:"))
-        .unwrap_or(lowered)
-        .trim_start();
-    if lowered.starts_with("unsupported")
-        || lowered.starts_with("not supported")
-        || lowered.starts_with("neutral")
-    {
-        Some(ClaimVerdict::Unsupported)
-    } else if lowered.starts_with("contradict") {
-        Some(ClaimVerdict::Contradicted)
-    } else if lowered.starts_with("support") {
-        Some(ClaimVerdict::Supported)
-    } else {
-        None
-    }
-}
-
-fn truncate_chars(text: &str, limit: usize) -> String {
-    if text.chars().count() <= limit {
-        return text.to_string();
-    }
-    let mut out: String = text.chars().take(limit).collect();
-    out.push('…');
-    out
 }

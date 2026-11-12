@@ -2,6 +2,7 @@
 //! answers cannot be read, a pass that moved nothing. Each stop says in words
 //! what is wrong and what to do (acceptance design §2.10).
 
+use super::super::research::Unresearched;
 use super::super::*;
 use super::{ClaimLedger, Waiting};
 use crate::persistence::now;
@@ -174,12 +175,12 @@ impl ClaimLedger {
     /// The lesson stops: a whole pass moved no statement and changed nothing,
     /// so going on would repeat it. The stop names each statement that waits and
     /// says in words what it waits for; the nodes go to the log. When the
-    /// round's research reached nothing, which is the usual cause, it says so.
+    /// round's research could not run, which is the usual cause, it says why.
     pub(in crate::lessons::content_verification) async fn stop_no_progress(
         &mut self,
         raw: &str,
         waiting: &[Waiting],
-        unreached: bool,
+        unresearched: Option<Unresearched>,
     ) -> Result<AppError> {
         let statement = |waits: &Waiting| {
             self.entry(&waits.claim)
@@ -197,22 +198,26 @@ impl ClaimLedger {
             .iter()
             .filter(|waits| waits.step == Step::Research)
             .collect();
-        let reason = if unreached && !researching.is_empty() {
+        let reason = if let (Some(cause), false) = (unresearched, researching.is_empty()) {
             let quoted: Vec<String> = researching
                 .iter()
                 .map(|waits| format!("\"{}\"", statement(waits)))
                 .collect();
             let count = quoted.len();
-            self.stop_reason(
-                StopCode::NoProgress,
-                format!(
-                    "Research could not reach any search engine or web page, so {count} statement{} still {} for a source: {}.",
-                    if count == 1 { "" } else { "s" },
-                    if count == 1 { "waits" } else { "wait" },
-                    quoted.join("; ")
+            let plural = if count == 1 { "" } else { "s" };
+            let wait = if count == 1 { "waits" } else { "wait" };
+            let quoted = quoted.join("; ");
+            let (text, fix) = match cause {
+                Unresearched::Unreached => (
+                    format!("Research could not reach any search engine or web page, so {count} statement{plural} still {wait} for a source: {quoted}."),
+                    "Check your internet connection and the research settings, then resume this lesson.",
                 ),
-                "Check your internet connection and the research settings, then resume this lesson.",
-            )
+                Unresearched::Unplanned => (
+                    format!("Research could not plan its searches: the Learning model gave no plan Lattice could use, so {count} statement{plural} still {wait} for a source: {quoted}."),
+                    "Resume this lesson to try again. If it stops here again, choose another Learning model in Settings → AI.",
+                ),
+            };
+            self.stop_reason(StopCode::NoProgress, text, fix)
         } else {
             let waits: Vec<String> = waiting
                 .iter()

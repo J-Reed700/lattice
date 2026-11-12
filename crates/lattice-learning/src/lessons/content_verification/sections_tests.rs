@@ -2,6 +2,7 @@
 use super::*;
 use crate::lessons::course_generation_tests::{clean_review, verdict, ScriptedModel};
 use crate::lessons::shape;
+use lattice_core::application::services::model_contract::CORRECTION_LEAD;
 use lattice_core::domain::learning::claim_review::{
     Actor, Check, CheckResult, Checker, ClaimEvent, ClaimLocation, ClaimState, EvidenceFingerprint,
     UnitKind,
@@ -677,30 +678,35 @@ async fn mend_in(
 }
 
 #[tokio::test]
-async fn a_flow_repair_that_inserts_a_sentence_the_lesson_already_has_gives_no_edit() -> Result<()>
-{
+async fn a_flow_repair_that_inserts_a_sentence_the_lesson_already_has_is_asked_once_more(
+) -> Result<()> {
     let (section, taken, protected) = mended_section();
+    let nothing = json!({"edits":[]});
     let own = json!({"edits":[
         {"path":"/blocks/0/body","before":"This follows from it.","after":"An intro to the whole idea."}
     ]});
-    let llm = model(&[own]);
+    let llm = model(&[own, nothing.clone()]);
     assert_eq!(
         mend(&llm, &taken, &protected).await?,
         None,
         "the section already has An intro to the whole idea."
     );
+    let prompts = llm.prompts.lock().unwrap().clone();
+    assert_eq!(prompts.len(), 2);
+    assert!(prompts[1].contains(CORRECTION_LEAD), "{}", prompts[1]);
 
     let elsewhere = "Another section says exactly this.";
     let lesson = json!({"blocks":[section, block("explanation","Other",elsewhere)],"questions":[]});
     let other = json!({"edits":[
         {"path":"/blocks/0/body","before":"This follows from it.","after":elsewhere}
     ]});
-    let llm = model(&[other]);
+    let llm = model(&[other, nothing]);
     assert_eq!(
         mend_in(&llm, &taken, &protected, &lesson).await?,
         None,
         "another section already has the sentence"
     );
+    assert_eq!(llm.prompts.lock().unwrap().len(), 2);
     Ok(())
 }
 
@@ -1229,4 +1235,35 @@ async fn a_flow_repair_whose_edits_do_not_apply_is_asked_again() -> Result<()> {
         ))
     );
     Ok(())
+}
+
+#[test]
+fn the_flow_repair_contract_reads_what_it_renders() {
+    use crate::lessons::text_edits::{Cite, Edit, NamedUncite, Patch, Uncite};
+    let edit = |finding: Option<&str>| Edit {
+        finding: finding.map(str::to_owned),
+        path: "/blocks/0/body".into(),
+        before: json!("Old sentence."),
+        after: json!("New sentence."),
+    };
+    let cite = |finding: Option<&str>, source_index: Option<u64>| Cite {
+        finding: finding.map(str::to_owned),
+        path: "/blocks/0/citations".into(),
+        sentence: "New sentence.".into(),
+        source_index,
+        quote: "A quoted span.".into(),
+    };
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        FlowRepair,
+    >(&Patch {
+        edits: vec![edit(None), edit(Some("issue-0"))],
+        citations: vec![cite(None, Some(0)), cite(Some("issue-0"), None)],
+        uncite: vec![
+            Uncite::Path("/blocks/0/citations/0".into()),
+            Uncite::Named(NamedUncite {
+                finding: "issue-0".into(),
+                path: "/blocks/0/citations/1".into(),
+            }),
+        ],
+    });
 }

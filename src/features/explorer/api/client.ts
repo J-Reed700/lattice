@@ -50,7 +50,7 @@ export const explorerApi = {
   setConversationExplorerRoot: (
     conversationId: string,
     root: string | null,
-  ): Promise<ApiResult<void>> =>
+  ): Promise<ApiResult<null>> =>
     apiCall('set_conversation_explorer_root', { conversationId, root }),
 
   /** Opens the folder's search index and starts or resumes indexing; closes any other. */
@@ -60,7 +60,7 @@ export const explorerApi = {
     apiCall('explorer_index_open', { root }),
 
   /** Closes the open folder's index (watcher, indexing, database). */
-  explorerIndexClose: (): Promise<ApiResult<void>> =>
+  explorerIndexClose: (): Promise<ApiResult<null>> =>
     apiCall('explorer_index_close'),
 
   explorerIndexStatus: (
@@ -82,20 +82,20 @@ export const explorerApi = {
   explorerFolderRename: (
     root: string,
     name: string,
-  ): Promise<ApiResult<void>> =>
+  ): Promise<ApiResult<null>> =>
     apiCall('explorer_folder_rename', { root, name }),
 
   explorerFolderSetPinned: (
     root: string,
     pinned: boolean,
-  ): Promise<ApiResult<void>> =>
+  ): Promise<ApiResult<null>> =>
     apiCall('explorer_folder_set_pinned', { root, pinned }),
 
   /** Remembers the thread the folder's chat shows, so the folder reopens on it. */
   explorerFolderSetLastThread: (
     root: string,
     conversationId: string,
-  ): Promise<ApiResult<void>> =>
+  ): Promise<ApiResult<null>> =>
     apiCall('explorer_folder_set_last_thread', { root, conversationId }),
 
   /**
@@ -110,7 +110,7 @@ export const explorerApi = {
     apiCall('explorer_folder_set_settings', { root, instructions, spaceId }),
 
   /** Deletes the folder's own index and keeps it listed; the next open builds it again. */
-  explorerFolderDeleteIndex: (root: string): Promise<ApiResult<void>> =>
+  explorerFolderDeleteIndex: (root: string): Promise<ApiResult<null>> =>
     apiCall('explorer_folder_delete_index', { root }),
 
   /** Removes a folder and its own index from the list; with `deleteThreads`, its threads too. */

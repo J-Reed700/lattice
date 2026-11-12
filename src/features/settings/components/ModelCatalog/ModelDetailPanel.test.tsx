@@ -177,12 +177,11 @@ describe('ModelDetailPanel', () => {
   it('says what it cannot estimate', async () => {
     h.capabilities = null;
     renderPanel(recommendation(
-      { size_gb: 0, format: 'safetensors', capabilities: [], model_id: null, default_filename: null, download_url: null, supported_quantizations: [] } as never,
+      { size_gb: 0, capabilities: [], model_id: null, default_filename: null, download_url: null, supported_quantizations: [] } as never,
       { popularity_downloads: null, popularity_likes: null } as never,
     ));
     expect(screen.getByText('Not enough size or hardware information to estimate fit.')).toBeInTheDocument();
     expect(screen.getAllByText('Unknown')).toHaveLength(1);
-    expect(screen.getByText('Safetensors')).toBeInTheDocument();
     // No source to download from: no control at all.
     await waitFor(() => expect(h.downloaded.isModelDownloaded).toHaveBeenCalled());
     expect(screen.queryByRole('button', { name: 'Download' })).not.toBeInTheDocument();

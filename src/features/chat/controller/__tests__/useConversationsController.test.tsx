@@ -60,7 +60,7 @@ describe('useConversationsController optimistic cleanup', () => {
       ok: true,
       data: { messages: [], total: 0 },
     });
-    api.cancelConversationGeneration = vi.fn().mockResolvedValue({ ok: true, data: undefined });
+    api.cancelConversationGeneration = vi.fn().mockResolvedValue({ ok: true, data: null });
   });
 
   it('keeps unrelated selector consumers asleep during streaming state changes', async () => {
@@ -655,7 +655,7 @@ describe('useConversationsController optimistic cleanup', () => {
     api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
     api.deleteConversation = vi.fn().mockImplementation(async () => {
       deleted = true;
-      return { ok: true, data: undefined };
+      return { ok: true, data: null };
     });
     const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
@@ -698,7 +698,7 @@ describe('useConversationsController optimistic cleanup', () => {
     });
     api.deleteConversation = vi.fn().mockImplementation(async () => {
       deleted = true;
-      return { ok: true, data: undefined };
+      return { ok: true, data: null };
     });
     const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
@@ -726,7 +726,7 @@ describe('useConversationsController optimistic cleanup', () => {
     api.deleteConversation = vi.fn().mockImplementation((id: string) => {
       if (id === conversation.id) return new Promise(resolve => { resolveFirstDelete = resolve; });
       deleted.add(id);
-      return Promise.resolve({ ok: true, data: undefined });
+      return Promise.resolve({ ok: true, data: null });
     });
     const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
     await waitFor(() => expect(result.current.conversations).toHaveLength(2));
@@ -752,7 +752,7 @@ describe('useConversationsController optimistic cleanup', () => {
     queryClient.setQueryData(conversationKeys.messages(conversation.id), [original]);
     let resolveTruncate: ((value: unknown) => void) | undefined;
     api.truncateConversationAfter = vi.fn().mockImplementation(() => new Promise(resolve => { resolveTruncate = resolve; }));
-    api.deleteConversation = vi.fn().mockResolvedValue({ ok: true, data: undefined });
+    api.deleteConversation = vi.fn().mockResolvedValue({ ok: true, data: null });
     const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
 
     let truncating!: Promise<boolean>;
@@ -778,7 +778,7 @@ describe('useConversationsController optimistic cleanup', () => {
     queryClient.setQueryData(conversationKeys.messages(conversation.id), [savedMessage]);
     let resolveMessageDelete: ((value: unknown) => void) | undefined;
     api.deleteConversationMessage = vi.fn().mockImplementation(() => new Promise(resolve => { resolveMessageDelete = resolve; }));
-    api.deleteConversation = vi.fn().mockResolvedValue({ ok: true, data: undefined });
+    api.deleteConversation = vi.fn().mockResolvedValue({ ok: true, data: null });
     const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
 
     let deletingMessage!: Promise<void>;
@@ -1020,7 +1020,7 @@ describe('useConversationsController optimistic cleanup', () => {
 
     it('stops observing a deleted conversation and deletes one the list filter hides', async () => {
       const hidden = 'hidden-by-search';
-      api.deleteConversation = vi.fn().mockResolvedValue({ ok: true, data: undefined });
+      api.deleteConversation = vi.fn().mockResolvedValue({ ok: true, data: null });
       const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
       await act(async () => { await result.current.selectConversation(hidden); });
       expect(conversationUiStore.getState().requestedLinkedConversationIds.has(hidden)).toBe(true);

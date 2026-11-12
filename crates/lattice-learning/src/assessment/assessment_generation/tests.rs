@@ -169,7 +169,7 @@ async fn instructions_the_window_cannot_hold_by_exact_count_name_the_window() {
     );
     let llm = notation();
     let error = author_items(&llm, &need(description, 4)).await.err();
-    let Some(AppError::InvalidConfig(message)) = error else {
+    let Some(AppError::WindowTooSmall(message)) = error else {
         panic!("expected the window to be named, got {error:?}");
     };
     assert!(
@@ -314,7 +314,7 @@ async fn a_batch_cut_off_asks_for_fewer_and_a_single_item_cut_off_is_refused() -
     };
     assert!(batch(2).author(&CutOff, &collection).await?.is_none());
     let single = batch(1).author(&CutOff, &collection).await;
-    assert!(matches!(single, Err(AppError::ModelAnswerUnusable(_))));
+    assert!(matches!(single, Err(AppError::AnswerCutOff(_))));
     Ok(())
 }
 
@@ -853,4 +853,52 @@ async fn an_incomplete_item_review_is_corrected_with_why() -> Result<()> {
         judged[1]
     );
     Ok(())
+}
+
+#[test]
+fn the_grading_contracts_read_what_they_render() {
+    let criterion = |verdict: &str| {
+        json!({"criterionId":"c1","yourWords":["a phrase"],"whatWasMissing":"","fullCreditIncludes":"",
+            "sourceQuote":"","verdict":verdict,"points":1.0})
+    };
+    let graded: Vec<grading::RawGradeItem> = serde_json::from_value(json!([
+        {"itemId":"i1","criteria":[criterion("met"),criterion("partly_met"),criterion("missed")],"summary":"Fair.","responseToNote":"Noted."}
+    ]))
+    .unwrap();
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        grading::GradeWritten,
+    >(&graded);
+    for verdict in ["equivalent", "not_equivalent"] {
+        let judged: Vec<grading::RawJudgeItem> = serde_json::from_value(json!([{
+            "itemId":"i1","yourWords":[],"whatWasMissing":"","fullCreditIncludes":"",
+            "verdict":verdict,"summary":"Judged."
+        }]))
+        .unwrap();
+        lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+            grading::JudgeShort,
+        >(&judged);
+    }
+}
+
+#[test]
+fn the_quiz_writing_contracts_read_what_they_render() {
+    let items: Vec<formats::RawItem> = serde_json::from_value(json!([{
+        "prompt":"Which one?","options":["A","B","C","D"],"answerIndex":1,
+        "distractorRationales":["No.","","No.","No."],"explanation":"B follows.",
+        "blockIndex":0,"quote":"A passage.","difficulty":2,
+        "blanks":[{"acceptedAnswers":["x"]}],"pairs":[{"left":"l","right":"r"}],
+        "rubric":[
+            {"title":"T","description":"D","dimension":"recall"},
+            {"title":"T","description":"D","dimension":"explanation"},
+            {"title":"T","description":"D","dimension":"application"},
+            {"title":"T","description":"D","dimension":"transfer"}
+        ]
+    }]))
+    .unwrap();
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        QuizAuthor,
+    >(&items);
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        QuizRewrite,
+    >(&items);
 }

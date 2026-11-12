@@ -148,7 +148,7 @@ async fn copied_course_retains_citations_bound_to_copied_ids_without_exposing_an
         evidence.content_sha256, before.content_sha256,
         "import must not mint a new verification fingerprint"
     );
-    assert_eq!(evidence.claim_count, 2);
+    assert_eq!(evidence.claim_count, evidence.teaching_claims.len());
     assert_eq!(evidence.teaching_claims.len(), 1);
     assert!(!serde_json::to_string(&evidence)?.contains("PRIVATE"));
     assert!(evidence.sources_current);

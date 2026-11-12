@@ -415,7 +415,7 @@ pub(super) async fn rewrite_module(
         // Told what was wrong, the model still broke the outline's rules. The
         // saved module stands and its findings stay open for the next pass or
         // the user; the other modules are still repaired.
-        Err(AppError::ModelAnswerUnusable(reason)) => {
+        Err(AppError::ModelAnswerUnusable(reason) | AppError::AnswerCutOff(reason)) => {
             tracing::warn!(
                 module = index + 1,
                 %reason,

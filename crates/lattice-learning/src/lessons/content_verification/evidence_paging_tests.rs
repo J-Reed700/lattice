@@ -430,9 +430,8 @@ async fn an_unusable_check_leaves_the_claim_with_its_cause_and_an_outage_defers_
     .await
     .err()
     .unwrap();
-    assert_eq!(
-        crate::model_call::ErrorClass::of(&error),
-        crate::model_call::ErrorClass::Outage,
+    assert!(
+        crate::model_call::ErrorClass::of(&error).is_temporary(),
         "{error}"
     );
     Ok(())

@@ -6,6 +6,7 @@
 )]
 use super::*;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::services::model_contract::{CORRECTION_LEAD, CUT_OFF_REFUSAL};
 use lattice_core::domain::learning::acceptance::{Outcome, Reading, StandardPolicy};
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::JobStore;
@@ -98,10 +99,30 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
             })
             .collect();
     }
+    let correction = fixture_correction(request);
     if is_claim_check(user) || system.is_empty() {
-        return vec![user.to_owned()];
+        return vec![format!("{user}{correction}")];
     }
-    vec![format!("{system}\n\n{user}")]
+    vec![format!("{system}\n\n{user}{correction}")]
+}
+
+/// The correction a request asks again with, as the text that follows its task
+/// prompt: nothing for a first ask.
+fn fixture_correction(request: &CompletionRequest) -> String {
+    request
+        .input
+        .iter()
+        .rev()
+        .find_map(|item| match item {
+            lattice_core::application::ports::llm_port::CompletionInput::Message {
+                role,
+                content,
+            } if role == "user" && content.starts_with(CORRECTION_LEAD) => {
+                Some(format!("\n\n{content}"))
+            }
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 /// What a fixture model answers a lesson's check against its course plan
@@ -532,6 +553,12 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
     if prompt.starts_with("Audit inventory fidelity.") {
         return Some(json!({"missingAssertions":[],"reason":"The fixture inventory faithfully represents the original assertions."}).to_string());
     }
+    if prompt.starts_with("You decide whether one statement is standard knowledge of its field") {
+        return Some(json!({"verdict":"needs_source","reason":"The fixture's statements are not standard knowledge."}).to_string());
+    }
+    if prompt.starts_with("Sentences were taken out of this lesson section") {
+        return Some(json!({"edits":[]}).to_string());
+    }
     if prompt.starts_with("Extract lesson claims.") {
         let data = context(prompt);
         let units = data["units"].as_array().unwrap();
@@ -669,9 +696,11 @@ impl Model {
             return Ok(answer.to_string());
         }
         if prompt.starts_with("Source passages:") {
-            *self.judge_calls.lock().unwrap() += 1;
+            if !prompt.contains(CORRECTION_LEAD) {
+                *self.judge_calls.lock().unwrap() += 1;
+            }
             if self.failing_judge {
-                return Err(invalid("fixture offline"));
+                return Ok("No verdict.".into());
             }
             let bad = prompt.split("\n\nClaim: ").nth(1).unwrap().starts_with(BAD);
             if bad && self.hold_bad_claim {
@@ -681,6 +710,9 @@ impl Model {
         }
         if let Some(declined) = declined_teaching_edits(prompt) {
             return Ok(declined);
+        }
+        if prompt.starts_with("Plan focused reference searches") {
+            return Ok("No plan.".into());
         }
         Err(invalid(format!(
             "Unexpected fixture prompt: {} ... {}",
@@ -897,6 +929,9 @@ mod apparatus_tests;
 
 #[path = "sentence_naming_tests.rs"]
 mod sentence_naming_tests;
+
+#[path = "invariants.rs"]
+pub(in crate::lessons::content_verification) mod invariants;
 
 #[tokio::test]
 async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_do_not() -> Result<()>
@@ -2093,7 +2128,9 @@ async fn durable_judge_recovers_truncated_output_without_using_it_as_approval() 
                     ..Default::default()
                 });
             }
-            assert!(serde_json::to_string(&request.input)?.contains("Correct the response format"));
+            let sent = serde_json::to_string(&request.input)?;
+            assert!(sent.contains(CORRECTION_LEAD));
+            assert!(sent.contains(CUT_OFF_REFUSAL));
             Ok(CompletionResponse {
                 text: "Reason: The reference does not state the claimed date.\nSource passage: none\nVerdict: unsupported".into(),
                 finish_reason: "stop".into(),
@@ -2358,7 +2395,7 @@ async fn malformed_verdict_gets_one_format_correction_without_approving_missing_
         let prompts = model.prompts.lock().unwrap();
         assert_eq!(prompts.len(), 2);
         assert!(prompts[1].contains(SOURCE));
-        assert!(prompts[1].contains("Correct the response format"));
+        assert!(prompts[1].contains(CORRECTION_LEAD));
     }
     use lattice_core::application::services::claim_verification::parse_verdict_word;
     assert_eq!(
@@ -2372,7 +2409,7 @@ async fn malformed_verdict_gets_one_format_correction_without_approving_missing_
 }
 
 #[tokio::test]
-async fn strict_checker_preserves_long_exact_quotes_and_rejects_reflowed_code() {
+async fn strict_checker_records_a_long_or_reflowed_quote_as_the_sources_exact_text() {
     let quote = format!(
         "{} The field contains two spaces: a  b.",
         "A factual reference sentence. ".repeat(20)
@@ -2381,7 +2418,7 @@ async fn strict_checker_preserves_long_exact_quotes_and_rejects_reflowed_code() 
         text: quote.clone(),
         quote: None,
     };
-    for (cited, valid) in [(quote.clone(), true), (quote.replace("a  b", "a b"), false)] {
+    for cited in [quote.clone(), quote.replace("a  b", "a b")] {
         let model=TypedModel {response:CompletionResponse {
             text:format!("supported\nReason: The exact reference contains the statement.\nSource quote: {cited}"),
             finish_reason:"stop".into(),..Default::default()
@@ -2395,13 +2432,9 @@ async fn strict_checker_preserves_long_exact_quotes_and_rejects_reflowed_code() 
         let result = checker
             .check("The field contains two spaces.", &evidence)
             .await;
-        if valid {
-            assert!(
-                matches!(result,ClaimJudgment::Judged(outcome) if outcome.quote.as_deref()==Some(quote.as_str()))
-            );
-        } else {
-            assert!(matches!(result, ClaimJudgment::Unusable));
-        }
+        assert!(
+            matches!(result,ClaimJudgment::Judged(outcome) if outcome.quote.as_deref()==Some(quote.as_str()))
+        );
     }
 }
 

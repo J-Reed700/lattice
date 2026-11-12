@@ -2,6 +2,10 @@ use super::Contract;
 use crate::shared::error::Result;
 use std::fmt::Debug;
 
+mod scripted;
+
+pub use scripted::{Reply, ScriptedModel, Sent, SCRIPTED_WINDOW};
+
 /// A contract whose answer can be written as the model's reply text and read back by its production reader.
 pub trait RenderAnswer: Contract {
     type Answer;

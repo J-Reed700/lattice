@@ -4,9 +4,7 @@
 use super::*;
 use crate::lessons::verifier_audit::calls::VerifierAudit;
 use crate::lessons::verifier_audit::tests::ScriptedVerifier;
-use lattice_core::application::services::model_contract::test_support::{
-    assert_round_trip, RenderAnswer,
-};
+use lattice_core::application::services::model_contract::test_support::assert_round_trip;
 use lattice_core::domain::learning::claim_review::ClaimId;
 
 const UNIT: &str = "Water is everywhere.\n\nWater boils at 100 °C at sea level.\n\nThen it cools.";
@@ -467,18 +465,6 @@ fn a_reason_and_quote_longer_than_the_planned_room_are_read_whole() {
             supporting_quote: quote
         }
     );
-}
-
-impl RenderAnswer for VerifierAudit {
-    type Answer = RawAnswer;
-
-    fn render(answer: &RawAnswer) -> String {
-        serde_json::to_string(answer).unwrap_or_default()
-    }
-
-    fn read(text: &str) -> Result<RawAnswer, AppError> {
-        parse_answer(text).map_err(AppError::InvalidInput)
-    }
 }
 
 #[test]

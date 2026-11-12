@@ -128,12 +128,14 @@ impl DrillBuild<'_> {
                 reason: asked.value.reason,
                 trail,
             }),
-            Err(AppError::ModelAnswerUnusable(reason)) => Ok(Verdict {
-                breaks: false,
-                follows: false,
-                reason: format!("The check's answer could not be used: {reason}"),
-                trail,
-            }),
+            Err(AppError::ModelAnswerUnusable(reason) | AppError::AnswerCutOff(reason)) => {
+                Ok(Verdict {
+                    breaks: false,
+                    follows: false,
+                    reason: format!("The check's answer could not be used: {reason}"),
+                    trail,
+                })
+            }
             Err(error) => Err(error),
         }
     }

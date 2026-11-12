@@ -29,7 +29,7 @@ use lattice_core::application::services::model_contract::{
 };
 use lattice_core::{
     application::ports::LLMPort,
-    shared::error::{AppError, Result},
+    shared::error::{smaller_parts_may_succeed, AppError, Result},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -52,12 +52,42 @@ impl Contract for QuizAuthor {
     type Input = PromptInput;
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for QuizAuthor
+{
+    type Answer = Vec<RawItem>;
+
+    fn render(answer: &Vec<RawItem>) -> String {
+        json!({ "items": answer }).to_string()
+    }
+
+    fn read(text: &str) -> Result<Vec<RawItem>> {
+        read_batch(text)
+    }
+}
+
 /// The writer of a quiz item's replacement, and what a call is told about it.
 pub(crate) struct QuizRewrite;
 
 impl Contract for QuizRewrite {
     const ID: ContractId = ContractId::new("quiz-rewrite");
     type Input = PromptInput;
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for QuizRewrite
+{
+    type Answer = Vec<RawItem>;
+
+    fn render(answer: &Vec<RawItem>) -> String {
+        json!({ "items": answer }).to_string()
+    }
+
+    fn read(text: &str) -> Result<Vec<RawItem>> {
+        read_batch(text)
+    }
 }
 
 /// The contract call for a request whose prompt is only text.
@@ -323,6 +353,7 @@ impl Batch<'_> {
                     } else {
                         text_call::<QuizAuthor>(&request)?
                     };
+                    let call = call.splitting(self.count > 1);
                     let items =
                         complete_checked_request(llm, &call, request, None, None, read_batch)
                             .await?;
@@ -336,17 +367,15 @@ impl Batch<'_> {
 
     /// The items the model wrote, each built or refused with every fault it
     /// has; `None` when these many cannot come from one request: the window
-    /// holds no request for them (see [`Batch::send`]), or the batch stayed
-    /// unusable after its correction. The caller then asks for fewer items.
+    /// holds no request for them (see [`Batch::send`]), or the answer was cut
+    /// off. The caller then asks for fewer items.
     async fn author(
         &self,
         llm: &dyn LLMPort,
         collection: &ReferenceCollection<'_>,
     ) -> Result<Option<Written>> {
         let sent = match self.send(llm, collection).await {
-            Err(error) if self.count > 1 && ErrorClass::of(&error) == ErrorClass::Unusable => {
-                return Ok(None)
-            }
+            Err(error) if self.count > 1 && smaller_parts_may_succeed(&error) => return Ok(None),
             sent => sent?,
         };
         let Some((raw, chosen)) = sent else {

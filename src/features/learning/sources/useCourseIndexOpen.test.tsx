@@ -9,8 +9,8 @@ vi.mock('@/lib/api', () => ({ default: { courseIndexOpen: api.open, courseIndexC
 describe('The course workspace puts its index first', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    api.open.mockResolvedValue({ ok: true, data: undefined });
-    api.close.mockResolvedValue({ ok: true, data: undefined });
+    api.open.mockResolvedValue({ ok: true, data: null });
+    api.close.mockResolvedValue({ ok: true, data: null });
   });
 
   it('opens the course while mounted and closes it on leaving', () => {

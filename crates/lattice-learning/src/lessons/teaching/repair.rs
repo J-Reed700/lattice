@@ -155,12 +155,55 @@ pub(super) fn apply(
 
 const REPAIR_POLICY: Protocol = protocol!("teaching-repair", 3);
 
-/// The repair of a lesson's findings.
+/// The repair of a lesson's findings, answered as edits.
 pub(crate) struct TeachingRepair;
 
 impl Contract for TeachingRepair {
     const ID: ContractId = ContractId::new("teaching-repair");
     type Input = PromptInput;
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for TeachingRepair
+{
+    type Answer = Vec<answers::Entry>;
+
+    fn render(answer: &Vec<answers::Entry>) -> String {
+        json!({ "answers": answer }).to_string()
+    }
+
+    fn read(text: &str) -> Result<Vec<answers::Entry>> {
+        answers::entries(text)
+    }
+}
+
+/// The repair of a lesson's findings, answered as the whole corrected lesson.
+pub(crate) struct TeachingRewrite;
+
+impl Contract for TeachingRewrite {
+    const ID: ContractId = ContractId::new("teaching-rewrite");
+    type Input = PromptInput;
+}
+
+/// The corrected lesson a rewrite reply holds: its text, as the schema holds it.
+fn read_rewrite(raw: &str) -> Result<String> {
+    Ok(raw.to_owned())
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for TeachingRewrite
+{
+    type Answer = String;
+
+    fn render(answer: &String) -> String {
+        answer.clone()
+    }
+
+    fn read(text: &str) -> Result<String> {
+        read_rewrite(text)
+    }
 }
 
 /// What text a repair adds or changes is held to, beyond the finding it is for.
@@ -173,6 +216,8 @@ trait Form: Sync {
     fn schema(&self, request: &Request<'_>) -> Value;
     /// The whole prompt, `requirements` standing for `originalRequirements`.
     fn prompt(&self, request: &Request<'_>, requirements: Value) -> Map<String, Value>;
+    /// The call for this form's contract.
+    fn call(&self, input: &PromptInput) -> Result<ContractCall>;
     /// Whether the form can use this raw answer.
     fn accept(&self, request: &Request<'_>, raw: &str) -> Result<()>;
     fn repaired(&self, raw: String) -> Result<Repaired>;
@@ -204,6 +249,10 @@ impl Form for Edits {
             .into_iter()
             .map(|(key, value)| (key.to_owned(), value))
             .collect()
+    }
+
+    fn call(&self, input: &PromptInput) -> Result<ContractCall> {
+        ContractCall::of::<TeachingRepair>(input)
     }
 
     fn accept(&self, request: &Request<'_>, raw: &str) -> Result<()> {
@@ -256,12 +305,16 @@ impl Form for Rewrite {
             .collect()
     }
 
-    fn accept(&self, _request: &Request<'_>, _raw: &str) -> Result<()> {
-        Ok(())
+    fn call(&self, input: &PromptInput) -> Result<ContractCall> {
+        ContractCall::of::<TeachingRewrite>(input)
+    }
+
+    fn accept(&self, _request: &Request<'_>, raw: &str) -> Result<()> {
+        read_rewrite(raw).map(|_| ())
     }
 
     fn repaired(&self, raw: String) -> Result<Repaired> {
-        Ok(Repaired::Whole(raw))
+        read_rewrite(&raw).map(Repaired::Whole)
     }
 }
 
@@ -302,7 +355,7 @@ pub(super) async fn ask(
         schema,
         output_tokens: request.output_tokens,
     };
-    let call = ContractCall::of::<TeachingRepair>(&PromptInput {
+    let call = form.call(&PromptInput {
         system: system.clone(),
         prompt: Value::Object(prompt.clone()).to_string(),
     })?;
@@ -313,7 +366,7 @@ pub(super) async fn ask(
         .await;
     match &result {
         Ok(raw) => crate::lesson_drafts::record_checkpoint(&key, json!({"answer": raw})).await?,
-        Err(AppError::ModelAnswerUnusable(reason)) => {
+        Err(AppError::ModelAnswerUnusable(reason) | AppError::AnswerCutOff(reason)) => {
             crate::lesson_drafts::record_checkpoint(&key, json!({"refused": reason})).await?;
         }
         Err(_) => {}
@@ -325,6 +378,24 @@ pub(super) async fn ask(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
+    use lattice_core::application::services::model_contract::test_support::assert_round_trip;
+
+    #[test]
+    fn the_repair_contract_reads_what_it_renders() {
+        let entries: Vec<answers::Entry> = serde_json::from_value(json!([
+            {"finding":"f1","plan":"Add the missing step.",
+             "edits":[{"path":"blocks.0.body","before":"A.","after":"A. B."}],
+             "citations":[{"path":"blocks.0.body"}],"uncite":["blocks.1.body"]},
+            {"finding":"f2","plan":"Leave it."}
+        ]))
+        .unwrap();
+        assert_round_trip::<TeachingRepair>(&entries);
+    }
+
+    #[test]
+    fn the_rewrite_contract_reads_what_it_renders() {
+        assert_round_trip::<TeachingRewrite>(&json!({"blocks":[],"questions":[]}).to_string());
+    }
 
     /// One finding for each site: findings at one site are one finding.
     fn at(site: FindingSite, note: &str) -> ReviewFinding {

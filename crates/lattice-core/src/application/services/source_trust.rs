@@ -42,9 +42,9 @@ use crate::application::services::grounded_generation::{
     self, CallOptions, GroundedGenerationError, GroundedRequest, HistoryItem,
 };
 use crate::application::services::model_contract::{
-    answer, refusal, ContractCall, Transport, CORRECTION_LEAD,
+    answer, refusal, ContractCall, CutOffRemedy, Transport, CORRECTION_LEAD,
 };
-use crate::shared::error::{AppError, ErrorClass, Result};
+use crate::shared::error::{smaller_parts_may_succeed, AppError, ErrorClass, Result};
 
 /// What a judgement call came to.
 #[derive(Debug)]
@@ -125,12 +125,12 @@ impl Transport for Planned {
         Ok(next)
     }
 
-    async fn larger(
+    async fn cut_off(
         &self,
         _llm: &dyn LLMPort,
         _request: &GroundedRequest,
-    ) -> Option<GroundedRequest> {
-        None
+    ) -> CutOffRemedy<GroundedRequest> {
+        CutOffRemedy::Correct
     }
 }
 
@@ -166,16 +166,19 @@ pub(crate) async fn judge<T>(
             input_tokens,
             output_tokens,
         }),
+        Err(error) if smaller_parts_may_succeed(&error) => Ok(CallOutcome::TooLarge {
+            cause: refusal(&error),
+        }),
         Err(error) => match ErrorClass::of(&error) {
             ErrorClass::Unusable => Ok(CallOutcome::Unusable {
                 cause: refusal(&error),
                 input_tokens,
                 output_tokens,
             }),
-            ErrorClass::DoesNotFit => Ok(CallOutcome::TooLarge {
-                cause: refusal(&error),
-            }),
-            ErrorClass::Outage | ErrorClass::Fault => Err(error),
+            ErrorClass::DoesNotFit
+            | ErrorClass::Outage
+            | ErrorClass::Unavailable
+            | ErrorClass::Fault => Err(error),
         },
     }
 }

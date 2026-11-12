@@ -23,13 +23,15 @@ export const fetchConversationList = async (params: ConversationListParams, api:
     params.filterMode !== 'all'
   );
   const explorerResult = await api.listConversationsExplorer({
-    spaceId: params.spaceId ?? undefined,
-    query: trimmedQuery || undefined,
-    savedOnly: params.filterMode === 'saved' || undefined,
-    bookmarkedOnly: params.filterMode === 'bookmarked' || undefined,
-    pinnedOnly: params.filterMode === 'pinned' || undefined,
-    hasMessageBookmarks: params.filterMode === 'snippets' || undefined,
+    spaceId: params.spaceId ?? null,
+    query: trimmedQuery || null,
+    savedOnly: params.filterMode === 'saved' || null,
+    bookmarkedOnly: params.filterMode === 'bookmarked' || null,
+    pinnedOnly: params.filterMode === 'pinned' || null,
+    hasMessageBookmarks: params.filterMode === 'snippets' || null,
     includeArchived: params.filterMode === 'archived',
+    limit: null,
+    offset: null,
   });
 
   if (!explorerResult.ok && requiresExplorerQuery) {
@@ -71,7 +73,7 @@ export const fetchMessages = async (id: string, api: ApiClient = VaultAPI): Prom
 export const fetchBookmarks = async (id: string, query = '', api: ApiClient = VaultAPI): Promise<ConversationMessageBookmark[]> => {
   const result = await api.listMessageBookmarks({
     conversationId: id,
-    query: query.trim() || undefined,
+    query: query.trim() || null,
     limit: 200,
     offset: 0,
   });

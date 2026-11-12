@@ -119,7 +119,7 @@ async fn a_room_of_nothing_and_a_room_that_holds_the_brief_but_not_its_first_uni
             .await
             .unwrap_err();
         assert!(
-            matches!(&error, AppError::InvalidConfig(_)),
+            matches!(&error, AppError::WindowTooSmall(_)),
             "{room}: {error:?}"
         );
     }
@@ -235,7 +235,7 @@ async fn an_outline_lesson_whose_first_passage_does_not_fit_the_room_is_a_window
         .await
         .unwrap_err();
     assert!(
-        matches!(&error, AppError::InvalidConfig(message) if message.contains("first passage")),
+        matches!(&error, AppError::WindowTooSmall(message) if message.contains("first passage")),
         "{error:?}"
     );
     Ok(())

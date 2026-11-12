@@ -4,7 +4,9 @@
 //! cannot be taken out; the user's
 //! verdicts are never re-litigated and are labelled examples of the checker's
 //! accuracy (§15).
-use super::acceptance_switch_tests::{claim, local_check, open, stood, walk, SOURCED};
+use super::acceptance_switch_tests::{
+    claim, local_check, open, stood, walk, CUTTING, REWRITING, SOURCED,
+};
 use super::class_checks_tests::Classes;
 use super::*;
 use crate::dto::{
@@ -18,6 +20,7 @@ use crate::lessons::claim_reviews::repository::{ClaimReviewRepository, ShownPass
 use crate::lessons::claim_reviews::service::ClaimReviewService;
 use crate::repository::LearningRepository;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
+use lattice_core::application::services::model_contract::CORRECTION_LEAD;
 use lattice_core::domain::learning::acceptance::{Goal, Outcome, Reading, Step, Then};
 use lattice_core::domain::learning::claim_review::{
     text_sha256, Actor, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry,
@@ -84,6 +87,8 @@ pub(super) struct Figures {
     unusable_asks: usize,
     /// The judge calls a figure contradicted, not just unsupported.
     contradicted: bool,
+    /// What the research planner answers; None, and it gives no usable plan.
+    plan: Option<String>,
     asks: AtomicUsize,
     repairs: AtomicUsize,
     judged: Mutex<Vec<String>>,
@@ -98,6 +103,7 @@ impl Figures {
             fail_repair_at: None,
             unusable_asks: 0,
             contradicted: false,
+            plan: None,
             asks: AtomicUsize::new(0),
             repairs: AtomicUsize::new(0),
             judged: Mutex::new(Vec::new()),
@@ -114,7 +120,21 @@ impl Figures {
         }
     }
 
+    /// A research planner that plans one web search for the first gap.
+    pub(super) fn planning(query: &str) -> Self {
+        Self {
+            plan: Some(json!({"needs":[{"gap":0,"kind":"web","query":query}]}).to_string()),
+            ..Self::new()
+        }
+    }
+
     pub(super) async fn respond(&self, prompt: &str) -> Result<String> {
+        if let (Some(plan), true) = (
+            &self.plan,
+            prompt.starts_with("Plan focused reference searches"),
+        ) {
+            return Ok(plan.clone());
+        }
         if prompt.starts_with("Extract lesson claims.") {
             let data = self::context(prompt);
             let units = data["units"].as_array().unwrap();
@@ -204,9 +224,7 @@ impl LLMPort for Figures {
             .iter()
             .any(|prompt| prompt.starts_with("Source passages:"))
         {
-            let correcting = prompts
-                .iter()
-                .any(|prompt| prompt.contains("Your previous response was incomplete"));
+            let correcting = serde_json::to_string(&request.input)?.contains(CORRECTION_LEAD);
             let ask = if correcting {
                 self.asks.load(Ordering::Relaxed)
             } else {
@@ -360,6 +378,7 @@ async fn a_last_attempt_that_cannot_take_the_sentence_out_leaves_it_standing_and
     assert!(passages
         .iter()
         .all(|passage| sources[0].excerpt.contains(&passage.text)));
+    invariants::assert_prepared(&pool, &lesson_id, &raw, &report).await?;
     Ok(())
 }
 
@@ -427,6 +446,7 @@ async fn a_claim_still_failing_after_its_rewrite_is_taken_out_and_the_lesson_pub
         .expect("the cut recorded the sentence it took out and where it stood");
     assert!(!cut.sentence.is_empty() && !raw.contains(&cut.sentence));
     assert!(cut.before.is_some() || cut.after.is_some(), "{cut:?}");
+    invariants::assert_prepared(&pool, &lesson_id, &raw, &report).await?;
     Ok(())
 }
 
@@ -490,6 +510,7 @@ async fn a_lesson_whose_every_statement_would_be_cut_publishes_them_unverified_a
         Some(&(1, false, RepairOutcome::Rewritten))
     );
     assert!(waiting(&ledger.claims).is_empty());
+    invariants::assert_prepared(&pool, &lesson_id, &raw, &report).await?;
     Ok(())
 }
 
@@ -610,6 +631,7 @@ async fn a_lesson_stopped_on_checks_made_under_other_rules_completes_its_job_as_
             .await?
             .is_none()
     );
+    invariants::assert_prepared(&pool, &lesson_id, &raw, &report).await?;
     Ok(())
 }
 
@@ -631,7 +653,7 @@ async fn the_calls_ceiling_does_not_rise_while_a_rewrite_fails_its_recheck_and_i
         &sources,
     ))
     .await;
-    prepared?;
+    let (raw, report) = prepared?;
 
     // The first check, the rewrite and its re-check were calls, and the
     // plan's ceiling, set once from the first pass, never moved up while the
@@ -645,6 +667,7 @@ async fn the_calls_ceiling_does_not_rise_while_a_rewrite_fails_its_recheck_and_i
         trace.calls,
         trace.ceilings
     );
+    invariants::assert_prepared(&pool, &lesson_id, &raw, &report).await?;
     Ok(())
 }
 
@@ -703,6 +726,7 @@ async fn a_statement_whose_judge_never_answers_readably_keeps_its_text_and_attem
     );
     assert_eq!(claim.unjudged(), 2);
     assert!(repairs(claim).is_empty());
+    invariants::assert_prepared(&pool, &lesson_id, &raw, &report).await?;
     Ok(())
 }
 
@@ -758,6 +782,7 @@ async fn a_statement_unreadable_once_and_readable_on_the_recheck_is_judged_norma
             .await?
             .is_none()
     );
+    invariants::assert_prepared(&pool, &lesson_id, &raw, &report).await?;
     Ok(())
 }
 
@@ -852,6 +877,7 @@ async fn an_edit_is_applied_on_resume_and_only_its_section_is_extracted_again() 
     assert_eq!(examples.len(), 1);
     assert_eq!(examples[0].label_source, LabelSource::UserEdit);
     assert_eq!(examples[0].label, Label::False);
+    invariants::assert_prepared(&pool, &lesson_id, &raw, &report).await?;
     Ok(())
 }
 
@@ -946,6 +972,7 @@ async fn a_claim_confirmed_while_its_repair_was_interrupted_is_not_sent_on_resum
         first.state(),
         ClaimState::ResolvedByEvidence { .. }
     ));
+    invariants::assert_prepared(&pool, &lesson_id, &raw, &report).await?;
     Ok(())
 }
 
@@ -1260,7 +1287,7 @@ async fn a_statement_no_reading_judged_is_published_not_verified_as_unchecked() 
     ledger.append(&id, ClaimEvent::Checked(check)).await?;
 
     ledger
-        .cut(&policy, &[id.clone()], Outcome::CannotCut)
+        .cut(&policy, std::slice::from_ref(&id), Outcome::CannotCut)
         .await?;
 
     let state = ledger.entry(&id).unwrap().state();
@@ -1402,6 +1429,18 @@ pub(super) fn passage_finding(
         label: None,
         class: None,
     }
+}
+
+/// `findings` as the classify step leaves them for statements the writer
+/// cited: sorted Sourced, so identifying them records the class.
+pub(super) fn sourced(mut findings: Vec<Finding>) -> Vec<Finding> {
+    for finding in &mut findings {
+        finding.class = Some(Classed {
+            class: Class::Sourced,
+            by: ClassifiedBy::Writer,
+        });
+    }
+    findings
 }
 
 /// A pass's report of `findings`, its one source active.
@@ -1590,13 +1629,14 @@ async fn a_failed_claim_sharing_its_sentence_with_a_verified_one_tells_its_rewri
     let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
     let overstated = "Mitochondria produce all of a cell's ATP.";
     let before = cell_lesson(CELL);
-    let report = pass_report(vec![
+    let report = pass_report(sourced(vec![
         passage_finding(CELL, ATP, true, CELL_SOURCE),
         passage_finding(CELL, overstated, false, CELL_SOURCE),
-    ]);
+    ]));
     let ids = identify_findings(&mut ledger, &before, &report).await?;
     check_findings(&mut ledger, &ids, &report.findings).await?;
     let (verified, shared) = (ids[0].clone(), ids[1].clone());
+    walk(&mut ledger, &shared, Class::Sourced, &REWRITING).await?;
     assert_eq!(ledger.cotenants(&shared), std::slice::from_ref(&verified));
     assert_eq!(ledger.cotenants(&verified), std::slice::from_ref(&shared));
 
@@ -1639,14 +1679,15 @@ async fn a_claim_that_passed_on_a_sentence_cut_for_another_is_removed_by_the_mac
     let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
     let overstated = "Mitochondria produce all of a cell's ATP.";
     let before = cell_lesson(CELL);
-    let report = pass_report(vec![
+    let report = pass_report(sourced(vec![
         passage_finding(CELL, ATP, true, CELL_SOURCE),
         passage_finding(CELL, overstated, false, CELL_SOURCE),
-    ]);
+    ]));
     let ids = identify_findings(&mut ledger, &before, &report).await?;
     check_findings(&mut ledger, &ids, &report.findings).await?;
     let (verified, shared) = (ids[0].clone(), ids[1].clone());
-    // The failed claim has had its rewrite.
+    // The failed claim has had its rewrite and stands at its cut.
+    walk(&mut ledger, &shared, Class::Sourced, &CUTTING).await?;
     ledger
         .append(
             &shared,
@@ -2069,7 +2110,8 @@ async fn prepared_counting(
         sources,
     ))
     .await;
-    prepared?;
+    let (raw, report) = prepared?;
+    invariants::assert_prepared(&pool, &lesson_id, &raw, &report).await?;
     Ok((model, trace))
 }
 
@@ -2155,7 +2197,7 @@ async fn a_sentence_a_repair_rewrote_is_read_afresh_so_its_re_check_judges_the_w
     // A repair rewrites the sentence into another that asserts something else.
     let model = Figures::new();
 
-    prepare(
+    let (raw, report) = prepare(
         &Database::from(pool.clone()),
         &repo,
         &job,
@@ -2171,6 +2213,7 @@ async fn a_sentence_a_repair_rewrote_is_read_afresh_so_its_re_check_judges_the_w
         judged.contains(&figure(0)),
         "the rewritten sentence was never judged as it now reads; judged: {judged:?}"
     );
+    invariants::assert_prepared(&pool, &lesson_id, &raw, &report).await?;
     Ok(())
 }
 
@@ -2252,7 +2295,8 @@ async fn a_lesson_is_not_published_with_a_sentence_that_no_live_claim_stands_on(
 
     assert_eq!(model.repairs.load(Ordering::Relaxed), 1);
     match published {
-        Ok((raw, _)) => {
+        Ok((raw, report)) => {
+            invariants::assert_prepared(&pool, &lesson_id, &raw, &report).await?;
             let sentence = figure(0);
             let draft: Value = serde_json::from_str(&raw)?;
             let stands = draft["blocks"][1]["body"]
@@ -2481,6 +2525,7 @@ async fn a_lesson_with_a_sentence_a_claim_the_machine_ended_stood_on_publishes_w
             .await?
             .is_none()
     );
+    invariants::assert_prepared(&pool, &lesson_id, &published, &report).await?;
     Ok(())
 }
 
@@ -2631,6 +2676,14 @@ impl Course {
         .await
     }
 
+    pub(super) async fn assert_invariants(
+        &self,
+        raw: &str,
+        report: &LessonVerificationReport,
+    ) -> Result<()> {
+        invariants::assert_prepared(&self.pool, &self.lesson_id, raw, report).await
+    }
+
     /// Publishes what a preparation returned as the worker does, and reads
     /// the lesson back.
     pub(super) async fn publish(
@@ -2765,6 +2818,7 @@ async fn a_statement_whose_cut_would_take_the_lessons_first_explanation_is_publi
         .await
         .expect("the lesson publishes, its statement not verified");
 
+    course.assert_invariants(&prepared.0, &prepared.1).await?;
     let shown = course.publish(prepared).await?;
 
     shown.assert_only_not_verified(&figure(0), "unsupported");
@@ -2785,6 +2839,7 @@ async fn a_statement_whose_last_reading_was_a_contradiction_is_published_not_ver
         .await
         .expect("the lesson publishes, its statement not verified");
 
+    course.assert_invariants(&prepared.0, &prepared.1).await?;
     let shown = course.publish(prepared).await?;
 
     shown.assert_only_not_verified(&figure(0), "contradicted");
@@ -2800,6 +2855,7 @@ async fn a_lesson_whose_every_statement_would_be_cut_is_published_with_each_not_
         .await
         .expect("the lesson publishes, its statement not verified");
 
+    course.assert_invariants(&prepared.0, &prepared.1).await?;
     let shown = course.publish(prepared).await?;
 
     shown.assert_only_not_verified(&figure(0), "unsupported");
@@ -2819,6 +2875,7 @@ async fn a_statement_beside_one_the_sources_do_not_state_still_reads_verified_an
         .await
         .expect("the lesson publishes, one statement not verified");
 
+    course.assert_invariants(&prepared.0, &prepared.1).await?;
     let shown = course.publish(prepared).await?;
 
     // The settled statement reads as it always did, and is the only one that
@@ -2846,6 +2903,7 @@ async fn a_statement_whose_judge_never_answers_readably_is_published_not_verifie
         .await
         .expect("the lesson publishes, its statement not verified");
 
+    course.assert_invariants(&prepared.0, &prepared.1).await?;
     let shown = course.publish(prepared).await?;
 
     shown.assert_only_not_verified(GOOD, "unchecked");
@@ -2887,6 +2945,7 @@ async fn a_statement_left_for_the_user_when_no_machine_work_is_left_is_published
         .await
         .expect("the lesson publishes, its statement not verified");
 
+    course.assert_invariants(&prepared.0, &prepared.1).await?;
     let shown = course.publish(prepared).await?;
 
     shown.assert_only_not_verified(GOOD, "unchecked");
@@ -2933,6 +2992,7 @@ async fn a_sentence_a_claim_the_machine_ended_stood_on_is_published_with_that_cl
         .await
         .expect("the lesson publishes, the sentence not verified");
 
+    course.assert_invariants(&prepared.0, &prepared.1).await?;
     let shown = course.publish(prepared).await?;
 
     let on = shown.on(GOOD);
@@ -2979,6 +3039,7 @@ async fn statements_alone_in_their_sections_are_published_not_verified_instead_o
         .await
         .expect("the lesson publishes, two statements not verified");
 
+    course.assert_invariants(&prepared.0, &prepared.1).await?;
     let shown = course.publish(prepared).await?;
 
     // Each section's sentence is the figure its rewrite gave, and stands.
@@ -3020,6 +3081,7 @@ async fn a_lesson_whose_cuts_would_take_all_of_its_questions_is_published_with_t
     for (index, sentence) in [figure(0), figure(1)].iter().enumerate() {
         assert_eq!(questions[index]["explanation"], json!(sentence));
     }
+    course.assert_invariants(&raw, &report).await?;
     Ok(())
 }
 
@@ -3046,6 +3108,7 @@ async fn a_lesson_whose_cuts_take_every_question_of_a_kind_it_asks_is_published_
     assert_eq!(questions.len(), 1, "{questions:?}");
     assert_eq!(questions[0]["kind"], json!("quiz"));
     assert_eq!(questions[0]["explanation"], json!(GOOD));
+    course.assert_invariants(&raw, &report).await?;
     Ok(())
 }
 

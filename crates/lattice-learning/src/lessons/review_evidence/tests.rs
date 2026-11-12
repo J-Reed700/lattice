@@ -990,20 +990,6 @@ fn the_answer_schema_does_not_cap_evidence_ids() {
     assert!(cited.get("maxItems").is_none(), "{cited}");
 }
 
-impl lattice_core::application::services::model_contract::test_support::RenderAnswer
-    for ReviewEvidence
-{
-    type Answer = Decisions;
-
-    fn render(answer: &Decisions) -> String {
-        serde_json::to_string(answer).unwrap_or_default()
-    }
-
-    fn read(text: &str) -> Result<Decisions> {
-        generation::parse_json(text)
-    }
-}
-
 #[test]
 fn a_review_evidence_answer_reads_back_as_rendered() -> Result<()> {
     let answer = Decisions {
@@ -1022,4 +1008,36 @@ fn a_review_evidence_answer_reads_back_as_rendered() -> Result<()> {
         ReviewEvidence,
     >(&answer);
     Ok(())
+}
+
+#[test]
+fn a_review_evidence_answer_reads_back_whatever_its_verdict_and_basis() {
+    let findings = [Verdict::Actionable, Verdict::NotEstablished]
+        .into_iter()
+        .flat_map(|verdict| {
+            [
+                Basis::ExternalFact,
+                Basis::LessonContract,
+                Basis::InternalConflict,
+            ]
+            .into_iter()
+            .map(move |basis| (verdict, basis))
+        })
+        .enumerate()
+        .map(|(index, (verdict, basis))| Finding {
+            issue_id: format!("issue-{index}"),
+            verdict,
+            basis,
+            evidence_ids: vec!["reference-0".into()],
+            requirement_id: None,
+            reason: "Stated.".into(),
+            part_id: None,
+            left_to: Some("none".into()),
+        })
+        .collect();
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        ReviewEvidence,
+    >(&Decisions {
+        decisions: findings,
+    });
 }

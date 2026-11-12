@@ -640,8 +640,39 @@ mod tests {
         Ok(())
     }
 
+    fn two_sections() -> Vec<Value> {
+        vec![
+            json!({"body":"First assertion."}),
+            json!({"body":"Second assertion."}),
+        ]
+    }
+
     #[tokio::test]
-    async fn correction_keeps_valid_sections_and_requests_only_missing_checks() -> Result<()> {
+    async fn a_correction_reply_is_used_alone_and_nothing_of_the_refused_reply_is_kept(
+    ) -> Result<()> {
+        let mut stale = answer(0, "unit-0-passage-0");
+        stale["claims"][0]["statement"] = json!("A statement only the refused reply made.");
+        let model = model(vec![
+            fixture_response(vec![stale, answer(1, "unit-0-passage-0")]),
+            fixture_response(vec![
+                answer(0, "unit-0-passage-0"),
+                answer(1, "unit-1-passage-0"),
+            ]),
+        ]);
+        let inventory = extract(&model, &two_sections()).await?;
+        assert_eq!(inventory.units.len(), 2);
+        assert_eq!(
+            inventory.units[0].claims[0].statement,
+            "A scoped factual statement."
+        );
+        let prompts = model.prompts.lock().unwrap();
+        assert_eq!(prompts.len(), 2, "one answer and one correction");
+        assert!(prompts[1].contains("\"requestedIndices\":[0,1]"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_correction_reply_leaving_a_section_out_fails_even_when_the_refused_reply_had_it() {
         let model = model(vec![
             fixture_response(vec![
                 answer(0, "unit-0-passage-0"),
@@ -649,19 +680,11 @@ mod tests {
             ]),
             fixture_response(vec![answer(1, "unit-1-passage-0")]),
         ]);
-        let inventory = extract(
-            &model,
-            &[
-                json!({"body":"First assertion."}),
-                json!({"body":"Second assertion."}),
-            ],
-        )
-        .await?;
-        assert_eq!(inventory.units.len(), 2);
-        let prompts = model.prompts.lock().unwrap();
-        assert!(prompts[1].contains("\"requestedIndices\":[1]"));
-        assert!(!prompts[1].contains("First assertion."));
-        Ok(())
+        let error = extract(&model, &two_sections()).await.err().unwrap();
+        assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error}");
+        assert!(error.to_string().contains("Unit 0 needs an inventory"));
+        assert!(!error.to_string().contains("Unit 1"), "{error}");
+        assert_eq!(model.prompts.lock().unwrap().len(), 2);
     }
 
     #[tokio::test]

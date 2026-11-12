@@ -28,7 +28,7 @@ mod waiting;
 use passes::Passes;
 use quotes::QuoteCheck;
 use review_loop::{review_material, Reviewed};
-pub(crate) use standing::{references_hold, versions, Versions};
+pub(crate) use standing::{references_hold, versions};
 use subject::{LessonSubject, MaterialSubject, OutlineSubject};
 pub(crate) use waiting::question_texts;
 pub(crate) use waiting::record as record_waiting;
@@ -52,6 +52,10 @@ pub fn validate_project(project: &crate::dto::LearningProjectMilestoneDto) -> Re
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, PartialEq)
+)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GeneratedCriterion {
     pub title: String,

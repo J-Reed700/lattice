@@ -241,6 +241,13 @@ export function useJournalSpaces(options: {
       const result = await updateJournal(queryClient, {
         journalId: requestedJournalSpaceId,
         name: nextName,
+        description: null,
+        icon: null,
+        accentColor: null,
+        spacePrompt: null,
+        toolPreferencesJson: null,
+        isArchived: null,
+        sortOrder: null,
       }, api);
       if (!result.ok) {
         notify('error', result.error);

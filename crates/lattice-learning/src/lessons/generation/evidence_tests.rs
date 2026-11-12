@@ -319,3 +319,35 @@ fn the_plan_schema_bounds_no_text_but_a_blank() {
     let bounds = crate::lessons::course_generation_tests::length_bounds(&plan_schema());
     assert!(bounds.is_empty(), "{bounds:?}");
 }
+
+#[test]
+fn the_evidence_plan_contract_reads_what_it_renders() {
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        EvidencePlan,
+    >(&vec![
+        PlannedTopic {
+            topic: "A topic".into(),
+            queries: vec!["a search".into(), "another search".into()],
+        },
+        PlannedTopic {
+            topic: "Another topic".into(),
+            queries: vec![],
+        },
+    ]);
+}
+
+#[test]
+fn the_evidence_coverage_contract_reads_what_it_renders() {
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        EvidenceCoverage,
+    >(&vec![
+        CoverageEntry {
+            id: "t1".into(),
+            covering: vec!["p1".into(), "p2".into()],
+        },
+        CoverageEntry {
+            id: "t2".into(),
+            covering: vec![],
+        },
+    ]);
+}

@@ -8,6 +8,8 @@ use serde_json::{json, Value};
 
 use super::{data_prompt, judge, names, sanitised, CallOutcome};
 use crate::application::ports::LLMPort;
+#[cfg(any(test, feature = "test-support"))]
+use crate::application::services::model_contract::test_support::RenderAnswer;
 use crate::application::services::model_contract::{
     Contract, ContractCall, ContractId, PromptInput,
 };
@@ -146,22 +148,36 @@ pub fn standing_schema() -> Value {
     })
 }
 
+/// The reply as the model wrote it, before it is checked against the signals judged.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Answer {
-    standing: Standing,
-    publisher: Option<AnswerPublisher>,
-    editorial: EditorialProcess,
-    nature: ContentNature,
-    flags: Vec<RiskFlag>,
-    reasons: Vec<Reason>,
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, Debug, PartialEq)
+)]
+pub(crate) struct Answer {
+    pub(crate) standing: Standing,
+    pub(crate) publisher: Option<AnswerPublisher>,
+    pub(crate) editorial: EditorialProcess,
+    pub(crate) nature: ContentNature,
+    pub(crate) flags: Vec<RiskFlag>,
+    pub(crate) reasons: Vec<Reason>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AnswerPublisher {
-    name: String,
-    kind: PublisherKind,
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, Debug, PartialEq)
+)]
+pub(crate) struct AnswerPublisher {
+    pub(crate) name: String,
+    pub(crate) kind: PublisherKind,
+}
+
+/// The standing a reply holds, when it is the schema's JSON.
+pub(crate) fn read_standing_answer(text: &str) -> std::result::Result<Answer, String> {
+    serde_json::from_str(text.trim()).map_err(|error| format!("not the schema: {error}"))
 }
 
 /// What a standing assessment copies from its input rather than from the
@@ -181,8 +197,7 @@ pub(super) fn parse_standing(
 ) -> std::result::Result<StandingAssessment, String> {
     let (signals, track_record, model) =
         (judging.signals, judging.track_record, &judging.key.model);
-    let answer: Answer =
-        serde_json::from_str(text.trim()).map_err(|error| format!("not the schema: {error}"))?;
+    let answer = read_standing_answer(text)?;
     if answer.reasons.is_empty() || answer.reasons.iter().any(|r| r.text.trim().is_empty()) {
         return Err("every conclusion needs a reason".into());
     }
@@ -383,4 +398,17 @@ pub async fn judge_standing(
             output_tokens: 0,
         },
     })
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl RenderAnswer for SourceStanding {
+    type Answer = Answer;
+
+    fn render(answer: &Answer) -> String {
+        serde_json::to_string(answer).unwrap_or_default()
+    }
+
+    fn read(text: &str) -> Result<Answer> {
+        read_standing_answer(text).map_err(crate::shared::error::AppError::InvalidInput)
+    }
 }

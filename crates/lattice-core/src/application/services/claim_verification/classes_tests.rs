@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-use super::classes::{read_consistency, read_sample, Consistency, Knowledge};
+use super::classes::{Consistency, Knowledge};
 use super::*;
 use crate::application::ports::llm_port::CompletionResponse;
-use crate::application::services::model_contract::test_support::{assert_round_trip, RenderAnswer};
+use crate::application::services::model_contract::test_support::assert_round_trip;
 use crate::application::services::model_contract::CORRECTION_LEAD;
 use crate::domain::learning::acceptance::KNOWLEDGE_SAMPLES;
 use crate::shared::error::AppError;
@@ -179,7 +179,7 @@ async fn an_unreadable_answer_is_asked_for_once_more_and_then_left_unchecked() {
     for (replies, sends) in [
         (vec![unreadable(), unreadable()], 2),
         (vec![unknown(), unknown()], 2),
-        (vec![cut(), cut()], 1),
+        (vec![cut(), cut()], 2),
     ] {
         let llm = Scripted::new(replies);
         let judgment = checker(&llm, CheckPolicy::Consistency)
@@ -402,34 +402,26 @@ async fn a_reason_past_600_characters_is_kept_whole() {
     assert_eq!(outcome.reason, reason);
 }
 
-impl RenderAnswer for Consistency {
-    type Answer = ConsistencyOutcome;
-    fn render(answer: &ConsistencyOutcome) -> String {
-        json!({"verdict": answer.verdict, "reason": answer.reason}).to_string()
-    }
-    fn read(text: &str) -> Result<ConsistencyOutcome> {
-        read_consistency(text).ok_or_else(|| AppError::InvalidInput("unreadable".into()))
-    }
-}
-
-impl RenderAnswer for Knowledge {
-    type Answer = KnowledgeSample;
-    fn render(answer: &KnowledgeSample) -> String {
-        json!({"verdict": answer.verdict, "reason": answer.reason}).to_string()
-    }
-    fn read(text: &str) -> Result<KnowledgeSample> {
-        read_sample(text).ok_or_else(|| AppError::InvalidInput("unreadable".into()))
-    }
-}
-
 #[test]
 fn the_class_contracts_read_what_they_render() {
-    assert_round_trip::<Consistency>(&ConsistencyOutcome {
-        verdict: ConsistencyVerdict::UnfoundedSpecific,
-        reason: "A figure no passage gives.".into(),
-    });
-    assert_round_trip::<Knowledge>(&KnowledgeSample {
-        verdict: KnowledgeVerdict::NeedsSource,
-        reason: "A textbook would cite it.".into(),
-    });
+    for verdict in [
+        ConsistencyVerdict::Consistent,
+        ConsistencyVerdict::Contradicted,
+        ConsistencyVerdict::UnfoundedSpecific,
+    ] {
+        assert_round_trip::<Consistency>(&ConsistencyOutcome {
+            verdict,
+            reason: "A figure no passage gives.".into(),
+        });
+    }
+    for verdict in [
+        KnowledgeVerdict::TrueCommon,
+        KnowledgeVerdict::False,
+        KnowledgeVerdict::NeedsSource,
+    ] {
+        assert_round_trip::<Knowledge>(&KnowledgeSample {
+            verdict,
+            reason: "A textbook would cite it.".into(),
+        });
+    }
 }

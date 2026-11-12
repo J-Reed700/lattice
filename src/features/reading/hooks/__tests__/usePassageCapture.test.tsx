@@ -46,7 +46,7 @@ describe('usePassageCapture', () => {
     await act(() => result.current.handleReference('  Caravans crossed the Taklamakan.  '));
     expect(api.createPassageReference).toHaveBeenCalledWith({
       documentId: 'doc 1', chunkId: 'doc-1#9', filePath: '/library/silk-road.pdf', fileName: 'Silk Road.pdf', locator: 'p. 12',
-      text: 'Caravans crossed the Taklamakan.',
+      text: 'Caravans crossed the Taklamakan.', title: null, note: null,
     });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: PASSAGE_REFERENCES_QUERY_KEY });
     expect(toast.success).toHaveBeenCalledWith('Saved to references', { message: 'Lattice will use this in future answers.' });
@@ -61,7 +61,7 @@ describe('usePassageCapture', () => {
   it('sends no locator when the passage has no known location', async () => {
     const { result } = setup({ source: source({ chunkId: '' }) });
     await act(() => result.current.handleReference('Marco Polo'));
-    expect(api.createPassageReference.mock.calls[0][0].locator).toBeUndefined();
+    expect(api.createPassageReference.mock.calls[0][0].locator).toBeNull();
   });
 
   it('says why a reference could not be saved', async () => {

@@ -9,7 +9,7 @@ export const speechApi = {
    * @returns The voices, the default one and the download's size
    */
   getSpeechStatus: async (): Promise<ApiResult<Wire.SpeechStatusDto>> =>
-    apiCall<Wire.SpeechStatusDto>('get_speech_status'),
+    apiCall('get_speech_status'),
 
   /**
    * Reads one piece of text aloud on this computer.
@@ -24,5 +24,5 @@ export const speechApi = {
     voice: string,
     speed: number,
   ): Promise<ApiResult<Wire.SpeechClipDto>> =>
-    apiCall<Wire.SpeechClipDto>('synthesize_speech', { text, voice, speed }),
+    apiCall('synthesize_speech', { text, voice, speed }),
 };

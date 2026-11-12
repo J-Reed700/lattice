@@ -1129,8 +1129,8 @@ struct Failing {
 #[async_trait::async_trait]
 impl LLMPort for Failing {
     async fn complete(&self, _: &CompletionRequest) -> Result<CompletionResponse> {
-        Err(if self.refused {
-            AppError::PromptExceedsWindow {
+        if self.refused {
+            return Err(AppError::PromptExceedsWindow {
                 prompt_tokens: 35_569,
                 window: 32_768,
                 counted_exactly: true,
@@ -1138,13 +1138,11 @@ impl LLMPort for Failing {
                           no room for an answer; the configured context window is 32768. It \
                           was not sent."
                     .into(),
-            }
-        } else {
-            AppError::InvalidInput(
-                "Reference selection returned invalid evidence candidates; no pages were saved."
-                    .into(),
-            )
-        })
+            });
+        }
+        Ok(CompletionResponse::from_text(
+            r#"{"decisions":[{"id":"result-99","useForGap":true,"reason":"A page."}]}"#,
+        ))
     }
     fn model_name(&self) -> &str {
         "failing"
@@ -1231,7 +1229,10 @@ async fn a_round_whose_searches_found_nothing_did_reach_a_search_engine() -> Res
                 panic!("a search that found nothing adds nothing");
             };
             assert!(!searched.queries.is_empty(), "the search ran");
-            assert!(!searched.unreached, "an answer of nothing was an answer");
+            assert!(
+                searched.unresearched.is_none(),
+                "an answer of nothing was an answer"
+            );
             Ok(())
         },
     )
