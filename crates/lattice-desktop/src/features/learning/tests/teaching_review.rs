@@ -2,7 +2,7 @@
 
 use lattice_core::shared::error::Result;
 use lattice_learning::lessons::teaching_review::test_support::candidate;
-use lattice_learning::lessons::teaching_review::{review, LengthRule, Scope};
+use lattice_learning::lessons::teaching_review::{review, Scope};
 use serde_json::json;
 
 /// Opt-in provider acceptance check. No application data is written and
@@ -26,7 +26,6 @@ async fn live_review_passage_protocol() -> Result<()> {
         &content,
         Scope::default(),
         Some(&run.progress),
-        LengthRule::Fail,
     )
     .await?
     .reported;
@@ -39,7 +38,6 @@ async fn live_review_passage_protocol() -> Result<()> {
         &content,
         Scope::default(),
         Some(&run.progress),
-        LengthRule::Fail,
     )
     .await?
     .reported;

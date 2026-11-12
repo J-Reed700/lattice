@@ -1,7 +1,7 @@
 use super::*;
 use crate::lessons::course_generation_tests::ScriptedModel;
 use crate::question_review::{self, Outcome};
-use crate::teaching_review::{LengthRule, Scope};
+use crate::teaching_review::Scope;
 use crate::{lesson_drafts, teaching_review};
 
 fn outcome() -> Outcome<'static> {
@@ -61,7 +61,6 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
                     &candidate,
                     Scope::default(),
                     None,
-                    LengthRule::Fail
                 )
                 .await?
                 .reported
@@ -88,7 +87,6 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
             &candidate,
             Scope::default(),
             None,
-            LengthRule::Fail,
         )
         .await?;
         assert_eq!(
@@ -107,7 +105,6 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
             &candidate,
             Scope::default(),
             None,
-            LengthRule::Fail,
         )
         .await?;
         assert_eq!(model.prompts.lock().unwrap().len(), 7);
@@ -139,7 +136,6 @@ async fn incomplete_reviews_are_never_saved_as_completed() -> Result<()> {
                 &candidate,
                 Scope::default(),
                 None,
-                LengthRule::Fail
             )
             .await
             .is_err());
