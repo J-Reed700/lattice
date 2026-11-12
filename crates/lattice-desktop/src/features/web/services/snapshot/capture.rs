@@ -330,11 +330,7 @@ fn needs_browser_escalation(doc: &Document) -> bool {
         "data-reactroot",
     ];
     let has_spa_root = spa_roots.iter().any(|root| lower_html.contains(root));
-    if has_spa_root && lower_html.contains("<script") && vis_len < 80 {
-        return true;
-    }
-
-    false
+    has_spa_root && lower_html.contains("<script") && vis_len < 80
 }
 
 /// 403, 429 and 503 are `Blocked` (a browser may pass); other non-2xx is refused.

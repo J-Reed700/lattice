@@ -551,15 +551,10 @@ fn is_claim_candidate(sentence: &str) -> bool {
     }
 
     let lowercase = s.to_lowercase();
-    if lowercase.starts_with("verification note:")
+    !(lowercase.starts_with("verification note:")
         || lowercase.starts_with("sources:")
         || lowercase.starts_with("reference:")
-        || lowercase.starts_with("relevance")
-    {
-        return false;
-    }
-
-    true
+        || lowercase.starts_with("relevance"))
 }
 
 fn claim_for_note(claim: &str) -> String {
