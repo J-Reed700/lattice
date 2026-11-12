@@ -2336,6 +2336,7 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
             reexporting: false,
             reexports: Vec::new(),
             spawns: Vec::new(),
+            processes: Vec::new(),
             statics: Vec::new(),
         };
         collector.visit_file(&file.ast);
