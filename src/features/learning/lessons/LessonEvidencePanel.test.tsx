@@ -176,5 +176,14 @@ describe('lesson evidence', () => {
       expect(await screen.findByText(/1 statement verified against sources · 1 consistent with their sources · 1 confirmed by you/)).toBeVisible();
       expect(screen.queryByText(/common knowledge, not checked against a source/)).not.toBeInTheDocument();
     });
+
+    it('does not count a claim whose source was removed as verified', async () => {
+      const removed = { ...data, claimCount: 2, confirmedCount: 0, teachingClaims: [claim({ claim: 'Kept.' }), claim({ claim: 'Lost its source.', resolution: 'source_removed' })] };
+      mocks.evidence.mockResolvedValue({ ok: true, data: removed });
+      show();
+      await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
+
+      expect(await screen.findByText(/1 statement verified against sources/)).toBeVisible();
+    });
   });
 });
