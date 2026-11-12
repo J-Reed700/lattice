@@ -649,3 +649,15 @@ fn the_classifier_is_told_what_the_lesson_s_own_figures_are() {
         "{SYSTEM}"
     );
 }
+
+#[test]
+fn the_sort_contract_reads_what_it_renders() {
+    let answer: BTreeMap<String, String> = ["sourced", "reasoning", "common", "internal"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, class)| (format!("s{index}"), class.to_owned()))
+        .collect();
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        SortStatements,
+    >(&answer);
+}
