@@ -35,6 +35,9 @@ mod classes;
 mod prompt;
 mod rooms;
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
+
 #[cfg(test)]
 mod bridge_tests;
 #[cfg(test)]

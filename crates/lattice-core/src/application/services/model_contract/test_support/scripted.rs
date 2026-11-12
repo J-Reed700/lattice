@@ -22,11 +22,13 @@ pub enum Reply<A> {
     /// Text no reader accepts, to test the correction path.
     Unreadable(String),
     Fail(AppError),
+    /// Nothing in the script answers this request: it errors, and the test fails when the model is dropped.
+    Miss(String),
 }
 
 impl<A> Reply<A> {
-    fn into_response<C: RenderAnswer<Answer = A>>(self) -> Result<CompletionResponse> {
-        match self {
+    fn into_handled<C: RenderAnswer<Answer = A>>(self) -> Handled {
+        let response = match self {
             Self::Answer(answer) => Ok(CompletionResponse::from_text(C::render(&answer))),
             Self::CutOff(answer) => Ok(CompletionResponse {
                 finish_reason: CUT_OFF_REASON.into(),
@@ -34,8 +36,15 @@ impl<A> Reply<A> {
             }),
             Self::Unreadable(text) => Ok(CompletionResponse::from_text(text)),
             Self::Fail(error) => Err(error),
-        }
+            Self::Miss(what) => return Handled::Miss(what),
+        };
+        Handled::Response(response)
     }
+}
+
+enum Handled {
+    Response(Result<CompletionResponse>),
+    Miss(String),
 }
 
 /// A request a scripted model was sent, with the contract it names.
@@ -45,8 +54,7 @@ pub struct Sent {
     pub request: CompletionRequest,
 }
 
-type Handler =
-    Box<dyn Fn(&Sent, usize) -> BoxFuture<'static, Result<CompletionResponse>> + Send + Sync>;
+type Handler = Box<dyn Fn(&Sent, usize) -> BoxFuture<'static, Handled> + Send + Sync>;
 
 type Outage = Box<dyn Fn(&Sent) -> AppError + Send + Sync>;
 
@@ -111,21 +119,29 @@ impl ScriptedModel {
 
     /// Answer a call of `C` by how many calls of `C` came before it.
     pub fn on_nth<C: RenderAnswer + 'static>(
-        mut self,
+        self,
         reply: impl Fn(&C::Input, usize) -> Reply<C::Answer> + Send + Sync + 'static,
+    ) -> Self {
+        self.on_sent::<C>(move |_, input, nth| reply(input, nth))
+    }
+
+    /// [`Self::on_nth`], with the whole request the call was sent as.
+    pub fn on_sent<C: RenderAnswer + 'static>(
+        mut self,
+        reply: impl Fn(&Sent, &C::Input, usize) -> Reply<C::Answer> + Send + Sync + 'static,
     ) -> Self {
         self.handlers.insert(
             C::ID,
             Box::new(move |sent, nth| {
-                let result = match sent.call.input_as::<C>() {
-                    Some(input) => reply(&input, nth).into_response::<C>(),
-                    None => Err(AppError::InternalError(format!(
+                let handled = match sent.call.input_as::<C>() {
+                    Some(input) => reply(sent, &input, nth).into_handled::<C>(),
+                    None => Handled::Response(Err(AppError::InternalError(format!(
                         "the {} input could not be read back: {}",
                         C::ID.as_str(),
                         sent.call.input
-                    ))),
+                    )))),
                 };
-                Box::pin(std::future::ready(result))
+                Box::pin(std::future::ready(handled))
             }),
         );
         self
@@ -139,7 +155,13 @@ impl ScriptedModel {
             + Sync
             + 'static,
     ) -> Self {
-        self.handlers.insert(C::ID, Box::new(handler));
+        self.handlers.insert(
+            C::ID,
+            Box::new(move |sent, nth| {
+                let response = handler(sent, nth);
+                Box::pin(async move { Handled::Response(response.await) })
+            }),
+        );
         self
     }
 
@@ -210,7 +232,10 @@ impl ScriptedModel {
                 sent.call.input
             ));
         };
-        handler(&sent, nth).await
+        match handler(&sent, nth).await {
+            Handled::Response(response) => response,
+            Handled::Miss(what) => self.miss(what),
+        }
     }
 }
 
@@ -388,6 +413,17 @@ mod tests {
             matches!(error, AppError::ServiceNotAvailable(_)),
             "{error:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_handler_can_report_a_miss_and_see_the_request() {
+        let model = ScriptedModel::new().on_sent::<Number>(|sent, _, _| {
+            Reply::Miss(format!("{} messages", sent.request.input.len()))
+        });
+        let error = ask::<Number>(&model, "a").await.unwrap_err();
+        assert!(error.to_string().contains("0 messages"), "{error}");
+        assert_eq!(model.record().misses.len(), 1);
+        model.record().misses.clear();
     }
 
     #[tokio::test]
