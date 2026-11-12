@@ -112,9 +112,7 @@ impl ClaimLedger {
         self.entries
             .iter()
             .filter(|other| other.claim_id() != claim_id)
-            .filter(|other| {
-                !other.state().is_gone() && !is_example(other)
-            })
+            .filter(|other| !other.state().is_gone() && !is_example(other))
             .filter(|other| other.location().unit_index == unit && other.location().field == field)
             .any(|other| {
                 let own = located_quote(other.location(), other.statement(), text);
