@@ -5,6 +5,7 @@ use super::*;
 use crate::lessons::course_plan::{fixture_response, PLAN_TASK};
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
+use sqlx::SqlitePool;
 use std::sync::Mutex;
 
 /// Plans the course when asked and refuses every other request, which ends the

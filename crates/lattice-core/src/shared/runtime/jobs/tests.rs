@@ -1396,7 +1396,7 @@ async fn a_locked_sqlite_database_defers_the_job() {
         .connect_with(options.busy_timeout(Duration::ZERO))
         .await
         .unwrap();
-    let error = JobStore::new(blocked)
+    let error = JobStore::new(Database::new(blocked))
         .submit(&new_job(KIND, "locked", None))
         .await
         .unwrap_err();

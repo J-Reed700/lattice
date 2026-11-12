@@ -334,7 +334,7 @@ impl Course {
             stop: None,
         };
         let (result_ref, message) = crate::content_verification::review_outcome(&[held]);
-        JobStore::new(self.pool.clone())
+        JobStore::new(self.db.clone())
             .complete(&job.id, &result_ref, &message)
             .await?;
         Ok(job)

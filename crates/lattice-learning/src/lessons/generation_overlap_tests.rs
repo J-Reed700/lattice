@@ -12,6 +12,7 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobRuntime, JobStatus, JobStore};
+use sqlx::SqlitePool;
 use std::sync::Mutex;
 
 /// A word only the lesson's published block carries.

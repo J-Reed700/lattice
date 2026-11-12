@@ -388,6 +388,7 @@ mod tests {
     use super::super::topics_support::*;
     use super::super::{edit_entry, EditCoursePlanEntryRequestDto};
     use super::*;
+    use lattice_core::shared::persistence::Database;
 
     #[tokio::test]
     async fn a_queued_preparation_leaves_topics_editable_and_a_running_one_locks_them() -> Result<()>
