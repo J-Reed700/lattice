@@ -231,6 +231,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_unreadable_coverage_mapping_fails_the_job() {
+        let unreadable = model(vec![
+            listed(&[("p0", empty()), ("p1", empty())]),
+            listed(&[("p0", empty()), ("p1", empty())]),
+        ]);
+        let error = review(&unreadable, &units(), None).await.err().unwrap();
+        assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error}");
+    }
+
+    #[tokio::test]
     async fn duplicate_or_foreign_decisions_cannot_silently_complete_mapping() -> Result<()> {
         let duplicate = listed(&[("p0", missing()), ("p0", empty()), ("p1", label())]);
         let model = model(vec![duplicate, listed(&[("p0", missing())])]);

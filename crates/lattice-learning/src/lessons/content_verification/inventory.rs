@@ -412,6 +412,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_unreadable_inventory_fails_the_job_instead_of_deferring() -> Result<()> {
+        let pool = crate::tests::pool().await?;
+        let (repo, job, lesson) =
+            crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+        let content = vec![json!({"body":"The first section states a fact."})];
+        let unreadable = model(vec![json!({"units":{}}), json!({"units":{}})]);
+        crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+            let error = extract_remaining(&unreadable, &content, vec![])
+                .await
+                .err()
+                .unwrap();
+            assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error}");
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn lesson_internal_statements_are_nonfactual_but_the_facts_they_rely_on_are_claims(
     ) -> Result<()> {
         let content = vec![
