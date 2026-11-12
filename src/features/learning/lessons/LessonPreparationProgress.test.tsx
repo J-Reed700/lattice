@@ -408,7 +408,7 @@ describe('Durable lesson preparation progress', () => {
 
   it('shows a lesson held only by an audit stop as waiting, never "0 statements", with Review', async () => {
     api.plan.mockResolvedValue({ ok: true, data: { jobs: [{ ...job, status: 'completed', resultId: 'needs_review:lesson-1', progressMessage: 'Needs your review: 0 statements', finishedAt: Date.now() - 1_000 }] } });
-    api.review.mockResolvedValue({ ok: true, data: review([], { stopReason: { code: 'verifier_unset', message: 'Audit cannot run: no Verifier model is set.', fix: 'Choose one in Settings → Downloaded, or turn the audit off for this course.', at: 1, request: null } }) });
+    api.review.mockResolvedValue({ ok: true, data: review([], { stopReason: { code: 'verifier_unset', audit: true, message: 'Audit cannot run: no Verifier model is set.', fix: 'Choose one in Settings → Downloaded, or turn the audit off for this course.', at: 1, request: null } }) });
     const { client, unmount } = show(vi.fn());
     expect(await screen.findByText('— waiting for the independent check')).toBeVisible();
     expect(screen.queryByText(/0 statements/)).not.toBeInTheDocument();

@@ -11,7 +11,7 @@ import { AddSourceSheet, type AddSourceTarget } from '@/features/learning/lesson
 import { ClaimInFocus } from '@/features/learning/lessons/review/ClaimInFocus';
 import { ClaimQueue, queueRowId } from '@/features/learning/lessons/review/ClaimQueue';
 import { ALL_RESOLVED, NEEDS_NOTE_HINT, cannotHere, tallyLine, teachingNotesWait, unverifiedReviewLine } from '@/features/learning/lessons/review/claimReviewCopy';
-import { AUDIT_STOP_PREFIX, NOTHING_CHANGED, confirmNeedsNote, currentPreparationJobs, reviewHold, sentenceBefore, type ClaimGroup, type TakenOutSentence } from '@/features/learning/lessons/review/claimReviewPresentation';
+import { NOTHING_CHANGED, confirmNeedsNote, currentPreparationJobs, reviewHold, sentenceBefore, type ClaimGroup, type TakenOutSentence } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { LessonAuditLine } from '@/features/learning/lessons/review/LessonAudit';
 import { RemovedStatements } from '@/features/learning/lessons/review/RemovedStatements';
 import { AuditHold, FocusMessage, StopReason } from '@/features/learning/lessons/review/ReviewHolds';
@@ -225,7 +225,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   }
 
   const hold = review ? reviewHold(review, waiting.length) : 'claims';
-  const auditStop = review?.stopReason?.code.startsWith(AUDIT_STOP_PREFIX) ? review.stopReason : null;
+  const auditStop = review?.stopReason?.audit ? review.stopReason : null;
   const position = session.activeIndex >= 0 ? session.activeIndex + 1 : 0;
   const settleNote = (findingKey: string) => settleNotes.mutateAsync({ findingKeys: [findingKey], settle: 'source_added' })
     .then(() => session.say('Source added. The note is resolved.'))

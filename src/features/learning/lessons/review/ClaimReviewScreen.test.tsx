@@ -267,7 +267,7 @@ describe('Claim review screen', () => {
       return review([waitingOnSource(1)], { state: 'verifying' });
     }, /Checking your changes/],
     ['audit-held', () => review([], { changedSinceStop: false }), /Waiting for the independent check/],
-    ['stopped', () => review([], { state: 'stopped', stopReason: { code: 'model_rejected', message: 'The model server rejected the request twice.', fix: 'lower the context window in Settings', at: 1, request: null } }), /Lesson preparation stopped/],
+    ['stopped', () => review([], { state: 'stopped', stopReason: { code: 'model_rejected', audit: false, message: 'The model server rejected the request twice.', fix: 'lower the context window in Settings', at: 1, request: null } }), /Lesson preparation stopped/],
   ] as const)('renders the %s state', async (_, fixture, words) => {
     show(fixture());
     expect(await screen.findByText(words)).toBeVisible();

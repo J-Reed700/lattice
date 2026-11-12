@@ -99,7 +99,7 @@ describe('claim review presentation', () => {
   });
 
   it('tells a hold by claims from a hold by the Verifier audit, so nothing reads "0 statements"', () => {
-    const auditStop = { code: 'verifier_turned_off', message: 'Audit stopped: you turned the Verifier off.', fix: 'Resume to publish without the audit.', at: 1, request: null };
+    const auditStop = { code: 'verifier_turned_off', audit: true, message: 'Audit stopped: you turned the Verifier off.', fix: 'Resume to publish without the audit.', at: 1, request: null };
     expect(reviewHold(review([claimItem()], { changedSinceStop: true }), 1)).toBe('claims');
     expect(reviewHold(review([], { stopReason: auditStop }), 0)).toBe('audit_stop');
     expect(reviewHold(review([]), 0)).toBe('audit');

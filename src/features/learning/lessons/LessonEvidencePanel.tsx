@@ -113,7 +113,7 @@ export function evidenceSummary(report: LearningLessonEvidenceDto): string {
   const notVerified = unverifiedCount(report);
   const consistent = report.teachingClaims.filter((claim) => passedAs(claim, 'reasoning')).length;
   const common = report.teachingClaims.filter((claim) => passedAs(claim, 'common')).length;
-  const verified = Math.max(0, report.claimCount - report.confirmedCount - consistent - common - notVerified);
+  const verified = Math.max(0, report.claimCount - report.confirmedCount - consistent - common - notVerified - sourceRemovedCount(report));
   const byLevel = verifiedByLevel(report.teachingClaims.filter((claim) => !passedAs(claim, 'reasoning') && !passedAs(claim, 'common')));
   const against = byLevel.length ? byLevel : verified > 0 || consistent + common === 0 ? [`${verified} ${verified === 1 ? 'statement' : 'statements'} verified against sources`] : [];
   return [

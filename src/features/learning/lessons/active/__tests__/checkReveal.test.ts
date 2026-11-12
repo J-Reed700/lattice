@@ -1,20 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { checkCardContent, checkCardId, splitCheck } from '@/features/learning/lessons/active/checkReveal';
+import { checkCardContent, checkCardId } from '@/features/learning/lessons/active/checkReveal';
 
 const CASE = 'A sealed jar of air is carried from the beach up a mountain. Predict what happens to its lid, and say why.';
 const REVEAL = 'The lid bulges.\n\nOutside pressure falls with altitude while the air inside keeps its pressure. If you said it caves in, you reversed which side lost pressure.';
 
 describe('a check’s reveal', () => {
-  it('splits at exactly one “Check your thinking” heading, as lesson_rules.rs does', () => {
-    expect(splitCheck(`${CASE}\n\n### Check your thinking\n\n${REVEAL}`)).toEqual({ question: CASE, reveal: REVEAL });
-    expect(splitCheck(`${CASE}\n#### check your thinking\n${REVEAL}`)).toEqual({ question: CASE, reveal: REVEAL });
-    expect(splitCheck(`${CASE} ${REVEAL}`)).toBeNull();
-    expect(splitCheck(`${CASE}\n### Check your thinking\n${REVEAL}\n### Check your thinking\nAgain.`)).toBeNull();
-    expect(splitCheck(`### Check your thinking\n${REVEAL}`)).toBeNull();
-    expect(splitCheck(`# Check your thinking\n${REVEAL}`)).toBeNull();
-  });
-
   it('becomes a review card: case, answer, then reasoning', () => {
     expect(checkCardContent({ question: CASE, reveal: REVEAL })).toEqual({
       prompt: CASE,
