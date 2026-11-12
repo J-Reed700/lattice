@@ -104,7 +104,7 @@ fn finding(unit: usize, statement: &str) -> Finding {
 /// A report of `units` units with one statement each.
 fn report(units: usize) -> LessonVerificationReport {
     LessonVerificationReport {
-        policy: POLICY.into(),
+        policy: POLICY.to_string(),
         lesson_id: String::new(),
         content_sha256: String::new(),
         checker_model: "fixture".into(),

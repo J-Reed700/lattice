@@ -68,7 +68,9 @@ impl ClaimLedger {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lessons::content_verification::acceptance_switch_tests::{claim, open, SOURCED};
+    use crate::lessons::content_verification::tests::acceptance_switch_tests::{
+        claim, open, SOURCED,
+    };
 
     #[tokio::test]
     async fn a_recorded_fault_is_listed_with_its_claim_and_moves_no_state() -> Result<()> {

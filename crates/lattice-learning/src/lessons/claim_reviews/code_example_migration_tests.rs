@@ -1,6 +1,7 @@
 //! A code example's claim saved before its run was recorded is read back as
 //! that run's claim.
 
+use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimId, ClaimLocation, Class, ClassifiedBy, EventProvenance, LessonReview,
     LessonReviewState, UnitKind,

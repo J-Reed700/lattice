@@ -110,7 +110,7 @@ async fn a_page_retrieved_from_the_course_is_read_by_the_plain_strict_judge() ->
     let (part_wise, strict) = model.requests();
     assert_eq!(part_wise, 0);
     assert!(strict > 0, "the page was judged");
-    assert_eq!(reads[0].finding.verdict, ClaimVerdict::Unsupported);
-    assert!(reads[0].finding.two_pass.parts.is_empty());
+    assert_eq!(reads[0].finding().verdict, ClaimVerdict::Unsupported);
+    assert!(reads[0].finding().two_pass.parts.is_empty());
     Ok(())
 }

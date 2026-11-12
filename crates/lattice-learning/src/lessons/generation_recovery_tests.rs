@@ -1,4 +1,5 @@
 use super::*;
+use crate::dto::LearningPreparation;
 use crate::{
     curriculum::LearningGenerationJobStatus as Status,
     curriculum_repository::{lesson_job_config, LESSON_PREPARATION},

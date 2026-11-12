@@ -788,9 +788,10 @@ fn restated_size(llm: &Recorder, reason: &str) -> usize {
 
 /// The refusal of a call that a packer sent, as `send_fitted` sets its scope.
 async fn refused_beyond_the_window(llm: &Recorder, reason: &str) -> AppError {
+    let contract = probe();
     let call = complete_checked_request(
         llm,
-        &probe(),
+        &contract,
         first_request(),
         None,
         None,
@@ -863,10 +864,11 @@ async fn a_packed_request_whose_correction_does_not_fit_is_sent_again_with_less_
     };
     let room = model_call::source_room(&llm, &build(0), usize::MAX);
     let reason = "Too vague. ".repeat(40);
+    let contract = probe();
     let answer = model_call::send_fitted(&llm, room, build, |request| {
         complete_checked_request(
             &llm,
-            &probe(),
+            &contract,
             request,
             None,
             None,

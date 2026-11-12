@@ -394,8 +394,9 @@ async fn a_skeleton_the_window_cannot_hold_settles_at_room_zero_unsent() {
     assert_eq!(fit.request.task, crowded(0).task);
     assert_eq!(llm.counts.load(Ordering::SeqCst), 0);
 
+    let contract = probe();
     let answer = send_fitted(&llm, 1_000, crowded, |request| {
-        send(&llm, &probe(), request, None, "too large")
+        send(&llm, &contract, request, None, "too large")
     })
     .await;
     assert!(matches!(answer, Ok(None)));
@@ -407,8 +408,9 @@ async fn a_skeleton_the_window_cannot_hold_settles_at_room_zero_unsent() {
 async fn a_fitted_send_on_dense_material_is_never_refused() -> Result<()> {
     let llm = dense(8_192);
     let room = source_room(&llm, &packed(0), usize::MAX);
+    let contract = probe();
     let answer = send_fitted(&llm, room, packed, |request| {
-        send(&llm, &probe(), request, None, "too large")
+        send(&llm, &contract, request, None, "too large")
     })
     .await?;
     assert!(answer.is_some());
@@ -420,8 +422,9 @@ async fn a_fitted_send_on_dense_material_is_never_refused() -> Result<()> {
 async fn a_servers_estimated_refusal_halves_the_room_until_it_is_accepted() -> Result<()> {
     let llm = blind(6_000);
     let room = source_room(&llm, &packed(0), usize::MAX);
+    let contract = probe();
     let answer = send_fitted(&llm, room, packed, |request| {
-        send(&llm, &probe(), request, None, "too large")
+        send(&llm, &contract, request, None, "too large")
     })
     .await?;
     assert!(answer.is_some());
@@ -432,8 +435,9 @@ async fn a_servers_estimated_refusal_halves_the_room_until_it_is_accepted() -> R
     assert!(refusals <= usize::BITS as usize - room.leading_zeros() as usize);
 
     let never = blind(0);
+    let contract = probe();
     let answer = send_fitted(&never, room, packed, |request| {
-        send(&never, &probe(), request, None, "too large")
+        send(&never, &contract, request, None, "too large")
     })
     .await?;
     assert!(answer.is_none());

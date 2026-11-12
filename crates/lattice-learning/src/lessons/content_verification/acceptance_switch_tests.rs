@@ -62,20 +62,21 @@ pub(super) const CUTTING: [(Step, Outcome); 5] = [
 /// Steps that end a Reasoning statement Consistent.
 const CONSISTENT: [(Step, Outcome); 2] = [(CONSISTENCY, Outcome::Stands), (VETO, Outcome::Stands)];
 
-pub(super) const SOURCED: (Class, ClassifiedBy) = (Class::Sourced, ClassifiedBy::Writer);
+pub(in crate::lessons::content_verification) const SOURCED: (Class, ClassifiedBy) =
+    (Class::Sourced, ClassifiedBy::Writer);
 pub(super) const REASONED: (Class, ClassifiedBy) = (Class::Reasoning, ClassifiedBy::Model);
 
 pub(super) fn lesson_of(body: &str) -> Value {
     json!({"blocks":[{"kind":"explanation","title":"Rows","body":body,"rubric":[]}],"questions":[]})
 }
 
-pub(super) async fn open() -> Result<claim_ledger::ClaimLedger> {
+pub(in crate::lessons::content_verification) async fn open() -> Result<claim_ledger::ClaimLedger> {
     claim_ledger::ClaimLedger::open(&Model::new(), "{}").await
 }
 
 /// A claim of section 0 the ledger holds, standing on `quote` of `body`,
 /// sorted into `class` by `by`.
-pub(super) async fn claim(
+pub(in crate::lessons::content_verification) async fn claim(
     ledger: &mut claim_ledger::ClaimLedger,
     name: &str,
     (quote, statement): (&str, &str),
@@ -3135,7 +3136,7 @@ pub(super) fn local_check(result: CheckResult, reason: &str, evidence: Vec<Evide
         },
         result,
         reason: reason.into(),
-        fingerprint: EvidenceFingerprint::of(POLICY, Model::new().model_name(), &evidence),
+        fingerprint: EvidenceFingerprint::of(POLICY.as_str(), Model::new().model_name(), &evidence),
         evidence,
         window_tokens: 128_000,
     }

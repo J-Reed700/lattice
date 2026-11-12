@@ -524,8 +524,8 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
                 1,
                 "Only the interrupted comparison should repeat"
             );
-            assert_eq!(reads[0].finding.verdict, ClaimVerdict::Supported);
-            assert_eq!(reads[1].finding.verdict, ClaimVerdict::Contradicted);
+            assert_eq!(reads[0].finding().verdict, ClaimVerdict::Supported);
+            assert_eq!(reads[1].finding().verdict, ClaimVerdict::Contradicted);
             let mut changed = sources.clone();
             changed[0]
                 .excerpt

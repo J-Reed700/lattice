@@ -236,6 +236,10 @@ fn each_broken_rule_says_what_is_wrong_in_plain_words() {
         .into_iter()
         .map(|finding| finding.summary)
         .collect();
+    let fifth = format!(
+        "Question 5: {}",
+        ChoiceFault::Repeated("Yes".to_owned()).message()
+    );
 
     assert_eq!(
         summaries,
@@ -243,10 +247,7 @@ fn each_broken_rule_says_what_is_wrong_in_plain_words() {
             "Section 5 has the same title as section 1.",
             "The lesson should have at least two explanations, two worked examples, one contrast and two checks, and one each of guided practice, independent practice, reflection and recap. It has 3 explanations, 2 worked examples, 1 contrast, 2 checks, 1 guided practice, 1 independent practice, 1 reflection, 0 recaps.",
             "Question 4 asks the same thing as question 3.",
-            format!(
-                "Question 5: {}",
-                ChoiceFault::Repeated("Yes".to_owned()).message()
-            ),
+            fifth.as_str(),
         ]
     );
 }

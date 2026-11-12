@@ -281,7 +281,7 @@ async fn a_statement_the_coverage_audit_adds_is_quoted_by_the_sentence_the_judge
 #[test]
 fn an_inventory_saved_under_the_earlier_policy_is_not_the_current_one() {
     const EARLIER: &str = "lesson-evidence-v8";
-    assert_ne!(INVENTORY_POLICY, EARLIER);
+    assert!(!INVENTORY_POLICY.names(EARLIER));
     let saved = InventoryCheckpoint {
         policy: EARLIER.into(),
         model: String::new(),
@@ -291,7 +291,7 @@ fn an_inventory_saved_under_the_earlier_policy_is_not_the_current_one() {
         coverage: Coverage { units: Vec::new() },
         coverage_policy: None,
     };
-    assert_ne!(saved.policy, INVENTORY_POLICY);
+    assert!(!INVENTORY_POLICY.names(&saved.policy));
 }
 
 #[tokio::test]

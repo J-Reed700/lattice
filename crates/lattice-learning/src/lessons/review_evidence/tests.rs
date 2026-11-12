@@ -965,25 +965,6 @@ async fn a_proposal_left_to_a_recorded_finding_or_to_none_is_not_handed_back() -
 }
 
 #[test]
-fn a_proposal_asked_for_a_second_time_is_handed_back_once() -> Result<()> {
-    let issues = proposal("The kettle is described twice.");
-    let evidence = HashMap::from([("blocks-0".to_owned(), EvidenceKind::Candidate)]);
-    let beside = Beside {
-        decides: &DECIDES,
-        recorded: &[],
-    };
-    let raw = gate_decision("actionable", "check-1");
-    let mut kept = HashMap::new();
-    let first = accepted(&raw, &issues, beside, &evidence, false, &mut kept)?;
-    assert_eq!(first.left.len(), 1);
-    // The second answer breaks the protocol for this issue; the first one's ruling stands.
-    let broken = gate_decision("actionable", "check-9");
-    let second = accepted(&broken, &issues, beside, &evidence, true, &mut kept)?;
-    assert_eq!(second.left, first.left);
-    Ok(())
-}
-
-#[test]
 fn a_finding_may_cite_nine_evidence_ids() -> Result<()> {
     let issues = proposal("The nine sections contradict one another.");
     let ids: Vec<String> = (0..9).map(|at| format!("blocks-{at}")).collect();

@@ -2,6 +2,7 @@
 //! reading, the policy's decision on it and the state that follows, and a
 //! change of class.
 use super::super::class_checks::finding_of;
+use super::super::provenance_gate::FindingTrust;
 use super::super::readings::driver::ReadStep;
 use super::super::readings::Read;
 use super::bridge_tests::{
@@ -21,7 +22,7 @@ use lattice_core::domain::learning::claim_review::{
     text_sha256, Actor, Check, CheckResult, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation,
     ClaimState, EvidenceFingerprint, EvidenceSeen, UnitKind, VerdictKind,
 };
-use lattice_core::domain::provenance::ClaimKind;
+use lattice_core::domain::provenance::{ClaimKind, ClaimProfile, Decision, TemporalScope};
 
 const SENTENCE: &str = "The reader hands over one row at a time.";
 const PASSAGE: &str = "The reader hands over one row at a time, as a dict.";
@@ -225,7 +226,7 @@ async fn a_reading_that_stands_resolves_the_claim_on_the_passage_that_states_it(
     assert_eq!(
         check.fingerprint,
         EvidenceFingerprint::of(
-            evidence_policy(),
+            Judged::Passages.policy(),
             Model::new().model_name(),
             &[seen(&evidence[0])]
         )
@@ -353,7 +354,7 @@ async fn a_passed_veto_records_not_false_and_ends_the_claim_consistent() -> Resu
     assert_eq!(
         first.fingerprint,
         EvidenceFingerprint::of(
-            CONSISTENCY_POLICY,
+            CONSISTENCY_POLICY.as_str(),
             model.model_name(),
             &[seen(&evidence[0])]
         )
@@ -361,7 +362,7 @@ async fn a_passed_veto_records_not_false_and_ends_the_claim_consistent() -> Resu
     assert_eq!(second.result, CheckResult::NotFalse);
     assert_eq!(
         second.fingerprint,
-        EvidenceFingerprint::of(KNOWLEDGE_POLICY, model.model_name(), &[])
+        EvidenceFingerprint::of(KNOWLEDGE_POLICY.as_str(), model.model_name(), &[])
     );
     assert!(matches!(held.state(), ClaimState::Consistent { .. }));
     assert_eq!(held.decided(), Some(&Then::End(End::Consistent)));
@@ -402,7 +403,7 @@ async fn a_unanimous_knowledge_reading_records_known_common_and_ends_as_general_
     assert_eq!(check.result, CheckResult::KnownCommon);
     assert_eq!(
         check.fingerprint,
-        EvidenceFingerprint::of(KNOWLEDGE_POLICY, Model::new().model_name(), &[])
+        EvidenceFingerprint::of(KNOWLEDGE_POLICY.as_str(), Model::new().model_name(), &[])
     );
     assert!(matches!(held.state(), ClaimState::GeneralKnowledge { .. }));
     Ok(())
