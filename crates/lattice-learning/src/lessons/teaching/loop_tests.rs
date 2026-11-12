@@ -4054,3 +4054,109 @@ async fn a_whole_repair_is_neither_sent_nor_charged_a_failing_quotation() -> Res
     assert!(reviewed?.set_aside.is_empty());
     Ok(())
 }
+
+async fn repaired_outline(model: &ScriptedModel, outline: Value) -> Result<String> {
+    let progress = crate::outline_progress::OutlineProgress::default();
+    let sources = references();
+    review_and_repair_with_progress(
+        model,
+        LESSON_REPAIR_SYSTEM,
+        &context(),
+        &json!({"type":"object","properties":{"modules":{"type":"array"}}}),
+        outline.to_string(),
+        4000,
+        OutlineReviewContext {
+            progress: &progress,
+            sources: &sources,
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn an_outline_repair_that_leaves_a_finding_is_repaired_again() {
+    let model = model(vec![
+        json!({"issues":["Defect one of the outline."]}).to_string(),
+        json!({"modules":[{"title":"Revised"}]}).to_string(),
+        json!({"issues":["Defect two of the outline."],"openFindings":[verdict("reviewer/1", "resolved")]}).to_string(),
+        json!({"modules":[{"title":"Revised again"}]}).to_string(),
+        json!({"issues":[],"openFindings":[verdict("reviewer/2", "resolved")]}).to_string(),
+    ]);
+    let result = repaired_outline(&model, json!({"modules":[]})).await;
+    assert!(result.is_ok(), "{result:?}");
+}
+
+#[tokio::test]
+async fn an_outline_revision_whose_quote_matches_no_reference_is_repaired() {
+    let cited = |quote: &str| json!({"modules":[{"summary":{"text":"Summary","sourceIndex":0,"quote":quote}}]});
+    let model = model(vec![
+        json!({"issues":[]}).to_string(),
+        cited("A different imaginary handbook says this tool behaves in another way entirely.")
+            .to_string(),
+        json!({"issues":[]}).to_string(),
+        cited(EXCERPT).to_string(),
+        json!({"issues":[]}).to_string(),
+    ]);
+    let result = repaired_outline(
+        &model,
+        cited("An imaginary handbook says this tool behaves in a different way entirely."),
+    )
+    .await;
+    assert!(result.is_ok(), "{result:?}");
+}
+
+#[tokio::test]
+async fn a_diagnostic_edit_repair_that_cannot_be_used_is_split() {
+    let model = Answering::new(
+        vec![
+            judged_issues(&[
+                "First defect of the lesson.",
+                "Second defect of the lesson.",
+            ]),
+            judged(
+                None,
+                &[
+                    verdict("reviewer/1", "resolved"),
+                    verdict("reviewer/2", "resolved"),
+                ],
+            ),
+        ],
+        |sent| {
+            Ok(match ids_of(sent).as_slice() {
+                [only] if only == "reviewer/1" => retitle_from("Example", "Example one"),
+                [only] if only == "reviewer/2" => retitle_from("Example one", "Example two"),
+                _ => unusable_edits(),
+            })
+        },
+    );
+    let result = review_and_repair(
+        &model,
+        LESSON_REPAIR_SYSTEM,
+        &context(),
+        &json!({"type":"object"}),
+        lesson(EXCERPT).to_string(),
+        4000,
+    )
+    .await;
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(
+        model.asked(),
+        [
+            vec!["reviewer/1".to_owned(), "reviewer/2".to_owned()],
+            vec!["reviewer/1".to_owned()],
+            vec!["reviewer/2".to_owned()]
+        ]
+    );
+}
+
+/// A review of the lesson's one section that reports `issues` about the
+/// lesson as a whole.
+fn judged_issues(issues: &[&str]) -> String {
+    review_reply(
+        issues,
+        vec![
+            json!({"index":0,"passageId":"section-0-passage-0","finding":"The complete explanation was reviewed and no teaching defect was found.","hasDefect":false}),
+        ],
+        &[],
+    )
+}

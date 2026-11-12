@@ -390,3 +390,15 @@ async fn a_repair_that_goes_wrong_in_one_block_still_applies_the_edits_of_the_ot
     );
     Ok(())
 }
+
+#[test]
+fn reanchoring_keeps_a_sentence_whole_across_an_abbreviation() {
+    let authoring = json!({"sources":[{"sourceIndex":0,
+        "excerpt":"Most teams pick Rust for their services vs. Go and Python. Both compile fast."}]});
+    let mut candidate = json!({"blocks":[{"body":"Unrelated.","sourceIndex":0,"quote":"Teams choose Rust for their services"}],"questions":[]});
+    assert_eq!(reanchor_lesson_quotes(&mut candidate, &authoring), 1);
+    assert_eq!(
+        candidate["blocks"][0]["quote"],
+        "Most teams pick Rust for their services vs. Go and Python."
+    );
+}
