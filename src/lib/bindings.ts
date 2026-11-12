@@ -8001,7 +8001,7 @@ movesBar: boolean;
  * Who gave the verdict (`user_confirm`, `verifier_agree`, …).
  */
 labelSource: string; lessonId: string; claimId: string; reason: LearningTrustReasonDto }
-export type LearningBlockDto = { kind: LearningBlockKind; title: string; body: string; sourceIds: string[]; rubric?: LearningPracticeCriterionDto[] }
+export type LearningBlockDto = { kind: LearningBlockKind; title: string; body: string; sourceIds: string[]; rubric?: LearningPracticeCriterionDto[]; check?: LearningCheckDto | null }
 export type LearningBlockKind =
 /**
  * One core idea's mental model, in plain language.
@@ -8034,6 +8034,11 @@ export type LearningCardDraftActionRequestDto = { programId: string; draftId: st
 export type LearningCardDraftDto = { id: string; lessonId: string; question: string; answer: string; explanation: string; sourceIds: string[]; origin: LearningCardDraftOrigin; createdAt: number }
 export type LearningCardDraftOrigin = "generated" | "manual"
 export type LearningCardOriginDto = { cardId: string; lessonId: string; origin: LearningCardDraftOrigin; sourceIds: string[]; acceptedAt: number }
+/**
+ * A check section's two halves: the case the learner reasons through, and
+ * what is revealed once they commit an answer.
+ */
+export type LearningCheckDto = { question: string; reveal: string }
 export type LearningClaimEvidenceDto = { sectionIndex: number;
 /**
  * Exact lesson text selected by the claim inventory. This anchors the
@@ -11246,7 +11251,11 @@ export type StickyItemDto = { id: string; text: string; color: string; createdAt
 /**
  * Why a lesson's preparation stopped, verbatim for "Copy details" (§8.4).
  */
-export type StopReasonDto = { code: string; message: string; fix: string; at: number; request: RequestFactsDto | null }
+export type StopReasonDto = { code: string;
+/**
+ * A stop of the Verifier audit, which holds a lesson its checks passed.
+ */
+audit: boolean; message: string; fix: string; at: number; request: RequestFactsDto | null }
 export type StrongAnswerDto = { approach: string; complexity: string; reference: string }
 export type StructureMode = "sections" | "pages"
 export type StudyCardDto = { id: string; format?: StudyCardFormat; deckId: string; question: string; answer: string; options: string[]; correctIndex: number; explanation: string; source: StudySourceDto;
