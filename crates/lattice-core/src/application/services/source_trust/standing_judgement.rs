@@ -8,6 +8,9 @@ use serde_json::{json, Value};
 
 use super::{data_prompt, judge, names, sanitised, CallOutcome};
 use crate::application::ports::LLMPort;
+use crate::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use crate::domain::provenance::{
     canonical_json, ContentEvidence, ContentNature, EditorialProcess, Judged, JudgementKey,
     NamedEntity, ProvenanceSignals, PublisherKind, Reason, ReasonCode, RiskFlag, Standing,
@@ -17,6 +20,14 @@ use crate::shared::error::Result;
 use crate::shared::hash::sha256_hex;
 
 /// The prompt's version: part of every cache key.
+/// The model call of the standing judgement.
+pub(crate) struct SourceStanding;
+
+impl Contract for SourceStanding {
+    const ID: ContractId = ContractId::new("source-standing");
+    type Input = PromptInput;
+}
+
 pub const STANDING_POLICY: &str = "source-standing-v2";
 
 /// The system prompt, fixed text; `STANDING_POLICY` versions it.
@@ -315,9 +326,18 @@ pub async fn judge_standing(
             "Source signals and content evidence",
             &standing_input(signals, &shown, track_record),
         );
-        let outcome = judge(llm, STANDING_SYSTEM, &prompt, &standing_schema(), |text| {
-            parse_standing(text, &judging)
-        })
+        let call = ContractCall::of::<SourceStanding>(&PromptInput {
+            system: STANDING_SYSTEM.to_owned(),
+            prompt: prompt.clone(),
+        })?;
+        let outcome = judge(
+            llm,
+            &call,
+            STANDING_SYSTEM,
+            &prompt,
+            &standing_schema(),
+            |text| parse_standing(text, &judging),
+        )
         .await?;
         match outcome {
             CallOutcome::TooLarge { .. } if shown.can_shrink() => shown.shrink(),
