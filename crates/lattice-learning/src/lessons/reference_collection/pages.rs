@@ -106,10 +106,6 @@ pub(crate) struct ClaimList {
     pub deeper: bool,
 }
 
-fn overlapping(a: &ReferencePassage, b: &ReferencePassage) -> bool {
-    a.source_id == b.source_id && a.start_byte < b.end_byte && b.start_byte < a.end_byte
-}
-
 impl ReferenceCollection<'_> {
     /// `claim`'s corroboration list over `scope`: the claim and its counter query
     /// ranked together, hits widened to their source text, minus passages
@@ -148,7 +144,7 @@ impl ReferenceCollection<'_> {
             }
             let mut passages: Vec<ReferencePassage> = widened
                 .into_iter()
-                .filter(|passage| !shown.iter().any(|seen| overlapping(seen, passage)))
+                .filter(|passage| !shown.iter().any(|seen| seen.overlaps(passage)))
                 .collect();
             let end = passages
                 .iter()
