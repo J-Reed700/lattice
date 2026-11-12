@@ -247,18 +247,18 @@ impl Transport for Growing {
         Ok(request.clone())
     }
 
-    async fn larger(
+    async fn cut_off(
         &self,
         _llm: &dyn LLMPort,
         request: &CompletionRequest,
-    ) -> Option<CompletionRequest> {
-        request
-            .max_output_tokens
-            .is_none()
-            .then(|| CompletionRequest {
-                max_output_tokens: Some(2048),
-                ..request.clone()
-            })
+    ) -> CutOffRemedy<CompletionRequest> {
+        if request.max_output_tokens.is_some() {
+            return CutOffRemedy::Stop;
+        }
+        CutOffRemedy::Larger(CompletionRequest {
+            max_output_tokens: Some(2048),
+            ..request.clone()
+        })
     }
 }
 

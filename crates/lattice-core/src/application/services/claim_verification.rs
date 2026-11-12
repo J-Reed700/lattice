@@ -8,7 +8,7 @@ use crate::application::ports::LLMPort;
 #[cfg(any(test, feature = "test-support"))]
 use crate::application::services::model_contract::test_support::RenderAnswer;
 use crate::application::services::model_contract::{
-    answer, refusal, Contract, ContractCall, ContractId, Plain, Transport,
+    answer, refusal, Contract, ContractCall, ContractId, CutOffRemedy, Plain, Transport,
 };
 use crate::domain::learning::acceptance::Outcome;
 use crate::domain::learning::claim_review::{CheckResult, VerdictKind};
@@ -324,12 +324,12 @@ impl Transport for Judging<'_> {
         .await
     }
 
-    async fn larger(
+    async fn cut_off(
         &self,
         _llm: &dyn LLMPort,
         _request: &CompletionRequest,
-    ) -> Option<CompletionRequest> {
-        None
+    ) -> CutOffRemedy<CompletionRequest> {
+        CutOffRemedy::Correct
     }
 }
 

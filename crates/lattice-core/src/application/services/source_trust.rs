@@ -42,7 +42,7 @@ use crate::application::services::grounded_generation::{
     self, CallOptions, GroundedGenerationError, GroundedRequest, HistoryItem,
 };
 use crate::application::services::model_contract::{
-    answer, refusal, ContractCall, Transport, CORRECTION_LEAD,
+    answer, refusal, ContractCall, CutOffRemedy, Transport, CORRECTION_LEAD,
 };
 use crate::shared::error::{smaller_parts_may_succeed, AppError, ErrorClass, Result};
 
@@ -125,12 +125,12 @@ impl Transport for Planned {
         Ok(next)
     }
 
-    async fn larger(
+    async fn cut_off(
         &self,
         _llm: &dyn LLMPort,
         _request: &GroundedRequest,
-    ) -> Option<GroundedRequest> {
-        None
+    ) -> CutOffRemedy<GroundedRequest> {
+        CutOffRemedy::Correct
     }
 }
 

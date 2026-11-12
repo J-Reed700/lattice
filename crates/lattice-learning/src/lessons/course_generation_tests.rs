@@ -1307,10 +1307,10 @@ async fn outline_model_streams_without_a_deadline_and_rejects_truncated_output()
     .await
     .unwrap_err();
     assert!(error.to_string().contains("cut off"));
-    // Under outline progress the answer already had the whole window, so it is
-    // not sent with twice the reservation; it streamed twice: once, and once
-    // more as the correction asking for it more briefly.
-    assert_eq!(progress.snapshot().response_characters, 28);
+    // The cut-off answer streamed once. Under outline progress it already had
+    // the whole window, so twice the reservation would give it no more room
+    // and the same answer: the retry is skipped.
+    assert_eq!(progress.snapshot().response_characters, 14);
     Ok(())
 }
 

@@ -19,7 +19,7 @@ use lattice_core::application::services::grounded_generation::{
 #[cfg(any(test, feature = "test-support"))]
 use lattice_core::application::services::model_contract::test_support::RenderAnswer;
 use lattice_core::application::services::model_contract::{
-    Contract, ContractId, PromptInput, Transport, CORRECTION_LEAD,
+    Contract, ContractId, CutOffRemedy, PromptInput, Transport, CORRECTION_LEAD,
 };
 use lattice_core::shared::error::AppError;
 
@@ -300,7 +300,7 @@ Your previous answer:
         Ok(next)
     }
 
-    async fn larger(&self, _: &dyn LLMPort, _: &Rendered) -> Option<Rendered> {
-        None
+    async fn cut_off(&self, _: &dyn LLMPort, _: &Rendered) -> CutOffRemedy<Rendered> {
+        CutOffRemedy::Correct
     }
 }

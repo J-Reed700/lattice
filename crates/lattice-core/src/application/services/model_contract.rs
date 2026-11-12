@@ -258,8 +258,22 @@ pub trait Transport: Sync {
         refusal: &str,
     ) -> Result<Self::Request>;
 
-    /// The same request with a larger output allowance, or None.
-    async fn larger(&self, llm: &dyn LLMPort, request: &Self::Request) -> Option<Self::Request>;
+    /// What a cut-off reply to `request` gets.
+    async fn cut_off(
+        &self,
+        llm: &dyn LLMPort,
+        request: &Self::Request,
+    ) -> CutOffRemedy<Self::Request>;
+}
+
+/// What a reply cut off at its output allowance gets.
+pub enum CutOffRemedy<R> {
+    /// Sent once more as this larger request.
+    Larger(R),
+    /// One correction asking for the whole answer more briefly.
+    Correct,
+    /// Nothing: the call ends as a cut-off answer.
+    Stop,
 }
 
 /// A request sent as it is, asked again with the refused reply in the history.
@@ -298,12 +312,12 @@ impl Transport for Plain {
         Ok(next)
     }
 
-    async fn larger(
+    async fn cut_off(
         &self,
         _llm: &dyn LLMPort,
         _request: &CompletionRequest,
-    ) -> Option<CompletionRequest> {
-        None
+    ) -> CutOffRemedy<CompletionRequest> {
+        CutOffRemedy::Correct
     }
 }
 
@@ -329,9 +343,8 @@ enum Reply<R> {
 }
 
 /// The reply to a request. A cut-off reply of a call that splits is an
-/// [`AppError::AnswerCutOff`] at once; otherwise it is sent once more with a
-/// larger allowance where the transport offers one, and a call without one gets the
-/// cut-off reply back to be corrected.
+/// [`AppError::AnswerCutOff`] at once; otherwise the transport's
+/// [`CutOffRemedy`] decides: a larger send, the reply back to be corrected, or the end.
 async fn complete_reply<T: Transport>(
     llm: &dyn LLMPort,
     call: &ContractCall,
@@ -341,15 +354,16 @@ async fn complete_reply<T: Transport>(
     let response = transport.send(llm, &request).await?;
     let (request, response) = match response.finish() {
         Finish::CutOff if call.splits => return Err(cut_off()),
-        Finish::CutOff => match transport.larger(llm, &request).await {
-            Some(larger) => {
+        Finish::CutOff => match transport.cut_off(llm, &request).await {
+            CutOffRemedy::Larger(larger) => {
                 let response = transport.send(llm, &larger).await?;
                 if response.finish() == Finish::CutOff {
                     return Err(cut_off());
                 }
                 (larger, response)
             }
-            None => return Ok(Reply::CutOff(request, response)),
+            CutOffRemedy::Correct => return Ok(Reply::CutOff(request, response)),
+            CutOffRemedy::Stop => return Err(cut_off()),
         },
         _ => (request, response),
     };
