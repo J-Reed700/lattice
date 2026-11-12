@@ -2983,7 +2983,10 @@ async fn a_lesson_whose_cuts_would_take_all_of_its_questions_is_published_with_t
     let course = Course::new().await?;
     let draft = with_questions(vec![quiz("quiz", &figure(5)), quiz("quiz", &figure(6))]);
     let (raw, report) = course
-        .prepare(&Figures::contradicting(), &draft)
+        .prepare(&Figures {
+            contradicted: true,
+            ..Figures::planning("csv dictreader buffer size")
+        }, &draft)
         .await
         .expect("the lesson publishes, two statements not verified");
 
@@ -3011,7 +3014,10 @@ async fn a_lesson_whose_cuts_take_every_question_of_a_kind_it_asks_is_published_
     let course = Course::new().await?;
     let draft = with_questions(vec![quiz("practice", &figure(5)), quiz("quiz", GOOD)]);
     let (raw, report) = course
-        .prepare(&Figures::contradicting(), &draft)
+        .prepare(&Figures {
+            contradicted: true,
+            ..Figures::planning("csv dictreader buffer size")
+        }, &draft)
         .await
         .expect("the lesson publishes, one question cut");
 
