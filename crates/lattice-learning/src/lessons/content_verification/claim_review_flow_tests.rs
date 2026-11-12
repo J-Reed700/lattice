@@ -306,12 +306,14 @@ impl Waiting {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|block| LearningBlockDto {
-                    kind: LearningBlockKind::Explanation,
-                    title: block["title"].as_str().unwrap().into(),
-                    body: block["body"].as_str().unwrap().into(),
-                    source_ids: Vec::new(),
-                    rubric: Vec::new(),
+                .map(|block| {
+                    LearningBlockDto::new(
+                        LearningBlockKind::Explanation,
+                        block["title"].as_str().unwrap().into(),
+                        block["body"].as_str().unwrap().into(),
+                        Vec::new(),
+                        Vec::new(),
+                    )
                 })
                 .collect(),
             questions: Vec::new(),

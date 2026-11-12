@@ -1,5 +1,6 @@
 //! The private report owns its public projection. No assessment text is copied
 //! into a learner DTO; malformed data is unavailable, never a checked claim.
+use super::claim_ledger::stands_in_part;
 use super::provenance_gate::FindingTrust;
 use super::resolution::{ended_mark, standing, Placed, Resolution, Standing};
 use super::{ClaimVerdict, Finding, LessonVerificationReport};
@@ -87,6 +88,56 @@ fn part_kind(kind: PartKind) -> LearningClaimPartKindDto {
     }
 }
 
+/// What the learner is told of a claim: `stood`, its resolution as it stands;
+/// `verified`, the ledger verified it; `verdict`, its finding's; `source_removed`,
+/// a source it stood on is gone (`in_ledger`: the ledger knows the claim); and
+/// `sentence`, why another claim on its sentence was published not verified.
+pub(super) fn told(
+    stood: Option<&Resolution>,
+    verified: bool,
+    verdict: ClaimVerdict,
+    (source_removed, in_ledger): (bool, bool),
+    sentence: Option<UnverifiedReason>,
+) -> (
+    LearningClaimResolutionDto,
+    Option<String>,
+    Option<UnverifiedReasonDto>,
+) {
+    use LearningClaimResolutionDto::{ConfirmedByYou, NotVerified, SourceRemoved, Verified};
+    match stood {
+        _ if in_ledger && source_removed => (SourceRemoved, None, None),
+        Some(Resolution::Confirmed { note, .. }) => (ConfirmedByYou, note.clone(), None),
+        Some(Resolution::Unverified { reason }) => (NotVerified, None, Some((*reason).into())),
+        None if verdict != ClaimVerdict::Supported && !verified => {
+            let reason = verdict
+                .failure(true)
+                .map_or(UnverifiedReason::Unsupported, |kind| {
+                    UnverifiedReason::of(&kind)
+                });
+            (NotVerified, None, Some(reason.into()))
+        }
+        None if source_removed => (SourceRemoved, None, None),
+        None => match sentence {
+            Some(reason) => (NotVerified, None, Some(reason.into())),
+            None => (Verified, None, None),
+        },
+    }
+}
+
+/// Each sentence that carries a claim published not verified, and why.
+pub(super) fn unverified_sentences<'f>(
+    claims: impl Iterator<Item = (&'f Finding, Option<Resolution>)>,
+) -> HashMap<(usize, &'f str), UnverifiedReason> {
+    claims
+        .filter_map(|(finding, resolution)| match resolution {
+            Some(Resolution::Unverified { reason }) => {
+                Some(((finding.unit, finding.quote.as_str()), reason))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 fn unavailable() -> AppError {
     AppError::InvalidState("Saved lesson evidence is unavailable: its report or source bindings do not match this lesson.".into())
 }
@@ -98,6 +149,11 @@ impl LessonVerificationReport {
         versions: &[SavedEvidenceVersion],
         states: &ClaimStates,
     ) -> Result<LearningLessonEvidenceDto> {
+        let blocks = lesson
+            .blocks
+            .iter()
+            .map(serde_json::to_value)
+            .collect::<serde_json::Result<Vec<_>>>()?;
         if self.lesson_id != lesson.id
             || self.policy.is_empty()
             || self.content_sha256.is_empty()
@@ -105,14 +161,9 @@ impl LessonVerificationReport {
             || self.findings.iter().any(|finding| {
                 finding.quote.trim().is_empty()
                     || finding.statement.trim().is_empty()
-                    || lesson.blocks.get(finding.unit).is_some_and(|block| {
-                        !block.body.contains(&finding.quote)
-                            && !block.title.contains(&finding.quote)
-                            && !block.rubric.iter().any(|criterion| {
-                                criterion.title.contains(&finding.quote)
-                                    || criterion.description.contains(&finding.quote)
-                            })
-                    })
+                    || blocks
+                        .get(finding.unit)
+                        .is_some_and(|block| !stands_in_part(block, &finding.quote))
             })
         {
             return Err(unavailable());
@@ -138,13 +189,7 @@ impl LessonVerificationReport {
                     .is_some_and(|version| version.content_sha256 == source.sha256)
             });
         // A statement the model sorted Internal ends as no claim: the learner reads it as lesson text alone.
-        let claims = || {
-            self.findings.iter().filter(|finding| {
-                finding
-                    .class
-                    .is_none_or(|classed| classed.class != Class::Internal)
-            })
-        };
+        let claims = || self.findings.iter().filter(|finding| finding.is_claim());
         // What the learner is told of a finding follows its claim as the
         // ledger holds it now; a finding whose claim the ledger does not know
         // keeps the resolution it was published with.
@@ -195,14 +240,8 @@ impl LessonVerificationReport {
         };
         // A sentence that carries a claim published not verified reads not
         // verified, whatever another claim on it found.
-        let unverified: HashMap<(usize, &str), UnverifiedReason> = claims()
-            .filter_map(|finding| match resolved(finding).0 {
-                Some(Resolution::Unverified { reason }) => {
-                    Some(((finding.unit, finding.quote.as_str()), reason))
-                }
-                _ => None,
-            })
-            .collect();
+        let unverified =
+            unverified_sentences(claims().map(|finding| (finding, resolved(finding).0)));
         let teaching_claims = claims()
             .filter(|finding| finding.unit < lesson.blocks.len())
             .map(|finding| {
@@ -211,7 +250,7 @@ impl LessonVerificationReport {
                     .iter()
                     .map(|passage| {
                         let version = by_id.get(passage.source_id.as_str());
-                        if version.is_none() && passage.retrieval_kind != "execution" {
+                        if version.is_none() && !passage.is_run() {
                             return Err(unavailable());
                         }
                         if passage.text.is_empty() || passage.end_byte < passage.start_byte {
@@ -258,56 +297,21 @@ impl LessonVerificationReport {
                             .is_some_and(|version| version.deleted_at.is_some())
                     }),
                 };
-                let removed_in_ledger = ledger_state.is_some() && source_removed;
                 let (stood, verified) = resolved(finding);
-                let (resolution, note, unverified_reason) = match &stood {
-                    _ if removed_in_ledger => {
-                        (LearningClaimResolutionDto::SourceRemoved, None, None)
-                    }
-                    Some(Resolution::Confirmed { note, .. }) => (
-                        LearningClaimResolutionDto::ConfirmedByYou,
-                        note.clone(),
-                        None,
-                    ),
-                    Some(Resolution::Unverified { reason }) => (
-                        LearningClaimResolutionDto::NotVerified,
-                        None,
-                        Some((*reason).into()),
-                    ),
-                    None if finding.verdict != ClaimVerdict::Supported && !verified => (
-                        LearningClaimResolutionDto::NotVerified,
-                        None,
-                        Some(match finding.verdict {
-                            ClaimVerdict::Contradicted => UnverifiedReasonDto::Contradicted,
-                            ClaimVerdict::Unverified => UnverifiedReasonDto::Unchecked,
-                            ClaimVerdict::Supported | ClaimVerdict::Unsupported => {
-                                UnverifiedReasonDto::Unsupported
-                            }
-                        }),
-                    ),
-                    None if source_removed => {
-                        (LearningClaimResolutionDto::SourceRemoved, None, None)
-                    }
-                    None => match unverified.get(&(finding.unit, finding.quote.as_str())) {
-                        Some(reason) => (
-                            LearningClaimResolutionDto::NotVerified,
-                            None,
-                            Some((*reason).into()),
-                        ),
-                        None => (LearningClaimResolutionDto::Verified, None, None),
-                    },
-                };
+                let (resolution, note, unverified_reason) = told(
+                    stood.as_ref(),
+                    verified,
+                    finding.verdict,
+                    (source_removed, ledger_state.is_some()),
+                    unverified
+                        .get(&(finding.unit, finding.quote.as_str()))
+                        .copied(),
+                );
                 Ok(LearningClaimEvidenceDto {
                     section_index: finding.unit,
                     content_quote: finding.quote.clone(),
                     claim: finding.statement.clone(),
-                    verdict: match finding.verdict {
-                        ClaimVerdict::Supported => "supported",
-                        ClaimVerdict::Contradicted => "contradicted",
-                        ClaimVerdict::Unsupported => "unsupported",
-                        ClaimVerdict::Unverified => "unverified",
-                    }
-                    .into(),
+                    verdict: finding.verdict.as_str().into(),
                     reason: finding.reason.clone(),
                     supporting_quote: finding.supporting_quote.clone(),
                     passages,
@@ -333,6 +337,10 @@ impl LessonVerificationReport {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
+        let confirmed_count = teaching_claims
+            .iter()
+            .filter(|claim| claim.resolution == LearningClaimResolutionDto::ConfirmedByYou)
+            .count();
         Ok(LearningLessonEvidenceDto {
             policy: self.policy.clone(),
             checked_at: self.checked_at,
@@ -340,10 +348,8 @@ impl LessonVerificationReport {
             retrieval_mode: self.retrieval_mode.clone(),
             embedding_model: self.embedding_model.clone(),
             content_sha256: self.content_sha256.clone(),
-            claim_count: claims().count(),
-            confirmed_count: claims()
-                .filter(|finding| matches!(resolved(finding).0, Some(Resolution::Confirmed { .. })))
-                .count(),
+            claim_count: teaching_claims.len(),
+            confirmed_count,
             executed_examples: self.executions.len(),
             unexecuted_languages: self.unexecuted_languages.clone(),
             sources_current,
@@ -357,18 +363,19 @@ mod tests {
     use super::*;
     use crate::content_verification::{tests::attest, CheckedPart, Classed, EvidencePassage};
     use crate::dto::{LearningBlockDto, LearningBlockKind, PreparedLearningLesson};
+    use crate::reference_collection::PassageKind;
     use lattice_core::domain::learning::claim_review::ClassifiedBy;
     use lattice_core::domain::provenance::Label;
 
     fn fixture() -> (LearningLessonDto, LessonVerificationReport) {
         let mut lesson = crate::tests::fixture().modules.remove(0).lessons.remove(0);
-        lesson.blocks = vec![LearningBlockDto {
-            kind: LearningBlockKind::Explanation,
-            title: "Title".into(),
-            body: "An exact lesson statement.".into(),
-            rubric: vec![],
-            source_ids: vec![],
-        }];
+        lesson.blocks = vec![LearningBlockDto::new(
+            LearningBlockKind::Explanation,
+            "Title".into(),
+            "An exact lesson statement.".into(),
+            vec![],
+            vec![],
+        )];
         let prepared = PreparedLearningLesson {
             blocks: lesson.blocks.clone(),
             questions: vec![],
@@ -468,6 +475,32 @@ mod tests {
 
         assert_eq!(view.teaching_claims.len(), 1);
         assert_eq!(view.teaching_claims[0].class, None);
+        assert_eq!(view.claim_count, 1);
+    }
+
+    #[test]
+    fn a_quote_differing_from_the_block_only_typographically_still_has_a_view() {
+        let (mut lesson, mut report) = fixture();
+        lesson.blocks[0].body = "It\u{2019}s an exact lesson statement.".into();
+        report.findings[0].quote = "It's an exact lesson statement.".into();
+
+        let view = report.learner_view(&lesson, &[], &ClaimStates::default());
+
+        assert!(view.is_ok(), "{:?}", view.as_ref().err());
+    }
+
+    #[test]
+    fn the_report_counts_the_claims_it_lists() {
+        let (lesson, mut report) = fixture();
+        let mut question = report.findings[0].clone();
+        question.unit = lesson.blocks.len();
+        report.findings.push(question);
+
+        let view = report
+            .learner_view(&lesson, &[], &ClaimStates::default())
+            .unwrap();
+
+        assert_eq!(view.claim_count, view.teaching_claims.len());
         assert_eq!(view.claim_count, 1);
     }
 
@@ -620,7 +653,7 @@ mod tests {
         assert!(report
             .learner_view(&lesson, &[], &ClaimStates::default())
             .is_err());
-        report.findings[0].evidence[0].retrieval_kind = "execution".into();
+        report.findings[0].evidence[0].retrieval_kind = PassageKind::Run.label().into();
         let view = report
             .learner_view(&lesson, &[], &ClaimStates::default())
             .unwrap();
