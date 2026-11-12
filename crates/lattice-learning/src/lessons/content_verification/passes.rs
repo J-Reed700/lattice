@@ -4,7 +4,8 @@
 //! the ledger each statement is, the reading of each statement that waits for
 //! one along its graph, and the report of what the latest readings found.
 use super::claim_ledger::ClaimLedger;
-use super::readings::driver::{read_page, read_until_remedy, ReadSteps};
+use super::claim_ledger::StatementFault;
+use super::readings::driver::{read_page, read_until_remedy, Fault, ReadSteps};
 use super::readings::{Read, ReadContext, ReaderSet, Statement};
 use super::*;
 use crate::lessons::claim_reviews::repository::ShownPassage;
@@ -323,6 +324,14 @@ pub(super) async fn record_readings(
     }
     let mut stopped = Vec::new();
     for (id, read) in &readings {
+        if let Some(Fault { stage, message }) = &read.fault {
+            let fault = StatementFault {
+                claim: id.clone(),
+                stage: *stage,
+                message: message.clone(),
+            };
+            ledger.record_fault(fault).await?;
+        }
         for step in &read.steps {
             ledger.record_reading(policy, id, step).await?;
         }
