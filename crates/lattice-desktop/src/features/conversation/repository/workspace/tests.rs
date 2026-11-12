@@ -724,7 +724,7 @@ async fn many_conversations(repo: &ConversationRepository, count: usize) -> Vec<
 
 #[tokio::test]
 async fn the_explorer_listing_without_a_limit_returns_every_conversation() {
-    let (_directory, repo) = repository().await;
+    let (_directory, _, repo) = repository().await;
     many_conversations(&repo, 101).await;
 
     let all = repo
@@ -742,7 +742,7 @@ async fn the_explorer_listing_without_a_limit_returns_every_conversation() {
 
 #[tokio::test]
 async fn an_explicit_listing_limit_returns_at_most_that_many_and_offset_pages() {
-    let (_directory, repo) = repository().await;
+    let (_directory, _, repo) = repository().await;
     many_conversations(&repo, 5).await;
 
     let first = repo
@@ -767,7 +767,7 @@ async fn an_explicit_listing_limit_returns_at_most_that_many_and_offset_pages() 
 
 #[tokio::test]
 async fn a_listing_limit_below_one_or_a_negative_offset_is_invalid_input() {
-    let (_directory, repo) = repository().await;
+    let (_directory, _, repo) = repository().await;
     let journal_id = repo.create_journal(journal("Reading")).await.unwrap().id;
 
     for (limit, offset) in [(Some(0), None), (Some(-5), None), (None, Some(-1))] {
@@ -793,7 +793,7 @@ async fn a_listing_limit_below_one_or_a_negative_offset_is_invalid_input() {
 
 #[tokio::test]
 async fn the_journal_listing_without_a_limit_returns_every_entry() {
-    let (_directory, repo) = repository().await;
+    let (_directory, _, repo) = repository().await;
     let reading = repo.create_journal(journal("Reading")).await.unwrap();
     for id in many_conversations(&repo, 121).await {
         repo.add_conversation_to_journal(AddConversationToJournalRequestDto {
@@ -813,10 +813,11 @@ async fn the_journal_listing_without_a_limit_returns_every_entry() {
 
 #[tokio::test]
 async fn the_bookmark_listing_returns_every_bookmark_without_a_limit_and_honours_a_large_one() {
-    let (_directory, repo) = repository().await;
+    let (_directory, pool, repo) = repository().await;
     let conversation = repo.create("Notes", None).await.unwrap().id.to_string();
     for index in 0..201 {
         bookmarked_message(
+            &pool,
             &repo,
             &conversation,
             &format!("note {index}"),

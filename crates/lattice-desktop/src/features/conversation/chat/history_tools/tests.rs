@@ -1174,7 +1174,7 @@ async fn ids_past_the_per_read_ceiling_are_named_as_not_read() {
         seed_message(&pool, "conv-mine", &id, "user", "a short note", "completed").await;
         ids.push(id);
     }
-    let port = port(&pool);
+    let port = port(&Database::new(pool.clone()));
     let scope = scope("conv-mine");
     let mut memo = HistoryToolMemo::default();
 

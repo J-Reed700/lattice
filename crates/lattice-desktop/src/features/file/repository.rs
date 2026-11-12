@@ -206,7 +206,7 @@ mod tests {
             cite(&pool, &id, "doc-a", &format!("chunk-{i}")).await;
         }
         ListCitingConversationsUseCase::new(Arc::new(SqliteCitingConversationsRepository::new(
-            pool,
+            Database::new(pool),
         )))
     }
 

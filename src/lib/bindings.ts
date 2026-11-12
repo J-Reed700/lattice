@@ -12454,7 +12454,7 @@ export type CommandArgs = {
 	is_favorite: { documentId: string };
 	is_model_already_downloaded: { modelId: string };
 	last_learning_window_shortfall: void;
-	list_all_documents: { limit?: number | null };
+	list_all_documents: void | { limit?: number | null };
 	list_available_functions: void;
 	list_cloud_models: { provider: CloudProvider };
 	list_clusters: void;

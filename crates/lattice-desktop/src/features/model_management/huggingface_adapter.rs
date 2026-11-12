@@ -205,10 +205,7 @@ impl HuggingFaceModel {
                 }
             }
         }
-        if self.requires_fork_hadamard_runtime() || self.is_fork_g128_q2_0(filename) {
-            return false;
-        }
-        true
+        !(self.requires_fork_hadamard_runtime() || self.is_fork_g128_q2_0(filename))
     }
 
     fn gguf_variants(&self) -> Vec<ExternalModelMetadata> {
