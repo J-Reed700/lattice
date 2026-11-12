@@ -21,7 +21,7 @@ const job: LearningGenerationJob = {
   id: 'job-1', programId: 'program-1', operationId: 'operation-1', kind: 'lesson_preparation',
   payloadSha256: 'hash', baseRevisionNumber: 44, status: 'running', progressCompleted: 0,
   activity: null, progressTotal: 1, progressMessage: 'Writing the first lesson · 420 response characters received',
-  resultId: null, error: null, retryOfJobId: null, createdAt: Date.now() - 60_000,
+  resultId: null, heldLessonIds: [], error: null, retryOfJobId: null, createdAt: Date.now() - 60_000,
   startedAt: Date.now() - 60_000, finishedAt: null,
 };
 
@@ -342,7 +342,7 @@ describe('Durable lesson preparation progress', () => {
   });
 
   it('shows a held lesson as one line with Review, never as a failure', async () => {
-    api.plan.mockResolvedValue({ ok: true, data: { jobs: [{ ...job, status: 'completed', resultId: 'needs_review:lesson-1', progressMessage: 'Needs your review: 1 statement', finishedAt: Date.now() - 1_000 }] } });
+    api.plan.mockResolvedValue({ ok: true, data: { jobs: [{ ...job, status: 'completed', heldLessonIds: ['lesson-1'], progressMessage: 'Needs your review: 1 statement', finishedAt: Date.now() - 1_000 }] } });
     api.review.mockResolvedValue({ ok: true, data: review([claimItem()]) });
     const onReview = vi.fn();
     const { client, unmount } = show(onReview);
@@ -407,7 +407,7 @@ describe('Durable lesson preparation progress', () => {
   });
 
   it('shows a lesson held only by an audit stop as waiting, never "0 statements", with Review', async () => {
-    api.plan.mockResolvedValue({ ok: true, data: { jobs: [{ ...job, status: 'completed', resultId: 'needs_review:lesson-1', progressMessage: 'Needs your review: 0 statements', finishedAt: Date.now() - 1_000 }] } });
+    api.plan.mockResolvedValue({ ok: true, data: { jobs: [{ ...job, status: 'completed', heldLessonIds: ['lesson-1'], progressMessage: 'Needs your review: 0 statements', finishedAt: Date.now() - 1_000 }] } });
     api.review.mockResolvedValue({ ok: true, data: review([], { stopReason: { code: 'verifier_unset', audit: true, message: 'Audit cannot run: no Verifier model is set.', fix: 'Choose one in Settings → Downloaded, or turn the audit off for this course.', at: 1, request: null } }) });
     const { client, unmount } = show(vi.fn());
     expect(await screen.findByText('— waiting for the independent check')).toBeVisible();
