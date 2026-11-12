@@ -5,6 +5,14 @@
 //! and its receipt.
 use super::*;
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::{protocol, shared::protocol::Protocol};
+
+/// Why a comparison whose answer could not be used is unverified.
+const UNUSABLE: &str =
+    "The checker's answer was unusable after its correction and its retry alone.";
+
+/// The rule that saves which groups of comparisons are checked in halves.
+const SPLIT_KEYS: Protocol = protocol!("claim-batch-split", 1);
 
 /// Finish `pending` with the judge's `judgment`. `shown` holds the positions
 /// in the page of the passages the judge was shown when it was not shown them
@@ -18,66 +26,54 @@ pub(super) async fn finish(
     shown: Option<Vec<usize>>,
     parts: Vec<CheckedPart>,
 ) -> Result<CheckedClaim> {
-    let (verdict, reason, supporting_quote) = match judgment {
+    let receipt = match judgment {
         ClaimJudgment::Failed(error) => return Err(error),
-        ClaimJudgment::Judged(outcome) => (
-            outcome.verdict,
-            outcome.reason.unwrap_or_default(),
-            outcome.quote,
-        ),
-        // Every unverified finding is deterministic: its reason is the cause.
-        ClaimJudgment::Unusable => (
-            ClaimVerdict::Unverified,
-            "The checker's answer was unusable after its correction and its retry alone.".into(),
-            None,
-        ),
+        ClaimJudgment::Unusable => None,
+        ClaimJudgment::Judged(outcome) => Some(ClaimReceipt {
+            verdict: outcome.verdict,
+            reason: outcome.reason.unwrap_or_default(),
+            supporting_quote: outcome.quote,
+            shown,
+            parts: parts.clone(),
+        }),
     };
-    let verdict = if verdict == ClaimVerdict::Supported
-        && supporting_quote
-            .as_ref()
-            .is_none_or(|quote| !pending.evidence.iter().any(|p| p.text.contains(quote)))
-    {
-        ClaimVerdict::Unverified
-    } else {
-        verdict
-    };
-    let finding = Finding {
+    if let Some(receipt) = receipt {
+        let saved = serde_json::to_value(&receipt)?;
+        if let Some(finding) =
+            receipt.finding(pending.unit, &pending.claim, pending.evidence.clone())
+        {
+            crate::lesson_drafts::record_checkpoint(&pending.receipt_key, saved).await?;
+            return Ok((pending.ordinal, pending.key, finding, false));
+        }
+    }
+    Ok((
+        pending.ordinal,
+        pending.key,
+        unusable(pending, parts),
+        false,
+    ))
+}
+
+/// The finding of a comparison whose answer could not be used.
+fn unusable(pending: PendingClaim, parts: Vec<CheckedPart>) -> Finding {
+    Finding {
         unit: pending.unit,
         quote: pending.claim.quote,
         statement: pending.claim.statement,
-        verdict,
-        reason,
+        verdict: ClaimVerdict::Unverified,
+        reason: UNUSABLE.into(),
         evidence: pending.evidence,
-        supporting_quote,
+        supporting_quote: None,
         resolution: None,
         trust: None,
         claim_id: None,
         two_pass: TwoPass {
-            parts: parts.clone(),
+            parts,
             ..TwoPass::default()
         },
         label: None,
         class: None,
-    };
-    if finding.verdict != ClaimVerdict::Unverified {
-        let mut receipt = serde_json::to_value(ClaimReceipt {
-            verdict: finding.verdict,
-            reason: finding.reason.clone(),
-            supporting_quote: finding.supporting_quote.clone(),
-            interpretation_policy: Some(
-                lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY
-                    .into(),
-            ),
-            shown,
-        })?;
-        if !parts.is_empty() {
-            if let Some(fields) = receipt.as_object_mut() {
-                fields.insert("parts".into(), serde_json::to_value(&parts)?);
-            }
-        }
-        crate::lesson_drafts::record_checkpoint(&pending.receipt_key, receipt).await?;
     }
-    Ok((pending.ordinal, pending.key, finding, false))
 }
 
 /// Each passage of the claim's page under its source's label (§18.6 of the
@@ -211,12 +207,8 @@ pub(in crate::lessons::content_verification) async fn group(
         answers.add(answer);
         completed(&mut results, result, tell);
     }
-    let checker = ClaimChecker::new(
-        llm,
-        SamplingOverride::deterministic(),
-        CHECKER_OUTPUT_TOKENS,
-        CheckPolicy::Strict,
-    );
+    let checker =
+        ClaimChecker::for_policy(llm, SamplingOverride::deterministic(), CheckPolicy::Strict);
     let mut groups = vec![pending];
     while let Some(mut pending) = groups.pop() {
         if pending.is_empty() {
@@ -239,15 +231,12 @@ pub(in crate::lessons::content_verification) async fn group(
         }
         // This is a transport plan, never an approval. Bind it to the exact
         // comparisons so restarting cannot repeat a group known to fail.
-        let split_key = format!(
-            "claim-batch-split-v1:{}",
-            sha256_hex(&serde_json::to_string(
-                &pending
-                    .iter()
-                    .map(|item| &item.receipt_key)
-                    .collect::<Vec<_>>(),
-            )?)
-        );
+        let split_key = SPLIT_KEYS.key(sha256_hex(&serde_json::to_string(
+            &pending
+                .iter()
+                .map(|item| &item.receipt_key)
+                .collect::<Vec<_>>(),
+        )?));
         if crate::lesson_drafts::checkpoint(&split_key).await? == Some(json!(true)) {
             let rest = pending.split_off(pending.len() / 2);
             groups.push(rest);
@@ -334,12 +323,8 @@ pub(in crate::lessons::content_verification) fn pack(
     mut pending: Vec<PendingClaim>,
     labels: &Labels,
 ) -> Vec<Vec<PendingClaim>> {
-    let checker = ClaimChecker::new(
-        llm,
-        SamplingOverride::deterministic(),
-        CHECKER_OUTPUT_TOKENS,
-        CheckPolicy::Strict,
-    );
+    let checker =
+        ClaimChecker::for_policy(llm, SamplingOverride::deterministic(), CheckPolicy::Strict);
     pending.sort_by_key(|item| (item.unit, item.ordinal, item.pass));
     let mut claims: Vec<Vec<PendingClaim>> = Vec::new();
     for item in pending {
@@ -375,3 +360,7 @@ pub(in crate::lessons::content_verification) fn pack(
     }
     requests
 }
+
+#[cfg(test)]
+#[path = "requests_tests.rs"]
+mod tests;

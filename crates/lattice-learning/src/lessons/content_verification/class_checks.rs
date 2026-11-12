@@ -5,18 +5,14 @@
 //! `readings` ask these judges along its graphs. Every judgment is saved as a
 //! receipt, so a resumed pass asks nothing twice.
 use super::claim_ledger::{sentences, Place, Rewrites};
-use super::classify::{classify, ruling, Case, ToSort};
+use super::classify::{classify, ruling, saved_class, Case, ToSort};
 use super::*;
-use crate::lessons::call_plan::{Planned, PlannedAt, SAMPLES};
+use crate::lessons::call_plan::{Planned, PlannedAt};
 use lattice_core::application::services::claim_verification::{
     ClassJudgment, ConsistencyOutcome, KnowledgeOutcome, KnowledgeSample, KnowledgeVerdict,
     CONSISTENCY_POLICY, KNOWLEDGE_POLICY,
 };
-use lattice_core::domain::learning::acceptance::AcceptancePolicy;
-
-/// Tokens a passage costs beside its text in the consistency check: its
-/// label and the blank line after it.
-const LABEL_TOKENS: usize = 12;
+use lattice_core::domain::learning::acceptance::{AcceptancePolicy, KNOWLEDGE_SAMPLES};
 
 /// The class of each of `claims`, in order: the one `given` holds for it,
 /// which the match of the pass gave (that of the claim it continues, or of the
@@ -90,8 +86,7 @@ pub(super) async fn sort(
                 })
                 .collect();
             let answered = classify(llm, &to_sort).await?;
-            for ((slot, statement, _, _), (class, by)) in open.into_iter().zip(answered) {
-                save_class(llm, statement, class).await?;
+            for ((slot, _, _, _), (class, by)) in open.into_iter().zip(answered) {
                 *slot = Some(Classed { class, by });
             }
         }
@@ -222,31 +217,10 @@ pub(super) fn standard(knowledge: &KnowledgeOutcome) -> String {
     format!("Standard knowledge: {reason}")
 }
 
-/// The passages of a section, as many as the consistency check of
-/// `statement` holds beside its answer.
-pub(super) fn fitted(
-    llm: &dyn LLMPort,
-    statement: &str,
-    passages: &[EvidencePassage],
-) -> Vec<EvidencePassage> {
-    let checker = consistency_checker(llm);
-    let room = checker.consistency_evidence_room(statement);
-    let mut used = 0usize;
-    passages
-        .iter()
-        .take_while(|passage| {
-            used = used.saturating_add(llm.count_tokens(&passage.text) + LABEL_TOKENS);
-            used <= room
-        })
-        .cloned()
-        .collect()
-}
-
-fn consistency_checker(llm: &dyn LLMPort) -> ClaimChecker<'_> {
-    ClaimChecker::new(
+pub(super) fn consistency_checker(llm: &dyn LLMPort) -> ClaimChecker<'_> {
+    ClaimChecker::for_policy(
         llm,
         SamplingOverride::deterministic(),
-        CHECKER_OUTPUT_TOKENS,
         CheckPolicy::Consistency,
     )
 }
@@ -350,15 +324,16 @@ pub(super) async fn knowledge_of(
     statement: &str,
     case: Option<&str>,
 ) -> Result<Option<KnowledgeOutcome>> {
-    let checker = ClaimChecker::new(
+    let checker = ClaimChecker::for_policy(
         llm,
         SamplingOverride::deterministic(),
-        CHECKER_OUTPUT_TOKENS,
         CheckPolicy::Knowledge,
     );
     let judged = {
-        let _model_calls =
-            crate::lesson_progress::model_calls(SAMPLES, crate::lesson_progress::Term::Reading);
+        let _model_calls = crate::lesson_progress::model_calls(
+            KNOWLEDGE_SAMPLES,
+            crate::lesson_progress::Term::Reading,
+        );
         checker.check_knowledge(statement, case).await
     };
     match judged {
@@ -369,26 +344,4 @@ pub(super) async fn knowledge_of(
         ClassJudgment::Unusable => Ok(None),
         ClassJudgment::Failed(error) => Err(error),
     }
-}
-
-fn class_key(llm: &dyn LLMPort, statement: &str) -> String {
-    format!(
-        "classes-v2:{}",
-        sha256_hex(json!({"model": llm.model_name(), "statement": statement}).to_string())
-    )
-}
-
-/// The class the model gave `statement`, when it was asked before.
-async fn saved_class(llm: &dyn LLMPort, statement: &str) -> Result<Option<Class>> {
-    Ok(crate::lesson_drafts::checkpoint(&class_key(llm, statement))
-        .await?
-        .and_then(|value| serde_json::from_value(value).ok()))
-}
-
-async fn save_class(llm: &dyn LLMPort, statement: &str, class: Class) -> Result<()> {
-    crate::lesson_drafts::record_checkpoint(
-        &class_key(llm, statement),
-        serde_json::to_value(class)?,
-    )
-    .await
 }
