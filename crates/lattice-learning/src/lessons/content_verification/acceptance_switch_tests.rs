@@ -1729,6 +1729,36 @@ async fn a_refuted_rationale_in_the_last_question_of_its_kind_stays_and_is_publi
     Ok(())
 }
 
+#[tokio::test]
+async fn a_refuted_rationale_in_the_last_question_of_the_lesson_stays_and_is_published_not_verified(
+) -> Result<()> {
+    let lesson = lesson_asking(
+        "The middle section stands. It says two things.",
+        &[question_of("quiz", "Which?", WINDOW)],
+    );
+    let (mut ledger, id, mut context) =
+        refuted_at(&lesson, (3, UnitKind::AnswerKey, "rationales/2"), WINDOW).await?;
+
+    repair::last_attempts(
+        &StandardPolicy::new(),
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
+
+    assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
+    assert_eq!(context["candidate"], lesson);
+    let entry = ledger.entry(&id).unwrap();
+    assert_eq!(entry.decided(), Some(&Then::End(End::Unverified)));
+    assert!(
+        matches!(entry.state(), ClaimState::Unverified { .. }),
+        "{:?}",
+        entry.state()
+    );
+    Ok(())
+}
+
 /// The second section holds two sentences a refuted statement can be cut
 /// out of, beside the one the guard of the questions is about.
 fn cuttable() -> String {
