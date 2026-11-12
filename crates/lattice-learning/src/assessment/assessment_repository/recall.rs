@@ -9,7 +9,6 @@ use crate::portability_dto::{
 };
 use crate::recall_repository::LearningRecallRepository;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
 use sha2::{Digest, Sha256};
 
 /// A UUID derived from text, so a repeated request writes the same cards.
@@ -139,15 +138,14 @@ impl LearningAssessmentRepository {
             hash,
             "Operation ID was reused with different questions.",
         );
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        let replayed = operation
-            .replay::<LearningQuizMissesToRecallDto>(&mut connection)
-            .await?;
-        drop(connection);
-        if let Some(done) = replayed {
+        let mut read = self.db.begin_read().await.map_err(db)?;
+        if let Some(done) = operation
+            .replay::<LearningQuizMissesToRecallDto>(&mut read)
+            .await?
+        {
+            read.commit().await.map_err(db)?;
             return Ok(done);
         }
-        let mut read = self.pool.begin_read().await.map_err(db)?;
         let status: Option<String> = sqlx::query_scalar(
             "SELECT status FROM learning_assessment_forms WHERE id=? AND program_id=?",
         )
@@ -185,7 +183,7 @@ impl LearningAssessmentRepository {
                 .map_err(db)?
                 .ok_or_else(|| AppError::NotFound("This course has no recall deck yet.".into()))?;
         read.commit().await.map_err(db)?;
-        let recall = LearningRecallRepository::new(self.pool.clone());
+        let recall = LearningRecallRepository::new(self.db.clone());
         let mut created = 0i64;
         for (item_id, sources, (format, content)) in cards {
             let seed = format!("{}:{item_id}", req.operation_id);
@@ -207,8 +205,9 @@ impl LearningAssessmentRepository {
             cards_created: created,
             deck_id,
         };
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        operation.record(&mut connection, &done).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
+        operation.record(&mut tx, &done).await?;
+        tx.commit().await.map_err(db)?;
         Ok(done)
     }
 }

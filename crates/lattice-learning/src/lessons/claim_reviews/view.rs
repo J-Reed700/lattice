@@ -45,7 +45,6 @@ use crate::reference_collection::PassageKind;
 use crate::references::trust::dto_map;
 use crate::repository::LearningRepository;
 use crate::source_library::{workspace_in, LearningSourceLibraryRepository};
-use lattice_core::shared::persistence::Transactions;
 
 /// A stored location's quote and span narrowed to the claim's sentence in
 /// the lesson's current text; as stored when its field is gone.

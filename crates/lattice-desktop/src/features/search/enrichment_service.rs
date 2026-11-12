@@ -232,7 +232,7 @@ mod tests {
     #[tokio::test]
     async fn test_enrich_empty_chunks() {
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-        let service = SearchEnrichmentService::new(Database::from(pool));
+        let service = SearchEnrichmentService::new(Database::new(pool));
 
         let result = service.enrich_results(&[]).await.unwrap();
         assert!(result.is_empty());

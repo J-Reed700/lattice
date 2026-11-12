@@ -1,23 +1,23 @@
 //! The `learning_checker_examples` table.
 
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use sqlx::{Row, SqliteConnection};
+use lattice_core::shared::persistence::{Database, WriteTx};
+use sqlx::Row;
 
 use crate::lessons::claim_reviews::checker_examples::{CheckerExample, Label, LabelSource};
 use crate::persistence::{db, decode, encode};
 
 pub(in crate::lessons::claim_reviews) async fn insert(
-    pool: &impl DriverPool,
+    database: &Database,
     example: &CheckerExample,
 ) -> Result<()> {
-    let pool = pool.sqlx_pool();
-    let mut connection = pool.acquire().await.map_err(db)?;
-    insert_in(&mut connection, example).await
+    let mut tx = database.begin_write().await.map_err(db)?;
+    insert_in(&mut tx, example).await?;
+    tx.commit().await.map_err(db)
 }
 
 pub(in crate::lessons::claim_reviews) async fn insert_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     example: &CheckerExample,
 ) -> Result<()> {
     sqlx::query("INSERT INTO learning_checker_examples(id,program_id,lesson_id,claim_id,checker_model,context_window,policy,claim,passages_json,local_verdict,label,label_source,at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
@@ -34,46 +34,47 @@ pub(in crate::lessons::claim_reviews) async fn insert_in(
         .bind(example.label.as_str())
         .bind(example.label_source.as_str())
         .bind(example.at)
-        .execute(&mut *connection)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
     Ok(())
 }
 
 pub(in crate::lessons::claim_reviews) async fn delete_for_claim(
-    pool: &impl DriverPool,
+    database: &Database,
     claim_id: &str,
     source: LabelSource,
 ) -> Result<()> {
-    let pool = pool.sqlx_pool();
-    let mut connection = pool.acquire().await.map_err(db)?;
-    delete_for_claim_in(&mut connection, claim_id, source).await
+    let mut tx = database.begin_write().await.map_err(db)?;
+    delete_for_claim_in(&mut tx, claim_id, source).await?;
+    tx.commit().await.map_err(db)
 }
 
 pub(in crate::lessons::claim_reviews) async fn delete_for_claim_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     claim_id: &str,
     source: LabelSource,
 ) -> Result<()> {
     sqlx::query("DELETE FROM learning_checker_examples WHERE claim_id=? AND label_source=?")
         .bind(claim_id)
         .bind(source.as_str())
-        .execute(&mut *connection)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
     Ok(())
 }
 
 pub(in crate::lessons::claim_reviews) async fn list(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: Option<&str>,
 ) -> Result<Vec<CheckerExample>> {
-    let pool = pool.sqlx_pool();
+    let mut read = database.begin_read().await.map_err(db)?;
     let rows = sqlx::query("SELECT * FROM learning_checker_examples WHERE ?1 IS NULL OR program_id=?1 ORDER BY at,rowid")
         .bind(program_id)
-        .fetch_all(pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(db)?;
+    read.commit().await.map_err(db)?;
     rows.iter()
         .map(|row| {
             let label: String = row.get("label");

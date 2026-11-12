@@ -13,7 +13,7 @@ use crate::practice::{
     practical_generation::INTERVIEW_PLAN_FILE_PATH,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, ReadTx, Transactions};
+use lattice_core::shared::persistence::{Database, ReadTx};
 use std::collections::HashMap;
 
 fn decode<T: serde::de::DeserializeOwned>(content: &str, what: &str) -> Result<T> {
@@ -513,7 +513,7 @@ mod tests {
     #[tokio::test]
     async fn a_saved_ready_interview_loads_with_its_guides_and_cited_sources() -> Result<()> {
         let pool = crate::tests::pool().await?;
-        let database = Database::from(pool.clone());
+        let database = Database::new(pool.clone());
         // Only the rows `load` reads; their program, lesson and source library are not under test.
         sqlx::query("PRAGMA foreign_keys=OFF")
             .execute(&pool)
@@ -611,7 +611,7 @@ mod tests {
             study_service::create_interview_deck,
         };
         let pool = crate::tests::pool().await?;
-        let database = Database::from(pool.clone());
+        let database = Database::new(pool.clone());
         sqlx::query("PRAGMA foreign_keys=OFF")
             .execute(&pool)
             .await
@@ -626,7 +626,7 @@ mod tests {
             &[(INTERVIEW_PLAN_FILE_PATH, "reference", plan)],
         )
         .await?;
-        let repo = StudyRepository::new(pool.clone());
+        let repo = StudyRepository::new(database.clone());
         let request = |target_at| CreateInterviewStudyDeckRequestDto {
             program_id: "program".into(),
             activity_id: "ready".into(),

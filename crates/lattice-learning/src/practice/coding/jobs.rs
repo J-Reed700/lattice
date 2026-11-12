@@ -24,7 +24,7 @@ use crate::quiz_bank_jobs::ModelLoader;
 use async_trait::async_trait;
 use lattice_core::domain::learning::practice::work::{Form, KindId};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{
     Backoff, JobContext, JobHandler, JobKindConfig, JobOutcome, JobStore, NewJob, RecoveryPolicy,
 };

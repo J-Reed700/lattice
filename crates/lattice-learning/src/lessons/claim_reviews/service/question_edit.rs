@@ -11,7 +11,6 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
 
 use super::section_edit::{endings, record_edit, Ending};
 use super::{provenance, ClaimReviewService};

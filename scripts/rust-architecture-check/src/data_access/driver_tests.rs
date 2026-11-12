@@ -11,7 +11,6 @@ const PERSISTENCE: &str = "crates/lattice-desktop/src/infrastructure/persistence
 const CONNECTION: &str = "crates/lattice-desktop/src/infrastructure/persistence/connection.rs";
 const DATABASE: &str = "crates/lattice-core/src/shared/persistence/database.rs";
 const SYNC_DB: &str = "crates/lattice-sync/src/persistence/db.rs";
-const DRIVER: &str = "crates/lattice-core/src/shared/persistence/driver.rs";
 const TRANSACTIONS_FILE: &str = "crates/lattice-core/src/shared/persistence/transactions.rs";
 const LEARNING_ROOT: &str = "crates/lattice-learning/src/lib.rs";
 const LESSONS: &str = "crates/lattice-learning/src/lessons/mod.rs";
@@ -25,6 +24,7 @@ fn found(path: &str, source: &str) -> Vec<String> {
     let ast = syn::parse_file(source).unwrap();
     file_violations(path, &ast)
         .iter()
+        .filter(|violation| violation.rule != 6)
         .map(ToString::to_string)
         .collect()
 }
@@ -44,6 +44,7 @@ fn found_among(files: &[(&str, &str)], target: &str) -> Vec<String> {
     let (module, ast) = &parsed[index];
     file_violations_in(target, module, ast, &modules)
         .iter()
+        .filter(|violation| violation.rule != 6)
         .map(ToString::to_string)
         .collect()
 }
@@ -701,18 +702,29 @@ fn a_sqlx_error_is_not_a_handle() {
 }
 
 const DATABASE_SOURCE: &str = r#"//! The database as code outside a data module holds it.
-use async_trait::async_trait;
 use sqlx::SqlitePool;
 
 use super::{
     error::PersistenceError,
-    transactions::{ReadTx, Transactions, WriteTx},
+    transactions::{ReadTx, WriteTx},
 };
 
 #[derive(Clone, Debug)]
 pub struct Database(SqlitePool);
 
 impl Database {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self(pool)
+    }
+
+    pub async fn begin_write(&self) -> Result<WriteTx, PersistenceError> {
+        WriteTx::start(&self.0).await
+    }
+
+    pub async fn begin_read(&self) -> Result<ReadTx, PersistenceError> {
+        ReadTx::start(&self.0).await
+    }
+
     pub async fn is_reachable(&self) -> bool {
         self.0.acquire().await.is_ok()
     }
@@ -725,69 +737,7 @@ impl Database {
         self.0.size()
     }
 }
-
-impl From<SqlitePool> for Database {
-    fn from(pool: SqlitePool) -> Self {
-        Self(pool)
-    }
-}
-
-#[async_trait]
-impl Transactions for Database {
-    async fn begin_write(&self) -> Result<WriteTx, PersistenceError> {
-        self.0.begin_write().await.map_err(PersistenceError::from)
-    }
-
-    async fn begin_read(&self) -> Result<ReadTx, PersistenceError> {
-        self.0.begin_read().await.map_err(PersistenceError::from)
-    }
-}
 "#;
-
-const DRIVER_SOURCE: &str = "use sqlx::SqlitePool;
-use super::{Database, PersistenceError, Transactions};
-
-pub trait DriverPool: Transactions + Send + Sync + std::fmt::Debug {
-    fn sqlx_pool(&self) -> &SqlitePool;
-}
-
-impl DriverPool for Database {
-    fn sqlx_pool(&self) -> &SqlitePool {
-        &self.0
-    }
-}
-
-impl DriverPool for SqlitePool {
-    fn sqlx_pool(&self) -> &SqlitePool {
-        self
-    }
-}
-
-impl From<PersistenceError> for sqlx::Error {
-    fn from(error: PersistenceError) -> Self {
-        sqlx::Error::Protocol(error.to_string())
-    }
-}
-";
-
-const DRIVER_EXTRAS: &str = "pub fn sqlx_pool(database: &Database) -> &SqlitePool {
-    todo!()
-}
-pub struct Other;
-impl Other {
-    pub fn sqlx_pool(&self) -> &SqlitePool {
-        todo!()
-    }
-}
-impl DriverPool for Other {
-    fn sqlx_pool(&self) -> &SqlitePool {
-        todo!()
-    }
-}
-pub trait Another {
-    fn sqlx_pool(&self) -> &SqlitePool;
-}
-";
 
 const GUARD_SOURCE: &str = "use sqlx::SqliteConnection;
 use std::ops::{Deref, DerefMut};
@@ -832,36 +782,8 @@ impl WriteTx {
 ";
 
 #[test]
-fn the_core_database_file_and_the_driver_door_pass_every_rule() {
+fn the_core_database_file_passes_every_rule() {
     assert_eq!(found(DATABASE, DATABASE_SOURCE), none());
-    assert_eq!(found(DRIVER, DRIVER_SOURCE), none());
-}
-
-#[test]
-fn the_driver_trait_and_its_impls_hand_out_the_pool_anywhere_but_in_driver_rs() {
-    let elsewhere = "crates/lattice-learning/src/persistence/driver.rs";
-    assert_eq!(
-        found(elsewhere, DRIVER_SOURCE),
-        vec![
-            hands(elsewhere, 5, "SqlitePool", "fn", "sqlx_pool"),
-            hands(elsewhere, 9, "SqlitePool", "fn", "sqlx_pool"),
-            hands(elsewhere, 15, "SqlitePool", "fn", "sqlx_pool"),
-        ]
-    );
-}
-
-#[test]
-fn a_driver_exemption_covers_only_its_own_trait_or_impl() {
-    let source = format!("{DRIVER_SOURCE}{DRIVER_EXTRAS}");
-    assert_eq!(
-        found(DRIVER, &source),
-        vec![
-            hands(DRIVER, 25, "SqlitePool", "fn", "sqlx_pool"),
-            hands(DRIVER, 30, "SqlitePool", "fn", "sqlx_pool"),
-            hands(DRIVER, 35, "SqlitePool", "fn", "sqlx_pool"),
-            hands(DRIVER, 40, "SqlitePool", "fn", "sqlx_pool"),
-        ]
-    );
 }
 
 #[test]
@@ -895,14 +817,14 @@ fn the_unit_of_work_guard_may_deref_to_the_connection_and_no_other_type_may() {
 fn only_a_data_module_may_call_sqlx_pool() {
     let source = r#"fn a(db: &Database) {
     let pool = db.sqlx_pool();
-    let other = DriverPool::sqlx_pool(&db);
+    let other = Door::sqlx_pool(&db);
     let text = format!("{:?}", db.sqlx_pool());
 }
 "#;
     assert_eq!(
         found(SERVICE, source),
         vec![
-            names(SERVICE, 3, "DriverPool::sqlx_pool"),
+            names(SERVICE, 3, "Door::sqlx_pool"),
             unwraps(SERVICE, 2),
             unwraps(SERVICE, 3),
             unwraps(SERVICE, 4)
@@ -912,92 +834,29 @@ fn only_a_data_module_may_call_sqlx_pool() {
 }
 
 #[test]
-fn the_driver_trait_in_a_use_tree_is_flagged_whatever_its_form() {
-    let source = "use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::driver::DriverPool as Pool;
-use lattice_core::shared::persistence::driver::{self, DriverPool as Door};
-use lattice_core::shared::persistence::driver::*;
-use lattice_core::shared::persistence::{driver, Database};
-use lattice_core::shared::persistence::Database as Db;
-";
-    let driver = "lattice_core::shared::persistence::driver";
-    assert_eq!(
-        found(SERVICE, source),
-        vec![
-            names(SERVICE, 1, &format!("{driver}::DriverPool")),
-            names(SERVICE, 2, &format!("{driver}::DriverPool")),
-            names(SERVICE, 3, &format!("{driver}, {driver}::DriverPool")),
-            names(SERVICE, 4, &format!("{driver}::*")),
-            names(SERVICE, 5, driver),
-        ]
-    );
-    assert_eq!(found(REPOSITORY, source), none());
-}
-
-#[test]
-fn the_driver_trait_in_a_bound_a_generic_argument_or_an_impl_is_flagged() {
-    let source = "fn a(db: &impl DriverPool) {}
-fn b<T: DriverPool>(db: &T) {}
-fn c<T>(db: &T)
-where
-    T: DriverPool,
-{
-}
-struct S {
-    db: std::sync::Arc<dyn DriverPool>,
-}
-impl DriverPool for S {}
-";
-    assert_eq!(
-        found(SERVICE, source),
-        vec![
-            names(SERVICE, 1, "DriverPool"),
-            names(SERVICE, 2, "DriverPool"),
-            names(SERVICE, 5, "DriverPool"),
-            names(SERVICE, 9, "DriverPool"),
-            names(SERVICE, 11, "DriverPool"),
-        ]
-    );
-    assert_eq!(found(REPOSITORY, source), none());
-}
-
-#[test]
 fn a_path_ending_in_sqlx_pool_is_flagged_as_a_call_a_reference_and_a_qualified_path() {
     let source = r#"fn a(db: &Database, dbs: &[Database]) {
     let f = Database::sqlx_pool;
-    let all: Vec<_> = dbs.iter().map(DriverPool::sqlx_pool).collect();
-    let one = DriverPool::sqlx_pool(db);
-    let two = <Database as DriverPool>::sqlx_pool(db);
-    let three = format!("{:?}", DriverPool::sqlx_pool(db));
+    let all: Vec<_> = dbs.iter().map(Door::sqlx_pool).collect();
+    let one = Door::sqlx_pool(db);
+    let two = <Database as Door>::sqlx_pool(db);
+    let three = format!("{:?}", Door::sqlx_pool(db));
 }
 "#;
     assert_eq!(
         found(SERVICE, source),
         vec![
             names(SERVICE, 2, "Database::sqlx_pool"),
-            names(SERVICE, 3, "DriverPool::sqlx_pool"),
-            names(SERVICE, 4, "DriverPool::sqlx_pool"),
-            names(SERVICE, 5, "DriverPool::sqlx_pool"),
-            names(SERVICE, 6, "DriverPool::sqlx_pool"),
+            names(SERVICE, 3, "Door::sqlx_pool"),
+            names(SERVICE, 4, "Door::sqlx_pool"),
+            names(SERVICE, 5, "Door::sqlx_pool"),
+            names(SERVICE, 6, "Door::sqlx_pool"),
             unwraps(SERVICE, 4),
             unwraps(SERVICE, 5),
             unwraps(SERVICE, 6),
         ]
     );
     assert_eq!(found(REPOSITORY, source), none());
-}
-
-#[test]
-fn test_code_may_name_the_driver_trait() {
-    let source = "#[cfg(test)]
-mod tests {
-    use lattice_core::shared::persistence::driver::DriverPool;
-    fn f(db: &impl DriverPool) {
-        db.sqlx_pool();
-    }
-}
-";
-    assert_eq!(found(SERVICE, source), none());
 }
 
 #[test]

@@ -142,19 +142,21 @@ async fn to_dto(
 mod tests {
     use super::*;
     use crate::features::conversation::repository::ConversationRepository;
+    use lattice_core::shared::persistence::Database;
     use sqlx::SqlitePool;
 
-    async fn database() -> SqlitePool {
+    async fn database() -> (SqlitePool, Database) {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&pool)
             .await
             .unwrap();
-        pool
+        let db = Database::new(pool.clone());
+        (pool, db)
     }
 
-    async fn seeded(pool: &SqlitePool) -> (ConversationRepository, String, String) {
+    async fn seeded(db: &Database) -> (ConversationRepository, String, String) {
         use lattice_core::application::ports::conversation_memory::{
             MemoryCommitCandidate, MemoryCommitPreconditions,
         };
@@ -163,7 +165,7 @@ mod tests {
             MemoryKind, MemoryReview, MemoryState, SourceRole,
         };
 
-        let repository = ConversationRepository::new(pool.clone());
+        let repository = ConversationRepository::new(db.clone());
         let conversation = repository
             .create_conversation("Details", None)
             .await
@@ -236,8 +238,8 @@ mod tests {
 
     #[tokio::test]
     async fn the_details_view_quotes_the_source_and_marks_the_label_as_generated() {
-        let pool = database().await;
-        let (repository, id, _) = seeded(&pool).await;
+        let (_pool, db) = database().await;
+        let (repository, id, _) = seeded(&db).await;
 
         let details = load_memory_details(&repository, &id, false, true)
             .await
@@ -265,8 +267,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_deleted_source_leaves_an_absence_rather_than_a_cached_quotation() {
-        let pool = database().await;
-        let (repository, id, message_id) = seeded(&pool).await;
+        let (_pool, db) = database().await;
+        let (repository, id, message_id) = seeded(&db).await;
 
         repository
             .delete_messages(&id, &[message_id])
@@ -285,8 +287,8 @@ mod tests {
 
     #[tokio::test]
     async fn an_edited_source_shows_the_item_as_a_conflict_with_no_text() {
-        let pool = database().await;
-        let (repository, id, message_id) = seeded(&pool).await;
+        let (pool, db) = database().await;
+        let (repository, id, message_id) = seeded(&db).await;
 
         // Edit through a path that does not fire the invalidation trigger would
         // be a bug; this one does fire it, which is the point — but the details
@@ -313,8 +315,8 @@ mod tests {
 
     #[tokio::test]
     async fn the_view_reports_the_switch_so_the_ui_cannot_advertise_memory_that_is_off() {
-        let pool = database().await;
-        let (repository, id, _) = seeded(&pool).await;
+        let (_pool, db) = database().await;
+        let (repository, id, _) = seeded(&db).await;
 
         let details = load_memory_details(&repository, &id, false, false)
             .await

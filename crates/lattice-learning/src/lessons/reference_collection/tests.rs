@@ -2,6 +2,7 @@ use super::test_support::collection_fixture;
 pub(crate) use super::test_support::FakeLibrary;
 use super::*;
 use crate::tests;
+use lattice_core::shared::persistence::Database;
 use std::collections::HashSet;
 
 #[test]
@@ -94,8 +95,8 @@ fn merging_context_keeps_both_partly_overlapping_hits() -> Result<()> {
 
 #[tokio::test]
 async fn without_a_course_index_every_snapshot_is_ranked_by_its_words() -> Result<()> {
-    let pool = tests::pool().await?;
-    let (_, sources) = collection_fixture(&pool, ["doc-ownership", "doc-plants"]).await?;
+    let db = Database::new(tests::pool().await?);
+    let (_, sources) = collection_fixture(&db, ["doc-ownership", "doc-plants"]).await?;
     let lexical = ReferenceCollection::current(None, &sources).await?;
     assert!(lexical.retrieve("sunlight conversion", 3).await?.is_empty());
     let hits = lexical.retrieve("photosynthesis", 3).await?;
@@ -108,8 +109,8 @@ async fn without_a_course_index_every_snapshot_is_ranked_by_its_words() -> Resul
 
 #[tokio::test]
 async fn a_ranking_keeps_to_its_scope_and_records_its_branches() -> Result<()> {
-    let pool = tests::pool().await?;
-    let (_, sources) = collection_fixture(&pool, ["doc-ownership", "doc-plants"]).await?;
+    let db = Database::new(tests::pool().await?);
+    let (_, sources) = collection_fixture(&db, ["doc-ownership", "doc-plants"]).await?;
     let collection = ReferenceCollection::lexical(&sources)?;
     let plants = sources
         .iter()

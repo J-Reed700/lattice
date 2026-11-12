@@ -70,7 +70,7 @@ async fn fixture() -> (SqlitePool, Arc<ChatImageService>, tempfile::TempDir) {
     let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
     sweep_gate.open();
     let service = Arc::new(ChatImageService::new(
-        Database::from(pool.clone()),
+        Database::new(pool.clone()),
         dir.path().join("chat-images"),
         Arc::new(NoNetwork),
         Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),

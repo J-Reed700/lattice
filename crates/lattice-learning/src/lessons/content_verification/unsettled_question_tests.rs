@@ -92,8 +92,9 @@ fn cuts_saved_without_the_unsettled_field_load() {
 #[tokio::test]
 async fn a_waiting_question_finding_sends_the_question_out_of_the_lesson() -> Result<()> {
     let pool = crate::test_support::pool().await?;
-    let (repo, job, lesson_id) = crate::content_verification::test_support::setup(&pool).await?;
-    let database = Database::from(pool.clone());
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = crate::content_verification::test_support::setup(&db).await?;
+    let database = db.clone();
     let lesson = shaped_lesson();
     let finding =
         ReviewFinding::reviewer(1, Some(FindingSite::Question(2)), "Alpha holds the line");
@@ -178,8 +179,9 @@ fn the_last_question_of_the_lesson_is_never_chosen() {
 #[tokio::test]
 async fn a_finding_that_waits_after_the_review_sends_its_question_out() -> Result<()> {
     let pool = crate::test_support::pool().await?;
-    let (repo, job, lesson_id) = crate::content_verification::test_support::setup(&pool).await?;
-    let database = Database::from(pool.clone());
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = crate::content_verification::test_support::setup(&db).await?;
+    let database = db.clone();
     let lesson = shaped_lesson();
     let finding =
         ReviewFinding::reviewer(1, Some(FindingSite::Question(2)), "Alpha holds the line");

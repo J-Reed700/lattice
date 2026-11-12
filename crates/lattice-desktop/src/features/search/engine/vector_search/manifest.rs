@@ -182,6 +182,7 @@ mod tests {
     use crate::infrastructure::vector_index::compression::{
         VectorIndexCompression, VectorQuantization,
     };
+    use lattice_core::shared::persistence::Database;
     use sqlx::SqlitePool;
     use std::path::PathBuf;
 
@@ -322,8 +323,9 @@ mod tests {
     #[tokio::test]
     async fn the_stamp_counts_only_this_generation_and_moves_with_every_write() {
         let pool = database().await;
+        let db = Database::new(pool.clone());
         assert_eq!(
-            read_source_stamp(&pool, "model-a", 4).await.unwrap(),
+            read_source_stamp(&db, "model-a", 4).await.unwrap(),
             SourceStamp {
                 row_count: 0,
                 write_counter: 0
@@ -339,13 +341,13 @@ mod tests {
             .await
             .unwrap();
 
-        let after_insert = read_source_stamp(&pool, "model-a", 4).await.unwrap();
+        let after_insert = read_source_stamp(&db, "model-a", 4).await.unwrap();
         assert_eq!(after_insert.row_count, 1);
         assert_eq!(after_insert.write_counter, 1);
 
         // Another model's vectors are not this index's business.
         assert_eq!(
-            read_source_stamp(&pool, "model-b", 4)
+            read_source_stamp(&db, "model-b", 4)
                 .await
                 .unwrap()
                 .row_count,
@@ -353,7 +355,7 @@ mod tests {
         );
         // …nor is the same model at another dimension.
         assert_eq!(
-            read_source_stamp(&pool, "model-a", 8)
+            read_source_stamp(&db, "model-a", 8)
                 .await
                 .unwrap()
                 .row_count,
@@ -372,7 +374,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            read_source_stamp(&pool, "model-a", 4)
+            read_source_stamp(&db, "model-a", 4)
                 .await
                 .unwrap()
                 .row_count,
@@ -381,7 +383,7 @@ mod tests {
 
         // A delete followed by an insert leaves the count alone; the counter
         // is the only thing that notices.
-        let before = read_source_stamp(&pool, "model-a", 4).await.unwrap();
+        let before = read_source_stamp(&db, "model-a", 4).await.unwrap();
         sqlx::query("DELETE FROM text_embeddings WHERE id = 'emb_c1'")
             .execute(&pool)
             .await
@@ -390,7 +392,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let after = read_source_stamp(&pool, "model-a", 4).await.unwrap();
+        let after = read_source_stamp(&db, "model-a", 4).await.unwrap();
         assert_eq!(after.row_count, before.row_count);
         assert_ne!(after.write_counter, before.write_counter);
     }

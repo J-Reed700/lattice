@@ -89,8 +89,9 @@ impl WaitObserver for Recorder {
 
 async fn generate(llm: &dyn LLMPort) -> Result<usize> {
     let pool = crate::tests::pool().await?;
+    let db = lattice_core::shared::persistence::Database::new(pool);
     let program = crate::service::generate(
-        &LearningRepository::new(pool),
+        &LearningRepository::new(db),
         &crate::outline_draft::DraftRunRegistry::new(),
         llm,
         request(LearningCourseDepth::Course),

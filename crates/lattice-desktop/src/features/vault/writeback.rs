@@ -630,6 +630,7 @@ mod tests {
     #[tokio::test]
     async fn failed_index_action_keeps_the_durable_write_for_retry() {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let db = Database::new(pool.clone());
         sqlx::query(
             "CREATE TABLE daily_notes_workspace(id TEXT PRIMARY KEY, title TEXT, content TEXT)",
         )
@@ -646,43 +647,35 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let write = super::super::repository::pending(&pool)
+        let write = super::super::repository::pending(&db)
             .await
             .unwrap()
             .remove(0);
 
-        super::super::repository::mark_mirrored(&pool, &write)
+        super::super::repository::mark_mirrored(&db, &write)
             .await
             .unwrap();
-        assert!(settle_write(
-            &Database::from(pool.clone()),
-            &write,
-            Err("simulated index failure".into())
-        )
-        .await
-        .is_err());
-        assert!(!super::super::repository::has_pending(&pool, "note")
+        assert!(
+            settle_write(&db, &write, Err("simulated index failure".into()))
+                .await
+                .is_err()
+        );
+        assert!(!super::super::repository::has_pending(&db, "note")
             .await
             .unwrap());
         assert_eq!(
-            super::super::repository::pending(&pool)
-                .await
-                .unwrap()
-                .len(),
+            super::super::repository::pending(&db).await.unwrap().len(),
             0
         );
         sqlx::query("UPDATE daily_notes_workspace SET content = 'new edit' WHERE id = 'note'")
             .execute(&pool)
             .await
             .unwrap();
-        assert!(super::super::repository::has_pending(&pool, "note")
+        assert!(super::super::repository::has_pending(&db, "note")
             .await
             .unwrap());
         assert_eq!(
-            super::super::repository::pending(&pool)
-                .await
-                .unwrap()
-                .len(),
+            super::super::repository::pending(&db).await.unwrap().len(),
             1
         );
     }

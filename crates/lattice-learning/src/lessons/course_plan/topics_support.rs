@@ -123,9 +123,9 @@ impl LLMPort for Topics {
     }
 }
 
-pub(super) async fn saved_program(pool: &SqlitePool) -> LearningProgramDto {
+pub(super) async fn saved_program(db: &Database) -> LearningProgramDto {
     let program = crate::tests::fixture();
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(db.clone())
         .create(&program)
         .await
         .unwrap();
@@ -140,23 +140,12 @@ pub(super) fn ids(program: &LearningProgramDto) -> Vec<String> {
 }
 
 /// A saved course whose topics are planned, with the outline revision.
-pub(super) async fn planned_program(
-    pool: &SqlitePool,
-    model: &Topics,
-) -> (LearningProgramDto, i64) {
-    let program = saved_program(pool).await;
-    let revision = outline_revision(&Database::from(pool.clone()), &program.summary.id)
+pub(super) async fn planned_program(db: &Database, model: &Topics) -> (LearningProgramDto, i64) {
+    let program = saved_program(db).await;
+    let revision = outline_revision(db, &program.summary.id).await.unwrap();
+    ensure(db, model, &program, revision, &Default::default())
         .await
         .unwrap();
-    ensure(
-        &Database::from(pool.clone()),
-        model,
-        &program,
-        revision,
-        &Default::default(),
-    )
-    .await
-    .unwrap();
     (program, revision)
 }
 
@@ -173,12 +162,12 @@ pub(super) fn topics_of(lesson_id: &str, idea: &str) -> PlannedLesson {
 /// Accepts the course if it is a draft and starts a lesson-preparation job
 /// for `lesson_id`, which is running when `running` is true.
 pub(super) async fn lesson_job(
-    pool: &SqlitePool,
+    db: &Database,
     program: &LearningProgramDto,
     lesson_id: &str,
     running: bool,
 ) -> String {
-    let repo = LearningRepository::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let current = repo.get(&program.summary.id).await.unwrap();
     if current.summary.status == crate::dto::LearningProgramStatus::Draft {
         repo.accept(&AcceptLearningProgramRequestDto {
@@ -190,7 +179,7 @@ pub(super) async fn lesson_job(
         .unwrap();
     }
     let program = repo.get(&program.summary.id).await.unwrap();
-    let job = crate::curriculum_repository::LearningCurriculumRepository::new(pool.clone())
+    let job = crate::curriculum_repository::LearningCurriculumRepository::new(db.clone())
         .start_lesson_job(&StartLearningGenerationJobRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
             program_id: program.summary.id.clone(),
@@ -202,7 +191,7 @@ pub(super) async fn lesson_job(
         .await
         .unwrap();
     if running {
-        assert!(JobStore::new(pool.clone())
+        assert!(JobStore::new(db.clone())
             .claim(&job.id)
             .await
             .unwrap()
@@ -212,16 +201,16 @@ pub(super) async fn lesson_job(
 }
 
 /// Runs the course-plan job `job_id` to its end on `llm`.
-pub(super) async fn run_plan_job(pool: &SqlitePool, llm: Arc<dyn LLMPort>, job_id: &str) {
+pub(super) async fn run_plan_job(db: &Database, llm: Arc<dyn LLMPort>, job_id: &str) {
     let worker = CoursePlanWorker {
-        database: Database::from(pool.clone()),
+        database: db.clone(),
         load_llm: Arc::new(move || {
             let llm = llm.clone();
             Box::pin(async move { Ok(crate::generation_jobs::pinned_for_test(llm)) })
         }),
         course_setups: Default::default(),
     };
-    let runtime = JobRuntime::new(Database::from(pool.clone()));
+    let runtime = JobRuntime::new(db.clone());
     runtime
         .register(COURSE_PLAN, Arc::new(worker), course_plan_job_config())
         .await

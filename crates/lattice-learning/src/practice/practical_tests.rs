@@ -84,8 +84,8 @@ fn generated() -> GeneratedPracticalActivity {
 async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluators() -> Result<()> {
     use crate::embedded_runtime::LearningBuiltinRuntime;
     use crate::lab_runtime::LearningLabFile;
-    let (pool, program_id, lesson_id, _) = fixture().await?;
-    let repository = LearningPracticalRepository::new(pool.clone());
+    let (pool, database, program_id, lesson_id, _) = fixture().await?;
+    let repository = LearningPracticalRepository::new(database.clone());
     let runs = crate::practical_runs::PracticalRunRegistry::new();
     let background = lattice_core::shared::runtime::background::BackgroundTasks::default();
     let runtimes = crate::embedded_runtime::BuiltinRuntimes::for_tests();
@@ -94,7 +94,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
         activity_id: id(),
         program_id: program_id.clone(),
         lesson_id,
-        expected_program_revision: LearningRepository::new(pool.clone())
+        expected_program_revision: LearningRepository::new(database.clone())
             .get(&program_id)
             .await?
             .summary
@@ -191,7 +191,7 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
         .id,
         passed.id
     );
-    let reopened = LearningPracticalRepository::new(pool.clone())
+    let reopened = LearningPracticalRepository::new(database.clone())
         .workspace(&program_id)
         .await?
         .with_capabilities(runtimes.capabilities(), Vec::new());
@@ -255,8 +255,8 @@ async fn builtin_run_executes_real_code_preserves_attempts_and_protects_evaluato
 
 #[tokio::test]
 async fn runtime_setup_validates_before_download_and_replays_committed_profile() -> Result<()> {
-    let (pool, program_id, _, _) = fixture().await?;
-    let repository = LearningPracticalRepository::new(pool);
+    let (_, database, program_id, _, _) = fixture().await?;
+    let repository = LearningPracticalRepository::new(database);
     let request = PrepareLearningRuntimePresetRequestDto {
         operation_id: id(),
         program_id: program_id.clone(),
@@ -332,9 +332,9 @@ async fn activity(
 #[tokio::test]
 async fn practical_activity_replay_is_safe_and_hidden_checks_never_reach_the_renderer() -> Result<()>
 {
-    let (pool, program_id, lesson_id, _) = fixture().await?;
-    let programs = LearningRepository::new(pool.clone());
-    let repository = LearningPracticalRepository::new(pool.clone());
+    let (pool, database, program_id, lesson_id, _) = fixture().await?;
+    let programs = LearningRepository::new(database.clone());
+    let repository = LearningPracticalRepository::new(database.clone());
     let (request, activity_id) = activity(&repository, &programs, &program_id, &lesson_id).await?;
     let runtimes = crate::embedded_runtime::BuiltinRuntimes::for_tests();
 
@@ -376,9 +376,9 @@ async fn practical_activity_replay_is_safe_and_hidden_checks_never_reach_the_ren
 #[tokio::test]
 async fn practical_draft_is_revision_scoped_idempotent_and_rejects_private_files() -> Result<()> {
     use crate::lab_runtime::LearningLabFile;
-    let (pool, program_id, lesson_id, _) = fixture().await?;
-    let programs = LearningRepository::new(pool.clone());
-    let repository = LearningPracticalRepository::new(pool.clone());
+    let (pool, database, program_id, lesson_id, _) = fixture().await?;
+    let programs = LearningRepository::new(database.clone());
+    let repository = LearningPracticalRepository::new(database.clone());
     let (_, activity_id) = activity(&repository, &programs, &program_id, &lesson_id).await?;
     let scope = GetLearningPracticalDraftRequestDto {
         program_id: program_id.clone(),
@@ -516,9 +516,10 @@ async fn practical_draft_survives_closing_and_reopening_file_backed_database() -
         .run(&pool)
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
-    let (pool, program_id, lesson_id, _) = fixture_on_pool(pool).await?;
-    let repository = LearningPracticalRepository::new(pool.clone());
-    let programs = LearningRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let (_, program_id, lesson_id, _) = fixture_on_pool(pool, &database).await?;
+    let repository = LearningPracticalRepository::new(database.clone());
+    let programs = LearningRepository::new(database.clone());
     let (_, activity_id) = activity(&repository, &programs, &program_id, &lesson_id).await?;
     let request = SaveLearningPracticalDraftRequestDto {
         operation_id: id(),
@@ -532,13 +533,15 @@ async fn practical_draft_survives_closing_and_reopening_file_backed_database() -
         }],
     };
     let saved = repository.save_draft(&request, "restart-payload").await?;
-    pool.close().await;
+    database.close().await;
 
-    let reopened = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(options())
-        .await
-        .map_err(db)?;
+    let reopened = Database::new(
+        SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options())
+            .await
+            .map_err(db)?,
+    );
     let restored = LearningPracticalRepository::new(reopened.clone())
         .get_draft(&GetLearningPracticalDraftRequestDto {
             program_id,
@@ -554,9 +557,9 @@ async fn practical_draft_survives_closing_and_reopening_file_backed_database() -
 
 #[tokio::test]
 async fn simulation_uses_cas_replays_mutations_and_records_only_uncertain_evidence() -> Result<()> {
-    let (pool, program_id, lesson_id, outcome_id) = fixture().await?;
-    let programs = LearningRepository::new(pool.clone());
-    let repository = LearningPracticalRepository::new(pool.clone());
+    let (pool, database, program_id, lesson_id, outcome_id) = fixture().await?;
+    let programs = LearningRepository::new(database.clone());
+    let repository = LearningPracticalRepository::new(database.clone());
     let (_, activity_id) = activity(&repository, &programs, &program_id, &lesson_id).await?;
     let session_id = id();
     let start = StartLearningSimulationRequestDto {
@@ -673,9 +676,9 @@ async fn simulation_uses_cas_replays_mutations_and_records_only_uncertain_eviden
 
 #[tokio::test]
 async fn runtime_profiles_use_cas_and_restart_recovery_marks_runs_interrupted() -> Result<()> {
-    let (pool, program_id, lesson_id, _) = fixture().await?;
-    let programs = LearningRepository::new(pool.clone());
-    let repository = LearningPracticalRepository::new(pool.clone());
+    let (pool, database, program_id, lesson_id, _) = fixture().await?;
+    let programs = LearningRepository::new(database.clone());
+    let repository = LearningPracticalRepository::new(database.clone());
     let profile_id = id();
     let create = SaveLearningRuntimeProfileRequestDto {
         operation_id: id(),
@@ -828,8 +831,8 @@ async fn runtime_profiles_use_cas_and_restart_recovery_marks_runs_interrupted() 
 
 #[tokio::test]
 async fn a_database_error_while_settling_runs_at_startup_does_not_fail_setup() -> Result<()> {
-    let (pool, ..) = fixture().await?;
-    let repository = LearningPracticalRepository::new(pool.clone());
+    let (pool, database, ..) = fixture().await?;
+    let repository = LearningPracticalRepository::new(database.clone());
     sqlx::query("ALTER TABLE learning_practical_runs RENAME TO learning_practical_runs_away")
         .execute(&pool)
         .await
@@ -847,13 +850,13 @@ async fn a_database_error_while_settling_runs_at_startup_does_not_fail_setup() -
 
 #[tokio::test]
 async fn interview_activity_with_plan_roundtrips_and_hides_internal_plan_file() -> Result<()> {
-    let (pool, program_id, lesson_id, _) = fixture().await?;
-    let repository = LearningPracticalRepository::new(pool.clone());
-    let programs = LearningRepository::new(pool.clone());
+    let (pool, database, program_id, lesson_id, _) = fixture().await?;
+    let repository = LearningPracticalRepository::new(database.clone());
+    let programs = LearningRepository::new(database.clone());
     let research_ids = crate::interview_research::research_interview_target(
         &TestResearchLLM(serde_json::json!({"needs":[]})),
         &lattice_core::application::ports::MockWebService::new(),
-        &crate::source_library::LearningSourceLibraryRepository::new(Database::from(pool.clone())),
+        &crate::source_library::LearningSourceLibraryRepository::new(database.clone()),
         &program_id,
         &id(),
         "Streaming systems",
@@ -987,7 +990,7 @@ async fn interview_activity_with_plan_roundtrips_and_hides_internal_plan_file() 
     use crate::{pack_repository::LearningPackRepository, portability_dto::*};
     let directory = tempfile::tempdir()?;
     let packs = LearningPackRepository::new(
-        pool.clone(),
+        database.clone(),
         directory.path().join("packs"),
         directory.path().join("app"),
     );
@@ -1082,8 +1085,8 @@ async fn interview_research_ingests_context_and_web_pages_idempotently() -> Resu
     use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchResult};
     use lattice_core::application::ports::MockWebService;
 
-    let (pool, program_id, _lesson_id, _) = fixture().await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let (_, database, program_id, _lesson_id, _) = fixture().await?;
+    let library = LearningSourceLibraryRepository::new(database.clone());
     let existing_count = library.workspace(&program_id).await?.sources.len();
     let llm = TestResearchLLM(
         serde_json::json!({"needs":[{"query":"Stripe distributed systems architecture","kind":"web"}]}),
@@ -1237,8 +1240,8 @@ async fn interview_research_rejects_redirects_outside_structured_site_scope() ->
     use crate::source_library::LearningSourceLibraryRepository;
     use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchResult};
     use lattice_core::application::ports::MockWebService;
-    let (pool, program_id, _, _) = fixture().await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool));
+    let (_, database, program_id, _, _) = fixture().await?;
+    let library = LearningSourceLibraryRepository::new(database);
     let existing_count = library.workspace(&program_id).await?.sources.len();
     let web = MockWebService::new();
     let address = "https://acme.example/engineering";
@@ -1569,9 +1572,9 @@ async fn a_long_simulation_turn_is_read_not_refused() -> Result<()> {
 
 #[tokio::test]
 async fn a_long_model_name_is_recorded_with_the_activity() -> Result<()> {
-    let (pool, program_id, lesson_id, _) = fixture().await?;
-    let programs = LearningRepository::new(pool.clone());
-    let repository = LearningPracticalRepository::new(pool.clone());
+    let (_, database, program_id, lesson_id, _) = fixture().await?;
+    let programs = LearningRepository::new(database.clone());
+    let repository = LearningPracticalRepository::new(database.clone());
     let request = GenerateLearningPracticalActivityRequestDto {
         operation_id: id(),
         activity_id: id(),
@@ -1600,9 +1603,9 @@ async fn a_long_model_name_is_recorded_with_the_activity() -> Result<()> {
 
 #[tokio::test]
 async fn a_long_simulation_reply_is_saved_whole() -> Result<()> {
-    let (pool, program_id, lesson_id, _) = fixture().await?;
-    let programs = LearningRepository::new(pool.clone());
-    let repository = LearningPracticalRepository::new(pool.clone());
+    let (_, database, program_id, lesson_id, _) = fixture().await?;
+    let programs = LearningRepository::new(database.clone());
+    let repository = LearningPracticalRepository::new(database.clone());
     let (_, activity_id) = activity(&repository, &programs, &program_id, &lesson_id).await?;
     let session_id = id();
     repository
@@ -1642,9 +1645,9 @@ async fn a_long_simulation_reply_is_saved_whole() -> Result<()> {
 #[tokio::test]
 async fn a_learners_long_interview_turn_is_held_to_the_chat_limit() -> Result<()> {
     use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
-    let (pool, program_id, lesson_id, _) = fixture().await?;
-    let programs = LearningRepository::new(pool.clone());
-    let repository = LearningPracticalRepository::new(pool.clone());
+    let (_, database, program_id, lesson_id, _) = fixture().await?;
+    let programs = LearningRepository::new(database.clone());
+    let repository = LearningPracticalRepository::new(database.clone());
     let (_, activity_id) = activity(&repository, &programs, &program_id, &lesson_id).await?;
     let session_id = id();
     repository

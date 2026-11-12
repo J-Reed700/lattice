@@ -13,15 +13,16 @@ use crate::persistence::db;
 use crate::tests::pool;
 use lattice_core::domain::learning::drills::{DrillFile, Material};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
 /// A spec for code in Go on a new course, built from its spacing lesson.
-async fn go_spec(pool: &sqlx::SqlitePool) -> Result<DrillSpec> {
+async fn go_spec(pool: &SqlitePool, database: &Database) -> Result<DrillSpec> {
     Ok(DrillSpec {
         material: Material::code("go"),
         lines: 30,
-        ..code_spec(pool).await?
+        ..code_spec(pool, database).await?
     })
 }
 
@@ -42,6 +43,7 @@ fn file(path: &str, text: &str) -> Value {
 async fn the_code_of_a_language_without_a_runner_is_accepted_with_its_lines_made_plain(
 ) -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let model = ScriptedModel::new([
         code_check_answer(true),
         json!({
@@ -51,8 +53,8 @@ async fn the_code_of_a_language_without_a_runner_is_accepted_with_its_lines_made
         .to_string(),
     ]);
     let grader = idle_grader();
-    let code = build(&pool, &model, None, &grader)
-        .clean_code(&go_spec(&pool).await?)
+    let code = build(&database, &model, None, &grader)
+        .clean_code(&go_spec(&pool, &database).await?)
         .await?;
     assert_eq!(
         code.files,
@@ -88,11 +90,12 @@ async fn the_code_of_a_language_without_a_runner_is_accepted_with_its_lines_made
 #[tokio::test]
 async fn a_runner_language_asks_for_a_suite_and_runs_it_on_the_code() -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let model = ScriptedModel::new([code_check_answer(true), clean_code_answer()]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let code = build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&code_spec(&pool).await?)
+    let code = build(&database, &model, Some(&runner), &grader)
+        .clean_code(&code_spec(&pool, &database).await?)
         .await?;
     assert_eq!(code.files, files());
     assert_eq!(code.suite.as_deref(), Some(SUITE));
@@ -120,6 +123,7 @@ async fn a_runner_language_asks_for_a_suite_and_runs_it_on_the_code() -> Result<
 #[tokio::test]
 async fn a_suite_that_fails_is_sent_back_once_with_the_output_and_then_accepted() -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let model = ScriptedModel::new([
         code_check_answer(true),
         clean_code_answer(),
@@ -132,8 +136,8 @@ async fn a_suite_that_fails_is_sent_back_once_with_the_output_and_then_accepted(
         RunOutcome::Passed,
     ]);
     let grader = idle_grader();
-    let code = build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&code_spec(&pool).await?)
+    let code = build(&database, &model, Some(&runner), &grader)
+        .clean_code(&code_spec(&pool, &database).await?)
         .await?;
     let requests = model.requests();
     assert_eq!(requests.len(), 3);
@@ -180,6 +184,7 @@ async fn a_suite_that_fails_is_sent_back_once_with_the_output_and_then_accepted(
 #[tokio::test]
 async fn a_suite_that_fails_twice_fails_the_stage_with_the_output() -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let model = ScriptedModel::new([
         code_check_answer(true),
         clean_code_answer(),
@@ -189,8 +194,8 @@ async fn a_suite_that_fails_twice_fails_the_stage_with_the_output() -> Result<()
         output: "AssertionError: boom".into(),
     });
     let grader = idle_grader();
-    let error = build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&code_spec(&pool).await?)
+    let error = build(&database, &model, Some(&runner), &grader)
+        .clean_code(&code_spec(&pool, &database).await?)
         .await
         .unwrap_err();
     assert!(
@@ -212,6 +217,7 @@ fn timed_out(output: &str) -> RunOutcome {
 async fn a_suite_that_does_not_finish_is_sent_back_once_like_a_failure_with_what_it_wrote(
 ) -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let model = ScriptedModel::new([
         code_check_answer(true),
         clean_code_answer(),
@@ -219,8 +225,8 @@ async fn a_suite_that_does_not_finish_is_sent_back_once_like_a_failure_with_what
     ]);
     let runner = FakeRunner::scripted(vec![timed_out("waiting 1\nwaiting 2"), RunOutcome::Passed]);
     let grader = idle_grader();
-    let code = build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&code_spec(&pool).await?)
+    let code = build(&database, &model, Some(&runner), &grader)
+        .clean_code(&code_spec(&pool, &database).await?)
         .await?;
     assert_eq!(code.files, files());
     let requests = model.requests();
@@ -267,6 +273,7 @@ async fn a_suite_that_does_not_finish_is_sent_back_once_like_a_failure_with_what
 #[tokio::test]
 async fn a_timeout_that_wrote_nothing_says_only_that_the_suite_did_not_finish() -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let model = ScriptedModel::new([
         code_check_answer(true),
         clean_code_answer(),
@@ -274,8 +281,8 @@ async fn a_timeout_that_wrote_nothing_says_only_that_the_suite_did_not_finish() 
     ]);
     let runner = FakeRunner::scripted(vec![timed_out(""), RunOutcome::Passed]);
     let grader = idle_grader();
-    build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&code_spec(&pool).await?)
+    build(&database, &model, Some(&runner), &grader)
+        .clean_code(&code_spec(&pool, &database).await?)
         .await?;
     let reask = last(&model.requests()[2]);
     assert!(
@@ -289,6 +296,7 @@ async fn a_timeout_that_wrote_nothing_says_only_that_the_suite_did_not_finish() 
 #[tokio::test]
 async fn a_suite_that_does_not_finish_twice_fails_the_stage_as_an_unusable_answer() -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let model = ScriptedModel::new([
         code_check_answer(true),
         clean_code_answer(),
@@ -296,8 +304,8 @@ async fn a_suite_that_does_not_finish_twice_fails_the_stage_as_an_unusable_answe
     ]);
     let runner = FakeRunner::new(|_, _| timed_out("still going"));
     let grader = idle_grader();
-    let error = build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&code_spec(&pool).await?)
+    let error = build(&database, &model, Some(&runner), &grader)
+        .clean_code(&code_spec(&pool, &database).await?)
         .await
         .unwrap_err();
     assert!(
@@ -321,6 +329,7 @@ async fn a_failure_and_a_timeout_in_either_order_fail_the_stage() -> Result<()> 
         (vec![timed_out(""), failed()], "AssertionError: boom"),
     ] {
         let pool = pool().await?;
+        let database = Database::new(pool.clone());
         let model = ScriptedModel::new([
             code_check_answer(true),
             clean_code_answer(),
@@ -328,8 +337,8 @@ async fn a_failure_and_a_timeout_in_either_order_fail_the_stage() -> Result<()> 
         ]);
         let runner = FakeRunner::scripted(outcomes);
         let grader = idle_grader();
-        let error = build(&pool, &model, Some(&runner), &grader)
-            .clean_code(&code_spec(&pool).await?)
+        let error = build(&database, &model, Some(&runner), &grader)
+            .clean_code(&code_spec(&pool, &database).await?)
             .await
             .unwrap_err();
         assert!(
@@ -345,6 +354,7 @@ async fn a_failure_and_a_timeout_in_either_order_fail_the_stage() -> Result<()> 
 async fn a_runtime_that_is_not_there_is_an_unavailable_service_and_the_answer_is_not_blamed(
 ) -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let model = ScriptedModel::new([
         code_check_answer(true),
         clean_code_answer(),
@@ -354,8 +364,8 @@ async fn a_runtime_that_is_not_there_is_an_unavailable_service_and_the_answer_is
         why: "The bundled Python runtime is missing.".into(),
     });
     let grader = idle_grader();
-    let error = build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&code_spec(&pool).await?)
+    let error = build(&database, &model, Some(&runner), &grader)
+        .clean_code(&code_spec(&pool, &database).await?)
         .await
         .unwrap_err();
     assert!(
@@ -369,6 +379,7 @@ async fn a_runtime_that_is_not_there_is_an_unavailable_service_and_the_answer_is
 #[tokio::test]
 async fn a_cancelled_run_is_a_cancelled_build_and_the_answer_is_not_blamed() -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let model = ScriptedModel::new([
         code_check_answer(true),
         clean_code_answer(),
@@ -376,8 +387,8 @@ async fn a_cancelled_run_is_a_cancelled_build_and_the_answer_is_not_blamed() -> 
     ]);
     let runner = FakeRunner::new(|_, _| RunOutcome::Cancelled);
     let grader = idle_grader();
-    let error = build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&code_spec(&pool).await?)
+    let error = build(&database, &model, Some(&runner), &grader)
+        .clean_code(&code_spec(&pool, &database).await?)
         .await
         .unwrap_err();
     assert!(matches!(&error, AppError::Cancelled(_)), "{error:?}");
@@ -388,11 +399,12 @@ async fn a_cancelled_run_is_a_cancelled_build_and_the_answer_is_not_blamed() -> 
 /// The model's first answer is `bad`, which has to be refused with a message holding `fragment`; the second is good.
 async fn refused_then_accepted(bad: String, fragment: &str) -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let model = ScriptedModel::new([code_check_answer(true), bad, clean_code_answer()]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let code = build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&code_spec(&pool).await?)
+    let code = build(&database, &model, Some(&runner), &grader)
+        .clean_code(&code_spec(&pool, &database).await?)
         .await?;
     assert_eq!(code.files, files(), "{fragment}");
     let requests = model.requests();
@@ -484,6 +496,7 @@ async fn an_answer_a_drill_cannot_be_made_from_is_refused_with_what_to_change() 
 #[tokio::test]
 async fn an_answer_refused_twice_fails_the_stage_with_the_second_reason() -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let limiter = super::support::limiter();
     let model = ScriptedModel::new([
         code_check_answer(true),
@@ -492,8 +505,8 @@ async fn an_answer_refused_twice_fails_the_stage_with_the_second_reason() -> Res
     ]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let error = build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&code_spec(&pool).await?)
+    let error = build(&database, &model, Some(&runner), &grader)
+        .clean_code(&code_spec(&pool, &database).await?)
         .await
         .unwrap_err();
     assert!(
@@ -508,7 +521,8 @@ async fn an_answer_refused_twice_fails_the_stage_with_the_second_reason() -> Res
 #[tokio::test]
 async fn a_testing_pattern_asks_for_a_test_file_that_is_part_of_the_code() -> Result<()> {
     let pool = pool().await?;
-    let mut spec = code_spec(&pool).await?;
+    let database = Database::new(pool.clone());
+    let mut spec = code_spec(&pool, &database).await?;
     spec.patterns = vec!["testing.assertion_free_test".into()];
     let limiter = super::support::limiter();
     let without = answer(vec![file("src/limiter.py", &limiter)], Some(SUITE));
@@ -522,7 +536,7 @@ async fn a_testing_pattern_asks_for_a_test_file_that_is_part_of_the_code() -> Re
     let model = ScriptedModel::new([code_check_answer(true), without, with]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let code = build(&pool, &model, Some(&runner), &grader)
+    let code = build(&database, &model, Some(&runner), &grader)
         .clean_code(&spec)
         .await?;
     assert_eq!(code.tests, ["tests/test_limiter.py"]);
@@ -535,11 +549,12 @@ async fn a_testing_pattern_asks_for_a_test_file_that_is_part_of_the_code() -> Re
 #[tokio::test]
 async fn the_writer_is_told_nothing_of_the_patterns_to_plant() -> Result<()> {
     let pool = pool().await?;
+    let database = Database::new(pool.clone());
     let model = ScriptedModel::new([code_check_answer(true), clean_code_answer()]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&code_spec(&pool).await?)
+    build(&database, &model, Some(&runner), &grader)
+        .clean_code(&code_spec(&pool, &database).await?)
         .await?;
     let sent: String = messages(&model.requests()[1])
         .into_iter()
@@ -554,11 +569,12 @@ async fn the_writer_is_told_nothing_of_the_patterns_to_plant() -> Result<()> {
 #[tokio::test]
 async fn the_writer_is_given_the_lessons_brief_and_no_domain() -> Result<()> {
     let pool = pool().await?;
-    let spec = code_spec(&pool).await?;
+    let database = Database::new(pool.clone());
+    let spec = code_spec(&pool, &database).await?;
     let model = ScriptedModel::new([code_check_answer(true), clean_code_answer()]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    build(&pool, &model, Some(&runner), &grader)
+    build(&database, &model, Some(&runner), &grader)
         .clean_code(&spec)
         .await?;
     let prompt = last(&model.requests()[1]);
@@ -579,11 +595,12 @@ async fn the_writer_is_given_the_lessons_brief_and_no_domain() -> Result<()> {
 #[tokio::test]
 async fn the_clean_stage_keeps_the_brief_the_writer_was_shown_and_no_fit_basis() -> Result<()> {
     let pool = pool().await?;
-    let spec = code_spec(&pool).await?;
+    let database = Database::new(pool.clone());
+    let spec = code_spec(&pool, &database).await?;
     let model = ScriptedModel::new([code_check_answer(true), clean_code_answer()]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let code = build(&pool, &model, Some(&runner), &grader)
+    let code = build(&database, &model, Some(&runner), &grader)
         .clean_code(&spec)
         .await?;
     let brief = code.brief.clone().expect("the brief the writer was shown");
@@ -599,8 +616,9 @@ async fn the_clean_stage_keeps_the_brief_the_writer_was_shown_and_no_fit_basis()
 async fn a_code_spec_without_a_lesson_or_with_one_of_another_course_fails_before_any_model_call(
 ) -> Result<()> {
     let pool = pool().await?;
-    let spec = code_spec(&pool).await?;
-    let other = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let spec = code_spec(&pool, &database).await?;
+    let other = course(&database).await?;
     let foreign = lesson_titled(&pool, &other, SPACING_LESSON).await?;
     let cases = [
         DrillSpec {
@@ -620,7 +638,7 @@ async fn a_code_spec_without_a_lesson_or_with_one_of_another_course_fails_before
         let model = ScriptedModel::new([clean_code_answer()]);
         let runner = FakeRunner::passing();
         let grader = idle_grader();
-        let error = build(&pool, &model, Some(&runner), &grader)
+        let error = build(&database, &model, Some(&runner), &grader)
             .clean_code(&case)
             .await
             .unwrap_err();
@@ -684,14 +702,14 @@ async fn verdicts(pool: &SqlitePool, lesson_id: &str) -> Result<Vec<(i64, String
 /// Runs the clean stage for `spec` on a model that answers `answers` in order, and returns the model and what the
 /// stage came to.
 async fn clean_with(
-    pool: &SqlitePool,
+    database: &Database,
     spec: &DrillSpec,
     answers: Vec<String>,
 ) -> (ScriptedModel, Result<CleanCode>) {
     let model = ScriptedModel::new(answers);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let built = build(pool, &model, Some(&runner), &grader)
+    let built = build(database, &model, Some(&runner), &grader)
         .clean_code(spec)
         .await;
     (model, built)
@@ -712,11 +730,12 @@ async fn fits_code(pool: &SqlitePool, spec: &DrillSpec) -> Result<bool> {
 async fn before_the_code_is_written_the_lesson_is_asked_whether_it_teaches_what_code_can_show(
 ) -> Result<()> {
     let pool = pool().await?;
-    let spec = code_spec(&pool).await?;
+    let database = Database::new(pool.clone());
+    let spec = code_spec(&pool, &database).await?;
     let lesson = spec.lesson_id.clone().expect("a lesson");
     let facts = lesson_facts(&pool, &lesson).await?;
     let (model, built) = clean_with(
-        &pool,
+        &database,
         &spec,
         vec![code_check_answer(true), clean_code_answer()],
     )
@@ -758,10 +777,11 @@ async fn before_the_code_is_written_the_lesson_is_asked_whether_it_teaches_what_
 async fn a_lesson_that_teaches_nothing_code_can_show_gives_no_drill_and_writes_no_code(
 ) -> Result<()> {
     let pool = pool().await?;
-    let spec = code_spec(&pool).await?;
+    let database = Database::new(pool.clone());
+    let spec = code_spec(&pool, &database).await?;
     let lesson = spec.lesson_id.clone().expect("a lesson");
     let program = spec.course().expect("a course").to_owned();
-    let (model, built) = clean_with(&pool, &spec, vec![code_check_answer(false)]).await;
+    let (model, built) = clean_with(&database, &spec, vec![code_check_answer(false)]).await;
     let error = built.unwrap_err();
 
     assert!(
@@ -799,17 +819,18 @@ async fn a_lesson_that_teaches_nothing_code_can_show_gives_no_drill_and_writes_n
 #[tokio::test]
 async fn a_lesson_judged_before_on_the_same_basis_is_not_asked_again() -> Result<()> {
     let pool = pool().await?;
-    let spec = code_spec(&pool).await?;
+    let database = Database::new(pool.clone());
+    let spec = code_spec(&pool, &database).await?;
     let lesson = spec.lesson_id.clone().expect("a lesson");
     let (_, first) = clean_with(
-        &pool,
+        &database,
         &spec,
         vec![code_check_answer(true), clean_code_answer()],
     )
     .await;
     first?;
 
-    let (model, second) = clean_with(&pool, &spec, vec![clean_code_answer()]).await;
+    let (model, second) = clean_with(&database, &spec, vec![clean_code_answer()]).await;
     second?;
     assert_eq!(model.purposes(), ["clean code"]);
     assert_eq!(verdicts(&pool, &lesson).await?.len(), 1);
@@ -819,11 +840,12 @@ async fn a_lesson_judged_before_on_the_same_basis_is_not_asked_again() -> Result
 #[tokio::test]
 async fn a_lesson_turned_down_before_on_the_same_basis_is_refused_without_a_call() -> Result<()> {
     let pool = pool().await?;
-    let spec = code_spec(&pool).await?;
-    let (_, first) = clean_with(&pool, &spec, vec![code_check_answer(false)]).await;
+    let database = Database::new(pool.clone());
+    let spec = code_spec(&pool, &database).await?;
+    let (_, first) = clean_with(&database, &spec, vec![code_check_answer(false)]).await;
     first.unwrap_err();
 
-    let (model, second) = clean_with(&pool, &spec, Vec::new()).await;
+    let (model, second) = clean_with(&database, &spec, Vec::new()).await;
     let error = second.unwrap_err();
     assert!(
         matches!(&error, AppError::InvalidInput(message) if *message == nothing_to_show(SPACING_LESSON)),
@@ -836,10 +858,11 @@ async fn a_lesson_turned_down_before_on_the_same_basis_is_refused_without_a_call
 #[tokio::test]
 async fn a_verdict_made_on_another_basis_is_asked_again() -> Result<()> {
     let pool = pool().await?;
-    let spec = code_spec(&pool).await?;
+    let database = Database::new(pool.clone());
+    let spec = code_spec(&pool, &database).await?;
     let lesson = spec.lesson_id.clone().expect("a lesson");
     let facts = lesson_facts(&pool, &lesson).await?;
-    let (_, first) = clean_with(&pool, &spec, vec![code_check_answer(false)]).await;
+    let (_, first) = clean_with(&database, &spec, vec![code_check_answer(false)]).await;
     first.unwrap_err();
     sqlx::query("UPDATE learning_drill_code_checks SET basis='stale'")
         .execute(&pool)
@@ -847,7 +870,7 @@ async fn a_verdict_made_on_another_basis_is_asked_again() -> Result<()> {
         .map_err(db)?;
 
     let (model, second) = clean_with(
-        &pool,
+        &database,
         &spec,
         vec![code_check_answer(true), clean_code_answer()],
     )
@@ -869,10 +892,11 @@ async fn a_verdict_made_on_another_basis_is_asked_again() -> Result<()> {
 #[tokio::test]
 async fn changing_the_lessons_objective_asks_again() -> Result<()> {
     let pool = pool().await?;
-    let spec = code_spec(&pool).await?;
+    let database = Database::new(pool.clone());
+    let spec = code_spec(&pool, &database).await?;
     let lesson = spec.lesson_id.clone().expect("a lesson");
     let (_, first) = clean_with(
-        &pool,
+        &database,
         &spec,
         vec![code_check_answer(true), clean_code_answer()],
     )
@@ -888,7 +912,7 @@ async fn changing_the_lessons_objective_asks_again() -> Result<()> {
         .map_err(db)?;
 
     let (model, second) = clean_with(
-        &pool,
+        &database,
         &spec,
         vec![code_check_answer(true), clean_code_answer()],
     )
@@ -905,10 +929,11 @@ async fn changing_the_lessons_objective_asks_again() -> Result<()> {
 #[tokio::test]
 async fn a_blank_reason_is_asked_for_again_once() -> Result<()> {
     let pool = pool().await?;
-    let spec = code_spec(&pool).await?;
+    let database = Database::new(pool.clone());
+    let spec = code_spec(&pool, &database).await?;
     let lesson = spec.lesson_id.clone().expect("a lesson");
     let (model, built) = clean_with(
-        &pool,
+        &database,
         &spec,
         vec![
             blank_reason_answer(),
@@ -935,10 +960,11 @@ async fn a_blank_reason_is_asked_for_again_once() -> Result<()> {
 #[tokio::test]
 async fn an_answer_refused_twice_fails_the_clean_stage_and_stores_nothing() -> Result<()> {
     let pool = pool().await?;
-    let spec = code_spec(&pool).await?;
+    let database = Database::new(pool.clone());
+    let spec = code_spec(&pool, &database).await?;
     let lesson = spec.lesson_id.clone().expect("a lesson");
     let (model, built) = clean_with(
-        &pool,
+        &database,
         &spec,
         vec![blank_reason_answer(), blank_reason_answer()],
     )
@@ -957,9 +983,10 @@ async fn an_answer_refused_twice_fails_the_clean_stage_and_stores_nothing() -> R
 #[tokio::test]
 async fn a_failing_code_fit_check_call_fails_the_clean_stage_and_stores_nothing() -> Result<()> {
     let pool = pool().await?;
-    let spec = code_spec(&pool).await?;
+    let database = Database::new(pool.clone());
+    let spec = code_spec(&pool, &database).await?;
     let lesson = spec.lesson_id.clone().expect("a lesson");
-    let (model, built) = clean_with(&pool, &spec, Vec::new()).await;
+    let (model, built) = clean_with(&database, &spec, Vec::new()).await;
     let error = built.unwrap_err();
 
     assert!(

@@ -5,7 +5,7 @@ use super::{ops, ChunkRepository};
 use lattice_core::application::ports::{ChunkRepositoryPort, RepositoryPort};
 use lattice_core::domain::entities::chunk::Chunk;
 use lattice_core::shared::error::AppError;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::types::DocumentId;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
@@ -54,7 +54,8 @@ fn ids(chunks: &[Chunk]) -> Vec<String> {
 #[tokio::test]
 async fn pool_repository_reads_in_index_order_and_by_document() {
     let pool = pool().await;
-    let repo = ChunkRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ChunkRepository::new(db.clone());
     let ferns = document(&pool, "indexed").await;
     let mosses = document(&pool, "pending").await;
     let fern_chunks = vec![chunk(&ferns, 2), chunk(&ferns, 0), chunk(&ferns, 1)];
@@ -128,7 +129,8 @@ async fn pool_repository_reads_in_index_order_and_by_document() {
 #[tokio::test]
 async fn pool_repository_reports_corrupt_chunk_rows_instead_of_wrapping_them() {
     let pool = pool().await;
-    let repo = ChunkRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ChunkRepository::new(db.clone());
     let document = document(&pool, "indexed").await;
     let chunk = chunk(&document, 0);
     repo.save(&chunk).await.unwrap();
@@ -148,7 +150,8 @@ async fn pool_repository_reports_corrupt_chunk_rows_instead_of_wrapping_them() {
 #[tokio::test]
 async fn pool_batches_are_atomic_and_deletes_reach_only_their_targets() {
     let pool = pool().await;
-    let repo = ChunkRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ChunkRepository::new(db.clone());
     let herbs = document(&pool, "indexed").await;
     let lichens = document(&pool, "indexed").await;
 
@@ -200,7 +203,8 @@ async fn chunk_batch_writes_are_bounded_and_late_batch_failure_rolls_back() {
     use crate::tests::common::query_counts::count_writes;
 
     let pool = pool().await;
-    let repo = ChunkRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ChunkRepository::new(db.clone());
     let owner = document(&pool, "indexed").await;
     let chunks: Vec<_> = (0..2 * CHUNK_ROWS_PER_INSERT + 1)
         .map(|index| chunk(&owner, index))
@@ -228,7 +232,7 @@ async fn chunk_batch_writes_are_bounded_and_late_batch_failure_rolls_back() {
         "a foreign-key failure in the second INSERT must roll back the first"
     );
 
-    let mut tx = pool.begin_write().await.unwrap();
+    let mut tx = db.begin_write().await.unwrap();
     let (saved, writes) = count_writes(ops::save_batch_optimized(&mut tx, &chunks)).await;
     saved.unwrap();
     assert_eq!(writes, 3, "a unit of work should use shared bulk writes");
@@ -238,9 +242,10 @@ async fn chunk_batch_writes_are_bounded_and_late_batch_failure_rolls_back() {
 #[tokio::test]
 async fn chunk_operations_follow_their_unit_of_work() {
     let pool = pool().await;
+    let db = Database::new(pool.clone());
     let seeds = document(&pool, "indexed").await;
 
-    let mut tx = pool.begin_write().await.unwrap();
+    let mut tx = db.begin_write().await.unwrap();
     ops::save_batch_optimized(&mut tx, &[]).await.unwrap();
     let saved = vec![chunk(&seeds, 1), chunk(&seeds, 0)];
     ops::save_batch_optimized(&mut tx, &saved).await.unwrap();
@@ -267,14 +272,14 @@ async fn chunk_operations_follow_their_unit_of_work() {
     assert!(ops::exists(&mut tx, saved[0].id().as_str()).await.unwrap());
     tx.rollback().await.unwrap();
 
-    let pool_repo = ChunkRepository::new(pool.clone());
+    let pool_repo = ChunkRepository::new(db.clone());
     assert_eq!(
         pool_repo.count_all().await.unwrap(),
         0,
         "rollback undid the writes"
     );
 
-    let mut tx = pool.begin_write().await.unwrap();
+    let mut tx = db.begin_write().await.unwrap();
     let kept = chunk(&seeds, 3);
     ops::save(&mut tx, &kept).await.unwrap();
     ops::save_batch_optimized(&mut tx, &[chunk(&seeds, 4)])
@@ -299,7 +304,7 @@ async fn chunk_operations_follow_their_unit_of_work() {
 async fn create_test_repo() -> (ChunkRepository, DocumentId) {
     let pool = pool().await;
     let doc_id = document(&pool, "indexed").await;
-    (ChunkRepository::new(pool), doc_id)
+    (ChunkRepository::new(Database::new(pool)), doc_id)
 }
 
 #[tokio::test]
@@ -422,7 +427,8 @@ async fn an_ocr_chunk_keeps_its_mark_through_the_database() {
     };
     let pool = pool().await;
     let doc_id = document(&pool, "indexed").await;
-    let repo = ChunkRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ChunkRepository::new(db.clone());
     let mut scanned = Chunk::new(doc_id.clone(), "Recognized scan".to_string(), 0);
     scanned.set_provenance(None, Some(0), Some(15), Some(2));
     scanned.set_from_ocr(true);
@@ -442,13 +448,14 @@ async fn an_ocr_chunk_keeps_its_mark_through_the_database() {
     assert_eq!(mark(&found, &scanned), Some((true, Some(2))));
     assert_eq!(mark(&found, &typed), Some((false, None)));
 
-    let mut conn = pool.acquire().await.unwrap();
-    save_chunks(&mut conn, doc_id.as_str(), &chunks)
+    let mut tx = db.begin_write().await.unwrap();
+    save_chunks(&mut tx, doc_id.as_str(), &chunks)
         .await
         .unwrap();
-    let reloaded = fetch_chunks_for_document(&mut conn, doc_id.as_str())
+    let reloaded = fetch_chunks_for_document(&mut tx, doc_id.as_str())
         .await
         .unwrap();
+    tx.commit().await.unwrap();
 
     assert_eq!(mark(&reloaded, &scanned), Some((true, Some(2))));
     assert_eq!(mark(&reloaded, &typed), Some((false, None)));

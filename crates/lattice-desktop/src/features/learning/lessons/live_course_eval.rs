@@ -704,6 +704,7 @@ async fn live_course_eval() -> Result<()> {
         .run(&pool)
         .await
         .map_err(db)?;
+    let database = lattice_core::shared::persistence::Database::new(pool);
     let mut run = Run {
         metrics: read_json(&dir.join("metrics.json"))?.unwrap_or_else(|| json!({})),
         dir,
@@ -711,7 +712,8 @@ async fn live_course_eval() -> Result<()> {
         web,
         embedder,
     };
-    let (outline, lessons) = run_stages(&mut run, &pool, &options, &request, &selectors).await?;
+    let (outline, lessons) =
+        run_stages(&mut run, &database, &options, &request, &selectors).await?;
     let finished = chrono::Utc::now().to_rfc3339();
     write_json(
         &run.dir.join("done.json"),
@@ -723,6 +725,6 @@ async fn live_course_eval() -> Result<()> {
     manifest["web"]["entries_at_end"] = json!(run.web.report().entries_at_end);
     write_json(&run.dir.join("run.json"), &manifest)?;
     println!("COURSE EVAL DONE: outline {outline}, lessons {lessons}");
-    pool.close().await;
+    database.close().await;
     Ok(())
 }

@@ -11,7 +11,6 @@ use crate::persistence::{db, now};
 use crate::quiz_bank_jobs;
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashMap;
@@ -132,8 +131,7 @@ impl LearningAssessmentRepository {
                 "A note is at most {MAX_CHAT_MESSAGE_CHARS} characters."
             )));
         }
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &req.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = assessment_operation(
             &req.operation_id,
             &req.program_id,
@@ -224,11 +222,13 @@ impl LearningAssessmentRepository {
     }
 
     pub(crate) async fn contest_input(&self, contest_id: &str) -> Result<Option<ContestInput>> {
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let row = sqlx::query("SELECT form_id,item_ordinal,note FROM learning_assessment_grade_contests WHERE id=? AND status='open'")
             .bind(contest_id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *read)
             .await
             .map_err(db)?;
+        read.commit().await.map_err(db)?;
         Ok(row.map(|r| ContestInput {
             form_id: r.get("form_id"),
             ordinal: r.get("item_ordinal"),
@@ -244,8 +244,8 @@ impl LearningAssessmentRepository {
         regrade: Regrade,
         model: &str,
     ) -> Result<()> {
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        let contest = sqlx::query("SELECT form_id,item_ordinal,first_score,program_id FROM learning_assessment_grade_contests WHERE id=? AND status='open'")
+        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let contest = sqlx::query("SELECT form_id,item_ordinal,first_score FROM learning_assessment_grade_contests WHERE id=? AND status='open'")
             .bind(contest_id)
             .fetch_optional(&mut *tx)
             .await
@@ -253,8 +253,6 @@ impl LearningAssessmentRepository {
             .ok_or_else(|| AppError::NotFound("Open contest not found".into()))?;
         let form_id: String = contest.get("form_id");
         let ordinal: i64 = contest.get("item_ordinal");
-        let program_id: String = contest.get("program_id");
-        Self::writer_lock(&mut tx, &program_id).await?;
         match regrade {
             Regrade::Failed(reason) => {
                 sqlx::query("UPDATE learning_assessment_grade_contests SET status='failed',regrade_reason=?,regrade_model=?,decided_at=? WHERE id=?")
@@ -320,8 +318,7 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &req.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = assessment_operation(
             &req.operation_id,
             &req.program_id,
@@ -377,8 +374,7 @@ impl LearningAssessmentRepository {
                 "A note is at most {MAX_CHAT_MESSAGE_CHARS} characters."
             )));
         }
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &req.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = assessment_operation(
             &req.operation_id,
             &req.program_id,

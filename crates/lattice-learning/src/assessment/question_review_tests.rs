@@ -222,22 +222,17 @@ async fn a_question_that_repeats_an_earlier_one_is_a_finding_on_the_later_one() 
 async fn sound_questions_have_no_finding_and_unchanged_questions_are_not_reviewed_again(
 ) -> Result<()> {
     let pool = crate::test_support::pool().await?;
-    let (repo, job, lesson_id) = crate::content_verification::test_support::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = crate::content_verification::test_support::setup(&db).await?;
     let llm = Script::new(Script::agreeing(), Script::sound());
 
-    crate::lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async {
-            assert!(check(&llm, &lesson(), outcome()).await?.is_empty());
-            assert_eq!(llm.kinds(), ["solve", "judge"]);
-            assert!(check(&llm, &lesson(), outcome()).await?.is_empty());
-            assert_eq!(llm.kinds(), ["solve", "judge"]);
-            Ok(())
-        },
-    )
+    crate::lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        assert!(check(&llm, &lesson(), outcome()).await?.is_empty());
+        assert_eq!(llm.kinds(), ["solve", "judge"]);
+        assert!(check(&llm, &lesson(), outcome()).await?.is_empty());
+        assert_eq!(llm.kinds(), ["solve", "judge"]);
+        Ok(())
+    })
     .await
 }
 
@@ -316,8 +311,9 @@ const CHANGED: &str = "Which one takes the changed case?";
 
 async fn in_a_task<T>(body: impl std::future::Future<Output = Result<T>>) -> Result<T> {
     let pool = crate::test_support::pool().await?;
-    let (repo, job, lesson_id) = crate::content_verification::test_support::setup(&pool).await?;
-    crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson_id, body).await
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = crate::content_verification::test_support::setup(&db).await?;
+    crate::lesson_drafts::run(&db, &repo, &job, &lesson_id, body).await
 }
 
 fn prompts_of(request: &Value, field: &str) -> Vec<String> {

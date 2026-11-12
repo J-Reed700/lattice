@@ -9,6 +9,7 @@ use super::PlannedLesson;
 use crate::curriculum_repository::LearningCurriculumRepository;
 use crate::persistence::{db, now};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::WriteTx;
 use lattice_core::shared::runtime::jobs::{JobRecord, JobStatus, JobStore};
 use sqlx::SqliteConnection;
 use std::collections::{HashMap, HashSet};
@@ -102,7 +103,7 @@ pub(super) async fn newest_replaced_rows(
 
 /// Saves a lesson's entry unless it already has one.
 pub(super) async fn insert_entry(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     outline_revision: i64,
     lesson_id: &str,
@@ -115,7 +116,7 @@ pub(super) async fn insert_entry(
         .bind(lesson_id)
         .bind(entry_json)
         .bind(created_at)
-        .execute(connection)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
     Ok(())
@@ -123,7 +124,7 @@ pub(super) async fn insert_entry(
 
 /// Replaces a lesson's entry, keeping the old one in its history.
 pub(super) async fn replace_entry(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     outline_revision: i64,
     lesson_id: &str,
@@ -136,7 +137,7 @@ pub(super) async fn replace_entry(
     .bind(program_id)
     .bind(outline_revision)
     .bind(lesson_id)
-    .fetch_one(&mut *connection)
+    .fetch_one(&mut **tx)
     .await
     .map_err(db)?;
     sqlx::query("INSERT INTO learning_course_plan_entry_history(program_id,outline_revision,lesson_id,entry_revision,entry_json,replaced_at) VALUES(?,?,?,?,?,?)")
@@ -146,7 +147,7 @@ pub(super) async fn replace_entry(
         .bind(revision)
         .bind(old)
         .bind(replaced_at)
-        .execute(&mut *connection)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
     sqlx::query("UPDATE learning_course_plan_lessons SET entry_json=?,entry_revision=entry_revision+1 WHERE program_id=? AND outline_revision=? AND lesson_id=?")
@@ -154,7 +155,7 @@ pub(super) async fn replace_entry(
         .bind(program_id)
         .bind(outline_revision)
         .bind(lesson_id)
-        .execute(&mut *connection)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
     Ok(())
@@ -163,7 +164,7 @@ pub(super) async fn replace_entry(
 /// Puts back the entry the newest change replaced and drops it from the
 /// history. False when there is nothing to put back.
 pub(super) async fn restore_entry(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     outline_revision: i64,
     lesson_id: &str,
@@ -174,7 +175,7 @@ pub(super) async fn restore_entry(
     .bind(program_id)
     .bind(outline_revision)
     .bind(lesson_id)
-    .fetch_optional(&mut *connection)
+    .fetch_optional(&mut **tx)
     .await
     .map_err(db)?;
     let Some((replaced, entry)) = newest else {
@@ -185,7 +186,7 @@ pub(super) async fn restore_entry(
         .bind(program_id)
         .bind(outline_revision)
         .bind(lesson_id)
-        .execute(&mut *connection)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
     sqlx::query("DELETE FROM learning_course_plan_entry_history WHERE program_id=? AND outline_revision=? AND lesson_id=? AND entry_revision=?")
@@ -193,7 +194,7 @@ pub(super) async fn restore_entry(
         .bind(outline_revision)
         .bind(lesson_id)
         .bind(replaced)
-        .execute(&mut *connection)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
     Ok(true)
@@ -213,7 +214,7 @@ pub(super) async fn job_revisions(
 
 /// Records the program, base revision and outline revision of a new job.
 pub(super) async fn insert_job_row(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     job_id: &str,
     program_id: &str,
     base_revision: i64,
@@ -224,7 +225,7 @@ pub(super) async fn insert_job_row(
         .bind(program_id)
         .bind(base_revision)
         .bind(outline_revision)
-        .execute(connection)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
     Ok(())
@@ -232,14 +233,14 @@ pub(super) async fn insert_job_row(
 
 /// Gives a new attempt the program and revisions of the job it retries.
 pub(super) async fn copy_job_row(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     new_job_id: &str,
     old_job_id: &str,
 ) -> Result<()> {
     sqlx::query("INSERT INTO learning_jobs(job_id,program_id,base_revision_number,content_revision) SELECT ?,program_id,base_revision_number,content_revision FROM learning_jobs WHERE job_id=?")
         .bind(new_job_id)
         .bind(old_job_id)
-        .execute(connection)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
     Ok(())
@@ -366,13 +367,13 @@ pub(super) async fn check_in(
 
 /// Replace a lesson's entry, keeping the old one in its history.
 pub(super) async fn replace_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     outline_revision: i64,
     topics: &PlannedLesson,
 ) -> Result<()> {
     replace_entry(
-        connection,
+        tx,
         program_id,
         outline_revision,
         &topics.lesson_id,
@@ -392,19 +393,20 @@ mod tests {
     async fn a_queued_preparation_leaves_topics_editable_and_a_running_one_locks_them() -> Result<()>
     {
         let pool = crate::tests::pool().await?;
-        let (program, revision) = planned_program(&pool, &Topics::new()).await;
+        let db = Database::new(pool.clone());
+        let (program, revision) = planned_program(&db, &Topics::new()).await;
         let lesson = ids(&program)[1].clone();
-        let database = lattice_core::shared::persistence::Database::from(pool.clone());
+        let database = db.clone();
         let edit = |revision_seen: i64, idea: &str| EditCoursePlanEntryRequestDto {
             program_id: program.summary.id.clone(),
             outline_revision: revision,
             expected_entry_revision: revision_seen,
             topics: topics_of(&lesson, idea),
         };
-        let job = lesson_job(&pool, &program, &lesson, false).await;
+        let job = lesson_job(&db, &program, &lesson, false).await;
         edit_entry(&database, edit(1, "a first idea")).await?;
 
-        assert!(JobStore::new(pool.clone()).claim(&job).await?.is_some());
+        assert!(JobStore::new(db.clone()).claim(&job).await?.is_some());
         let refused = edit_entry(&database, edit(2, "a second idea")).await;
         assert!(
             matches!(&refused, Err(AppError::InvalidState(text)) if text == LESSON_LOCKED),

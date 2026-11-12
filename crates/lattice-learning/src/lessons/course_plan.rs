@@ -18,7 +18,7 @@ use lattice_core::application::services::model_contract::{
     Contract, ContractCall, ContractId, PromptInput,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};

@@ -21,7 +21,7 @@ use lattice_core::domain::learning::drills::{
     language_of_code, LessonStanding, Material, LANGUAGES,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, ReadTx, Transactions};
+use lattice_core::shared::persistence::{Database, ReadTx};
 use std::collections::HashMap;
 
 mod repository;

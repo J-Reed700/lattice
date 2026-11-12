@@ -1,5 +1,4 @@
 use super::*;
-use lattice_core::shared::persistence::Transactions;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct MessageBookmarkRow {
@@ -21,7 +20,7 @@ impl ConversationRepository {
         request: BookmarkConversationMessageRequestDto,
     ) -> Result<RenameConversationResponseDto, AppError> {
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -86,6 +85,7 @@ impl ConversationRepository {
         &self,
         request: UnbookmarkConversationMessageRequestDto,
     ) -> Result<RenameConversationResponseDto, AppError> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query(
             r#"
         DELETE FROM conversation_message_bookmarks
@@ -94,9 +94,10 @@ impl ConversationRepository {
         )
         .bind(&request.conversation_id)
         .bind(&request.message_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to remove message bookmark: {}", e)))?;
+        tx.commit().await?;
 
         Ok(RenameConversationResponseDto {
             status: "success".to_string(),
@@ -107,7 +108,7 @@ impl ConversationRepository {
         &self,
         request: DeleteConversationMessageRequestDto,
     ) -> Result<RenameConversationResponseDto, AppError> {
-        let mut tx = self.pool.begin_write().await.map_err(|e| {
+        let mut tx = self.db.begin_write().await.map_err(|e| {
             AppError::Database(format!("Failed to start delete message transaction: {}", e))
         })?;
 
@@ -232,6 +233,7 @@ impl ConversationRepository {
             .filter(|q| !q.is_empty());
         let fts_query = search_query.and_then(build_fts_query);
 
+        let mut read = self.db.begin_read().await?;
         let mut qb = QueryBuilder::<Sqlite>::new(
             r#"
         SELECT
@@ -274,9 +276,10 @@ impl ConversationRepository {
 
         let rows = qb
             .build_query_as::<MessageBookmarkRow>()
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *read)
             .await
             .map_err(|e| AppError::Database(format!("Failed to list message bookmarks: {}", e)))?;
+        read.commit().await?;
 
         let bookmarks = rows
             .into_iter()

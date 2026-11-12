@@ -340,16 +340,17 @@ mod tests {
     #[tokio::test]
     async fn retry_keeps_valid_decisions_but_changed_input_does_not_inherit_them() -> Result<()> {
         let pool = crate::tests::pool().await?;
+        let db = Database::new(pool.clone());
         let (repo, job, lesson) =
-            crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+            crate::content_verification::tests::batch_scheduler_tests::setup(&db).await?;
         let first = model(vec![listed(&[("p0", missing()), ("p1", label())])]);
-        crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+        crate::lesson_drafts::run(&db, &repo, &job, &lesson, async {
             review(&first, &units(), None).await?;
             Ok(())
         })
         .await?;
         let next = model(vec![]);
-        crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+        crate::lesson_drafts::run(&db, &repo, &job, &lesson, async {
             let raw = review(&next, &units(), None).await?;
             assert!(!resolve(&raw, &units())?[0].complete);
             assert!(next.prompts.lock().unwrap().is_empty());

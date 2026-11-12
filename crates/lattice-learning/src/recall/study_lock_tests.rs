@@ -1,5 +1,6 @@
 //! Study writes that read first must wait for another writer, not fail.
 use super::{study_dto::*, study_generation::parse_cards, study_repository::StudyRepository};
+use lattice_core::shared::persistence::Database;
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::time::Duration;
 
@@ -31,23 +32,21 @@ fn deck() -> StudyDeckDto {
     }
 }
 
-async fn open() -> (tempfile::TempDir, SqlitePool, StudyDeckDto) {
+async fn open() -> (tempfile::TempDir, SqlitePool, Database, StudyDeckDto) {
     let dir = tempfile::tempdir().unwrap();
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
         .connect_with(crate::test_support::file_options(dir.path().join("t.db")))
         .await
         .unwrap();
+    let db = Database::new(pool.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
         .await
         .unwrap();
     let deck = deck();
-    StudyRepository::new(pool.clone())
-        .save(&deck)
-        .await
-        .unwrap();
-    (dir, pool, deck)
+    StudyRepository::new(db.clone()).save(&deck).await.unwrap();
+    (dir, pool, db, deck)
 }
 
 /// Another connection takes the write lock now and commits after `HELD`.
@@ -65,9 +64,9 @@ async fn another_writer(pool: &SqlitePool) -> tokio::task::JoinHandle<()> {
 
 #[tokio::test]
 async fn setting_a_target_waits_for_a_writer_between_its_read_and_its_write() {
-    let (_dir, pool, deck) = open().await;
+    let (_dir, pool, db, deck) = open().await;
     let other = another_writer(&pool).await;
-    StudyRepository::new(pool.clone())
+    StudyRepository::new(db.clone())
         .set_target(&deck.id, Some(5_000_000), 2000)
         .await
         .unwrap();
@@ -76,10 +75,10 @@ async fn setting_a_target_waits_for_a_writer_between_its_read_and_its_write() {
 
 #[tokio::test]
 async fn editing_a_card_waits_for_a_writer_between_its_read_and_its_write() {
-    let (_dir, pool, deck) = open().await;
+    let (_dir, pool, db, deck) = open().await;
     let other = another_writer(&pool).await;
     let card = deck.cards.first().unwrap();
-    StudyRepository::new(pool.clone())
+    StudyRepository::new(db.clone())
         .update_card(&UpdateStudyCardRequestDto {
             card_id: card.id.clone(),
             question: "What comes before choosing a procedure?".into(),

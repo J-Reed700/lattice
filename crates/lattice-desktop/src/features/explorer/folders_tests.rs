@@ -2,14 +2,14 @@
 //! checked once the write lock is the writer's own.
 use super::{folders, repository};
 use crate::features::conversation::repository::ConversationRepository;
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 use std::time::Duration;
 
 const ROOT: &str = "/w/a";
 
-async fn database() -> (SqlitePool, tempfile::TempDir) {
+async fn database() -> (SqlitePool, Database, tempfile::TempDir) {
     let directory = tempfile::tempdir().unwrap();
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
@@ -19,18 +19,19 @@ async fn database() -> (SqlitePool, tempfile::TempDir) {
         .await
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let db = Database::new(pool.clone());
     sqlx::query("INSERT INTO conversation_spaces (id, name) VALUES ('space_music', 'Music')")
         .execute(&pool)
         .await
         .unwrap();
-    repository::record_folder_opened(&pool, ROOT, "a", "2026-10-01T10:00:00.000Z")
+    repository::record_folder_opened(&db, ROOT, "a", "2026-10-01T10:00:00.000Z")
         .await
         .unwrap();
-    (pool, directory)
+    (pool, db, directory)
 }
 
-async fn thread(pool: &SqlitePool) -> String {
-    ConversationRepository::new(pool.clone())
+async fn thread(db: &Database) -> String {
+    ConversationRepository::new(db.clone())
         .create_conversation("Voices", None)
         .await
         .unwrap()
@@ -53,7 +54,7 @@ where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = T>,
 {
-    let mut tx = pool.begin_write().await.unwrap();
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
     sqlx::query(statement).execute(&mut *tx).await.unwrap();
     let other = tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -66,11 +67,11 @@ where
 
 #[tokio::test]
 async fn a_thread_that_cannot_be_filed_in_its_folders_space_is_not_bound() {
-    let (pool, _directory) = database().await;
-    folders::set_settings(&Database::from(pool.clone()), ROOT, "", "space_music")
+    let (pool, db, _directory) = database().await;
+    folders::set_settings(&db, ROOT, "", "space_music")
         .await
         .unwrap();
-    let id = thread(&pool).await;
+    let id = thread(&db).await;
     sqlx::query(
         "CREATE TRIGGER refuse_move BEFORE UPDATE OF space_id ON conversations \
          BEGIN SELECT RAISE(ABORT, 'injected'); END",
@@ -79,7 +80,7 @@ async fn a_thread_that_cannot_be_filed_in_its_folders_space_is_not_bound() {
     .await
     .unwrap();
 
-    let result = folders::bind_thread(&Database::from(pool.clone()), &id, Some(ROOT)).await;
+    let result = folders::bind_thread(&db, &id, Some(ROOT)).await;
 
     assert!(result.is_err());
     assert_eq!(root_of(&pool, &id).await, None);
@@ -87,13 +88,12 @@ async fn a_thread_that_cannot_be_filed_in_its_folders_space_is_not_bound() {
 
 #[tokio::test]
 async fn a_space_archived_meanwhile_is_not_given_to_a_folder() {
-    let (pool, _directory) = database().await;
+    let (pool, db, _directory) = database().await;
 
-    let database = Database::from(pool.clone());
     let result = after_another_writer(
         &pool,
         "UPDATE conversation_spaces SET is_archived = 1 WHERE id = 'space_music'",
-        || folders::set_settings(&database, ROOT, "", "space_music"),
+        || folders::set_settings(&db, ROOT, "", "space_music"),
     )
     .await;
 
@@ -109,18 +109,15 @@ async fn a_space_archived_meanwhile_is_not_given_to_a_folder() {
 
 #[tokio::test]
 async fn a_thread_unbound_meanwhile_is_not_remembered_as_the_folders() {
-    let (pool, _directory) = database().await;
-    let id = thread(&pool).await;
-    repository::set_conversation_root(&pool, &id, Some(ROOT))
+    let (pool, db, _directory) = database().await;
+    let id = thread(&db).await;
+    repository::set_conversation_root(&db, &id, Some(ROOT))
         .await
         .unwrap();
     let unbind = format!("UPDATE conversations SET explorer_root = NULL WHERE id = '{id}'");
 
-    let database = Database::from(pool.clone());
-    let result = after_another_writer(&pool, &unbind, || {
-        folders::remember_thread(&database, ROOT, &id)
-    })
-    .await;
+    let result =
+        after_another_writer(&pool, &unbind, || folders::remember_thread(&db, ROOT, &id)).await;
 
     assert!(result.is_err());
     let last: Option<String> =

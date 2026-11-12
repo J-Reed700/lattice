@@ -10,7 +10,7 @@ use crate::{
 use futures::TryStreamExt;
 use lattice_core::domain::learning::claim_review::SourceAddedBy;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, Transactions, WriteTx};
+use lattice_core::shared::persistence::{Database, WriteTx};
 #[cfg(test)]
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;

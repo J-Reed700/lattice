@@ -6,20 +6,20 @@ use crate::infrastructure::storage::file_intents::{record_releases_sql, run_id, 
 use lattice_core::domain::entities::Document as DocumentEntity;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::bind_limit::rows_per_statement;
-use sqlx::SqliteConnection;
+use lattice_core::shared::persistence::WriteTx;
 use std::time::Instant;
 use tracing::{info, instrument};
 
-pub async fn save(conn: &mut SqliteConnection, entity: &DocumentEntity) -> Result<()> {
+pub async fn save(tx: &mut WriteTx, entity: &DocumentEntity) -> Result<()> {
     // Persist the full aggregate (document + chunks + tags).
     // Saving only the document row causes FK failures when embeddings are saved
     // against chunk IDs that were never persisted.
-    save_aggregate(conn, entity).await
+    save_aggregate(tx, entity).await
 }
 
 /// [`delete`], recording first, in the same transaction, that the document's
 /// library blob was let go of.
-pub async fn delete_and_release_blob(conn: &mut SqliteConnection, id: &str) -> Result<()> {
+pub async fn delete_and_release_blob(tx: &mut WriteTx, id: &str) -> Result<()> {
     sqlx::query(&record_releases_sql(
         FileStore::Library,
         "checksum",
@@ -27,23 +27,23 @@ pub async fn delete_and_release_blob(conn: &mut SqliteConnection, id: &str) -> R
     ))
     .bind(run_id())
     .bind(id)
-    .execute(&mut *conn)
+    .execute(&mut **tx)
     .await
     .map_err(|e| AppError::Database(format!("Failed to record a library release: {}", e)))?;
-    delete(conn, id).await
+    delete(tx, id).await
 }
 
-pub async fn delete(conn: &mut SqliteConnection, id: &str) -> Result<()> {
+pub async fn delete(tx: &mut WriteTx, id: &str) -> Result<()> {
     sqlx::query!("DELETE FROM documents WHERE id = ?", id)
-        .execute(conn)
+        .execute(&mut **tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to delete document: {}", e)))?;
 
     Ok(())
 }
 
-#[instrument(skip(conn, aggregate), fields(document_id = %aggregate.id().as_str()))]
-pub async fn save_aggregate(conn: &mut SqliteConnection, aggregate: &DocumentEntity) -> Result<()> {
+#[instrument(skip(tx, aggregate), fields(document_id = %aggregate.id().as_str()))]
+pub async fn save_aggregate(tx: &mut WriteTx, aggregate: &DocumentEntity) -> Result<()> {
     use lattice_core::domain::entities::document::DocumentStatus as EntityStatus;
 
     let start = Instant::now();
@@ -124,7 +124,7 @@ pub async fn save_aggregate(conn: &mut SqliteConnection, aggregate: &DocumentEnt
         model.last_accessed_at,
         model.word_count
     )
-    .execute(&mut *conn)
+    .execute(&mut **tx)
     .await
     .map_err(|e| AppError::Database(format!("Failed to save document: {}", e)))?;
 
@@ -137,10 +137,10 @@ pub async fn save_aggregate(conn: &mut SqliteConnection, aggregate: &DocumentEnt
                 .transpose()?,
         )
         .bind(doc_id)
-        .execute(&mut *conn)
+        .execute(&mut **tx)
         .await?;
-    save_chunks(&mut *conn, doc_id, aggregate.chunks()).await?;
-    save_tags(&mut *conn, doc_id, aggregate.tags()).await?;
+    save_chunks(tx, doc_id, aggregate.chunks()).await?;
+    save_tags(tx, doc_id, aggregate.tags()).await?;
 
     let elapsed = start.elapsed();
     info!(
@@ -156,17 +156,17 @@ pub async fn save_aggregate(conn: &mut SqliteConnection, aggregate: &DocumentEnt
 
 /// A batch has exactly the same aggregate semantics as repeated saves.
 /// The caller owns the surrounding transaction.
-pub async fn save_batch(conn: &mut SqliteConnection, entities: &[DocumentEntity]) -> Result<()> {
+pub async fn save_batch(tx: &mut WriteTx, entities: &[DocumentEntity]) -> Result<()> {
     for entity in entities {
-        save_aggregate(conn, entity).await?;
+        save_aggregate(tx, entity).await?;
     }
     Ok(())
 }
 
 /// Optimized batch delete for multiple documents
 /// Uses single DELETE with IN clause to reduce database round-trips
-#[instrument(skip(conn), fields(id_count = ids.len()))]
-pub async fn delete_batch_optimized(conn: &mut SqliteConnection, ids: &[&str]) -> Result<()> {
+#[instrument(skip(tx), fields(id_count = ids.len()))]
+pub async fn delete_batch_optimized(tx: &mut WriteTx, ids: &[&str]) -> Result<()> {
     use std::time::Instant;
     use tracing::info;
 
@@ -187,7 +187,7 @@ pub async fn delete_batch_optimized(conn: &mut SqliteConnection, ids: &[&str]) -
         }
 
         query_builder
-            .execute(&mut *conn)
+            .execute(&mut **tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to delete document batch: {}", e)))?;
     }
@@ -203,13 +203,13 @@ pub async fn delete_batch_optimized(conn: &mut SqliteConnection, ids: &[&str]) -
     Ok(())
 }
 
-pub async fn rename(conn: &mut SqliteConnection, id: &str, name: &str) -> Result<()> {
+pub async fn rename(tx: &mut WriteTx, id: &str, name: &str) -> Result<()> {
     let result = sqlx::query(
         "UPDATE documents SET file_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
     )
     .bind(name)
     .bind(id)
-    .execute(conn)
+    .execute(&mut **tx)
     .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("Document not found: {id}")));

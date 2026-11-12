@@ -18,7 +18,7 @@ impl LearningRecallRepository {
     pub async fn workspace(&self, program_id: &str) -> Result<LearningRecallWorkspaceDto> {
         validate_uuid(program_id, "program")?;
         self.bootstrap_deck_cards(program_id).await?;
-        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let program_exists: Option<i64> =
             sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
                 .bind(program_id)

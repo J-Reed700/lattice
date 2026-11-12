@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::shared::persistence::Database;
 use parking_lot::Mutex;
-use sqlx::SqlitePool;
 
 use crate::features::summaries::entity::DocumentSummary;
 use crate::features::summaries::repository::{
@@ -215,8 +215,8 @@ fn source_with_sections(sections: usize) -> SummarySource {
     }
 }
 
-async fn pool_with_document() -> SqlitePool {
-    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+async fn pool_with_document() -> Database {
+    let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::query("PRAGMA foreign_keys = ON")
         .execute(&pool)
         .await
@@ -232,7 +232,7 @@ async fn pool_with_document() -> SqlitePool {
             .await
             .unwrap();
     }
-    pool
+    Database::new(pool)
 }
 
 fn summary(document_id: &str, section: Option<&str>, text: &str) -> DocumentSummary {
@@ -249,8 +249,8 @@ fn summary(document_id: &str, section: Option<&str>, text: &str) -> DocumentSumm
 
 #[tokio::test]
 async fn repository_round_trips_every_field() {
-    let pool = pool_with_document().await;
-    let repository = SqliteSummaryRepository::new(pool.clone());
+    let db = pool_with_document().await;
+    let repository = SqliteSummaryRepository::new(db.clone());
     let written = vec![
         summary("doc-1", None, "The whole manual."),
         summary("doc-1", Some("Emergencies"), "What to do when it burns."),
@@ -301,8 +301,8 @@ async fn repository_round_trips_every_field() {
 
 #[tokio::test]
 async fn regenerating_replaces_rather_than_accumulates() {
-    let pool = pool_with_document().await;
-    let repository = SqliteSummaryRepository::new(pool.clone());
+    let db = pool_with_document().await;
+    let repository = SqliteSummaryRepository::new(db.clone());
     let first = vec![summary("doc-1", None, "First pass.")];
     repository
         .replace_for_document("doc-1", IDENTITY, &first)
@@ -320,8 +320,8 @@ async fn regenerating_replaces_rather_than_accumulates() {
 
 #[tokio::test]
 async fn other_identities_are_pruned_and_deleted_documents_cascade() {
-    let pool = pool_with_document().await;
-    let repository = SqliteSummaryRepository::new(pool.clone());
+    let db = pool_with_document().await;
+    let repository = SqliteSummaryRepository::new(db.clone());
     repository
         .replace_for_document("doc-1", IDENTITY, &[summary("doc-1", None, "Current.")])
         .await
@@ -337,17 +337,19 @@ async fn other_identities_are_pruned_and_deleted_documents_cascade() {
     );
     assert_eq!(repository.count_for_identity(IDENTITY).await.unwrap(), 1);
 
+    let mut tx = db.begin_write().await.unwrap();
     sqlx::query("DELETE FROM documents WHERE id = 'doc-1'")
-        .execute(&pool)
+        .execute(&mut *tx)
         .await
         .unwrap();
+    tx.commit().await.unwrap();
     assert_eq!(repository.count_for_identity(IDENTITY).await.unwrap(), 0);
 }
 
 #[tokio::test]
 async fn deleting_a_document_returns_the_ids_whose_vectors_must_go() {
-    let pool = pool_with_document().await;
-    let repository = SqliteSummaryRepository::new(pool.clone());
+    let db = pool_with_document().await;
+    let repository = SqliteSummaryRepository::new(db.clone());
     let written = vec![summary("doc-1", None, "Text.")];
     repository
         .replace_for_document("doc-1", IDENTITY, &written)
@@ -368,7 +370,7 @@ fn use_case(
     enabled: bool,
     source: Option<SummarySource>,
     responses: &[&str],
-    pool: &SqlitePool,
+    db: &Database,
     index: Arc<dyn VectorSearchPort>,
 ) -> (GenerateDocumentSummariesUseCase, Arc<Mutex<Vec<String>>>) {
     let llm = ScriptedLlm::new(responses);
@@ -377,7 +379,7 @@ fn use_case(
         enabled,
         IDENTITY,
         Arc::new(FixtureSource { source }),
-        Arc::new(SqliteSummaryRepository::new(pool.clone())),
+        Arc::new(SqliteSummaryRepository::new(db.clone())),
         index,
         Arc::new(StubRuntime {
             llm: Some(Arc::new(llm)),
@@ -392,13 +394,13 @@ fn memory_index() -> Arc<dyn VectorSearchPort> {
 
 #[tokio::test]
 async fn disabled_is_a_no_op() {
-    let pool = pool_with_document().await;
+    let db = pool_with_document().await;
     let index = memory_index();
     let (use_case, prompts) = use_case(
         false,
         Some(source_with_sections(4)),
         &[r#"{"summary":"S.","topics":["a"]}"#],
-        &pool,
+        &db,
         Arc::clone(&index),
     );
     assert_eq!(use_case.execute("doc-1").await.unwrap(), 0);
@@ -408,7 +410,7 @@ async fn disabled_is_a_no_op() {
 
 #[tokio::test]
 async fn generates_document_and_section_summaries_and_indexes_them() {
-    let pool = pool_with_document().await;
+    let db = pool_with_document().await;
     let index = memory_index();
     let responses: Vec<&str> =
         vec![r#"{"summary":"Three sentences.","topics":["preflight","engines"]}"#; 5];
@@ -416,7 +418,7 @@ async fn generates_document_and_section_summaries_and_indexes_them() {
         true,
         Some(source_with_sections(4)),
         &responses,
-        &pool,
+        &db,
         Arc::clone(&index),
     );
 
@@ -430,7 +432,7 @@ async fn generates_document_and_section_summaries_and_indexes_them() {
     assert!(prompts[0].contains("Section headings: Section 0 | Section 1"));
     assert!(prompts[1].contains("Section: Section 0"));
 
-    let repository = SqliteSummaryRepository::new(pool.clone());
+    let repository = SqliteSummaryRepository::new(db.clone());
     let scope: HashSet<String> = ["doc-1".to_string()].into_iter().collect();
     let stored = repository
         .list_for_documents(&scope, IDENTITY)
@@ -453,14 +455,14 @@ async fn generates_document_and_section_summaries_and_indexes_them() {
 /// summarized from the parts' summaries, the contract last every time.
 #[tokio::test]
 async fn a_long_document_is_summarized_from_all_of_it_part_by_part() {
-    let pool = pool_with_document().await;
+    let db = pool_with_document().await;
     let mut source = source_with_sections(0);
     source.body = (0..12_000)
         .map(|i| format!("w{i}"))
         .collect::<Vec<_>>()
         .join(" ");
     let responses: Vec<&str> = vec![r#"{"summary":"Three sentences.","topics":["a"]}"#; 20];
-    let (use_case, prompts) = use_case(true, Some(source), &responses, &pool, memory_index());
+    let (use_case, prompts) = use_case(true, Some(source), &responses, &db, memory_index());
 
     assert_eq!(use_case.execute("doc-1").await.unwrap(), 1);
 
@@ -479,13 +481,13 @@ async fn a_long_document_is_summarized_from_all_of_it_part_by_part() {
 
 #[tokio::test]
 async fn too_few_sections_means_only_a_document_summary() {
-    let pool = pool_with_document().await;
+    let db = pool_with_document().await;
     let index = memory_index();
     let (use_case, prompts) = use_case(
         true,
         Some(source_with_sections(2)),
         &[r#"{"summary":"Just the document.","topics":[]}"#],
-        &pool,
+        &db,
         Arc::clone(&index),
     );
     assert_eq!(use_case.execute("doc-1").await.unwrap(), 1);
@@ -495,14 +497,14 @@ async fn too_few_sections_means_only_a_document_summary() {
 /// Every section is summarized.
 #[tokio::test]
 async fn every_section_is_summarized() {
-    let pool = pool_with_document().await;
+    let db = pool_with_document().await;
     let index = memory_index();
     let responses: Vec<&str> = vec![r#"{"summary":"S."}"#; 41];
     let (use_case, _) = use_case(
         true,
         Some(source_with_sections(40)),
         &responses,
-        &pool,
+        &db,
         Arc::clone(&index),
     );
     let written = use_case.execute("doc-1").await.unwrap();
@@ -518,7 +520,7 @@ async fn unparseable_responses_are_retried_then_published_without() {
     use crate::features::summaries::use_cases::generate_summaries::{
         SummaryRun, MAX_CALL_ATTEMPTS,
     };
-    let pool = pool_with_document().await;
+    let db = pool_with_document().await;
     let index = memory_index();
     // Document summary is garbage; the first section is fine; the rest are
     // empty, as is every later answer.
@@ -531,7 +533,7 @@ async fn unparseable_responses_are_retried_then_published_without() {
             "",
             "{}",
         ],
-        &pool,
+        &db,
         Arc::clone(&index),
     );
     let cancel = tokio_util::sync::CancellationToken::new();
@@ -549,7 +551,7 @@ async fn unparseable_responses_are_retried_then_published_without() {
         SummaryRun::Published(1)
     );
     assert_eq!(index.count(), 1);
-    let repository = SqliteSummaryRepository::new(pool.clone());
+    let repository = SqliteSummaryRepository::new(db.clone());
     let scope: HashSet<String> = ["doc-1".to_string()].into_iter().collect();
     let stored = repository
         .list_for_documents(&scope, IDENTITY)
@@ -560,7 +562,7 @@ async fn unparseable_responses_are_retried_then_published_without() {
 
 #[tokio::test]
 async fn empty_source_is_complete_but_missing_model_is_retryable() {
-    let pool = pool_with_document().await;
+    let db = pool_with_document().await;
     let index = memory_index();
     let (empty, _) = use_case(
         true,
@@ -573,7 +575,7 @@ async fn empty_source_is_complete_but_missing_model_is_retryable() {
             unsectioned: String::new(),
         }),
         &[r#"{"summary":"S."}"#],
-        &pool,
+        &db,
         Arc::clone(&index),
     );
     assert_eq!(empty.execute("doc-1").await.unwrap(), 0);
@@ -584,7 +586,7 @@ async fn empty_source_is_complete_but_missing_model_is_retryable() {
         Arc::new(FixtureSource {
             source: Some(source_with_sections(4)),
         }),
-        Arc::new(SqliteSummaryRepository::new(pool.clone())),
+        Arc::new(SqliteSummaryRepository::new(db.clone())),
         Arc::clone(&index),
         Arc::new(StubRuntime { llm: None }),
     );
@@ -594,13 +596,13 @@ async fn empty_source_is_complete_but_missing_model_is_retryable() {
 
 #[tokio::test]
 async fn entirely_invalid_model_output_is_retryable() {
-    let pool = pool_with_document().await;
+    let db = pool_with_document().await;
     let index = memory_index();
     let (use_case, _) = use_case(
         true,
         Some(source_with_sections(0)),
         &["{}"],
-        &pool,
+        &db,
         Arc::clone(&index),
     );
     assert!(use_case.execute("doc-1").await.is_err());
@@ -609,13 +611,13 @@ async fn entirely_invalid_model_output_is_retryable() {
 
 #[tokio::test]
 async fn cancellation_interrupts_an_active_summary_model_call() {
-    let pool = pool_with_document().await;
+    let db = pool_with_document().await;
     let index = memory_index();
     let (generator, prompts) = use_case(
         true,
         Some(source_with_sections(0)),
         &["__stall__"],
-        &pool,
+        &db,
         Arc::clone(&index),
     );
     let cancel = tokio_util::sync::CancellationToken::new();
@@ -642,13 +644,13 @@ async fn cancellation_interrupts_an_active_summary_model_call() {
 
 #[tokio::test]
 async fn cancelled_summary_keeps_existing_rows_and_vectors() {
-    let pool = pool_with_document().await;
+    let db = pool_with_document().await;
     let index = memory_index();
     let (first, _) = use_case(
         true,
         Some(source_with_sections(0)),
         &[r#"{"summary":"Keep this."}"#],
-        &pool,
+        &db,
         Arc::clone(&index),
     );
     assert_eq!(first.execute("doc-1").await.unwrap(), 1);
@@ -656,7 +658,7 @@ async fn cancelled_summary_keeps_existing_rows_and_vectors() {
         true,
         Some(source_with_sections(0)),
         &[r#"{"summary":"Replace this."}"#],
-        &pool,
+        &db,
         Arc::clone(&index),
     );
     let cancel = tokio_util::sync::CancellationToken::new();
@@ -664,7 +666,7 @@ async fn cancelled_summary_keeps_existing_rows_and_vectors() {
     assert!(second.execute_cancellable("doc-1", &cancel).await.is_err());
     assert!(prompts.lock().is_empty());
     assert_eq!(index.count(), 1);
-    let saved = SqliteSummaryRepository::new(pool)
+    let saved = SqliteSummaryRepository::new(db)
         .list_for_documents(&HashSet::from(["doc-1".to_owned()]), IDENTITY)
         .await
         .unwrap();
@@ -676,14 +678,14 @@ async fn cancelled_summary_keeps_existing_rows_and_vectors() {
 
 #[tokio::test]
 async fn regeneration_swaps_the_vectors_rather_than_adding_to_them() {
-    let pool = pool_with_document().await;
+    let db = pool_with_document().await;
     let index = memory_index();
     for text in ["First.", "Second."] {
         let (use_case, _) = use_case(
             true,
             Some(source_with_sections(0)),
             &[&format!(r#"{{"summary":"{text}"}}"#)],
-            &pool,
+            &db,
             Arc::clone(&index),
         );
         assert_eq!(use_case.execute("doc-1").await.unwrap(), 1);
@@ -695,9 +697,9 @@ async fn regeneration_swaps_the_vectors_rather_than_adding_to_them() {
 
 #[tokio::test]
 async fn summary_search_ranks_documents_and_ignores_rows_that_are_gone() {
-    let pool = pool_with_document().await;
+    let db = pool_with_document().await;
     let index = memory_index();
-    let repository = Arc::new(SqliteSummaryRepository::new(pool.clone()));
+    let repository = Arc::new(SqliteSummaryRepository::new(db.clone()));
     let aviation = summary("doc-1", None, "preflight engine start emergency landing");
     let baking = summary("doc-2", None, "sourdough starter hydration crumb");
     for document in [&aviation, &baking] {
@@ -739,10 +741,12 @@ async fn summary_search_ranks_documents_and_ignores_rows_that_are_gone() {
 
     // Deleting the document removes its row; the orphaned vector must not
     // survive as a hit.
+    let mut tx = db.begin_write().await.unwrap();
     sqlx::query("DELETE FROM documents WHERE id = 'doc-1'")
-        .execute(&pool)
+        .execute(&mut *tx)
         .await
         .unwrap();
+    tx.commit().await.unwrap();
     let hits = search
         .top_summaries("preflight engine start emergency landing", &scope, 2)
         .await
@@ -799,13 +803,13 @@ async fn a_stubbed_tier_drives_opening_document_selection() {
 
 #[tokio::test]
 async fn forgetting_a_document_drops_its_rows_and_its_vectors() {
-    let pool = pool_with_document().await;
+    let db = pool_with_document().await;
     let index = memory_index();
     let (generator, _) = use_case(
         true,
         Some(source_with_sections(0)),
         &[r#"{"summary":"Only summary."}"#],
-        &pool,
+        &db,
         Arc::clone(&index),
     );
     assert_eq!(generator.execute("doc-1").await.unwrap(), 1);
@@ -813,7 +817,7 @@ async fn forgetting_a_document_drops_its_rows_and_its_vectors() {
 
     generator.forget("doc-1").await.unwrap();
     assert_eq!(index.count(), 0);
-    let repository = SqliteSummaryRepository::new(pool.clone());
+    let repository = SqliteSummaryRepository::new(db.clone());
     assert_eq!(repository.count_for_identity(IDENTITY).await.unwrap(), 0);
 
     // Forgetting a document with nothing stored is a no-op, not an error.
@@ -827,14 +831,14 @@ async fn forgetting_a_document_drops_its_rows_and_its_vectors() {
 #[tokio::test]
 async fn a_long_job_runs_in_shares_and_resumes_where_it_stopped() {
     use crate::features::summaries::use_cases::generate_summaries::{SummaryRun, CALLS_PER_RUN};
-    let pool = pool_with_document().await;
+    let db = pool_with_document().await;
     let index = memory_index();
     let responses: Vec<&str> = vec![r#"{"summary":"S."}"#; 41];
     let (use_case, prompts) = use_case(
         true,
         Some(source_with_sections(40)),
         &responses,
-        &pool,
+        &db,
         Arc::clone(&index),
     );
     let cancel = tokio_util::sync::CancellationToken::new();
@@ -854,10 +858,12 @@ async fn a_long_job_runs_in_shares_and_resumes_where_it_stopped() {
         SummaryRun::Published(41)
     );
     assert_eq!(prompts.lock().len(), 41, "no call was repeated");
+    let mut read = db.begin_read().await.unwrap();
     let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM summary_work_progress")
-        .fetch_one(&pool)
+        .fetch_one(&mut *read)
         .await
         .unwrap();
+    read.commit().await.unwrap();
     assert_eq!(left, 0);
 }
 
@@ -866,13 +872,13 @@ async fn a_long_job_runs_in_shares_and_resumes_where_it_stopped() {
 #[tokio::test]
 async fn a_new_revision_does_not_reuse_the_old_ones_calls() {
     use crate::features::summaries::use_cases::generate_summaries::{SummaryRun, CALLS_PER_RUN};
-    let pool = pool_with_document().await;
+    let db = pool_with_document().await;
     let responses: Vec<&str> = vec![r#"{"summary":"S."}"#; 2 * CALLS_PER_RUN];
     let (use_case, prompts) = use_case(
         true,
         Some(source_with_sections(40)),
         &responses,
-        &pool,
+        &db,
         memory_index(),
     );
     let cancel = tokio_util::sync::CancellationToken::new();
@@ -893,7 +899,7 @@ async fn a_new_revision_does_not_reuse_the_old_ones_calls() {
 /// described from their summaries.
 #[tokio::test]
 async fn a_long_sectioned_document_is_read_once() {
-    let pool = pool_with_document().await;
+    let db = pool_with_document().await;
     let mut source = source_with_sections(4);
     source.body = (0..12_000)
         .map(|i| format!("w{i}"))
@@ -901,7 +907,7 @@ async fn a_long_sectioned_document_is_read_once() {
         .join(" ");
     source.unsectioned = "A foreword under no heading.".into();
     let responses: Vec<&str> = vec![r#"{"summary":"Section said this."}"#; 5];
-    let (use_case, prompts) = use_case(true, Some(source), &responses, &pool, memory_index());
+    let (use_case, prompts) = use_case(true, Some(source), &responses, &db, memory_index());
 
     assert_eq!(use_case.execute("doc-1").await.unwrap(), 5);
     let prompts = prompts.lock().clone();
@@ -918,13 +924,13 @@ async fn a_long_sectioned_document_is_read_once() {
 /// and the queue waits before the next try.
 #[tokio::test]
 async fn a_run_with_no_usable_call_is_an_error_not_progress() {
-    let pool = pool_with_document().await;
+    let db = pool_with_document().await;
     let responses: Vec<&str> = vec!["not a summary"; 20];
     let (use_case, _) = use_case(
         true,
         Some(source_with_sections(40)),
         &responses,
-        &pool,
+        &db,
         memory_index(),
     );
     let cancel = tokio_util::sync::CancellationToken::new();

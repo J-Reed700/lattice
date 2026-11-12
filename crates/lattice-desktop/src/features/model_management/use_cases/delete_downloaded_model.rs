@@ -282,6 +282,7 @@ mod tests {
     use super::*;
     use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
     use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
+    use lattice_core::shared::persistence::Database;
     use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
     use std::path::PathBuf;
@@ -297,7 +298,7 @@ mod tests {
             .run(&pool)
             .await
             .expect("run migrations");
-        Arc::new(DownloadedModelRepository::new(pool))
+        Arc::new(DownloadedModelRepository::new(Database::new(pool)))
     }
 
     /// Builds a realistic on-disk layout: `<tmp>/models/<model_id>/model.gguf`.

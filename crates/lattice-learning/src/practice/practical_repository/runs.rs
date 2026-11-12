@@ -15,7 +15,6 @@ use crate::practical_runs::CodingRunStart;
 use crate::practice::coding::harness::{harness_for, new_nonce, RunEnd};
 use crate::practice::coding::problem::CaseStatus;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
 use sqlx::Row;
 use std::collections::HashSet;
 
@@ -127,8 +126,7 @@ impl LearningPracticalRepository {
             uuid(session_id, "practice session")?;
         }
         let evaluator = coding.map(coding_harness).transpose()?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &request.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = practical_operation(
             "practical_run",
             &request.operation_id,
@@ -361,7 +359,7 @@ impl LearningPracticalRepository {
             })
             .collect::<Vec<_>>();
         let timestamp = now();
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let updated = sqlx::query("UPDATE learning_practical_runs SET status=?,stdout=?,stderr=?,output_truncated=?,exit_code=?,duration_ms=?,check_results_json=?,completed_at=? WHERE id=? AND status='running'")
             .bind(status_name(&status)).bind(&stdout).bind(&execution.stderr)
             .bind(execution.output_truncated as i64).bind(execution.exit_code.map(i64::from))
@@ -414,8 +412,7 @@ impl LearningPracticalRepository {
         uuid(&request.operation_id, "operation")?;
         uuid(&request.program_id, "program")?;
         uuid(&request.run_id, "run")?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &request.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = practical_operation(
             "practical_run",
             &request.operation_id,
@@ -454,25 +451,31 @@ impl LearningPracticalRepository {
     }
 
     pub(crate) async fn run_cleanup(&self, id: &str) -> Result<RunCleanup> {
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let row = sqlx::query(
             "SELECT id,engine,activity_snapshot_json FROM learning_practical_runs WHERE id=?",
         )
         .bind(id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *read)
         .await
         .map_err(db)?;
+        read.commit().await.map_err(db)?;
         cleanup_record(&row)
     }
 
     pub(crate) async fn unfinished_runs(&self) -> Result<Vec<RunCleanup>> {
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let rows = sqlx::query("SELECT id,engine,activity_snapshot_json FROM learning_practical_runs WHERE status IN ('pending','running')")
-            .fetch_all(&self.pool).await.map_err(db)?;
+            .fetch_all(&mut *read).await.map_err(db)?;
+        read.commit().await.map_err(db)?;
         rows.iter().map(cleanup_record).collect()
     }
 
     pub(crate) async fn mark_runs_interrupted(&self) -> Result<usize> {
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let changed = sqlx::query("UPDATE learning_practical_runs SET status='interrupted',stderr='The desktop process stopped before the run completed.',completed_at=? WHERE status IN ('pending','running')")
-            .bind(now()).execute(&self.pool).await.map_err(db)?;
+            .bind(now()).execute(&mut *tx).await.map_err(db)?;
+        tx.commit().await.map_err(db)?;
         Ok(changed.rows_affected() as usize)
     }
 }

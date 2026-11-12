@@ -22,8 +22,9 @@ fn save_request(program_id: &str, revision: i64) -> SaveLearningPracticeProfileR
 #[tokio::test]
 async fn a_course_with_no_saved_profile_reads_as_the_empty_one() -> Result<()> {
     let pool = active_memory_pool().await?;
-    let (program, _lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool);
+    let database = Database::new(pool.clone());
+    let (program, _lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database);
 
     let profile = repo.get_profile(&program.summary.id).await?;
     assert_eq!(
@@ -43,7 +44,7 @@ async fn a_course_with_no_saved_profile_reads_as_the_empty_one() -> Result<()> {
 
 #[tokio::test]
 async fn a_profile_of_a_course_that_does_not_exist_is_not_found() -> Result<()> {
-    let repo = LearningPracticeRepository::new(active_memory_pool().await?);
+    let repo = LearningPracticeRepository::new(Database::new(active_memory_pool().await?));
     assert!(matches!(
         repo.get_profile(&id()).await,
         Err(AppError::NotFound(_))
@@ -58,8 +59,9 @@ async fn a_profile_of_a_course_that_does_not_exist_is_not_found() -> Result<()> 
 #[tokio::test]
 async fn a_saved_profile_reads_back_and_each_save_raises_the_revision() -> Result<()> {
     let pool = active_memory_pool().await?;
-    let (program, _lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool);
+    let database = Database::new(pool.clone());
+    let (program, _lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database);
     let program_id = program.summary.id.clone();
 
     let mut request = save_request(&program_id, 0);
@@ -85,8 +87,9 @@ async fn a_saved_profile_reads_back_and_each_save_raises_the_revision() -> Resul
 #[tokio::test]
 async fn a_stale_revision_is_a_conflict_that_reaches_the_frontend_as_conflict() -> Result<()> {
     let pool = active_memory_pool().await?;
-    let (program, _lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool);
+    let database = Database::new(pool.clone());
+    let (program, _lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database);
     let program_id = program.summary.id.clone();
 
     repo.save_profile(&save_request(&program_id, 0)).await?;
@@ -111,8 +114,9 @@ async fn a_stale_revision_is_a_conflict_that_reaches_the_frontend_as_conflict() 
 #[tokio::test]
 async fn a_new_profile_is_saved_only_from_revision_zero() -> Result<()> {
     let pool = active_memory_pool().await?;
-    let (program, _lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool);
+    let database = Database::new(pool.clone());
+    let (program, _lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database);
 
     assert!(matches!(
         repo.save_profile(&save_request(&program.summary.id, 3))
@@ -126,23 +130,25 @@ async fn a_new_profile_is_saved_only_from_revision_zero() -> Result<()> {
 #[tokio::test]
 async fn profile_in_reads_what_was_saved_and_nothing_for_a_course_without_one() -> Result<()> {
     let pool = active_memory_pool().await?;
-    let (program, _lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let (program, _lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database.clone());
     let program_id = program.summary.id.clone();
 
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     assert_eq!(
-        crate::practice_repository::profile_in(&mut connection, &program_id).await?,
+        crate::practice_repository::profile_in(&mut read, &program_id).await?,
         None
     );
-    drop(connection);
+    read.commit().await?;
 
     let saved = repo.save_profile(&save_request(&program_id, 0)).await?;
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     assert_eq!(
-        crate::practice_repository::profile_in(&mut connection, &program_id).await?,
+        crate::practice_repository::profile_in(&mut read, &program_id).await?,
         Some(saved)
     );
+    read.commit().await?;
     Ok(())
 }
 
@@ -186,14 +192,15 @@ async fn save_interview(
 #[tokio::test]
 async fn a_new_interview_date_becomes_the_target_of_the_courses_interview_decks() -> Result<()> {
     let pool = active_memory_pool().await?;
-    let (program, lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let (program, lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database.clone());
     let program_id = program.summary.id.clone();
     let activity_id = save_interview(&pool, &program, &lesson).await?;
-    let study = StudyRepository::new(pool.clone());
+    let study = StudyRepository::new(database.clone());
     let deck = create_interview_deck(
         &study,
-        &Database::from(pool.clone()),
+        &database,
         CreateInterviewStudyDeckRequestDto {
             program_id: program_id.clone(),
             activity_id,
@@ -220,14 +227,15 @@ async fn a_new_interview_date_becomes_the_target_of_the_courses_interview_decks(
 #[tokio::test]
 async fn a_conflicting_save_leaves_the_decks_target_alone() -> Result<()> {
     let pool = active_memory_pool().await?;
-    let (program, lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let (program, lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database.clone());
     let program_id = program.summary.id.clone();
     let activity_id = save_interview(&pool, &program, &lesson).await?;
-    let study = StudyRepository::new(pool.clone());
+    let study = StudyRepository::new(database.clone());
     let deck = create_interview_deck(
         &study,
-        &Database::from(pool.clone()),
+        &database,
         CreateInterviewStudyDeckRequestDto {
             program_id: program_id.clone(),
             activity_id,
@@ -249,8 +257,9 @@ async fn a_conflicting_save_leaves_the_decks_target_alone() -> Result<()> {
 #[tokio::test]
 async fn a_new_interview_date_with_no_interview_deck_is_just_saved() -> Result<()> {
     let pool = active_memory_pool().await?;
-    let (program, _lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool);
+    let database = Database::new(pool.clone());
+    let (program, _lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database);
 
     let mut request = save_request(&program.summary.id, 0);
     request.interview_at = Some(chrono::Utc::now().timestamp_millis() + 24 * 60 * 60 * 1000);
@@ -262,8 +271,9 @@ async fn a_new_interview_date_with_no_interview_deck_is_just_saved() -> Result<(
 #[tokio::test]
 async fn written_practice_starts_from_the_learners_details() -> Result<()> {
     let pool = active_memory_pool().await?;
-    let (program, lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool);
+    let database = Database::new(pool.clone());
+    let (program, lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database);
 
     let before = start_request(&program, &lesson);
     repo.start(&before, "before").await?;

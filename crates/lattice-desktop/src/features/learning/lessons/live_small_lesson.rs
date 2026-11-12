@@ -244,6 +244,7 @@ async fn live_small_lesson_reaches_ready() -> Result<()> {
         .run(&pool)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
+    let db = Database::new(pool);
     let model = Arc::new(ObservedModel::new(&config, directory.clone(), 0).await?);
     let fixture: serde_json::Value = serde_json::from_slice(&std::fs::read(
         std::env::var("LATTICE_LESSON_FIXTURE").unwrap(),
@@ -278,7 +279,7 @@ async fn live_small_lesson_reaches_ready() -> Result<()> {
             acquired_at: chrono::Utc::now().timestamp_millis(),
         })
         .collect();
-    let programs = LearningRepository::new(pool.clone());
+    let programs = LearningRepository::new(db.clone());
     let references: Vec<_> = program
         .sources
         .iter()
@@ -313,7 +314,7 @@ async fn live_small_lesson_reaches_ready() -> Result<()> {
         })
         .await?;
     let program = programs.get(&program.summary.id).await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let repo = LearningCurriculumRepository::new(db.clone());
     let job = repo
         .start_job(&StartLearningGenerationJobRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
@@ -327,11 +328,11 @@ async fn live_small_lesson_reaches_ready() -> Result<()> {
     std::fs::write(directory.join("job-id.txt"), &job.id)?;
     drop(repo);
     drop(programs);
-    run_and_confirm(pool, options, model, &job.id, &directory).await
+    run_and_confirm(db, options, model, &job.id, &directory).await
 }
 
 pub(super) async fn run_and_confirm(
-    pool: sqlx::SqlitePool,
+    db: Database,
     options: sqlx::sqlite::SqliteConnectOptions,
     model: Arc<ObservedModel>,
     job_id: &str,
@@ -341,9 +342,8 @@ pub(super) async fn run_and_confirm(
     let web: Arc<dyn lattice_core::application::ports::WebServiceTrait> = Arc::new(
         crate::features::web::services::web::WebService::new(web_dir.path())?,
     );
-    let runtime =
-        lattice_core::shared::runtime::jobs::JobRuntime::new(Database::from(pool.clone()));
-    let worker = worker(&pool, model, web, None);
+    let runtime = lattice_core::shared::runtime::jobs::JobRuntime::new(db.clone());
+    let worker = worker(&db, model, web, None);
     let result = run_job(runtime, worker, job_id, directory, &|_| Ok(())).await?;
     let job = &result;
     assert_eq!(
@@ -351,13 +351,15 @@ pub(super) async fn run_and_confirm(
         LearningGenerationJobStatus::Completed,
         "Production worker did not publish; see result.json"
     );
-    pool.close().await;
+    db.close().await;
     // Read readiness from a new connection after closing the worker's pool.
-    let reopened = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+    let reopened = Database::new(
+        sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?,
+    );
     let published = LearningRepository::new(reopened.clone())
         .get(&job.program_id)
         .await?;
@@ -399,7 +401,7 @@ pub(super) async fn run_and_confirm(
 /// The production lesson worker on `model`, reading the web through
 /// `research_web` and searching evidence through `courses`.
 pub(super) fn worker(
-    pool: &sqlx::SqlitePool,
+    db: &Database,
     model: Arc<ObservedModel>,
     research_web: Arc<dyn lattice_core::application::ports::WebServiceTrait>,
     courses: Option<Arc<crate::features::learning::references::course_index::CourseIndexes>>,
@@ -407,7 +409,7 @@ pub(super) fn worker(
     LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::features::learning::tests::runtimes(),
-        database: pool.clone().into(),
+        database: db.clone(),
         load_llm: Arc::new(move || {
             let llm: Arc<dyn LLMPort> = model.clone();
             Box::pin(async move { Ok(pinned_for_test(llm)) })
@@ -480,7 +482,8 @@ async fn live_small_lesson_resumes_to_ready() -> Result<()> {
         .connect_with(options.clone())
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let db = Database::new(pool);
+    let repo = LearningCurriculumRepository::new(db.clone());
     let job = repo.job(&job_id).await?;
     assert!(
         matches!(
@@ -503,7 +506,7 @@ async fn live_small_lesson_resumes_to_ready() -> Result<()> {
                 )),
             "Another test worker is active"
         );
-        let program = LearningRepository::new(pool.clone())
+        let program = LearningRepository::new(db.clone())
             .get(&job.program_id)
             .await?;
         // Use the same retry operation as the UI. It copies durable work but
@@ -533,7 +536,7 @@ async fn live_small_lesson_resumes_to_ready() -> Result<()> {
         .map_or(0, |n| n + 1);
     let model = Arc::new(ObservedModel::new(&config, directory.clone(), next_call).await?);
     // Exercise the same recovery the job runtime runs at native startup.
-    lattice_core::shared::runtime::jobs::JobStore::new(pool.clone())
+    lattice_core::shared::runtime::jobs::JobStore::new(db.clone())
         .recover(
             crate::features::learning::curriculum_repository::LESSON_PREPARATION,
             lattice_core::shared::runtime::jobs::RecoveryPolicy::Requeue,
@@ -544,5 +547,5 @@ async fn live_small_lesson_resumes_to_ready() -> Result<()> {
         LearningGenerationJobStatus::Pending
     );
     drop(repo);
-    run_and_confirm(pool, options, model, &job_id, &directory).await
+    run_and_confirm(db, options, model, &job_id, &directory).await
 }

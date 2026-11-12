@@ -3,6 +3,7 @@ use crate::features::conversation::{
     repository::ConversationRepository, service::ConversationService, ConversationServiceTrait,
 };
 use lattice_core::domain::conversation::MessageRole;
+use lattice_core::shared::persistence::Database;
 
 async fn service_with_pending_question() -> (
     Arc<dyn ConversationServiceTrait>,
@@ -13,7 +14,7 @@ async fn service_with_pending_question() -> (
     let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     let service: Arc<dyn ConversationServiceTrait> = Arc::new(ConversationService::new(Arc::new(
-        ConversationRepository::new(pool.clone()),
+        ConversationRepository::new(Database::new(pool.clone())),
     )));
     let conversation = service
         .create_conversation("Chat".into(), None)

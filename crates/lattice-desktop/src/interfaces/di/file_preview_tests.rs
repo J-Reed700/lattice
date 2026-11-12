@@ -9,11 +9,10 @@ use std::sync::Arc;
 #[tokio::test]
 async fn library_preview_survives_policy_refresh_without_allowing_siblings() -> anyhow::Result<()> {
     let data = tempfile::tempdir()?;
-    let database = Arc::new(DatabaseConnection::new(data.path().join("app.db")).await?);
+    let database = DatabaseConnection::new(data.path().join("app.db")).await?;
     initialize_database(database.database()).await?;
     let container = Container::new(
         database.database().clone(),
-        database,
         None,
         "http://127.0.0.1:1",
         "test-model",

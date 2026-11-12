@@ -2,7 +2,7 @@ use crate::persistence::db;
 use crate::references::trust::overrides::CoveredVersion;
 use lattice_core::domain::provenance::OverrideScope;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Database;
 use sqlx::{Row, SqliteConnection};
 
 /// A version a scope covers: its course and its id.
@@ -46,11 +46,11 @@ pub(in crate::references::trust) async fn site_versions(
 
 /// Per site and origin, the outcomes that held and the ones that failed.
 pub(in crate::references::trust) async fn site_outcome_counts(
-    pool: &impl DriverPool,
+    database: &Database,
     sites: &[&str],
 ) -> Result<Vec<(String, i64, i64)>> {
-    let pool = pool.sqlx_pool();
-    sqlx::query_as(
+    let mut read = database.begin_read().await.map_err(db)?;
+    let counts = sqlx::query_as(
         "SELECT p.site, SUM(o.decision_sufficient=o.decision_right),
                         SUM(o.decision_sufficient<>o.decision_right)
          FROM (SELECT DISTINCT site,origin_key FROM source_provenance
@@ -59,9 +59,11 @@ pub(in crate::references::trust) async fn site_outcome_counts(
          GROUP BY p.site,p.origin_key",
     )
     .bind(serde_json::to_string(sites)?)
-    .fetch_all(pool)
+    .fetch_all(&mut *read)
     .await
-    .map_err(db)
+    .map_err(db)?;
+    read.commit().await.map_err(db)?;
+    Ok(counts)
 }
 
 /// A source scope covers every version of that source in its course; a

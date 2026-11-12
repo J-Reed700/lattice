@@ -7,6 +7,7 @@ use crate::infrastructure::persistence::mappers::{ChunkMapper, ChunkModel};
 use lattice_core::domain::entities::chunk::Chunk as ChunkEntity;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::bind_limit::rows_per_statement;
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::QueryBuilder;
 use sqlx::Row;
 use sqlx::SqliteConnection;
@@ -16,7 +17,7 @@ const IDS_PER_STATEMENT: usize = rows_per_statement(1, 0);
 /// Chunk rows one INSERT takes: fifteen bound fields each.
 pub(super) const CHUNK_ROWS_PER_INSERT: usize = rows_per_statement(15, 0);
 
-pub async fn save(conn: &mut SqliteConnection, chunk: &ChunkEntity) -> Result<()> {
+pub async fn save(tx: &mut WriteTx, chunk: &ChunkEntity) -> Result<()> {
     let model = ChunkMapper::to_model(chunk)?;
 
     sqlx::query(
@@ -57,7 +58,7 @@ pub async fn save(conn: &mut SqliteConnection, chunk: &ChunkEntity) -> Result<()
     .bind(&model.section)
     .bind(model.page_number)
     .bind(model.from_ocr)
-    .execute(conn)
+    .execute(&mut **tx)
     .await
     .map_err(|e| AppError::Database(format!("Failed to save chunk: {}", e)))?;
 
@@ -228,19 +229,19 @@ pub async fn find_by_document_limit(
     ChunkMapper::to_entities(&db_models)
 }
 
-pub async fn delete(conn: &mut SqliteConnection, id: &str) -> Result<()> {
+pub async fn delete(tx: &mut WriteTx, id: &str) -> Result<()> {
     sqlx::query("DELETE FROM text_chunks WHERE id = ?")
         .bind(id)
-        .execute(conn)
+        .execute(&mut **tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to delete chunk: {}", e)))?;
     Ok(())
 }
 
-pub async fn delete_by_document(conn: &mut SqliteConnection, document_id: &str) -> Result<()> {
+pub async fn delete_by_document(tx: &mut WriteTx, document_id: &str) -> Result<()> {
     sqlx::query("DELETE FROM text_chunks WHERE document_id = ?")
         .bind(document_id)
-        .execute(conn)
+        .execute(&mut **tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to delete chunks: {}", e)))?;
     Ok(())
@@ -286,10 +287,7 @@ pub async fn exists(conn: &mut SqliteConnection, id: &str) -> Result<bool> {
 
 /// Optimized batch save for multiple chunks
 /// Uses bulk INSERT with QueryBuilder to reduce database round-trips
-pub async fn save_batch_optimized(
-    conn: &mut SqliteConnection,
-    chunks: &[ChunkEntity],
-) -> Result<()> {
+pub async fn save_batch_optimized(tx: &mut WriteTx, chunks: &[ChunkEntity]) -> Result<()> {
     use sqlx::QueryBuilder;
     use std::time::Instant;
     use tracing::info;
@@ -352,7 +350,7 @@ pub async fn save_batch_optimized(
 
         query_builder
             .build()
-            .execute(&mut *conn)
+            .execute(&mut **tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to insert chunk batch: {}", e)))?;
     }
@@ -378,7 +376,7 @@ pub async fn save_batch_optimized(
 
 /// Optimized batch delete for multiple chunks
 /// Uses single DELETE with IN clause to reduce database round-trips
-pub async fn delete_batch_optimized(conn: &mut SqliteConnection, ids: &[&str]) -> Result<()> {
+pub async fn delete_batch_optimized(tx: &mut WriteTx, ids: &[&str]) -> Result<()> {
     use std::time::Instant;
     use tracing::info;
 
@@ -398,7 +396,7 @@ pub async fn delete_batch_optimized(conn: &mut SqliteConnection, ids: &[&str]) -
         }
 
         query_builder
-            .execute(&mut *conn)
+            .execute(&mut **tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to delete chunk batch: {}", e)))?;
     }

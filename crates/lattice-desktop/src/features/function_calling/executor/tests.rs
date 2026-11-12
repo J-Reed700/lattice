@@ -328,7 +328,8 @@ async fn list_documents_uses_migrated_schema_for_inventory_favorites_and_recent(
 
     let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    let documents = Arc::new(SqliteDocuments::new(pool.clone()));
+    let db = Database::new(pool);
+    let documents = Arc::new(SqliteDocuments::new(db.clone()));
     for name in ["mpep-0100.pdf", "mpep-0200.pdf"] {
         let document = Document::new(
             lattice_core::shared::types::ValidatedFilePath::new(PathBuf::from(format!(
@@ -342,8 +343,8 @@ async fn list_documents_uses_migrated_schema_for_inventory_favorites_and_recent(
         );
         documents.save(&document).await.unwrap();
     }
-    let favorites = Arc::new(FavoritesRepository::new(pool.clone()));
-    let recent = Arc::new(RecentDocumentsRepository::new(pool.clone()));
+    let favorites = Arc::new(FavoritesRepository::new(db.clone()));
+    let recent = Arc::new(RecentDocumentsRepository::new(db.clone()));
     let mut services = test_executor_services(
         Arc::new(crate::features::function_calling::registry::init_function_registry().unwrap()),
         Arc::new(MockWebService::new()),
@@ -351,9 +352,7 @@ async fn list_documents_uses_migrated_schema_for_inventory_favorites_and_recent(
     services.document_repository = documents;
     services.favorites_repository = favorites.clone();
     services.recent_documents_repository = recent.clone();
-    services.tag_service = Arc::new(crate::features::tags::service::TagService::new(
-        Database::from(pool),
-    ));
+    services.tag_service = Arc::new(crate::features::tags::service::TagService::new(db.clone()));
     let executor = FunctionExecutor::new(services);
     let list = |args| {
         let executor = &executor;
@@ -500,7 +499,8 @@ async fn hybrid_semantic_search_runs_the_library_orchestrator_and_names_hits_by_
 
     let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    let documents = Arc::new(SqliteDocuments::new(pool.clone()));
+    let db = Database::new(pool.clone());
+    let documents = Arc::new(SqliteDocuments::new(db.clone()));
     let document = Document::new(
         lattice_core::shared::types::ValidatedFilePath::new(PathBuf::from("/tmp/quotas.md"))
             .unwrap(),
@@ -523,9 +523,9 @@ async fn hybrid_semantic_search_runs_the_library_orchestrator_and_names_hits_by_
         HybridSearchUseCase::new(
             Arc::new(lattice_core::application::ports::UnavailableEmbedding::not_installed()),
             Arc::new(USearchVectorIndex::new(4, None).unwrap()),
-            Arc::new(SqliteTextSearch::new(Database::from(pool.clone()))),
+            Arc::new(SqliteTextSearch::new(db.clone())),
         )
-        .with_chunk_repository(Arc::new(ChunkRepository::new(pool.clone()))),
+        .with_chunk_repository(Arc::new(ChunkRepository::new(db.clone()))),
     );
     let mut services = test_executor_services(
         Arc::new(crate::features::function_calling::registry::init_function_registry().unwrap()),

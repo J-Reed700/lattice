@@ -210,7 +210,6 @@ impl Container {
     /// **Architecture**: Layer 0 (raw params) → Layer 1 (CoreModule) → Layer 2 (Features)
     pub async fn new(
         database: Database,
-        db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
         app_handle: Option<tauri::AppHandle>,
         llm_endpoint: &str,
         llm_model: &str,
@@ -270,13 +269,7 @@ impl Container {
         // CoreModule builds shared singletons (security, runtime, credentials)
         // Stack frame for this construction is freed before Layer 2 begins
         let core = Arc::new(
-            super::modules::CoreModule::new(
-                database.clone(),
-                db_conn.clone(),
-                data_dir.clone(),
-                background,
-            )
-            .await?,
+            super::modules::CoreModule::new(database.clone(), data_dir.clone(), background).await?,
         );
 
         tracing::debug!("CoreModule initialized");

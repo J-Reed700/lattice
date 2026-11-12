@@ -14,10 +14,12 @@
 //! left beside it would put old vectors behind new passages.
 
 use super::chunking::NewPassage;
-use lattice_core::shared::persistence::{PersistenceError, PersistenceErrorKind, Transactions};
+use lattice_core::shared::persistence::{
+    Database, PersistenceError, PersistenceErrorKind, WriteTx,
+};
 use lattice_core::shared::{AppError, Result};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
-use sqlx::{Connection, Row, SqliteConnection, SqlitePool};
+use sqlx::{Connection, Row, SqliteConnection};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -273,27 +275,25 @@ async fn cleared(dir: &Path) -> Result<()> {
         .map_err(|error| AppError::FileStorage(format!("Passage index: {error}")))?
 }
 
-async fn connect_pool(dir: &Path) -> Result<SqlitePool> {
+async fn connect_pool(dir: &Path) -> Result<Database> {
     let options = SqliteConnectOptions::new()
         .filename(dir.join(DB_FILE))
         .create_if_missing(true)
         .busy_timeout(Duration::from_secs(5))
         .pragma("journal_mode", "WAL")
         .pragma("synchronous", "NORMAL");
-    SqlitePoolOptions::new()
+    let pool = SqlitePoolOptions::new()
         .max_connections(2)
         .acquire_timeout(Duration::from_secs(5))
         .connect_with(options)
         .await
-        .map_err(db_error("open passages.db"))
+        .map_err(db_error("open passages.db"))?;
+    Ok(Database::new(pool))
 }
 
-/// Whether the store in `pool` holds tables of another shape than this one.
-async fn other_version(pool: &SqlitePool) -> Result<bool> {
-    let mut tx = pool
-        .begin_read()
-        .await
-        .map_err(db_error("read the schema"))?;
+/// Whether the store in `db` holds tables of another shape than this one.
+async fn other_version(db: &Database) -> Result<bool> {
+    let mut tx = db.begin_read().await.map_err(db_error("read the schema"))?;
     let tables: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
     )
@@ -313,8 +313,8 @@ async fn other_version(pool: &SqlitePool) -> Result<bool> {
 
 /// Creates the tables and records the version in one transaction, so a store
 /// never has tables without the version that vouches for them.
-async fn install_schema(pool: &SqlitePool) -> Result<()> {
-    let mut tx = pool
+async fn install_schema(db: &Database) -> Result<()> {
+    let mut tx = db
         .begin_write()
         .await
         .map_err(db_error("create the schema"))?;
@@ -329,7 +329,7 @@ async fn install_schema(pool: &SqlitePool) -> Result<()> {
 }
 
 async fn put_meta(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     key: &str,
     value: &str,
 ) -> std::result::Result<(), sqlx::Error> {
@@ -339,14 +339,14 @@ async fn put_meta(
     )
     .bind(key)
     .bind(value)
-    .execute(connection)
+    .execute(&mut **tx)
     .await
     .map(|_| ())
 }
 
 pub struct PassageStore {
     dir: PathBuf,
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl PassageStore {
@@ -362,17 +362,17 @@ impl PassageStore {
         if !dir.join(DB_FILE).exists() {
             cleared(dir).await?;
         }
-        let mut pool = connect_pool(dir).await?;
-        if other_version(&pool).await? {
+        let mut db = connect_pool(dir).await?;
+        if other_version(&db).await? {
             tracing::info!(dir = %dir.display(), "Passage index: schema changed; rebuilding");
-            pool.close().await;
+            db.close().await;
             cleared(dir).await?;
-            pool = connect_pool(dir).await?;
+            db = connect_pool(dir).await?;
         }
-        install_schema(&pool).await?;
+        install_schema(&db).await?;
         Ok(Self {
             dir: dir.to_path_buf(),
-            pool,
+            db,
         })
     }
 
@@ -391,10 +391,11 @@ impl PassageStore {
             .connect_with(options)
             .await
             .map_err(db_error("open an in-memory store"))?;
-        install_schema(&pool).await?;
+        let db = Database::new(pool);
+        install_schema(&db).await?;
         Ok(Self {
             dir: PathBuf::new(),
-            pool,
+            db,
         })
     }
 
@@ -404,43 +405,62 @@ impl PassageStore {
     }
 
     pub async fn close(&self) {
-        self.pool.close().await;
+        self.db.close().await;
     }
 
     pub async fn meta(&self, key: &str) -> Result<Option<String>> {
-        sqlx::query_scalar::<_, String>("SELECT value FROM meta WHERE key = ?")
+        let mut read = self.db.begin_read().await.map_err(db_error("read meta"))?;
+        let value = sqlx::query_scalar::<_, String>("SELECT value FROM meta WHERE key = ?")
             .bind(key)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *read)
             .await
-            .map_err(db_error("read meta"))
+            .map_err(db_error("read meta"))?;
+        read.commit().await.map_err(db_error("read meta"))?;
+        Ok(value)
     }
 
     pub async fn set_meta(&self, key: &str, value: &str) -> Result<()> {
-        let mut connection = self.pool.acquire().await.map_err(db_error("write meta"))?;
-        put_meta(&mut connection, key, value)
+        let mut tx = self
+            .db
+            .begin_write()
             .await
-            .map_err(db_error("write meta"))
+            .map_err(db_error("write meta"))?;
+        put_meta(&mut tx, key, value)
+            .await
+            .map_err(db_error("write meta"))?;
+        tx.commit().await.map_err(db_error("write meta"))
     }
 
     pub async fn delete_meta(&self, key: &str) -> Result<()> {
+        let mut tx = self
+            .db
+            .begin_write()
+            .await
+            .map_err(db_error("write meta"))?;
         sqlx::query("DELETE FROM meta WHERE key = ?")
             .bind(key)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
-            .map(|_| ())
-            .map_err(db_error("write meta"))
+            .map_err(db_error("write meta"))?;
+        tx.commit().await.map_err(db_error("write meta"))
     }
 
     /// Every document under `prefix` (`""` for all), keyed by its key.
     pub async fn documents(&self, prefix: &str) -> Result<HashMap<String, Document>> {
+        let mut read = self
+            .db
+            .begin_read()
+            .await
+            .map_err(db_error("read documents"))?;
         let rows = sqlx::query(&format!(
             "SELECT key, stamp, content_hash, embedded FROM index_documents WHERE {}",
             under("key")
         ))
         .bind(prefix)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(db_error("read documents"))?;
+        read.commit().await.map_err(db_error("read documents"))?;
         Ok(rows
             .into_iter()
             .map(|row| {
@@ -459,25 +479,37 @@ impl PassageStore {
     /// Keys of the documents under `prefix`: a search's scope, or what a
     /// removed folder takes with it.
     pub async fn keys_under(&self, prefix: &str) -> Result<Vec<String>> {
-        sqlx::query_scalar(&format!(
+        let mut read = self
+            .db
+            .begin_read()
+            .await
+            .map_err(db_error("read documents"))?;
+        let keys = sqlx::query_scalar(&format!(
             "SELECT key FROM index_documents WHERE {} ORDER BY key",
             under("key")
         ))
         .bind(prefix)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
-        .map_err(db_error("read documents"))
+        .map_err(db_error("read documents"))?;
+        read.commit().await.map_err(db_error("read documents"))?;
+        Ok(keys)
     }
 
     /// Same content under a new stamp: nothing to redo.
     pub async fn touch(&self, key: &str, stamp: &str) -> Result<()> {
+        let mut tx = self
+            .db
+            .begin_write()
+            .await
+            .map_err(db_error("update a document"))?;
         sqlx::query("UPDATE index_documents SET stamp = ? WHERE key = ?")
             .bind(stamp)
             .bind(key)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
-            .map(|_| ())
-            .map_err(db_error("update a document"))
+            .map_err(db_error("update a document"))?;
+        tx.commit().await.map_err(db_error("update a document"))
     }
 
     /// Replaces a document's passages and marks it for embedding (or done,
@@ -490,7 +522,7 @@ impl PassageStore {
         content_hash: &str,
         passages: &[NewPassage],
     ) -> Result<Vec<i64>> {
-        let mut tx = self.pool.begin_write().await.map_err(db_error("begin"))?;
+        let mut tx = self.db.begin_write().await.map_err(db_error("begin"))?;
         let old: Vec<i64> = sqlx::query_scalar("SELECT id FROM passages WHERE document = ?")
             .bind(key)
             .fetch_all(&mut *tx)
@@ -531,7 +563,7 @@ impl PassageStore {
 
     /// Forgets the documents at `keys`. Returns their passage ids.
     pub async fn remove(&self, keys: &[String]) -> Result<Vec<i64>> {
-        let mut tx = self.pool.begin_write().await.map_err(db_error("begin"))?;
+        let mut tx = self.db.begin_write().await.map_err(db_error("begin"))?;
         let mut removed = Vec::new();
         for key in keys {
             let ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM passages WHERE document = ?")
@@ -558,26 +590,41 @@ impl PassageStore {
     /// Documents under `prefix` whose passages are not all in the vectors
     /// file yet, in key order.
     pub async fn pending(&self, prefix: &str) -> Result<Vec<String>> {
-        sqlx::query_scalar(&format!(
+        let mut read = self
+            .db
+            .begin_read()
+            .await
+            .map_err(db_error("read pending documents"))?;
+        let keys = sqlx::query_scalar(&format!(
             "SELECT key FROM index_documents WHERE embedded = 0 AND {} ORDER BY key",
             under("key")
         ))
         .bind(prefix)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
-        .map_err(db_error("read pending documents"))
+        .map_err(db_error("read pending documents"))?;
+        read.commit()
+            .await
+            .map_err(db_error("read pending documents"))?;
+        Ok(keys)
     }
 
     /// A document's passages in span order.
     pub async fn passages_of(&self, key: &str) -> Result<Vec<Passage>> {
+        let mut read = self
+            .db
+            .begin_read()
+            .await
+            .map_err(db_error("read passages"))?;
         let rows = sqlx::query(
             "SELECT id, document, span_start, span_end, text FROM passages
              WHERE document = ? ORDER BY span_start, id",
         )
         .bind(key)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(db_error("read passages"))?;
+        read.commit().await.map_err(db_error("read passages"))?;
         Ok(rows.into_iter().map(passage).collect())
     }
 
@@ -587,20 +634,26 @@ impl PassageStore {
             return Ok(Vec::new());
         }
         let ids = serde_json::to_string(ids)?;
+        let mut read = self
+            .db
+            .begin_read()
+            .await
+            .map_err(db_error("read passages"))?;
         let rows = sqlx::query(
             "SELECT id, document, span_start, span_end, text FROM passages
              WHERE id IN (SELECT value FROM json_each(?))",
         )
         .bind(ids)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(db_error("read passages"))?;
+        read.commit().await.map_err(db_error("read passages"))?;
         Ok(rows.into_iter().map(passage).collect())
     }
 
     /// Their passages are in the saved vectors file.
     pub async fn mark_embedded(&self, keys: &[String]) -> Result<()> {
-        let mut tx = self.pool.begin_write().await.map_err(db_error("begin"))?;
+        let mut tx = self.db.begin_write().await.map_err(db_error("begin"))?;
         for key in keys {
             sqlx::query("UPDATE index_documents SET embedded = 1 WHERE key = ?")
                 .bind(key)
@@ -614,14 +667,19 @@ impl PassageStore {
     /// The vectors are gone (a new embedding model): every document with
     /// passages is embedded again. Passages and hashes stay.
     pub async fn reset_embedded(&self) -> Result<()> {
+        let mut tx = self
+            .db
+            .begin_write()
+            .await
+            .map_err(db_error("reset embedded flags"))?;
         sqlx::query(
             "UPDATE index_documents SET embedded = 0
              WHERE key IN (SELECT DISTINCT document FROM passages)",
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
-        .map(|_| ())
-        .map_err(db_error("reset embedded flags"))
+        .map_err(db_error("reset embedded flags"))?;
+        tx.commit().await.map_err(db_error("reset embedded flags"))
     }
 
     /// Passage ids for an FTS5 `MATCH` expression, best `bm25` first, with
@@ -634,6 +692,11 @@ impl PassageStore {
         limit: usize,
     ) -> Result<Vec<(i64, f64)>> {
         let scope = scope.map(serde_json::to_string).transpose()?;
+        let mut read = self
+            .db
+            .begin_read()
+            .await
+            .map_err(db_error("search the full-text index"))?;
         let rows = sqlx::query(
             "SELECT p.id AS id, bm25(passages_fts) AS score
              FROM passages_fts JOIN passages p ON p.id = passages_fts.rowid
@@ -644,9 +707,12 @@ impl PassageStore {
         .bind(expression)
         .bind(scope)
         .bind(i64::try_from(limit).unwrap_or(i64::MAX))
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(db_error("search the full-text index"))?;
+        read.commit()
+            .await
+            .map_err(db_error("search the full-text index"))?;
         Ok(rows
             .into_iter()
             .map(|row| (row.get("id"), row.get("score")))
@@ -654,7 +720,7 @@ impl PassageStore {
     }
 
     pub async fn counts(&self, prefix: &str) -> Result<Counts> {
-        let mut tx = self.pool.begin_read().await.map_err(db_error("count"))?;
+        let mut tx = self.db.begin_read().await.map_err(db_error("count"))?;
         let counts = read_counts(&mut tx, prefix)
             .await
             .map_err(db_error("count documents and passages"))?;
@@ -664,15 +730,21 @@ impl PassageStore {
 
     /// Whether anything under `prefix` has passages.
     pub async fn has_passages(&self, prefix: &str) -> Result<bool> {
-        sqlx::query_scalar::<_, i64>(&format!(
+        let mut read = self
+            .db
+            .begin_read()
+            .await
+            .map_err(db_error("read passages"))?;
+        let exists = sqlx::query_scalar::<_, i64>(&format!(
             "SELECT EXISTS (SELECT 1 FROM passages WHERE {})",
             under("document")
         ))
         .bind(prefix)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *read)
         .await
-        .map(|exists| exists != 0)
-        .map_err(db_error("read passages"))
+        .map_err(db_error("read passages"))?;
+        read.commit().await.map_err(db_error("read passages"))?;
+        Ok(exists != 0)
     }
 
     /// How many passages hold each of `terms`, from the full-text index's
@@ -683,13 +755,21 @@ impl PassageStore {
             return Ok(HashMap::new());
         }
         let terms = serde_json::to_string(terms)?;
+        let mut read = self
+            .db
+            .begin_read()
+            .await
+            .map_err(db_error("read the vocabulary"))?;
         let rows = sqlx::query(
             "SELECT term, doc FROM passages_vocab WHERE term IN (SELECT value FROM json_each(?))",
         )
         .bind(terms)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(db_error("read the vocabulary"))?;
+        read.commit()
+            .await
+            .map_err(db_error("read the vocabulary"))?;
         Ok(rows
             .into_iter()
             .map(|row| {

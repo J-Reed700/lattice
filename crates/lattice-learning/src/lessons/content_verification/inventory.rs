@@ -366,11 +366,12 @@ mod tests {
     #[tokio::test]
     async fn an_unreadable_inventory_fails_the_job_instead_of_deferring() -> Result<()> {
         let pool = crate::tests::pool().await?;
+        let db = Database::new(pool.clone());
         let (repo, job, lesson) =
-            crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+            crate::content_verification::tests::batch_scheduler_tests::setup(&db).await?;
         let content = vec![json!({"body":"The first section states a fact."})];
         let unreadable = model(vec![json!({"units":{}}), json!({"units":{}})]);
-        crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+        crate::lesson_drafts::run(&db, &repo, &job, &lesson, async {
             let error = extract_remaining(&unreadable, &content, vec![])
                 .await
                 .err()

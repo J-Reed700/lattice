@@ -1464,46 +1464,34 @@ fn repairs_asked(llm: &DropsAfterRepair) -> usize {
 /// repair saved, after `between` has happened to it. Returns the repairs asked
 /// of the model across both runs and the second run's review.
 async fn cut_short_then_resumed(between: fn(&mut Value)) -> Result<(usize, Reviewed)> {
-    let pool = crate::tests::pool().await?;
+    let db = Database::new(crate::tests::pool().await?);
     let (repo, job, lesson_id) =
-        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+        crate::content_verification::tests::batch_scheduler_tests::setup(&db).await?;
     let llm = DropsAfterRepair {
         model: model(defect_no_repair_fixes()),
         repaired: AtomicBool::new(false),
         dropped: AtomicBool::new(false),
     };
-    let first = lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async {
-            lesson_drafts::resume(INPUT.into()).await?;
-            run(&llm, lesson(EXCERPT)).await
-        },
-    )
+    let first = lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        lesson_drafts::resume(INPUT.into()).await?;
+        run(&llm, lesson(EXCERPT)).await
+    })
     .await;
     assert!(matches!(first, Err(AppError::Network(_))));
     assert_eq!(repairs_asked(&llm), 1, "cut short after the first repair");
-    let second = lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async {
-            let saved = lesson_drafts::resume(INPUT.into())
-                .await?
-                .expect("the repair saved its draft");
-            let mut draft: Value = serde_json::from_str(&saved)?;
-            assert_eq!(draft["blocks"][0]["title"], "Corrected example");
-            let repaired = draft.clone();
-            between(&mut draft);
-            if draft != repaired {
-                lesson_drafts::save(&draft.to_string()).await?;
-            }
-            run(&llm, draft).await
-        },
-    )
+    let second = lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        let saved = lesson_drafts::resume(INPUT.into())
+            .await?
+            .expect("the repair saved its draft");
+        let mut draft: Value = serde_json::from_str(&saved)?;
+        assert_eq!(draft["blocks"][0]["title"], "Corrected example");
+        let repaired = draft.clone();
+        between(&mut draft);
+        if draft != repaired {
+            lesson_drafts::save(&draft.to_string()).await?;
+        }
+        run(&llm, draft).await
+    })
     .await?;
     Ok((repairs_asked(&llm), second))
 }
@@ -2516,16 +2504,13 @@ async fn kept_repairs(pool: &sqlx::SqlitePool, job: &str, lesson_id: &str) -> Ve
 #[tokio::test]
 async fn a_repair_s_answer_is_kept_as_it_was_given() -> Result<()> {
     let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
     let (repo, job, lesson_id) =
-        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+        crate::content_verification::tests::batch_scheduler_tests::setup(&db).await?;
     let model = model(defect_no_repair_fixes());
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async { run(&model, lesson(EXCERPT)).await },
-    )
+    lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        run(&model, lesson(EXCERPT)).await
+    })
     .await?;
     let kept = kept_repairs(&pool, &job, &lesson_id).await;
     assert!(kept.iter().all(|row| row["answer"].is_string()), "{kept:?}");
@@ -2548,8 +2533,9 @@ async fn a_repair_s_answer_is_kept_as_it_was_given() -> Result<()> {
 #[tokio::test]
 async fn a_refused_repair_answer_is_kept_with_its_reason() -> Result<()> {
     let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
     let (repo, job, lesson_id) =
-        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+        crate::content_verification::tests::batch_scheduler_tests::setup(&db).await?;
     let unusable =
         json!({"edits":[{"path":"/blocks/0/title","before":"Missing text","after":"X"}]})
             .to_string();
@@ -2563,13 +2549,9 @@ async fn a_refused_repair_answer_is_kept_with_its_reason() -> Result<()> {
         unusable.clone(),
         unusable,
     ]);
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async { run(&model, lesson(EXCERPT)).await },
-    )
+    lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        run(&model, lesson(EXCERPT)).await
+    })
     .await?;
     let kept = kept_repairs(&pool, &job, &lesson_id).await;
     assert_eq!(kept.len(), 2, "{kept:?}");
@@ -2619,8 +2601,9 @@ impl lattice_core::application::ports::llm_port::LLMPort for RepairsApart {
 #[tokio::test]
 async fn a_repair_asked_again_in_its_job_is_read_back() -> Result<()> {
     let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
     let (repo, job, lesson_id) =
-        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+        crate::content_verification::tests::batch_scheduler_tests::setup(&db).await?;
     let script = defect_no_repair_fixes();
     // The reviews of the second run are read from their checkpoints; the
     // evidence check of the first finding is asked again.
@@ -2638,21 +2621,13 @@ async fn a_repair_asked_again_in_its_job_is_read_back() -> Result<()> {
         ]),
         rest: model(rest),
     };
-    let first = lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async { run(&llm, lesson(EXCERPT)).await },
-    )
+    let first = lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        run(&llm, lesson(EXCERPT)).await
+    })
     .await?;
-    let second = lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async { run(&llm, lesson(EXCERPT)).await },
-    )
+    let second = lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        run(&llm, lesson(EXCERPT)).await
+    })
     .await?;
     assert_eq!(llm.repairs.prompts.lock().unwrap().len(), 2);
     assert_eq!(second.candidate, first.candidate);
@@ -2670,8 +2645,9 @@ async fn a_repair_asked_again_in_its_job_is_read_back() -> Result<()> {
 #[tokio::test]
 async fn a_saved_answer_in_the_answers_shape_is_reused_without_asking_again() -> Result<()> {
     let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
     let (repo, job, lesson_id) =
-        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+        crate::content_verification::tests::batch_scheduler_tests::setup(&db).await?;
     let script = defect_no_repair_fixes();
     let rest = vec![
         script[0].clone(),
@@ -2691,22 +2667,14 @@ async fn a_saved_answer_in_the_answers_shape_is_reused_without_asking_again() ->
         ]),
         rest: model(rest),
     };
-    let first = lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async { run(&llm, lesson(EXCERPT)).await },
-    )
+    let first = lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        run(&llm, lesson(EXCERPT)).await
+    })
     .await?;
     assert_eq!(llm.repairs.prompts.lock().unwrap().len(), 2);
-    let second = lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async { run(&llm, lesson(EXCERPT)).await },
-    )
+    let second = lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        run(&llm, lesson(EXCERPT)).await
+    })
     .await?;
     assert_eq!(llm.repairs.prompts.lock().unwrap().len(), 2);
     assert_eq!(second.candidate, first.candidate);
@@ -2735,15 +2703,16 @@ fn plan_at(subject: &str, site: FindingSite) -> ReviewFinding {
 #[tokio::test]
 async fn keeping_one_finding_leaves_another_finding_in_its_section_repairable() -> Result<()> {
     let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
     let (_, job, lesson_id) =
-        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+        crate::content_verification::tests::batch_scheduler_tests::setup(&db).await?;
     let program_id: String =
         sqlx::query_scalar("SELECT program_id FROM learning_lessons WHERE id=?")
             .bind(&lesson_id)
             .fetch_one(&pool)
             .await
             .unwrap();
-    let store = TeachingFindingsRepository::new(Database::from(pool));
+    let store = TeachingFindingsRepository::new(db.clone());
     let candidate = lesson(EXCERPT);
     let first = plan_at("aaaa000000000001", FindingSite::Section(0));
     let set_aside = [SetAside {
@@ -2768,8 +2737,9 @@ async fn keeping_one_finding_leaves_another_finding_in_its_section_repairable() 
 #[tokio::test]
 async fn a_row_stored_by_place_holds_every_finding_of_its_kind_there() -> Result<()> {
     let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
     let (_, _, lesson_id) =
-        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+        crate::content_verification::tests::batch_scheduler_tests::setup(&db).await?;
     let candidate = lesson(EXCERPT);
     sqlx::query(
         "INSERT INTO learning_lesson_teaching_findings (lesson_id, finding_key, kind, site, unit_index, unit_title, unit_sha256, note, passage, repairs, state, job_id, found_at, kept_at)          VALUES (?, 'teaching:section-0', 'teaching', 'section', 0, 'T', ?, 'A note.', NULL, 0, 'kept', NULL, 1, 5)",
@@ -2779,7 +2749,7 @@ async fn a_row_stored_by_place_holds_every_finding_of_its_kind_there() -> Result
     .execute(&pool)
     .await
     .unwrap();
-    let store = TeachingFindingsRepository::new(Database::from(pool));
+    let store = TeachingFindingsRepository::new(db.clone());
     let passes = Passes::new(store.held(&lesson_id, &candidate).await?);
     assert!(!passes.repairable(&plan_at("aaaa000000000001", FindingSite::Section(0))));
     assert!(!passes.repairable(&plan_at("aaaa000000000002", FindingSite::Section(0))));
@@ -3373,15 +3343,16 @@ async fn a_new_whole_lesson_issue_continues_the_count_of_the_one_before() -> Res
 async fn a_stored_reviewer_finding_is_judged_again_by_the_first_review_and_is_not_repaired(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
     let (_, job, lesson_id) =
-        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+        crate::content_verification::tests::batch_scheduler_tests::setup(&db).await?;
     let program_id: String =
         sqlx::query_scalar("SELECT program_id FROM learning_lessons WHERE id=?")
             .bind(&lesson_id)
             .fetch_one(&pool)
             .await
             .unwrap();
-    let store = TeachingFindingsRepository::new(Database::from(pool));
+    let store = TeachingFindingsRepository::new(db.clone());
     let before = parts_lesson(2);
     let stored = ReviewFinding::reviewer(
         1,
@@ -3501,31 +3472,22 @@ pub(super) fn part_a_is_wrong(text: &str) -> bool {
 async fn a_draft_the_reviewer_saw_under_one_authoring_context_is_reviewed_again_under_another(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
     let (repo, job, lesson_id) =
-        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+        crate::content_verification::tests::batch_scheduler_tests::setup(&db).await?;
     let first = ByRequest::new(part_a_is_wrong, |_, _| Vec::new());
-    let before = lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async { review_in_the_job(&first, &context(), parts_lesson(2)).await },
-    )
+    let before = lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        review_in_the_job(&first, &context(), parts_lesson(2)).await
+    })
     .await?;
     assert_eq!(before.set_aside.len(), 1);
     let other =
         json!({"sources":[{"sourceIndex":0,"excerpt":EXCERPT}],"lessonShape":["Two sections."]})
             .to_string();
     let second = ByRequest::new(part_a_is_wrong, |_, _| Vec::new());
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async {
-            review_in_the_job(&second, &other, serde_json::from_str(&before.candidate)?).await
-        },
-    )
+    lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        review_in_the_job(&second, &other, serde_json::from_str(&before.candidate)?).await
+    })
     .await?;
     let reviews = second.reviews();
     assert!(

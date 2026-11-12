@@ -24,8 +24,8 @@ use lattice_core::shared::runtime::jobs::JobStore;
 use sqlx::SqlitePool;
 
 /// The course's drills with the language it suggests.
-async fn drills_of(pool: &SqlitePool, program_id: &str) -> Result<CourseDrillsDto> {
-    review::course_drills(&Database::from(pool.clone()), program_id, None).await
+async fn drills_of(database: &Database, program_id: &str) -> Result<CourseDrillsDto> {
+    review::course_drills(database, program_id, None).await
 }
 
 /// A request for a drill on `material` from the lesson `lesson_id` of the course `program_id`, or from any.
@@ -38,13 +38,13 @@ fn asking(program_id: &str, lesson_id: Option<&str>, material: Material) -> Cour
 }
 
 /// Stocks the python drill `id`, built from the lesson `lesson_id` of the course `program_id`.
-async fn stock_for(pool: &SqlitePool, id: &str, program_id: &str, lesson_id: &str) -> Result<()> {
+async fn stock_for(database: &Database, id: &str, program_id: &str, lesson_id: &str) -> Result<()> {
     let spec = DrillSpec {
         program_id: Some(program_id.to_owned()),
         lesson_id: Some(lesson_id.to_owned()),
         ..spec()
     };
-    stock_on(pool, id, &spec).await
+    stock_on(database, id, &spec).await
 }
 
 /// Writes the language of the stocked drill `id`.
@@ -139,7 +139,8 @@ fn lesson_in<'a>(shown: &'a CourseDrillsDto, lesson_id: &str) -> Option<&'a Dril
 async fn a_new_course_lists_every_lesson_as_new_by_module_with_the_current_lesson_next(
 ) -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
     let lessons = lessons_of(&pool, &program).await?;
     let modules: Vec<(String, String)> =
         sqlx::query_as("SELECT id,title FROM learning_modules WHERE program_id=? ORDER BY ordinal")
@@ -150,7 +151,7 @@ async fn a_new_course_lists_every_lesson_as_new_by_module_with_the_current_lesso
     let titles = [SPACING_LESSON, SLEEP_LESSON, "Lesson 1-0", "Lesson 1-1"];
     let lesson = |position: usize| unseen(&lessons[position], titles[position], position == 0);
 
-    let shown = drills_of(&pool, &program).await?;
+    let shown = drills_of(&database, &program).await?;
     assert_eq!(
         shown.modules,
         [
@@ -180,7 +181,8 @@ async fn a_new_course_lists_every_lesson_as_new_by_module_with_the_current_lesso
 #[tokio::test]
 async fn the_language_is_the_one_most_of_the_prepared_lessons_code_is_in() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
     let lessons = lessons_of(&pool, &program).await?;
     prepare_lesson(
         &pool,
@@ -205,14 +207,15 @@ async fn the_language_is_the_one_most_of_the_prepared_lessons_code_is_in() -> Re
     .await?;
     set_state(&pool, &lessons[2], "replaced").await?;
 
-    assert_eq!(drills_of(&pool, &program).await?.language, "rust");
+    assert_eq!(drills_of(&database, &program).await?.language, "rust");
     Ok(())
 }
 
 #[tokio::test]
 async fn the_course_keeps_the_language_of_its_latest_code_drill() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
     let lessons = lessons_of(&pool, &program).await?;
     prepare_lesson(
         &pool,
@@ -220,49 +223,49 @@ async fn the_course_keeps_the_language_of_its_latest_code_drill() -> Result<()> 
         &[("explanation", &fenced("rust", 2), &[])],
     )
     .await?;
-    assert_eq!(drills_of(&pool, &program).await?.language, "rust");
+    assert_eq!(drills_of(&database, &program).await?.language, "rust");
 
-    stock_for(&pool, "in-go", &program, &lessons[0]).await?;
+    stock_for(&database, "in-go", &program, &lessons[0]).await?;
     in_language(&pool, "in-go", "go").await?;
-    opened(&pool, "in-go", AttemptMode::Practice).await?;
-    assert_eq!(drills_of(&pool, &program).await?.language, "go");
+    opened(&database, "in-go", AttemptMode::Practice).await?;
+    assert_eq!(drills_of(&database, &program).await?.language, "go");
 
-    stock_for(&pool, "in-python", &program, &lessons[0]).await?;
-    opened(&pool, "in-python", AttemptMode::Practice).await?;
-    assert_eq!(drills_of(&pool, &program).await?.language, "python");
+    stock_for(&database, "in-python", &program, &lessons[0]).await?;
+    opened(&database, "in-python", AttemptMode::Practice).await?;
+    assert_eq!(drills_of(&database, &program).await?.language, "python");
     Ok(())
 }
 
 #[tokio::test]
 async fn with_nothing_to_go_on_the_language_is_the_one_last_drilled_in_any_course() -> Result<()> {
     let pool = pool().await?;
-    let elsewhere = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let elsewhere = course(&database).await?;
     let elsewhere_lessons = lessons_of(&pool, &elsewhere).await?;
-    stock_for(&pool, "in-java", &elsewhere, &elsewhere_lessons[0]).await?;
+    stock_for(&database, "in-java", &elsewhere, &elsewhere_lessons[0]).await?;
     in_language(&pool, "in-java", "java").await?;
-    opened(&pool, "in-java", AttemptMode::Practice).await?;
+    opened(&database, "in-java", AttemptMode::Practice).await?;
 
-    let program = course(&pool).await?;
-    assert_eq!(drills_of(&pool, &program).await?.language, "java");
+    let program = course(&database).await?;
+    assert_eq!(drills_of(&database, &program).await?.language, "java");
     Ok(())
 }
 
 #[tokio::test]
 async fn a_language_asked_for_is_the_one_offered_and_must_be_in_the_catalogue() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
     let lessons = lessons_of(&pool, &program).await?;
-    stock_for(&pool, "drill", &program, &lessons[1]).await?;
+    stock_for(&database, "drill", &program, &lessons[1]).await?;
 
-    let go = review::course_drills(&Database::from(pool.clone()), &program, Some("go")).await?;
+    let go = review::course_drills(&database, &program, Some("go")).await?;
     assert_eq!(go.language, "go");
     assert_eq!(go.next_code, next(&lessons[0], NextDrillStatus::ToBuild));
-    let python =
-        review::course_drills(&Database::from(pool.clone()), &program, Some("python")).await?;
+    let python = review::course_drills(&database, &program, Some("python")).await?;
     assert_eq!(python.language, "python");
     assert_eq!(python.next_code, next(&lessons[1], NextDrillStatus::Ready));
-    let result =
-        review::course_drills(&Database::from(pool.clone()), &program, Some("klingon")).await;
+    let result = review::course_drills(&database, &program, Some("klingon")).await;
     assert!(
         matches!(result, Err(AppError::InvalidInput(_))),
         "{result:?}"
@@ -273,16 +276,17 @@ async fn a_language_asked_for_is_the_one_offered_and_must_be_in_the_catalogue() 
 #[tokio::test]
 async fn a_start_with_no_lesson_opens_an_attempt_on_the_ready_drill_the_view_names() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
     let lessons = lessons_of(&pool, &program).await?;
-    stock_for(&pool, "drill", &program, &lessons[1]).await?;
+    stock_for(&database, "drill", &program, &lessons[1]).await?;
     assert_eq!(
-        drills_of(&pool, &program).await?.next_code,
+        drills_of(&database, &program).await?.next_code,
         next(&lessons[1], NextDrillStatus::Ready)
     );
 
     let started = review::start(
-        &Database::from(pool.clone()),
+        &database,
         &asking(&program, None, Material::code("python")),
         AttemptMode::Practice,
         40,
@@ -292,7 +296,7 @@ async fn a_start_with_no_lesson_opens_an_attempt_on_the_ready_drill_the_view_nam
     let StartedCodeReviewDto::Started { attempt_id, .. } = started.dto else {
         panic!("a drill was ready");
     };
-    let (_, stored) = attempts::get(&Database::from(pool.clone()), &attempt_id).await?;
+    let (_, stored) = attempts::get(&database, &attempt_id).await?;
     assert_eq!(stored.drill.id, "drill");
     Ok(())
 }
@@ -300,11 +304,12 @@ async fn a_start_with_no_lesson_opens_an_attempt_on_the_ready_drill_the_view_nam
 #[tokio::test]
 async fn a_start_with_no_lesson_waits_for_the_build_the_view_names() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
     let lessons = lessons_of(&pool, &program).await?;
     let python = Material::code("python");
     let building = review::start(
-        &Database::from(pool.clone()),
+        &database,
         &asking(&program, Some(&lessons[1]), python.clone()),
         AttemptMode::Practice,
         40,
@@ -315,12 +320,12 @@ async fn a_start_with_no_lesson_waits_for_the_build_the_view_names() -> Result<(
         panic!("none was ready");
     };
     assert_eq!(
-        drills_of(&pool, &program).await?.next_code,
+        drills_of(&database, &program).await?.next_code,
         next(&lessons[1], NextDrillStatus::Building)
     );
 
     let again = review::start(
-        &Database::from(pool.clone()),
+        &database,
         &asking(&program, None, python),
         AttemptMode::Practice,
         40,
@@ -335,15 +340,16 @@ async fn a_start_with_no_lesson_waits_for_the_build_the_view_names() -> Result<(
 #[tokio::test]
 async fn a_start_with_no_lesson_builds_the_lesson_the_view_names() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
     let lessons = lessons_of(&pool, &program).await?;
     assert_eq!(
-        drills_of(&pool, &program).await?.next_code,
+        drills_of(&database, &program).await?.next_code,
         next(&lessons[0], NextDrillStatus::ToBuild)
     );
 
     let started = review::start(
-        &Database::from(pool.clone()),
+        &database,
         &asking(&program, None, Material::code("python")),
         AttemptMode::Practice,
         40,
@@ -353,7 +359,7 @@ async fn a_start_with_no_lesson_builds_the_lesson_the_view_names() -> Result<()>
     let StartedCodeReviewDto::Building { job_id } = &started.dto else {
         panic!("none was ready");
     };
-    let queued = spec_of(&JobStore::new(pool.clone()).get(job_id).await?)?;
+    let queued = spec_of(&JobStore::new(database.clone()).get(job_id).await?)?;
     assert_eq!(queued.lesson_id.as_deref(), Some(lessons[0].as_str()));
     Ok(())
 }
@@ -361,17 +367,17 @@ async fn a_start_with_no_lesson_builds_the_lesson_the_view_names() -> Result<()>
 #[tokio::test]
 async fn each_lesson_stands_by_its_schedule_and_its_drills() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
     let lessons = lessons_of(&pool, &program).await?;
     let due = now() - 10_000;
     let rested = now() + 86_400_000;
     schedule_lesson(&pool, &program, &lessons[0], due).await?;
     schedule_lesson(&pool, &program, &lessons[1], rested).await?;
-    stock_for(&pool, "in-go", &program, &lessons[2]).await?;
+    stock_for(&database, "in-go", &program, &lessons[2]).await?;
     in_language(&pool, "in-go", "go").await?;
 
-    let shown =
-        review::course_drills(&Database::from(pool.clone()), &program, Some("python")).await?;
+    let shown = review::course_drills(&database, &program, Some("python")).await?;
     let standing = |position: usize| {
         lesson_in(&shown, &lessons[position]).map(|lesson| (lesson.standing, lesson.due_at))
     };
@@ -386,13 +392,13 @@ async fn each_lesson_stands_by_its_schedule_and_its_drills() -> Result<()> {
 #[tokio::test]
 async fn a_lesson_that_does_not_fit_a_material_says_so_for_that_material_alone() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
     let lessons = lessons_of(&pool, &program).await?;
-    record_unfit(&pool, &program, &lessons[0], &Material::code("python")).await?;
-    record_unfit(&pool, &program, &lessons[1], &Material::Passage).await?;
+    record_unfit(&database, &program, &lessons[0], &Material::code("python")).await?;
+    record_unfit(&database, &program, &lessons[1], &Material::Passage).await?;
 
-    let shown =
-        review::course_drills(&Database::from(pool.clone()), &program, Some("python")).await?;
+    let shown = review::course_drills(&database, &program, Some("python")).await?;
     let fits = |position: usize| {
         lesson_in(&shown, &lessons[position]).map(|lesson| (lesson.fits_code, lesson.fits_passage))
     };
@@ -409,17 +415,18 @@ async fn a_lesson_that_does_not_fit_a_material_says_so_for_that_material_alone()
 #[tokio::test]
 async fn a_course_with_no_source_offers_no_passage_to_build() -> Result<()> {
     let pool = pool().await?;
-    let program = course_of(&pool, &[]).await?;
+    let database = Database::new(pool.clone());
+    let program = course_of(&database, &[]).await?;
     let lessons = lessons_of(&pool, &program).await?;
 
-    let shown = drills_of(&pool, &program).await?;
+    let shown = drills_of(&database, &program).await?;
     assert!(!shown.has_sources);
     assert_eq!(shown.next_passage, None);
     assert_eq!(shown.next_code, next(&lessons[0], NextDrillStatus::ToBuild));
 
-    stock_for(&pool, "drill", &program, &lessons[0]).await?;
+    stock_for(&database, "drill", &program, &lessons[0]).await?;
     on_a_passage(&pool, "drill").await?;
-    let shown = drills_of(&pool, &program).await?;
+    let shown = drills_of(&database, &program).await?;
     assert!(!shown.has_sources);
     assert_eq!(
         shown.next_passage,
@@ -431,25 +438,26 @@ async fn a_course_with_no_source_offers_no_passage_to_build() -> Result<()> {
 #[tokio::test]
 async fn the_latest_attempts_of_the_course_are_listed_newest_first() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
     let lessons = lessons_of(&pool, &program).await?;
-    let other = course(&pool).await?;
+    let other = course(&database).await?;
     let other_lessons = lessons_of(&pool, &other).await?;
     let mut opened_here = Vec::new();
     for number in 0..12 {
         let id = format!("drill-{number:02}");
-        stock_for(&pool, &id, &program, &lessons[0]).await?;
+        stock_for(&database, &id, &program, &lessons[0]).await?;
         let mode = if number % 2 == 0 {
             AttemptMode::Practice
         } else {
             AttemptMode::Interview
         };
-        opened_here.push(opened(&pool, &id, mode).await?);
+        opened_here.push(opened(&database, &id, mode).await?);
     }
-    stock_for(&pool, "elsewhere", &other, &other_lessons[0]).await?;
-    opened(&pool, "elsewhere", AttemptMode::Rapid).await?;
+    stock_for(&database, "elsewhere", &other, &other_lessons[0]).await?;
+    opened(&database, "elsewhere", AttemptMode::Rapid).await?;
 
-    let shown = drills_of(&pool, &program).await?;
+    let shown = drills_of(&database, &program).await?;
     let expected: Vec<CourseDrillAttemptDto> = opened_here
         .iter()
         .rev()
@@ -479,7 +487,7 @@ async fn the_latest_attempts_of_the_course_are_listed_newest_first() -> Result<(
 #[tokio::test]
 async fn a_graded_attempt_is_listed_with_its_score() -> Result<()> {
     let waiting = Waiting::new(vec![operator_finding(), extra_finding()], None).await?;
-    let program = course(&waiting.pool).await?;
+    let program = course(&waiting.db).await?;
     let lessons = lessons_of(&waiting.pool, &program).await?;
     let model = ScriptedModel::new(Vec::<String>::new());
     let grader = FakeGrader::new(review_assessment());
@@ -491,12 +499,12 @@ async fn a_graded_attempt_is_listed_with_its_score() -> Result<()> {
         .await
         .map_err(db)?;
 
-    let revealed = review::result(&Database::from(waiting.pool.clone()), &waiting.attempt)
+    let revealed = review::result(&waiting.db, &waiting.attempt)
         .await?
         .reveal
         .expect("a graded review is revealed");
     let attempt = waiting.attempt().await?;
-    let shown = drills_of(&waiting.pool, &program).await?;
+    let shown = drills_of(&waiting.db, &program).await?;
     assert_eq!(
         shown.recent,
         [CourseDrillAttemptDto {
@@ -522,11 +530,12 @@ async fn a_graded_attempt_is_listed_with_its_score() -> Result<()> {
 #[tokio::test]
 async fn a_course_that_is_not_there_is_not_found() -> Result<()> {
     let pool = pool().await?;
-    let result = review::course_drills(&Database::from(pool.clone()), "nothing", None).await;
+    let database = Database::new(pool.clone());
+    let result = review::course_drills(&database, "nothing", None).await;
     assert!(matches!(result, Err(AppError::NotFound(_))), "{result:?}");
     for material in [Material::code("python"), Material::Passage] {
         let result = review::start(
-            &Database::from(pool.clone()),
+            &database,
             &asking("nothing", None, material.clone()),
             AttemptMode::Practice,
             40,
@@ -545,13 +554,14 @@ async fn a_course_that_is_not_there_is_not_found() -> Result<()> {
 #[tokio::test]
 async fn a_passage_drill_of_a_course_with_no_source_is_refused_unless_one_is_ready() -> Result<()> {
     let pool = pool().await?;
-    let program = course_of(&pool, &[]).await?;
+    let database = Database::new(pool.clone());
+    let program = course_of(&database, &[]).await?;
     let lessons = lessons_of(&pool, &program).await?;
     let first = lesson_titled(&pool, &program, SPACING_LESSON).await?;
     assert_eq!(first, lessons[0]);
     for lesson in [Some(first.as_str()), None] {
         let result = review::start(
-            &Database::from(pool.clone()),
+            &database,
             &asking(&program, lesson, Material::Passage),
             AttemptMode::Practice,
             4,
@@ -565,10 +575,10 @@ async fn a_passage_drill_of_a_course_with_no_source_is_refused_unless_one_is_rea
     }
     assert_eq!(builds(&pool).await?, 0);
 
-    stock_for(&pool, "drill", &program, &first).await?;
+    stock_for(&database, "drill", &program, &first).await?;
     on_a_passage(&pool, "drill").await?;
     let started = review::start(
-        &Database::from(pool.clone()),
+        &database,
         &asking(&program, None, Material::Passage),
         AttemptMode::Practice,
         4,
@@ -578,7 +588,7 @@ async fn a_passage_drill_of_a_course_with_no_source_is_refused_unless_one_is_rea
     let StartedCodeReviewDto::Started { attempt_id, .. } = started.dto else {
         panic!("a drill was ready");
     };
-    let (_, stored) = attempts::get(&Database::from(pool.clone()), &attempt_id).await?;
+    let (_, stored) = attempts::get(&database, &attempt_id).await?;
     assert_eq!(stored.drill.id, "drill");
     Ok(())
 }

@@ -12,8 +12,7 @@ use crate::persistence::{db, now};
 use crate::quiz_blueprints;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, WriteTx};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection};
 use std::collections::{HashMap, HashSet};
@@ -51,7 +50,7 @@ pub(crate) fn content_hash(item: &StoredItem) -> String {
 /// already holds is stored `dropped`, its token salted by its ID. Returns how
 /// many were stored.
 pub(crate) async fn insert_bank_items_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     items: &[BankItem],
     author_model: Option<&str>,
@@ -69,7 +68,7 @@ pub(crate) async fn insert_bank_items_in(
         )
         .bind(program_id)
         .bind(&item.id)
-        .fetch_optional(&mut *connection)
+        .fetch_optional(&mut **tx)
         .await
         .map_err(db)?;
         if id_taken.is_some() {
@@ -80,7 +79,7 @@ pub(crate) async fn insert_bank_items_in(
         )
         .bind(program_id)
         .bind(&hash)
-        .fetch_optional(&mut *connection)
+        .fetch_optional(&mut **tx)
         .await
         .map_err(db)?;
         if repeated.is_some() {
@@ -108,14 +107,14 @@ pub(crate) async fn insert_bank_items_in(
             .bind(&entry.lesson_id)
             .bind(&entry.source_quote)
             .bind(json(&item.left)?)
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
         for outcome in &item.outcome_ids {
             sqlx::query("INSERT OR IGNORE INTO learning_assessment_candidate_outcomes(candidate_id,outcome_id) VALUES(?,?)")
                 .bind(&item.id)
                 .bind(outcome)
-                .execute(&mut *connection)
+                .execute(&mut **tx)
                 .await
                 .map_err(db)?;
         }
@@ -124,7 +123,7 @@ pub(crate) async fn insert_bank_items_in(
             .bind(&item.explanation)
             .bind(json(&item.key)?)
             .bind(json(&item.distractor_rationales)?)
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
         stored += 1;
@@ -277,13 +276,12 @@ impl LearningAssessmentRepository {
     /// [`Self::bank_needs_in`] as a unit of work of its own: working out a
     /// need stores the outcomes and the blueprint revision it reads.
     pub(crate) async fn bank_needs(
-        pool: &impl DriverPool,
+        database: &Database,
         program_id: &str,
         scope: &LearningQuizScopeDto,
         top_up: bool,
     ) -> Result<Vec<AuthoringNeed>> {
-        let pool = pool.sqlx_pool();
-        let mut tx = pool.begin_write().await.map_err(db)?;
+        let mut tx = database.begin_write().await.map_err(db)?;
         let needs = Self::bank_needs_in(&mut tx, program_id, scope, top_up).await?;
         tx.commit().await.map_err(db)?;
         Ok(needs)
@@ -291,13 +289,12 @@ impl LearningAssessmentRepository {
 
     /// [`insert_bank_items_in`] as a unit of work of its own.
     pub(crate) async fn insert_bank_items(
-        pool: &impl DriverPool,
+        database: &Database,
         program_id: &str,
         items: &[BankItem],
         author_model: Option<&str>,
     ) -> Result<usize> {
-        let pool = pool.sqlx_pool();
-        let mut tx = pool.begin_write().await.map_err(db)?;
+        let mut tx = database.begin_write().await.map_err(db)?;
         let stored = insert_bank_items_in(&mut tx, program_id, items, author_model).await?;
         tx.commit().await.map_err(db)?;
         Ok(stored)
@@ -308,20 +305,20 @@ impl LearningAssessmentRepository {
     /// items remain than a form asks. Empty when the quiz has nothing to ask
     /// yet or its bank is full.
     pub(crate) async fn bank_needs_in(
-        connection: &mut SqliteConnection,
+        tx: &mut WriteTx,
         program_id: &str,
         scope: &LearningQuizScopeDto,
         top_up: bool,
     ) -> Result<Vec<AuthoringNeed>> {
-        Self::ensure_outcomes(connection, program_id).await?;
+        Self::ensure_outcomes(tx, program_id).await?;
         let Some((blueprint, _)) =
-            quiz_blueprints::ensure_blueprint_in(connection, program_id, scope).await?
+            quiz_blueprints::ensure_blueprint_in(tx, program_id, scope).await?
         else {
             return Ok(vec![]);
         };
-        let requirements = quiz_blueprints::requirements_in(connection, &blueprint).await?;
-        let bank = Self::bank_in(connection, program_id).await?;
-        let exposed = Self::exposed_in(connection, program_id).await?;
+        let requirements = quiz_blueprints::requirements_in(tx, &blueprint).await?;
+        let bank = Self::bank_in(tx, program_id).await?;
+        let exposed = Self::exposed_in(tx, program_id).await?;
         let state = bank_state(&requirements, &bank, &exposed);
         let mut needs = Vec::new();
         for (requirement, (eligible, unseen)) in requirements.iter().zip(state.per_requirement) {
@@ -340,7 +337,7 @@ impl LearningAssessmentRepository {
             let outcome = sqlx::query("SELECT title,description,module_id,lesson_id FROM learning_outcome_definitions WHERE id=? AND program_id=?")
                 .bind(&requirement.outcome_id)
                 .bind(program_id)
-                .fetch_one(&mut *connection)
+                .fetch_one(&mut **tx)
                 .await
                 .map_err(db)?;
             let lesson_id: Option<String> = outcome.get("lesson_id");
@@ -349,14 +346,14 @@ impl LearningAssessmentRepository {
                 (None, Some(module)) => sqlx::query_scalar("SELECT id FROM learning_lessons WHERE program_id=? AND module_id=? AND preparation='ready' ORDER BY ordinal")
                     .bind(program_id)
                     .bind(module)
-                    .fetch_all(&mut *connection)
+                    .fetch_all(&mut **tx)
                     .await
                     .map_err(db)?,
                 (None, None) => vec![],
             };
             let mut material = Vec::new();
             for lesson in &lessons {
-                material.extend(Self::lesson_material_in(connection, lesson).await?);
+                material.extend(Self::lesson_material_in(tx, lesson).await?);
             }
             if material.is_empty() {
                 continue;

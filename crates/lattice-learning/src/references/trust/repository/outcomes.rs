@@ -1,5 +1,6 @@
 use lattice_core::domain::provenance::{LabelSource, OutcomeRecord, ProvenanceRecord};
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::SqliteConnection;
 
 use super::rows::{provenance_from_row, PROVENANCE_COLUMNS};
@@ -8,7 +9,7 @@ use crate::persistence::db;
 
 /// Deletes a claim's outcomes under each of `labels`, on the caller's unit of work.
 pub(in crate::references::trust) async fn delete_for_labels_in(
-    conn: &mut SqliteConnection,
+    tx: &mut WriteTx,
     claim_id: &str,
     labels: &[LabelSource],
 ) -> Result<()> {
@@ -16,7 +17,7 @@ pub(in crate::references::trust) async fn delete_for_labels_in(
         sqlx::query("DELETE FROM source_trust_outcomes WHERE claim_id=? AND label_source=?")
             .bind(claim_id)
             .bind(label.as_str())
-            .execute(&mut *conn)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
     }
@@ -55,11 +56,11 @@ pub(in crate::references::trust) async fn provenance_in(
 
 /// Inserts the outcomes on the caller's unit of work.
 pub(in crate::references::trust) async fn insert_all_in(
-    conn: &mut SqliteConnection,
+    tx: &mut WriteTx,
     outcomes: &[OutcomeRecord],
 ) -> Result<()> {
     for outcome in outcomes {
-        insert_outcome(&mut *conn, outcome).await?;
+        insert_outcome(tx, outcome).await?;
     }
     Ok(())
 }

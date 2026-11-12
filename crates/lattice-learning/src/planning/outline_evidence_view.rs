@@ -535,7 +535,7 @@ mod tests {
             .iter()
             .map(|source| source.id.clone())
             .collect();
-        let repo = LearningRepository::new(pool);
+        let repo = LearningRepository::new(Database::new(pool));
         repo.create_outline_draft(&program, &[], Some(&draft))
             .await?;
         let saved = repo.outline_draft(&program.summary.id).await?.unwrap();

@@ -109,7 +109,6 @@ mod tests {
     use crate::infrastructure::persistence::repositories::{
         ChunkRepository, DocumentRepositoryImpl,
     };
-    use lattice_core::shared::persistence::driver::DriverPool;
 
     const STAMP: &str = "2026-10-02T00:00:00Z";
 
@@ -119,14 +118,15 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let db = DatabaseConnection::new(dir.path().join("library.db")).await?;
         initialize_database(db.database()).await?;
-        let pool = db.database().sqlx_pool().clone();
+        let database = db.database().clone();
+        let mut tx = database.begin_write().await?;
         let document_id = uuid::Uuid::new_v4().to_string();
         sqlx::query("INSERT INTO documents(id,file_path,file_name,size_bytes,modified_at,indexed_at,created_at,updated_at,checksum,status) VALUES(?,?,?,?,?,?,?,?,?,?)")
             .bind(&document_id).bind(format!("/tmp/{document_id}.txt")).bind("Field notes.txt")
             .bind(22_i64)
             .bind(STAMP).bind(STAMP).bind(STAMP).bind(STAMP)
             .bind("a".repeat(64)).bind("indexed")
-            .execute(&pool).await?;
+            .execute(&mut *tx).await?;
         for (index, content) in [
             (1_i64, "second".to_string()),
             (0, "first".to_string()),
@@ -139,13 +139,14 @@ mod tests {
             .bind(&document_id)
             .bind(content)
             .bind(index)
-            .execute(&pool)
+            .execute(&mut *tx)
             .await?;
         }
+        tx.commit().await?;
         let library = LibraryPassages::new(
             crate::features::search::mocks::empty_hybrid_search(),
-            Arc::new(DocumentRepositoryImpl::new(pool.clone())),
-            Arc::new(ChunkRepository::new(pool.clone())),
+            Arc::new(DocumentRepositoryImpl::new(database.clone())),
+            Arc::new(ChunkRepository::new(database.clone())),
         );
         let document = library
             .document_text(&document_id)
@@ -159,10 +160,12 @@ mod tests {
             .document_text(&uuid::Uuid::new_v4().to_string())
             .await?
             .is_none());
+        let mut tx = database.begin_write().await?;
         sqlx::query("UPDATE documents SET status='processing' WHERE id=?")
             .bind(&document_id)
-            .execute(&pool)
+            .execute(&mut *tx)
             .await?;
+        tx.commit().await?;
         assert!(library.document_text(&document_id).await.is_err());
         Ok(())
     }

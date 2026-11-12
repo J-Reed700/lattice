@@ -1,7 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
 use crate::review_findings::{PlanCheck, ReviewFinding};
-use lattice_core::shared::persistence::driver::DriverPool;
 use serde_json::json;
 use sqlx::SqlitePool;
 
@@ -96,7 +95,7 @@ async fn states(store: &TeachingFindingsRepository) -> Vec<(String, TeachingFind
 
 #[tokio::test]
 async fn a_set_aside_finding_waits_with_its_note_and_the_part_it_is_about() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     store
         .record(
             "l1",
@@ -150,7 +149,7 @@ async fn a_set_aside_finding_waits_with_its_note_and_the_part_it_is_about() {
 
 #[tokio::test]
 async fn a_section_title_is_shown_numbered_and_plain() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     let emphasised = json!({"blocks":[
         {"title":"**Ownership**","body":"The function returns the number 4.","quote":""}
     ],"questions":[]});
@@ -164,7 +163,7 @@ async fn a_section_title_is_shown_numbered_and_plain() {
 
 #[tokio::test]
 async fn a_whole_lesson_finding_is_shown_as_the_whole_lesson() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     let finding = set_aside(
         FindingKind::Structure,
         FindingSite::Lesson,
@@ -181,7 +180,7 @@ async fn a_whole_lesson_finding_is_shown_as_the_whole_lesson() {
 
 #[tokio::test]
 async fn keep_as_written_holds_until_the_part_s_text_changes() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     store
         .record("l1", "j1", &lesson(), &[example_finding()], true)
         .await
@@ -237,6 +236,7 @@ fn plan_finding(subject: &str, note: &str) -> SetAside {
 
 /// A row recorded before finding ids: keyed by kind and place.
 async fn place_row(store: &TeachingFindingsRepository, state: &str, sha: &str, note: &str) {
+    let mut tx = store.database.begin_write().await.unwrap();
     sqlx::query(
         "INSERT INTO learning_lesson_teaching_findings (lesson_id, finding_key, kind, site, unit_index, unit_title, unit_sha256, note, passage, repairs, state, job_id, found_at, kept_at)          VALUES ('l1', 'teaching:section-0', 'teaching', 'section', 0, 'T', ?, ?, NULL, 0, ?, NULL, 1, CASE WHEN ?='kept' THEN 5 END)",
     )
@@ -244,22 +244,28 @@ async fn place_row(store: &TeachingFindingsRepository, state: &str, sha: &str, n
     .bind(note)
     .bind(state)
     .bind(state)
-    .execute(store.database.sqlx_pool())
+    .execute(&mut *tx)
     .await
     .unwrap();
+    tx.commit().await.unwrap();
 }
 
 async fn note_of(store: &TeachingFindingsRepository, key: &str) -> String {
-    sqlx::query_scalar("SELECT note FROM learning_lesson_teaching_findings WHERE finding_key=?")
-        .bind(key)
-        .fetch_one(store.database.sqlx_pool())
-        .await
-        .unwrap()
+    let mut read = store.database.begin_read().await.unwrap();
+    let note = sqlx::query_scalar(
+        "SELECT note FROM learning_lesson_teaching_findings WHERE finding_key=?",
+    )
+    .bind(key)
+    .fetch_one(&mut *read)
+    .await
+    .unwrap();
+    read.commit().await.unwrap();
+    note
 }
 
 #[tokio::test]
 async fn two_findings_in_one_section_are_two_rows() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     let first = plan_finding(
         "aaaa000000000001",
         "A first idea is used without being shown.",
@@ -291,7 +297,7 @@ async fn two_findings_in_one_section_are_two_rows() {
 
 #[tokio::test]
 async fn a_row_stored_by_place_still_stands_for_its_place() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     let sha = site_sha256(&lesson(), FindingSite::Section(0));
     place_row(&store, "kept", &sha, "The user's own note.").await;
     store
@@ -321,7 +327,7 @@ async fn a_row_stored_by_place_still_stands_for_its_place() {
 
 #[tokio::test]
 async fn a_row_stored_by_place_gives_way_when_its_text_changes() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     place_row(&store, "kept", "an earlier text", "The user's own note.").await;
     let finding = set_aside(
         FindingKind::Teaching,
@@ -341,7 +347,7 @@ async fn a_row_stored_by_place_gives_way_when_its_text_changes() {
 
 #[tokio::test]
 async fn a_finding_recorded_after_the_review_takes_over_a_lapsed_place_row() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     place_row(&store, "waiting", "an earlier text", "An old note.").await;
     let finding = set_aside(
         FindingKind::Teaching,
@@ -361,7 +367,7 @@ async fn a_finding_recorded_after_the_review_takes_over_a_lapsed_place_row() {
 
 #[tokio::test]
 async fn a_review_that_no_longer_raises_a_finding_removes_it_and_lesson_rules_only_add() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     store
         .record("l1", "j1", &lesson(), &[example_finding()], true)
         .await
@@ -467,7 +473,7 @@ async fn the_table_checks_its_states_and_goes_with_its_lesson() {
 
 #[tokio::test]
 async fn settling_keeps_many_findings_in_one_call() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     three_waiting(&store).await;
     store
         .settle(
@@ -493,7 +499,7 @@ async fn settling_keeps_many_findings_in_one_call() {
 
 #[tokio::test]
 async fn a_settle_with_one_stale_key_is_refused_and_writes_nothing() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     three_waiting(&store).await;
     store
         .settle("p1", "l1", &keys(&["reviewer/1"]), TeachingSettleDto::Keep)
@@ -542,7 +548,7 @@ async fn a_settle_with_one_stale_key_is_refused_and_writes_nothing() {
 
 #[tokio::test]
 async fn a_settle_with_no_keys_or_a_lesson_of_another_course_is_refused() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     three_waiting(&store).await;
     assert!(store
         .settle("p1", "l1", &[], TeachingSettleDto::Keep)
@@ -560,7 +566,7 @@ async fn a_settle_with_no_keys_or_a_lesson_of_another_course_is_refused() {
 
 #[tokio::test]
 async fn reopening_returns_kept_findings_to_waiting_and_clears_when_they_were_kept() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     three_waiting(&store).await;
     let both = keys(&["reviewer/1", "rule/schema/section-1"]);
     store
@@ -575,12 +581,14 @@ async fn reopening_returns_kept_findings_to_waiting_and_clears_when_they_were_ke
         .await
         .iter()
         .all(|(_, state)| *state == TeachingFindingStateDto::Waiting));
+    let mut read = store.database.begin_read().await.unwrap();
     let kept_at: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM learning_lesson_teaching_findings WHERE kept_at IS NOT NULL",
     )
-    .fetch_one(store.database.sqlx_pool())
+    .fetch_one(&mut *read)
     .await
     .unwrap();
+    read.commit().await.unwrap();
     assert_eq!(kept_at, 0);
     // A waiting finding cannot be reopened.
     assert!(store
@@ -591,7 +599,7 @@ async fn reopening_returns_kept_findings_to_waiting_and_clears_when_they_were_ke
 
 #[tokio::test]
 async fn a_summary_recorded_with_the_finding_is_what_is_listed() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     store
         .record("l1", "j1", &lesson(), &[example_finding()], true)
         .await
@@ -620,7 +628,7 @@ async fn a_summary_recorded_with_the_finding_is_what_is_listed() {
 
 #[tokio::test]
 async fn a_finding_recorded_with_no_summary_is_listed_with_the_plain_line_for_its_kind() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     three_waiting(&store).await;
     let summaries: Vec<_> = store
         .list("l1")
@@ -657,6 +665,7 @@ async fn old_row(
     passage: Option<&str>,
 ) -> String {
     let key = format!("{kind}:{site}-{index:?}");
+    let mut tx = store.database.begin_write().await.unwrap();
     sqlx::query(
         "INSERT INTO learning_lesson_teaching_findings (lesson_id, finding_key, kind, site, unit_index, unit_title, unit_sha256, note, passage, repairs, state, job_id, found_at, kept_at) \
          VALUES ('l1', ?, ?, ?, ?, 'T', 'sha', ?, ?, 1, 'waiting', NULL, 1, NULL)",
@@ -667,9 +676,10 @@ async fn old_row(
     .bind(index)
     .bind(note)
     .bind(passage)
-    .execute(store.database.sqlx_pool())
+    .execute(&mut *tx)
     .await
     .unwrap();
+    tx.commit().await.unwrap();
     key
 }
 
@@ -695,15 +705,17 @@ async fn dto_of(store: &TeachingFindingsRepository, key: &str) -> TeachingFindin
 }
 
 async fn section_text(store: &TeachingFindingsRepository, ordinal: i64, body: &str) {
+    let mut tx = store.database.begin_write().await.unwrap();
     sqlx::query(
         "INSERT INTO learning_blocks (lesson_id, ordinal, kind, title, body, source_ids_json) \
          VALUES ('l1', ?, 'explanation', 'Sums', ?, '[]')",
     )
     .bind(ordinal)
     .bind(body)
-    .execute(store.database.sqlx_pool())
+    .execute(&mut *tx)
     .await
     .unwrap();
+    tx.commit().await.unwrap();
 }
 
 const LONG: &str = "The default timeout for every outgoing request in the client library is 30 seconds unless the caller sets another value.";
@@ -714,7 +726,7 @@ fn uncited(shown: &str) -> String {
 
 #[tokio::test]
 async fn an_old_row_for_a_missing_citation_gets_its_sentence_in_full() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     let short = old_row(
         &store,
         ("quotation", "section", Some(0)),
@@ -744,7 +756,8 @@ async fn an_old_row_for_a_missing_citation_gets_its_sentence_in_full() {
 
 #[tokio::test]
 async fn an_old_row_completes_a_cut_sentence_from_the_published_section() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
+    let mut tx = store.database.begin_write().await.unwrap();
     sqlx::query(
         "INSERT INTO learning_blocks (lesson_id, ordinal, kind, title, body, source_ids_json) \
          VALUES ('l1', 0, 'explanation', 'Sums', ?, '[]')",
@@ -752,9 +765,10 @@ async fn an_old_row_completes_a_cut_sentence_from_the_published_section() {
     .bind(format!(
         "Requests are retried. {LONG} Nothing else applies."
     ))
-    .execute(store.database.sqlx_pool())
+    .execute(&mut *tx)
     .await
     .unwrap();
+    tx.commit().await.unwrap();
     let cut: String = LONG.chars().take(90).collect();
     let key = old_row(
         &store,
@@ -771,7 +785,7 @@ async fn an_old_row_completes_a_cut_sentence_from_the_published_section() {
 
 #[tokio::test]
 async fn an_old_row_leaves_the_sentence_out_rather_than_cut_it() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     let cut: String = LONG.chars().take(90).collect();
     // Two sentences start with the cut-off text, so which one is not known.
     let other = format!("{cut} and nothing else.");
@@ -804,7 +818,7 @@ async fn an_old_row_leaves_the_sentence_out_rather_than_cut_it() {
 
 #[tokio::test]
 async fn an_old_row_for_a_quote_that_lacks_a_figure_says_what_it_lacks() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     let note = "Section 1 (candidate blocks-0): the quote cited for \"The default timeout is 30 seconds.\" does not contain 30. Cite a quote of a supplied excerpt that does, in an entry of the citations of /blocks/0, or write the general form when no excerpt states it.";
     let key = old_row(&store, ("quotation", "section", Some(0)), note, None).await;
     assert_eq!(
@@ -815,7 +829,7 @@ async fn an_old_row_for_a_quote_that_lacks_a_figure_says_what_it_lacks() {
 
 #[tokio::test]
 async fn an_old_row_for_a_sentence_citation_and_for_a_part_citation_is_rebuilt() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     let cut: String = LONG.chars().take(80).collect();
     section_text(&store, 2, &format!("Before it. {LONG} After it.")).await;
     // The stored passage holds another sentence that starts with the cut
@@ -877,7 +891,7 @@ async fn an_old_row_for_a_sentence_citation_and_for_a_part_citation_is_rebuilt()
 
 #[tokio::test]
 async fn an_old_row_for_unchecked_assertions_and_for_a_reviewer_s_critique_is_rebuilt() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     let audit = old_row(
         &store,
         ("teaching", "section", Some(0)),
@@ -904,7 +918,7 @@ async fn an_old_row_for_unchecked_assertions_and_for_a_reviewer_s_critique_is_re
 
 #[tokio::test]
 async fn an_old_row_no_format_matches_gets_the_plain_line_for_its_kind() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     let mut seen = Vec::new();
     for (kind, site, index) in [
         ("teaching", "lesson", None),
@@ -934,7 +948,7 @@ async fn an_old_row_no_format_matches_gets_the_plain_line_for_its_kind() {
 
 #[tokio::test]
 async fn a_quotation_finding_lists_its_quote_as_a_quotation_and_the_rest_as_the_lesson() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     let mut quote = with_summary(
         set_aside(
             FindingKind::Quotation,
@@ -990,7 +1004,7 @@ async fn a_quotation_finding_lists_its_quote_as_a_quotation_and_the_rest_as_the_
 
 #[tokio::test]
 async fn an_old_sentence_level_quotation_row_shows_no_passage_and_a_part_level_one_keeps_it() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     let cut: String = LONG.chars().take(90).collect();
     let reason = "The generated quotation does not match a valid passage in the saved reference. No material was published.";
     let rows = [
@@ -1054,7 +1068,7 @@ fn with_sentence(mut finding: SetAside, sentence: &str) -> SetAside {
 
 #[tokio::test]
 async fn a_sentence_recorded_with_a_finding_is_listed_and_the_next_pass_replaces_it() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     let finding = |sentence: Option<&str>| {
         let mut finding = set_aside(
             FindingKind::Quotation,
@@ -1111,7 +1125,7 @@ async fn a_sentence_recorded_with_a_finding_is_listed_and_the_next_pass_replaces
 
 #[tokio::test]
 async fn an_old_row_s_sentence_is_the_one_its_note_completes_and_none_otherwise() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     let cut: String = LONG.chars().take(90).collect();
     let short = old_row(
         &store,
@@ -1183,7 +1197,7 @@ async fn dto_states(store: &TeachingFindingsRepository) -> Vec<TeachingFindingSt
 
 #[tokio::test]
 async fn settling_source_added_resolves_a_waiting_note_with_that_resolution() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     three_waiting(&store).await;
     store
         .settle(
@@ -1207,18 +1221,20 @@ async fn settling_source_added_resolves_a_waiting_note_with_that_resolution() {
     assert!(added.resolved_at.is_some());
     let waiting = dto_of(&store, "key/question-0").await;
     assert_eq!((waiting.resolution, waiting.resolved_at), (None, None));
+    let mut read = store.database.begin_read().await.unwrap();
     let kept_at: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM learning_lesson_teaching_findings WHERE kept_at IS NOT NULL",
     )
-    .fetch_one(store.database.sqlx_pool())
+    .fetch_one(&mut *read)
     .await
     .unwrap();
+    read.commit().await.unwrap();
     assert_eq!(kept_at, 0);
 }
 
 #[tokio::test]
 async fn a_resolved_note_cannot_be_kept_or_resolved_again_and_one_stale_key_refuses_all() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     three_waiting(&store).await;
     store
         .settle(
@@ -1259,7 +1275,7 @@ async fn a_resolved_note_cannot_be_kept_or_resolved_again_and_one_stale_key_refu
 
 #[tokio::test]
 async fn reopening_takes_kept_and_resolved_notes_back_and_clears_the_resolution() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     three_waiting(&store).await;
     store
         .settle(
@@ -1309,7 +1325,7 @@ async fn reopening_takes_kept_and_resolved_notes_back_and_clears_the_resolution(
 
 #[tokio::test]
 async fn a_resolved_note_stays_resolved_while_its_text_is_unchanged() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     store
         .record("l1", "j1", &lesson(), &[example_finding()], true)
         .await
@@ -1370,7 +1386,7 @@ async fn waiting_reviewer_findings(store: &TeachingFindingsRepository) {
 
 #[tokio::test]
 async fn a_stored_reviewer_finding_is_held_with_its_number_and_words_while_its_part_is_unchanged() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     waiting_reviewer_findings(&store).await;
     let held = store.held("l1", &lesson()).await.unwrap();
     let found: Vec<_> = held
@@ -1393,7 +1409,7 @@ async fn a_stored_reviewer_finding_is_held_with_its_number_and_words_while_its_p
 
 #[tokio::test]
 async fn a_reviewer_finding_whose_part_changed_is_not_held_but_its_number_is_not_used_again() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     waiting_reviewer_findings(&store).await;
     let mut changed = lesson();
     changed["blocks"][1]["body"] = json!("Add 3 and 3.");
@@ -1410,7 +1426,7 @@ async fn a_reviewer_finding_whose_part_changed_is_not_held_but_its_number_is_not
 
 #[tokio::test]
 async fn a_lesson_with_no_reviewer_finding_holds_none_and_starts_numbering_afresh() {
-    let store = TeachingFindingsRepository::new(Database::from(pool().await));
+    let store = TeachingFindingsRepository::new(Database::new(pool().await));
     let held = store.held("l1", &lesson()).await.unwrap();
     assert!(held.reviewer.is_empty());
     assert_eq!(held.next_number, 0);

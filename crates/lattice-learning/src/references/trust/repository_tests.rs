@@ -204,7 +204,7 @@ async fn judgements_round_trip_under_their_keys() -> Result<()> {
         )
         .await?;
     assert_eq!(found, Some(authority));
-    let other_course = course_on(&course.pool).await?;
+    let other_course = course_on(&course.database).await?;
     assert_eq!(
         course
             .store
@@ -366,7 +366,7 @@ async fn overrides_round_trip_at_each_scope_and_a_course_sees_its_own() -> Resul
         page_signals(url, json!({})),
     )
     .await?;
-    let other_course = course_on(&course.pool).await?;
+    let other_course = course_on(&course.database).await?;
     let source = TrustOverride::Source {
         program_id: course.program_id.clone(),
         source_id: saved.source_id.clone(),

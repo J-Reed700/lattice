@@ -13,7 +13,7 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::domain::provenance::{ClaimKind, EffectiveBars};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use serde::Serialize;
 
 use super::repository::{hold_in, load_in, reviews, ClaimReviewRepository};

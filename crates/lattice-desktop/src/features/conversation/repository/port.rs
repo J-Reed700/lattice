@@ -11,8 +11,10 @@ impl lattice_core::application::ports::conversation_repository::ConversationRepo
     for ConversationRepository
 {
     async fn fail_pending_turn(&self, user_message_id: &str) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query("UPDATE conversation_messages SET status='failed' WHERE id=? AND role='user' AND status='pending'")
-            .bind(user_message_id).execute(&self.pool).await?;
+            .bind(user_message_id).execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
     async fn complete_turn(
@@ -137,12 +139,14 @@ impl lattice_core::application::ports::conversation_repository::ConversationRepo
         for (key, value) in &fields {
             query = query.bind(format!("$.{key}")).bind(value.to_string());
         }
-        let result = query.bind(message_id).execute(&self.pool).await?;
+        let mut tx = self.db.begin_write().await?;
+        let result = query.bind(message_id).execute(&mut *tx).await?;
         if result.rows_affected() == 0 {
             return Err(lattice_core::shared::error::AppError::NotFound(format!(
                 "Message not found: {message_id}"
             )));
         }
+        tx.commit().await?;
         Ok(())
     }
 }

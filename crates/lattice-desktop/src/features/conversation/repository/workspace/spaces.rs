@@ -1,6 +1,5 @@
 use super::*;
 use crate::features::conversation::repository::space_rows::ConversationSpaceRow;
-use lattice_core::shared::persistence::Transactions;
 use sqlx::SqliteConnection;
 
 fn preferences_declares_journal(raw: Option<&str>) -> bool {
@@ -59,6 +58,7 @@ pub(super) async fn ensure_standard_space(
 
 impl ConversationRepository {
     pub async fn list_conversation_spaces(&self) -> Result<Vec<ConversationSpaceDto>, AppError> {
+        let mut read = self.db.begin_read().await?;
         let spaces = sqlx::query_as::<_, ConversationSpaceRow>(
             r#"
         SELECT
@@ -68,9 +68,10 @@ impl ConversationRepository {
         ORDER BY is_archived ASC, sort_order ASC, updated_at DESC
         "#,
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("Failed to list spaces: {}", e)))?;
+        read.commit().await?;
 
         Ok(spaces.into_iter().map(Into::into).collect())
     }
@@ -88,7 +89,7 @@ impl ConversationRepository {
         let is_archived: Option<i64> = request.is_archived.map(|v| if v { 1 } else { 0 });
 
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -163,6 +164,7 @@ impl ConversationRepository {
         let now = Utc::now().to_rfc3339();
         let archived = if request.archived { 1 } else { 0 };
 
+        let mut tx = self.db.begin_write().await?;
         let result = sqlx::query(
             r#"
         UPDATE conversation_spaces
@@ -173,7 +175,7 @@ impl ConversationRepository {
         .bind(archived)
         .bind(&now)
         .bind(&request.space_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to archive space: {}", e)))?;
 
@@ -183,6 +185,8 @@ impl ConversationRepository {
                 request.space_id
             )));
         }
+
+        tx.commit().await?;
 
         Ok(RenameConversationResponseDto {
             status: "success".to_string(),
@@ -194,7 +198,7 @@ impl ConversationRepository {
         request: MoveConversationToSpaceRequestDto,
     ) -> Result<RenameConversationResponseDto, AppError> {
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;

@@ -14,7 +14,6 @@ use crate::drills::runner::{CodeRunner, RunOutcome};
 use crate::persistence::db;
 use lattice_core::domain::learning::drills::{Origin, Proof};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobFailure, JobOutcome, JobStatus};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -387,7 +386,7 @@ async fn a_run_cancelled_under_the_builds_token_stops_the_job_and_saves_nothing_
         &model,
         Box::new(CodeMaterial::new(Some(&runner as &dyn CodeRunner))),
         &grader,
-        &Database::from(harness.pool.clone()),
+        &harness.db,
         cancel,
     )
     .run(&context, &spec)

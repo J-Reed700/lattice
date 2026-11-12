@@ -3,19 +3,21 @@ use crate::practice::session::dto::{DueKind, PracticeDueDto};
 use crate::repository::LearningRepository;
 use lattice_core::domain::learning::drills::PatternRating;
 use lattice_core::domain::learning::practice::{problem_pattern, PROBLEM_PATTERNS};
+use lattice_core::shared::persistence::Database;
 use sqlx::SqlitePool;
 
 const DAY_MS: i64 = 86_400_000;
 const NOW: i64 = 1_800_000_000_000;
 
-async fn course() -> (SqlitePool, crate::dto::LearningProgramDto) {
+async fn course() -> (SqlitePool, Database, crate::dto::LearningProgramDto) {
     let pool = crate::test_support::pool().await.expect("test pool");
+    let db = Database::new(pool.clone());
     let program = crate::test_support::fixture();
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(db.clone())
         .create(&program)
         .await
         .expect("insert program");
-    (pool, program)
+    (pool, db, program)
 }
 
 async fn schedule(pool: &SqlitePool, material: &str, pattern: &str, due_at: i64) {
@@ -57,13 +59,13 @@ fn of_different_families(count: usize) -> Vec<&'static ProblemPattern> {
 
 #[tokio::test]
 async fn ratings_are_recorded_under_the_problem_material_and_leave_the_drills_alone() {
-    let (pool, program) = course().await;
+    let (pool, db, program) = course().await;
     let pattern = of_different_families(1)[0];
     schedule(&pool, "code:python", pattern.id, 777).await;
-    let mut connection = pool.acquire().await.expect("connection");
+    let mut tx = db.begin_write().await.expect("write unit");
 
     let rated = record_ratings_in(
-        &mut connection,
+        &mut tx,
         &program.summary.id,
         "python",
         &[pattern.id.to_owned()],
@@ -73,7 +75,7 @@ async fn ratings_are_recorded_under_the_problem_material_and_leave_the_drills_al
     )
     .await
     .expect("record");
-    drop(connection);
+    tx.commit().await.expect("commit");
 
     assert_eq!(rated.len(), 1);
     assert_eq!(rated[0].pattern_id, pattern.id);
@@ -97,12 +99,12 @@ async fn ratings_are_recorded_under_the_problem_material_and_leave_the_drills_al
 
 #[tokio::test]
 async fn a_second_review_moves_the_same_schedule_on() {
-    let (pool, program) = course().await;
+    let (pool, db, program) = course().await;
     let id = of_different_families(1)[0].id.to_owned();
-    let mut connection = pool.acquire().await.expect("connection");
+    let mut tx = db.begin_write().await.expect("write unit");
     for at in [NOW, NOW + 2 * DAY_MS] {
         record_ratings_in(
-            &mut connection,
+            &mut tx,
             &program.summary.id,
             "Python",
             std::slice::from_ref(&id),
@@ -113,7 +115,7 @@ async fn a_second_review_moves_the_same_schedule_on() {
         .await
         .expect("record");
     }
-    drop(connection);
+    tx.commit().await.expect("commit");
     let reviews: i64 = sqlx::query_scalar(
         "SELECT review_count FROM learning_drill_pattern_schedules WHERE material='problem:python' AND pattern_id=?",
     )
@@ -126,12 +128,12 @@ async fn a_second_review_moves_the_same_schedule_on() {
 
 #[tokio::test]
 async fn the_interview_date_pulls_the_next_review_in() {
-    let (pool, program) = course().await;
+    let (_, db, program) = course().await;
     let id = of_different_families(1)[0].id.to_owned();
     let target = NOW + 3 * DAY_MS;
-    let mut connection = pool.acquire().await.expect("connection");
+    let mut tx = db.begin_write().await.expect("write unit");
     let rated = record_ratings_in(
-        &mut connection,
+        &mut tx,
         &program.summary.id,
         "python",
         &[id],
@@ -141,16 +143,17 @@ async fn the_interview_date_pulls_the_next_review_in() {
     )
     .await
     .expect("record");
+    tx.commit().await.expect("commit");
     assert!(rated[0].due_at > NOW);
     assert!(rated[0].due_at <= target);
 }
 
 #[tokio::test]
 async fn an_id_the_catalogue_does_not_hold_is_left_out() {
-    let (pool, program) = course().await;
-    let mut connection = pool.acquire().await.expect("connection");
+    let (_, db, program) = course().await;
+    let mut tx = db.begin_write().await.expect("write unit");
     let rated = record_ratings_in(
-        &mut connection,
+        &mut tx,
         &program.summary.id,
         "python",
         &["not_a_pattern".to_owned()],
@@ -160,12 +163,13 @@ async fn an_id_the_catalogue_does_not_hold_is_left_out() {
     )
     .await
     .expect("record");
+    tx.commit().await.expect("commit");
     assert!(rated.is_empty());
 }
 
 #[tokio::test]
 async fn targets_rank_due_then_never_practised_then_the_rest() {
-    let (pool, program) = course().await;
+    let (pool, db, program) = course().await;
     let families = of_different_families(3);
     let (most_overdue, overdue, never) = (families[0], families[1], families[2]);
     for (order, pattern) in PROBLEM_PATTERNS.iter().enumerate() {
@@ -180,9 +184,9 @@ async fn targets_rank_due_then_never_practised_then_the_rest() {
         };
         schedule(&pool, "problem:python", pattern.id, at).await;
     }
-    let mut connection = pool.acquire().await.expect("connection");
+    let mut read = db.begin_read().await.expect("read unit");
 
-    let ranked = targets_in(&mut connection, &program.summary.id, "python", NOW)
+    let ranked = targets_in(&mut read, &program.summary.id, "python", NOW)
         .await
         .expect("targets");
 
@@ -192,13 +196,13 @@ async fn targets_rank_due_then_never_practised_then_the_rest() {
 
 #[tokio::test]
 async fn targets_ignore_the_drills_schedules_and_other_languages() {
-    let (pool, program) = course().await;
+    let (pool, db, program) = course().await;
     let first = PROBLEM_PATTERNS.first().expect("a catalogue");
     schedule(&pool, "code:python", first.id, NOW + 30 * DAY_MS).await;
     schedule(&pool, "problem:rust", first.id, NOW + 30 * DAY_MS).await;
-    let mut connection = pool.acquire().await.expect("connection");
+    let mut read = db.begin_read().await.expect("read unit");
 
-    let ranked = targets_in(&mut connection, &program.summary.id, "python", NOW)
+    let ranked = targets_in(&mut read, &program.summary.id, "python", NOW)
         .await
         .expect("targets");
 
@@ -207,10 +211,10 @@ async fn targets_ignore_the_drills_schedules_and_other_languages() {
 
 #[tokio::test]
 async fn targets_interleave_the_families() {
-    let (pool, program) = course().await;
-    let mut connection = pool.acquire().await.expect("connection");
+    let (_, db, program) = course().await;
+    let mut read = db.begin_read().await.expect("read unit");
 
-    let ranked = targets_in(&mut connection, &program.summary.id, "python", NOW)
+    let ranked = targets_in(&mut read, &program.summary.id, "python", NOW)
         .await
         .expect("targets");
 
@@ -234,12 +238,12 @@ async fn targets_interleave_the_families() {
 
 #[tokio::test]
 async fn due_holds_nothing_when_nothing_is_due() {
-    let (pool, program) = course().await;
+    let (pool, db, program) = course().await;
     let id = of_different_families(1)[0].id;
     schedule(&pool, "problem:python", id, NOW + DAY_MS).await;
-    let mut connection = pool.acquire().await.expect("connection");
+    let mut read = db.begin_read().await.expect("read unit");
 
-    let due = practice_due_in(&mut connection, &program.summary.id, NOW, true)
+    let due = practice_due_in(&mut read, &program.summary.id, NOW, true)
         .await
         .expect("due");
 
@@ -248,13 +252,13 @@ async fn due_holds_nothing_when_nothing_is_due() {
 
 #[tokio::test]
 async fn due_problem_patterns_are_one_item_that_names_no_pattern() {
-    let (pool, program) = course().await;
+    let (pool, db, program) = course().await;
     let families = of_different_families(2);
     schedule(&pool, "problem:python", families[0].id, NOW - 2 * DAY_MS).await;
     schedule(&pool, "problem:python", families[1].id, NOW - DAY_MS).await;
-    let mut connection = pool.acquire().await.expect("connection");
+    let mut read = db.begin_read().await.expect("read unit");
 
-    let due = practice_due_in(&mut connection, &program.summary.id, NOW, true)
+    let due = practice_due_in(&mut read, &program.summary.id, NOW, true)
         .await
         .expect("due");
 
@@ -278,7 +282,7 @@ async fn due_problem_patterns_are_one_item_that_names_no_pattern() {
 
 #[tokio::test]
 async fn due_adds_the_drills_lessons_and_patterns_most_overdue_first() {
-    let (pool, program) = course().await;
+    let (pool, db, program) = course().await;
     let lesson = &program.modules[0].lessons[0];
     sqlx::query(
         "INSERT INTO learning_drill_lesson_schedules(program_id,lesson_id,stability,difficulty,last_reviewed_at,due_at,interval_days,review_count,lapses) VALUES(?,?,1.0,5.0,?,?,1,1,0)",
@@ -293,9 +297,9 @@ async fn due_adds_the_drills_lessons_and_patterns_most_overdue_first() {
     let pattern = of_different_families(1)[0].id;
     schedule(&pool, "problem:python", pattern, NOW - DAY_MS).await;
     schedule(&pool, "code:python", pattern, NOW - 5 * DAY_MS).await;
-    let mut connection = pool.acquire().await.expect("connection");
+    let mut read = db.begin_read().await.expect("read unit");
 
-    let due = practice_due_in(&mut connection, &program.summary.id, NOW, true)
+    let due = practice_due_in(&mut read, &program.summary.id, NOW, true)
         .await
         .expect("due");
 
@@ -325,17 +329,17 @@ async fn due_adds_the_drills_lessons_and_patterns_most_overdue_first() {
 
 #[tokio::test]
 async fn due_coding_items_are_left_out_of_a_course_where_code_does_not_fit() {
-    let (pool, program) = course().await;
+    let (pool, db, program) = course().await;
     let pattern = of_different_families(1)[0].id;
     schedule(&pool, "problem:python", pattern, NOW - DAY_MS).await;
     schedule(&pool, "code:python", pattern, NOW - 2 * DAY_MS).await;
     schedule(&pool, "passage", "any_passage_pattern", NOW - 3 * DAY_MS).await;
-    let mut connection = pool.acquire().await.expect("connection");
+    let mut read = db.begin_read().await.expect("read unit");
 
-    let without = practice_due_in(&mut connection, &program.summary.id, NOW, false)
+    let without = practice_due_in(&mut read, &program.summary.id, NOW, false)
         .await
         .expect("due");
-    let with = practice_due_in(&mut connection, &program.summary.id, NOW, true)
+    let with = practice_due_in(&mut read, &program.summary.id, NOW, true)
         .await
         .expect("due");
 

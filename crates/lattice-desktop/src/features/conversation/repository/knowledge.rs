@@ -8,7 +8,6 @@ use crate::features::conversation::memory_dto::MemoryEvidenceDto;
 use lattice_core::application::ports::conversation_memory::SHARED_RELEVANCE_FLOOR;
 use lattice_core::domain::conversation::memory::compute_digest;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::text::informative_terms;
 use sqlx::SqliteConnection;
 use std::collections::HashMap;
@@ -49,7 +48,7 @@ impl ConversationRepository {
         offset: i64,
         for_prompt: bool,
     ) -> Result<KnowledgeResponseDto> {
-        let mut tx = self.pool.begin_read().await?;
+        let mut tx = self.db.begin_read().await?;
         let response = Self::list_knowledge_on(&mut tx, conversation, offset, for_prompt).await?;
         tx.commit().await?;
         Ok(response)
@@ -204,7 +203,7 @@ impl ConversationRepository {
                 ));
             }
         }
-        let mut tx = self.pool.begin_write().await?;
+        let mut tx = self.db.begin_write().await?;
         let chat_pool = Self::chat_pool(&mut tx, &r.conversation_id).await?;
         let mut source = r.conversation_id.clone();
         let (scope_kind, scope_key) = match r.scope.as_deref() {
@@ -382,7 +381,7 @@ impl ConversationRepository {
         query: &str,
     ) -> Result<lattice_core::application::ports::conversation_memory::PreparedMemory> {
         let vector = self.embed_knowledge_query(query).await;
-        let mut tx = self.pool.begin_read().await?;
+        let mut tx = self.db.begin_read().await?;
         let revisions = Self::knowledge_revisions(&mut tx, conversation).await?;
         let mut applicable = Vec::new();
         let mut offset = 0;
@@ -464,7 +463,7 @@ impl ConversationRepository {
     ) -> Result<Vec<lattice_core::domain::conversation::memory::MemoryItem>> {
         let terms = informative_terms(text);
         let vector = self.embed_knowledge_query(text).await;
-        let mut tx = self.pool.begin_read().await?;
+        let mut tx = self.db.begin_read().await?;
         let semantic = self
             .semantic_scores_on(&mut tx, conversation, vector.as_deref())
             .await;
@@ -605,7 +604,7 @@ impl ConversationRepository {
         query: &str,
     ) -> std::collections::HashMap<String, f32> {
         let vector = self.embed_knowledge_query(query).await;
-        let Ok(mut tx) = self.pool.begin_read().await else {
+        let Ok(mut tx) = self.db.begin_read().await else {
             return std::collections::HashMap::new();
         };
         let scores = self
@@ -695,8 +694,11 @@ impl ConversationRepository {
 
 impl ConversationRepository {
     pub(super) async fn suppressed_memory_ids(&self, conversation: &str) -> Result<Vec<String>> {
-        Ok(sqlx::query_scalar("SELECT a.item_id FROM conversation_memory_attributes a JOIN conversation_memory_items i ON i.id=a.item_id WHERE i.conversation_id=? AND (a.forgotten=1 OR julianday(a.valid_from)>julianday('now') OR julianday(a.valid_until)<=julianday('now'))")
-            .bind(conversation).fetch_all(&self.pool).await?)
+        let mut read = self.db.begin_read().await?;
+        let ids = sqlx::query_scalar("SELECT a.item_id FROM conversation_memory_attributes a JOIN conversation_memory_items i ON i.id=a.item_id WHERE i.conversation_id=? AND (a.forgotten=1 OR julianday(a.valid_from)>julianday('now') OR julianday(a.valid_until)<=julianday('now'))")
+            .bind(conversation).fetch_all(&mut *read).await?;
+        read.commit().await?;
+        Ok(ids)
     }
 }
 

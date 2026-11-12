@@ -11,7 +11,6 @@ use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionRe
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Database;
-use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::runtime::jobs::{JobRuntime, JobStatus, JobStore};
 use std::sync::Mutex;
 
@@ -116,49 +115,36 @@ fn prepared(
 
 /// Plans the course's topics on `planner`.
 pub(crate) async fn plan_course(
-    pool: &SqlitePool,
+    db: &Database,
     program_id: &str,
     planner: &dyn LLMPort,
 ) -> Result<crate::dto::LearningProgramDto> {
-    let program = LearningRepository::new(pool.clone())
-        .get(program_id)
+    let program = LearningRepository::new(db.clone()).get(program_id).await?;
+    let revision = crate::lessons::course_plan::outline_revision(db, program_id).await?;
+    crate::lessons::course_plan::ensure(db, planner, &program, revision, &Default::default())
         .await?;
-    let revision =
-        crate::lessons::course_plan::outline_revision(&Database::from(pool.clone()), program_id)
-            .await?;
-    crate::lessons::course_plan::ensure(
-        &Database::from(pool.clone()),
-        planner,
-        &program,
-        revision,
-        &Default::default(),
-    )
-    .await?;
     Ok(program)
 }
 
 /// Plans the course on `planner` and saves the first lesson's prepared,
 /// verified teaching as `job_id`'s checkpoint. Returns the lesson's id.
 pub(crate) async fn save_verified(
-    pool: &SqlitePool,
+    db: &Database,
     job_id: &str,
     program_id: &str,
     planner: &dyn LLMPort,
 ) -> Result<String> {
-    let program = plan_course(pool, program_id, planner).await?;
-    let revision =
-        crate::lessons::course_plan::outline_revision(&Database::from(pool.clone()), program_id)
-            .await?;
-    let plan =
-        crate::lessons::course_plan::stored(&Database::from(pool.clone()), &program, revision)
-            .await?
-            .unwrap();
-    let sources = LearningRepository::new(pool.clone())
+    let program = plan_course(db, program_id, planner).await?;
+    let revision = crate::lessons::course_plan::outline_revision(db, program_id).await?;
+    let plan = crate::lessons::course_plan::stored(db, &program, revision)
+        .await?
+        .unwrap();
+    let sources = LearningRepository::new(db.clone())
         .verification_sources(program_id)
         .await?;
     let lesson = &program.modules[0].lessons[0];
     let prepared = prepared(lesson, &sources[0].id);
-    LearningCurriculumRepository::new(pool.clone())
+    LearningCurriculumRepository::new(db.clone())
         .save_lesson_checkpoint(
             job_id,
             &lesson.id,
@@ -175,17 +161,17 @@ pub(crate) async fn save_verified(
 /// Runs the course's first lesson job through the real worker and runtime
 /// with its lesson already prepared and verified, as a resumed job has it,
 /// and `model` as the Learning model.
-pub(crate) async fn run_lesson_job(pool: &SqlitePool, model: Arc<Recorder>) -> Result<Published> {
-    let (_, job) = repository_tests::queued_job(pool).await;
-    let store = JobStore::new(pool.clone());
+pub(crate) async fn run_lesson_job(db: &Database, model: Arc<Recorder>) -> Result<Published> {
+    let (_, job) = repository_tests::queued_job(db).await;
+    let store = JobStore::new(db.clone());
     store.claim(&job.id).await?.unwrap();
-    let lesson_id = save_verified(pool, &job.id, &job.program_id, model.as_ref()).await?;
+    let lesson_id = save_verified(db, &job.id, &job.program_id, model.as_ref()).await?;
     store.suspend(&job.id).await?;
     let llm: Arc<dyn LLMPort> = model;
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        database: pool.clone().into(),
+        database: db.clone(),
         load_llm: Arc::new(move || {
             let llm = llm.clone();
             Box::pin(async move { Ok(pinned_for_test(llm)) })
@@ -205,10 +191,10 @@ pub(crate) async fn run_lesson_job(pool: &SqlitePool, model: Arc<Recorder>) -> R
 
 /// The course's quiz jobs, oldest first.
 pub(crate) async fn quiz_jobs(
-    pool: &SqlitePool,
+    db: &Database,
     program_id: &str,
 ) -> Result<Vec<lattice_core::shared::runtime::jobs::JobRecord>> {
-    let mut jobs = JobStore::new(pool.clone())
+    let mut jobs = JobStore::new(db.clone())
         .list_for_subject(QUIZ_BANK, program_id)
         .await?;
     jobs.sort_by_key(|job| job.created_at);
@@ -226,11 +212,12 @@ async fn count(pool: &SqlitePool, sql: &str, binds: &[&str]) -> i64 {
 #[tokio::test]
 async fn a_lesson_job_publishes_when_its_teaching_is_verified_and_queues_its_quiz() -> Result<()> {
     let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
     let model = Recorder::new();
-    let published = run_lesson_job(&pool, model.clone()).await?;
+    let published = run_lesson_job(&db, model.clone()).await?;
     let (program, lesson) = (&published.program_id, &published.lesson_id);
 
-    let job = LearningCurriculumRepository::new(pool.clone())
+    let job = LearningCurriculumRepository::new(db.clone())
         .job(&published.job_id)
         .await?;
     assert_eq!(job.status, Status::Completed);
@@ -295,7 +282,7 @@ async fn a_lesson_job_publishes_when_its_teaching_is_verified_and_queues_its_qui
         1
     );
 
-    let jobs = quiz_jobs(&pool, program).await?;
+    let jobs = quiz_jobs(&db, program).await?;
     assert_eq!(jobs.len(), 1, "one quiz job for the lesson");
     assert_eq!(jobs[0].status, JobStatus::Pending);
     assert_eq!(
@@ -316,15 +303,16 @@ async fn a_lesson_job_publishes_when_its_teaching_is_verified_and_queues_its_qui
 #[tokio::test]
 async fn a_publication_that_fails_leaves_no_quiz_job_behind() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job) = repository_tests::queued_job(&pool).await;
-    let program = LearningRepository::new(pool.clone())
+    let db = Database::new(pool.clone());
+    let (repo, job) = repository_tests::queued_job(&db).await;
+    let program = LearningRepository::new(db.clone())
         .get(&job.program_id)
         .await?;
-    let sources = LearningRepository::new(pool.clone())
+    let sources = LearningRepository::new(db.clone())
         .verification_sources(&job.program_id)
         .await?;
     let lesson = &program.modules[0].lessons[0];
-    JobStore::new(pool.clone()).claim(&job.id).await?.unwrap();
+    JobStore::new(db.clone()).claim(&job.id).await?.unwrap();
     // No accepted snapshot exists yet, which publication finds only after it
     // has written the lesson and queued its quiz.
     let published = repo
@@ -344,7 +332,7 @@ async fn a_publication_that_fails_leaves_no_quiz_job_behind() -> Result<()> {
         .await,
         1
     );
-    assert!(quiz_jobs(&pool, &job.program_id).await?.is_empty());
+    assert!(quiz_jobs(&db, &job.program_id).await?.is_empty());
     Ok(())
 }
 
@@ -356,11 +344,12 @@ async fn two_lessons_of_one_course_publish_at_the_same_time() -> Result<()> {
     use crate::curriculum::LearningGenerationJobKind;
     use crate::plan_dto::StartLearningGenerationJobRequestDto;
     let pool = crate::tests::pool().await?;
-    let (repo, first) = repository_tests::queued_job(&pool).await;
-    let program = LearningRepository::new(pool.clone())
+    let db = Database::new(pool.clone());
+    let (repo, first) = repository_tests::queued_job(&db).await;
+    let program = LearningRepository::new(db.clone())
         .get(&first.program_id)
         .await?;
-    let sources = LearningRepository::new(pool.clone())
+    let sources = LearningRepository::new(db.clone())
         .verification_sources(&first.program_id)
         .await?;
     let lessons = [
@@ -378,7 +367,7 @@ async fn two_lessons_of_one_course_publish_at_the_same_time() -> Result<()> {
         })
         .await?;
     repo.seed_accepted(&first.program_id).await?;
-    let store = JobStore::new(pool.clone());
+    let store = JobStore::new(db.clone());
     for job in [&first, &second] {
         store.claim(&job.id).await?.unwrap();
     }
@@ -427,7 +416,7 @@ async fn two_lessons_of_one_course_publish_at_the_same_time() -> Result<()> {
         assert_eq!(bodies.len(), 1);
         assert!(bodies[0].contains(&lesson.title) && bodies[0].contains(BODY_MARK));
     }
-    let queued = quiz_jobs(&pool, &first.program_id).await?;
+    let queued = quiz_jobs(&db, &first.program_id).await?;
     let mut scoped: Vec<String> = queued
         .iter()
         .map(|job| job.requested["scope"]["id"].as_str().unwrap().to_owned())
@@ -472,8 +461,9 @@ impl JobHandler for Marks {
 #[tokio::test]
 async fn a_lesson_job_starts_while_a_quiz_job_of_its_course_is_running() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (_, job) = repository_tests::queued_job(&pool).await;
-    let program = LearningRepository::new(pool.clone())
+    let db = Database::new(pool.clone());
+    let (_, job) = repository_tests::queued_job(&db).await;
+    let program = LearningRepository::new(db.clone())
         .get(&job.program_id)
         .await?;
     let scope = crate::dto::LearningQuizScopeDto {
@@ -481,7 +471,7 @@ async fn a_lesson_job_starts_while_a_quiz_job_of_its_course_is_running() -> Resu
         id: Some(program.modules[0].lessons[0].id.clone()),
     };
     let quiz = crate::quiz_bank_jobs::queue_bank(
-        &Database::from(pool.clone()),
+        &db,
         &uuid::Uuid::new_v4().to_string(),
         &job.program_id,
         &scope,
@@ -490,7 +480,7 @@ async fn a_lesson_job_starts_while_a_quiz_job_of_its_course_is_running() -> Resu
     .await?;
     let quiz_running = Arc::new(tokio::sync::Notify::new());
     let lesson_started = Arc::new(tokio::sync::Notify::new());
-    let runtime = JobRuntime::new(Database::from(pool.clone()));
+    let runtime = JobRuntime::new(db.clone());
     runtime
         .register(
             QUIZ_BANK,
@@ -522,8 +512,8 @@ async fn a_lesson_job_starts_while_a_quiz_job_of_its_course_is_running() -> Resu
 }
 
 /// Every lesson of the fixture course, in course order.
-async fn lesson_ids_in_course_order(pool: &SqlitePool, program_id: &str) -> Vec<String> {
-    let program = LearningRepository::new(pool.clone())
+async fn lesson_ids_in_course_order(db: &Database, program_id: &str) -> Vec<String> {
+    let program = LearningRepository::new(db.clone())
         .get(program_id)
         .await
         .unwrap();
@@ -537,10 +527,11 @@ async fn lesson_ids_in_course_order(pool: &SqlitePool, program_id: &str) -> Vec<
 #[tokio::test]
 async fn a_lesson_job_is_ranked_by_its_lessons_place_in_the_course() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, first) = repository_tests::queued_job(&pool).await;
-    let store = JobStore::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let (repo, first) = repository_tests::queued_job(&db).await;
+    let store = JobStore::new(db.clone());
     assert_eq!(store.get(&first.id).await?.rank, Some(0));
-    let lessons = lesson_ids_in_course_order(&pool, &first.program_id).await;
+    let lessons = lesson_ids_in_course_order(&db, &first.program_id).await;
     assert_eq!(lessons.len(), 4);
     // Later lessons first: a rank is the lesson's place, not the job's order.
     for (place, lesson) in lessons.iter().enumerate().skip(1).rev() {
@@ -566,13 +557,14 @@ async fn a_lesson_job_is_ranked_by_its_lessons_place_in_the_course() -> Result<(
 #[tokio::test]
 async fn a_lessons_quiz_job_takes_the_lessons_rank() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (_, job) = repository_tests::queued_job(&pool).await;
-    let lessons = lesson_ids_in_course_order(&pool, &job.program_id).await;
+    let db = Database::new(pool.clone());
+    let (_, job) = repository_tests::queued_job(&db).await;
+    let lessons = lesson_ids_in_course_order(&db, &job.program_id).await;
     for (place, lesson) in lessons.iter().enumerate().rev() {
-        let mut tx = pool.begin_write().await.map_err(crate::persistence::db)?;
+        let mut tx = db.begin_write().await.map_err(crate::persistence::db)?;
         crate::quiz_bank_jobs::queue_lesson_bank_in(&mut tx, &job.program_id, lesson).await?;
         tx.commit().await.map_err(crate::persistence::db)?;
-        let quiz = quiz_jobs(&pool, &job.program_id)
+        let quiz = quiz_jobs(&db, &job.program_id)
             .await?
             .into_iter()
             .find(|quiz| quiz.requested["scope"]["id"] == serde_json::json!(lesson))
@@ -591,8 +583,9 @@ async fn a_lessons_quiz_job_takes_the_lessons_rank() -> Result<()> {
 #[tokio::test]
 async fn the_lesson_worker_runs_inside_its_jobs_rank() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, first) = repository_tests::queued_job(&pool).await;
-    let lessons = lesson_ids_in_course_order(&pool, &first.program_id).await;
+    let db = Database::new(pool.clone());
+    let (repo, first) = repository_tests::queued_job(&db).await;
+    let lessons = lesson_ids_in_course_order(&db, &first.program_id).await;
     let third = repo
         .start_job(&crate::plan_dto::StartLearningGenerationJobRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
@@ -608,7 +601,7 @@ async fn the_lesson_worker_runs_inside_its_jobs_rank() -> Result<()> {
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        database: pool.clone().into(),
+        database: db.clone(),
         load_llm: {
             let loads = loads.clone();
             Arc::new(move || {
@@ -626,7 +619,7 @@ async fn the_lesson_worker_runs_inside_its_jobs_rank() -> Result<()> {
         research_web: None,
         verifier: None,
     };
-    let runtime = JobRuntime::new(Database::from(pool.clone()));
+    let runtime = JobRuntime::new(db.clone());
     runtime
         .register(LESSON_PREPARATION, Arc::new(worker), lesson_job_config())
         .await?;

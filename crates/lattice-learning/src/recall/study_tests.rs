@@ -6,6 +6,7 @@ use super::{
     study_repository::StudyRepository,
     study_service as service,
 };
+use lattice_core::shared::persistence::Database;
 use serde_json::json;
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
@@ -214,7 +215,8 @@ fn study_rejects_unknown_persisted_card_formats() {
 #[tokio::test]
 async fn decks_reviews_edits_and_deletion_persist_atomically() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
-    let db = open(dir.path().join("study.db")).await?;
+    let pool = open(dir.path().join("study.db")).await?;
+    let db = Database::new(pool.clone());
     let repo = StudyRepository::new(db.clone());
     let d = deck();
     repo.save(&d).await?;
@@ -222,7 +224,7 @@ async fn decks_reviews_edits_and_deletion_persist_atomically() -> anyhow::Result
     sqlx::query("UPDATE study_cards SET source_json=? WHERE id=?")
         .bind(serde_json::to_string(&c.source)?)
         .bind(&c.id)
-        .execute(&db)
+        .execute(&pool)
         .await?;
     assert_eq!(
         repo.get(&d.id).await?.cards[0].citations.len(),
@@ -288,7 +290,7 @@ async fn decks_reviews_edits_and_deletion_persist_atomically() -> anyhow::Result
     assert!(repo.get(&d.id).await.is_err());
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM study_reviews")
-            .fetch_one(&db)
+            .fetch_one(&pool)
             .await?,
         0
     );
@@ -298,7 +300,8 @@ async fn decks_reviews_edits_and_deletion_persist_atomically() -> anyhow::Result
 #[tokio::test]
 async fn a_card_is_edited_at_any_length() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
-    let db = open(dir.path().join("long-edit.db")).await?;
+    let pool = open(dir.path().join("long-edit.db")).await?;
+    let db = Database::new(pool.clone());
     let repo = StudyRepository::new(db.clone());
     let d = deck();
     repo.save(&d).await?;
@@ -320,7 +323,8 @@ async fn a_card_is_edited_at_any_length() -> anyhow::Result<()> {
 async fn question_answer_reviews_reject_choices_and_replay_only_matching_payloads(
 ) -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
-    let db = open(dir.path().join("qa-study.db")).await?;
+    let pool = open(dir.path().join("qa-study.db")).await?;
+    let db = Database::new(pool.clone());
     let repo = StudyRepository::new(db.clone());
     let mut d = deck();
     let card = d
@@ -366,12 +370,13 @@ async fn question_answer_reviews_reject_choices_and_replay_only_matching_payload
 async fn conversation_claims_keep_verified_answers_and_resolve_their_citations(
 ) -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
-    let db = open(dir.path().join("conversation-study.db")).await?;
+    let pool = open(dir.path().join("conversation-study.db")).await?;
+    let db = Database::new(pool.clone());
     let repo = StudyRepository::new(db.clone());
     let conversation_id = uuid::Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO conversations (id,title) VALUES (?,'Research notes')")
         .bind(&conversation_id)
-        .execute(&db)
+        .execute(&pool)
         .await?;
     let source = |number: i64, name: &str, content: &str| {
         json!({
@@ -412,7 +417,7 @@ async fn conversation_claims_keep_verified_answers_and_resolve_their_citations(
         .bind(&conversation_id)
         .bind("The second supported fact follows from beta evidence [2]. The first supported fact follows from alpha evidence [1]. An unsupported assertion [1].")
         .bind(metadata.to_string())
-        .execute(&db)
+        .execute(&pool)
         .await?;
 
     let claims = repo.conversation_claims(&conversation_id).await?;
@@ -517,6 +522,7 @@ async fn the_consolidation_migration_moves_every_card_onto_fsrs() -> anyhow::Res
         .max_connections(1)
         .connect(":memory:")
         .await?;
+    let db = Database::new(pool.clone());
     sqlx::migrate::Migrator::new(earlier.as_path())
         .await?
         .run(&pool)
@@ -565,7 +571,7 @@ async fn the_consolidation_migration_moves_every_card_onto_fsrs() -> anyhow::Res
     .await?;
     assert_eq!(scheduler_columns, 0);
 
-    let reviewed = StudyRepository::new(pool.clone())
+    let reviewed = StudyRepository::new(db.clone())
         .review(
             &ReviewStudyCardRequestDto {
                 review_id: uuid::Uuid::new_v4().to_string(),

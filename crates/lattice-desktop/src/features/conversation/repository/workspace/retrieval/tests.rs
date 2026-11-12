@@ -1,4 +1,5 @@
 use super::*;
+use lattice_core::shared::persistence::Database;
 
 mod batch_reads;
 
@@ -22,7 +23,7 @@ async fn scope_fixture() -> ConversationRepository {
                 ('filed_both', 'space_general'), ('filed_both', 'patent'),
                 ('unindexed', 'patent');")
         .execute(&pool).await.unwrap();
-    ConversationRepository::new(pool)
+    ConversationRepository::new(Database::new(pool))
 }
 
 async fn scope_of(repo: &ConversationRepository, conversation: &str) -> HashSet<String> {
@@ -156,6 +157,10 @@ async fn an_empty_space_and_a_missing_conversation_are_distinguishable() {
 /// The `@` picker reads whole document rows, not just ids, so it needs a
 /// documents table with the columns it shows.
 async fn picker_fixture() -> ConversationRepository {
+    picker_fixture_with_pool().await.1
+}
+
+async fn picker_fixture_with_pool() -> (sqlx::SqlitePool, ConversationRepository) {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect(":memory:")
@@ -179,7 +184,8 @@ async fn picker_fixture() -> ConversationRepository {
     .execute(&pool)
     .await
     .unwrap();
-    ConversationRepository::new(pool)
+    let db = Database::new(pool.clone());
+    (pool, ConversationRepository::new(db))
 }
 
 /// The picker offers exactly the set retrieval would search.
@@ -206,12 +212,12 @@ async fn the_picker_offers_only_what_the_space_can_search() {
 /// too.
 #[tokio::test]
 async fn the_picker_offers_the_asking_chat_its_own_attachments() {
-    let repo = picker_fixture().await;
+    let (pool, repo) = picker_fixture_with_pool().await;
     sqlx::raw_sql(
         "CREATE TABLE conversations (id TEXT, space_id TEXT);
              INSERT INTO conversations VALUES ('some-chat', 'space_general'), ('other-chat', 'space_general');",
     )
-    .execute(&repo.pool)
+    .execute(&pool)
     .await
     .unwrap();
 
@@ -360,7 +366,7 @@ async fn a_hit_location_carries_the_ocr_mark() {
     .execute(&pool)
     .await
     .unwrap();
-    let repo = ConversationRepository::new(pool);
+    let repo = ConversationRepository::new(Database::new(pool));
 
     let locations = repo
         .retrieval_locations(&["scan".to_string(), "typed".to_string()])

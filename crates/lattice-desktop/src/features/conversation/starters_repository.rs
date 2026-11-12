@@ -4,8 +4,8 @@ use crate::features::conversation::repository::ConversationRepository;
 use async_trait::async_trait;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::bind_limit::rows_per_statement;
-use lattice_core::shared::persistence::driver::DriverPool;
-use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
+use lattice_core::shared::persistence::Database;
+use sqlx::{QueryBuilder, Row, Sqlite};
 use std::collections::{HashMap, HashSet};
 
 /// How many document ids one statement binds at a time; the aggregates over
@@ -16,17 +16,17 @@ const ID_BIND_BATCH: usize = rows_per_statement(1, 0);
 /// corpus fingerprint, plus the aggregate reads the starter prompt needs. Every
 /// read is scoped to the document ids the chat's space can see.
 pub struct ChatStarterCacheRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl ChatStarterCacheRepository {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     /// The cached `(starters_json, created_at)` for a fingerprint, if any.
     pub async fn get(&self, fingerprint: &str) -> Result<Option<(String, String)>> {
+        let mut read = self.db.begin_read().await?;
         let row = sqlx::query(
             r#"
             SELECT starters_json, created_at
@@ -35,9 +35,10 @@ impl ChatStarterCacheRepository {
             "#,
         )
         .bind(fingerprint)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("Failed to read chat starter cache: {}", e)))?;
+        read.commit().await?;
 
         match row {
             Some(row) => {
@@ -60,6 +61,7 @@ impl ChatStarterCacheRepository {
         starters_json: &str,
         created_at: &str,
     ) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query(
             r#"
             INSERT INTO chat_starter_cache (fingerprint, starters_json, created_at)
@@ -72,15 +74,17 @@ impl ChatStarterCacheRepository {
         .bind(fingerprint)
         .bind(starters_json)
         .bind(created_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to write chat starter cache: {}", e)))?;
+        tx.commit().await?;
 
         Ok(())
     }
 
     /// Keep only the newest `keep` rows; the cache is a convenience, not a record.
     pub async fn prune(&self, keep: i64) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query(
             r#"
             DELETE FROM chat_starter_cache
@@ -92,9 +96,10 @@ impl ChatStarterCacheRepository {
             "#,
         )
         .bind(keep)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to prune chat starter cache: {}", e)))?;
+        tx.commit().await?;
 
         Ok(())
     }
@@ -104,6 +109,7 @@ impl ChatStarterCacheRepository {
     /// Documents with no `file_type` are reported as `"other"` so the mix always
     /// sums to the document count.
     pub async fn type_mix(&self, allowed_ids: &HashSet<String>) -> Result<Vec<(String, i64)>> {
+        let mut read = self.db.begin_read().await?;
         let mut totals: HashMap<String, i64> = HashMap::new();
         for batch in sorted_ids(allowed_ids).chunks(ID_BIND_BATCH) {
             let mut query = QueryBuilder::<Sqlite>::new(
@@ -117,7 +123,7 @@ impl ChatStarterCacheRepository {
 
             let rows: Vec<(String, i64)> = query
                 .build_query_as()
-                .fetch_all(&self.pool)
+                .fetch_all(&mut *read)
                 .await
                 .map_err(|e| {
                     AppError::Database(format!("Failed to read corpus type mix: {}", e))
@@ -126,6 +132,7 @@ impl ChatStarterCacheRepository {
                 *totals.entry(kind).or_default() += n;
             }
         }
+        read.commit().await?;
 
         let mut mix: Vec<(String, i64)> = totals.into_iter().collect();
         mix.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
@@ -137,6 +144,7 @@ impl ChatStarterCacheRepository {
     /// Blank names are dropped in SQL so a batch never spends its limit on
     /// titles the prompt would discard anyway.
     pub async fn recent_titles(&self, allowed_ids: &HashSet<String>) -> Result<Vec<String>> {
+        let mut read = self.db.begin_read().await?;
         let mut rows: Vec<(String, String, String)> = Vec::new();
         for batch in sorted_ids(allowed_ids).chunks(ID_BIND_BATCH) {
             let mut query = QueryBuilder::<Sqlite>::new(
@@ -150,13 +158,14 @@ impl ChatStarterCacheRepository {
 
             let batch_rows: Vec<(String, String, String)> = query
                 .build_query_as()
-                .fetch_all(&self.pool)
+                .fetch_all(&mut *read)
                 .await
                 .map_err(|e| {
                     AppError::Database(format!("Failed to read recent document titles: {}", e))
                 })?;
             rows.extend(batch_rows);
         }
+        read.commit().await?;
 
         // Each batch is ordered on its own, so the batches are merged here.
         rows.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
@@ -168,6 +177,7 @@ impl ChatStarterCacheRepository {
 
     /// Newest `indexed_at` in `allowed_ids`, or an empty string when there is none.
     pub async fn latest_indexed_at(&self, allowed_ids: &HashSet<String>) -> Result<String> {
+        let mut read = self.db.begin_read().await?;
         let mut latest = String::new();
         for batch in sorted_ids(allowed_ids).chunks(ID_BIND_BATCH) {
             let mut query =
@@ -180,7 +190,7 @@ impl ChatStarterCacheRepository {
 
             let value: Option<String> = query
                 .build_query_scalar()
-                .fetch_one(&self.pool)
+                .fetch_one(&mut *read)
                 .await
                 .map_err(|e| {
                     AppError::Database(format!("Failed to read latest indexed_at: {}", e))
@@ -191,6 +201,7 @@ impl ChatStarterCacheRepository {
                 }
             }
         }
+        read.commit().await?;
         Ok(latest)
     }
 
@@ -199,7 +210,7 @@ impl ChatStarterCacheRepository {
     /// actually answer from. The rule stays in the one statement
     /// [`ConversationRepository::space_document_scope`] owns.
     pub async fn space_document_scope(&self, space_id: &str) -> Result<HashSet<String>> {
-        ConversationRepository::new(self.pool.clone())
+        ConversationRepository::new(self.db.clone())
             .space_document_scope(space_id)
             .await
     }
@@ -240,16 +251,18 @@ fn sorted_ids(allowed_ids: &HashSet<String>) -> Vec<&String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::SqlitePool;
 
-    async fn fresh_repository() -> ChatStarterCacheRepository {
+    async fn fresh_repository() -> (ChatStarterCacheRepository, SqlitePool) {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        ChatStarterCacheRepository::new(pool)
+        let repo = ChatStarterCacheRepository::new(Database::new(pool.clone()));
+        (repo, pool)
     }
 
     #[tokio::test]
     async fn test_starter_cache_round_trip() {
-        let repo = fresh_repository().await;
+        let (repo, _pool) = fresh_repository().await;
         let json = r#"[{"question":"What did I decide about pricing?"}]"#;
 
         repo.put("fp-1", json, "2026-09-06T10:00:00Z")
@@ -265,7 +278,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_starter_cache_prune_keeps_newest() {
-        let repo = fresh_repository().await;
+        let (repo, pool) = fresh_repository().await;
         for i in 0..10 {
             repo.put(
                 &format!("fp-{:02}", i),
@@ -279,7 +292,7 @@ mod tests {
         repo.prune(8).await.unwrap();
 
         let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chat_starter_cache")
-            .fetch_one(&repo.pool)
+            .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(remaining, 8);
@@ -293,9 +306,9 @@ mod tests {
     #[tokio::test]
     async fn test_zero_documents_writes_no_cache_row() {
         // Mirrors the short-circuit: nothing touches the table.
-        let repo = fresh_repository().await;
+        let (_repo, pool) = fresh_repository().await;
         let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chat_starter_cache")
-            .fetch_one(&repo.pool)
+            .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(rows, 0);
@@ -306,7 +319,7 @@ mod tests {
     /// timestamp, nor the titles the model is shown.
     #[tokio::test]
     async fn test_the_aggregate_reads_see_only_the_allowed_documents() {
-        let repo = fresh_repository().await;
+        let (repo, pool) = fresh_repository().await;
         for (i, (kind, indexed)) in [
             ("pdf", "2026-09-01T00:00:00Z"),
             ("pdf", "2026-09-03T00:00:00Z"),
@@ -331,7 +344,7 @@ mod tests {
             .bind(*indexed)
             .bind(*indexed)
             .bind(format!("sum-{}", i))
-            .execute(&repo.pool)
+            .execute(&pool)
             .await
             .unwrap();
         }

@@ -6,7 +6,7 @@ use crate::features::indexing::engine::error::{IndexingError, Result};
 use chrono::Utc;
 use lattice_core::shared::error::ResultExt;
 use lattice_core::shared::fs::path::path_to_string;
-use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Database;
 use serde::Deserialize;
 use sqlx::Row;
 use std::path::Path;
@@ -52,34 +52,32 @@ async fn get_web_article_title(path: &Path) -> Result<String> {
 }
 
 /// Check if a document exists in the database by path.
-pub async fn document_exists(pool: &impl DriverPool, path: &Path) -> Result<bool> {
-    let pool = pool.sqlx_pool();
+pub async fn document_exists(db: &Database, path: &Path) -> Result<bool> {
     let file_path = path
         .to_str()
         .with_context(|| format!("Invalid UTF-8 in path: {}", path.display()))?;
 
+    let mut read = db.begin_read().await?;
     let count: i64 = sqlx::query_scalar(
         r#"
         SELECT COUNT(*) FROM documents WHERE file_path = ?
         "#,
     )
     .bind(file_path)
-    .fetch_one(pool)
+    .fetch_one(&mut *read)
     .await?;
+    read.commit().await?;
 
     Ok(count > 0)
 }
 
 /// Get document record by file path.
-pub async fn get_document_by_path(
-    pool: &impl DriverPool,
-    path: &Path,
-) -> Result<Option<DocumentRecord>> {
-    let pool = pool.sqlx_pool();
+pub async fn get_document_by_path(db: &Database, path: &Path) -> Result<Option<DocumentRecord>> {
     let file_path = path
         .to_str()
         .with_context(|| format!("Invalid UTF-8 in path: {}", path.display()))?;
 
+    let mut read = db.begin_read().await?;
     let result = sqlx::query(
         r#"
         SELECT
@@ -90,8 +88,9 @@ pub async fn get_document_by_path(
         "#,
     )
     .bind(file_path)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *read)
     .await?;
+    read.commit().await?;
 
     Ok(result.map(|row| {
         let id: String = row.get("id");
@@ -119,11 +118,10 @@ pub async fn get_document_by_path(
 }
 
 /// Check if a document needs reindexing (checksum changed).
-pub async fn needs_reindex(pool: &impl DriverPool, path: &Path) -> Result<bool> {
-    let pool = pool.sqlx_pool();
+pub async fn needs_reindex(db: &Database, path: &Path) -> Result<bool> {
     let current_checksum = calculate_checksum(path).await?;
 
-    if let Some(doc) = get_document_by_path(pool, path).await? {
+    if let Some(doc) = get_document_by_path(db, path).await? {
         Ok(doc.checksum != current_checksum)
     } else {
         Ok(true)
@@ -131,12 +129,12 @@ pub async fn needs_reindex(pool: &impl DriverPool, path: &Path) -> Result<bool> 
 }
 
 /// Update document status.
-pub async fn mark_document_status(pool: &impl DriverPool, path: &Path, status: &str) -> Result<()> {
-    let pool = pool.sqlx_pool();
+pub async fn mark_document_status(db: &Database, path: &Path, status: &str) -> Result<()> {
     let file_path = path
         .to_str()
         .with_context(|| format!("Invalid UTF-8 in path: {}", path.display()))?;
 
+    let mut tx = db.begin_write().await?;
     sqlx::query!(
         r#"
         UPDATE documents SET status = ?, updated_at = CURRENT_TIMESTAMP
@@ -145,39 +143,40 @@ pub async fn mark_document_status(pool: &impl DriverPool, path: &Path, status: &
         status,
         file_path
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
 
     Ok(())
 }
 
 /// Remove a document from the database.
-pub async fn remove_document(pool: &impl DriverPool, path: &Path) -> Result<()> {
-    let pool = pool.sqlx_pool();
+pub async fn remove_document(db: &Database, path: &Path) -> Result<()> {
     let file_path = path
         .to_str()
         .with_context(|| format!("Invalid UTF-8 in path: {}", path.display()))?;
 
+    let mut tx = db.begin_write().await?;
     sqlx::query!(
         r#"
         DELETE FROM documents WHERE file_path = ?
         "#,
         file_path
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
 
     Ok(())
 }
 
 /// Store only file metadata without indexing content.
 pub async fn store_file_metadata_only(
-    pool: &impl DriverPool,
+    db: &Database,
     path: &Path,
     _file_id: &str,
     mime_type: &str,
 ) -> Result<String> {
-    let pool = pool.sqlx_pool();
     let path_str = path_to_string(path).map_err(|e| IndexingError::FileRead {
         path: path.display().to_string(),
         reason: format!("Invalid path encoding: {}", e),
@@ -238,6 +237,7 @@ pub async fn store_file_metadata_only(
     // re-store the DO UPDATE branch leaves `id` alone, so handing the caller
     // the generated UUID pointed them at a document that does not exist.
     // Non-macro form to avoid regenerating the offline sqlx cache.
+    let mut tx = db.begin_write().await?;
     let actual_id: String = sqlx::query_scalar(
         r#"
         INSERT INTO documents (
@@ -262,8 +262,9 @@ pub async fn store_file_metadata_only(
     .bind(&modified_at_str)
     .bind(&indexed_at)
     .bind(&checksum)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await?;
+    tx.commit().await?;
 
     Ok(actual_id)
 }

@@ -21,6 +21,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::WriteTx;
 use serde::{Deserialize, Serialize};
 use sqlx::SqliteConnection;
 use std::collections::HashMap;
@@ -94,18 +95,14 @@ impl SectionRows for SourceLibrary {
         }
         Ok(())
     }
-    async fn insert(
-        &self,
-        connection: &mut SqliteConnection,
-        scope: &ImportScope<'_>,
-    ) -> Result<()> {
+    async fn insert(&self, tx: &mut WriteTx, scope: &ImportScope<'_>) -> Result<()> {
         let Some(workspace) =
             decode::<LearningSourceWorkspaceDto>(scope.pack, SOURCE_LIBRARY_ENTRY)?
         else {
             return Ok(());
         };
         importers::insert_source_workspace(
-            connection,
+            tx,
             &scope.program.summary.id,
             &workspace,
             scope.pack,
@@ -141,15 +138,11 @@ impl SectionRows for SourceTrust {
         }
         Ok(Vec::new())
     }
-    async fn insert(
-        &self,
-        connection: &mut SqliteConnection,
-        scope: &ImportScope<'_>,
-    ) -> Result<()> {
+    async fn insert(&self, tx: &mut WriteTx, scope: &ImportScope<'_>) -> Result<()> {
         let Some(rows) = decode::<SourceTrustPackEntry>(scope.pack, SOURCE_TRUST_ENTRY)? else {
             return Ok(());
         };
-        importers::insert_source_trust(connection, &scope.program.summary.id, rows, scope.ids).await
+        importers::insert_source_trust(tx, &scope.program.summary.id, rows, scope.ids).await
     }
 }
 
@@ -190,22 +183,13 @@ impl SectionRows for SourceHistory {
         }
         Ok(())
     }
-    async fn insert(
-        &self,
-        connection: &mut SqliteConnection,
-        scope: &ImportScope<'_>,
-    ) -> Result<()> {
+    async fn insert(&self, tx: &mut WriteTx, scope: &ImportScope<'_>) -> Result<()> {
         let Some(mut history) = decode::<SourceHistorySnapshot>(scope.pack, SOURCE_HISTORY_ENTRY)?
         else {
             return Ok(());
         };
-        importers::insert_source_history(
-            connection,
-            &scope.program.summary.id,
-            &mut history,
-            scope.ids,
-        )
-        .await
+        importers::insert_source_history(tx, &scope.program.summary.id, &mut history, scope.ids)
+            .await
     }
 }
 
@@ -237,13 +221,9 @@ impl SectionRows for SourceSelectors {
     ) -> Result<()> {
         map_table_ids(pack, SOURCE_SELECTORS_ENTRY, ids)
     }
-    async fn insert(
-        &self,
-        connection: &mut SqliteConnection,
-        scope: &ImportScope<'_>,
-    ) -> Result<()> {
+    async fn insert(&self, tx: &mut WriteTx, scope: &ImportScope<'_>) -> Result<()> {
         importers::insert_selectors(
-            connection,
+            tx,
             &scope.program.summary.id,
             scope.pack,
             scope.ids,

@@ -481,8 +481,9 @@ async fn outline_error(window: usize, goal: String) -> String {
     let mut asked = request(LearningCourseDepth::Course);
     asked.goal = goal;
     let pool = crate::tests::pool().await.unwrap();
+    let db = lattice_core::shared::persistence::Database::new(pool);
     crate::service::generate(
-        &crate::repository::LearningRepository::new(pool),
+        &crate::repository::LearningRepository::new(db),
         &crate::outline_draft::DraftRunRegistry::new(),
         &llm,
         asked,
