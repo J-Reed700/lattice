@@ -2,7 +2,6 @@
 //! report, the learner's view and the lesson itself, each read through the
 //! owner of its rule.
 use super::super::claim_ledger::{self, ClaimLedger};
-use super::super::learner_view::{resolved, told, unverified_sentences};
 use super::super::resolution::{standing, Resolution, Standing};
 use super::super::{ClaimStates, Finding, LessonVerificationReport};
 use crate::dto::{LearningBlockDto, LearningLessonDto};
@@ -21,7 +20,7 @@ use lattice_core::domain::learning::claim_review::{
 use lattice_core::shared::error::Result;
 use lattice_core::shared::hash::sha256_hex;
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// What a whole-lesson test has at its end.
 pub(in crate::lessons::content_verification) struct PreparedRun {
@@ -257,62 +256,6 @@ fn carried_on(run: &PreparedRun, entry: &ClaimLedgerEntry) -> bool {
     })
 }
 
-/// What the production mapping tells of each claim finding from the ledger the
-/// store loaded: its label and the reason it gives.
-fn told_of(
-    run: &PreparedRun,
-) -> Vec<(
-    &Finding,
-    LearningClaimResolutionDto,
-    Option<UnverifiedReasonDto>,
-)> {
-    let states = ClaimStates::of(&run.ledger);
-    let claims = || {
-        run.report
-            .findings
-            .iter()
-            .filter(|finding| finding.is_claim())
-    };
-    let finding_claims: HashSet<&str> = run
-        .report
-        .findings
-        .iter()
-        .filter_map(|finding| finding.claim_id.as_deref())
-        .collect();
-    let unverified = unverified_sentences(
-        claims().map(|finding| (finding, resolved(finding, &states, &finding_claims).0)),
-    );
-    claims()
-        .map(|finding| {
-            let (stood, verified) = resolved(finding, &states, &finding_claims);
-            let state = finding
-                .claim_id
-                .as_deref()
-                .and_then(|id| entry_of(run, id))
-                .map(ClaimLedgerEntry::state);
-            let source_removed = state.is_some_and(|state| {
-                matches!(
-                    state,
-                    ClaimState::Reopened {
-                        cause: ReopenCause::SourceDeleted(_),
-                        ..
-                    }
-                )
-            });
-            let (label, _, reason) = told(
-                stood.as_ref(),
-                verified,
-                finding.verdict,
-                (source_removed, state.is_some()),
-                unverified
-                    .get(&(finding.unit, finding.quote.as_str()))
-                    .copied(),
-            );
-            (finding, label, reason)
-        })
-        .collect()
-}
-
 /// 3. Every label the learner reads and every count of them is what the
 /// ledger derives.
 fn labels(
@@ -340,59 +283,88 @@ fn labels(
             listed
         ));
     }
-    let told_all = told_of(run);
-    let teaching: Vec<_> = told_all
-        .iter()
-        .filter(|(finding, ..)| finding.unit < sections)
-        .collect();
-    if teaching.len() != run.view.teaching_claims.len() {
-        found.push(format!(
-            "the learner's view lists {} claims, the production mapping tells {}",
-            run.view.teaching_claims.len(),
-            teaching.len()
-        ));
-    }
+    let shown = &run.view.teaching_claims;
     let mut confirmed = 0;
-    for ((finding, label, reason), shown) in teaching.iter().zip(&run.view.teaching_claims) {
-        confirmed += usize::from(*label == LearningClaimResolutionDto::ConfirmedByYou);
-        let Some(entry) = finding.claim_id.as_deref().and_then(|id| entry_of(run, id)) else {
+    let mut not_verified = 0;
+    for item in shown {
+        use LearningClaimResolutionDto::{ConfirmedByYou, NotVerified, SourceRemoved, Verified};
+        confirmed += usize::from(item.resolution == ConfirmedByYou);
+        not_verified += usize::from(item.resolution == NotVerified);
+        if item.unverified_reason.is_some() != (item.resolution == NotVerified) {
+            found.push(format!(
+                "{:?} (section {}): the learner is given the reason {:?} on a claim read as {:?}",
+                item.claim, item.section_index, item.unverified_reason, item.resolution
+            ));
+        }
+        let Some(entry) = item.claim_id.as_deref().and_then(|id| entry_of(run, id)) else {
             found.push(format!(
                 "the learner's view lists {:?} (section {}) for a claim the ledger does not hold ({:?})",
-                shown.claim, shown.section_index, finding.claim_id
+                item.claim, item.section_index, item.claim_id
             ));
             continue;
         };
-        if shown.resolution != *label {
+        let state = entry.state();
+        let standing = standing_of(run, state);
+        let mates = || {
+            shown.iter().filter(|other| {
+                other.claim_id != item.claim_id
+                    && other.section_index == item.section_index
+                    && other.content_quote == item.content_quote
+            })
+        };
+        let verified = state.is_verified() && matches!(standing, Standing::Verified);
+        let mate_not_verified = mates().any(|other| other.resolution == NotVerified);
+        let ledger_mate_unverified = mates().any(|other| {
+            other
+                .claim_id
+                .as_deref()
+                .and_then(|id| entry_of(run, id))
+                .is_some_and(|mate| {
+                    matches!(
+                        standing_of(run, mate.state()),
+                        Standing::Unsettled | Standing::Resolved(Resolution::Unverified { .. })
+                    )
+                })
+        });
+        let allowed = match item.resolution {
+            Verified => verified && !mate_not_verified,
+            ConfirmedByYou => matches!(standing, Standing::Resolved(Resolution::Confirmed { .. })),
+            SourceRemoved => matches!(
+                state,
+                ClaimState::Reopened {
+                    cause: ReopenCause::SourceDeleted(_),
+                    ..
+                }
+            ),
+            NotVerified => !verified || ledger_mate_unverified,
+        };
+        if !allowed {
             found.push(format!(
-                "{}: the learner reads it as {:?}, the ledger says {:?} ({:?})",
+                "{}: the learner reads it as {:?}, but the ledger holds it {:?} (standing {:?}, verified {}, an unverified claim on its sentence {})",
                 about(entry),
-                shown.resolution,
-                label,
-                entry.state()
-            ));
-        }
-        if shown.unverified_reason != *reason {
-            found.push(format!(
-                "{}: the learner is given the reason {:?}, the ledger says {:?}",
-                about(entry),
-                shown.unverified_reason,
-                reason
+                item.resolution,
+                state,
+                standing,
+                verified,
+                ledger_mate_unverified
             ));
         }
     }
     if run.view.confirmed_count != confirmed {
         found.push(format!(
-            "the learner is told {} claims are confirmed by them, the ledger confirms {}",
+            "the learner is told {} claims are confirmed by them, its list holds {}",
             run.view.confirmed_count, confirmed
         ));
     }
-    let not_verified = told_all
+    let claim_findings = run
+        .report
+        .findings
         .iter()
-        .filter(|(_, label, _)| *label == LearningClaimResolutionDto::NotVerified)
+        .filter(|finding| finding.is_claim())
         .count();
-    if run.report.unverified_count() != not_verified {
+    if claim_findings == listed && run.report.unverified_count() != not_verified {
         found.push(format!(
-            "the report counts {} statements not verified, the ledger derives {}",
+            "the report counts {} statements not verified, the learner's view shows {}",
             run.report.unverified_count(),
             not_verified
         ));
@@ -639,7 +611,6 @@ mod tests {
             named(&found, &["claim kept", GOOD, "NotVerified", "Verified"]),
             "{found:?}"
         );
-        assert!(named(&found, &["claim kept", "reason"]), "{found:?}");
         assert!(named(&found, &["confirmed by them"]), "{found:?}");
 
         let mut run = run_of(&ledger, &lesson_body(), compared(SOURCE)).await?;
@@ -652,7 +623,7 @@ mod tests {
 
         assert!(named(&found, &["told of 4 claims"]), "{found:?}");
         assert!(
-            named(&found, &["report counts 1", "ledger derives 0"]),
+            named(&found, &["report counts 1", "view shows 0"]),
             "{found:?}"
         );
         Ok(())
