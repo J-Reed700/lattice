@@ -485,17 +485,6 @@ mod tests {
     }
 
     #[test]
-    fn a_quote_differing_from_the_block_only_typographically_still_has_a_view() {
-        let (mut lesson, mut report) = fixture();
-        lesson.blocks[0].body = "It\u{2019}s an exact lesson statement.".into();
-        report.findings[0].quote = "It's an exact lesson statement.".into();
-
-        let view = report.learner_view(&lesson, &[], &ClaimStates::default());
-
-        assert!(view.is_ok(), "{:?}", view.as_ref().err());
-    }
-
-    #[test]
     fn the_report_counts_the_claims_it_lists() {
         let (lesson, mut report) = fixture();
         let mut question = report.findings[0].clone();

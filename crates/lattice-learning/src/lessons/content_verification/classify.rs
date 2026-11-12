@@ -303,23 +303,27 @@ fn opens(mark: char, before: Option<char>) -> bool {
 }
 
 /// The quotations of `text`, in order, each from its opening mark to its
-/// closing mark inclusive. A closing mark with no opening one before it (an
-/// inch or a second, say) quotes nothing, and neither does an opening mark
-/// with no closing one. A single quote is an apostrophe or a possessive,
-/// never a quotation mark.
+/// closing mark inclusive; a quotation inside another is part of it. A
+/// closing mark with no opening one of its kind before it (an inch or a
+/// second, say) quotes nothing, and neither does an opening mark with no
+/// closing one. A single quote is an apostrophe or a possessive, never a
+/// quotation mark.
 pub(crate) fn quotations(text: &str) -> Vec<(usize, usize)> {
-    let mut spans = Vec::new();
-    let mut open: Option<(usize, char)> = None;
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut open: Vec<(usize, char)> = Vec::new();
     let mut before = None;
     for (at, c) in text.char_indices() {
         if QUOTE_MARKS.contains(&c) {
             if opens(c, before) {
-                open = Some((at, c));
-            } else if let Some((from, _)) =
-                open.filter(|&(_, opener)| (opener == '"') == (c == '"'))
+                open.push((at, c));
+            } else if let Some(depth) = open
+                .iter()
+                .rposition(|&(_, opener)| (opener == '"') == (c == '"'))
             {
-                spans.push((from, at + c.len_utf8()));
-                open = None;
+                if let Some((from, _)) = open.drain(depth..).next() {
+                    spans.retain(|&(start, _)| start < from);
+                    spans.push((from, at + c.len_utf8()));
+                }
             }
         }
         before = Some(c);
