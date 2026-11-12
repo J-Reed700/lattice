@@ -2919,3 +2919,91 @@ fn a_choices_reason_is_a_field_of_its_question_and_its_sentence_is_the_answer_ke
         format!("a\n\nb\n\nc\n\nd\n\nA holds.\n\n\n\n{REASON}\n\nC fails.\n\nD fails.")
     );
 }
+
+fn quiz_uncited(kind: &str, explanation: &str) -> Value {
+    json!({"kind":kind,"prompt":"Which?","options":["One","Two","Three","Four"],"correctIndex":0,"explanation":explanation})
+}
+
+fn with_questions_uncited(questions: Vec<Value>) -> Value {
+    json!({"blocks":[
+        {"kind":"explanation","title":"Section 0","body":section(GOOD),"rubric":[]},
+        {"kind":"explanation","title":"Section 1","body":section(GOOD),"rubric":[]}
+    ],"questions":questions})
+}
+
+async fn diagnose(label: &str, draft: Value) -> Result<()> {
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_ansi(false)
+        .with_test_writer()
+        .finish();
+    let _logs = tracing::subscriber::set_default(subscriber);
+    tracing::callsite::rebuild_interest_cache();
+    let course = Course::new().await?;
+    let model = Figures::contradicting();
+    let prepared = course.prepare(&model, &draft).await;
+    eprintln!("== {label} JUDGED {:?}", model.judged.lock().unwrap());
+    eprintln!(
+        "== {label} REPAIRS {}",
+        model.repairs.load(Ordering::Relaxed)
+    );
+    match &prepared {
+        Ok((raw, report)) => {
+            eprintln!("== {label} RAW {raw}");
+            eprintln!("== {label} ISSUES {:?}", report.issues);
+            for finding in &report.findings {
+                eprintln!(
+                    "== {label} FINDING {:?} {:?} {:?}",
+                    finding.statement, finding.verdict, finding.reason
+                );
+            }
+        }
+        Err(error) => eprintln!("== {label} ERROR {error:?}"),
+    }
+    let ledger = ClaimReviewRepository::new(course.pool.clone())
+        .load(&course.lesson_id)
+        .await?;
+    for claim in &ledger.claims {
+        let kinds: Vec<&str> = claim
+            .events()
+            .iter()
+            .map(|record| record.event.kind_name())
+            .collect();
+        eprintln!(
+            "== {label} CLAIM {:?} {:?} {kinds:?}",
+            claim.statement(),
+            claim.state()
+        );
+    }
+    panic!("diagnostic {label}");
+}
+
+#[tokio::test]
+async fn diag_cited_standing() -> Result<()> {
+    let questions = vec![quiz("quiz", &figure(5)), quiz("quiz", &figure(6))];
+    diagnose("cited-standing", with_questions(questions)).await
+}
+
+#[tokio::test]
+async fn diag_uncited_standing() -> Result<()> {
+    let questions = vec![
+        quiz_uncited("quiz", &figure(5)),
+        quiz_uncited("quiz", &figure(6)),
+    ];
+    diagnose("uncited-standing", with_questions_uncited(questions)).await
+}
+
+#[tokio::test]
+async fn diag_cited_kind() -> Result<()> {
+    let questions = vec![quiz("practice", &figure(5)), quiz("quiz", GOOD)];
+    diagnose("cited-kind", with_questions(questions)).await
+}
+
+#[tokio::test]
+async fn diag_uncited_kind() -> Result<()> {
+    let questions = vec![
+        quiz_uncited("practice", &figure(5)),
+        quiz_uncited("quiz", GOOD),
+    ];
+    diagnose("uncited-kind", with_questions_uncited(questions)).await
+}
