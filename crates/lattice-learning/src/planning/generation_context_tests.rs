@@ -11,6 +11,7 @@ use crate::{
 };
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::RecoveryPolicy;
+use sqlx::SqlitePool;
 
 fn prepared(lesson: &str) -> PreparedLearningLesson {
     let mut result = PreparedLearningLesson {
@@ -29,9 +30,10 @@ fn prepared(lesson: &str) -> PreparedLearningLesson {
     result
 }
 
-async fn setup() -> Result<(SqlitePool, LearningProgramDto, String, String)> {
+async fn setup() -> Result<(SqlitePool, Database, LearningProgramDto, String, String)> {
     let pool = pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let program = fixture();
     let earlier = program.modules[0].lessons[0].id.clone();
     let target = program
@@ -59,11 +61,11 @@ async fn setup() -> Result<(SqlitePool, LearningProgramDto, String, String)> {
         &prepared(&earlier),
     )
     .await?;
-    LearningCurriculumRepository::new(pool.clone())
+    LearningCurriculumRepository::new(db.clone())
         .plan(&program.summary.id)
         .await?;
     let program = repo.get(&program.summary.id).await?;
-    Ok((pool, program, earlier, target))
+    Ok((pool, db, program, earlier, target))
 }
 
 async fn enqueue(
@@ -84,9 +86,9 @@ async fn enqueue(
 
 #[tokio::test]
 async fn learner_completion_preserves_resume_retry_and_atomic_publication() -> Result<()> {
-    let (pool, program, earlier, target) = setup().await?;
-    let programs = LearningRepository::new(pool.clone());
-    let jobs = LearningCurriculumRepository::new(pool.clone());
+    let (_, db, program, earlier, target) = setup().await?;
+    let programs = LearningRepository::new(db.clone());
+    let jobs = LearningCurriculumRepository::new(db.clone());
     let job = enqueue(&jobs, &program, &target).await?;
     // The learner finishes a different ready lesson while this job is queued.
     programs
@@ -102,28 +104,22 @@ async fn learner_completion_preserves_resume_retry_and_atomic_publication() -> R
     // Reloading the course after studying creates a new UI operation, but must
     // rejoin this lesson's existing queued work rather than enqueue it twice.
     assert_eq!(enqueue(&jobs, &progressed, &target).await?.id, job.id);
-    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
+    assert!(JobStore::new(db.clone()).claim(&job.id).await?.is_some());
     assert_eq!(enqueue(&jobs, &progressed, &target).await?.id, job.id);
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &jobs,
-        &job.id,
-        &target,
-        async {
-            assert_eq!(
-                lesson_drafts::authoring_revision(progressed.summary.revision),
-                program.summary.revision
-            );
-            lesson_drafts::record_checkpoint("comparison", serde_json::json!("retained")).await
-        },
-    )
+    lesson_drafts::run(&db, &jobs, &job.id, &target, async {
+        assert_eq!(
+            lesson_drafts::authoring_revision(progressed.summary.revision),
+            program.summary.revision
+        );
+        lesson_drafts::record_checkpoint("comparison", serde_json::json!("retained")).await
+    })
     .await?;
-    JobStore::new(pool.clone()).suspend(&job.id).await?;
-    JobStore::new(pool.clone())
+    JobStore::new(db.clone()).suspend(&job.id).await?;
+    JobStore::new(db.clone())
         .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
         .await?;
-    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
-    JobStore::new(pool.clone())
+    assert!(JobStore::new(db.clone()).claim(&job.id).await?.is_some());
+    JobStore::new(db.clone())
         .fail(&job.id, "generation_failed", "Retryable provider error")
         .await?;
     let mut retry_request = LearningGenerationJobActionRequestDto {
@@ -135,29 +131,20 @@ async fn learner_completion_preserves_resume_retry_and_atomic_publication() -> R
     let retry = jobs.retry_job(&retry_request).await?;
     retry_request.operation_id = uuid::Uuid::new_v4().to_string();
     assert_eq!(jobs.retry_job(&retry_request).await?.id, retry.id);
-    assert!(JobStore::new(pool.clone())
-        .claim(&retry.id)
-        .await?
-        .is_some());
+    assert!(JobStore::new(db.clone()).claim(&retry.id).await?.is_some());
     retry_request.operation_id = uuid::Uuid::new_v4().to_string();
     assert_eq!(jobs.retry_job(&retry_request).await?.id, retry.id);
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &jobs,
-        &retry.id,
-        &target,
-        async {
-            assert_eq!(
-                lesson_drafts::authoring_revision(progressed.summary.revision),
-                program.summary.revision
-            );
-            assert_eq!(
-                lesson_drafts::checkpoint("comparison").await?,
-                Some(serde_json::json!("retained"))
-            );
-            Ok(())
-        },
-    )
+    lesson_drafts::run(&db, &jobs, &retry.id, &target, async {
+        assert_eq!(
+            lesson_drafts::authoring_revision(progressed.summary.revision),
+            program.summary.revision
+        );
+        assert_eq!(
+            lesson_drafts::checkpoint("comparison").await?,
+            Some(serde_json::json!("retained"))
+        );
+        Ok(())
+    })
     .await?;
     // Publication must preserve the learner's intervening progress and advance
     // the current revision, rather than restore the older job's revision.
@@ -197,10 +184,10 @@ async fn learner_completion_preserves_resume_retry_and_atomic_publication() -> R
 
 #[tokio::test]
 async fn accepted_curriculum_edits_cannot_publish_or_retry_old_teaching() -> Result<()> {
-    let (pool, program, _, target) = setup().await?;
-    let jobs = LearningCurriculumRepository::new(pool.clone());
+    let (_, db, program, _, target) = setup().await?;
+    let jobs = LearningCurriculumRepository::new(db.clone());
     let job = enqueue(&jobs, &program, &target).await?;
-    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
+    assert!(JobStore::new(db.clone()).claim(&job.id).await?.is_some());
     let preview = jobs
         .preview(&PreviewLearningCurriculumRevisionRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
@@ -232,7 +219,7 @@ async fn accepted_curriculum_edits_cannot_publish_or_retry_old_teaching() -> Res
         )
         .await
         .is_err());
-    JobStore::new(pool.clone())
+    JobStore::new(db.clone())
         .fail(&job.id, "generation_failed", "Content changed")
         .await?;
     assert!(jobs
@@ -246,7 +233,7 @@ async fn accepted_curriculum_edits_cannot_publish_or_retry_old_teaching() -> Res
         .is_err());
     let fresh = enqueue(
         &jobs,
-        &LearningRepository::new(pool)
+        &LearningRepository::new(db.clone())
             .get(&program.summary.id)
             .await?,
         &target,
@@ -258,6 +245,7 @@ async fn accepted_curriculum_edits_cannot_publish_or_retry_old_teaching() -> Res
 
 struct Course {
     pool: SqlitePool,
+    db: Database,
     jobs: LearningCurriculumRepository,
     program_id: String,
     earlier: String,
@@ -267,7 +255,7 @@ struct Course {
 
 impl Course {
     async fn new() -> Result<Self> {
-        let (pool, program, earlier, _) = setup().await?;
+        let (pool, db, program, earlier, _) = setup().await?;
         let lessons = program
             .modules
             .iter()
@@ -276,17 +264,18 @@ impl Course {
             .map(|l| l.id.clone())
             .collect();
         Ok(Self {
-            jobs: LearningCurriculumRepository::new(pool.clone()),
+            jobs: LearningCurriculumRepository::new(db.clone()),
             program_id: program.summary.id.clone(),
             modules: program.modules.iter().map(|m| m.id.clone()).collect(),
             pool,
+            db,
             earlier,
             lessons,
         })
     }
 
     async fn revision(&self) -> Result<i64> {
-        Ok(LearningRepository::new(self.pool.clone())
+        Ok(LearningRepository::new(self.db.clone())
             .get(&self.program_id)
             .await?
             .summary
@@ -308,7 +297,7 @@ impl Course {
 
     async fn started(&self, lessons: &[&str]) -> Result<LearningGenerationJob> {
         let job = self.queue(lessons).await?;
-        assert!(JobStore::new(self.pool.clone())
+        assert!(JobStore::new(self.db.clone())
             .claim(&job.id)
             .await?
             .is_some());
@@ -362,7 +351,7 @@ async fn a_lesson_queued_behind_another_publishes_after_it() -> Result<()> {
     let (a, b) = (course.lessons[0].as_str(), course.lessons[1].as_str());
     let first = course.queue(&[a]).await?;
     let second = course.queue(&[b]).await?;
-    let store = JobStore::new(course.pool.clone());
+    let store = JobStore::new(course.db.clone());
     assert!(store.claim(&first.id).await?.is_some());
     course.publish(&first, a).await?;
     assert!(course.jobs.job_content_is_current(&second.id).await?);
@@ -419,7 +408,7 @@ async fn a_lesson_in_progress_publishes_after_learner_work_and_other_lessons_pub
                 course.publish(&published, other).await?;
             }
             LessonCompleted => {
-                LearningRepository::new(course.pool.clone())
+                LearningRepository::new(course.db.clone())
                     .complete(&CompleteLearningLessonRequestDto {
                         program_id: course.program_id.clone(),
                         lesson_id: course.earlier.clone(),
@@ -538,7 +527,7 @@ async fn a_held_lesson_leaves_the_lesson_behind_it_and_its_own_resume_current() 
         course.jobs.job(&held_job.id).await?.status,
         LearningGenerationJobStatus::Completed
     );
-    assert!(JobStore::new(course.pool.clone())
+    assert!(JobStore::new(course.db.clone())
         .claim(&behind.id)
         .await?
         .is_some());

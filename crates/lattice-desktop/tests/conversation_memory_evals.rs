@@ -131,6 +131,7 @@ use lattice_core::domain::conversation::memory::{
 };
 use lattice_core::domain::conversation::MessageRole;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -1729,6 +1730,7 @@ struct Harness {
     _dir: tempfile::TempDir,
     db_path: PathBuf,
     pool: SqlitePool,
+    db: Database,
     repo: Arc<ConversationRepository>,
 }
 
@@ -1745,11 +1747,13 @@ impl Harness {
             .execute(&pool)
             .await
             .expect("foreign keys");
-        let repo = Arc::new(ConversationRepository::new(pool.clone()));
+        let db = Database::new(pool.clone());
+        let repo = Arc::new(ConversationRepository::new(db.clone()));
         Self {
             _dir: dir,
             db_path,
             pool,
+            db,
             repo,
         }
     }
@@ -1775,7 +1779,8 @@ impl Harness {
             .execute(&self.pool)
             .await
             .expect("foreign keys");
-        self.repo = Arc::new(ConversationRepository::new(self.pool.clone()));
+        self.db = Database::new(self.pool.clone());
+        self.repo = Arc::new(ConversationRepository::new(self.db.clone()));
     }
 
     /// Persist a transcript through the production repository operations.

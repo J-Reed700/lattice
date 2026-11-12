@@ -9,7 +9,7 @@ use super::spec::DrillSpec;
 use crate::persistence::{db, decode, encode, now};
 use lattice_core::domain::learning::drills::{Drill, DrillFile, KeyIssue, Material};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::{Database, WriteTx};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 use std::collections::HashMap;
 
@@ -83,11 +83,11 @@ pub struct StoredDrill {
 
 /// Writes a drill, ready, with a row for each pattern its key holds. The course it names is kept only if it still
 /// exists, and the lesson only if it is a lesson of that course. Call inside the transaction that completes the build.
-pub(crate) async fn insert_in(connection: &mut SqliteConnection, new: &NewDrill<'_>) -> Result<()> {
+pub(crate) async fn insert_in(tx: &mut WriteTx, new: &NewDrill<'_>) -> Result<()> {
     let program_id: Option<String> = match &new.spec.program_id {
         Some(id) => sqlx::query_scalar("SELECT id FROM learning_programs WHERE id=?")
             .bind(id)
-            .fetch_optional(&mut *connection)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(db)?,
         None => None,
@@ -97,7 +97,7 @@ pub(crate) async fn insert_in(connection: &mut SqliteConnection, new: &NewDrill<
             sqlx::query_scalar("SELECT id FROM learning_lessons WHERE id=? AND program_id=?")
                 .bind(lesson_id)
                 .bind(program_id)
-                .fetch_optional(&mut *connection)
+                .fetch_optional(&mut **tx)
                 .await
                 .map_err(db)?
         }
@@ -135,7 +135,7 @@ pub(crate) async fn insert_in(connection: &mut SqliteConnection, new: &NewDrill<
         .bind(new.runner)
         .bind(new.model)
         .bind(now())
-        .execute(&mut *connection)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
     let mut patterns: Vec<&str> = Vec::new();
@@ -147,7 +147,7 @@ pub(crate) async fn insert_in(connection: &mut SqliteConnection, new: &NewDrill<
         sqlx::query("INSERT INTO learning_drill_patterns(drill_id,pattern_id) VALUES(?,?)")
             .bind(&new.drill.id)
             .bind(&issue.pattern)
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
     }
@@ -207,32 +207,34 @@ pub(crate) async fn any_ready_in(
 
 /// The source passages the drills of the course `program_id` were built on, ready or taken.
 pub(crate) async fn drilled_passages(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
 ) -> Result<Vec<SourcePassage>> {
-    let pool = pool.sqlx_pool();
+    let mut read = database.begin_read().await.map_err(db)?;
     let stored: Vec<String> = sqlx::query_scalar(
         "SELECT source_json FROM learning_drills WHERE material='passage' AND program_id=? AND source_json IS NOT NULL ORDER BY created_at,rowid",
     )
     .bind(program_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *read)
     .await
     .map_err(db)?;
+    read.commit().await.map_err(db)?;
     stored.iter().map(|json| decode(json)).collect()
 }
 
 /// For each version of the course's sources, the source it is a version of.
 pub(crate) async fn source_owners(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
 ) -> Result<HashMap<String, String>> {
-    let pool = pool.sqlx_pool();
+    let mut read = database.begin_read().await.map_err(db)?;
     let rows: Vec<(String, String)> =
         sqlx::query_as("SELECT id,source_id FROM learning_source_versions WHERE program_id=?")
             .bind(program_id)
-            .fetch_all(pool)
+            .fetch_all(&mut *read)
             .await
             .map_err(db)?;
+    read.commit().await.map_err(db)?;
     Ok(rows.into_iter().collect())
 }
 
@@ -249,17 +251,13 @@ pub async fn find_in(connection: &mut SqliteConnection, id: &str) -> Result<Opti
 }
 
 /// Marks a ready drill taken. False when it was not ready, so a drill is never given to two learners.
-pub(crate) async fn mark_taken_in(
-    connection: &mut SqliteConnection,
-    id: &str,
-    at: i64,
-) -> Result<bool> {
+pub(crate) async fn mark_taken_in(tx: &mut WriteTx, id: &str, at: i64) -> Result<bool> {
     Ok(sqlx::query(
         "UPDATE learning_drills SET status='taken',taken_at=? WHERE id=? AND status='ready'",
     )
     .bind(at)
     .bind(id)
-    .execute(connection)
+    .execute(&mut **tx)
     .await
     .map_err(db)?
     .rows_affected()

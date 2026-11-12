@@ -204,7 +204,7 @@ describe('ExplorerPage and the folder index', () => {
     mocks.apiCall.mockResolvedValue({ ok: true, data: [] });
     localStorage.clear();
     useExplorerStore.setState({ root: null });
-    mocks.indexClose.mockResolvedValue({ ok: true, data: undefined });
+    mocks.indexClose.mockResolvedValue({ ok: true, data: null });
     mocks.foldersList.mockResolvedValue({ ok: true, data: { home: '/Users/me', folders: [] } });
   });
 
@@ -246,7 +246,7 @@ describe('ExplorerPage and the folder index', () => {
     expect(mocks.indexClose).toHaveBeenCalledOnce();
     expect(useExplorerStore.getState().root).toEqual(PROJECT);
 
-    await act(async () => release({ ok: true, data: undefined }));
+    await act(async () => release({ ok: true, data: null }));
     await waitFor(() => expect(useExplorerStore.getState().root).toBeNull());
   });
 

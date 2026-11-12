@@ -14,9 +14,8 @@ use crate::{
     source_selector::{create_quote_selector, match_quote_selector, LearningQuoteMatch},
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use lattice_core::shared::persistence::{Database, WriteTx};
+use sqlx::{Row, SqliteConnection};
 use std::collections::HashSet;
 
 mod cards;
@@ -66,18 +65,17 @@ fn parse_format(value: &str) -> Result<LearningRecallCardFormat> {
 
 #[derive(Clone)]
 pub struct LearningRecallRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 impl LearningRecallRepository {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     /// Give cards accepted into the program deck their recall profile and
     /// first content version.
     async fn bootstrap_deck_cards(&self, program_id: &str) -> Result<()> {
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let deck_id: Option<String> =
             sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
                 .bind(program_id)
@@ -186,11 +184,11 @@ impl LearningRecallRepository {
     }
 }
 
-async fn lock_active_program(tx: &mut SqliteConnection, program_id: &str) -> Result<()> {
+async fn lock_active_program(tx: &mut WriteTx, program_id: &str) -> Result<()> {
     let result =
         sqlx::query("UPDATE learning_programs SET status=status WHERE id=? AND status='active'")
             .bind(program_id)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
     if result.rows_affected() != 1 {
@@ -217,7 +215,7 @@ fn recall_operation<'a>(
     }
 }
 
-async fn memory_deck(tx: &mut SqliteConnection, program_id: &str) -> Result<String> {
+async fn memory_deck(tx: &mut WriteTx, program_id: &str) -> Result<String> {
     crate::repository::ensure_memory_resources(tx, program_id)
         .await
         .map(|(_, deck_id)| deck_id)

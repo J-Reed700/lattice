@@ -66,6 +66,7 @@ async fn outline_source(
 async fn an_outline_page_saved_from_the_web_before_the_mark_stays_under_the_sweep_and_a_document_does_not(
 ) {
     let pool = memory_pool().await;
+    let db = Database::new(pool.clone());
     let migrator = migrator();
     assert!(migrator.iter().any(|m| m.version == FOUND_BY_SEARCH));
     {
@@ -113,7 +114,7 @@ async fn an_outline_page_saved_from_the_web_before_the_mark_stays_under_the_swee
             .await
             .unwrap();
     assert_eq!(marks, [("s-doc".to_owned(), 0), ("s-web".to_owned(), 1)]);
-    let refused = LearningSourceLibraryRepository::new(Database::from(pool.clone()))
+    let refused = LearningSourceLibraryRepository::new(db.clone())
         .sweep_admission("p1")
         .await
         .unwrap();

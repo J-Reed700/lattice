@@ -2,6 +2,7 @@
 
 use super::*;
 use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::SqlitePool;
 
 async fn create_test_pool() -> SqlitePool {
     SqlitePoolOptions::new().connect(":memory:").await.unwrap()
@@ -37,7 +38,7 @@ async fn untagged_batches_filter_and_limit_before_loading_documents() {
     .execute(&pool)
     .await
     .unwrap();
-    let repo = TagRepository::new(pool);
+    let repo = TagRepository::new(Database::new(pool));
     let (ids, reads) =
         crate::tests::common::query_counts::count_reads(repo.untagged_document_ids(1)).await;
     assert_eq!(ids.unwrap(), ["new"]);
@@ -56,7 +57,7 @@ async fn untagged_batches_filter_and_limit_before_loading_documents() {
 async fn test_save_and_find_by_id() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
-    let repo = TagRepository::new(pool);
+    let repo = TagRepository::new(Database::new(pool));
 
     let name = TagName::new("rust".to_string()).unwrap();
     let entity = TagEntity::new(name, "#ff5733".to_string());
@@ -76,7 +77,7 @@ async fn test_save_and_find_by_id() {
 async fn test_find_by_name() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
-    let repo = TagRepository::new(pool);
+    let repo = TagRepository::new(Database::new(pool));
 
     let name = TagName::new("python".to_string()).unwrap();
     let entity = TagEntity::new(name, "#6366f1".to_string());
@@ -97,7 +98,7 @@ async fn test_find_by_name() {
 async fn test_get_or_create() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
-    let repo = TagRepository::new(pool);
+    let repo = TagRepository::new(Database::new(pool));
 
     // First call creates the tag
     let tag1 = repo.get_or_create("rust", Some("#ff5733")).await.unwrap();
@@ -114,7 +115,7 @@ async fn test_get_or_create() {
 async fn test_find_all() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
-    let repo = TagRepository::new(pool);
+    let repo = TagRepository::new(Database::new(pool));
 
     let tag1 = TagEntity::new(
         TagName::new("rust".to_string()).unwrap(),
@@ -138,7 +139,7 @@ async fn test_find_all() {
 async fn test_save_batch() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
-    let repo = TagRepository::new(pool);
+    let repo = TagRepository::new(Database::new(pool));
 
     let entities = vec![
         TagEntity::new(
@@ -165,7 +166,7 @@ async fn test_save_batch() {
 async fn test_delete() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
-    let repo = TagRepository::new(pool);
+    let repo = TagRepository::new(Database::new(pool));
 
     let entity = TagEntity::new(
         TagName::new("rust".to_string()).unwrap(),
@@ -183,7 +184,7 @@ async fn test_delete() {
 async fn test_delete_batch() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
-    let repo = TagRepository::new(pool);
+    let repo = TagRepository::new(Database::new(pool));
 
     let entities = vec![
         TagEntity::new(
@@ -208,7 +209,7 @@ async fn test_delete_batch() {
 async fn test_exists() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
-    let repo = TagRepository::new(pool);
+    let repo = TagRepository::new(Database::new(pool));
 
     let entity = TagEntity::new(
         TagName::new("rust".to_string()).unwrap(),

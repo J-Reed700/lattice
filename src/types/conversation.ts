@@ -7,7 +7,15 @@
 import { z } from 'zod';
 
 import type { SearchResult } from './searchResult';
-import type { ChatModelChoice, ExplorerFocusDto } from '../lib/bindings';
+import type {
+  CompactionRecordDto,
+  ConversationDto,
+  ConversationMessageBookmarkDto,
+  CreateConversationRequestDto,
+  ExplorerFocusDto,
+  SpaceDocumentDto,
+  WebPageDto,
+} from '../lib/bindings';
 
 /**
  * SourceWithMetadata - Rich source metadata for citations
@@ -241,12 +249,7 @@ export interface ToolPreferences {
  * Comes from the same allow-list retrieval derives its scope from, so the
  * picker can never name a file the turn would then fail to search.
  */
-export interface SpaceDocument {
-  documentId: string;
-  fileName: string;
-  category: string | null;
-  modifiedAt: string | null;
-}
+export type SpaceDocument = SpaceDocumentDto;
 
 /**
  * A web page as the app read it: the article text the model was given, not the
@@ -255,66 +258,15 @@ export interface SpaceDocument {
  * Served from the page cache, so opening a cited article costs no request when
  * the turn that cited it already read it.
  */
-export interface WebPage {
-  /** The URL after redirects. */
-  url: string;
-  title: string | null;
-  /** Extracted article text, paragraphs separated by blank lines. */
-  text: string;
-  wordCount: number;
-  /** RFC 3339. When the text was actually fetched, not when it was served. */
-  fetchedAt: string;
-  fromCache: boolean;
-}
+export type WebPage = WebPageDto;
 
-export interface Conversation {
-  id: string;
-  title: string;
-  /** The model this chat asked for: the Settings default, live, or its own. */
-  modelChoice?: ChatModelChoice;
-  systemPrompt?: string | null;
-  spaceId?: string | null;
-  isSaved?: boolean | null;
-  isBookmarked?: boolean | null;
-  isPinned?: boolean | null;
-  isArchived?: boolean | null;
-  savedAt?: string | null;
-  bookmarkedAt?: string | null;
-  pinnedAt?: string | null;
-  archivedAt?: string | null;
-  lastMessagePreview?: string | null;
-  createdAt?: string;
-  updatedAt: string;
-  messageCount?: number;
-  totalTokens?: number;
-  /** Active compaction summary, if older messages were folded into a summary. */
-  compaction?: CompactionRecord | null;
-  /**
-   * The conversation this one was branched from, when it was.
-   *
-   * No foreign key stands behind it, so the parent may since have been
-   * deleted. A reader that cannot find it shows no lineage at all — a
-   * dangling id is an ordinary state, not an error.
-   */
-  forkedFromConversationId?: string | null;
-  /** The parent turn the branch was taken at, when one was named. */
-  forkedFromMessageId?: string | null;
-  /**
-   * The folder this conversation is bound to, when it is an Explorer thread.
-   * Such threads live in the Explorer and are left out of Chat.
-   */
-  explorerRoot?: string | null;
-  /**
-   * The course this conversation teaches from, when it is a tutor chat. Such
-   * chats live in the course's Tutor tab and are left out of Chat.
-   */
-  programId?: string | null;
-  /** The lesson a tutor chat was opened from. */
-  lessonId?: string | null;
-  /** Hidden from top-level lists until promoted. */
-  tangentParentId?: string | null;
-  messages?: ConversationMessage[];
-}
+type ConversationRequired = 'id' | 'title' | 'updatedAt';
+
+/** The generated conversation with its optional fields left optional, plus the loaded messages. */
+export type Conversation = Pick<ConversationDto, ConversationRequired> &
+  Partial<Omit<ConversationDto, ConversationRequired>> & {
+    messages?: ConversationMessage[];
+  };
 
 export interface ConversationMessage {
   id: string;
@@ -333,32 +285,9 @@ export interface ConversationMessage {
  * LLM summary. The original messages stay in the history for display; only
  * the LLM context switches to the summary from here on.
  */
-export interface CompactionRecord {
-  id: string;
-  conversationId: string;
-  summaryText: string;
-  /** Id of the last message folded into the summary (inclusive boundary). */
-  upToMessageId: string;
-  originalMessageCount: number;
-  originalTokens: number;
-  summaryTokens: number;
-  /** `summaryTokens / originalTokens`, clamped to (0, 1]. */
-  compressionRatio: number;
-  createdAt: string;
-}
+export type CompactionRecord = CompactionRecordDto;
 
-export interface ConversationMessageBookmark {
-  id: string;
-  conversationId: string;
-  conversationTitle: string;
-  spaceId: string;
-  messageId: string;
-  messageRole: string;
-  messagePreview: string;
-  title?: string | null;
-  note?: string | null;
-  createdAt: string;
-}
+export type ConversationMessageBookmark = ConversationMessageBookmarkDto;
 
 export interface ConversationalAnswer {
   answer: string;
@@ -368,10 +297,7 @@ export interface ConversationalAnswer {
   totalTokens: number;
 }
 
-export interface CreateConversationParams {
-  title: string;
-  systemPrompt?: string | null;
-}
+export type CreateConversationParams = CreateConversationRequestDto;
 
 export interface AskQuestionParams {
   question: string;

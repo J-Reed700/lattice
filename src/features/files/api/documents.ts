@@ -79,8 +79,8 @@ export const documentApi = {
     path: string,
     recursive?: boolean,
     spaceId?: string,
-  ): Promise<ApiResult<void>> =>
-    apiCall<void>('index_directory', {
+  ): Promise<ApiResult<null>> =>
+    apiCall('index_directory', {
       path,
       recursive: recursive ?? true,
 
@@ -99,7 +99,7 @@ export const documentApi = {
     path: string,
     spaceId?: string,
   ): Promise<ApiResult<IndexFileResponse>> =>
-    apiCall<Wire.IndexFileResponseDto>('index_file', { path, spaceId }),
+    apiCall('index_file', { path, spaceId }),
 
   /**
    * Reindexes an existing file with fresh content and embeddings.
@@ -108,8 +108,8 @@ export const documentApi = {
    * @param path - Absolute path to file to reindex
    * @returns Void on success
    */
-  reindexFile: async (path: string): Promise<ApiResult<void>> =>
-    apiCall<void>('reindex_file', { path }),
+  reindexFile: async (path: string): Promise<ApiResult<null>> =>
+    apiCall('reindex_file', { path }),
 
   /**
    * Removes a file from the search index and database.
@@ -118,8 +118,8 @@ export const documentApi = {
    * @param path - Absolute path to file to remove
    * @returns Void on success
    */
-  removeIndexedFile: async (path: string): Promise<ApiResult<void>> =>
-    apiCall<void>('remove_indexed_file', { path }),
+  removeIndexedFile: async (path: string): Promise<ApiResult<null>> =>
+    apiCall('remove_indexed_file', { path }),
 
   /**
    * Deletes a document by ID from the search index and database.
@@ -129,8 +129,8 @@ export const documentApi = {
    * @param documentId - Unique identifier of the document to delete
    * @returns Void on success
    */
-  deleteDocument: async (documentId: string): Promise<ApiResult<void>> =>
-    apiCall<void>('delete_document', { documentId }),
+  deleteDocument: async (documentId: string): Promise<ApiResult<null>> =>
+    apiCall('delete_document', { documentId }),
 
   /**
    * Renames a document's display name in the database.
@@ -151,7 +151,7 @@ export const documentApi = {
     documentId: string,
     newName: string,
   ): Promise<ApiResult<Wire.RenameDocumentResponseDto>> =>
-    apiCall<Wire.RenameDocumentResponseDto>('rename_document', {
+    apiCall('rename_document', {
       documentId,
       newName,
     }),
@@ -163,7 +163,7 @@ export const documentApi = {
    * @returns IndexProgress object with current state
    */
   getIndexProgress: async (): Promise<ApiResult<IndexingSnapshot>> => {
-    const result = await apiCall<Wire.IndexProgress>('get_index_progress');
+    const result = await apiCall('get_index_progress');
     if (!result.ok) {
       return result;
     }
@@ -176,16 +176,16 @@ export const documentApi = {
    *
    * @returns Void on success
    */
-  cancelIndexing: async (): Promise<ApiResult<void>> =>
-    apiCall<void>('cancel_indexing'),
+  cancelIndexing: async (): Promise<ApiResult<null>> =>
+    apiCall('cancel_indexing'),
 
   /** Pauses the running index. Both the directory run and the watcher queue stop. */
-  pauseIndexing: async (): Promise<ApiResult<void>> =>
-    apiCall<void>('pause_indexing'),
+  pauseIndexing: async (): Promise<ApiResult<null>> =>
+    apiCall('pause_indexing'),
 
   /** Resumes a paused index. */
-  resumeIndexing: async (): Promise<ApiResult<void>> =>
-    apiCall<void>('resume_indexing'),
+  resumeIndexing: async (): Promise<ApiResult<null>> =>
+    apiCall('resume_indexing'),
 
   /**
    * Drops one path from the run's failure list.
@@ -195,8 +195,8 @@ export const documentApi = {
    * reappear the moment another surface reads the snapshot. Unknown paths are
    * a no-op on the backend.
    */
-  clearIndexingFailure: async (path: string): Promise<ApiResult<void>> =>
-    apiCall<void>('clear_indexing_failure', { path }),
+  clearIndexingFailure: async (path: string): Promise<ApiResult<null>> =>
+    apiCall('clear_indexing_failure', { path }),
 
   /**
    * Thin `{ active, progress }` view of the index.
@@ -205,43 +205,43 @@ export const documentApi = {
    */
   getIndexingStatus: async (): Promise<
     ApiResult<{ active: boolean; progress: number }>
-  > => apiCall<Wire.IndexingStatus>('get_indexing_status'),
+  > => apiCall('get_indexing_status'),
 
   /** Absolute paths of indexed files, newest first. */
   listIndexedFiles: async (limit?: number): Promise<ApiResult<string[]>> =>
-    apiCall<string[]>('list_indexed_files', { limit }),
+    apiCall('list_indexed_files', { limit }),
 
   listCustomCollections: async (): Promise<
     ApiResult<Wire.CustomCollectionDto[]>
-  > => apiCall<Wire.CustomCollectionDto[]>('list_custom_collections'),
+  > => apiCall('list_custom_collections'),
 
   createCustomCollection: async (
     request: Wire.CreateCustomCollectionRequest,
   ): Promise<ApiResult<string>> =>
-    apiCall<string>('create_custom_collection', { request }),
+    apiCall('create_custom_collection', { request }),
 
   renameCustomCollection: async (
     collectionId: string,
     name: string,
-  ): Promise<ApiResult<void>> =>
-    apiCall<void>('rename_custom_collection', { collectionId, name }),
+  ): Promise<ApiResult<null>> =>
+    apiCall('rename_custom_collection', { collectionId, name }),
 
   moveCustomCollection: async (
     collectionId: string,
     parentId: string | null,
-  ): Promise<ApiResult<void>> =>
-    apiCall<void>('move_custom_collection', { collectionId, parentId }),
+  ): Promise<ApiResult<null>> =>
+    apiCall('move_custom_collection', { collectionId, parentId }),
 
   deleteCustomCollection: async (
     collectionId: string,
-  ): Promise<ApiResult<void>> =>
-    apiCall<void>('delete_custom_collection', { collectionId }),
+  ): Promise<ApiResult<null>> =>
+    apiCall('delete_custom_collection', { collectionId }),
 
   addDocumentsToCustomCollection: async (
     collectionId: string,
     documentIds: string[],
-  ): Promise<ApiResult<void>> =>
-    apiCall<void>('add_documents_to_custom_collection', {
+  ): Promise<ApiResult<null>> =>
+    apiCall('add_documents_to_custom_collection', {
       collectionId,
       documentIds,
     }),
@@ -249,8 +249,8 @@ export const documentApi = {
   removeDocumentsFromCustomCollection: async (
     collectionId: string,
     documentIds: string[],
-  ): Promise<ApiResult<void>> =>
-    apiCall<void>('remove_documents_from_custom_collection', {
+  ): Promise<ApiResult<null>> =>
+    apiCall('remove_documents_from_custom_collection', {
       collectionId,
       documentIds,
     }),
@@ -262,7 +262,7 @@ export const documentApi = {
    * @returns IndexingStats object with counts and metrics
    */
   getIndexingStats: async (): Promise<ApiResult<IndexingStats>> => {
-    const result = await apiCall<Wire.IndexingStatsDto>('get_indexing_stats');
+    const result = await apiCall('get_indexing_stats');
     if (!result.ok) {
       return result;
     }
@@ -276,7 +276,7 @@ export const documentApi = {
    * @returns Array of IndexedFolder objects
    */
   getIndexedFolders: async (): Promise<ApiResult<IndexedFolder[]>> =>
-    apiCall<Wire.IndexedFolder[]>('get_indexed_folders'),
+    apiCall('get_indexed_folders'),
 
   /**
    * Retrieves recent indexing activity history.
@@ -288,7 +288,7 @@ export const documentApi = {
   getIndexingActivities: async (
     limit: number,
   ): Promise<ApiResult<IndexingActivity[]>> =>
-    apiCall<Wire.IndexingActivity[]>('get_indexing_activities', { limit }),
+    apiCall('get_indexing_activities', { limit }),
 
   /**
    * Opens a file in the system's default application.
@@ -298,7 +298,7 @@ export const documentApi = {
    * @returns OpenFileResponseDto with success status and optional error
    */
   openFile: async (path: string): Promise<ApiResult<OpenFileResponseDto>> =>
-    apiCall<OpenFileResponseDto>('open_file', { path }),
+    apiCall('open_file', { path }),
 
   /**
    * Opens a file by its internal document ID.
@@ -311,7 +311,7 @@ export const documentApi = {
   openFileById: async (
     fileId: string,
   ): Promise<ApiResult<OpenFileResponseDto>> =>
-    apiCall<OpenFileResponseDto>('open_file_by_id', { fileId }),
+    apiCall('open_file_by_id', { fileId }),
 
   /**
    * Retrieves the file system path for a document by its ID.
@@ -321,7 +321,7 @@ export const documentApi = {
    * @returns Absolute file path as string
    */
   getFilePathById: async (fileId: string): Promise<ApiResult<string>> =>
-    apiCall<string>('get_file_path_by_id', { fileId }),
+    apiCall('get_file_path_by_id', { fileId }),
 
   /**
    * Gets recently accessed documents ordered by last access time.
@@ -333,7 +333,7 @@ export const documentApi = {
   getRecentDocuments: async (
     limit: number,
   ): Promise<ApiResult<RecentDocument[]>> =>
-    apiCall<Wire.RecentDocument[]>('get_recent_documents', { limit }),
+    apiCall('get_recent_documents', { limit }),
 
   /**
    * Lists ALL documents from the documents table.
@@ -348,7 +348,7 @@ export const documentApi = {
   listAllDocuments: async (
     limit?: number,
   ): Promise<ApiResult<DocumentMetadata[]>> =>
-    apiCall<Wire.DocumentMetadataDto[]>('list_all_documents', { limit: limit ?? null }),
+    apiCall('list_all_documents', { limit: limit ?? null }),
 
   /**
    * Retrieves document metadata by ID.
@@ -374,7 +374,7 @@ export const documentApi = {
   getDocument: async (
     documentId: string,
   ): Promise<ApiResult<DocumentMetadata>> =>
-    apiCall<DocumentMetadata>('get_document', { documentId }),
+    apiCall('get_document', { documentId }),
 
   /**
    * Reads the raw text content of a file from disk.
@@ -384,7 +384,7 @@ export const documentApi = {
    * @returns File content as string
    */
   readFileContent: async (path: string): Promise<ApiResult<string>> =>
-    apiCall<string>('read_file_content', { path }),
+    apiCall('read_file_content', { path }),
 
   /**
    * Reads the raw bytes of a file from disk.
@@ -393,7 +393,7 @@ export const documentApi = {
    * @returns File content as bytes
    */
   readFileBytes: async (path: string): Promise<ApiResult<Uint8Array>> => {
-    const result = await apiCall<number[]>('read_file_bytes', { path });
+    const result = await apiCall('read_file_bytes', { path });
     if (!result.ok) return result;
     return { ok: true, data: Uint8Array.from(result.data) };
   },
@@ -406,7 +406,7 @@ export const documentApi = {
    * @returns Metadata object with file system information
    */
   getFileMetadata: async (path: string): Promise<ApiResult<FileMetadata>> =>
-    apiCall<Wire.FileMetadataDto>('get_file_metadata', { path }),
+    apiCall('get_file_metadata', { path }),
 
   /**
    * Opens the file's parent folder in the system file manager.
@@ -415,8 +415,8 @@ export const documentApi = {
    * @param path - Absolute path to file
    * @returns Void on success
    */
-  showInFolder: async (path: string): Promise<ApiResult<void>> =>
-    apiCall<void>('show_in_folder', { path }),
+  showInFolder: async (path: string): Promise<ApiResult<null>> =>
+    apiCall('show_in_folder', { path }),
 
   /**
    * Vault-wide type mix and recent growth.
@@ -426,7 +426,7 @@ export const documentApi = {
    * the filter can never disagree.
    */
   getCorpusShape: async (): Promise<ApiResult<CorpusShapeDto>> =>
-    apiCall<Wire.CorpusShapeDto>('get_corpus_shape'),
+    apiCall('get_corpus_shape'),
 
   /**
    * Conversations that have this document among their linked documents.
@@ -438,7 +438,7 @@ export const documentApi = {
     documentId: string,
     limit?: number,
   ): Promise<ApiResult<CitingConversationDto[]>> =>
-    apiCall<Wire.CitingConversationDto[]>(
+    apiCall(
       'list_conversations_citing_document',
       {
         documentId,

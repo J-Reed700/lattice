@@ -23,6 +23,7 @@ impl DownloadedModelRepositoryTrait for DownloadedModelRepository {
     /// This implements the domain trait contract by delegating to
     /// a SQL DELETE operation filtered by model_id.
     async fn delete(&self, model_id: &str) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query!(
             r#"
             DELETE FROM models
@@ -30,12 +31,13 @@ impl DownloadedModelRepositoryTrait for DownloadedModelRepository {
             "#,
             model_id
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             error!(error = %e, model_id = %model_id, "Failed to delete downloaded model by model_id");
             AppError::Database(format!("Failed to delete downloaded model: {}", e))
         })?;
+        tx.commit().await?;
 
         debug!(model_id = %model_id, "Downloaded model deleted by model_id");
         Ok(())
@@ -65,6 +67,7 @@ impl DownloadedModelRepositoryTrait for DownloadedModelRepository {
         active_model_id: &str,
     ) -> Result<bool> {
         // Atomic DELETE with WHERE guard checking both model id and active flags.
+        let mut tx = self.db.begin_write().await?;
         let result = sqlx::query(
             r#"
             DELETE FROM models
@@ -76,14 +79,16 @@ impl DownloadedModelRepositoryTrait for DownloadedModelRepository {
         )
         .bind(model_id)
         .bind(active_model_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             error!(error = %e, model_id = %model_id, "Failed to delete model if not active");
             AppError::Database(format!("Failed to delete model: {}", e))
         })?;
 
-        Ok(result.rows_affected() > 0)
+        let deleted = result.rows_affected() > 0;
+        tx.commit().await?;
+        Ok(deleted)
     }
 
     async fn find_by_id(&self, id: &str) -> Result<Option<DownloadedModel>> {

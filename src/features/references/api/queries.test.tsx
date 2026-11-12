@@ -74,8 +74,7 @@ describe('Reference inbox listing', () => {
   renderHook(() => useReferenceInbox({requestedReferenceId:null}),{wrapper:harness(client())});
   await waitFor(() => expect(api.listMessageBookmarks).toHaveBeenCalled());
   for (const [request] of api.listMessageBookmarks.mock.calls) {
-   expect(request).not.toHaveProperty('limit');
-   expect(request).not.toHaveProperty('offset');
+   expect(request).toMatchObject({ limit: null, offset: null });
   }
  });
 });

@@ -7,7 +7,7 @@ use super::spec::DrillSpec;
 use crate::persistence::{db, now};
 use lattice_core::domain::learning::drills::Material;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 
 mod store;
 pub use store::queue_build_in;

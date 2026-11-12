@@ -28,7 +28,6 @@ use lattice_core::shared::Result;
 use parking_lot::Mutex;
 use serde_json::json;
 use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -98,16 +97,16 @@ impl Rig {
             .await
     }
 
-    /// A manager over `pool`'s jobs, as the app is after a start: its builds
+    /// A manager over `db`'s jobs, as the app is after a start: its builds
     /// registered, saved ones resuming. Every status a build saves is
     /// collected in `events`.
     async fn manager_on(
         &self,
         config: ManagerConfig,
         embedder: Option<Arc<FakeEmbedder>>,
-        pool: SqlitePool,
+        db: Database,
     ) -> Arc<FolderIndexManager> {
-        self.manager_searching(config, embedder, pool, Arc::new(HybridSearchUseCaseFactory))
+        self.manager_searching(config, embedder, db, Arc::new(HybridSearchUseCaseFactory))
             .await
     }
 
@@ -116,10 +115,10 @@ impl Rig {
         &self,
         config: ManagerConfig,
         embedder: Option<Arc<FakeEmbedder>>,
-        pool: SqlitePool,
+        db: Database,
         searches: Arc<dyn HybridSearchFactory>,
     ) -> Arc<FolderIndexManager> {
-        let jobs = JobRuntime::with_poll_interval(Database::from(pool), Duration::from_millis(50));
+        let jobs = JobRuntime::with_poll_interval(db, Duration::from_millis(50));
         let events = Arc::clone(&self.events);
         jobs.observe(move |job| {
             let status = job
@@ -168,7 +167,7 @@ impl Rig {
 }
 
 /// The app database's job tables, in memory and kept for the test's length.
-async fn jobs_database() -> SqlitePool {
+async fn jobs_database() -> Database {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .idle_timeout(None)
@@ -177,7 +176,7 @@ async fn jobs_database() -> SqlitePool {
         .await
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    pool
+    Database::new(pool)
 }
 
 fn text(root: &Path) -> String {
@@ -1427,12 +1426,16 @@ mod builds {
         panic!("{} never finished its build", root.display());
     }
 
-    async fn job_messages(pool: &SqlitePool, id: &str) -> Vec<String> {
-        sqlx::query_scalar("SELECT message FROM job_events WHERE job_id=? ORDER BY ordinal")
-            .bind(id)
-            .fetch_all(pool)
-            .await
-            .unwrap()
+    async fn job_messages(db: &Database, id: &str) -> Vec<String> {
+        let mut read = db.begin_read().await.unwrap();
+        let messages =
+            sqlx::query_scalar("SELECT message FROM job_events WHERE job_id=? ORDER BY ordinal")
+                .bind(id)
+                .fetch_all(&mut *read)
+                .await
+                .unwrap();
+        read.commit().await.unwrap();
+        messages
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1470,17 +1473,17 @@ mod builds {
 
     /// A job database holding a build of `root` that the runtime failed for
     /// stopping the app, and that build's id.
-    async fn stopped_build(root: &Path) -> (SqlitePool, String) {
-        let pool = jobs_database().await;
-        let id = stopped_build_on(&pool, root).await;
-        (pool, id)
+    async fn stopped_build(root: &Path) -> (Database, String) {
+        let db = jobs_database().await;
+        let id = stopped_build_on(&db, root).await;
+        (db, id)
     }
 
-    /// Fails a build of `root` for stopping the app, in `pool`'s jobs, with
+    /// Fails a build of `root` for stopping the app, in `db`'s jobs, with
     /// no runtime registered to run it. Returns its id.
-    async fn stopped_build_on(pool: &SqlitePool, root: &Path) -> String {
+    async fn stopped_build_on(db: &Database, root: &Path) -> String {
         use lattice_core::shared::runtime::jobs::{JobStore, NewJob, RecoveryPolicy};
-        let store = JobStore::new(pool.clone());
+        let store = JobStore::new(db.clone());
         let id = store
             .submit(&NewJob {
                 kind: FOLDER_INDEX.into(),
@@ -1531,18 +1534,18 @@ mod builds {
                 ),
             ],
         );
-        let pool = jobs_database().await;
+        let db = jobs_database().await;
         let before = rig
-            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool.clone())
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), db.clone())
             .await;
         open_settled(&before, &parent).await;
         before.close().await;
         before.jobs.close();
         before.jobs.drain().await;
-        let id = stopped_build_on(&pool, &parent).await;
+        let id = stopped_build_on(&db, &parent).await;
 
         let manager = rig
-            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool)
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), db)
             .await;
         let child = parent.join("crates/net");
         open_only(&manager, &child).await;
@@ -1564,9 +1567,9 @@ mod builds {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
         let root = rig.project("project", &[("src/retry.rs", RETRY_RS)]);
-        let (pool, id) = stopped_build(&root).await;
+        let (db, id) = stopped_build(&root).await;
         let manager = rig
-            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool)
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), db)
             .await;
         open_only(&manager, &root).await;
         manager.close().await;
@@ -1593,9 +1596,9 @@ mod builds {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
         let root = rig.project("project", &[("src/retry.rs", RETRY_RS)]);
-        let (pool, id) = stopped_build(&root).await;
+        let (db, id) = stopped_build(&root).await;
         let manager = rig
-            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool)
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), db)
             .await;
         open_only(&manager, &root).await;
         manager.close().await;
@@ -1657,9 +1660,9 @@ mod builds {
     async fn opening_a_folder_puts_its_build_ahead_of_the_one_running() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
-        let pool = jobs_database().await;
+        let db = jobs_database().await;
         let manager = rig
-            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool.clone())
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), db.clone())
             .await;
         let first = many_files(&rig, "first", 40);
         let second = many_files(&rig, "second", 8);
@@ -1695,7 +1698,7 @@ mod builds {
         );
         assert!(firsts[0] < seconds[0] && firsts[39] > seconds[7]);
         assert!(
-            job_messages(&pool, &first_build.id)
+            job_messages(&db, &first_build.id)
                 .await
                 .iter()
                 .any(|message| message == "Waiting for its turn"),
@@ -1708,11 +1711,11 @@ mod builds {
     async fn stopped_part_way(
         rig: &Rig,
         embedder: &Arc<FakeEmbedder>,
-        pool: &SqlitePool,
+        db: &Database,
         root: &Path,
     ) -> JobRecord {
         let manager = rig
-            .manager_on(rig.config(), Some(Arc::clone(embedder)), pool.clone())
+            .manager_on(rig.config(), Some(Arc::clone(embedder)), db.clone())
             .await;
         let gate = BatchGate::new(2);
         *embedder.batch_gate.lock() = Some(Arc::clone(&gate));
@@ -1733,14 +1736,14 @@ mod builds {
     async fn a_build_stopped_by_a_restart_resumes_at_the_next_start() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
-        let pool = jobs_database().await;
+        let db = jobs_database().await;
         let root = many_files(&rig, "resumed", 40);
-        let stopped = stopped_part_way(&rig, &embedder, &pool, &root).await;
+        let stopped = stopped_part_way(&rig, &embedder, &db, &root).await;
         let before = embedder.embedded().len();
         embedder.forget_calls();
 
         let manager = rig
-            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool.clone())
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), db.clone())
             .await;
         let job = finished(&manager, &root).await;
         assert_eq!(job.id, stopped.id);
@@ -1756,14 +1759,14 @@ mod builds {
     async fn a_build_whose_folder_is_gone_fails_at_the_next_start() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
-        let pool = jobs_database().await;
+        let db = jobs_database().await;
         let root = many_files(&rig, "gone", 40);
-        stopped_part_way(&rig, &embedder, &pool, &root).await;
+        stopped_part_way(&rig, &embedder, &db, &root).await;
         std::fs::remove_dir_all(&root).unwrap();
         embedder.forget_calls();
 
         let manager = rig
-            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool.clone())
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), db.clone())
             .await;
         let job = finished(&manager, &root).await;
         assert_eq!(job.status, JobStatus::Failed);

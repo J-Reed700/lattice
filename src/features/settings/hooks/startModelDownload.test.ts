@@ -25,7 +25,6 @@ const chatModel: ModelMetadata = {
   total_size_bytes: 0,
   embedding_dimensions: null,
   embedding_compatibility: null,
-  format: 'gguf',
 };
 
 describe('startModelDownload', () => {
@@ -80,7 +79,6 @@ describe('startModelDownload', () => {
         architecture: 'qwen3',
         reason: 'The local runtime cannot load sharded weights yet.',
       },
-      format: 'safetensors',
     };
 
     const result = await startModelDownload({

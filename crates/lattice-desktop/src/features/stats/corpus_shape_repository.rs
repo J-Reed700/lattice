@@ -9,12 +9,11 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Local, NaiveTime, Utc};
-use sqlx::{Row, SqlitePool};
+use sqlx::Row;
 
 use crate::features::stats::type_label::type_label;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::Database;
 
 /// How far back "recently grown" looks.
 pub const GROWTH_WINDOW_DAYS: i64 = 7;
@@ -45,13 +44,12 @@ pub trait CorpusShapeRepositoryPort: Send + Sync {
 }
 
 pub struct SqliteCorpusShapeRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl SqliteCorpusShapeRepository {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 }
 
@@ -59,7 +57,7 @@ impl SqliteCorpusShapeRepository {
 impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
     async fn corpus_shape(&self) -> Result<CorpusShape> {
         let mut tx = self
-            .pool
+            .db
             .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("corpus shape begin: {}", e)))?;
@@ -133,6 +131,7 @@ impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
 mod tests {
     use super::*;
     use chrono::Utc;
+    use sqlx::SqlitePool;
 
     async fn pool() -> SqlitePool {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -179,7 +178,7 @@ mod tests {
         }
         insert_doc(&pool, "web0", "html", "web", &now).await;
 
-        let repo = SqliteCorpusShapeRepository::new(pool);
+        let repo = SqliteCorpusShapeRepository::new(Database::new(pool));
         let shape = repo.corpus_shape().await.unwrap();
 
         assert_eq!(shape.total, 6);
@@ -201,7 +200,7 @@ mod tests {
         insert_doc(&pool, "recent", "pdf", "local", &recent).await;
         insert_doc(&pool, "old", "pdf", "local", &old).await;
 
-        let repo = SqliteCorpusShapeRepository::new(pool);
+        let repo = SqliteCorpusShapeRepository::new(Database::new(pool));
         let shape = repo.corpus_shape().await.unwrap();
 
         assert_eq!(shape.total, 2);
@@ -219,7 +218,7 @@ mod tests {
             .await
             .unwrap();
 
-        let repo = SqliteCorpusShapeRepository::new(pool);
+        let repo = SqliteCorpusShapeRepository::new(Database::new(pool));
         let shape = repo.corpus_shape().await.unwrap();
 
         assert_eq!(shape.total, 1);
@@ -250,7 +249,7 @@ mod tests {
             .await
             .unwrap();
 
-        let repo = SqliteCorpusShapeRepository::new(pool);
+        let repo = SqliteCorpusShapeRepository::new(Database::new(pool));
         let shape = repo.corpus_shape().await.unwrap();
 
         assert_eq!(shape.total, 2);
@@ -261,7 +260,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_vault_reports_zeroes() {
-        let repo = SqliteCorpusShapeRepository::new(pool().await);
+        let repo = SqliteCorpusShapeRepository::new(Database::new(pool().await));
         let shape = repo.corpus_shape().await.unwrap();
         assert_eq!(shape.total, 0);
         assert!(shape.by_type.is_empty());

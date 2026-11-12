@@ -12,7 +12,6 @@ use lattice_core::application::ports::conversation_memory::{
 };
 use lattice_core::domain::conversation::memory::SourceRole;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
 use std::str::FromStr;
 
 /// Cap on terms in one `MATCH` expression (§9.1 rule 1).
@@ -103,7 +102,7 @@ impl ConversationRepository {
         let mut out = RecallCandidates::default();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut tx = self
-            .pool
+            .db
             .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin recall read: {}", e)))?;
@@ -220,7 +219,7 @@ impl ConversationRepository {
         terms: &[String],
     ) -> Result<TermHolders> {
         let mut tx = self
-            .pool
+            .db
             .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin term read: {}", e)))?;

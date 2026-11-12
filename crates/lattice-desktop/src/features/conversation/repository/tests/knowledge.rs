@@ -1,6 +1,7 @@
 use super::*;
 use crate::features::conversation::knowledge_dto::KnowledgeRequestDto;
 use crate::features::conversation::repository::ConversationRepository;
+use lattice_core::shared::persistence::Database;
 
 async fn setup() -> (SqlitePool, ConversationRepository) {
     let pool = create_test_pool().await;
@@ -22,7 +23,8 @@ async fn setup() -> (SqlitePool, ConversationRepository) {
             .await
             .unwrap();
     }
-    (pool.clone(), ConversationRepository::new(pool))
+    let db = Database::new(pool.clone());
+    (pool, ConversationRepository::new(db))
 }
 fn request(conversation: &str, action: &str) -> KnowledgeRequestDto {
     KnowledgeRequestDto {

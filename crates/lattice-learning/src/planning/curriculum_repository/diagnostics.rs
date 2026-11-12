@@ -9,7 +9,6 @@ use crate::plan_dto::{
 };
 use crate::repository::LearningRepository;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
 use sqlx::Row;
 
 impl LearningCurriculumRepository {
@@ -24,7 +23,7 @@ impl LearningCurriculumRepository {
     ) -> Result<Option<LearningDiagnosticAttemptDto>> {
         validate_operation_id(operation_id)?;
         let payload = hash(request)?;
-        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let attempt = match diagnostic_operation(operation_id, program_id, kind, &payload)
             .replay::<String>(&mut read)
             .await?
@@ -41,8 +40,10 @@ impl LearningCurriculumRepository {
         program_id: &str,
         diagnostic_id: &str,
     ) -> Result<LearningDiagnosticAttemptDto> {
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        Self::diagnostic_for_program_on(&mut connection, program_id, diagnostic_id).await
+        let mut read = self.db.begin_read().await.map_err(db)?;
+        let attempt = Self::diagnostic_for_program_on(&mut read, program_id, diagnostic_id).await?;
+        read.commit().await.map_err(db)?;
+        Ok(attempt)
     }
 
     async fn diagnostic_for_program_on(
@@ -64,8 +65,10 @@ impl LearningCurriculumRepository {
         program_id: &str,
         diagnostic_id: &str,
     ) -> Result<Vec<crate::diagnostic_generation::DiagnosticTask>> {
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        Self::diagnostic_tasks_on(&mut connection, program_id, diagnostic_id).await
+        let mut read = self.db.begin_read().await.map_err(db)?;
+        let tasks = Self::diagnostic_tasks_on(&mut read, program_id, diagnostic_id).await?;
+        read.commit().await.map_err(db)?;
+        Ok(tasks)
     }
 
     async fn diagnostic_tasks_on(
@@ -99,7 +102,7 @@ impl LearningCurriculumRepository {
     ) -> Result<LearningDiagnosticAttemptDto> {
         validate_operation_id(&request.operation_id)?;
         let payload = hash(request)?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         Self::seed_on(&mut tx, &request.program_id).await?;
         let operation = diagnostic_operation(
             &request.operation_id,
@@ -209,7 +212,7 @@ impl LearningCurriculumRepository {
     ) -> Result<LearningDiagnosticAttemptDto> {
         validate_operation_id(&request.operation_id)?;
         let payload = hash(request)?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = diagnostic_operation(
             &request.operation_id,
             &request.program_id,
@@ -316,7 +319,7 @@ impl LearningCurriculumRepository {
     ) -> Result<LearningDiagnosticAttemptDto> {
         validate_operation_id(&request.operation_id)?;
         let payload = hash(request)?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation =
             diagnostic_operation(&request.operation_id, &request.program_id, "skip", &payload);
         if let Some(id) = operation.replay::<String>(&mut tx).await? {

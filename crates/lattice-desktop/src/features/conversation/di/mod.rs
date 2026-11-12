@@ -118,7 +118,7 @@ mod tests {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .connect_lazy("sqlite::memory:")
             .unwrap();
-        let services = build(Database::from(pool));
+        let services = build(Database::new(pool));
         assert_eq!(
             Arc::as_ptr(&services.conversation_service) as *const (),
             Arc::as_ptr(&services.conversation_history) as *const ()

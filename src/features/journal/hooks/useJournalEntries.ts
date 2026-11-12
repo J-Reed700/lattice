@@ -110,7 +110,10 @@ export const journalEntriesQueryOptions = (journalSpaceId: string, api: ApiClien
     queryFn: async () => {
       const result = await api.listJournalConversations({
         journalSpaceId,
+        query: null,
         includeArchived: true,
+        limit: null,
+        offset: null,
       });
       if (!result.ok) throw new Error(result.error);
       return parseRawConversations(result.data).map((c) => normalizeConversation(c));

@@ -6,6 +6,7 @@ use crate::{
     },
     repository::LearningRepository,
 };
+use lattice_core::shared::persistence::Database;
 use lattice_core::{
     application::ports::{
         llm_port::{CompletionRequest, CompletionResponse},
@@ -21,12 +22,12 @@ fn id() -> String {
 }
 use crate::persistence::db;
 
-async fn setup(pool: &SqlitePool) -> Result<(LearningProgramDto, String)> {
+async fn setup(pool: &SqlitePool, database: &Database) -> Result<(LearningProgramDto, String)> {
     sqlx::query("PRAGMA foreign_keys=ON")
         .execute(pool)
         .await
         .map_err(db)?;
-    let repo = LearningRepository::new(pool.clone());
+    let repo = LearningRepository::new(database.clone());
     let p = crate::tests::fixture();
     repo.create(&p).await?;
     repo.accept(&AcceptLearningProgramRequestDto {
@@ -100,8 +101,9 @@ async fn attempt_session_and_artifact_survive_file_backed_reopen() -> Result<()>
     let dir = tempfile::tempdir().map_err(|e| AppError::Database(e.to_string()))?;
     let path = dir.path().join("practice.sqlite");
     let pool = file_pool(path.clone()).await?;
-    let (p, lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let (p, lesson) = setup(&pool, &db).await?;
+    let repo = LearningPracticeRepository::new(db.clone());
     let start = start_request(&p, &lesson);
     repo.start(&start, "start-hash").await?;
     let save = save_request(
@@ -112,9 +114,9 @@ async fn attempt_session_and_artifact_survive_file_backed_reopen() -> Result<()>
         "I can explain the idea with a new example.",
     );
     repo.save_artifact(&save, "save-hash").await?;
-    pool.close().await;
+    db.close().await;
     let reopened = file_pool(path).await?;
-    let session = LearningPracticeRepository::new(reopened.clone())
+    let session = LearningPracticeRepository::new(Database::new(reopened))
         .get_session(&start.session_id)
         .await?;
     assert_eq!(
@@ -129,8 +131,9 @@ async fn attempt_session_and_artifact_survive_file_backed_reopen() -> Result<()>
 #[tokio::test]
 async fn artifact_replay_is_idempotent_payload_checked_and_cas_protected() -> Result<()> {
     let pool = active_memory_pool().await?;
-    let (p, lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool);
+    let db = Database::new(pool.clone());
+    let (p, lesson) = setup(&pool, &db).await?;
+    let repo = LearningPracticeRepository::new(db);
     let start = start_request(&p, &lesson);
     repo.start(&start, "start").await?;
     let op = id();
@@ -156,8 +159,9 @@ async fn artifact_replay_is_idempotent_payload_checked_and_cas_protected() -> Re
 #[tokio::test]
 async fn stale_session_writes_are_reported_as_conflicts() -> Result<()> {
     let pool = active_memory_pool().await?;
-    let (p, lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool);
+    let db = Database::new(pool.clone());
+    let (p, lesson) = setup(&pool, &db).await?;
+    let repo = LearningPracticeRepository::new(db);
     let start = start_request(&p, &lesson);
     repo.start(&start, "start").await?;
     let first = save_request(&p.summary.id, &start.session_id, &id(), 0, "first");
@@ -206,8 +210,9 @@ async fn stale_session_writes_are_reported_as_conflicts() -> Result<()> {
 #[tokio::test]
 async fn demonstrate_mode_blocks_all_selected_aids_and_session_stays_frozen() -> Result<()> {
     let pool = active_memory_pool().await?;
-    let (p, lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool);
+    let db = Database::new(pool.clone());
+    let (p, lesson) = setup(&pool, &db).await?;
+    let repo = LearningPracticeRepository::new(db);
     let mut start = start_request(&p, &lesson);
     start.mode = LearningPracticeMode::Demonstrate;
     repo.start(&start, "start").await?;
@@ -235,8 +240,9 @@ async fn demonstrate_mode_blocks_all_selected_aids_and_session_stays_frozen() ->
 #[tokio::test]
 async fn submitted_result_is_an_immutable_artifact_snapshot() -> Result<()> {
     let pool = active_memory_pool().await?;
-    let (p, lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool);
+    let db = Database::new(pool.clone());
+    let (p, lesson) = setup(&pool, &db).await?;
+    let repo = LearningPracticeRepository::new(db);
     let start = start_request(&p, &lesson);
     repo.start(&start, "start").await?;
     let save = save_request(
@@ -511,8 +517,9 @@ pub(crate) fn passage_source(text: &str) -> LearningSourceVersionDto {
 
 async fn started_session(artifact: &str) -> Result<LearningPracticeSessionDto> {
     let pool = active_memory_pool().await?;
-    let (p, lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool);
+    let db = Database::new(pool.clone());
+    let (p, lesson) = setup(&pool, &db).await?;
+    let repo = LearningPracticeRepository::new(db);
     let start = start_request(&p, &lesson);
     repo.start(&start, "start").await?;
     let mut session = repo.get_session(&start.session_id).await?;
@@ -704,8 +711,9 @@ fn a_learners_pasted_tutor_prompt_is_held_to_the_chat_limit() {
 async fn a_learners_long_artifact_is_held_to_the_chat_limit() -> Result<()> {
     use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
     let pool = active_memory_pool().await?;
-    let (p, lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool);
+    let db = Database::new(pool.clone());
+    let (p, lesson) = setup(&pool, &db).await?;
+    let repo = LearningPracticeRepository::new(db);
     let start = start_request(&p, &lesson);
     repo.start(&start, "start").await?;
     let essay = "I tried the second approach first and it held. ".repeat(1_000);

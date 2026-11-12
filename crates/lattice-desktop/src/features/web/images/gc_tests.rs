@@ -6,7 +6,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use lattice_core::application::ports::chat_images::{ChatImagesPort, ImageTurnScope};
-use lattice_core::shared::persistence::Transactions;
 use sqlx::SqlitePool;
 
 use super::crash_tests::{png, NoNetwork};
@@ -39,7 +38,7 @@ async fn fixture() -> (SqlitePool, Arc<ChatImageService>, tempfile::TempDir) {
     let gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
     gate.open();
     let service = Arc::new(ChatImageService::new(
-        Database::from(pool.clone()),
+        Database::new(pool.clone()),
         dir.path().join("chat-images"),
         Arc::new(NoNetwork),
         Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),
@@ -60,7 +59,7 @@ async fn a_picture_attached_while_the_sweep_waits_for_the_write_lock_is_kept() {
         .await
         .unwrap();
 
-    let mut tx = pool.begin_write().await.unwrap();
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
     let sweeping = {
         let service = service.clone();
         tokio::spawn(async move { service.sweep(&HashSet::new()).await })

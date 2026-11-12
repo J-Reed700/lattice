@@ -32,8 +32,8 @@ fn assert_not_found<T: std::fmt::Debug>(result: Result<T>) {
     );
 }
 
-async fn active_program(pool: &SqlitePool) -> Result<LearningProgramDto> {
-    let repo = LearningRepository::new(pool.clone());
+async fn active_program(db: &Database) -> Result<LearningProgramDto> {
+    let repo = LearningRepository::new(db.clone());
     let program = tests::fixture();
     repo.create(&program).await?;
     repo.accept(&AcceptLearningProgramRequestDto {
@@ -98,13 +98,13 @@ fn review(
 }
 
 async fn add_version(
-    pool: &SqlitePool,
+    db: &Database,
     program_id: &str,
     kind: LearningSourceKind,
 ) -> Result<(String, String)> {
     let (op, source_id, version_id) = (id(), id(), id());
     let web = kind == LearningSourceKind::Web;
-    LearningSourceLibraryRepository::new(Database::from(pool.clone()))
+    LearningSourceLibraryRepository::new(db.clone())
         .add(
             NewLearningSource {
                 operation_id: &op,
@@ -141,13 +141,13 @@ async fn add_version(
     Ok((source_id, version_id))
 }
 
-async fn deck_card(pool: &SqlitePool, program_id: &str, card_id: &str) -> Result<StudyCardDto> {
-    let deck_id = LearningRepository::new(pool.clone())
+async fn deck_card(db: &Database, program_id: &str, card_id: &str) -> Result<StudyCardDto> {
+    let deck_id = LearningRepository::new(db.clone())
         .memory_state(program_id)
         .await?
         .deck_id
         .ok_or_else(|| AppError::NotFound("memory deck".into()))?;
-    StudyRepository::new(pool.clone())
+    StudyRepository::new(db.clone())
         .get(&deck_id)
         .await?
         .cards
@@ -159,9 +159,10 @@ async fn deck_card(pool: &SqlitePool, program_id: &str, card_id: &str) -> Result
 #[tokio::test]
 async fn malformed_or_foreign_card_saves_are_rejected_without_writing() -> Result<()> {
     let pool = tests::pool().await?;
-    let program = active_program(&pool).await?;
+    let db = Database::new(pool.clone());
+    let program = active_program(&db).await?;
     let pid = program.summary.id.clone();
-    let recall = LearningRecallRepository::new(pool.clone());
+    let recall = LearningRecallRepository::new(db.clone());
     let qa = LearningRecallCardFormat::QuestionAnswer;
 
     let mut repeated = save(&pid, qa, free_answer());
@@ -195,7 +196,7 @@ async fn malformed_or_foreign_card_saves_are_rejected_without_writing() -> Resul
     assert_not_found(recall.save_card(&phantom_edit).await);
 
     let draft = tests::fixture();
-    LearningRepository::new(pool.clone()).create(&draft).await?;
+    LearningRepository::new(db.clone()).create(&draft).await?;
     assert_not_found(
         recall
             .save_card(&save(&draft.summary.id, qa, free_answer()))
@@ -229,7 +230,7 @@ async fn malformed_or_foreign_card_saves_are_rejected_without_writing() -> Resul
             lapses: 0,
         };
         let card_id = card.id.clone();
-        StudyRepository::new(pool.clone())
+        StudyRepository::new(db.clone())
             .save(&StudyDeckDto {
                 id: deck_id,
                 title: "Medieval England".into(),
@@ -254,9 +255,10 @@ async fn malformed_or_foreign_card_saves_are_rejected_without_writing() -> Resul
 #[tokio::test]
 async fn edits_are_revision_guarded_versioned_and_mirrored_into_the_deck() -> Result<()> {
     let pool = tests::pool().await?;
-    let program = active_program(&pool).await?;
+    let db = Database::new(pool.clone());
+    let program = active_program(&db).await?;
     let pid = program.summary.id.clone();
-    let recall = LearningRecallRepository::new(pool.clone());
+    let recall = LearningRecallRepository::new(db.clone());
 
     let first = save(
         &pid,
@@ -295,7 +297,7 @@ async fn edits_are_revision_guarded_versioned_and_mirrored_into_the_deck() -> Re
         .versions
         .iter()
         .any(|v| v.change_reason == "Turn into a quiz"));
-    let mirrored = deck_card(&pool, &pid, &first.card_id).await?;
+    let mirrored = deck_card(&db, &pid, &first.card_id).await?;
     assert_eq!(mirrored.format, StudyCardFormat::MultipleChoice);
     assert_eq!(mirrored.options, vec!["1066", "1215", "1415"]);
     assert_eq!(mirrored.answer, "1066");
@@ -306,11 +308,12 @@ async fn edits_are_revision_guarded_versioned_and_mirrored_into_the_deck() -> Re
 #[tokio::test]
 async fn cited_versions_become_the_deck_citations() -> Result<()> {
     let pool = tests::pool().await?;
-    let program = active_program(&pool).await?;
+    let db = Database::new(pool.clone());
+    let program = active_program(&db).await?;
     let pid = program.summary.id.clone();
-    let recall = LearningRecallRepository::new(pool.clone());
-    let (web_source, web_version) = add_version(&pool, &pid, LearningSourceKind::Web).await?;
-    let (text_source, text_version) = add_version(&pool, &pid, LearningSourceKind::Pasted).await?;
+    let recall = LearningRecallRepository::new(db.clone());
+    let (web_source, web_version) = add_version(&db, &pid, LearningSourceKind::Web).await?;
+    let (text_source, text_version) = add_version(&db, &pid, LearningSourceKind::Pasted).await?;
 
     let mut cited = save(
         &pid,
@@ -319,7 +322,7 @@ async fn cited_versions_become_the_deck_citations() -> Result<()> {
     );
     cited.source_version_ids = vec![web_version.clone(), text_version.clone()];
     recall.save_card(&cited).await?;
-    let card = deck_card(&pool, &pid, &cited.card_id).await?;
+    let card = deck_card(&db, &pid, &cited.card_id).await?;
     assert_eq!(card.citations.len(), 2);
     let web = &card.citations[0];
     assert_eq!(web.chunk_id, web_version);
@@ -343,9 +346,10 @@ async fn cited_versions_become_the_deck_citations() -> Result<()> {
 #[tokio::test]
 async fn reviews_must_fit_the_card_format_and_the_program() -> Result<()> {
     let pool = tests::pool().await?;
-    let program = active_program(&pool).await?;
+    let db = Database::new(pool.clone());
+    let program = active_program(&db).await?;
     let pid = program.summary.id.clone();
-    let recall = LearningRecallRepository::new(pool.clone());
+    let recall = LearningRecallRepository::new(db.clone());
     let free = save(
         &pid,
         LearningRecallCardFormat::QuestionAnswer,
@@ -370,7 +374,7 @@ async fn reviews_must_fit_the_card_format_and_the_program() -> Result<()> {
     negative.expected_review_count = -1;
     assert_invalid(recall.review_card(&negative).await);
     assert_not_found(recall.review_card(&review(&pid, &id(), None)).await);
-    let other = active_program(&pool).await?;
+    let other = active_program(&db).await?;
     assert_not_found(
         recall
             .review_card(&review(&other.summary.id, &free.card_id, None))

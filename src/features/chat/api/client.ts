@@ -42,13 +42,13 @@ import type {
 
 export const chatApi = {
   createConversationTangent: (request: Wire.CreateTangentRequestDto): Promise<ApiResult<Wire.ConversationTangentDto>> =>
-    apiCall<Wire.ConversationTangentDto>('create_conversation_tangent', { request }),
+    apiCall('create_conversation_tangent', { request }),
 
   listConversationTangents: (conversationId: string): Promise<ApiResult<Wire.ConversationTangentDto[]>> =>
-    apiCall<Wire.ConversationTangentDto[]>('list_conversation_tangents', { request: { conversationId } }),
+    apiCall('list_conversation_tangents', { request: { conversationId } }),
 
   promoteConversationTangent: (conversationId: string): Promise<ApiResult<Wire.ConversationDto>> =>
-    apiCall<Wire.ConversationDto>('promote_conversation_tangent', { request: { conversationId } }),
+    apiCall('promote_conversation_tangent', { request: { conversationId } }),
 
   /**
    * Creates a new conversation for multi-turn Q&A with context.
@@ -67,10 +67,10 @@ export const chatApi = {
     title: string,
     systemPrompt?: string,
   ): Promise<ApiResult<CreateConversationResponse>> =>
-    apiCall<Wire.CreateConversationResponseDto>('create_conversation', {
+    apiCall('create_conversation', {
       request: {
         title,
-        systemPrompt,
+        systemPrompt: systemPrompt ?? null,
       },
     }),
 
@@ -84,7 +84,7 @@ export const chatApi = {
     conversationId: string,
     choice: Wire.ChatModelChoice,
   ): Promise<ApiResult<Wire.ConversationDto>> =>
-    apiCall<Wire.ConversationDto>('set_conversation_model_choice', {
+    apiCall('set_conversation_model_choice', {
       conversationId,
       choice,
     }),
@@ -100,10 +100,10 @@ export const chatApi = {
     limit?: number,
     offset?: number,
   ): Promise<ApiResult<ListConversationsResponse>> =>
-    apiCall<Wire.ListConversationsResponseDto>('list_conversations', {
+    apiCall('list_conversations', {
       query: {
-        limit,
-        offset,
+        limit: limit ?? null,
+        offset: offset ?? null,
       },
     }),
 
@@ -117,7 +117,7 @@ export const chatApi = {
   getConversation: async (
     conversationId: string,
   ): Promise<ApiResult<GetConversationResponse>> =>
-    apiCall<Wire.GetConversationResponseDto>('get_conversation', {
+    apiCall('get_conversation', {
       request: {
         conversationId,
       },
@@ -133,7 +133,7 @@ export const chatApi = {
   getConversationMessages: async (
     conversationId: string,
   ): Promise<ApiResult<GetConversationMessagesResponse>> =>
-    apiCall<Wire.GetConversationMessagesResponseDto>(
+    apiCall(
       'get_conversation_messages',
       {
         request: {
@@ -154,7 +154,7 @@ export const chatApi = {
     conversationId: string,
     newTitle: string,
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>('rename_conversation', {
+    apiCall('rename_conversation', {
       request: {
         conversationId,
         newTitle,
@@ -181,7 +181,7 @@ export const chatApi = {
     attachmentDocumentIds?: string[],
     attachmentImageIds?: string[],
   ): Promise<ApiResult<Wire.ChatResponse>> =>
-    apiCall<Wire.ChatResponse>('chat_with_conversation', {
+    apiCall('chat_with_conversation', {
       conversationId,
       message,
       requestId,
@@ -196,15 +196,15 @@ export const chatApi = {
    * conversation but to no message until a send names their ids.
    */
   attachMessageImages: (conversationId: string, paths: string[]): Promise<ApiResult<Wire.ChatImageDto[]>> =>
-    apiCall<Wire.ChatImageDto[]>('attach_message_images', { conversationId, paths }),
+    apiCall('attach_message_images', { conversationId, paths }),
 
   /** Lets go of draft pictures that were removed or discarded before a send. */
   releaseMessageImages: (conversationId: string, imageIds: string[]): Promise<ApiResult<null>> =>
-    apiCall<null>('release_message_images', { conversationId, imageIds }),
+    apiCall('release_message_images', { conversationId, imageIds }),
 
   /** A copy of a sent picture, staged on the draft so the next turn shows it again. */
   restageMessageImage: (conversationId: string, imageId: string): Promise<ApiResult<Wire.ChatImageDto>> =>
-    apiCall<Wire.ChatImageDto>('restage_message_image', { conversationId, imageId }),
+    apiCall('restage_message_image', { conversationId, imageId }),
 
   /**
    * Cancels active model generation for a conversation if one is currently in-flight.
@@ -212,8 +212,8 @@ export const chatApi = {
   cancelConversationGeneration: async (
     conversationId: string,
     requestId: string,
-  ): Promise<ApiResult<void>> => {
-    const response = await apiCall<Wire.ChatResponse>(
+  ): Promise<ApiResult<null>> => {
+    const response = await apiCall(
       'chat_with_conversation',
       {
         conversationId,
@@ -223,9 +223,9 @@ export const chatApi = {
       },
     );
     if (!response.ok) {
-      return response as unknown as ApiResult<void>;
+      return response;
     }
-    return { ok: true, data: undefined };
+    return { ok: true, data: null };
   },
 
   /**
@@ -238,7 +238,7 @@ export const chatApi = {
   deleteConversation: async (
     conversationId: string,
   ): Promise<ApiResult<DeleteConversationResponse>> =>
-    apiCall<Wire.DeleteConversationResponseDto>('delete_conversation', {
+    apiCall('delete_conversation', {
       request: {
         conversationId,
       },
@@ -250,7 +250,7 @@ export const chatApi = {
   createConversationSpace: async (
     request: CreateConversationSpaceRequest,
   ): Promise<ApiResult<ConversationSpaceDto>> =>
-    apiCall<Wire.ConversationSpaceDto>('create_conversation_space', {
+    apiCall('create_conversation_space', {
       request,
     }),
 
@@ -259,7 +259,7 @@ export const chatApi = {
    */
   listConversationSpaces: async (): Promise<
     ApiResult<ConversationSpaceDto[]>
-  > => apiCall<Wire.ConversationSpaceDto[]>('list_conversation_spaces'),
+  > => apiCall('list_conversation_spaces'),
 
   /**
    * Creates a journal notebook.
@@ -267,13 +267,13 @@ export const chatApi = {
   createJournal: async (
     request: CreateConversationJournalRequest,
   ): Promise<ApiResult<ConversationJournalDto>> =>
-    apiCall<Wire.ConversationJournalDto>('create_journal', { request }),
+    apiCall('create_journal', { request }),
 
   /**
    * Lists all journals.
    */
   listJournals: async (): Promise<ApiResult<ConversationJournalDto[]>> =>
-    apiCall<Wire.ConversationJournalDto[]>('list_journals'),
+    apiCall('list_journals'),
 
   /**
    * Lists members for a specific conversation space.
@@ -281,7 +281,7 @@ export const chatApi = {
   listConversationSpaceMembers: async (
     spaceId: string,
   ): Promise<ApiResult<ConversationSpaceMemberDto[]>> =>
-    apiCall<Wire.ConversationSpaceMemberDto[]>(
+    apiCall(
       'list_conversation_space_members',
       {
         spaceId,
@@ -294,7 +294,7 @@ export const chatApi = {
   upsertConversationSpaceMember: async (
     request: UpsertConversationSpaceMemberRequest,
   ): Promise<ApiResult<ConversationSpaceMemberDto>> =>
-    apiCall<Wire.ConversationSpaceMemberDto>(
+    apiCall(
       'upsert_conversation_space_member',
       { request },
     ),
@@ -305,7 +305,7 @@ export const chatApi = {
   removeConversationSpaceMember: async (
     request: RemoveConversationSpaceMemberRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>(
+    apiCall(
       'remove_conversation_space_member',
       { request },
     ),
@@ -316,7 +316,7 @@ export const chatApi = {
   updateConversationSpace: async (
     request: UpdateConversationSpaceRequest,
   ): Promise<ApiResult<ConversationSpaceDto>> =>
-    apiCall<Wire.ConversationSpaceDto>('update_conversation_space', {
+    apiCall('update_conversation_space', {
       request,
     }),
 
@@ -326,7 +326,7 @@ export const chatApi = {
   archiveConversationSpace: async (
     request: ArchiveConversationSpaceRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>('archive_conversation_space', {
+    apiCall('archive_conversation_space', {
       request,
     }),
 
@@ -341,7 +341,7 @@ export const chatApi = {
   updateJournal: async (
     request: UpdateConversationJournalRequest,
   ): Promise<ApiResult<ConversationJournalDto>> =>
-    apiCall<Wire.ConversationJournalDto>('update_journal', { request }),
+    apiCall('update_journal', { request }),
 
   /**
    * Archives/unarchives a journal notebook.
@@ -349,7 +349,7 @@ export const chatApi = {
   archiveJournal: async (
     request: ArchiveConversationJournalRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>('archive_journal', { request }),
+    apiCall('archive_journal', { request }),
 
   /**
    * Permanently deletes a journal notebook.
@@ -357,7 +357,7 @@ export const chatApi = {
   deleteJournal: async (
     request: DeleteConversationJournalRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>('delete_journal', { request }),
+    apiCall('delete_journal', { request }),
 
   /**
    * Moves a conversation to a space.
@@ -365,7 +365,7 @@ export const chatApi = {
   moveConversationToSpace: async (
     request: MoveConversationToSpaceRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>('move_conversation_to_space', {
+    apiCall('move_conversation_to_space', {
       request,
     }),
 
@@ -375,7 +375,7 @@ export const chatApi = {
   addConversationToJournal: async (
     request: AddConversationToJournalRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>('add_conversation_to_journal', {
+    apiCall('add_conversation_to_journal', {
       request,
     }),
 
@@ -385,7 +385,7 @@ export const chatApi = {
   removeConversationFromJournal: async (
     request: RemoveConversationFromJournalRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>(
+    apiCall(
       'remove_conversation_from_journal',
       { request },
     ),
@@ -396,7 +396,7 @@ export const chatApi = {
   setConversationSaved: async (
     request: SetConversationStateRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>('set_conversation_saved', {
+    apiCall('set_conversation_saved', {
       request,
     }),
 
@@ -406,7 +406,7 @@ export const chatApi = {
   setConversationBookmarked: async (
     request: SetConversationStateRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>('set_conversation_bookmarked', {
+    apiCall('set_conversation_bookmarked', {
       request,
     }),
 
@@ -416,7 +416,7 @@ export const chatApi = {
   setConversationPinned: async (
     request: SetConversationStateRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>('set_conversation_pinned', {
+    apiCall('set_conversation_pinned', {
       request,
     }),
 
@@ -426,7 +426,7 @@ export const chatApi = {
   setConversationArchived: async (
     request: SetConversationStateRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>('set_conversation_archived', {
+    apiCall('set_conversation_archived', {
       request,
     }),
 
@@ -436,7 +436,7 @@ export const chatApi = {
   deleteConversationMessage: async (
     request: DeleteConversationMessageRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>('delete_conversation_message', {
+    apiCall('delete_conversation_message', {
       request,
     }),
 
@@ -446,7 +446,7 @@ export const chatApi = {
   bookmarkConversationMessage: async (
     request: BookmarkConversationMessageRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>(
+    apiCall(
       'bookmark_conversation_message',
       { request },
     ),
@@ -457,7 +457,7 @@ export const chatApi = {
   unbookmarkConversationMessage: async (
     request: UnbookmarkConversationMessageRequest,
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>(
+    apiCall(
       'unbookmark_conversation_message',
       { request },
     ),
@@ -466,21 +466,17 @@ export const chatApi = {
    * Lists message-level bookmarks with optional conversation and text filters.
    */
   listMessageBookmarks: async (
-    query?: ListMessageBookmarksQuery,
+    query: ListMessageBookmarksQuery,
   ): Promise<ApiResult<ListMessageBookmarksResponse>> =>
-    apiCall<Wire.ListMessageBookmarksResponseDto>('list_message_bookmarks', {
-      query: query ?? {},
-    }),
+    apiCall('list_message_bookmarks', { query }),
 
   /**
    * Lists conversations for the explorer with filters and text search.
    */
   listConversationsExplorer: async (
-    query?: ListConversationsExplorerQuery,
+    query: ListConversationsExplorerQuery,
   ): Promise<ApiResult<ListConversationsResponse>> =>
-    apiCall<Wire.ListConversationsResponseDto>('list_conversations_explorer', {
-      query: query ?? {},
-    }),
+    apiCall('list_conversations_explorer', { query }),
 
   /**
    * Lists conversations included in a journal (additive membership).
@@ -488,7 +484,7 @@ export const chatApi = {
   listJournalConversations: async (
     query: ListJournalConversationsQuery,
   ): Promise<ApiResult<ListConversationsResponse>> =>
-    apiCall<Wire.ListConversationsResponseDto>('list_journal_conversations', {
+    apiCall('list_journal_conversations', {
       query,
     }),
 
@@ -501,7 +497,7 @@ export const chatApi = {
   /** Pins or unpins an entry in one journal; the Chat sidebar's pin is separate. */
   setJournalEntryPinned: (
     request: Wire.SetJournalEntryPinnedRequestDto,
-  ): Promise<ApiResult<void>> =>
+  ): Promise<ApiResult<null>> =>
     apiCall('set_journal_entry_pinned', { request }),
 
   /**
@@ -517,7 +513,7 @@ export const chatApi = {
     query: string,
     limit: number,
   ): Promise<ApiResult<SpaceDocument[]>> =>
-    apiCall<Wire.SpaceDocumentDto[]>('list_space_documents', {
+    apiCall('list_space_documents', {
       spaceId,
       conversationId,
       query,
@@ -530,7 +526,7 @@ export const chatApi = {
   listConversationLinkedDocuments: async (
     conversationId: string,
   ): Promise<ApiResult<ConversationLinkedDocumentDto[]>> =>
-    apiCall<Wire.ConversationLinkedDocumentDto[]>(
+    apiCall(
       'list_conversation_linked_documents',
       {
         conversationId,
@@ -544,7 +540,7 @@ export const chatApi = {
     conversationId: string,
     documentId: string,
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>(
+    apiCall(
       'remove_conversation_linked_document',
       {
         conversationId,
@@ -565,7 +561,7 @@ export const chatApi = {
       relevanceScore?: number;
     },
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>('add_conversation_web_source', {
+    apiCall('add_conversation_web_source', {
       conversationId,
       url,
       title: options?.title,
@@ -580,7 +576,7 @@ export const chatApi = {
   listConversationWebSources: async (
     conversationId: string,
   ): Promise<ApiResult<ConversationWebSourceDto[]>> =>
-    apiCall<Wire.ConversationWebSourceDto[]>('list_conversation_web_sources', {
+    apiCall('list_conversation_web_sources', {
       conversationId,
     }),
 
@@ -591,7 +587,7 @@ export const chatApi = {
     conversationId: string,
     sourceId: string,
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>(
+    apiCall(
       'remove_conversation_web_source',
       {
         conversationId,
@@ -606,7 +602,7 @@ export const chatApi = {
   listDocumentSpaceMemberships: async (
     documentId: string,
   ): Promise<ApiResult<DocumentSpaceMembershipDto[]>> =>
-    apiCall<Wire.DocumentSpaceMembershipDto[]>(
+    apiCall(
       'list_document_space_memberships',
       {
         documentId,
@@ -621,7 +617,7 @@ export const chatApi = {
     spaceId: string,
     assigned: boolean,
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>(
+    apiCall(
       'set_document_space_membership',
       {
         documentId,
@@ -686,7 +682,7 @@ export const chatApi = {
     requestId?: string,
     model?: Wire.ModelRef,
   ): Promise<ApiResult<Wire.ChatResponse>> =>
-    apiCall<Wire.ChatResponse>('regenerate_response', {
+    apiCall('regenerate_response', {
       conversationId,
       toolPreferences,
       requestId,
@@ -723,13 +719,13 @@ export const chatApi = {
   manageKnowledge: async (
     request: Wire.KnowledgeRequestDto,
   ): Promise<ApiResult<Wire.KnowledgeResponseDto>> =>
-    apiCall<Wire.KnowledgeResponseDto>('manage_knowledge', { request }),
+    apiCall('manage_knowledge', { request }),
 
   getConversationMemory: async (
     conversationId: string,
     includeHistory?: boolean,
   ): Promise<ApiResult<Wire.ConversationMemoryDetailsDto>> =>
-    apiCall<Wire.ConversationMemoryDetailsDto>('get_conversation_memory', {
+    apiCall('get_conversation_memory', {
       request: { conversationId, includeHistory: includeHistory ?? null },
     }),
 
@@ -741,7 +737,7 @@ export const chatApi = {
     spaceId: string,
     assigned: boolean,
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>(
+    apiCall(
       'set_documents_space_membership',
       {
         documentIds,
@@ -762,7 +758,7 @@ export const chatApi = {
   addDocumentsToLibrary: async (
     documentIds: string[],
   ): Promise<ApiResult<RenameConversationResponse>> =>
-    apiCall<Wire.RenameConversationResponseDto>('add_documents_to_library', {
+    apiCall('add_documents_to_library', {
       documentIds,
     }),
 };

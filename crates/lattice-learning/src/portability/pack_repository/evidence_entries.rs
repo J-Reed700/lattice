@@ -22,6 +22,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::SqliteConnection;
 use std::collections::{BTreeMap, HashMap};
 
@@ -195,14 +196,10 @@ impl SectionRows for EvidenceTableRows {
         validate_aggregate_id_namespaces(&snapshot, program, &outcomes)?;
         map_evidence_ids(&snapshot, ids)
     }
-    async fn insert(
-        &self,
-        connection: &mut SqliteConnection,
-        scope: &ImportScope<'_>,
-    ) -> Result<()> {
+    async fn insert(&self, tx: &mut WriteTx, scope: &ImportScope<'_>) -> Result<()> {
         let Some(snapshot) = decode_evidence(scope.pack)? else {
             return Ok(());
         };
-        insert_evidence_snapshot(connection, &scope.program.summary.id, &snapshot, scope.ids).await
+        insert_evidence_snapshot(tx, &scope.program.summary.id, &snapshot, scope.ids).await
     }
 }

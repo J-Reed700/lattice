@@ -59,7 +59,7 @@ async fn section_fixture() -> sqlx::SqlitePool {
 
 #[tokio::test]
 async fn dotted_labels_match_only_at_line_starts_with_headings_first() {
-    let repo = ConversationRepository::new(section_fixture().await);
+    let repo = ConversationRepository::new(Database::new(section_fixture().await));
     let allowed = HashSet::from(["a".into()]);
     // The breadcrumb hit ranks first although its chunk comes later; the
     // mid-sentence pH value is prose, not the numbered paragraph.
@@ -86,7 +86,7 @@ async fn dotted_labels_match_only_at_line_starts_with_headings_first() {
 
 #[tokio::test]
 async fn child_neighbors_keep_their_own_heading() {
-    let repo = ConversationRepository::new(section_fixture().await);
+    let repo = ConversationRepository::new(Database::new(section_fixture().await));
     let allowed = HashSet::from(["a".into()]);
     let neighbors = repo
         .retrieval_neighbors("neighbor-parent", &allowed)
@@ -106,7 +106,7 @@ async fn child_neighbors_keep_their_own_heading() {
 
 #[tokio::test]
 async fn exact_section_lookup_preserves_scope_subsections_and_comparison_coverage() {
-    let repo = ConversationRepository::new(section_fixture().await);
+    let repo = ConversationRepository::new(Database::new(section_fixture().await));
     let allowed = HashSet::from(["a".into(), "b".into()]);
     let found = repo
         .retrieval_section_passages(&["706.07(a)".into()], &allowed)
@@ -139,15 +139,13 @@ async fn direct_evidence_survives_rewrite_omission_and_unavailable_search_models
     use crate::infrastructure::vector_index::USearchVectorIndex;
     use lattice_core::application::ports::UnavailableEmbedding;
     let pool = section_fixture().await;
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repository = ConversationRepository::new(db.clone());
     let embedder = Arc::new(UnavailableEmbedding::not_installed());
     let index = Arc::new(USearchVectorIndex::new(384, None).unwrap());
     // The fixture deliberately lacks an FTS index too; both search branches fail.
-    let hybrid = HybridSearchUseCase::new(
-        embedder,
-        index,
-        Arc::new(SqliteTextSearch::new(Database::from(pool))),
-    );
+    let hybrid =
+        HybridSearchUseCase::new(embedder, index, Arc::new(SqliteTextSearch::new(db.clone())));
     let scope = super::super::SpaceDocumentScope {
         space_id: super::super::DEFAULT_SPACE_ID.into(),
         document_ids: ["a".to_owned()].into(),
@@ -199,15 +197,13 @@ async fn keyword_search_in_a_named_space_finds_the_chats_attachment() {
         INSERT INTO chunks_trigram SELECT id,content FROM text_chunks;
         INSERT INTO document_space_memberships VALUES ('member','space_movies');")
         .execute(&pool).await.unwrap();
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repository = ConversationRepository::new(db.clone());
     // Degraded embedder: the vector branch fails, so only keyword can answer.
     let embedder = Arc::new(UnavailableEmbedding::not_installed());
     let index = Arc::new(USearchVectorIndex::new(384, None).unwrap());
-    let hybrid = HybridSearchUseCase::new(
-        embedder,
-        index,
-        Arc::new(SqliteTextSearch::new(Database::from(pool))),
-    );
+    let hybrid =
+        HybridSearchUseCase::new(embedder, index, Arc::new(SqliteTextSearch::new(db.clone())));
     let scope = super::super::SpaceDocumentScope {
         space_id: "space_movies".into(),
         document_ids: ["member".to_owned(), "attached".to_owned()].into(),
@@ -258,14 +254,12 @@ async fn reading_from_the_beginning_reads_half_the_budget_round_robin() {
             .unwrap();
         }
     }
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repository = ConversationRepository::new(db.clone());
     let embedder = Arc::new(UnavailableEmbedding::not_installed());
     let index = Arc::new(USearchVectorIndex::new(384, None).unwrap());
-    let hybrid = HybridSearchUseCase::new(
-        embedder,
-        index,
-        Arc::new(SqliteTextSearch::new(Database::from(pool))),
-    );
+    let hybrid =
+        HybridSearchUseCase::new(embedder, index, Arc::new(SqliteTextSearch::new(db.clone())));
     let scope = super::super::SpaceDocumentScope {
         space_id: super::super::DEFAULT_SPACE_ID.into(),
         document_ids: ["intro".to_owned(), "ch1".to_owned()].into(),
@@ -381,7 +375,8 @@ async fn catalog_and_openings_are_scoped_ordered_and_bounded() {
     .await
     .unwrap();
     sqlx::raw_sql("INSERT INTO text_chunks(id,document_id,content,chunk_index) VALUES ('a2','a','Second',2),('a0','a','Introduction',0),('a1','a','First',1),('b0','b','Private',0);").execute(&pool).await.unwrap();
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repository = ConversationRepository::new(db.clone());
     let scope = HashSet::from(["a".to_string()]);
     let catalog = repository.retrieval_catalog(&scope).await.unwrap();
     assert_eq!(catalog.len(), 1);
@@ -561,12 +556,13 @@ async fn live_corpus_retrieval_and_answer() {
         )
         .unwrap();
     assert!(count > 0);
+    let db = Database::new(pool.clone());
     let hybrid = HybridSearchUseCase::new(
         embedding.clone(),
         index.clone(),
-        Arc::new(SqliteTextSearch::new(Database::from(pool.clone()))),
+        Arc::new(SqliteTextSearch::new(db.clone())),
     );
-    let repository = ConversationRepository::new(pool.clone());
+    let repository = ConversationRepository::new(db.clone());
     let conversation: String = match std::env::var("LATTICE_RETRIEVAL_CONVERSATION_ID") {
         Ok(id) => id,
         Err(_) => {

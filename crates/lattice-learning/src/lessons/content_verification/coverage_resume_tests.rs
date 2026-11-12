@@ -67,10 +67,11 @@ impl DisconnectDuringFidelity {
 #[tokio::test]
 async fn interrupted_coverage_reuses_mapping_and_each_completed_passage() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
     let model = DisconnectDuringFidelity {
         inner: Model::new(),
-        jobs: JobStore::new(pool.clone()),
+        jobs: JobStore::new(db.clone()),
         job: job.clone(),
         fidelity: format!("{lesson}/coverage-fidelity-v2:"),
         mapping_calls: AtomicUsize::new(0),
@@ -92,7 +93,7 @@ async fn interrupted_coverage_reuses_mapping_and_each_completed_passage() -> Res
             })
             .collect(),
     };
-    crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+    crate::lesson_drafts::run(&db, &repo, &job, &lesson, async {
         assert!(coverage::audit(&model, &content, &inventory, None)
             .await
             .is_err());
@@ -102,7 +103,7 @@ async fn interrupted_coverage_reuses_mapping_and_each_completed_passage() -> Res
     })
     .await?;
     // A new task-local context must recover the persisted results, not memory.
-    crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+    crate::lesson_drafts::run(&db, &repo, &job, &lesson, async {
         let audited = coverage::audit(&model, &content, &inventory, None).await?;
         assert!(audited.units.iter().all(|unit| unit.complete));
         assert_eq!(model.mapping_calls.load(Ordering::Relaxed), 1);

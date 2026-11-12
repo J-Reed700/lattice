@@ -6,7 +6,6 @@ use super::repository::admission as stored;
 use super::*;
 use crate::curriculum_repository::LESSON_PREPARATION;
 use crate::references::admission as gate;
-use lattice_core::shared::persistence::Transactions;
 
 /// A saved page that is not a source, with the reason the gate gives.
 #[derive(Debug, Clone, PartialEq, Eq)]

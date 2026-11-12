@@ -24,7 +24,7 @@ export function quantizationDescription(quantization: string | null): string {
  * embedding entry pins its own files).
  */
 export function hasModelVersions(model: ModelMetadata): boolean {
-  if (!model.model_id || model.format === 'safetensors') return false;
+  if (!model.model_id) return false;
   if (model.category === 'LLM') return true;
   return model.category === 'Embedding' && Boolean(model.default_filename?.toLowerCase().endsWith('.gguf'));
 }

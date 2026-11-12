@@ -17,7 +17,7 @@ use lattice_core::domain::learning::drills::{
     lesson_rating, ratings, score, validate, IssueRating, PatternRating,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, Transactions, WriteTx};
+use lattice_core::shared::persistence::{Database, WriteTx};
 use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
 use tokio_util::sync::CancellationToken;
 

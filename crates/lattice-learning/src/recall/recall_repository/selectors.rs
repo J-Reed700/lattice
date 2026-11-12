@@ -1,6 +1,5 @@
 //! Source selectors: creating, reading and re-matching them, and searching program sources.
 use super::*;
-use lattice_core::shared::persistence::{Database, Transactions};
 use sqlx::SqliteConnection;
 
 #[derive(Debug, Clone)]
@@ -42,7 +41,7 @@ impl LearningRecallRepository {
         validate_owned_id(&req.source_id, "source")?;
         validate_owned_id(&req.source_version_id, "source version")?;
         let hash = payload_hash(req)?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &req.program_id).await?;
         let operation = Operation {
             id: &req.operation_id,
@@ -99,8 +98,10 @@ impl LearningRecallRepository {
     ) -> Result<LearningSourceSelectorDto> {
         validate_uuid(program_id, "program")?;
         validate_uuid(selector_id, "selector")?;
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        Self::selector_on(&mut connection, program_id, selector_id).await
+        let mut read = self.db.begin_read().await.map_err(db)?;
+        let selector = Self::selector_on(&mut read, program_id, selector_id).await?;
+        read.commit().await.map_err(db)?;
+        Ok(selector)
     }
 
     async fn selector_on(
@@ -126,14 +127,16 @@ impl LearningRecallRepository {
         validate_uuid(&req.program_id, "program")?;
         validate_uuid(&req.selector_id, "selector")?;
         validate_uuid(&req.target_version_id, "source version")?;
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let row = sqlx::query("SELECT s.source_id,s.exact_text,s.prefix_text,s.suffix_text,v.full_text FROM learning_source_selectors s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.source_id=s.source_id WHERE s.program_id=? AND s.id=? AND v.id=?")
             .bind(&req.program_id)
             .bind(&req.selector_id)
             .bind(&req.target_version_id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *read)
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Selector or source version not found.".into()))?;
+        read.commit().await.map_err(db)?;
         let selector = crate::source_selector::LearningTextQuoteSelector {
             exact: row.get("exact_text"),
             prefix: row.get("prefix_text"),
@@ -153,7 +156,7 @@ impl LearningRecallRepository {
         if query.is_empty() {
             return Err(invalid("Source search query must not be empty."));
         }
-        let snapshots = LearningSourceLibraryRepository::new(Database::from(self.pool.clone()));
+        let snapshots = LearningSourceLibraryRepository::new(self.db.clone());
         let sources = snapshots.verification_sources(&req.program_id).await?;
         // The course's index with its rows brought up to date, never waiting
         // for embedding; by words alone when there is none.

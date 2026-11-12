@@ -214,7 +214,7 @@ mod tests {
             .await
             .unwrap();
         TagGenerationService::new(
-            Database::from(pool),
+            Database::new(pool),
             Arc::new(crate::features::tags::mocks::MockTagService::new()),
             Arc::new(NoModel),
         )

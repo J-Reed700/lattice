@@ -8,6 +8,7 @@ use crate::{
 };
 use lattice_core::shared::error::Result;
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::shared::persistence::WriteTx;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection};
 use std::collections::{HashMap, HashSet};
@@ -163,7 +164,7 @@ fn remap_outline(draft: &mut OutlineDraft, ids: &HashMap<String, String>) {
 }
 
 pub(super) async fn restore(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     mut snapshot: ProvenanceSnapshot,
     ids: &HashMap<String, String>,
@@ -173,7 +174,7 @@ pub(super) async fn restore(
         sqlx::query("INSERT INTO learning_outline_drafts(program_id,state_json) VALUES(?,?)")
             .bind(program_id)
             .bind(json_string(draft)?)
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
     }
@@ -181,7 +182,7 @@ pub(super) async fn restore(
         remap_outline(&mut checkpoint.draft, ids);
         sqlx::query("INSERT INTO learning_outline_checkpoints(program_id,revision,state_json,created_at) VALUES(?,?,?,?)")
             .bind(program_id).bind(checkpoint.revision).bind(json_string(&checkpoint.draft)?).bind(checkpoint.created_at)
-            .execute(&mut *connection).await.map_err(db)?;
+            .execute(&mut **tx).await.map_err(db)?;
     }
     for mut lesson in snapshot.lessons {
         lesson.lesson_id = remap(ids, &lesson.lesson_id);
@@ -190,7 +191,7 @@ pub(super) async fn restore(
             lesson.report.archived_metadata(&lesson.lesson_id)?;
         sqlx::query("INSERT INTO learning_lesson_verifications(lesson_id,program_id,policy,content_sha256,report_json,checked_at) VALUES(?,?,?,?,?,?)")
             .bind(&lesson.lesson_id).bind(program_id).bind(policy).bind(fingerprint).bind(json_string(&lesson.report)?).bind(checked_at)
-            .execute(&mut *connection).await.map_err(db)?;
+            .execute(&mut **tx).await.map_err(db)?;
     }
     Ok(())
 }

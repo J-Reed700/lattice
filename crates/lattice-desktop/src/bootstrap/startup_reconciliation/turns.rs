@@ -51,6 +51,7 @@ mod tests {
             .await
             .unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let db = Database::new(pool.clone());
         sqlx::query("INSERT INTO conversations (id, title) VALUES ('c', 'c')")
             .execute(&pool)
             .await
@@ -77,9 +78,7 @@ mod tests {
             .unwrap();
         }
 
-        let marked = reconcile_interrupted_verifications(&Database::from(pool.clone()))
-            .await
-            .unwrap();
+        let marked = reconcile_interrupted_verifications(&db).await.unwrap();
         assert_eq!(marked, 1);
 
         let waiting: String =
@@ -109,6 +108,7 @@ mod tests {
             .await
             .unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let db = Database::new(pool.clone());
         sqlx::query("INSERT INTO conversations (id, title) VALUES ('c', 'c')")
             .execute(&pool)
             .await
@@ -131,13 +131,8 @@ mod tests {
             .unwrap();
         }
 
-        let jobs = JobStore::new(pool.clone());
-        assert_eq!(
-            reconcile_stuck_turns(&Database::from(pool.clone()), &jobs)
-                .await
-                .unwrap(),
-            2
-        );
+        let jobs = JobStore::new(db.clone());
+        assert_eq!(reconcile_stuck_turns(&db, &jobs).await.unwrap(), 2);
 
         let statuses: Vec<(String, String)> =
             sqlx::query_as("SELECT id, status FROM conversation_messages ORDER BY id")
@@ -170,8 +165,8 @@ mod tests {
     }
 
     /// The pass startup makes over the turns the last run left.
-    async fn reconcile(pool: &sqlx::SqlitePool) {
-        reconcile_stuck_turns(&Database::from(pool.clone()), &JobStore::new(pool.clone()))
+    async fn reconcile(db: &Database) {
+        reconcile_stuck_turns(db, &JobStore::new(db.clone()))
             .await
             .unwrap();
     }
@@ -245,7 +240,8 @@ mod tests {
     #[tokio::test]
     async fn only_the_question_of_a_research_job_still_live_survives_the_restart() {
         let pool = migrated_pool().await;
-        let jobs = JobStore::new(pool.clone());
+        let db = Database::new(pool.clone());
+        let jobs = JobStore::new(db.clone());
         sqlx::query("INSERT INTO conversations (id, title) VALUES ('c', 'c')")
             .execute(&pool)
             .await
@@ -284,7 +280,7 @@ mod tests {
         )
         .await;
 
-        reconcile(&pool).await;
+        reconcile(&db).await;
 
         let rows: Vec<(String, String)> =
             sqlx::query_as("SELECT id, status FROM conversation_messages")
@@ -308,9 +304,10 @@ mod tests {
     #[tokio::test]
     async fn a_resumed_research_turn_saves_its_answer_after_the_startup_sweep() {
         let pool = migrated_pool().await;
-        let jobs = JobStore::new(pool.clone());
+        let db = Database::new(pool.clone());
+        let jobs = JobStore::new(db.clone());
         let service: Arc<dyn ConversationServiceTrait> = Arc::new(ConversationService::new(
-            Arc::new(ConversationRepository::new(pool.clone())),
+            Arc::new(ConversationRepository::new(db.clone())),
         ));
         let chat = service
             .create_conversation("Research".into(), None)
@@ -342,7 +339,7 @@ mod tests {
         .await;
 
         // The app opens again and the job is delivered again.
-        reconcile(&pool).await;
+        reconcile(&db).await;
         let answered = service
             .complete_turn(
                 &chat,
@@ -377,7 +374,8 @@ mod tests {
     #[tokio::test]
     async fn the_question_of_a_research_job_whose_saved_turn_cannot_be_read_is_failed() {
         let pool = migrated_pool().await;
-        let jobs = JobStore::new(pool.clone());
+        let db = Database::new(pool.clone());
+        let jobs = JobStore::new(db.clone());
         sqlx::query("INSERT INTO conversations (id, title) VALUES ('c', 'c')")
             .execute(&pool)
             .await
@@ -396,7 +394,7 @@ mod tests {
         )
         .await;
 
-        reconcile(&pool).await;
+        reconcile(&db).await;
 
         assert_eq!(status_of(&pool, "of-an-older-turn").await, "failed");
     }

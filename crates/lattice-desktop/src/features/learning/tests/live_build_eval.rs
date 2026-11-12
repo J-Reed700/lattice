@@ -30,7 +30,6 @@ use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha384};
-use sqlx::SqlitePool;
 use tokio_util::sync::CancellationToken;
 
 use super::support::{
@@ -522,12 +521,12 @@ async fn checkpoints(store: &JobStore, job: &str) -> Value {
 async fn build(
     llm: &dyn LLMPort,
     runtimes: &BuiltinRuntimes,
-    pool: &SqlitePool,
+    database: &Database,
     spec: &DrillSpec,
     seed: &str,
 ) -> Result<std::result::Result<StoredDrill, Failure>> {
-    let job = bank::queue_build(&Database::from(pool.clone()), spec, seed).await?;
-    let store = JobStore::new(pool.clone());
+    let job = bank::queue_build(database, spec, seed).await?;
+    let store = JobStore::new(database.clone());
     if store.claim(&job).await?.is_none() {
         return Err(AppError::InternalError(
             "The build job was not claimed.".into(),
@@ -541,15 +540,9 @@ async fn build(
     let check = ClaimSourceCheck::new(llm);
     let material = material_for(&spec.material, runner.as_deref(), &check);
     let grader = JudgeGrader::new(llm);
-    let outcome = DrillBuild::new(
-        llm,
-        material,
-        &grader,
-        &Database::from(pool.clone()),
-        CancellationToken::new(),
-    )
-    .run(&context, spec)
-    .await;
+    let outcome = DrillBuild::new(llm, material, &grader, database, CancellationToken::new())
+        .run(&context, spec)
+        .await;
     match outcome {
         Ok(JobOutcome::Committed) => {
             let id = store
@@ -558,8 +551,8 @@ async fn build(
                 .result_ref
                 .and_then(|reference| reference.strip_prefix("drill:").map(str::to_owned))
                 .ok_or_else(|| AppError::InternalError("The build names no drill.".into()))?;
-            let mut connection = pool.acquire().await.map_err(db)?;
-            let stored = repository::find_in(&mut connection, &id)
+            let mut read = database.begin_read().await.map_err(db)?;
+            let stored = repository::find_in(&mut read, &id)
                 .await?
                 .ok_or_else(|| AppError::InternalError("The stored drill is not there.".into()))?;
             Ok(Ok(stored))
@@ -634,19 +627,21 @@ struct EvalCourse {
 /// The courses `ids` as the app offers them for drills: each course's lessons that fit the material, and its language,
 /// or `language` for every course when one is given.
 async fn eval_courses(
-    pool: &SqlitePool,
+    database: &Database,
     ids: &[String],
     kind: Kind,
     language: Option<&str>,
 ) -> Result<Vec<EvalCourse>> {
     let mut courses = Vec::with_capacity(ids.len());
     for id in ids {
-        let offered = course_drills(&Database::from(pool.clone()), id, language).await?;
+        let offered = course_drills(database, id, language).await?;
+        let mut read = database.begin_read().await.map_err(db)?;
         let title: String = sqlx::query_scalar("SELECT title FROM learning_programs WHERE id=?")
             .bind(id)
-            .fetch_one(pool)
+            .fetch_one(&mut *read)
             .await
             .map_err(db)?;
+        read.commit().await.map_err(db)?;
         let lessons = offered
             .modules
             .iter()
@@ -702,8 +697,8 @@ async fn build_eval(kind: Kind) -> Result<()> {
         "context_window": llm.max_context_tokens(),
     });
     let runtimes = crate::features::learning::tests::runtimes();
-    let pool = copied_database(&database).await?;
-    let courses = eval_courses(&pool, &ids, kind, language.as_deref()).await?;
+    let handle = copied_database(&database).await?;
+    let courses = eval_courses(&handle, &ids, kind, language.as_deref()).await?;
     let lessons_of: Vec<(String, Vec<String>)> = courses
         .iter()
         .map(|course| {
@@ -759,7 +754,7 @@ async fn build_eval(kind: Kind) -> Result<()> {
         }));
         let started = Instant::now();
         let seed = format!("{run}:{name}");
-        let built = build(llm.as_ref(), &runtimes, &pool, &spec, &seed).await?;
+        let built = build(llm.as_ref(), &runtimes, &handle, &spec, &seed).await?;
         let seconds = started.elapsed().as_secs_f64();
         let (shown, entry) = match built {
             Ok(stored) => {
@@ -1018,7 +1013,7 @@ fn passage_markdown(name: &str, course: &str, stored: &StoredDrill, seconds: f64
 }
 
 /// A copy of the app's database, its migrations brought up to this build's.
-async fn copied_database(path: &str) -> Result<SqlitePool> {
+async fn copied_database(path: &str) -> Result<Database> {
     let options = sqlx::sqlite::SqliteConnectOptions::new()
         .filename(path)
         .foreign_keys(true)
@@ -1028,14 +1023,17 @@ async fn copied_database(path: &str) -> Result<SqlitePool> {
         .connect_with(options)
         .await
         .map_err(db)?;
+    let database = Database::new(pool);
     let mut migrator = sqlx::migrate!("./migrations");
     migrator.set_ignore_missing(true);
-    reconcile_line_endings(&pool, &migrator).await?;
+    let mut tx = database.begin_write().await?;
+    reconcile_line_endings(&mut tx, &migrator).await?;
     migrator
-        .run(&pool)
+        .run_direct(&mut *tx)
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
-    Ok(pool)
+    tx.commit().await?;
+    Ok(database)
 }
 
 #[tokio::test]
@@ -1053,8 +1051,9 @@ async fn a_copy_migrated_with_the_other_line_endings_still_opens() -> Result<()>
         .connect_with(options)
         .await
         .map_err(db)?;
-    crate::infrastructure::persistence::database::run_migrations(&pool).await?;
-    pool.close().await;
+    let database = Database::new(pool);
+    crate::infrastructure::persistence::database::run_migrations(&database).await?;
+    database.close().await;
 
     let migrator = sqlx::migrate!("./migrations");
     let migration = migrator
@@ -1087,22 +1086,25 @@ async fn a_copy_migrated_with_the_other_line_endings_still_opens() -> Result<()>
     assert_eq!(changed, 1);
     pool.close().await;
 
-    let pool = copied_database(path).await?;
+    let database = copied_database(path).await?;
+    let mut read = database.begin_read().await?;
     let stored: Vec<u8> =
         sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = ?")
             .bind(migration.version)
-            .fetch_one(&pool)
+            .fetch_one(&mut *read)
             .await
             .map_err(db)?;
+    read.commit().await?;
     assert_eq!(stored.as_slice(), &*migration.checksum);
     Ok(())
 }
 
 async fn stored() -> Result<StoredDrill> {
     let pool = crate::features::learning::tests::pool().await?;
-    stock(&pool, "drill").await?;
-    let mut connection = pool.acquire().await.map_err(db)?;
-    repository::find_in(&mut connection, "drill")
+    let database = Database::new(pool);
+    stock(&database, "drill").await?;
+    let mut read = database.begin_read().await.map_err(db)?;
+    repository::find_in(&mut read, "drill")
         .await?
         .ok_or_else(|| AppError::InternalError("The drill is not there.".into()))
 }

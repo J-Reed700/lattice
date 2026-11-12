@@ -144,9 +144,8 @@ pub(super) async fn finished(jobs: &JobRuntime, id: &str) -> JobRecord {
     .expect("the synthesis never finished")
 }
 
-async fn runtime_with(pool: &sqlx::SqlitePool, work: Arc<FakeWork>) -> Arc<JobRuntime> {
-    let jobs =
-        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
+async fn runtime_with(db: &Database, work: Arc<FakeWork>) -> Arc<JobRuntime> {
+    let jobs = JobRuntime::with_poll_interval(db.clone(), Duration::from_millis(50));
     jobs.register(
         JOURNAL_SYNTHESIS,
         Arc::new(JournalSynthesisJob::with(work)),
@@ -159,9 +158,9 @@ async fn runtime_with(pool: &sqlx::SqlitePool, work: Arc<FakeWork>) -> Arc<JobRu
 
 #[tokio::test]
 async fn a_synthesis_stopped_by_a_restart_resumes_at_the_first_part_it_had_not_saved() {
-    let pool = pool().await;
+    let db = Database::new(pool().await);
     let before = FakeWork::answering(1);
-    let jobs = runtime_with(&pool, before.clone()).await;
+    let jobs = runtime_with(&db, before.clone()).await;
     let started = synthesize_journal_entries_impl(request(), &jobs)
         .await
         .unwrap();
@@ -181,7 +180,7 @@ async fn a_synthesis_stopped_by_a_restart_resumes_at_the_first_part_it_had_not_s
     assert_eq!(saved.status, JobStatus::Pending);
 
     let after = FakeWork::answering(usize::MAX);
-    let jobs = runtime_with(&pool, after.clone()).await;
+    let jobs = runtime_with(&db, after.clone()).await;
     let job = finished(&jobs, &started.job.id).await;
 
     assert_eq!(job.status, JobStatus::Completed, "{:?}", job.error_message);
@@ -203,8 +202,8 @@ async fn a_synthesis_stopped_by_a_restart_resumes_at_the_first_part_it_had_not_s
 
 #[tokio::test]
 async fn a_synthesis_finished_while_closed_waits_staged_and_is_saved_once() {
-    let pool = pool().await;
-    let jobs = runtime_with(&pool, FakeWork::answering(usize::MAX)).await;
+    let db = Database::new(pool().await);
+    let jobs = runtime_with(&db, FakeWork::answering(usize::MAX)).await;
     let started = synthesize_journal_entries_impl(request(), &jobs)
         .await
         .unwrap();
@@ -213,7 +212,7 @@ async fn a_synthesis_finished_while_closed_waits_staged_and_is_saved_once() {
     jobs.drain().await;
 
     // The app opens again: the finished synthesis is listed with where it goes.
-    let jobs = runtime_with(&pool, FakeWork::answering(0)).await;
+    let jobs = runtime_with(&db, FakeWork::answering(0)).await;
     let listed = list_journal_syntheses_impl(&jobs).await.unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].job.status, JobStatus::Completed);
@@ -257,9 +256,9 @@ async fn every_open_synthesis_is_listed_however_many_there_are() {
 
 #[tokio::test]
 async fn a_synthesis_still_running_cannot_be_marked_applied() {
-    let pool = pool().await;
+    let db = Database::new(pool().await);
     let work = FakeWork::answering(0);
-    let jobs = runtime_with(&pool, work.clone()).await;
+    let jobs = runtime_with(&db, work.clone()).await;
     let started = synthesize_journal_entries_impl(request(), &jobs)
         .await
         .unwrap();
@@ -282,9 +281,9 @@ async fn a_synthesis_still_running_cannot_be_marked_applied() {
 /// holds them, every note read.
 #[tokio::test]
 async fn notes_too_many_for_one_brief_are_merged_in_levels_first() {
-    let pool = pool().await;
+    let db = Database::new(pool().await);
     let work = FakeWork::merging();
-    let jobs = runtime_with(&pool, work.clone()).await;
+    let jobs = runtime_with(&db, work.clone()).await;
     let started = synthesize_journal_entries_impl(request(), &jobs)
         .await
         .unwrap();

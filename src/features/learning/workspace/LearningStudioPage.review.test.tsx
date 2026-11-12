@@ -40,8 +40,8 @@ vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeo
   getLearningMemory: async () => ({ ok: true, data: { programId: 'program-1', journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0 } }),
   listStudyDecks: async () => ({ ok: true, data: [] }),
   courseIndexStatus: async () => ({ ok: true, data: { state: 'ready', mode: 'hybrid' } }),
-  courseIndexOpen: async () => ({ ok: true, data: undefined }),
-  courseIndexClose: async () => ({ ok: true, data: undefined }),
+  courseIndexOpen: async () => ({ ok: true, data: null }),
+  courseIndexClose: async () => ({ ok: true, data: null }),
 } }));
 
 const PAGE_WAIT = { timeout: 5000 };

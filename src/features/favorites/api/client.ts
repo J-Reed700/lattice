@@ -1,4 +1,3 @@
-import type * as Wire from '@/lib/bindings';
 import { apiCall } from '@/shared/ipc/transport';
 import type { ApiResult, FavoriteDocument } from '@/types';
 
@@ -10,8 +9,8 @@ export const favoritesApi = {
    * @param documentId - Internal document identifier
    * @returns Void on success
    */
-  addFavorite: async (documentId: string): Promise<ApiResult<void>> =>
-    apiCall<void>('add_favorite', { documentId }),
+  addFavorite: async (documentId: string): Promise<ApiResult<null>> =>
+    apiCall('add_favorite', { documentId }),
 
   /**
    * Removes a document from favorites.
@@ -20,8 +19,8 @@ export const favoritesApi = {
    * @param documentId - Internal document identifier
    * @returns Void on success
    */
-  removeFavorite: async (documentId: string): Promise<ApiResult<void>> =>
-    apiCall<void>('remove_favorite', { documentId }),
+  removeFavorite: async (documentId: string): Promise<ApiResult<null>> =>
+    apiCall('remove_favorite', { documentId }),
 
   /**
    * Retrieves all favorited documents.
@@ -30,7 +29,7 @@ export const favoritesApi = {
    * @returns Array of favorite document objects
    */
   getFavorites: async (): Promise<ApiResult<FavoriteDocument[]>> =>
-    apiCall<Wire.FavoriteDocument[]>('get_favorites'),
+    apiCall('get_favorites'),
 
   /**
    * Checks if a document is marked as favorite.
@@ -39,5 +38,5 @@ export const favoritesApi = {
    * @returns True if document is favorited, false otherwise
    */
   isFavorite: async (documentId: string): Promise<ApiResult<boolean>> =>
-    apiCall<boolean>('is_favorite', { documentId }),
+    apiCall('is_favorite', { documentId }),
 };

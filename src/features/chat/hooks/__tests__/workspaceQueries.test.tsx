@@ -100,8 +100,6 @@ describe('sidebar bookmarks', () => {
     const { result } = renderHook(() => useSidebarBookmarksQuery('  notes ', 'space-two'), { wrapper });
     await waitFor(() => expect(result.current.data).toEqual([bookmark('b', 'space-two')]));
     const request = vi.mocked(VaultAPI.listMessageBookmarks).mock.calls[0]?.[0];
-    expect(request).toEqual({ query: 'notes' });
-    expect(request).not.toHaveProperty('limit');
-    expect(request).not.toHaveProperty('offset');
+    expect(request).toEqual({ conversationId: null, query: 'notes', limit: null, offset: null });
   });
 });

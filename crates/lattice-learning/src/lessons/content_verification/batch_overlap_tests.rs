@@ -122,10 +122,11 @@ async fn a_batch_with_a_malformed_first_answer_is_asked_once_more() -> Result<()
 #[tokio::test]
 async fn a_batch_failing_twice_names_its_sections_and_the_others_are_kept() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
     let model = Flaky::new(2);
     let content = sections(5);
-    crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+    crate::lesson_drafts::run(&db, &repo, &job, &lesson, async {
         let error = inventory::extract_remaining(&model, &content, vec![])
             .await
             .err()

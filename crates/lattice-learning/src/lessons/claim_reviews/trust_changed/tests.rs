@@ -7,7 +7,6 @@ use std::time::Duration;
 use lattice_core::domain::learning::claim_review::{
     ClaimId, ClaimLocation, EvidenceFingerprint, HumanBinding, UnitKind, UserAction, VerdictKind,
 };
-use lattice_core::shared::persistence::Transactions;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 
@@ -31,6 +30,7 @@ fn provenance(actor: Actor) -> EventProvenance {
 }
 
 struct Published {
+    db: Database,
     pool: SqlitePool,
     store: ClaimReviewRepository,
     lesson_id: String,
@@ -40,7 +40,7 @@ struct Published {
 
 impl Published {
     fn hold(&self) -> tokio::task::JoinHandle<Result<()>> {
-        let database = Database::from(self.pool.clone());
+        let database = self.db.clone();
         let lesson_id = self.lesson_id.clone();
         tokio::spawn(async move { hold_if_published(&database, &lesson_id).await })
     }
@@ -71,9 +71,10 @@ async fn published() -> Published {
         .run(&pool)
         .await
         .unwrap();
+    let db = Database::new(pool.clone());
     let mut program = crate::test_support::fixture();
     program.summary.status = LearningProgramStatus::Active;
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(db.clone())
         .create(&program)
         .await
         .unwrap();
@@ -94,7 +95,7 @@ async fn published() -> Published {
             .await
             .unwrap();
     }
-    let store = ClaimReviewRepository::new(pool.clone());
+    let store = ClaimReviewRepository::new(db.clone());
     store
         .set_lesson_review(
             &lesson_id,
@@ -155,6 +156,7 @@ async fn published() -> Published {
     let ledger = store.load(&lesson_id).await.unwrap();
     assert_eq!(end_state(&ledger.claims), LessonReviewState::NeedsReview);
     Published {
+        db,
         pool,
         store,
         lesson_id,
@@ -167,7 +169,7 @@ async fn published() -> Published {
 async fn a_new_draft_written_while_the_hold_waits_for_the_write_lock_is_kept() {
     let fixture = published().await;
 
-    let mut tx = fixture.pool.begin_write().await.unwrap();
+    let mut tx = fixture.pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
     let holding = fixture.hold();
     tokio::time::sleep(Duration::from_millis(300)).await;
     sqlx::query(
@@ -190,7 +192,7 @@ async fn a_new_draft_written_while_the_hold_waits_for_the_write_lock_is_kept() {
 async fn a_claim_fixed_while_the_hold_waits_for_the_write_lock_keeps_the_lesson_ready() {
     let fixture = published().await;
 
-    let mut tx = fixture.pool.begin_write().await.unwrap();
+    let mut tx = fixture.db.begin_write().await.unwrap();
     let holding = fixture.hold();
     tokio::time::sleep(Duration::from_millis(300)).await;
     let confirm = ClaimEvent::UserAction {

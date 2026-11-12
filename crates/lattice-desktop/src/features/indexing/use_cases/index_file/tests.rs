@@ -365,6 +365,7 @@ async fn test_index_file_execution() {
     fs::write(&file_path, "Test content").unwrap();
 
     let pool = test_pool().await;
+    let db = Database::new(pool.clone());
     let use_case = IndexFileUseCase::new(
         Arc::new(MockContentStorage),
         Arc::new(MockFileStorage),
@@ -372,7 +373,7 @@ async fn test_index_file_execution() {
         Arc::new(MockEmbedder),
         Arc::new(MockDocumentRepo),
         Arc::new(MockEmbeddingRepo),
-        Database::from(pool.clone()),
+        db,
     );
 
     let request = IndexFileRequestDto {
@@ -411,6 +412,7 @@ async fn test_index_file_with_chunking() {
     fs::write(&file_path, "A".repeat(1000)).unwrap();
 
     let pool = test_pool().await;
+    let db = Database::new(pool.clone());
     let use_case = IndexFileUseCase::new(
         Arc::new(MockContentStorage),
         Arc::new(MockFileStorage),
@@ -418,7 +420,7 @@ async fn test_index_file_with_chunking() {
         Arc::new(MockSplittingEmbedder { window: 100 }),
         Arc::new(MockDocumentRepo),
         Arc::new(MockEmbeddingRepo),
-        Database::from(pool.clone()),
+        db,
     );
 
     let request = IndexFileRequestDto {
@@ -497,7 +499,7 @@ async fn prepare_for_indexing_records_library_blob_hash_when_source_mutates_duri
         Arc::new(MockEmbedder),
         Arc::new(MockDocumentRepo),
         Arc::new(MockEmbeddingRepo),
-        Database::from(test_pool().await),
+        Database::new(test_pool().await),
     );
 
     let outcome = use_case
@@ -616,7 +618,7 @@ async fn reimport_of_a_file_edited_during_the_copy(edited_content_indexed: bool)
         Arc::new(MockEmbedder),
         repo.clone(),
         Arc::new(MockEmbeddingRepo),
-        Database::from(test_pool().await),
+        Database::new(test_pool().await),
     );
     let request = IndexFileRequestDto {
         path: source.to_str().unwrap().to_string(),
@@ -776,7 +778,7 @@ async fn prepare_for_indexing_preserves_tokenizer_counts_code_flags_and_avoids_f
         Arc::new(TokenizerCountEmbedder { token_count: 14 }),
         Arc::new(MockDocumentRepo),
         Arc::new(MockEmbeddingRepo),
-        Database::from(test_pool().await),
+        Database::new(test_pool().await),
     );
 
     // 1. C code with #include must not get a fake section label "include <stdio.h>"

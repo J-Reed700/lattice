@@ -12,7 +12,7 @@ use lattice_core::domain::learning::drills::{
     Assessment, DrillFile, Finding, IssueFix, IssueRating, Score,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use serde::{Deserialize, Serialize};
 
 pub(crate) mod repository;

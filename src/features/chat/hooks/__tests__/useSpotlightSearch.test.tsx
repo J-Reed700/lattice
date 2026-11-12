@@ -36,8 +36,11 @@ it('searches chats and bookmarks with the trimmed query and leaves Explorer thre
   const { result } = renderSpotlight({ query: '  canopy ', isOpen: true });
   expect(result.current.isLoading).toBe(true);
   await waitFor(() => expect(result.current.isLoading).toBe(false));
-  expect(api.listConversationsExplorer).toHaveBeenCalledWith({ query: 'canopy', includeArchived: true, limit: 20, offset: 0 });
-  expect(api.listMessageBookmarks).toHaveBeenCalledWith({ query: 'canopy', limit: 20, offset: 0 });
+  expect(api.listConversationsExplorer).toHaveBeenCalledWith({
+    spaceId: null, query: 'canopy', savedOnly: null, bookmarkedOnly: null, pinnedOnly: null, hasMessageBookmarks: null,
+    includeArchived: true, limit: 20, offset: 0,
+  });
+  expect(api.listMessageBookmarks).toHaveBeenCalledWith({ conversationId: null, query: 'canopy', limit: 20, offset: 0 });
   expect(result.current.conversations).toEqual([chat]);
   expect(result.current.bookmarks).toEqual([bookmark]);
 });

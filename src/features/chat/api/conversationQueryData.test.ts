@@ -13,8 +13,6 @@ describe('fetchBookmarks', () => {
 
     expect(bookmarks).toEqual([{ id: 'b1' }]);
     const request = listMessageBookmarks.mock.calls[0]?.[0];
-    expect(request).toEqual({ conversationId: 'conv-1', query: 'notes' });
-    expect(request).not.toHaveProperty('limit');
-    expect(request).not.toHaveProperty('offset');
+    expect(request).toEqual({ conversationId: 'conv-1', query: 'notes', limit: null, offset: null });
   });
 });

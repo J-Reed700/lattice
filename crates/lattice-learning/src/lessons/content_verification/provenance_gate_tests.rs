@@ -826,9 +826,9 @@ impl LLMPort for SecondUnitFails {
 #[tokio::test]
 async fn a_unit_profiled_before_another_unit_fails_keeps_its_profiles() -> Result<()> {
     let pool = crate::test_support::pool().await?;
+    let db = Database::new(pool.clone());
     let mut judgements =
-        context::Judgements::cached(Database::from(pool.clone()), "program", "profile-model")
-            .await?;
+        context::Judgements::cached(db.clone(), "program", "profile-model").await?;
     let claims = [
         (0, "The first unit states one claim."),
         (1, "The second unit states another claim."),
@@ -963,18 +963,19 @@ impl LLMPort for Judges {
 /// web capture gives it.
 async fn seed_version(
     pool: &sqlx::SqlitePool,
+    db: &Database,
     program_id: &str,
     id: &str,
     url: &str,
 ) -> Result<()> {
-    let db = |error: sqlx::Error| AppError::Database(error.to_string());
+    let failed = |error: sqlx::Error| AppError::Database(error.to_string());
     let text = format!("{id} states the fact.");
     sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at,added_by) VALUES(?,?,'pasted','seed',NULL,'fixed',?,NULL,0,1,1,'user')")
         .bind(id).bind(program_id).bind(id)
-        .execute(pool).await.map_err(db)?;
+        .execute(pool).await.map_err(failed)?;
     sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES(?,?,?,1,'Seed',?,'',?,4,0,'test',1)")
         .bind(id).bind(program_id).bind(id).bind(&text).bind(id)
-        .execute(pool).await.map_err(db)?;
+        .execute(pool).await.map_err(failed)?;
     let origin = lattice_core::domain::provenance::Origin::of_url(url)
         .map_err(|error| AppError::InternalError(format!("{error:?}")))?;
     let signals = serde_json::from_value(serde_json::json!({
@@ -984,7 +985,7 @@ async fn seed_version(
         "dates": { "acquired_at": 1_760_000_000 },
         "extraction_version": lattice_core::domain::provenance::PAGE_SIGNALS_VERSION,
     }))?;
-    crate::references::trust::SqliteSourceTrustStore::new(pool.clone())
+    crate::references::trust::SqliteSourceTrustStore::new(db.clone())
         .save_provenance(&lattice_core::domain::provenance::ProvenanceRecord {
             source_version_id: id.into(),
             program_id: program_id.into(),
@@ -1020,14 +1021,15 @@ async fn weighed_by(
     claims: &[(usize, &str)],
 ) -> Result<Judges> {
     let pool = crate::test_support::pool().await?;
+    let db = Database::new(pool.clone());
     let mut program = crate::test_support::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
-    crate::repository::LearningRepository::new(pool.clone())
+    crate::repository::LearningRepository::new(db.clone())
         .create(&program)
         .await?;
     let program_id = program.summary.id;
     for (id, url) in versions {
-        seed_version(&pool, &program_id, id, url).await?;
+        seed_version(&pool, &db, &program_id, id, url).await?;
     }
     let mut results: Vec<CheckedClaim> = claims
         .iter()
@@ -1043,12 +1045,9 @@ async fn weighed_by(
             (ordinal, statement, claim, false)
         })
         .collect();
-    context::with_trust(
-        Database::from(pool.clone()),
-        program_id,
-        "Topic".into(),
-        async { weigh(&model, &mut results, &HashSet::new()).await },
-    )
+    context::with_trust(db.clone(), program_id, "Topic".into(), async {
+        weigh(&model, &mut results, &HashSet::new()).await
+    })
     .await?;
     assert!(results.iter().all(|(_, _, claim, _)| claim.trust.is_some()));
     Ok(model)

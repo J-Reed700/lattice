@@ -123,13 +123,13 @@ type Scope<'a> = (&'a LearningCurriculumRepository, &'a str, &'a str);
 /// A lesson of one section whose statement waited for research when the user
 /// gave a hint on it: the claim is the user's now, and holds the hint. Gives
 /// the lesson.
-async fn hinted(pool: &sqlx::SqlitePool, scope: Scope<'_>, statement: &str) -> Result<String> {
-    hinted_in(pool, scope, lesson_of(&section(statement)), statement).await
+async fn hinted(db: &Database, scope: Scope<'_>, statement: &str) -> Result<String> {
+    hinted_in(db, scope, lesson_of(&section(statement)), statement).await
 }
 
 /// [`hinted`] in `lesson`, whose first section states `statement`.
 async fn hinted_in(
-    pool: &sqlx::SqlitePool,
+    db: &Database,
     (repo, job, lesson_id): Scope<'_>,
     lesson: Value,
     statement: &str,
@@ -139,7 +139,7 @@ async fn hinted_in(
         .unwrap_or_default()
         .to_owned();
     let raw = lesson.to_string();
-    lesson_drafts::run(&Database::from(pool.clone()), repo, job, lesson_id, async {
+    lesson_drafts::run(db, repo, job, lesson_id, async {
         lesson_drafts::resume(INPUT.into()).await?;
         lesson_drafts::save(&raw).await?;
         let mut ledger = open().await?;
@@ -157,12 +157,12 @@ async fn hinted_in(
         };
         let check = local_check(failed, "No source says so.", vec![]);
         ledger.append(&id, ClaimEvent::Checked(check)).await?;
-        let revision = ClaimReviewRepository::new(pool.clone())
+        let revision = ClaimReviewRepository::new(db.clone())
             .load(lesson_id)
             .await?
             .revision
             .0;
-        ClaimReviewService::new(Database::from(pool.clone()))
+        ClaimReviewService::new(db.clone())
             .resolve(
                 lesson_id,
                 &id.0,
@@ -180,14 +180,14 @@ async fn hinted_in(
 /// has since lost, and which the user gave a hint on: the claim is the user's,
 /// and its latest check passed. Gives the lesson.
 async fn reopened_and_hinted(
-    pool: &sqlx::SqlitePool,
+    db: &Database,
     (repo, job, lesson_id): Scope<'_>,
     statement: &str,
 ) -> Result<String> {
     const LOST: &str = "a-lost-source";
     let body = section(statement);
     let raw = lesson_of(&body).to_string();
-    lesson_drafts::run(&Database::from(pool.clone()), repo, job, lesson_id, async {
+    lesson_drafts::run(db, repo, job, lesson_id, async {
         lesson_drafts::resume(INPUT.into()).await?;
         lesson_drafts::save(&raw).await?;
         let mut ledger = open().await?;
@@ -211,12 +211,12 @@ async fn reopened_and_hinted(
             cause: ReopenCause::SourceDeleted(LOST.into()),
         };
         ledger.append(&id, reopened).await?;
-        let revision = ClaimReviewRepository::new(pool.clone())
+        let revision = ClaimReviewRepository::new(db.clone())
             .load(lesson_id)
             .await?
             .revision
             .0;
-        ClaimReviewService::new(Database::from(pool.clone()))
+        ClaimReviewService::new(db.clone())
             .resolve(
                 lesson_id,
                 &id.0,
@@ -233,24 +233,24 @@ async fn reopened_and_hinted(
 /// One run of the loop over the lesson, with research on the page the fixture
 /// serves. The lesson is resumed when `first` is none.
 async fn resumed(
-    pool: &sqlx::SqlitePool,
+    db: &Database,
     scope: Scope<'_>,
     model: &Searching,
     first: Option<String>,
 ) -> Result<Result<(String, LessonVerificationReport)>> {
-    resumed_over(pool, scope, model, first, &[source()]).await
+    resumed_over(db, scope, model, first, &[source()]).await
 }
 
 /// [`resumed`] over the course `sources`.
 async fn resumed_over(
-    pool: &sqlx::SqlitePool,
+    db: &Database,
     (repo, job, lesson_id): Scope<'_>,
     model: &Searching,
     first: Option<String>,
     sources: &[LearningSourceDto],
 ) -> Result<Result<(String, LessonVerificationReport)>> {
     let program_id = repo.job(job).await?.program_id;
-    let database = Database::from(pool.clone());
+    let database = db.clone();
     Ok(research::run(
         database.clone(),
         program_id,
@@ -262,8 +262,8 @@ async fn resumed_over(
 }
 
 /// The lesson's one claim as the store holds it.
-async fn held(pool: &sqlx::SqlitePool, lesson_id: &str) -> Result<ClaimLedgerEntry> {
-    let ledger = ClaimReviewRepository::new(pool.clone())
+async fn held(db: &Database, lesson_id: &str) -> Result<ClaimLedgerEntry> {
+    let ledger = ClaimReviewRepository::new(db.clone())
         .load(lesson_id)
         .await?;
     let [entry] = ledger.claims.as_slice() else {
@@ -287,17 +287,18 @@ fn after_the_hint(entry: &ClaimLedgerEntry) -> Vec<&'static str> {
 async fn a_hint_the_user_gave_is_searched_and_a_page_that_states_the_claim_verifies_it_with_no_step_recorded(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     let scope = (&repo, job.as_str(), lesson_id.as_str());
     let model = Searching::new(&[CLAIM]);
     model.plans(Some(one_search()));
-    let raw = hinted(&pool, scope, CLAIM).await?;
-    let before = held(&pool, &lesson_id).await?;
+    let raw = hinted(&db, scope, CLAIM).await?;
+    let before = held(&db, &lesson_id).await?;
     assert!(matches!(before.state(), ClaimState::Queued { .. }));
 
-    resumed(&pool, scope, &model, Some(raw)).await??;
+    resumed(&db, scope, &model, Some(raw)).await??;
 
-    let entry = held(&pool, &lesson_id).await?;
+    let entry = held(&db, &lesson_id).await?;
     assert!(
         matches!(entry.state(), ClaimState::ResolvedByEvidence { .. }),
         "{:?}",
@@ -330,19 +331,20 @@ async fn a_hint_the_user_gave_is_searched_and_a_page_that_states_the_claim_verif
 async fn a_hint_on_a_claim_whose_latest_check_passed_is_still_searched_and_the_page_that_states_it_verifies_it(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     let scope = (&repo, job.as_str(), lesson_id.as_str());
     let model = Searching::new(&[CLAIM]);
     model.plans(Some(one_search()));
-    let raw = reopened_and_hinted(&pool, scope, CLAIM).await?;
+    let raw = reopened_and_hinted(&db, scope, CLAIM).await?;
     assert!(matches!(
-        held(&pool, &lesson_id).await?.state(),
+        held(&db, &lesson_id).await?.state(),
         ClaimState::Reopened { .. }
     ));
 
-    let finished = resumed(&pool, scope, &model, Some(raw)).await?;
+    let finished = resumed(&db, scope, &model, Some(raw)).await?;
 
-    let entry = held(&pool, &lesson_id).await?;
+    let entry = held(&db, &lesson_id).await?;
     let queries = entry
         .events()
         .iter()
@@ -370,14 +372,15 @@ async fn a_hint_on_a_claim_whose_latest_check_passed_is_still_searched_and_the_p
 async fn a_hint_whose_page_does_not_state_the_claim_leaves_it_the_users_with_the_readings_reason(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     let scope = (&repo, job.as_str(), lesson_id.as_str());
     let model = Searching::new(&[UNSTATED]);
     model.plans(Some(one_search()));
-    let raw = hinted(&pool, scope, UNSTATED).await?;
-    let before = held(&pool, &lesson_id).await?;
+    let raw = hinted(&db, scope, UNSTATED).await?;
+    let before = held(&db, &lesson_id).await?;
 
-    let finished = resumed(&pool, scope, &model, Some(raw)).await?;
+    let finished = resumed(&db, scope, &model, Some(raw)).await?;
 
     // The machine has done all it will do and the claim is still the user's,
     // so the lesson publishes with its statement not verified, the reason
@@ -399,7 +402,7 @@ async fn a_hint_whose_page_does_not_state_the_claim_leaves_it_the_users_with_the
         "{:?}",
         report.findings[0].resolution
     );
-    let entry = held(&pool, &lesson_id).await?;
+    let entry = held(&db, &lesson_id).await?;
     assert!(
         matches!(
             entry.state(),
@@ -442,16 +445,17 @@ async fn a_hint_whose_page_does_not_state_the_claim_leaves_it_the_users_with_the
 async fn a_hint_whose_round_saved_nothing_is_answered_by_its_research_alone_and_nothing_is_read(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     let scope = (&repo, job.as_str(), lesson_id.as_str());
     let model = Searching::new(&[CLAIM]);
     // The search runs, and the selector finds no result worth saving.
     model.plans(Some(one_search()));
     model.selects(json!({"decisions":[]}));
-    let raw = hinted(&pool, scope, CLAIM).await?;
-    let before = held(&pool, &lesson_id).await?;
+    let raw = hinted(&db, scope, CLAIM).await?;
+    let before = held(&db, &lesson_id).await?;
 
-    let finished = resumed(&pool, scope, &model, Some(raw)).await?;
+    let finished = resumed(&db, scope, &model, Some(raw)).await?;
 
     // Nothing was saved and nothing is left for the machine, so the lesson
     // publishes with the statement not verified, the reason `unchecked`
@@ -473,7 +477,7 @@ async fn a_hint_whose_round_saved_nothing_is_answered_by_its_research_alone_and_
         "{:?}",
         report.findings[0].resolution
     );
-    let entry = held(&pool, &lesson_id).await?;
+    let entry = held(&db, &lesson_id).await?;
     assert_eq!(
         after_the_hint(&entry),
         ["researched", "published_unverified"]
@@ -497,17 +501,18 @@ async fn a_hint_whose_round_saved_nothing_is_answered_by_its_research_alone_and_
 #[tokio::test]
 async fn a_hint_whose_round_reached_nothing_is_tried_again_by_the_next_run() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     let scope = (&repo, job.as_str(), lesson_id.as_str());
     // The planner has no answer: the round reaches nothing.
     let model = Searching::new(&[CLAIM]);
-    let raw = hinted(&pool, scope, CLAIM).await?;
-    let before = held(&pool, &lesson_id).await?;
+    let raw = hinted(&db, scope, CLAIM).await?;
+    let before = held(&db, &lesson_id).await?;
 
-    let first = resumed(&pool, scope, &model, Some(raw)).await?;
+    let first = resumed(&db, scope, &model, Some(raw)).await?;
 
     assert!(first.is_err(), "the claim still waits for the user");
-    let entry = held(&pool, &lesson_id).await?;
+    let entry = held(&db, &lesson_id).await?;
     assert!(
         after_the_hint(&entry).is_empty(),
         "a round that reached nothing records nothing: {:?}",
@@ -517,9 +522,9 @@ async fn a_hint_whose_round_reached_nothing_is_tried_again_by_the_next_run() -> 
 
     // The next run's planner answers, and the hint is searched.
     model.plans(Some(one_search()));
-    resumed(&pool, scope, &model, None).await??;
+    resumed(&db, scope, &model, None).await??;
 
-    let entry = held(&pool, &lesson_id).await?;
+    let entry = held(&db, &lesson_id).await?;
     assert!(
         matches!(entry.state(), ClaimState::ResolvedByEvidence { .. }),
         "{:?}",
@@ -533,15 +538,16 @@ async fn a_hint_whose_round_reached_nothing_is_tried_again_by_the_next_run() -> 
 async fn a_hint_whose_page_verifies_the_claim_on_a_source_its_section_does_not_cite_leaves_the_published_section_citing_that_source(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     let scope = (&repo, job.as_str(), lesson_id.as_str());
     let model = Searching::new(&[CLAIM]);
     model.plans(Some(one_search()));
     // The section cites a page of the course; the hint finds another. The
     // course is one of the program's sources, as a preparation job reads it.
     let program_id = repo.job(&job).await?.program_id;
-    install_source(&pool, &program_id, &source().excerpt).await?;
-    let programs = crate::repository::LearningRepository::new(pool.clone());
+    install_source(&db, &program_id, &source().excerpt).await?;
+    let programs = crate::repository::LearningRepository::new(db.clone());
     let course: Vec<LearningSourceDto> = programs
         .verification_sources(&program_id)
         .await?
@@ -552,9 +558,9 @@ async fn a_hint_whose_page_verifies_the_claim_on_a_source_its_section_does_not_c
     let mut lesson = lesson_of(&section(CLAIM));
     lesson["blocks"][0]["sourceIndex"] = json!(0);
     lesson["blocks"][0]["quote"] = json!(GOOD);
-    let raw = hinted_in(&pool, scope, lesson, CLAIM).await?;
+    let raw = hinted_in(&db, scope, lesson, CLAIM).await?;
 
-    let (published, _) = resumed_over(&pool, scope, &model, Some(raw), &course).await??;
+    let (published, _) = resumed_over(&db, scope, &model, Some(raw), &course).await??;
 
     let published: Value = serde_json::from_str(&published)?;
     let block = &published["blocks"][0];

@@ -1,5 +1,5 @@
 //! The persistent half of the owner cache: `sourcing_owner_cache`.
-use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Database;
 use sqlx::Row;
 
 pub(super) struct CachedOwnerRow {
@@ -9,16 +9,17 @@ pub(super) struct CachedOwnerRow {
 }
 
 pub(super) async fn find(
-    pool: &impl DriverPool,
+    db: &Database,
     cache_key: &str,
 ) -> Result<Option<CachedOwnerRow>, sqlx::Error> {
-    let pool = pool.sqlx_pool();
+    let mut read = db.begin_read().await?;
     let row = sqlx::query(
         "SELECT origins_json, resolved_by, updated_at FROM sourcing_owner_cache WHERE cache_key = ?",
     )
     .bind(cache_key)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *read)
     .await?;
+    read.commit().await?;
     Ok(row.map(|row| CachedOwnerRow {
         origins_json: row.get("origins_json"),
         resolved_by: row.get("resolved_by"),
@@ -27,7 +28,7 @@ pub(super) async fn find(
 }
 
 pub(super) async fn upsert(
-    pool: &impl DriverPool,
+    db: &Database,
     cache_key: &str,
     subject_name: &str,
     subject_kind: &str,
@@ -35,7 +36,7 @@ pub(super) async fn upsert(
     resolved_by: &str,
     updated_at: i64,
 ) -> Result<(), sqlx::Error> {
-    let pool = pool.sqlx_pool();
+    let mut tx = db.begin_write().await?;
     sqlx::query(
         r#"INSERT INTO sourcing_owner_cache
            (cache_key, subject_name, subject_kind, origins_json, resolved_by, updated_at)
@@ -51,7 +52,8 @@ pub(super) async fn upsert(
     .bind(origins_json)
     .bind(resolved_by)
     .bind(updated_at)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(())
 }

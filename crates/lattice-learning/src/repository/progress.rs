@@ -1,10 +1,9 @@
 //! Accepting programs and recording prepared and completed lessons.
 use super::*;
-use lattice_core::shared::persistence::Transactions;
 
 impl LearningRepository {
     pub async fn accept(&self, req: &AcceptLearningProgramRequestDto) -> Result<()> {
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_outline_drafts WHERE program_id=? AND json_extract(state_json,'$.review.status') IS NOT 'passed')").bind(&req.program_id).fetch_one(&mut *tx).await?;
         if pending {
             return Err(AppError::InvalidInput(
@@ -27,7 +26,7 @@ impl LearningRepository {
         expected_revision: i64,
         prepared: &PreparedLearningLesson,
     ) -> Result<()> {
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let row =
             sqlx::query("SELECT preparation FROM learning_lessons WHERE id=? AND program_id=?")
                 .bind(lesson_id)
@@ -83,7 +82,7 @@ impl LearningRepository {
     }
 
     pub async fn complete(&self, req: &CompleteLearningLessonRequestDto) -> Result<()> {
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let changed=sqlx::query("UPDATE learning_programs SET revision=revision+1 WHERE id=? AND revision=? AND status='active'").bind(&req.program_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
         if changed.rows_affected() != 1 {
             return Err(AppError::Conflict(

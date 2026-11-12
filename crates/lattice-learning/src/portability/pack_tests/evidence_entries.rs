@@ -9,18 +9,16 @@ use crate::{
     tests::{fixture, pool},
 };
 use lattice_core::shared::error::Result;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 
-async fn course(pool: &SqlitePool) -> Result<String> {
+async fn course(db: &Database) -> Result<String> {
     let program = fixture();
-    LearningRepository::new(pool.clone())
-        .create(&program)
-        .await?;
+    LearningRepository::new(db.clone()).create(&program).await?;
     Ok(program.summary.id)
 }
 
-async fn export(pool: &SqlitePool, dir: &std::path::Path, program_id: &str) -> Result<String> {
-    let workspace = packs(pool, dir).export(&move_request(program_id)).await?;
+async fn export(db: &Database, dir: &std::path::Path, program_id: &str) -> Result<String> {
+    let workspace = packs(db, dir).export(&move_request(program_id)).await?;
     Ok(workspace.exports[0].destination_path.clone())
 }
 
@@ -46,13 +44,14 @@ async fn merge_into(packs: &LearningPackRepository, path: &str) -> Result<()> {
 #[tokio::test]
 async fn a_multi_megabyte_evidence_table_round_trips_in_its_own_entry() -> Result<()> {
     let home = pool().await?;
-    let program_id = course(&home).await?;
+    let home_db = Database::new(home.clone());
+    let program_id = course(&home_db).await?;
     let large = serde_json::to_string(&"x".repeat(9 * 1024 * 1024))?;
     let operation_id = super::id();
     sqlx::query("INSERT INTO learning_operations(operation_id,program_id,scope,kind,subject_id,payload_hash,result_json,created_at) VALUES(?,?,'curriculum','long_history',NULL,'large-hash',?,1)")
         .bind(&operation_id).bind(&program_id).bind(&large).execute(&home).await?;
     let home_dir = tempfile::tempdir()?;
-    let path = export(&home, home_dir.path(), &program_id).await?;
+    let path = export(&home_db, home_dir.path(), &program_id).await?;
     let decoded = decode_learning_pack(&tokio::fs::read(&path).await?)?;
     let table = &decoded.entries["evidence/tables/learning_operations.json"];
     assert!(table.len() > 8 * 1024 * 1024);
@@ -61,8 +60,9 @@ async fn a_multi_megabyte_evidence_table_round_trips_in_its_own_entry() -> Resul
         .contains_key("evidence/learning-aggregate.json"));
 
     let fresh = pool().await?;
+    let fresh_db = Database::new(fresh.clone());
     let fresh_dir = tempfile::tempdir()?;
-    merge_into(&packs(&fresh, fresh_dir.path()), &path).await?;
+    merge_into(&packs(&fresh_db, fresh_dir.path()), &path).await?;
     let restored: String =
         sqlx::query_scalar("SELECT result_json FROM learning_operations WHERE operation_id=?")
             .bind(&operation_id)
@@ -75,9 +75,10 @@ async fn a_multi_megabyte_evidence_table_round_trips_in_its_own_entry() -> Resul
 #[tokio::test]
 async fn a_missing_or_extra_evidence_table_is_rejected() -> Result<()> {
     let home = pool().await?;
-    let program_id = course(&home).await?;
+    let home_db = Database::new(home.clone());
+    let program_id = course(&home_db).await?;
     let home_dir = tempfile::tempdir()?;
-    let path = export(&home, home_dir.path(), &program_id).await?;
+    let path = export(&home_db, home_dir.path(), &program_id).await?;
     let decoded = decode_learning_pack(&tokio::fs::read(&path).await?)?;
     let tables = decoded
         .entries
@@ -99,8 +100,9 @@ async fn a_missing_or_extra_evidence_table_is_rejected() -> Result<()> {
         })
     })?;
     let fresh = pool().await?;
+    let fresh_db = Database::new(fresh.clone());
     let fresh_dir = tempfile::tempdir()?;
-    let fresh_packs = packs(&fresh, fresh_dir.path());
+    let fresh_packs = packs(&fresh_db, fresh_dir.path());
     for (name, bytes, reason) in [
         ("missing", missing, "missing study_reviews"),
         ("extra", extra, "unexpected table"),
@@ -116,7 +118,7 @@ async fn a_missing_or_extra_evidence_table_is_rejected() -> Result<()> {
             .expect_err("the evidence table set is exact");
         assert!(error.to_string().contains(reason), "{name}: {error}");
     }
-    assert!(LearningRepository::new(fresh.clone())
+    assert!(LearningRepository::new(fresh_db.clone())
         .list()
         .await?
         .is_empty());
@@ -126,7 +128,8 @@ async fn a_missing_or_extra_evidence_table_is_rejected() -> Result<()> {
 #[tokio::test]
 async fn two_canvases_travel_as_two_entries() -> Result<()> {
     let home = pool().await?;
-    let program_id = course(&home).await?;
+    let home_db = Database::new(home.clone());
+    let program_id = course(&home_db).await?;
     for (canvas, title) in [("canvas-one", "Sketch"), ("canvas-two", "Diagram")] {
         let canvas_id = format!("{program_id}-{canvas}");
         sqlx::query("INSERT INTO learning_canvases(id,program_id,lesson_id,title,description,scene_json,element_count,revision,created_at,updated_at) VALUES(?,?,NULL,?,'A drawing','{\"elements\":[1]}',1,2,10,11)")
@@ -136,7 +139,7 @@ async fn two_canvases_travel_as_two_entries() -> Result<()> {
             .execute(&home).await?;
     }
     let home_dir = tempfile::tempdir()?;
-    let path = export(&home, home_dir.path(), &program_id).await?;
+    let path = export(&home_db, home_dir.path(), &program_id).await?;
     let decoded = decode_learning_pack(&tokio::fs::read(&path).await?)?;
     let canvases: Vec<&str> = decoded
         .entries
@@ -154,8 +157,9 @@ async fn two_canvases_travel_as_two_entries() -> Result<()> {
     assert!(!decoded.entries.contains_key("program/canvases.json"));
 
     let fresh = pool().await?;
+    let fresh_db = Database::new(fresh.clone());
     let fresh_dir = tempfile::tempdir()?;
-    merge_into(&packs(&fresh, fresh_dir.path()), &path).await?;
+    merge_into(&packs(&fresh_db, fresh_dir.path()), &path).await?;
     let restored: Vec<(String, String, String, i64)> = sqlx::query_as("SELECT c.id,c.title,s.id,c.revision FROM learning_canvases c JOIN learning_canvas_snapshots s ON s.canvas_id=c.id WHERE c.program_id=? ORDER BY c.id")
         .bind(&program_id).fetch_all(&fresh).await?;
     assert_eq!(

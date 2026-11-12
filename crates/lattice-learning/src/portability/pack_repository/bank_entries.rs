@@ -23,6 +23,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::WriteTx;
 use serde_json::Value;
 use sqlx::SqliteConnection;
 use std::collections::{HashMap, HashSet};
@@ -265,16 +266,12 @@ impl SectionRows for BankTableRows {
         }
         Ok(())
     }
-    async fn insert(
-        &self,
-        connection: &mut SqliteConnection,
-        scope: &ImportScope<'_>,
-    ) -> Result<()> {
+    async fn insert(&self, tx: &mut WriteTx, scope: &ImportScope<'_>) -> Result<()> {
         let program_id = &scope.program.summary.id;
         for (table, spec) in decode_bank(scope.pack)?.iter().zip(BANK_TABLES) {
-            for mut object in checked_rows(connection, spec, table).await? {
+            for mut object in checked_rows(tx, spec, table).await? {
                 rewrite(&mut object, program_id, scope.ids);
-                insert_row(connection, "INSERT", spec.table, &table.columns, &object).await?;
+                insert_row(tx, "INSERT", spec.table, &table.columns, &object).await?;
             }
         }
         Ok(())

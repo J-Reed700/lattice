@@ -1,6 +1,5 @@
 //! Saving, deduplicating and reviewing versioned recall cards.
 use super::*;
-use lattice_core::shared::persistence::Transactions;
 
 impl LearningRecallRepository {
     pub async fn save_card(
@@ -26,7 +25,7 @@ impl LearningRecallRepository {
             return Err(invalid("Card change reason must not be empty."));
         }
         let hash = payload_hash(req)?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &req.program_id).await?;
         let operation = recall_operation(&req.operation_id, &req.program_id, "save_card", &hash);
         if let Some(card_id) = operation.replay::<String>(&mut tx).await? {
@@ -199,7 +198,7 @@ impl LearningRecallRepository {
         validate_uuid(&req.program_id, "program")?;
         validate_uuid(&req.suggestion_id, "duplicate suggestion")?;
         let hash = payload_hash(req)?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &req.program_id).await?;
         let operation = recall_operation(
             &req.operation_id,
@@ -257,7 +256,7 @@ impl LearningRecallRepository {
             req.selected_option,
             req.expected_review_count,
         ))?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &req.program_id).await?;
         let operation = recall_operation(&req.review_id, &req.program_id, "review", &hash);
         if operation.seen(&mut tx).await? {
@@ -354,7 +353,7 @@ impl LearningRecallRepository {
 
     async fn suggest_duplicates(
         &self,
-        tx: &mut SqliteConnection,
+        tx: &mut WriteTx,
         program_id: &str,
         card_id: &str,
         prompt: &str,
@@ -364,7 +363,7 @@ impl LearningRecallRepository {
         let rows = sqlx::query("SELECT card_id,prompt_json FROM learning_recall_card_profiles WHERE program_id=? AND card_id<>?")
             .bind(program_id)
             .bind(card_id)
-            .fetch_all(&mut *tx)
+            .fetch_all(&mut **tx)
             .await
             .map_err(db)?;
         for row in rows {
@@ -386,7 +385,7 @@ impl LearningRecallRepository {
                 .bind(program_id)
                 .bind(first)
                 .bind(second)
-                .fetch_optional(&mut *tx)
+                .fetch_optional(&mut **tx)
                 .await
                 .map_err(db)?;
             if exists.is_some() {
@@ -400,7 +399,7 @@ impl LearningRecallRepository {
                 .bind("similar_prompt")
                 .bind(similarity)
                 .bind(timestamp)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await
                 .map_err(db)?;
         }

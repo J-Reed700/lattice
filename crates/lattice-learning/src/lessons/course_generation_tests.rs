@@ -148,7 +148,8 @@ fn lesson_response() -> serde_json::Value {
 #[tokio::test]
 async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let drafts = crate::outline_draft::DraftRunRegistry::new();
     let draft = service::generate(
         &repo,
@@ -184,7 +185,7 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
     // reference shares the lesson's own words ("controlled experiment"): a
     // full-text match counts whole words of two letters or more, as the
     // library's does, so a lone "a" is no match.
-    crate::content_verification::tests::install_source(&pool, &draft.summary.id, REFERENCE).await?;
+    crate::content_verification::tests::install_source(&db, &draft.summary.id, REFERENCE).await?;
     let mut lesson_candidate = lesson_response();
     for field in ["blocks", "questions"] {
         for item in lesson_candidate[field].as_array_mut().unwrap() {
@@ -236,7 +237,7 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
         .find(|block| block.kind == LearningBlockKind::IndependentPractice)
         .ok_or_else(|| AppError::InvalidState("missing assignment".into()))?;
     let session_id = uuid::Uuid::new_v4().to_string();
-    let practice = LearningPracticeRepository::new(pool.clone());
+    let practice = LearningPracticeRepository::new(db.clone());
     practice
         .start(
             &StartLearningPracticeSessionRequestDto {
@@ -431,7 +432,8 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
     }
 
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let drafts = crate::outline_draft::DraftRunRegistry::new();
     let draft = service::generate(
         &repo,
@@ -452,7 +454,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
     )
     .await?;
     let quote = "A randomized comparison isolates the intervention.";
-    crate::content_verification::tests::install_source(&pool, &draft.summary.id, REFERENCE).await?;
+    crate::content_verification::tests::install_source(&db, &draft.summary.id, REFERENCE).await?;
     let mut program = repo.get(&draft.summary.id).await?;
     program.sources = repo.verification_sources(&draft.summary.id).await?;
     let lesson = &program.modules[0].lessons[0];
@@ -468,7 +470,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
         fail_review: AtomicBool::new(true),
         authored: AtomicUsize::new(0),
     };
-    let jobs = LearningCurriculumRepository::new(pool.clone());
+    let jobs = LearningCurriculumRepository::new(db.clone());
     jobs.plan(&program.summary.id).await?;
     let job = jobs
         .start_job(&StartLearningGenerationJobRequestDto {
@@ -480,12 +482,12 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
             progress_total: 1,
         })
         .await?;
-    JobStore::new(pool.clone()).claim(&job.id).await?;
+    JobStore::new(db.clone()).claim(&job.id).await?;
     let runtimes = crate::embedded_runtime::BuiltinRuntimes::for_tests();
     let first = crate::lesson_progress::run(
-        &JobContext::detached(&JobStore::new(pool.clone()), &job.id).await?,
+        &JobContext::detached(&JobStore::new(db.clone()), &job.id).await?,
         crate::lesson_drafts::run(
-            &Database::from(pool.clone()),
+            &db,
             &jobs,
             &job.id,
             &lesson.id,
@@ -496,7 +498,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
     let error = first.expect_err("missing section reviews must fail");
     assert!(error.to_string().contains("lesson draft is saved"));
     assert_eq!(llm.authored.load(Ordering::Relaxed), 1);
-    JobStore::new(pool.clone())
+    JobStore::new(db.clone())
         .fail(&job.id, "generation_failed", &error.to_string())
         .await?;
     assert!(repo.get(&program.summary.id).await?.modules[0].lessons[0]
@@ -511,12 +513,12 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
             job_id: job.id,
         })
         .await?;
-    JobStore::new(pool.clone()).claim(&retry.id).await?;
+    JobStore::new(db.clone()).claim(&retry.id).await?;
     llm.fail_review.store(false, Ordering::Relaxed);
     let prepared = crate::lesson_progress::run(
-        &JobContext::detached(&JobStore::new(pool.clone()), &retry.id).await?,
+        &JobContext::detached(&JobStore::new(db.clone()), &retry.id).await?,
         crate::lesson_drafts::run(
-            &Database::from(pool.clone()),
+            &db,
             &jobs,
             &retry.id,
             &lesson.id,
@@ -724,7 +726,8 @@ async fn a_question_may_cite_a_reference_verification_saved_for_the_program() ->
     }
 
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let drafts = crate::outline_draft::DraftRunRegistry::new();
     let draft = service::generate(
         &repo,
@@ -744,7 +747,7 @@ async fn a_question_may_cite_a_reference_verification_saved_for_the_program() ->
         },
     )
     .await?;
-    crate::content_verification::tests::install_source(&pool, &draft.summary.id, REFERENCE).await?;
+    crate::content_verification::tests::install_source(&db, &draft.summary.id, REFERENCE).await?;
     let mut program = repo.get(&draft.summary.id).await?;
     program.sources = repo.verification_sources(&draft.summary.id).await?;
     let lesson = &program.modules[0].lessons[0];
@@ -762,7 +765,7 @@ async fn a_question_may_cite_a_reference_verification_saved_for_the_program() ->
     let runtimes = crate::embedded_runtime::BuiltinRuntimes::for_tests();
 
     let prepared = Box::pin(research::run(
-        Database::from(pool.clone()),
+        db.clone(),
         accepted.summary.id.clone(),
         accepted.summary.goal.clone(),
         Some(research_tests::web(false)),
@@ -963,7 +966,8 @@ async fn placement_tasks_keep_keys_private_and_save_answers_with_replay_and_conf
         plan_dto::*,
     };
     let pool = crate::tests::pool().await?;
-    let repository = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repository = LearningRepository::new(db.clone());
     let drafts = crate::outline_draft::DraftRunRegistry::new();
     let draft = service::generate(
         &repository,
@@ -983,7 +987,7 @@ async fn placement_tasks_keep_keys_private_and_save_answers_with_replay_and_conf
         },
     )
     .await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let repo = LearningCurriculumRepository::new(db.clone());
     let plan = repo.plan(&program.summary.id).await?;
     let outcome = plan
         .accepted_revision
@@ -1076,7 +1080,7 @@ async fn depth_is_enforced_and_failed_source_acquisition_cannot_become_a_topic_c
             .len(),
         6
     );
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let mut grounded = request(LearningCourseDepth::Course);
     grounded
         .source_urls
@@ -1286,8 +1290,8 @@ impl LLMPort for DelayedOutlineModel {
 
 #[tokio::test]
 async fn outline_final_review_and_save_survive_the_old_ten_minute_cutoff() -> Result<()> {
-    let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool);
+    let db = Database::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(db);
     let draft = outline(4, 3).0;
     let mut corrected: serde_json::Value = serde_json::from_str(&draft)?;
     corrected["modules"][0]["lessons"][0]["objective"] =
@@ -1377,7 +1381,7 @@ async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_repo
         captured,
         found: false,
     };
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     // Linking keeps the author's exact citation (offered as a candidate) and
     // links nothing else.
     let model = ScriptedModel {
@@ -1474,7 +1478,8 @@ async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_repo
 async fn outline_repair_preserves_completed_module_edits_when_later_call_fails() -> Result<()> {
     use crate::outline_draft::LearningOutlineReviewStatus;
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let candidate: serde_json::Value = serde_json::from_str(&outline(4, 3).0)?;
     let issues = json!({"newFindings":[
         {"path":"/modules/0","kind":"plan","claim":"Comparison objective","reason":"Specify the measurement used in the comparison."},
@@ -1518,7 +1523,7 @@ async fn outline_repair_preserves_completed_module_edits_when_later_call_fails()
         .unwrap()
         .note
         .contains("Completed work is saved"));
-    let reopened = LearningRepository::new(pool.clone())
+    let reopened = LearningRepository::new(db.clone())
         .get(&saved.summary.id)
         .await?;
     assert_eq!(
@@ -1576,7 +1581,8 @@ async fn outline_draft_survives_cancellation_and_resumes_without_redrafting() ->
     }
 
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let entered = std::sync::Arc::new(tokio::sync::Notify::new());
     let model = WaitingModel {
         draft: outline(4, 3).0,
@@ -1608,7 +1614,7 @@ async fn outline_draft_survives_cancellation_and_resumes_without_redrafting() ->
     let saved = repo.list().await?.pop().unwrap();
     assert!(registry.cancel(&id));
     assert!(task.await.unwrap().is_err());
-    let reopened = LearningRepository::new(pool);
+    let reopened = LearningRepository::new(db.clone());
     let saved = reopened.get(&saved.id).await?;
     assert_eq!(
         saved.outline_review.as_ref().unwrap().status,
@@ -1642,7 +1648,7 @@ async fn outline_draft_survives_cancellation_and_resumes_without_redrafting() ->
 async fn outline_automatic_repair_is_bounded_by_attempts_and_repair_starts_them_afresh(
 ) -> Result<()> {
     use crate::outline_draft::LearningOutlineReviewStatus;
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let candidate: serde_json::Value = serde_json::from_str(&outline(4, 3).0)?;
     let raised = json!({"newFindings":[{"path":"/modules/0/lessons/0","kind":"plan","claim":"Design a controlled experiment and explain its limitations.","reason":"Specify the measurement used in the comparison."}]});
     let unresolved = |reason: &str| json!({"verdicts":[{"id":"finding-1","status":"unresolved","reason":reason}],"newFindings":[]});
@@ -1832,7 +1838,8 @@ async fn a_drafts_citation_list_is_gone_before_review_and_verification_read_it()
     }
 
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let drafts = crate::outline_draft::DraftRunRegistry::new();
     let draft = service::generate(
         &repo,
@@ -1853,7 +1860,7 @@ async fn a_drafts_citation_list_is_gone_before_review_and_verification_read_it()
     )
     .await?;
     let quote = "A randomized comparison isolates the intervention.";
-    crate::content_verification::tests::install_source(&pool, &draft.summary.id, REFERENCE).await?;
+    crate::content_verification::tests::install_source(&db, &draft.summary.id, REFERENCE).await?;
     let mut program = repo.get(&draft.summary.id).await?;
     program.sources = repo.verification_sources(&draft.summary.id).await?;
     let lesson = &program.modules[0].lessons[0];
@@ -1875,7 +1882,7 @@ async fn a_drafts_citation_list_is_gone_before_review_and_verification_read_it()
         drafted: Mutex::new(false),
         later: Mutex::new(Vec::new()),
     };
-    let jobs = LearningCurriculumRepository::new(pool.clone());
+    let jobs = LearningCurriculumRepository::new(db.clone());
     jobs.plan(&program.summary.id).await?;
     let job = jobs
         .start_job(&StartLearningGenerationJobRequestDto {
@@ -1887,12 +1894,12 @@ async fn a_drafts_citation_list_is_gone_before_review_and_verification_read_it()
             progress_total: 1,
         })
         .await?;
-    JobStore::new(pool.clone()).claim(&job.id).await?;
+    JobStore::new(db.clone()).claim(&job.id).await?;
     let runtimes = crate::embedded_runtime::BuiltinRuntimes::for_tests();
     let prepared = crate::lesson_progress::run(
-        &JobContext::detached(&JobStore::new(pool.clone()), &job.id).await?,
+        &JobContext::detached(&JobStore::new(db.clone()), &job.id).await?,
         crate::lesson_drafts::run(
-            &Database::from(pool.clone()),
+            &db,
             &jobs,
             &job.id,
             &lesson.id,

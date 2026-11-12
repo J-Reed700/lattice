@@ -2,16 +2,13 @@
 //!
 //! Worker transitions are conditional on the job still running, so a committed
 //! cancellation is never overwritten by a late result. Functions ending in
-//! `_in` take a connection so a feature can commit a job transition together
+//! `_in` take a unit of work so a feature can commit a job transition together
 //! with its own writes.
 use super::attempt::Attempt;
 use super::{Admitted, Backoff, Deferral, JobRecord, JobStatus, NewJob, RecoveryPolicy};
 use crate::shared::error::{AppError, Result};
-use crate::shared::persistence::driver::DriverPool;
-use crate::shared::persistence::{
-    Page, PersistenceError, PersistenceErrorKind, Transactions, WriteTx,
-};
-use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
+use crate::shared::persistence::{Database, Page, PersistenceError, PersistenceErrorKind, WriteTx};
+use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 
 const SUSPENDED: &str = "Saved; resumes when the app opens";
 const RESUMING: &str = "Resuming saved work";
@@ -96,7 +93,7 @@ fn parse(row: &SqliteRow) -> Result<JobRecord> {
 
 /// Appends the job's current progress to its history under `status`.
 async fn record_event(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     id: &str,
     status: JobStatus,
     message: &str,
@@ -107,7 +104,7 @@ async fn record_event(
         .bind(message)
         .bind(stamp)
         .bind(id)
-        .execute(connection)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
     Ok(())
@@ -115,26 +112,19 @@ async fn record_event(
 
 #[derive(Clone)]
 pub struct JobStore {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl JobStore {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
-    }
-
-    async fn immediate(&self) -> Result<WriteTx> {
-        // Reserve the write lock before reading: upgrading a deferred WAL read
-        // transaction can fail at once with SQLITE_BUSY instead of waiting.
-        self.pool.begin_write().await.map_err(db)
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     pub async fn get(&self, id: &str) -> Result<JobRecord> {
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        Self::find_in(&mut connection, id)
-            .await?
-            .ok_or_else(not_found)
+        let mut read = self.db.begin_read().await.map_err(db)?;
+        let job = Self::find_in(&mut read, id).await?;
+        read.commit().await.map_err(db)?;
+        job.ok_or_else(not_found)
     }
 
     pub async fn find_in(connection: &mut SqliteConnection, id: &str) -> Result<Option<JobRecord>> {
@@ -150,8 +140,10 @@ impl JobStore {
 
     /// A subject's jobs of one kind, newest first.
     pub async fn list_for_subject(&self, kind: &str, subject_id: &str) -> Result<Vec<JobRecord>> {
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        Self::list_for_subject_in(&mut connection, kind, subject_id).await
+        let mut read = self.db.begin_read().await.map_err(db)?;
+        let jobs = Self::list_for_subject_in(&mut read, kind, subject_id).await?;
+        read.commit().await.map_err(db)?;
+        Ok(jobs)
     }
 
     pub async fn list_for_subject_in(
@@ -174,14 +166,14 @@ impl JobStore {
 
     /// Pending and running jobs of a kind, oldest first.
     pub async fn live(&self, kind: &str) -> Result<Vec<JobRecord>> {
-        sqlx::query("SELECT * FROM jobs WHERE kind=? AND status IN ('pending','running') ORDER BY created_at,rowid")
+        let mut read = self.db.begin_read().await.map_err(db)?;
+        let rows = sqlx::query("SELECT * FROM jobs WHERE kind=? AND status IN ('pending','running') ORDER BY created_at,rowid")
             .bind(kind)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *read)
             .await
-            .map_err(db)?
-            .iter()
-            .map(parse)
-            .collect()
+            .map_err(db)?;
+        read.commit().await.map_err(db)?;
+        rows.iter().map(parse).collect()
     }
 
     /// Jobs of the given kinds, newest first, leaving out attempts that a
@@ -189,30 +181,30 @@ impl JobStore {
     pub async fn list_latest(&self, kinds: &[&str], page: Page) -> Result<Vec<JobRecord>> {
         let kinds =
             serde_json::to_string(kinds).map_err(|e| AppError::Serialization(e.to_string()))?;
-        sqlx::query("SELECT * FROM jobs WHERE kind IN (SELECT value FROM json_each(?)) AND NOT EXISTS (SELECT 1 FROM jobs retry WHERE retry.retry_of_job_id=jobs.id) ORDER BY created_at DESC,rowid DESC LIMIT ? OFFSET ?")
+        let mut read = self.db.begin_read().await.map_err(db)?;
+        let rows = sqlx::query("SELECT * FROM jobs WHERE kind IN (SELECT value FROM json_each(?)) AND NOT EXISTS (SELECT 1 FROM jobs retry WHERE retry.retry_of_job_id=jobs.id) ORDER BY created_at DESC,rowid DESC LIMIT ? OFFSET ?")
             .bind(kinds)
             .bind(page.sql_limit())
             .bind(page.offset())
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *read)
             .await
-            .map_err(db)?
-            .iter()
-            .map(parse)
-            .collect()
+            .map_err(db)?;
+        read.commit().await.map_err(db)?;
+        rows.iter().map(parse).collect()
     }
 
     pub async fn delete(&self, id: &str) -> Result<()> {
-        let mut tx = self.immediate().await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         Self::delete_in(&mut tx, id).await?;
         tx.commit().await.map_err(db)
     }
 
     /// Deletes a finished job with every earlier attempt it retried, and their
     /// events and checkpoints. A job still pending or running is refused.
-    pub async fn delete_in(connection: &mut SqliteConnection, id: &str) -> Result<()> {
+    pub async fn delete_in(tx: &mut WriteTx, id: &str) -> Result<()> {
         let statuses: Vec<String> = sqlx::query_scalar("WITH RECURSIVE chain(id) AS (SELECT id FROM jobs WHERE id=? UNION SELECT jobs.retry_of_job_id FROM jobs JOIN chain ON jobs.id=chain.id WHERE jobs.retry_of_job_id IS NOT NULL) SELECT status FROM jobs WHERE id IN (SELECT id FROM chain)")
         .bind(id)
-        .fetch_all(&mut *connection)
+        .fetch_all(&mut **tx)
         .await
         .map_err(db)?;
         if statuses.is_empty() {
@@ -226,7 +218,7 @@ impl JobStore {
         }
         sqlx::query("WITH RECURSIVE chain(id) AS (SELECT id FROM jobs WHERE id=? UNION SELECT jobs.retry_of_job_id FROM jobs JOIN chain ON jobs.id=chain.id WHERE jobs.retry_of_job_id IS NOT NULL) DELETE FROM jobs WHERE id IN (SELECT id FROM chain)")
         .bind(id)
-        .execute(connection)
+        .execute(&mut **tx)
         .await
         .map_err(db)?;
         Ok(())
@@ -236,39 +228,39 @@ impl JobStore {
     /// saved before their worker starts, so this also finds work whose process
     /// exited between those steps.
     pub async fn due(&self, kind: &str) -> Result<Vec<JobRecord>> {
-        sqlx::query("SELECT * FROM jobs WHERE kind=? AND status='pending' AND (retry_not_before IS NULL OR retry_not_before<=?) ORDER BY created_at,rowid")
+        let mut read = self.db.begin_read().await.map_err(db)?;
+        let rows = sqlx::query("SELECT * FROM jobs WHERE kind=? AND status='pending' AND (retry_not_before IS NULL OR retry_not_before<=?) ORDER BY created_at,rowid")
             .bind(kind)
             .bind(now())
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *read)
             .await
-            .map_err(db)?
-            .iter()
-            .map(parse)
-            .collect()
+            .map_err(db)?;
+        read.commit().await.map_err(db)?;
+        rows.iter().map(parse).collect()
     }
 
     pub async fn submit(&self, job: &NewJob) -> Result<Admitted> {
-        let mut tx = self.immediate().await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let admitted = Self::submit_in(&mut tx, job).await?;
         tx.commit().await.map_err(db)?;
         Ok(admitted)
     }
 
-    pub async fn submit_in(connection: &mut SqliteConnection, job: &NewJob) -> Result<Admitted> {
-        Self::submit_with_rank_in(connection, job, None).await
+    pub async fn submit_in(tx: &mut WriteTx, job: &NewJob) -> Result<Admitted> {
+        Self::submit_with_rank_in(tx, job, None).await
     }
 
     /// Like [`Self::submit`], for a job of a ranked kind: its model calls are
     /// served in `rank` order, lowest first.
     pub async fn submit_ranked(&self, job: &NewJob, rank: i64) -> Result<Admitted> {
-        let mut tx = self.immediate().await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let admitted = Self::submit_with_rank_in(&mut tx, job, Some(rank)).await?;
         tx.commit().await.map_err(db)?;
         Ok(admitted)
     }
 
     pub async fn submit_with_rank_in(
-        connection: &mut SqliteConnection,
+        tx: &mut WriteTx,
         job: &NewJob,
         rank: Option<i64>,
     ) -> Result<Admitted> {
@@ -279,7 +271,7 @@ impl JobStore {
         }
         if let Some(row) = sqlx::query("SELECT id,kind,payload_hash FROM jobs WHERE operation_id=?")
             .bind(&job.operation_id)
-            .fetch_optional(&mut *connection)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(db)?
         {
@@ -307,25 +299,23 @@ impl JobStore {
             .bind(stamp)
             .bind(stamp)
             .bind(rank)
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
-        record_event(connection, &id, JobStatus::Pending, &job.message, stamp).await?;
+        record_event(tx, &id, JobStatus::Pending, &job.message, stamp).await?;
         Ok(Admitted { id, created: true })
     }
 
     pub async fn cancel(&self, id: &str) -> Result<()> {
-        let mut tx = self.immediate().await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         Self::cancel_in(&mut tx, id).await?;
         tx.commit().await.map_err(db)
     }
 
     /// Pending, running and interrupted jobs can be cancelled. The status is
     /// final once committed: the worker's later transitions are conditional.
-    pub async fn cancel_in(connection: &mut SqliteConnection, id: &str) -> Result<()> {
-        let job = Self::find_in(&mut *connection, id)
-            .await?
-            .ok_or_else(not_found)?;
+    pub async fn cancel_in(tx: &mut WriteTx, id: &str) -> Result<()> {
+        let job = Self::find_in(tx, id).await?.ok_or_else(not_found)?;
         if !matches!(
             job.status,
             JobStatus::Pending | JobStatus::Running | JobStatus::Interrupted
@@ -338,14 +328,14 @@ impl JobStore {
         sqlx::query("UPDATE jobs SET status='cancelled',finished_at=?,result_ref=NULL,error_code=NULL,cause_code=NULL,error_message=NULL,progress_message='Cancelled' WHERE id=?")
             .bind(stamp)
             .bind(id)
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
-        record_event(connection, id, JobStatus::Cancelled, "Cancelled", stamp).await
+        record_event(tx, id, JobStatus::Cancelled, "Cancelled", stamp).await
     }
 
     pub async fn retry(&self, id: &str, operation_id: &str, message: &str) -> Result<Admitted> {
-        let mut tx = self.immediate().await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let admitted = Self::retry_in(&mut tx, id, operation_id, message).await?;
         tx.commit().await.map_err(db)?;
         Ok(admitted)
@@ -356,12 +346,12 @@ impl JobStore {
     /// reused. One job has at most one live attempt: retrying it again returns
     /// that attempt, and only the newest attempt of a chain can be retried.
     pub async fn retry_in(
-        connection: &mut SqliteConnection,
+        tx: &mut WriteTx,
         id: &str,
         operation_id: &str,
         message: &str,
     ) -> Result<Admitted> {
-        Self::attempt_in(connection, id, operation_id, message, Attempt::Retry).await
+        Self::attempt_in(tx, id, operation_id, message, Attempt::Retry).await
     }
 
     /// A new attempt of a completed job whose result handed part of its work
@@ -372,7 +362,7 @@ impl JobStore {
     /// instead of the original request. Whether a completed job may continue
     /// is the caller's rule; failed or stopped jobs are retried instead.
     pub async fn continue_in(
-        connection: &mut SqliteConnection,
+        tx: &mut WriteTx,
         id: &str,
         operation_id: &str,
         message: &str,
@@ -380,7 +370,7 @@ impl JobStore {
         total: u32,
     ) -> Result<Admitted> {
         Self::attempt_in(
-            connection,
+            tx,
             id,
             operation_id,
             message,
@@ -390,7 +380,7 @@ impl JobStore {
     }
 
     async fn attempt_in(
-        connection: &mut SqliteConnection,
+        tx: &mut WriteTx,
         id: &str,
         operation_id: &str,
         message: &str,
@@ -398,7 +388,7 @@ impl JobStore {
     ) -> Result<Admitted> {
         if let Some(row) = sqlx::query("SELECT id,retry_of_job_id FROM jobs WHERE operation_id=?")
             .bind(operation_id)
-            .fetch_optional(&mut *connection)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(db)?
         {
@@ -410,13 +400,11 @@ impl JobStore {
                 created: false,
             });
         }
-        let old = Self::find_in(&mut *connection, id)
-            .await?
-            .ok_or_else(not_found)?;
+        let old = Self::find_in(tx, id).await?.ok_or_else(not_found)?;
         attempt.admits(old.status)?;
         if let Some(child) = sqlx::query("SELECT id,status FROM jobs WHERE retry_of_job_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1")
             .bind(id)
-            .fetch_optional(&mut *connection)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(db)?
         {
@@ -449,16 +437,16 @@ impl JobStore {
             .bind(stamp)
             .bind(stamp)
             .bind(id)
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
         sqlx::query("INSERT INTO job_checkpoints(job_id,key,data_json,updated_at) SELECT ?,key,data_json,updated_at FROM job_checkpoints WHERE job_id=?")
             .bind(&retry)
             .bind(id)
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
-        record_event(connection, &retry, JobStatus::Pending, message, stamp).await?;
+        record_event(tx, &retry, JobStatus::Pending, message, stamp).await?;
         Ok(Admitted {
             id: retry,
             created: true,
@@ -467,7 +455,7 @@ impl JobStore {
 
     /// Moves a due pending job to running. At most one caller wins.
     pub async fn claim(&self, id: &str) -> Result<Option<JobRecord>> {
-        let mut tx = self.immediate().await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let stamp = now();
         let claimed = sqlx::query("UPDATE jobs SET status='running',started_at=?,finished_at=NULL,error_code=NULL,cause_code=NULL,error_message=NULL,retry_not_before=NULL,progress_message='Starting',heartbeat_at=? WHERE id=? AND status='pending' AND (retry_not_before IS NULL OR retry_not_before<=?)")
             .bind(stamp)
@@ -496,7 +484,7 @@ impl JobStore {
         message: &str,
         activity: Option<&serde_json::Value>,
     ) -> Result<bool> {
-        let mut tx = self.immediate().await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let job = Self::find_in(&mut tx, id).await?.ok_or_else(not_found)?;
         if job.status != JobStatus::Running {
             tx.commit().await.map_err(db)?;
@@ -533,16 +521,17 @@ impl JobStore {
     }
 
     pub async fn heartbeat(&self, id: &str) -> Result<bool> {
-        Ok(
-            sqlx::query("UPDATE jobs SET heartbeat_at=? WHERE id=? AND status='running'")
-                .bind(now())
-                .bind(id)
-                .execute(&self.pool)
-                .await
-                .map_err(db)?
-                .rows_affected()
-                == 1,
-        )
+        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let beat = sqlx::query("UPDATE jobs SET heartbeat_at=? WHERE id=? AND status='running'")
+            .bind(now())
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?
+            .rows_affected()
+            == 1;
+        tx.commit().await.map_err(db)?;
+        Ok(beat)
     }
 
     pub async fn staged(&self, id: &str) -> Result<Option<serde_json::Value>> {
@@ -555,7 +544,7 @@ impl JobStore {
     where
         F: FnOnce(Option<serde_json::Value>) -> Result<serde_json::Value> + Send,
     {
-        let mut tx = self.immediate().await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let job = Self::find_in(&mut tx, id).await?.ok_or_else(not_found)?;
         if job.status != JobStatus::Running {
             tx.commit().await.map_err(db)?;
@@ -573,13 +562,15 @@ impl JobStore {
     }
 
     pub async fn checkpoint(&self, id: &str, key: &str) -> Result<Option<serde_json::Value>> {
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let saved: Option<String> =
             sqlx::query_scalar("SELECT data_json FROM job_checkpoints WHERE job_id=? AND key=?")
                 .bind(id)
                 .bind(key)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut *read)
                 .await
                 .map_err(db)?;
+        read.commit().await.map_err(db)?;
         saved.as_deref().map(decode).transpose()
     }
 
@@ -589,13 +580,15 @@ impl JobStore {
         id: &str,
         prefix: &str,
     ) -> Result<Vec<serde_json::Value>> {
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let saved: Vec<String> = sqlx::query_scalar("SELECT data_json FROM job_checkpoints WHERE job_id=? AND substr(key,1,length(?))=? ORDER BY updated_at DESC,key")
             .bind(id)
             .bind(prefix)
             .bind(prefix)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *read)
             .await
             .map_err(db)?;
+        read.commit().await.map_err(db)?;
         saved.iter().map(|value| decode(value)).collect()
     }
 
@@ -605,7 +598,7 @@ impl JobStore {
         key: &str,
         data: &serde_json::Value,
     ) -> Result<bool> {
-        let mut tx = self.immediate().await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let saved = Self::put_checkpoint_in(&mut tx, id, key, data).await?;
         tx.commit().await.map_err(db)?;
         Ok(saved)
@@ -613,7 +606,7 @@ impl JobStore {
 
     /// Saves one checkpoint while the job runs; returns false otherwise.
     pub async fn put_checkpoint_in(
-        connection: &mut SqliteConnection,
+        tx: &mut WriteTx,
         id: &str,
         key: &str,
         data: &serde_json::Value,
@@ -623,7 +616,7 @@ impl JobStore {
             .bind(id)
             .bind(key)
             .bind(&data)
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?;
         Ok(sqlx::query("INSERT INTO job_checkpoints(job_id,key,data_json,updated_at) SELECT id,?,?,? FROM jobs WHERE id=? AND status='running' ON CONFLICT(job_id,key) DO UPDATE SET data_json=excluded.data_json,updated_at=excluded.updated_at")
@@ -631,7 +624,7 @@ impl JobStore {
             .bind(data)
             .bind(now())
             .bind(id)
-            .execute(connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?
             .rows_affected()
@@ -639,7 +632,7 @@ impl JobStore {
     }
 
     pub async fn complete(&self, id: &str, result_ref: &str, message: &str) -> Result<bool> {
-        let mut tx = self.immediate().await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let completed = Self::complete_in(&mut tx, id, result_ref, message).await?;
         tx.commit().await.map_err(db)?;
         Ok(completed)
@@ -647,7 +640,7 @@ impl JobStore {
 
     /// Completes a running job, naming what it produced.
     pub async fn complete_in(
-        connection: &mut SqliteConnection,
+        tx: &mut WriteTx,
         id: &str,
         result_ref: &str,
         message: &str,
@@ -659,13 +652,13 @@ impl JobStore {
             .bind(stamp)
             .bind(stamp)
             .bind(id)
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?
             .rows_affected()
             == 1;
         if completed {
-            record_event(connection, id, JobStatus::Completed, message, stamp).await?;
+            record_event(tx, id, JobStatus::Completed, message, stamp).await?;
         }
         Ok(completed)
     }
@@ -682,14 +675,14 @@ impl JobStore {
         message: &str,
         cause_code: Option<&str>,
     ) -> Result<bool> {
-        let mut tx = self.immediate().await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let failed = Self::fail_in(&mut tx, id, code, message, cause_code).await?;
         tx.commit().await.map_err(db)?;
         Ok(failed)
     }
 
     async fn fail_in(
-        connection: &mut SqliteConnection,
+        tx: &mut WriteTx,
         id: &str,
         code: &str,
         message: &str,
@@ -703,13 +696,13 @@ impl JobStore {
             .bind(cause_code)
             .bind(message.chars().take(ERROR_LIMIT).collect::<String>())
             .bind(id)
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?
             .rows_affected()
             == 1;
         if failed {
-            record_event(connection, id, JobStatus::Failed, "Failed", stamp).await?;
+            record_event(tx, id, JobStatus::Failed, "Failed", stamp).await?;
         }
         Ok(failed)
     }
@@ -728,7 +721,7 @@ impl JobStore {
         backoff: Backoff,
         cause_code: Option<&str>,
     ) -> Result<bool> {
-        let mut tx = self.immediate().await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let job = Self::find_in(&mut tx, id).await?.ok_or_else(not_found)?;
         if job.status != JobStatus::Running {
             tx.commit().await.map_err(db)?;
@@ -763,7 +756,7 @@ impl JobStore {
     /// Returns a running job to pending, recording why, so it runs again at
     /// its next delivery.
     pub(super) async fn requeue(&self, id: &str, message: &str) -> Result<bool> {
-        let mut tx = self.immediate().await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let requeued = Self::suspend_in(&mut tx, id, message).await?;
         tx.commit().await.map_err(db)?;
         Ok(requeued)
@@ -771,55 +764,51 @@ impl JobStore {
 
     /// Returns a running job to pending so it resumes at the next start.
     pub async fn suspend(&self, id: &str) -> Result<bool> {
-        let mut tx = self.immediate().await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let suspended = Self::suspend_in(&mut tx, id, SUSPENDED).await?;
         tx.commit().await.map_err(db)?;
         Ok(suspended)
     }
 
-    async fn suspend_in(
-        connection: &mut SqliteConnection,
-        id: &str,
-        message: &str,
-    ) -> Result<bool> {
+    async fn suspend_in(tx: &mut WriteTx, id: &str, message: &str) -> Result<bool> {
         let stamp = now();
         let suspended = sqlx::query("UPDATE jobs SET status='pending',finished_at=NULL,error_code=NULL,cause_code=NULL,error_message=NULL,progress_message=?,heartbeat_at=?,unsaved_starts=0 WHERE id=? AND status='running'")
             .bind(message)
             .bind(stamp)
             .bind(id)
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?
             .rows_affected()
             == 1;
         if suspended {
-            record_event(connection, id, JobStatus::Pending, message, stamp).await?;
+            record_event(tx, id, JobStatus::Pending, message, stamp).await?;
         }
         Ok(suspended)
     }
 
     /// Ends a running job whose work cannot resume. It can be retried.
     pub async fn interrupt(&self, id: &str) -> Result<bool> {
-        let mut tx = self.immediate().await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let interrupted = Self::interrupt_in(&mut tx, id).await?;
         tx.commit().await.map_err(db)?;
         Ok(interrupted)
     }
 
-    async fn interrupt_in(connection: &mut SqliteConnection, id: &str) -> Result<bool> {
+    async fn interrupt_in(tx: &mut WriteTx, id: &str) -> Result<bool> {
         let stamp = now();
         let interrupted = sqlx::query("UPDATE jobs SET status='interrupted',finished_at=?,heartbeat_at=?,result_ref=NULL,error_code='interrupted',cause_code=NULL,error_message=?,progress_message='Interrupted' WHERE id=? AND status='running'")
             .bind(stamp)
             .bind(stamp)
             .bind(STOPPED_BY_RESTART)
             .bind(id)
-            .execute(&mut *connection)
+            .execute(&mut **tx)
             .await
             .map_err(db)?
             .rows_affected()
             == 1;
         if interrupted {
-            record_event(connection, id, JobStatus::Interrupted, "Interrupted", stamp).await?;
+            record_event(tx, id, JobStatus::Interrupted, "Interrupted", stamp).await?;
         }
         Ok(interrupted)
     }
@@ -837,7 +826,7 @@ impl JobStore {
         kind: &str,
         policy: RecoveryPolicy,
     ) -> Result<Recovered> {
-        let mut tx = self.immediate().await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let mut stopped = Vec::new();
         let running: Vec<(String, i64, i64, i64)> = sqlx::query_as(
             "SELECT id,saved_work,recovery_mark,unsaved_starts FROM jobs WHERE kind=? AND status='running' ORDER BY created_at,rowid",
@@ -885,14 +874,16 @@ impl JobStore {
         let stamp = now();
         let resumable =
             serde_json::to_string(resumable).map_err(|e| AppError::Serialization(e.to_string()))?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let suspended = sqlx::query("UPDATE jobs SET status=CASE WHEN kind IN (SELECT value FROM json_each(?1)) THEN 'pending' ELSE status END,progress_message=CASE WHEN kind IN (SELECT value FROM json_each(?1)) THEN ?2 ELSE progress_message END,heartbeat_at=?3,unsaved_starts=0 WHERE status='running'")
             .bind(resumable)
             .bind(SUSPENDED)
             .bind(stamp)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(db)?
             .rows_affected();
+        tx.commit().await.map_err(db)?;
         Ok(usize::try_from(suspended).unwrap_or(usize::MAX))
     }
 
@@ -900,12 +891,14 @@ impl JobStore {
     /// stopped the app. Automatic resubmission must leave such work waiting
     /// for the learner's retry, which makes a newer job.
     pub async fn last_run_stopped_the_app(&self, kind: &str, subject_id: &str) -> Result<bool> {
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let code: Option<Option<String>> = sqlx::query_scalar("SELECT CASE WHEN status='failed' THEN error_code END FROM jobs WHERE kind=? AND subject_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1")
             .bind(kind)
             .bind(subject_id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *read)
             .await
             .map_err(db)?;
+        read.commit().await.map_err(db)?;
         Ok(code.flatten().as_deref() == Some(STOPPED_THE_APP))
     }
 }

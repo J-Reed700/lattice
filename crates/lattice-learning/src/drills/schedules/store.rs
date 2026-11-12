@@ -11,7 +11,7 @@ use lattice_core::domain::learning::drills::{
     per_pattern, IssueRating, LessonStanding, Material, PatternDue, PatternRating,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::{Database, WriteTx};
 use serde_json::json;
 use sqlx::SqliteConnection;
 use std::collections::BTreeSet;
@@ -38,7 +38,7 @@ async fn read_in(
 
 /// Writes a reviewed schedule at `key`, replacing the one there.
 async fn write_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     table: &Table,
     key: (&str, &str),
     schedule: &CardSchedule,
@@ -57,26 +57,26 @@ async fn write_in(
         difficulty,
         reviewed,
     };
-    repository::write_schedule_in(connection, table, key, &memory, schedule).await
+    repository::write_schedule_in(tx, table, key, &memory, schedule).await
 }
 
 /// Moves the schedule at `key` on by one review rated `rating` at `now`.
 async fn review_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     table: &Table,
     key: (&str, &str),
     rating: PatternRating,
     now: i64,
 ) -> Result<()> {
-    let before = read_in(connection, table, key, now).await?;
+    let before = read_in(tx, table, key, now).await?;
     let after = before.review(study_rating(rating), now, None)?;
-    write_in(connection, table, key, &after).await
+    write_in(tx, table, key, &after).await
 }
 
 /// Moves the schedule of `pattern` under `material` on by one review rated `rating` at `now`, landing before `target`
 /// while it is ahead, and returns the schedule it now has.
 pub(crate) async fn review_pattern_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     material: &str,
     pattern: &str,
     rating: PatternRating,
@@ -84,16 +84,16 @@ pub(crate) async fn review_pattern_in(
     target: Option<i64>,
 ) -> Result<CardSchedule> {
     let key = (material, pattern);
-    let before = read_in(connection, &PATTERNS, key, now).await?;
+    let before = read_in(tx, &PATTERNS, key, now).await?;
     let after = before.review(study_rating(rating), now, target)?;
-    write_in(connection, &PATTERNS, key, &after).await?;
+    write_in(tx, &PATTERNS, key, &after).await?;
     Ok(after)
 }
 
 /// Moves the schedule of each pattern `ratings` rate by one review, and the lesson's when `lesson` is rated and the
 /// drill was built from one. Call inside the transaction that records the grade.
 pub(crate) async fn record_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     drill: &StoredDrill,
     ratings: &[IssueRating],
     lesson: Option<PatternRating>,
@@ -102,7 +102,7 @@ pub(crate) async fn record_in(
     let material = schedule_material(&drill.drill.material);
     for entry in per_pattern(ratings) {
         review_in(
-            connection,
+            tx,
             &PATTERNS,
             (material.as_str(), entry.pattern.as_str()),
             entry.rating,
@@ -114,7 +114,7 @@ pub(crate) async fn record_in(
         (lesson, &drill.program_id, &drill.lesson_id)
     {
         review_in(
-            connection,
+            tx,
             &LESSONS,
             (program_id.as_str(), lesson_id.as_str()),
             rating,
@@ -243,11 +243,11 @@ pub(crate) async fn fit_basis_in(
 
 /// [`fit_basis_in`] as a unit of work of its own.
 pub(crate) async fn fit_basis(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
     lesson_id: &str,
 ) -> Result<String> {
-    let mut tx = pool.begin_read().await.map_err(db)?;
+    let mut tx = database.begin_read().await.map_err(db)?;
     let basis = fit_basis_in(&mut tx, program_id, lesson_id).await?;
     tx.commit().await.map_err(db)?;
     Ok(basis)
@@ -255,7 +255,7 @@ pub(crate) async fn fit_basis(
 
 /// [`record_fit_in`] as a unit of work of its own.
 pub(crate) async fn record_fit(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
     lesson_id: &str,
     material: &Material,
@@ -263,7 +263,7 @@ pub(crate) async fn record_fit(
     basis: &str,
     now: i64,
 ) -> Result<()> {
-    let mut tx = pool.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await.map_err(db)?;
     record_fit_in(&mut tx, program_id, lesson_id, material, fits, basis, now).await?;
     tx.commit().await.map_err(db)
 }
@@ -271,7 +271,7 @@ pub(crate) async fn record_fit(
 /// Records whether the lesson fits `material`, and the basis the decision rests on, replacing an earlier record;
 /// nothing, when the lesson is no longer one of the course's.
 pub(crate) async fn record_fit_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     lesson_id: &str,
     material: &Material,
@@ -280,7 +280,7 @@ pub(crate) async fn record_fit_in(
     now: i64,
 ) -> Result<()> {
     repository::record_fit_in(
-        connection,
+        tx,
         program_id,
         lesson_id,
         fit_material(material),

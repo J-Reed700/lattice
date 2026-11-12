@@ -10,7 +10,7 @@ use super::repository::BatchItems;
 use crate::features::web::services::web::check_public_url;
 use lattice_core::application::ports::document_scope::DocumentScopePort;
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::shared::persistence::{Database, Page, Transactions, WriteTx};
+use lattice_core::shared::persistence::{Database, Page, WriteTx};
 use lattice_core::shared::{
     error::{AppError, Result},
     runtime::jobs::{JobRecord, JobRuntime, JobStore, NewJob},

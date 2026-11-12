@@ -9,6 +9,7 @@ use crate::drills::runner::RunOutcome;
 use crate::tests::pool;
 use lattice_core::domain::learning::drills::{DrillFile, Severity};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use serde_json::{json, Value};
 
 /// The code the stage reviews: the project with a flaw in `forget`.
@@ -42,11 +43,11 @@ fn issue(before: &str, after: &str) -> Value {
 
 #[tokio::test]
 async fn a_review_that_finds_nothing_leaves_the_code_and_runs_nothing() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([review_answer(vec![])]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let reviewed = build(&pool, &model, Some(&runner), &grader)
+    let reviewed = build(&db, &model, Some(&runner), &grader)
         .clean_review(&spec(), &code())
         .await?;
     assert_eq!(reviewed.files, files());
@@ -59,11 +60,11 @@ async fn a_review_that_finds_nothing_leaves_the_code_and_runs_nothing() -> Resul
 
 #[tokio::test]
 async fn repairs_are_made_and_the_suite_runs_on_the_repaired_code() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([review_answer(vec![issue(FLAW, REPAIR)])]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let reviewed = build(&pool, &model, Some(&runner), &grader)
+    let reviewed = build(&db, &model, Some(&runner), &grader)
         .clean_review(&spec(), &flawed())
         .await?;
     assert_eq!(reviewed.files, files(), "the repaired code is the baseline");
@@ -85,11 +86,11 @@ async fn repairs_are_made_and_the_suite_runs_on_the_repaired_code() -> Result<()
 /// The reviewer's first answer is `bad`, which has to be refused with a message holding `fragment`; the second repairs
 /// the flaw.
 async fn refused_then_accepted(bad: String, fragment: &str) -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([bad, review_answer(vec![issue(FLAW, REPAIR)])]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let reviewed = build(&pool, &model, Some(&runner), &grader)
+    let reviewed = build(&db, &model, Some(&runner), &grader)
         .clean_review(&spec(), &flawed())
         .await?;
     assert_eq!(reviewed.files, files(), "{fragment}");
@@ -142,14 +143,14 @@ async fn a_repair_that_does_not_apply_is_refused_naming_it_and_what_to_change() 
 
 #[tokio::test]
 async fn a_review_refused_twice_fails_the_stage() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([
         review_answer(vec![issue("        del self.hits[other]\n", REPAIR)]),
         review_answer(vec![issue("        del self.hits[another]\n", REPAIR)]),
     ]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let error = build(&pool, &model, Some(&runner), &grader)
+    let error = build(&db, &model, Some(&runner), &grader)
         .clean_review(&spec(), &flawed())
         .await
         .unwrap_err();
@@ -164,7 +165,7 @@ async fn a_review_refused_twice_fails_the_stage() -> Result<()> {
 
 #[tokio::test]
 async fn a_repair_that_breaks_the_suite_is_sent_back_once_with_the_output() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let breaking = issue(FLAW, "        self.hits.clear()\n");
     let model = ScriptedModel::new([
         review_answer(vec![breaking]),
@@ -177,7 +178,7 @@ async fn a_repair_that_breaks_the_suite_is_sent_back_once_with_the_output() -> R
         RunOutcome::Passed,
     ]);
     let grader = idle_grader();
-    let reviewed = build(&pool, &model, Some(&runner), &grader)
+    let reviewed = build(&db, &model, Some(&runner), &grader)
         .clean_review(&spec(), &flawed())
         .await?;
     assert_eq!(reviewed.files, files());
@@ -199,14 +200,14 @@ async fn a_repair_that_breaks_the_suite_is_sent_back_once_with_the_output() -> R
 
 #[tokio::test]
 async fn a_repair_that_breaks_the_suite_twice_fails_the_stage() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let breaking = || review_answer(vec![issue(FLAW, "        self.hits.clear()\n")]);
     let model = ScriptedModel::new([breaking(), breaking()]);
     let runner = FakeRunner::new(|_, _| RunOutcome::Failed {
         output: "AssertionError: the limiter forgot every key".into(),
     });
     let grader = idle_grader();
-    let error = build(&pool, &model, Some(&runner), &grader)
+    let error = build(&db, &model, Some(&runner), &grader)
         .clean_review(&spec(), &flawed())
         .await
         .unwrap_err();
@@ -225,7 +226,7 @@ fn looping() -> String {
 #[tokio::test]
 async fn a_repair_that_leaves_the_suite_running_is_sent_back_once_with_what_it_wrote() -> Result<()>
 {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([looping(), review_answer(vec![issue(FLAW, REPAIR)])]);
     let runner = FakeRunner::scripted(vec![
         RunOutcome::TimedOut {
@@ -234,7 +235,7 @@ async fn a_repair_that_leaves_the_suite_running_is_sent_back_once_with_what_it_w
         RunOutcome::Passed,
     ]);
     let grader = idle_grader();
-    let reviewed = build(&pool, &model, Some(&runner), &grader)
+    let reviewed = build(&db, &model, Some(&runner), &grader)
         .clean_review(&spec(), &flawed())
         .await?;
     assert_eq!(reviewed.files, files());
@@ -263,13 +264,13 @@ async fn a_repair_that_leaves_the_suite_running_is_sent_back_once_with_what_it_w
 #[tokio::test]
 async fn a_repair_that_leaves_the_suite_running_twice_fails_the_stage_as_an_unusable_answer(
 ) -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([looping(), looping()]);
     let runner = FakeRunner::new(|_, _| RunOutcome::TimedOut {
         output: String::new(),
     });
     let grader = idle_grader();
-    let error = build(&pool, &model, Some(&runner), &grader)
+    let error = build(&db, &model, Some(&runner), &grader)
         .clean_review(&spec(), &flawed())
         .await
         .unwrap_err();
@@ -293,11 +294,11 @@ async fn a_runtime_that_is_not_there_or_a_cancelled_run_is_never_blamed_on_the_a
         ),
         (RunOutcome::Cancelled, false),
     ] {
-        let pool = pool().await?;
+        let db = Database::new(pool().await?);
         let model = ScriptedModel::new([looping(), looping()]);
         let runner = FakeRunner::new(move |_, _| outcome.clone());
         let grader = idle_grader();
-        let error = build(&pool, &model, Some(&runner), &grader)
+        let error = build(&db, &model, Some(&runner), &grader)
             .clean_review(&spec(), &flawed())
             .await
             .unwrap_err();
@@ -319,11 +320,11 @@ async fn a_runtime_that_is_not_there_or_a_cancelled_run_is_never_blamed_on_the_a
 
 #[tokio::test]
 async fn the_reviewer_is_told_nothing_of_planting() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([review_answer(vec![])]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    build(&pool, &model, Some(&runner), &grader)
+    build(&db, &model, Some(&runner), &grader)
         .clean_review(&spec(), &code())
         .await?;
     let request = &model.requests()[0];

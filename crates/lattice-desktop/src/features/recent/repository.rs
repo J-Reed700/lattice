@@ -7,15 +7,13 @@
 //! This repository implements the RecentDocumentsRepositoryPort trait,
 //! providing operations for tracking and retrieving recently accessed documents.
 
-use crate::infrastructure::persistence::database::query_with_timeout;
 use async_trait::async_trait;
 use chrono::Utc;
 use lattice_core::application::contracts::recent_documents::RecentDocumentRecord as RecentDocumentDto;
 use lattice_core::application::ports::RecentDocumentsRepositoryPort;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::{Page, Transactions};
-use sqlx::{Row, SqlitePool};
+use lattice_core::shared::persistence::{Database, Page};
+use sqlx::Row;
 
 /// SQLite implementation of recent documents repository.
 ///
@@ -24,132 +22,120 @@ use sqlx::{Row, SqlitePool};
 ///
 /// # Thread Safety
 ///
-/// This repository is thread-safe through SQLitePool's internal connection management.
+/// This repository is thread-safe through the Database's connection management.
 #[derive(Debug, Clone)]
 pub struct RecentDocumentsRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl RecentDocumentsRepository {
     /// Create a new recent documents repository.
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 }
 
 #[async_trait]
 impl RecentDocumentsRepositoryPort for RecentDocumentsRepository {
     async fn track_access(&self, document_id: &str) -> Result<()> {
-        let pool = self.pool.clone();
-        let document_id = document_id.to_string();
         let now = Utc::now().to_rfc3339();
 
-        let tracked = query_with_timeout(|| async {
-            let mut tx = pool.begin_write().await?;
-            let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents WHERE id = ?")
-                .bind(&document_id).fetch_one(&mut *tx).await?;
-            if exists == 0 { return Ok(false); }
-            let id = uuid::Uuid::new_v4().to_string();
-            sqlx::query(
-                r#"
-                INSERT INTO recent_documents (id, document_id, last_accessed_at, access_count)
-                VALUES (?, ?, ?, 1)
-                ON CONFLICT(document_id) DO UPDATE SET
-                    last_accessed_at = excluded.last_accessed_at,
-                    access_count = access_count + 1
-                "#
-            )
-            .bind(id).bind(&document_id).bind(&now)
-            .execute(&mut *tx)
+        let mut tx = self.db.begin_write().await?;
+        let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents WHERE id = ?")
+            .bind(document_id)
+            .fetch_one(&mut *tx)
             .await?;
-
-            // Tracking and bounded-history eviction succeed or roll back together.
-            sqlx::query("DELETE FROM recent_documents WHERE document_id NOT IN (SELECT document_id FROM recent_documents ORDER BY last_accessed_at DESC, rowid DESC LIMIT 50)")
-                .execute(&mut *tx).await?;
-            tx.commit().await?;
-
-            Ok(true)
-        })
-        .await?;
-        if !tracked {
+        if exists == 0 {
             return Err(AppError::NotFound("Document not found".into()));
         }
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            r#"
+            INSERT INTO recent_documents (id, document_id, last_accessed_at, access_count)
+            VALUES (?, ?, ?, 1)
+            ON CONFLICT(document_id) DO UPDATE SET
+                last_accessed_at = excluded.last_accessed_at,
+                access_count = access_count + 1
+            "#,
+        )
+        .bind(id)
+        .bind(document_id)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+
+        // Tracking and bounded-history eviction succeed or roll back together.
+        sqlx::query("DELETE FROM recent_documents WHERE document_id NOT IN (SELECT document_id FROM recent_documents ORDER BY last_accessed_at DESC, rowid DESC LIMIT 50)")
+            .execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 
     async fn get_recent_documents(&self, limit: usize) -> Result<Vec<RecentDocumentDto>> {
-        let pool = self.pool.clone();
         let page = Page::first(limit)?;
 
-        query_with_timeout(|| async {
-            let results = sqlx::query(
-                r#"
-                SELECT
-                    rd.document_id,
-                    rd.last_accessed_at,
-                    rd.access_count,
-                    COALESCE(rd.id, rd.document_id) as id,
-                    d.file_name,
-                    d.file_path,
-                    d.mime_type as file_type
-                FROM recent_documents rd
-                INNER JOIN documents d ON rd.document_id = d.id
-                ORDER BY rd.last_accessed_at DESC, rd.rowid DESC
-                LIMIT ?
-                "#,
-            )
-            .bind(page.sql_limit())
-            .fetch_all(&pool)
-            .await?;
+        let mut read = self.db.begin_read().await?;
+        let results = sqlx::query(
+            r#"
+            SELECT
+                rd.document_id,
+                rd.last_accessed_at,
+                rd.access_count,
+                COALESCE(rd.id, rd.document_id) as id,
+                d.file_name,
+                d.file_path,
+                d.mime_type as file_type
+            FROM recent_documents rd
+            INNER JOIN documents d ON rd.document_id = d.id
+            ORDER BY rd.last_accessed_at DESC, rd.rowid DESC
+            LIMIT ?
+            "#,
+        )
+        .bind(page.sql_limit())
+        .fetch_all(&mut *read)
+        .await?;
+        read.commit().await?;
 
-            Ok(results
-                .into_iter()
-                .map(|row| RecentDocumentDto {
-                    id: row.get("id"),
-                    document_id: row.get("document_id"),
-                    document_name: row.get("file_name"),
-                    document_path: row.get("file_path"),
-                    file_type: row.get("file_type"),
-                    last_accessed_at: row.get("last_accessed_at"),
-                    access_count: row.get("access_count"),
-                })
-                .collect())
-        })
-        .await
+        Ok(results
+            .into_iter()
+            .map(|row| RecentDocumentDto {
+                id: row.get("id"),
+                document_id: row.get("document_id"),
+                document_name: row.get("file_name"),
+                document_path: row.get("file_path"),
+                file_type: row.get("file_type"),
+                last_accessed_at: row.get("last_accessed_at"),
+                access_count: row.get("access_count"),
+            })
+            .collect())
     }
 
     async fn clear_recent_history(&self, before_date: Option<&str>) -> Result<usize> {
-        let pool = self.pool.clone();
-
-        query_with_timeout(|| async {
-            let mut tx = pool.begin_write().await?;
-            let result = if let Some(date) = before_date {
-                let date = date.to_string();
-                sqlx::query!(
-                    r#"
+        let mut tx = self.db.begin_write().await?;
+        let result = if let Some(date) = before_date {
+            let date = date.to_string();
+            sqlx::query!(
+                r#"
                     DELETE FROM recent_documents
                     WHERE last_accessed_at < ?
                     "#,
-                    date
-                )
-                .execute(&mut *tx)
-                .await?
-            } else {
-                // Clear all history if no date specified
-                sqlx::query!(
-                    r#"
+                date
+            )
+            .execute(&mut *tx)
+            .await?
+        } else {
+            // Clear all history if no date specified
+            sqlx::query!(
+                r#"
                     DELETE FROM recent_documents
                     "#
-                )
-                .execute(&mut *tx)
-                .await?
-            };
-            tx.commit().await?;
+            )
+            .execute(&mut *tx)
+            .await?
+        };
+        tx.commit().await?;
 
-            Ok(result.rows_affected() as usize)
-        })
-        .await
+        Ok(result.rows_affected() as usize)
     }
 }
 
@@ -157,6 +143,7 @@ impl RecentDocumentsRepositoryPort for RecentDocumentsRepository {
 mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
+    use sqlx::SqlitePool;
 
     async fn create_test_pool() -> SqlitePool {
         SqlitePoolOptions::new().connect(":memory:").await.unwrap()
@@ -187,7 +174,7 @@ mod tests {
     async fn test_track_access_new_document() {
         let pool = create_test_pool().await;
         setup_schema(&pool).await;
-        let repo = RecentDocumentsRepository::new(pool.clone());
+        let repo = RecentDocumentsRepository::new(Database::new(pool.clone()));
 
         // Track access to a new document
         repo.track_access("doc1").await.unwrap();
@@ -208,7 +195,7 @@ mod tests {
                 SELECT id, id, '2020-01-01', 1 FROM documents WHERE id LIKE 'old-%';
             CREATE TRIGGER reject_eviction BEFORE DELETE ON recent_documents BEGIN SELECT RAISE(ABORT, 'eviction failure'); END;")
             .execute(&pool).await.unwrap();
-        let repo = RecentDocumentsRepository::new(pool.clone());
+        let repo = RecentDocumentsRepository::new(Database::new(pool.clone()));
         assert!(repo.track_access("doc1").await.is_err());
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM recent_documents")
             .fetch_one(&pool)
@@ -240,7 +227,7 @@ mod tests {
     async fn unknown_document_is_not_tracked() {
         let pool = create_test_pool().await;
         setup_schema(&pool).await;
-        let repo = RecentDocumentsRepository::new(pool);
+        let repo = RecentDocumentsRepository::new(Database::new(pool.clone()));
         assert!(matches!(
             repo.track_access("missing").await,
             Err(AppError::NotFound(_))
@@ -252,7 +239,7 @@ mod tests {
     async fn test_track_access_existing_document_increments_count() {
         let pool = create_test_pool().await;
         setup_schema(&pool).await;
-        let repo = RecentDocumentsRepository::new(pool.clone());
+        let repo = RecentDocumentsRepository::new(Database::new(pool.clone()));
 
         // Track access multiple times
         repo.track_access("doc1").await.unwrap();
@@ -269,7 +256,7 @@ mod tests {
     async fn test_track_access_updates_timestamp() {
         let pool = create_test_pool().await;
         setup_schema(&pool).await;
-        let repo = RecentDocumentsRepository::new(pool.clone());
+        let repo = RecentDocumentsRepository::new(Database::new(pool.clone()));
 
         // First access
         repo.track_access("doc1").await.unwrap();
@@ -293,7 +280,7 @@ mod tests {
     async fn test_get_recent_documents_ordered_by_access_time() {
         let pool = create_test_pool().await;
         setup_schema(&pool).await;
-        let repo = RecentDocumentsRepository::new(pool.clone());
+        let repo = RecentDocumentsRepository::new(Database::new(pool.clone()));
 
         // Access documents in sequence
         repo.track_access("doc1").await.unwrap();
@@ -310,7 +297,7 @@ mod tests {
     async fn test_get_recent_documents_respects_limit() {
         let pool = create_test_pool().await;
         setup_schema(&pool).await;
-        let repo = RecentDocumentsRepository::new(pool.clone());
+        let repo = RecentDocumentsRepository::new(Database::new(pool.clone()));
 
         // Track multiple documents
         repo.track_access("doc1").await.unwrap();
@@ -331,7 +318,7 @@ mod tests {
             INSERT INTO recent_documents (id, document_id, last_accessed_at, access_count)
                 SELECT id, id, '2020-01-01', 1 FROM documents WHERE id LIKE 'old-%';")
             .execute(&pool).await.unwrap();
-        let repo = RecentDocumentsRepository::new(pool);
+        let repo = RecentDocumentsRepository::new(Database::new(pool));
         assert_eq!(repo.get_recent_documents(150).await.unwrap().len(), 150);
     }
 
@@ -339,7 +326,7 @@ mod tests {
     async fn test_clear_recent_history_all() {
         let pool = create_test_pool().await;
         setup_schema(&pool).await;
-        let repo = RecentDocumentsRepository::new(pool.clone());
+        let repo = RecentDocumentsRepository::new(Database::new(pool.clone()));
 
         // Track some documents
         repo.track_access("doc1").await.unwrap();
@@ -360,7 +347,7 @@ mod tests {
     async fn test_clear_recent_history_before_date() {
         let pool = create_test_pool().await;
         setup_schema(&pool).await;
-        let repo = RecentDocumentsRepository::new(pool.clone());
+        let repo = RecentDocumentsRepository::new(Database::new(pool.clone()));
 
         // Track documents at different times
         repo.track_access("doc1").await.unwrap();
@@ -385,7 +372,7 @@ mod tests {
     async fn test_get_recent_documents_includes_document_details() {
         let pool = create_test_pool().await;
         setup_schema(&pool).await;
-        let repo = RecentDocumentsRepository::new(pool.clone());
+        let repo = RecentDocumentsRepository::new(Database::new(pool.clone()));
 
         // Track access
         repo.track_access("doc1").await.unwrap();
@@ -403,7 +390,7 @@ mod tests {
     async fn test_track_access_multiple_documents() {
         let pool = create_test_pool().await;
         setup_schema(&pool).await;
-        let repo = RecentDocumentsRepository::new(pool.clone());
+        let repo = RecentDocumentsRepository::new(Database::new(pool.clone()));
 
         // Track different access patterns
         repo.track_access("doc1").await.unwrap();

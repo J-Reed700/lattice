@@ -116,16 +116,32 @@ smaller baselines; never add a line to get a change through. To find every
 site of a rule, run
 `bash scripts/check-rust-layer-boundaries.sh --list <rule> [subject]`.
 
-The same check holds three data-access rules at zero, with no baseline. A
+The same check holds six data-access rules at zero, with no baseline. A
+The check also holds `raw-process` at zero: production code starts a child
+process only through `lattice_core::shared::process::BoundCommand`, which ends
+the child with Lattice however Lattice ends, so naming `std::process::Command`
+or `tokio::process::Command` anywhere else fails. A launch that must outlive
+Lattice (revealing a file in the OS file manager) carries a
+`// detached-process: <reason>` comment directly above the statement or its fn.
+
 transaction begins only with `begin_write()` or `begin_read()` (SQLite crates;
 the Postgres sync server keeps `.begin()`). Only a data module builds or runs
 SQL: a `lattice-store` file, or a path segment or file stem that is
 `repository`, `repositories`, `persistence`, `store`, `storage`, `database` or
-`migrations`, or ends in `_repository` or `_store`. A data-module function that
-runs two or more statements on the pool, one of them a write, runs them in one
-`begin_write()` instead; a function SQLite refuses to run in a transaction is
-listed in `EXCEPTIONS` in `scripts/rust-architecture-check/src/data_access.rs`
-with its reason.
+`migrations`, or ends in `_repository` or `_store`. A function that runs two or
+more statements, or is a unit of work, runs them in one transaction, and
+awaits nothing under an open write unit but its own statements; a function
+that must do otherwise is listed in `EXCEPTIONS` in
+`scripts/rust-architecture-check/src/data_access.rs` with its reason. Only data
+modules name sqlx, and they keep the driver's handles (pools, connections,
+`sqlx_pool()`) inside them. Every statement runs in a unit of work, and a
+statement that writes runs on a write unit: `begin_write()` waits its turn in
+the database's write queue before it takes a connection, and a function that
+writes takes `&mut WriteTx`. The check flags only SQL it can read; a read unit
+that changed rows rolls them back and fails its commit, so a write the check
+cannot see never lands off the queue. Only the openers (the `Database` in
+`shared/persistence`, the live database's directory and the passage index's
+store) create a pool or a `Database`; everything else takes the one it is given.
 
 Use the shared mechanisms instead of a feature-local copy:
 `shared::runtime::background::spawn` for detached tasks (a deliberate raw

@@ -4,6 +4,7 @@ use crate::infrastructure::persistence::mappers::{ChunkMapper, ChunkModel};
 use lattice_core::domain::entities::chunk::Chunk;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::bind_limit::rows_per_statement;
+use lattice_core::shared::persistence::WriteTx;
 use lattice_core::shared::types::TagId;
 use sqlx::{QueryBuilder, SqliteConnection};
 use std::time::Instant;
@@ -70,17 +71,13 @@ pub async fn fetch_tags_for_document(
         .collect()
 }
 
-#[instrument(skip(conn, chunks), fields(doc_id = %doc_id, chunk_count = chunks.len()))]
-pub async fn save_chunks(
-    conn: &mut SqliteConnection,
-    doc_id: &str,
-    chunks: &[Chunk],
-) -> Result<()> {
+#[instrument(skip(tx, chunks), fields(doc_id = %doc_id, chunk_count = chunks.len()))]
+pub async fn save_chunks(tx: &mut WriteTx, doc_id: &str, chunks: &[Chunk]) -> Result<()> {
     let start = Instant::now();
 
     sqlx::query("DELETE FROM text_chunks WHERE document_id = ?")
         .bind(doc_id)
-        .execute(&mut *conn)
+        .execute(&mut **tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to delete old chunks: {}", e)))?;
 
@@ -127,7 +124,7 @@ pub async fn save_chunks(
 
         query_builder
             .build()
-            .execute(&mut *conn)
+            .execute(&mut **tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to insert chunk batch: {}", e)))?;
     }
@@ -148,12 +145,12 @@ pub async fn save_chunks(
     Ok(())
 }
 
-#[instrument(skip(conn, tags), fields(doc_id = %doc_id, tag_count = tags.len()))]
-pub async fn save_tags(conn: &mut SqliteConnection, doc_id: &str, tags: &[TagId]) -> Result<()> {
+#[instrument(skip(tx, tags), fields(doc_id = %doc_id, tag_count = tags.len()))]
+pub async fn save_tags(tx: &mut WriteTx, doc_id: &str, tags: &[TagId]) -> Result<()> {
     let start = Instant::now();
 
     sqlx::query!("DELETE FROM document_tags WHERE document_id = ?", doc_id)
-        .execute(&mut *conn)
+        .execute(&mut **tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to delete old tags: {}", e)))?;
 
@@ -178,7 +175,7 @@ pub async fn save_tags(conn: &mut SqliteConnection, doc_id: &str, tags: &[TagId]
 
         query_builder
             .build()
-            .execute(&mut *conn)
+            .execute(&mut **tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to insert tag batch: {}", e)))?;
     }

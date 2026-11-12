@@ -10,7 +10,7 @@ use super::*;
 use crate::references::trust;
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::http::url_identity::identity;
-use lattice_core::shared::persistence::{Transactions, WriteTx};
+use lattice_core::shared::persistence::WriteTx;
 
 impl LearningSourceLibraryRepository {
     /// Captures a source research selected, with the planner's reason for

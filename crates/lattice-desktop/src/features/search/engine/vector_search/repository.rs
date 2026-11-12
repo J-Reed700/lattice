@@ -1,13 +1,13 @@
 use super::manifest::SourceStamp;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Database;
 
 /// Read the stamp for one generation.
 ///
 /// Two aggregate queries against covering indexes; no embedding blob is
 /// touched. The counter is a single-row primary key lookup.
 pub async fn read_source_stamp(
-    pool: &impl DriverPool,
+    db: &Database,
     identity: &str,
     dimension: usize,
 ) -> Result<SourceStamp> {
@@ -16,7 +16,7 @@ pub async fn read_source_stamp(
     // a prepared vector whose source text has since changed, which this count
     // cannot see; that direction is safe, because the extra row makes the
     // stamp differ and buys a rebuild.
-    let (row_count, write_counter) = source_stamp_counts(pool, identity, dimension).await?;
+    let (row_count, write_counter) = source_stamp_counts(db, identity, dimension).await?;
 
     Ok(SourceStamp {
         row_count: row_count.max(0) as u64,
@@ -27,12 +27,12 @@ pub async fn read_source_stamp(
 /// Both values in one SQLite snapshot: separate SELECTs can combine an old
 /// count with a new counter when a writer commits between them.
 pub(super) async fn source_stamp_counts(
-    pool: &impl DriverPool,
+    db: &Database,
     identity: &str,
     dimension: i64,
 ) -> Result<(i64, i64)> {
-    let pool = pool.sqlx_pool();
-    Ok(sqlx::query_as(
+    let mut read = db.begin_read().await?;
+    let counts: (i64, i64) = sqlx::query_as(
         "SELECT COUNT(*), COALESCE((SELECT write_counter FROM vector_index_state WHERE id = 1), 0) FROM text_chunks tc \
          LEFT JOIN text_embeddings te ON te.chunk_id = tc.id AND te.model_name = ? AND te.dimension = ? \
          LEFT JOIN embedding_generation_vectors eg ON eg.chunk_id = tc.id AND eg.model_identity = ? AND eg.dimension = ? \
@@ -42,6 +42,8 @@ pub(super) async fn source_stamp_counts(
     .bind(dimension)
     .bind(identity)
     .bind(dimension)
-    .fetch_one(pool)
-    .await?)
+    .fetch_one(&mut *read)
+    .await?;
+    read.commit().await?;
+    Ok(counts)
 }

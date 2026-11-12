@@ -4,7 +4,7 @@ use crate::{
     dto::{AcceptLearningProgramRequestDto, LearningProgramDto},
     operations::Operation,
     pack::decode_learning_pack,
-    persistence::{db, hash},
+    persistence::hash,
     portability_dto::{
         ExportAllLearningPacksRequestDto, ExportAllLearningPacksResultDto, ExportedLearningPackDto,
         FailedLearningPackExportDto, LearningPackExportOptionsDto,
@@ -13,7 +13,7 @@ use crate::{
     tests::{fixture, pool},
 };
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::path::Path;
 
 /// What a batch into a chosen folder did.
@@ -53,12 +53,10 @@ fn request() -> ExportAllLearningPacksRequestDto {
     }
 }
 
-async fn create(pool: &SqlitePool, title: &str) -> Result<LearningProgramDto> {
+async fn create(db: &Database, title: &str) -> Result<LearningProgramDto> {
     let mut program = fixture();
     program.summary.title = title.into();
-    LearningRepository::new(pool.clone())
-        .create(&program)
-        .await?;
+    LearningRepository::new(db.clone()).create(&program).await?;
     Ok(program)
 }
 
@@ -73,17 +71,18 @@ fn files(dir: &Path) -> Result<Vec<String>> {
 #[tokio::test]
 async fn every_course_gets_one_file_and_failures_do_not_stop_the_rest() -> Result<()> {
     let pool = pool().await?;
-    let repo = LearningRepository::new(pool.clone());
-    let draft = create(&pool, "Draft: chemistry").await?;
-    let active = create(&pool, "Statistics").await?;
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
+    let draft = create(&db, "Draft: chemistry").await?;
+    let active = create(&db, "Statistics").await?;
     repo.accept(&AcceptLearningProgramRequestDto {
         program_id: active.summary.id.clone(),
         expected_revision: 0,
         title: active.summary.title.clone(),
     })
     .await?;
-    let twin = create(&pool, "Statistics").await?;
-    let busy = create(&pool, "Busy course").await?;
+    let twin = create(&db, "Statistics").await?;
+    let busy = create(&db, "Busy course").await?;
     let job = id();
     sqlx::query("INSERT INTO jobs(id,kind,subject_id,operation_id,payload_hash,status,requested_json,progress_total,progress_message,created_at) VALUES(?,'learning_lesson',?,?,'job-hash','running','{}',1,'Writing',1)")
         .bind(&job).bind(&busy.summary.id).bind(id()).execute(&pool).await?;
@@ -100,7 +99,7 @@ async fn every_course_gets_one_file_and_failures_do_not_stop_the_rest() -> Resul
 
     let app_data = tempfile::tempdir()?;
     let folder = tempfile::tempdir()?;
-    let packs = packs(&pool, app_data.path());
+    let packs = packs(&db, app_data.path());
     let result = done(packs.export_all(&request(), &picks(folder.path())).await?)?;
     assert_eq!(
         Some(Path::new(&result.destination_dir)),
@@ -154,11 +153,12 @@ async fn every_course_gets_one_file_and_failures_do_not_stop_the_rest() -> Resul
 #[tokio::test]
 async fn a_retried_batch_replays_instead_of_writing_duplicates() -> Result<()> {
     let pool = pool().await?;
-    create(&pool, "Geometry").await?;
-    create(&pool, "Poetry").await?;
+    let db = Database::new(pool.clone());
+    create(&db, "Geometry").await?;
+    create(&db, "Poetry").await?;
     let app_data = tempfile::tempdir()?;
     let folder = tempfile::tempdir()?;
-    let packs = packs(&pool, app_data.path());
+    let packs = packs(&db, app_data.path());
 
     // A completed batch answers from the ledger, before any dialog opens.
     let batch = request();
@@ -179,7 +179,7 @@ async fn a_retried_batch_replays_instead_of_writing_duplicates() -> Result<()> {
     let interrupted = request();
     let other = tempfile::tempdir()?;
     let partial = packs.export_all(&interrupted, &picks(other.path())).await?;
-    forget_batch(&pool, &interrupted).await?;
+    forget_batch(&db, &interrupted).await?;
     let retried = packs.export_all(&interrupted, &picks(other.path())).await?;
     assert_eq!(retried, partial);
     assert_eq!(files(other.path())?, written);
@@ -188,9 +188,9 @@ async fn a_retried_batch_replays_instead_of_writing_duplicates() -> Result<()> {
 
 /// The app quit before the batch was recorded, so a retry with the same
 /// operation ID opens the folder dialog again.
-async fn forget_batch(pool: &SqlitePool, batch: &ExportAllLearningPacksRequestDto) -> Result<()> {
+async fn forget_batch(db: &Database, batch: &ExportAllLearningPacksRequestDto) -> Result<()> {
     let payload_hash = hash(batch)?;
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut tx = db.begin_write().await?;
     Operation {
         id: &batch.operation_id,
         scope: "portability",
@@ -200,25 +200,28 @@ async fn forget_batch(pool: &SqlitePool, batch: &ExportAllLearningPacksRequestDt
         payload_hash: &payload_hash,
         conflict: "",
     }
-    .forget(&mut connection)
-    .await
+    .forget(&mut tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 #[tokio::test]
 async fn a_retry_into_another_folder_writes_fresh_packs_there() -> Result<()> {
     let pool = pool().await?;
-    create(&pool, "Geometry").await?;
-    create(&pool, "Poetry").await?;
+    let db = Database::new(pool.clone());
+    create(&db, "Geometry").await?;
+    create(&db, "Poetry").await?;
     let app_data = tempfile::tempdir()?;
     let first_folder = tempfile::tempdir()?;
     let second_folder = tempfile::tempdir()?;
-    let packs = packs(&pool, app_data.path());
+    let packs = packs(&db, app_data.path());
     let batch = request();
     packs
         .export_all(&batch, &picks(first_folder.path()))
         .await?;
     let first_files = files(first_folder.path())?;
-    forget_batch(&pool, &batch).await?;
+    forget_batch(&db, &batch).await?;
 
     let retried = done(
         packs
@@ -241,14 +244,15 @@ async fn a_retry_into_another_folder_writes_fresh_packs_there() -> Result<()> {
 #[tokio::test]
 async fn a_retry_rewrites_a_pack_deleted_since_the_first_run() -> Result<()> {
     let pool = pool().await?;
-    let geometry = create(&pool, "Geometry").await?;
-    create(&pool, "Poetry").await?;
+    let db = Database::new(pool.clone());
+    let geometry = create(&db, "Geometry").await?;
+    create(&db, "Poetry").await?;
     let app_data = tempfile::tempdir()?;
     let folder = tempfile::tempdir()?;
-    let packs = packs(&pool, app_data.path());
+    let packs = packs(&db, app_data.path());
     let batch = request();
     let first = done(packs.export_all(&batch, &picks(folder.path())).await?)?;
-    forget_batch(&pool, &batch).await?;
+    forget_batch(&db, &batch).await?;
     let deleted = first
         .exported
         .iter()
@@ -278,14 +282,15 @@ async fn a_retry_rewrites_a_pack_deleted_since_the_first_run() -> Result<()> {
 #[tokio::test]
 async fn no_courses_and_bad_folders() -> Result<()> {
     let pool = pool().await?;
+    let db = Database::new(pool.clone());
     let app_data = tempfile::tempdir()?;
     let folder = tempfile::tempdir()?;
-    let packs = packs(&pool, app_data.path());
+    let packs = packs(&db, app_data.path());
     let result = done(packs.export_all(&request(), &picks(folder.path())).await?)?;
     assert!(result.exported.is_empty() && result.failed.is_empty());
     assert!(!result.destination_dir.is_empty());
 
-    create(&pool, "Anything").await?;
+    create(&db, "Anything").await?;
     let inside = app_data.path().join("exports");
     tokio::fs::create_dir_all(&inside).await?;
     let error = packs

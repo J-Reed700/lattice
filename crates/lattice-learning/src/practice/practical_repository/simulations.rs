@@ -7,7 +7,6 @@ use crate::persistence::{db, hash, now};
 use crate::practical_dto::*;
 use crate::practice::session::turn::validate_learner_turn;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
 use sqlx::Row;
 
 impl LearningPracticalRepository {
@@ -27,9 +26,9 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different practical activity data.",
         );
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        let seen = operation.seen(&mut connection).await?;
-        drop(connection);
+        let mut read = self.db.begin_read().await.map_err(db)?;
+        let seen = operation.seen(&mut read).await?;
+        read.commit().await.map_err(db)?;
         if seen {
             return Ok(Some(self.workspace(program_id).await?));
         }
@@ -53,9 +52,9 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different simulation data.",
         );
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        let seen = operation.seen(&mut connection).await?;
-        drop(connection);
+        let mut read = self.db.begin_read().await.map_err(db)?;
+        let seen = operation.seen(&mut read).await?;
+        read.commit().await.map_err(db)?;
         if seen {
             return Ok(Some(self.simulation(session_id).await?));
         }
@@ -72,7 +71,7 @@ impl LearningPracticalRepository {
     )> {
         uuid(program_id, "program")?;
         uuid(activity_id, "activity")?;
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await.map_err(db)?;
         let activity = Self::internal_activity(&mut tx, program_id, activity_id).await?;
         tx.commit().await.map_err(db)?;
         Ok((
@@ -98,11 +97,13 @@ impl LearningPracticalRepository {
     )> {
         uuid(program_id, "program")?;
         uuid(session_id, "simulation")?;
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let snapshot: String = sqlx::query_scalar(
             "SELECT activity_snapshot_json FROM learning_simulation_sessions WHERE program_id=? AND id=?",
         )
-        .bind(program_id).bind(session_id).fetch_optional(&self.pool).await.map_err(db)?
+        .bind(program_id).bind(session_id).fetch_optional(&mut *read).await.map_err(db)?
         .ok_or_else(|| AppError::NotFound("Simulation not found".into()))?;
+        read.commit().await.map_err(db)?;
         let activity: InternalActivitySnapshot = decode(&snapshot)?;
         Ok((
             crate::practical_generation::SimulationActivityContext {
@@ -140,8 +141,7 @@ impl LearningPracticalRepository {
                 return Err(invalid(format!("{label} must contain 1–100 characters.")));
             }
         }
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &request.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = practical_operation(
             "simulation",
             &request.operation_id,
@@ -214,8 +214,7 @@ impl LearningPracticalRepository {
         if reply.content.trim().is_empty() {
             return Err(invalid("Simulation reply must not be blank."));
         }
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &request.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = practical_operation(
             "simulation",
             &request.operation_id,
@@ -287,8 +286,7 @@ impl LearningPracticalRepository {
         uuid(&request.operation_id, "operation")?;
         uuid(&request.program_id, "program")?;
         uuid(&request.session_id, "simulation")?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &request.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = practical_operation(
             "simulation",
             &request.operation_id,

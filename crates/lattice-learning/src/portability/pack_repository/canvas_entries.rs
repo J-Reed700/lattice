@@ -16,6 +16,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::WriteTx;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection};
 use std::collections::{BTreeMap, HashMap};
@@ -171,20 +172,11 @@ impl SectionRows for CanvasRows {
         }
         Ok(())
     }
-    async fn insert(
-        &self,
-        connection: &mut SqliteConnection,
-        scope: &ImportScope<'_>,
-    ) -> Result<()> {
+    async fn insert(&self, tx: &mut WriteTx, scope: &ImportScope<'_>) -> Result<()> {
         let Some(mut snapshot) = decode_canvases(scope.pack)? else {
             return Ok(());
         };
-        importers::insert_canvas_snapshot(
-            connection,
-            &scope.program.summary.id,
-            &mut snapshot,
-            scope.ids,
-        )
-        .await
+        importers::insert_canvas_snapshot(tx, &scope.program.summary.id, &mut snapshot, scope.ids)
+            .await
     }
 }

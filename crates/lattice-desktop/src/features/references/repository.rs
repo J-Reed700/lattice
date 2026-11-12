@@ -5,10 +5,9 @@
 
 use lattice_core::application::contracts::references::PassageReferenceRecord;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Page;
+use lattice_core::shared::persistence::{Database, Page};
 use sqlx::sqlite::SqliteRow;
-use sqlx::{Row, SqlitePool};
+use sqlx::Row;
 
 const REFERENCE_COLUMNS: &str = r#"
     id, document_id, chunk_id, file_path, file_name,
@@ -34,16 +33,16 @@ fn reference_from_row(row: SqliteRow) -> std::result::Result<PassageReferenceRec
 
 #[derive(Debug, Clone)]
 pub struct PassageReferenceRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl PassageReferenceRepository {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     pub async fn insert(&self, record: &PassageReferenceRecord) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query(
             r#"
             INSERT INTO passage_references (
@@ -62,25 +61,28 @@ impl PassageReferenceRepository {
         .bind(&record.title)
         .bind(&record.note)
         .bind(&record.created_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|error| {
             AppError::Database(format!("Failed to insert passage reference: {error}"))
         })?;
+        tx.commit().await?;
         Ok(())
     }
 
     pub async fn get(&self, id: &str) -> Result<PassageReferenceRecord> {
         let query = format!("SELECT {REFERENCE_COLUMNS} FROM passage_references WHERE id = ?");
-        sqlx::query(&query)
+        let mut read = self.db.begin_read().await?;
+        let row = sqlx::query(&query)
             .bind(id)
             .try_map(reference_from_row)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *read)
             .await
             .map_err(|error| {
                 AppError::Database(format!("Failed to fetch passage reference {id}: {error}"))
-            })?
-            .ok_or_else(|| AppError::NotFound(format!("Passage reference not found: {id}")))
+            })?;
+        read.commit().await?;
+        row.ok_or_else(|| AppError::NotFound(format!("Passage reference not found: {id}")))
     }
 
     /// Newest first, one page of them.
@@ -89,15 +91,18 @@ impl PassageReferenceRepository {
             "SELECT {REFERENCE_COLUMNS} FROM passage_references \
              ORDER BY created_at DESC LIMIT ? OFFSET ?"
         );
-        sqlx::query(&query)
+        let mut read = self.db.begin_read().await?;
+        let rows = sqlx::query(&query)
             .bind(page.sql_limit())
             .bind(page.offset())
             .try_map(reference_from_row)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *read)
             .await
             .map_err(|error| {
                 AppError::Database(format!("Failed to list passage references: {error}"))
-            })
+            })?;
+        read.commit().await?;
+        Ok(rows)
     }
 
     /// Newest first, `created_at >= cutoff`. `cutoff` MUST be produced by
@@ -108,16 +113,19 @@ impl PassageReferenceRepository {
             "SELECT {REFERENCE_COLUMNS} FROM passage_references \
              WHERE created_at >= ? ORDER BY created_at DESC"
         );
-        sqlx::query(&query)
+        let mut read = self.db.begin_read().await?;
+        let rows = sqlx::query(&query)
             .bind(cutoff)
             .try_map(reference_from_row)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *read)
             .await
             .map_err(|error| {
                 AppError::Database(format!(
                     "Failed to list passage references since {cutoff}: {error}"
                 ))
-            })
+            })?;
+        read.commit().await?;
+        Ok(rows)
     }
 
     /// Annotation-only update. Passing `None` clears the field.
@@ -127,15 +135,17 @@ impl PassageReferenceRepository {
         title: Option<&str>,
         note: Option<&str>,
     ) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         let result = sqlx::query("UPDATE passage_references SET title = ?, note = ? WHERE id = ?")
             .bind(title)
             .bind(note)
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|error| {
                 AppError::Database(format!("Failed to update passage reference {id}: {error}"))
             })?;
+        tx.commit().await?;
 
         if result.rows_affected() == 0 {
             return Err(AppError::NotFound(format!(
@@ -147,22 +157,27 @@ impl PassageReferenceRepository {
 
     /// Returns false when nothing matched.
     pub async fn delete(&self, id: &str) -> Result<bool> {
+        let mut tx = self.db.begin_write().await?;
         let result = sqlx::query("DELETE FROM passage_references WHERE id = ?")
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|error| {
                 AppError::Database(format!("Failed to delete passage reference {id}: {error}"))
             })?;
+        tx.commit().await?;
         Ok(result.rows_affected() > 0)
     }
 
     pub async fn count(&self) -> Result<i64> {
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM passage_references")
-            .fetch_one(&self.pool)
+        let mut read = self.db.begin_read().await?;
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM passage_references")
+            .fetch_one(&mut *read)
             .await
             .map_err(|error| {
                 AppError::Database(format!("Failed to count passage references: {error}"))
-            })
+            })?;
+        read.commit().await?;
+        Ok(count)
     }
 }

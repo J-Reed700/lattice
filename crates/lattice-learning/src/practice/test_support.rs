@@ -6,18 +6,22 @@ use crate::dto::AcceptLearningProgramRequestDto;
 use crate::persistence::db;
 use crate::repository::LearningRepository;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use sqlx::SqlitePool;
 
 pub fn id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-pub async fn fixture_on_pool(pool: SqlitePool) -> Result<(SqlitePool, String, String, String)> {
+pub async fn fixture_on_pool(
+    pool: SqlitePool,
+    database: &Database,
+) -> Result<(SqlitePool, String, String, String)> {
     let program = crate::test_support::fixture();
     let program_id = program.summary.id.clone();
     let module_id = program.modules[0].id.clone();
     let lesson_id = program.modules[0].lessons[0].id.clone();
-    let programs = LearningRepository::new(pool.clone());
+    let programs = LearningRepository::new(database.clone());
     programs.create(&program).await?;
     programs
         .accept(&AcceptLearningProgramRequestDto {
@@ -40,6 +44,9 @@ pub async fn fixture_on_pool(pool: SqlitePool) -> Result<(SqlitePool, String, St
     Ok((pool, program_id, lesson_id, outcome_id))
 }
 
-pub async fn fixture() -> Result<(SqlitePool, String, String, String)> {
-    fixture_on_pool(crate::test_support::pool().await?).await
+pub async fn fixture() -> Result<(SqlitePool, Database, String, String, String)> {
+    let pool = crate::test_support::pool().await?;
+    let database = Database::new(pool.clone());
+    let (pool, program_id, lesson_id, outcome_id) = fixture_on_pool(pool, &database).await?;
+    Ok((pool, database, program_id, lesson_id, outcome_id))
 }

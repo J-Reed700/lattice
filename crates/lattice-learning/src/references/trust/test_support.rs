@@ -33,11 +33,11 @@ pub(super) struct Course {
 
 pub(super) async fn course() -> Result<Course> {
     let pool = pool().await?;
-    let program_id = course_on(&pool).await?;
-    let database = Database::from(pool.clone());
+    let database = Database::new(pool.clone());
+    let program_id = course_on(&database).await?;
     Ok(Course {
         library: LearningSourceLibraryRepository::new(database.clone()),
-        store: SqliteSourceTrustStore::new(pool.clone()),
+        store: SqliteSourceTrustStore::new(database.clone()),
         program_id,
         pool,
         database,
@@ -59,11 +59,11 @@ pub(super) async fn course_on_file() -> Result<(Course, tempfile::TempDir)> {
         .run(&pool)
         .await
         .expect("migrations");
-    let program_id = course_on(&pool).await?;
-    let database = Database::from(pool.clone());
+    let database = Database::new(pool.clone());
+    let program_id = course_on(&database).await?;
     let course = Course {
         library: LearningSourceLibraryRepository::new(database.clone()),
-        store: SqliteSourceTrustStore::new(pool.clone()),
+        store: SqliteSourceTrustStore::new(database.clone()),
         program_id,
         pool,
         database,
@@ -73,10 +73,10 @@ pub(super) async fn course_on_file() -> Result<(Course, tempfile::TempDir)> {
 
 /// Another active course on the same database: its seeded fixture source
 /// is saved through `insert_source`, the initial-reference capture path.
-pub(super) async fn course_on(pool: &SqlitePool) -> Result<String> {
+pub(super) async fn course_on(database: &Database) -> Result<String> {
     let mut program = fixture();
     program.summary.status = LearningProgramStatus::Active;
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(database.clone())
         .create(&program)
         .await?;
     Ok(program.summary.id)

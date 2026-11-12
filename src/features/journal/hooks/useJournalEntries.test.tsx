@@ -39,7 +39,7 @@ beforeEach(() => {
   vi.mocked(VaultAPI.setJournalEntryPinned).mockImplementation(async ({ journalSpaceId, conversationId, pinned }) => {
     const rest = (pins[journalSpaceId] ?? []).filter(id => id !== conversationId);
     pins[journalSpaceId] = pinned ? [conversationId, ...rest] : rest;
-    return { ok: true, data: undefined };
+    return { ok: true, data: null };
   });
   useVaultImportStore.setState({ importTick: 0, lastImportedId: null });
   vi.mocked(VaultAPI.listJournalConversations).mockResolvedValue(response([first, second]));
@@ -64,7 +64,7 @@ it('loads newest entries first, selects one and requests its messages once', asy
   await waitFor(() => expect(result.current.selectedId).toBe('b'));
   await waitFor(() => expect(result.current.selectedMessagesLoading).toBe(false));
   expect(result.current.selectedMessages).toEqual([]);
-  expect(VaultAPI.listJournalConversations).toHaveBeenCalledWith({ journalSpaceId: 'journal-a', includeArchived: true });
+  expect(VaultAPI.listJournalConversations).toHaveBeenCalledWith({ journalSpaceId: 'journal-a', query: null, includeArchived: true, limit: null, offset: null });
   rerender({ ...initial });
   expect(VaultAPI.getConversationMessages).toHaveBeenCalledExactlyOnceWith('b');
 });
@@ -243,7 +243,5 @@ it('asks for every entry of the journal, with no limit or offset', async () => {
   const { result } = renderHook(useJournalEntries, { initialProps: initial });
   await waitFor(() => expect(result.current.entries).toHaveLength(2));
   const request = vi.mocked(VaultAPI.listJournalConversations).mock.calls[0]?.[0];
-  expect(request).toEqual({ journalSpaceId: 'journal-a', includeArchived: true });
-  expect(request).not.toHaveProperty('limit');
-  expect(request).not.toHaveProperty('offset');
+  expect(request).toEqual({ journalSpaceId: 'journal-a', query: null, includeArchived: true, limit: null, offset: null });
 });

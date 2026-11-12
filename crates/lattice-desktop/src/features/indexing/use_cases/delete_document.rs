@@ -26,7 +26,7 @@ use lattice_core::application::ports::{
 use lattice_core::domain::entities::Chunk;
 use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, Transactions, WriteTx};
+use lattice_core::shared::persistence::{Database, WriteTx};
 use serde::{Deserialize, Serialize};
 
 /// Request to delete a document.
@@ -351,6 +351,7 @@ mod tests {
         documents: Arc<DocumentRepositoryImpl>,
         vectors: Arc<RecordingVectorSearch>,
         pool: SqlitePool,
+        database: Database,
     }
 
     impl Fixture {
@@ -363,15 +364,17 @@ mod tests {
                 .await
                 .unwrap();
             sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+            let database = Database::new(pool.clone());
 
             Self {
                 library: Arc::new(ContentAddressedStorage::with_root(library_root.clone())),
                 archive: Arc::new(MockWebArchiveService::with_base_dir(
                     temp.path().join("web-archive"),
                 )),
-                documents: Arc::new(DocumentRepositoryImpl::new(pool.clone())),
+                documents: Arc::new(DocumentRepositoryImpl::new(database.clone())),
                 vectors: Arc::new(RecordingVectorSearch::default()),
                 pool,
+                database,
                 library_root,
                 temp,
             }
@@ -382,7 +385,7 @@ mod tests {
             let library = Arc::clone(&self.library) as Arc<dyn ContentAddressedStoragePort>;
             DeleteDocumentUseCase::new(
                 Arc::clone(&self.vectors) as Arc<dyn VectorSearchPort>,
-                Database::from(self.pool.clone()),
+                self.database.clone(),
                 Arc::clone(&library),
                 Arc::new(
                     LibraryGc::new(library, documents, {
@@ -390,7 +393,7 @@ mod tests {
                         gate.open();
                         Arc::new(gate)
                     })
-                    .with_intents(FileIntents::new(self.pool.clone())),
+                    .with_intents(FileIntents::new(self.database.clone())),
                 ),
                 Arc::clone(&self.archive) as Arc<dyn ArticleArchive>,
             )
@@ -462,7 +465,7 @@ mod tests {
         fixture.register("doc-1", &blob_path, &hash).await;
 
         // The record commits in the delete's own transaction.
-        let mut tx = fixture.pool.begin_write().await.unwrap();
+        let mut tx = fixture.database.begin_write().await.unwrap();
         document::ops::delete_and_release_blob(&mut tx, "doc-1")
             .await
             .unwrap();

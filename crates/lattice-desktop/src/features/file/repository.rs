@@ -5,11 +5,10 @@
 //! the Library can answer "where has this come up?" in one round trip.
 
 use async_trait::async_trait;
-use sqlx::{Row, SqlitePool};
+use sqlx::Row;
 
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Page;
+use lattice_core::shared::persistence::{Database, Page};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CitingConversation {
@@ -30,13 +29,12 @@ pub trait CitingConversationsRepositoryPort: Send + Sync {
 }
 
 pub struct SqliteCitingConversationsRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl SqliteCitingConversationsRepository {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 }
 
@@ -47,6 +45,7 @@ impl CitingConversationsRepositoryPort for SqliteCitingConversationsRepository {
         document_id: &str,
         page: Page,
     ) -> Result<Vec<CitingConversation>> {
+        let mut read = self.db.begin_read().await?;
         let rows = sqlx::query(
             r#"
             SELECT c.id            AS conversation_id,
@@ -64,9 +63,10 @@ impl CitingConversationsRepositoryPort for SqliteCitingConversationsRepository {
         .bind(document_id)
         .bind(page.sql_limit())
         .bind(page.offset())
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("citing conversations: {}", e)))?;
+        read.commit().await?;
 
         Ok(rows
             .into_iter()
@@ -84,6 +84,7 @@ impl CitingConversationsRepositoryPort for SqliteCitingConversationsRepository {
 mod tests {
     use super::*;
     use crate::features::file::use_cases::ListCitingConversationsUseCase;
+    use sqlx::SqlitePool;
     use std::sync::Arc;
 
     async fn pool() -> SqlitePool {
@@ -153,7 +154,7 @@ mod tests {
         cite(&pool, "conv-old", "doc-a", "chunk-3").await;
         cite(&pool, "conv-other", "doc-b", "chunk-4").await;
 
-        let repo = SqliteCitingConversationsRepository::new(pool);
+        let repo = SqliteCitingConversationsRepository::new(Database::new(pool.clone()));
         let rows = repo
             .find_citing_conversations("doc-a", Page::new(Some(10), None).unwrap())
             .await
@@ -170,7 +171,7 @@ mod tests {
     async fn an_uncited_document_returns_nothing() {
         let pool = pool().await;
         insert_document(&pool, "doc-a").await;
-        let repo = SqliteCitingConversationsRepository::new(pool);
+        let repo = SqliteCitingConversationsRepository::new(Database::new(pool.clone()));
         assert!(repo
             .find_citing_conversations("doc-a", Page::new(Some(10), None).unwrap())
             .await
@@ -187,7 +188,7 @@ mod tests {
             insert_conversation(&pool, &id, &id, &format!("2026-0{}-01T00:00:00Z", i + 1)).await;
             cite(&pool, &id, "doc-a", &format!("chunk-{i}")).await;
         }
-        let repo = SqliteCitingConversationsRepository::new(pool);
+        let repo = SqliteCitingConversationsRepository::new(Database::new(pool.clone()));
         let rows = repo
             .find_citing_conversations("doc-a", Page::new(Some(2), None).unwrap())
             .await

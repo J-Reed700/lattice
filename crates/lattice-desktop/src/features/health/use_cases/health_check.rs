@@ -146,7 +146,7 @@ mod tests {
     }
 
     async fn create_test_pool() -> Database {
-        SqlitePool::connect(":memory:").await.unwrap().into()
+        Database::new(SqlitePool::connect(":memory:").await.unwrap())
     }
 
     #[tokio::test]

@@ -1,18 +1,8 @@
 export type DownloadState = 'Pending' | 'Downloading' | 'Paused' | 'Completed' | 'Failed' | 'Cancelled';
 
-export interface ChecksumRequest {
-  algorithm: 'sha256' | 'md5';
-  value: string;
-}
+export type ChecksumRequest = import('../lib/bindings').ChecksumRequest;
 
-export interface StartDownloadRequest {
-  url: string;
-  destination: string;
-  checksum?: ChecksumRequest;
-  auth_token?: string;
-  model_name?: string;
-  model_id?: string;
-}
+export type StartDownloadRequest = import('../lib/bindings').StartDownloadRequest;
 
 export type DownloadStatus = Omit<import('../lib/bindings').DownloadStatusResponse, 'state'> & { state: DownloadState };
 

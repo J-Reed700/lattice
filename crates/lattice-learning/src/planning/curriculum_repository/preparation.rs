@@ -5,7 +5,6 @@ use crate::curriculum::{self, LearningCurriculumLessonState, LearningCurriculumR
 use crate::persistence::{db, decode, encode, now};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::runtime::jobs::{JobStatus, JobStore};
 use sqlx::Row;
 
@@ -70,7 +69,7 @@ impl LearningCurriculumRepository {
         key: &str,
         value: serde_json::Value,
     ) -> Result<()> {
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let in_course: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_jobs j JOIN learning_lessons l ON l.program_id=j.program_id WHERE j.job_id=? AND l.id=?)")
             .bind(job_id).bind(lesson_id).fetch_one(&mut *tx).await.map_err(db)?;
         if !in_course
@@ -115,7 +114,7 @@ impl LearningCurriculumRepository {
                 "A generation job may publish one to three prepared lessons.".into(),
             ));
         }
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let not_found = || AppError::NotFound("Generation job not found".into());
         let scope = job_scope(&mut tx, id).await?.ok_or_else(not_found)?;
         let job = JobStore::find_in(&mut tx, id)

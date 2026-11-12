@@ -118,7 +118,7 @@ export const useDashboardQuery = (
         api.getIndexedFolders(),
         api.listConversations(),
         api.listJournals(),
-        api.listMessageBookmarks({ limit: 10, offset: 0 }),
+        api.listMessageBookmarks({ conversationId: null, query: null, limit: 10, offset: 0 }),
       ]);
 
       // Say why Home could not load: the backend's reason, not a stock line.
@@ -141,6 +141,7 @@ export const useDashboardQuery = (
       if (preferredJournal) {
         const journalEntriesResult = await api.listJournalConversations({
           journalSpaceId: preferredJournal.id,
+          query: null,
           includeArchived: false,
           limit: 25,
           offset: 0,

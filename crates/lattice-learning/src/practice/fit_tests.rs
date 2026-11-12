@@ -8,6 +8,7 @@ use crate::practice::session::fake_kind::{fake_kind, ScriptedModel};
 use crate::practice::session::kind::{Kind, Kinds};
 use crate::practice_repository::KindVerdict;
 use lattice_core::domain::learning::practice::work::KindId;
+use lattice_core::shared::persistence::Database;
 use std::collections::BTreeSet;
 
 const BEADS: &str = "Beads. A course asks for it when learners string beads.";
@@ -105,8 +106,9 @@ fn outline(lesson_title: &str) -> CourseOutline {
 #[tokio::test]
 async fn two_kinds_are_decided_in_one_request_and_stored_on_one_basis() -> Result<()> {
     let pool = active_memory_pool().await?;
-    let (program, _lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let (program, _lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database.clone());
     let kinds = Kinds::new([kind("rope", ROPE), kind("beads", BEADS)])?;
     let model = scripted(&[answer(&[("beads", true), ("rope", false)])]);
 
@@ -141,8 +143,9 @@ async fn two_kinds_are_decided_in_one_request_and_stored_on_one_basis() -> Resul
 #[tokio::test]
 async fn deciding_again_sends_nothing_until_the_outline_changes() -> Result<()> {
     let pool = active_memory_pool().await?;
-    let (program, lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let (program, lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database.clone());
     let kinds = Kinds::new([kind("beads", BEADS), kind("rope", ROPE)])?;
     let model = scripted(&[
         answer(&[("beads", true), ("rope", true)]),
@@ -184,8 +187,9 @@ async fn deciding_again_sends_nothing_until_the_outline_changes() -> Result<()> 
 #[tokio::test]
 async fn a_reworded_kind_and_an_added_kind_are_each_decided_again_in_one_request() -> Result<()> {
     let pool = active_memory_pool().await?;
-    let (program, _lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let (program, _lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database.clone());
     let reworded = "Beads, worded anew. A course asks for it when learners thread beads.";
     let model = scripted(&[
         answer(&[("beads", true), ("rope", true)]),
@@ -246,8 +250,9 @@ async fn a_reworded_kind_and_an_added_kind_are_each_decided_again_in_one_request
 #[tokio::test]
 async fn a_kind_the_profile_wants_fits_without_a_reason_even_when_its_row_says_no() -> Result<()> {
     let pool = active_memory_pool().await?;
-    let (program, _lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let (program, _lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database.clone());
     let kinds = Kinds::new([wanted("beads", BEADS), kind("rope", ROPE)])?;
     let state = repo.fit_state(&program.summary.id).await?;
     let basis = basis_of(&state.outline, &kinds)?;
@@ -294,8 +299,9 @@ async fn a_kind_the_profile_wants_fits_without_a_reason_even_when_its_row_says_n
 #[tokio::test]
 async fn when_every_kind_is_wanted_nothing_is_asked_and_nothing_stored() -> Result<()> {
     let pool = active_memory_pool().await?;
-    let (program, _lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let (program, _lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database.clone());
     let kinds = Kinds::new([wanted("beads", BEADS), wanted("rope", ROPE)])?;
     let model = scripted(&[]);
 
@@ -341,8 +347,9 @@ async fn an_answer_that_breaks_its_shape_is_refused_twice_naming_the_kind() -> R
         (blank_reason(), "rope"),
     ] {
         let pool = active_memory_pool().await?;
-        let (program, _lesson) = setup(&pool).await?;
-        let repo = LearningPracticeRepository::new(pool.clone());
+        let database = Database::new(pool.clone());
+        let (program, _lesson) = setup(&pool, &database).await?;
+        let repo = LearningPracticeRepository::new(database.clone());
         let kinds = Kinds::new([kind("beads", BEADS), kind("rope", ROPE)])?;
         let model = scripted(&[bad.clone(), bad]);
 
@@ -362,8 +369,9 @@ async fn an_answer_that_breaks_its_shape_is_refused_twice_naming_the_kind() -> R
 async fn a_refused_answer_is_asked_again_and_the_second_answer_is_stored() -> Result<()> {
     for bad in [left_out(), named_twice(), blank_reason()] {
         let pool = active_memory_pool().await?;
-        let (program, _lesson) = setup(&pool).await?;
-        let repo = LearningPracticeRepository::new(pool.clone());
+        let database = Database::new(pool.clone());
+        let (program, _lesson) = setup(&pool, &database).await?;
+        let repo = LearningPracticeRepository::new(database.clone());
         let kinds = Kinds::new([kind("beads", BEADS), kind("rope", ROPE)])?;
         let model = scripted(&[bad, answer(&[("beads", true), ("rope", false)])]);
 
@@ -385,8 +393,9 @@ async fn a_refused_answer_is_asked_again_and_the_second_answer_is_stored() -> Re
 #[tokio::test]
 async fn fits_gives_exactly_the_kinds_that_fit() -> Result<()> {
     let pool = active_memory_pool().await?;
-    let (program, lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let (program, lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database.clone());
     let kinds = Kinds::new([
         wanted("beads", BEADS),
         kind("rope", ROPE),
@@ -419,12 +428,13 @@ async fn fits_gives_exactly_the_kinds_that_fit() -> Result<()> {
 async fn recording_fits_replaces_the_courses_earlier_rows_and_skips_a_deleted_course() -> Result<()>
 {
     let pool = active_memory_pool().await?;
+    let database = Database::new(pool.clone());
     let program = crate::tests::fixture();
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(database.clone())
         .create(&program)
         .await?;
     let program_id = program.summary.id.clone();
-    let repo = LearningPracticeRepository::new(pool.clone());
+    let repo = LearningPracticeRepository::new(database.clone());
     let verdict = |kind: &str, fits: bool, reason: &str| KindVerdict {
         kind: kind.into(),
         fits,

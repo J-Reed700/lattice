@@ -12,15 +12,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use sqlx::SqlitePool;
-
 use super::manifest::{read_manifest, write_manifest, IndexManifest, ManifestMismatch};
 use super::repository::read_source_stamp;
 use crate::infrastructure::vector_index::USearchVectorIndex;
 use lattice_core::application::ports::VectorSearchPort;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Database;
 
 /// How often the flusher looks at the index.
 const FLUSH_TICK: Duration = Duration::from_secs(5);
@@ -60,7 +58,7 @@ impl StartupPath {
 /// avoid. It is only called when the manifest says a rebuild is needed.
 pub async fn open_or_rebuild<F, Fut>(
     index: &Arc<USearchVectorIndex>,
-    pool: &impl DriverPool,
+    db: &Database,
     index_path: &Path,
     identity: &str,
     generation: &str,
@@ -71,9 +69,8 @@ where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<Vec<(String, Vec<f32>, String, String, String)>>>,
 {
-    let pool = pool.sqlx_pool();
     let started = Instant::now();
-    let stamp = read_source_stamp(pool, identity, dimension).await?;
+    let stamp = read_source_stamp(db, identity, dimension).await?;
     let config = index.index_config();
 
     let mut mismatch = match read_manifest(index_path) {
@@ -82,7 +79,7 @@ where
     };
 
     if mismatch.is_none() {
-        let hydrated = hydrate_content(index, pool, identity, dimension).await?;
+        let hydrated = hydrate_content(index, db, identity, dimension).await?;
         if hydrated == index.count() {
             let path = StartupPath::Reused {
                 vectors: index.count(),
@@ -139,7 +136,7 @@ where
 /// then publish it into the runtime index before reading the next page.
 pub async fn open_or_rebuild_streaming<F, Fut>(
     index: &Arc<USearchVectorIndex>,
-    pool: &impl DriverPool,
+    db: &Database,
     index_path: &Path,
     identity: &str,
     generation: &str,
@@ -154,16 +151,15 @@ where
         >,
     >,
 {
-    let pool = pool.sqlx_pool();
     let started = Instant::now();
-    let stamp = read_source_stamp(pool, identity, dimension).await?;
+    let stamp = read_source_stamp(db, identity, dimension).await?;
     let config = index.index_config();
     let mut mismatch = match read_manifest(index_path) {
         Some(manifest) => manifest.mismatch(generation, &config, index.count(), &stamp),
         None => Some(ManifestMismatch::Missing),
     };
     if mismatch.is_none() {
-        let hydrated = hydrate_content(index, pool, identity, dimension).await?;
+        let hydrated = hydrate_content(index, db, identity, dimension).await?;
         if hydrated == index.count() {
             return Ok(StartupPath::Reused {
                 vectors: index.count(),
@@ -198,7 +194,7 @@ where
         }
         added += count;
     }
-    let end_stamp = read_source_stamp(pool, identity, dimension).await?;
+    let end_stamp = read_source_stamp(db, identity, dimension).await?;
     if end_stamp != stamp {
         return Err(AppError::InvalidState(
             "Vector sources changed during startup rebuild; retry startup to restore a consistent generation".into(),
@@ -225,10 +221,11 @@ where
 /// fetched in small batches after ranking at the search boundary.
 async fn hydrate_content(
     index: &Arc<USearchVectorIndex>,
-    pool: &SqlitePool,
+    db: &Database,
     identity: &str,
     dimension: usize,
 ) -> Result<usize> {
+    let mut read = db.begin_read().await?;
     let mut cursor = String::new();
     let mut filled = 0;
     loop {
@@ -246,7 +243,7 @@ async fn hydrate_content(
                 .bind(identity)
                 .bind(dimension as i64)
                 .bind(HYDRATE_PAGE)
-                .fetch_all(pool)
+                .fetch_all(&mut *read)
                 .await?;
         let Some(last) = rows.last() else {
             break;
@@ -257,13 +254,14 @@ async fn hydrate_content(
                 .map(|id| lattice_core::shared::persistence::embedding_encoding::vector_key(&id)),
         );
     }
+    read.commit().await?;
     Ok(filled)
 }
 
 /// Owns the flush decision for one index.
 pub struct IndexPersistence {
     index: Arc<USearchVectorIndex>,
-    pool: SqlitePool,
+    db: Database,
     identity: String,
     generation: String,
     dimension: usize,
@@ -274,7 +272,7 @@ pub struct IndexPersistence {
 impl IndexPersistence {
     pub fn new(
         index: Arc<USearchVectorIndex>,
-        pool: impl DriverPool,
+        db: Database,
         identity: String,
         generation: String,
         dimension: usize,
@@ -282,7 +280,7 @@ impl IndexPersistence {
     ) -> Self {
         Self {
             index,
-            pool: pool.sqlx_pool().clone(),
+            db,
             identity,
             generation,
             dimension,
@@ -302,7 +300,7 @@ impl IndexPersistence {
         }
         let started = Instant::now();
         // Before the save, never after: see the module comment.
-        let stamp = read_source_stamp(&self.pool, &self.identity, self.dimension).await?;
+        let stamp = read_source_stamp(&self.db, &self.identity, self.dimension).await?;
         let config = self.index.index_config();
 
         let index = Arc::clone(&self.index);

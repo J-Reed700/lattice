@@ -71,6 +71,7 @@ impl IndexingModule {
                     database.clone(),
                 ),
             ),
+            crate::features::llm::engine::sidecar_manager::SidecarBinary::installed_paths(),
             Arc::clone(core.background()),
         );
         let embedding_repo = Arc::new(EmbeddingRepository::new(database.clone()))

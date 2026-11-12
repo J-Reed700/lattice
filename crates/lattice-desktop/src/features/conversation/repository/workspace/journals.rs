@@ -1,6 +1,5 @@
 use super::*;
 use crate::features::conversation::repository::space_rows::ConversationJournalRow;
-use lattice_core::shared::persistence::Transactions;
 use sqlx::SqliteConnection;
 
 pub(super) async fn ensure_journal_space(
@@ -48,7 +47,7 @@ impl ConversationRepository {
         let now = Utc::now().to_rfc3339();
 
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -95,6 +94,7 @@ impl ConversationRepository {
     }
 
     pub async fn list_journals(&self) -> Result<Vec<ConversationJournalDto>, AppError> {
+        let mut read = self.db.begin_read().await?;
         let journals = sqlx::query_as::<_, ConversationJournalRow>(
             r#"
         SELECT
@@ -104,9 +104,10 @@ impl ConversationRepository {
         ORDER BY is_archived ASC, sort_order ASC, updated_at DESC
         "#,
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("Failed to list journals: {}", e)))?;
+        read.commit().await?;
 
         Ok(journals.into_iter().map(Into::into).collect())
     }
@@ -119,7 +120,7 @@ impl ConversationRepository {
         let is_archived: Option<i64> = request.is_archived.map(|v| if v { 1 } else { 0 });
 
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -188,6 +189,7 @@ impl ConversationRepository {
         let now = Utc::now().to_rfc3339();
         let archived = if request.archived { 1 } else { 0 };
 
+        let mut tx = self.db.begin_write().await?;
         let result = sqlx::query(
             r#"
         UPDATE journals
@@ -198,7 +200,7 @@ impl ConversationRepository {
         .bind(archived)
         .bind(&now)
         .bind(&request.journal_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to archive journal: {}", e)))?;
 
@@ -208,6 +210,7 @@ impl ConversationRepository {
                 request.journal_id
             )));
         }
+        tx.commit().await?;
 
         Ok(RenameConversationResponseDto {
             status: "success".to_string(),
@@ -223,6 +226,7 @@ impl ConversationRepository {
             return Err(AppError::InvalidInput("journalId is required".to_string()));
         }
 
+        let mut tx = self.db.begin_write().await?;
         let result = sqlx::query(
             r#"
         DELETE FROM journals
@@ -230,7 +234,7 @@ impl ConversationRepository {
         "#,
         )
         .bind(journal_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to delete journal: {}", e)))?;
 
@@ -240,6 +244,7 @@ impl ConversationRepository {
                 journal_id
             )));
         }
+        tx.commit().await?;
 
         Ok(RenameConversationResponseDto {
             status: "success".to_string(),
@@ -265,7 +270,7 @@ impl ConversationRepository {
         }
 
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -331,7 +336,7 @@ impl ConversationRepository {
         }
 
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -374,7 +379,7 @@ impl ConversationRepository {
             ));
         }
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -411,7 +416,7 @@ impl ConversationRepository {
     ) -> Result<Vec<String>, AppError> {
         let journal_space_id = journal_space_id.trim();
         let mut tx = self
-            .pool
+            .db
             .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -453,7 +458,7 @@ impl ConversationRepository {
         .query();
 
         let mut tx = self
-            .pool
+            .db
             .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;

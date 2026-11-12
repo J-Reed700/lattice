@@ -10,7 +10,6 @@ use crate::persistence::{db, now};
 use crate::quiz_blueprints;
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashMap;
 
@@ -84,8 +83,7 @@ impl LearningAssessmentRepository {
         uuid(&req.form_id, "form")?;
         uuid(&req.operation_id, "operation")?;
         quiz_blueprints::validate_scope(&req.scope)?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &req.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = assessment_operation(
             &req.operation_id,
             &req.program_id,
@@ -229,7 +227,7 @@ impl LearningAssessmentRepository {
     }
 
     pub async fn get_form(&self, form_id: &str) -> Result<LearningAssessmentFormDto> {
-        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await.map_err(db)?;
         let form = Self::form_in(&mut read, form_id).await?;
         read.commit().await.map_err(db)?;
         Ok(form)
@@ -511,8 +509,7 @@ impl LearningAssessmentRepository {
         if req.assistance.iter().any(|a| a.trim().is_empty()) {
             return Err(invalid("Assistance notes cannot be blank."));
         }
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &req.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = assessment_operation(
             &req.operation_id,
             &req.program_id,
@@ -605,8 +602,7 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &req.program_id).await?;
+        let mut tx = self.db.begin_write().await.map_err(db)?;
         let operation = assessment_operation(
             &req.operation_id,
             &req.program_id,

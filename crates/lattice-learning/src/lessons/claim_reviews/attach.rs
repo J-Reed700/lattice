@@ -23,7 +23,7 @@ use lattice_core::domain::learning::claim_review::{
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::http::host_of;
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use std::sync::Arc;
 
 use self::acquire::Acquired;

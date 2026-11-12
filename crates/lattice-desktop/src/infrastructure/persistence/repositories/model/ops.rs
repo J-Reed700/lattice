@@ -3,6 +3,7 @@ use lattice_core::domain::entities::model::Model;
 use lattice_core::domain::entities::model_file::ModelFile;
 use lattice_core::domain::value_objects::model_status::{FileStatus, ModelStatus};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::SqliteConnection;
 use std::str::FromStr;
 use tracing::{debug, error, info};
@@ -104,7 +105,7 @@ pub async fn get_model_files(
     Ok(files)
 }
 
-pub async fn upsert_model(conn: &mut SqliteConnection, model: &Model) -> Result<()> {
+pub async fn upsert_model(tx: &mut WriteTx, model: &Model) -> Result<()> {
     let id = &model.id;
     let model_id = &model.model_id;
     let model_name = &model.name;
@@ -167,7 +168,7 @@ pub async fn upsert_model(conn: &mut SqliteConnection, model: &Model) -> Result<
     .bind(metadata)
     .bind(created_at)
     .bind(updated_at)
-    .execute(conn)
+    .execute(&mut **tx)
     .await
     .map_err(|e| {
         error!(error = %e, model_id = %model_id, "Failed to upsert model");
@@ -177,7 +178,7 @@ pub async fn upsert_model(conn: &mut SqliteConnection, model: &Model) -> Result<
     Ok(())
 }
 
-pub async fn upsert_model_file(conn: &mut SqliteConnection, file: &ModelFile) -> Result<()> {
+pub async fn upsert_model_file(tx: &mut WriteTx, file: &ModelFile) -> Result<()> {
     let file_id = &file.id;
     let file_model_id = &file.model_id;
     let file_name = &file.file_name;
@@ -219,7 +220,7 @@ pub async fn upsert_model_file(conn: &mut SqliteConnection, file: &ModelFile) ->
         file_created_at,
         file_updated_at
     )
-    .execute(conn)
+    .execute(&mut **tx)
     .await
     .map_err(|e| {
         error!(error = %e, file_id = %file_id, "Failed to upsert model file");
@@ -230,7 +231,7 @@ pub async fn upsert_model_file(conn: &mut SqliteConnection, file: &ModelFile) ->
 }
 
 pub async fn update_model_status(
-    conn: &mut SqliteConnection,
+    tx: &mut WriteTx,
     model_id: &str,
     status: ModelStatus,
 ) -> Result<()> {
@@ -247,7 +248,7 @@ pub async fn update_model_status(
         updated_at,
         model_id
     )
-    .execute(conn)
+    .execute(&mut **tx)
     .await
     .map_err(|e| {
         error!(error = %e, model_id = %model_id, "Failed to update model status");
@@ -262,7 +263,7 @@ pub async fn update_model_status(
     Ok(())
 }
 
-pub async fn deactivate_all_chat_models(conn: &mut SqliteConnection) -> Result<()> {
+pub async fn deactivate_all_chat_models(tx: &mut WriteTx) -> Result<()> {
     sqlx::query!(
         r#"
         UPDATE models
@@ -270,7 +271,7 @@ pub async fn deactivate_all_chat_models(conn: &mut SqliteConnection) -> Result<(
         WHERE is_active_for_chat = 1
         "#
     )
-    .execute(conn)
+    .execute(&mut **tx)
     .await
     .map_err(|e| {
         error!(error = %e, "Failed to deactivate other chat models");
@@ -280,7 +281,7 @@ pub async fn deactivate_all_chat_models(conn: &mut SqliteConnection) -> Result<(
     Ok(())
 }
 
-pub async fn activate_chat_model(conn: &mut SqliteConnection, model_id: &str) -> Result<()> {
+pub async fn activate_chat_model(tx: &mut WriteTx, model_id: &str) -> Result<()> {
     let updated_at = Utc::now().to_rfc3339();
     let result = sqlx::query!(
         r#"
@@ -291,7 +292,7 @@ pub async fn activate_chat_model(conn: &mut SqliteConnection, model_id: &str) ->
         updated_at,
         model_id
     )
-    .execute(conn)
+    .execute(&mut **tx)
     .await
     .map_err(|e| {
         error!(error = %e, model_id = %model_id, "Failed to set active chat model");
@@ -385,7 +386,7 @@ pub async fn get_active_embedding_model(conn: &mut SqliteConnection) -> Result<O
     }
 }
 
-pub async fn clear_active_chat_model(conn: &mut SqliteConnection) -> Result<()> {
+pub async fn clear_active_chat_model(tx: &mut WriteTx) -> Result<()> {
     sqlx::query!(
         r#"
         UPDATE models
@@ -393,7 +394,7 @@ pub async fn clear_active_chat_model(conn: &mut SqliteConnection) -> Result<()> 
         WHERE is_active_for_chat = 1
         "#
     )
-    .execute(conn)
+    .execute(&mut **tx)
     .await
     .map_err(|e| {
         error!(error = %e, "Failed to clear active chat model");
@@ -403,7 +404,7 @@ pub async fn clear_active_chat_model(conn: &mut SqliteConnection) -> Result<()> 
     Ok(())
 }
 
-pub async fn clear_active_embedding_model(conn: &mut SqliteConnection) -> Result<()> {
+pub async fn clear_active_embedding_model(tx: &mut WriteTx) -> Result<()> {
     sqlx::query!(
         r#"
         UPDATE models
@@ -411,7 +412,7 @@ pub async fn clear_active_embedding_model(conn: &mut SqliteConnection) -> Result
         WHERE is_active_for_embedding = 1
         "#
     )
-    .execute(conn)
+    .execute(&mut **tx)
     .await
     .map_err(|e| {
         error!(error = %e, "Failed to clear active embedding model");
@@ -421,7 +422,7 @@ pub async fn clear_active_embedding_model(conn: &mut SqliteConnection) -> Result
     Ok(())
 }
 
-pub async fn delete_if_not_active(conn: &mut SqliteConnection, model_id: &str) -> Result<()> {
+pub async fn delete_if_not_active(tx: &mut WriteTx, model_id: &str) -> Result<()> {
     let result = sqlx::query!(
         r#"
         DELETE FROM models
@@ -431,7 +432,7 @@ pub async fn delete_if_not_active(conn: &mut SqliteConnection, model_id: &str) -
         "#,
         model_id
     )
-    .execute(conn)
+    .execute(&mut **tx)
     .await
     .map_err(|e| {
         error!(error = %e, model_id = %model_id, "Failed to delete model");
@@ -445,7 +446,7 @@ pub async fn delete_if_not_active(conn: &mut SqliteConnection, model_id: &str) -
     Ok(())
 }
 
-pub async fn update_status_completed(conn: &mut SqliteConnection, model_id: &str) -> Result<()> {
+pub async fn update_status_completed(tx: &mut WriteTx, model_id: &str) -> Result<()> {
     let status_str = ModelStatus::Completed.to_string();
     let updated_at = Utc::now().to_rfc3339();
 
@@ -459,7 +460,7 @@ pub async fn update_status_completed(conn: &mut SqliteConnection, model_id: &str
         updated_at,
         model_id
     )
-    .execute(conn)
+    .execute(&mut **tx)
     .await
     .map_err(|e| {
         error!(error = %e, model_id = %model_id, "Failed to update model status to completed");
@@ -474,7 +475,7 @@ pub async fn update_status_completed(conn: &mut SqliteConnection, model_id: &str
     Ok(())
 }
 
-pub async fn update_status_failed(conn: &mut SqliteConnection, model_id: &str) -> Result<()> {
+pub async fn update_status_failed(tx: &mut WriteTx, model_id: &str) -> Result<()> {
     let status_str = ModelStatus::Failed.to_string();
     let updated_at = Utc::now().to_rfc3339();
 
@@ -488,7 +489,7 @@ pub async fn update_status_failed(conn: &mut SqliteConnection, model_id: &str) -
         updated_at,
         model_id
     )
-    .execute(conn)
+    .execute(&mut **tx)
     .await
     .map_err(|e| {
         error!(error = %e, model_id = %model_id, "Failed to update model status to failed");

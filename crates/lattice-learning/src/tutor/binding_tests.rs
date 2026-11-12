@@ -19,13 +19,14 @@ async fn binding_decides_on_the_course_as_the_other_writer_left_it() {
         .connect_with(file_options(dir.path().join("t.db")))
         .await
         .unwrap();
+    let db = Database::new(pool.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
         .await
         .unwrap();
     let mut program = fixture();
     program.summary.status = LearningProgramStatus::Active;
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(db.clone())
         .create(&program)
         .await
         .unwrap();
@@ -47,7 +48,7 @@ async fn binding_decides_on_the_course_as_the_other_writer_left_it() {
         writer.commit().await.unwrap();
     });
     let bound = bind_conversation(
-        &Database::from(pool.clone()),
+        &db,
         &SetConversationCourseRequestDto {
             conversation_id: conversation.clone(),
             program_id: program.summary.id.clone(),

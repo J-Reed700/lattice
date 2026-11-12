@@ -27,7 +27,7 @@ use lattice_core::domain::provenance::{
     TrackRecord, TrustOverride, POLICY,
 };
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use std::collections::BTreeSet;
 
 /// The relations through which a version inherits a level (§5 step 4), as
