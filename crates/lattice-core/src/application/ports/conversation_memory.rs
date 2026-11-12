@@ -8,7 +8,7 @@
 //! transaction.
 
 use crate::domain::conversation::memory::{
-    ConversationMemoryState, MemoryCommit, MemoryId, MemorySnapshot, SourceMessage, SourceRole,
+    ConversationMemoryState, MemoryCommit, MemorySnapshot, SourceMessage, SourceRole,
     SuppressedSpan,
 };
 use crate::shared::error::Result;
@@ -421,16 +421,6 @@ pub trait ConversationMemoryReadPort: Send + Sync {
         to_sequence: i64,
         limits: SourceReadLimits,
     ) -> Result<SourcePage>;
-
-    /// Search generated item labels, for the memory details view. Labels
-    /// improve findability; they never stand in for evidence, and mandatory
-    /// items never depend on this search.
-    async fn search_memory_labels(
-        &self,
-        conversation_id: &str,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<MemoryId>>;
 }
 
 /// Resolved and scope-checked ledger entries, ready for bounded assembly.

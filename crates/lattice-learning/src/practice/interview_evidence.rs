@@ -14,8 +14,6 @@ use lattice_core::{
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
-pub(super) const MAX_EVIDENCE_CHOICES: usize = 32;
-
 struct Choice {
     id: String,
     citation: LearningPracticeCitationDto,
@@ -56,6 +54,9 @@ impl EvidenceBank {
     ) -> Result<Self> {
         let mut bank = Self::default();
         let empty_cost = llm.count_tokens("[]");
+        let schema_cost =
+            |ids: &[String]| llm.count_tokens(&super::standard_schema(ids).to_string());
+        let empty_schema_cost = schema_cost(&[]);
         let documents = passages.as_array().ok_or_else(|| {
             invalid("Captured interview evidence must be a list of source passages.")
         })?;
@@ -115,17 +116,20 @@ impl EvidenceBank {
                             .map(|choice| &choice.view)
                             .chain(std::iter::once(&view))
                             .collect();
-                        if llm
+                        let ids: Vec<String> = bank
+                            .choices
+                            .iter()
+                            .map(|choice| choice.id.clone())
+                            .chain(std::iter::once(id.clone()))
+                            .collect();
+                        let cost = llm
                             .count_tokens(&json!(next).to_string())
                             .saturating_sub(empty_cost)
-                            > token_room
-                        {
+                            + schema_cost(&ids).saturating_sub(empty_schema_cost);
+                        if cost > token_room {
                             continue;
                         }
                         bank.choices.push(Choice { id, citation, view });
-                        if bank.choices.len() == MAX_EVIDENCE_CHOICES {
-                            return Ok(bank);
-                        }
                     }
                 }
             }

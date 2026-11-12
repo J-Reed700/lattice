@@ -68,3 +68,13 @@ describe('Shared reference ownership', () => {
   lifecycle.cleanupAll();
  });
 });
+
+describe('Reference inbox listing', () => {
+ it('asks for every bookmark, with no limit or offset', async () => {
+  renderHook(() => useReferenceInbox({requestedReferenceId:null}),{wrapper:harness(client())});
+  await waitFor(() => expect(api.listMessageBookmarks).toHaveBeenCalled());
+  for (const [request] of api.listMessageBookmarks.mock.calls) {
+   expect(request).toMatchObject({ limit: null, offset: null });
+  }
+ });
+});

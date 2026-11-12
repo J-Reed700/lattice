@@ -410,8 +410,8 @@ fn units(candidate: &Value) -> Result<Vec<Value>> {
         .get("questions")
         .and_then(Value::as_array)
         .ok_or_else(|| invalid("Verification needs lesson questions."))?;
-    if blocks.is_empty() || blocks.len() > 32 || questions.len() > 24 {
-        return Err(invalid("Invalid verification unit count."));
+    if blocks.is_empty() {
+        return Err(invalid("Verification needs lesson blocks."));
     }
     Ok(blocks.iter().map(|b| json!({"kind":"teaching", "role":b["kind"], "title":b["title"], "body":b["body"], "rubric":b["rubric"]}))
         .chain(questions.iter().map(|q| {

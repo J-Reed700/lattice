@@ -13,7 +13,6 @@ use std::sync::Arc;
 // Keep this in sync with the repository's 2,400-character document excerpt
 // and generation's source snapshot limit.
 const MAX_EXCERPT_CHARS: usize = 2400;
-const MAX_TITLE_CHARS: usize = 180;
 
 /// Everything source acquisition needs, bound as one small named bundle.
 ///
@@ -77,7 +76,7 @@ pub fn preview(
     };
     LearningSourceDto {
         id: id.into(),
-        title: captured.title.chars().take(MAX_TITLE_CHARS).collect(),
+        title: captured.title.clone(),
         url: captured
             .resolved_url
             .clone()

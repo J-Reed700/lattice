@@ -932,59 +932,6 @@ async fn a_second_claim_on_a_sentence_at_recite_waits_a_round_then_is_done_on_th
     Ok(())
 }
 
-#[tokio::test]
-async fn a_claim_that_cannot_be_cited_is_done_and_the_reading_after_it_tells() -> Result<()> {
-    let policy = StandardPolicy::new();
-    let sources = [source()];
-    let references = ReferenceCollection::lexical(&sources)?;
-    let mut ledger = open().await?;
-    let id = claim(&mut ledger, "bare", (GOOD, GOOD), GOOD, SOURCED).await?;
-    walk(&mut ledger, &id, Class::Sourced, &RECITING).await?;
-    // The section lists as many citations as the lesson schema allows, none
-    // of them the claim's: it can take no other.
-    let entries: Vec<Value> = (0..crate::generation::MAX_CITATIONS)
-        .map(|n| {
-            json!({"sentence":format!("Entry {n} says nothing of it."),"sourceIndex":0,"quote":GOOD})
-        })
-        .collect();
-    let mut lesson = lesson_of(GOOD);
-    lesson["blocks"][0]["citations"] = json!(entries);
-    identified(
-        &mut ledger,
-        &Model::new(),
-        &lesson,
-        &[(GOOD, GOOD)],
-        &sources,
-    )
-    .await?;
-    let finding = vec![elsewhere(GOOD, &sources[0].id, 0..GOOD.len())];
-    let report = pass_report(finding);
-
-    super::super::repair_loop::recite(
-        &mut ledger,
-        &policy,
-        (&mut lesson, &report),
-        (&mut vec![sources[0].clone()], &mut HashSet::new()),
-        &references,
-    )
-    .await?;
-
-    assert_eq!(node_of(&ledger, &id), Some("s.citeread"));
-    let events = events_of(ledger.entry(&id).unwrap());
-    assert!(events
-        .iter()
-        .all(|event| !matches!(event, ClaimEvent::CitationRepaired { .. })));
-    assert!(matches!(
-        events.last(),
-        Some(ClaimEvent::Stepped {
-            step: Step::Recite,
-            outcome: Outcome::Done,
-            ..
-        })
-    ));
-    Ok(())
-}
-
 fn cited_lesson(entries: Value) -> Value {
     json!({"blocks":[{"kind":"explanation","title":"Rows","body":GOOD,"rubric":[],
         "sourceIndex":0,"quote":GOOD,"citations":entries}],"questions":[]})

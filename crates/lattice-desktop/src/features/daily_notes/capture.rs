@@ -204,7 +204,6 @@ pub(super) fn apply_reference(
                 }],
             },
         );
-        note.conversation_snapshots.truncate(120);
     }
     Ok(request.add_snapshot.then_some(snapshot_id))
 }

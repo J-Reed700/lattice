@@ -508,52 +508,6 @@ fn a_second_claim_on_a_sentence_cited_in_the_call_is_deferred() -> Result<()> {
 }
 
 #[test]
-fn a_section_that_lists_as_many_citations_as_the_schema_allows_takes_no_other_but_moves_its_own(
-) -> Result<()> {
-    let sources = [source()];
-    let references = ReferenceCollection::lexical(&sources)?;
-    let finding = found_in(&sources[0], GOOD, (GOOD, GOOD));
-    let unrelated: Vec<Value> = (0..crate::generation::MAX_CITATIONS)
-        .map(|n| json!({"sentence":format!("Entry {n} says nothing of it."),"sourceIndex":0,"quote":NONE}))
-        .collect();
-    let mut candidate = csv_lesson(GOOD);
-    candidate["blocks"][0]["citations"] = json!(unrelated);
-    let full = candidate.clone();
-
-    let cited = repair::cite_where_supported(
-        &mut candidate,
-        std::slice::from_ref(&finding),
-        &[],
-        &mut sources.to_vec(),
-        &references,
-        &mut HashSet::new(),
-    )?;
-
-    assert!(matches!(cited.as_slice(), [repair::Cited::Cannot]));
-    assert_eq!(candidate, full, "nothing is written");
-
-    // Its own entry needs no room: it moves.
-    let mut entries = unrelated;
-    entries[0] = json!({"sentence":GOOD,"sourceIndex":0,"quote":NONE});
-    let mut candidate = csv_lesson(GOOD);
-    candidate["blocks"][0]["citations"] = json!(entries);
-    let cited = repair::cite_where_supported(
-        &mut candidate,
-        std::slice::from_ref(&finding),
-        &[],
-        &mut sources.to_vec(),
-        &references,
-        &mut HashSet::new(),
-    )?;
-    assert!(matches!(cited.as_slice(), [repair::Cited::Recited(_)]));
-    assert_eq!(
-        candidate["blocks"][0]["citations"][0],
-        json!({"sentence":GOOD,"sourceIndex":0,"quote":GOOD})
-    );
-    Ok(())
-}
-
-#[test]
 fn a_claim_that_draws_on_several_sentences_of_its_quote_cannot_be_cited() -> Result<()> {
     let sources = [source()];
     let references = ReferenceCollection::lexical(&sources)?;

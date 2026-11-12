@@ -6,7 +6,7 @@ use super::{
     entries::{decode, ExportScope, ImportScope, SectionRows},
     evidence_tables::{
         insert_evidence_snapshot, snapshot_evidence_tables, AggregateTableSnapshot,
-        LearningEvidenceSnapshot, EVIDENCE_TABLES, MAX_TABLE_ROWS,
+        LearningEvidenceSnapshot, EVIDENCE_TABLES,
     },
     invalid, json, parse,
     remap::map_evidence_ids,
@@ -40,17 +40,6 @@ fn encode_evidence(snapshot: &LearningEvidenceSnapshot) -> Result<Vec<LearningPa
             .any(|(table, spec)| table.table != spec.table)
     {
         return Err(invalid("Pack aggregate table set is incomplete."));
-    }
-    if let Some(table) = snapshot
-        .tables
-        .iter()
-        .find(|table| table.rows.len() > MAX_TABLE_ROWS)
-    {
-        return Err(invalid(format!(
-            "This course has {} records in {}, more than the {MAX_TABLE_ROWS} per table a course pack can carry, so no computer could import it.",
-            table.rows.len(),
-            table.table
-        )));
     }
     snapshot
         .tables

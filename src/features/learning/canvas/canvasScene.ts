@@ -3,9 +3,6 @@ import { serializeAsJSON } from '@excalidraw/excalidraw';
 import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import type { AppState, BinaryFiles } from '@excalidraw/excalidraw/types';
 
-const MAX_CANVAS_BYTES = 5 * 1024 * 1024;
-const MAX_CANVAS_ELEMENTS = 5_000;
-
 export type CanvasScene = {
   type: 'excalidraw';
   version: number;
@@ -25,8 +22,6 @@ export function serializeCanvasScene(elements: readonly ExcalidrawElement[], app
   if (elements.some((element) => element.type === 'embeddable' || element.type === 'iframe')) {
     throw new Error('External embeds aren’t available on Canvas. You can still draw shapes, lines, and text.');
   }
-  const liveElements = elements.filter((element) => element.isDeleted !== true);
-  if (liveElements.length > MAX_CANVAS_ELEMENTS) throw new Error('This canvas has reached its 5,000-element limit.');
   const official = JSON.parse(serializeAsJSON(elements, appState, {}, 'database')) as CanvasScene;
   const stableState = Object.fromEntries(PERSISTED_APP_STATE.flatMap((key) => appState[key] === undefined ? [] : [[key, appState[key]]]));
   const scene: CanvasScene = {
@@ -37,9 +32,7 @@ export function serializeCanvasScene(elements: readonly ExcalidrawElement[], app
     appState: stableState,
     files: {},
   };
-  const serialized = JSON.stringify(scene);
-  if (new Blob([serialized]).size > MAX_CANVAS_BYTES) throw new Error('This canvas has reached its 5 MB size limit. Simplify the drawing before saving.');
-  return serialized;
+  return JSON.stringify(scene);
 }
 
 export function parseCanvasScene(sceneJson: string): CanvasScene {

@@ -277,6 +277,24 @@ fn candidate_checks_refuse_leaks_length_bias_and_bad_blanks() {
     assert!(engine::validate_candidate(&cloze).is_err());
 }
 
+#[test]
+fn an_item_with_more_rationales_than_options_is_refused() {
+    let mut item = candidate(
+        LearningItemFormat::SingleChoice,
+        &["Alpha", "Bravo", "Charlie", "Delta"],
+        LearningAssessmentKey::Choice(1),
+    );
+    item.distractor_rationales = vec!["a".into(), String::new(), "c".into(), "d".into()];
+    assert!(engine::validate_candidate(&item).is_ok());
+    item.distractor_rationales.push("e".into());
+    let refused = engine::validate_candidate(&item).unwrap_err();
+    assert!(matches!(
+        refused,
+        AppError::InvalidInput(message)
+            if message == "An assessment item has more distractor rationales than options."
+    ));
+}
+
 fn rubric() -> Vec<LearningRubricCriterion> {
     vec![
         LearningRubricCriterion {

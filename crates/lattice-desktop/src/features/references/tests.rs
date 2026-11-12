@@ -14,7 +14,7 @@ use super::dto::CreatePassageReferenceRequestDto;
 use super::repository::PassageReferenceRepository;
 use lattice_core::application::contracts::references::PassageReferenceRecord;
 use lattice_core::shared::error::AppError;
-use lattice_core::shared::persistence::Database;
+use lattice_core::shared::persistence::{Database, Page};
 
 async fn fresh_repository() -> PassageReferenceRepository {
     let pool = SqlitePool::connect(":memory:").await.unwrap();
@@ -97,7 +97,7 @@ async fn list_returns_newest_first() {
         .await
         .unwrap();
 
-    let listed = repo.list(10).await.unwrap();
+    let listed = repo.list(Page::new(Some(10), None).unwrap()).await.unwrap();
     let ids: Vec<&str> = listed.iter().map(|r| r.id.as_str()).collect();
     assert_eq!(ids, vec!["pref_c", "pref_b", "pref_a"]);
 }
@@ -227,6 +227,45 @@ fn create_impl_keeps_long_titles_and_locators_and_refuses_an_overlong_id() {
     request.chunk_id = Some("x".repeat(201));
     assert!(matches!(
         build_create_record(request),
+        Err(AppError::InvalidInput(_))
+    ));
+}
+
+async fn container_with_references(count: usize) -> crate::interfaces::di::Container {
+    let container = crate::tests::common::setup_test_container()
+        .await
+        .expect("container");
+    for index in 0..count {
+        super::commands::create_passage_reference_impl(
+            &container,
+            create_request(&format!("Saved passage {index}")),
+        )
+        .await
+        .unwrap();
+    }
+    container
+}
+
+#[tokio::test]
+async fn listing_without_a_limit_returns_every_reference() {
+    let container = container_with_references(201).await;
+
+    let all = super::commands::list_passage_references_impl(&container, None)
+        .await
+        .unwrap();
+    assert_eq!(all.len(), 201);
+    let two = super::commands::list_passage_references_impl(&container, Some(2))
+        .await
+        .unwrap();
+    assert_eq!(two.len(), 2);
+}
+
+#[tokio::test]
+async fn listing_rejects_a_limit_below_one() {
+    let container = container_with_references(1).await;
+
+    assert!(matches!(
+        super::commands::list_passage_references_impl(&container, Some(0)).await,
         Err(AppError::InvalidInput(_))
     ));
 }

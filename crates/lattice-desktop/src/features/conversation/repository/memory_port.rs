@@ -12,7 +12,7 @@ use lattice_core::application::ports::conversation_memory::{
     ResolvedSpan, SourcePage, SourceReadLimits, SourceSpanRef, TermHolders,
 };
 use lattice_core::domain::conversation::memory::{
-    ConversationMemoryState, MemoryId, MemoryItem, MemorySnapshot, SourceMessage, SuppressedSpan,
+    ConversationMemoryState, MemoryItem, MemorySnapshot, SourceMessage, SuppressedSpan,
 };
 use lattice_core::shared::error::Result;
 
@@ -184,16 +184,6 @@ impl ConversationMemoryReadPort for ConversationRepository {
         limits: SourceReadLimits,
     ) -> Result<SourcePage> {
         self.read_memory_sequence_range(conversation_id, from_sequence, to_sequence, limits)
-            .await
-    }
-
-    async fn search_memory_labels(
-        &self,
-        conversation_id: &str,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<MemoryId>> {
-        self.search_memory_item_labels(conversation_id, query, limit)
             .await
     }
 }

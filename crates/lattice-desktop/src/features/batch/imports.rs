@@ -10,7 +10,7 @@ use super::repository::BatchItems;
 use crate::features::web::services::web::check_public_url;
 use lattice_core::application::ports::document_scope::DocumentScopePort;
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::shared::persistence::{Database, WriteTx};
+use lattice_core::shared::persistence::{Database, Page, WriteTx};
 use lattice_core::shared::{
     error::{AppError, Result},
     runtime::jobs::{JobRecord, JobRuntime, JobStore, NewJob},
@@ -24,8 +24,6 @@ const KINDS: [&str; 2] = [FILE_IMPORT, URL_IMPORT];
 
 const MAX_FILES: usize = 100;
 const MAX_URLS: usize = 50;
-const DEFAULT_HISTORY: i64 = 50;
-const MAX_HISTORY: i64 = 100;
 
 /// The import's type as the renderer names it.
 fn job_type(kind: &str) -> &str {
@@ -280,33 +278,15 @@ impl BatchImports {
     }
 
     /// Imports newest first. A retried import is listed once, as its latest
-    /// attempt.
+    /// attempt. No `limit` lists every import.
     pub async fn list(
         &self,
         limit: Option<i64>,
         offset: Option<i64>,
     ) -> Result<Vec<BatchJobSummaryDto>> {
-        let limit = match limit {
-            Some(limit) if limit < 0 => {
-                return Err(AppError::InvalidInput("Limit cannot be negative".into()))
-            }
-            Some(limit) => limit.min(MAX_HISTORY),
-            None => DEFAULT_HISTORY,
-        };
-        let offset = match offset {
-            Some(offset) if offset < 0 => {
-                return Err(AppError::InvalidInput("Offset cannot be negative".into()))
-            }
-            Some(offset) => offset,
-            None => 0,
-        };
         let jobs = self
             .store()
-            .list_latest(
-                &KINDS,
-                u32::try_from(limit).unwrap_or(u32::MAX),
-                u32::try_from(offset).unwrap_or(u32::MAX),
-            )
+            .list_latest(&KINDS, Page::new(limit, offset)?)
             .await?;
         let ids: Vec<String> = jobs.iter().map(|job| job.id.clone()).collect();
         let counts = self.items.counts(&ids).await?;

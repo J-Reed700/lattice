@@ -68,6 +68,7 @@ export async function installChatFixture(page: Page) {
     list_cloud_models: () => ({ hasApiKey: false, models: [] }),
     generate_chat_starters: () => ({ fingerprint: '', generatedAt: STAMP, starters: [], documentCount: 1 }),
     get_indexing_stats: () => ({ indexedDocuments: 1, totalChunks: 6 }),
+    get_corpus_shape: () => ({ total: 1, byType: [{ type: 'Markdown', count: 1 }], grownLast7Days: 1, grownToday: 1, lastIndexedAt: STAMP }),
     list_all_documents: () => [{
       id: 'doc-volcanoes', fileName: 'Volcanoes and magma.md', filePath: VOLCANO_FILE, fileType: 'md',
       category: 'Document', language: 'en', wordCount: 1800, modifiedAt: STAMP, indexedAt: STAMP,

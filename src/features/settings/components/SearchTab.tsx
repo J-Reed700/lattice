@@ -9,8 +9,6 @@ import { RetrievalTuningSection } from './RetrievalTuningSection';
 import {
   clamp,
   COMPRESSION_MODES,
-  MAX_COMPRESSION_DIMS,
-  MIN_COMPRESSION_DIMS,
   QUANTIZATIONS,
   toFinite,
   type CompressionMode,
@@ -203,8 +201,7 @@ export function SearchTab() {
               <input
                 id="search-vector-compression-dims"
                 type="number"
-                min={MIN_COMPRESSION_DIMS}
-                max={MAX_COMPRESSION_DIMS}
+                min={1}
                 step={1}
                 value={compressionDims}
                 onChange={(event) =>
@@ -216,9 +213,7 @@ export function SearchTab() {
                 onBlur={() =>
                   saveCompression(
                     {
-                      dims: Math.round(
-                        clamp(compressionDims, MIN_COMPRESSION_DIMS, MAX_COMPRESSION_DIMS)
-                      ),
+                      dims: Math.max(1, Math.round(compressionDims)),
                     },
                     ['vectorCompressionDims']
                   )
@@ -264,12 +259,11 @@ export function SearchTab() {
             id="search-max-results"
             type="number"
             min={1}
-            max={128}
             step={1}
             value={maxResults}
             onChange={(event) => setDraft('maxResults', toFinite(event.target.value, maxResults))}
             onBlur={() =>
-              saveSearchUpdates({ maxResults: Math.round(clamp(maxResults, 1, 128)) }, [
+              saveSearchUpdates({ maxResults: Math.max(1, Math.round(maxResults)) }, [
                 'maxResults',
               ])
             }

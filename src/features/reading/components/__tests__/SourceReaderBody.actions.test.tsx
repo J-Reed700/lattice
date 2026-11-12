@@ -227,6 +227,6 @@ describe('SourceReaderBody citation rail', () => {
     await waitFor(() => expect(mocks.createPassageReference).toHaveBeenCalledWith(expect.objectContaining({ text: 'Barley ripens in July.', chunkId: 'chunk-1' })));
     click('Ask about it');
     expect(onClose).toHaveBeenCalled();
-    expect(mocks.navigate).toHaveBeenCalledWith(expect.stringContaining('/chat?new=1&documentId='));
+    expect(mocks.navigate).toHaveBeenCalledWith(expect.stringContaining('/chat?new=1&documentId='), { state: { quote: 'Barley ripens in July.' } });
   });
 });

@@ -173,7 +173,7 @@ fn activity_schema(sources: &[LearningSourceVersionDto]) -> serde_json::Value {
         serde_json::json!({"type":"array","maxItems":0,"items":{"type":"string"}})
     } else {
         let ids: Vec<&str> = sources.iter().map(|s| s.version.id.as_str()).collect();
-        serde_json::json!({"type":"array","minItems":1,"maxItems":12,"uniqueItems":true,"items":{"type":"string","enum":ids}})
+        serde_json::json!({"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","enum":ids}})
     };
     serde_json::json!({
         "type":"object","additionalProperties":false,
@@ -182,17 +182,17 @@ fn activity_schema(sources: &[LearningSourceVersionDto]) -> serde_json::Value {
             "title":{"type":"string","minLength":1},
             "brief":{"type":"string","minLength":1},
             "sourceVersionIds":source_version_ids,
-            "rubric":{"type":"array","minItems":2,"maxItems":8,"items":{
+            "rubric":{"type":"array","minItems":1,"items":{
                 "type":"object","additionalProperties":false,
                 "required":["title","description","maxPoints"],
                 "properties":{
                     "title":{"type":"string","minLength":1},
                     "description":{"type":"string","minLength":1},
-                    "maxPoints":{"type":"integer","minimum":1,"maximum":10}
+                    "maxPoints":{"type":"integer","minimum":1}
                 }
             }},
-            "starterFiles":{"type":"array","maxItems":24,"items":file.clone()},
-            "referenceFiles":{"type":"array","maxItems":12,"items":file}
+            "starterFiles":{"type":"array","items":file.clone()},
+            "referenceFiles":{"type":"array","items":file}
         }
     })
 }
@@ -382,8 +382,8 @@ pub async fn generate_activity_with_plan(
     };
     present(&parsed.title, "Practical title")?;
     present(&parsed.brief, "Practical brief")?;
-    if parsed.rubric.len() < 2 || parsed.rubric.len() > 8 {
-        return Err(invalid("A practical rubric must contain 2–8 criteria."));
+    if parsed.rubric.is_empty() {
+        return Err(invalid("A practical rubric must contain criteria."));
     }
     let mut source_ids = Vec::new();
     for source_id in parsed.source_version_ids {
@@ -400,8 +400,8 @@ pub async fn generate_activity_with_plan(
     for criterion in parsed.rubric {
         present(&criterion.title, "Rubric title")?;
         present(&criterion.description, "Rubric description")?;
-        if !(1..=10).contains(&criterion.max_points) {
-            return Err(invalid("Practical rubric points must be between 1 and 10."));
+        if criterion.max_points < 1 {
+            return Err(invalid("Practical rubric points must be at least 1."));
         }
         rubric.push(LearningRubricCriterion {
             id: uuid::Uuid::new_v4().to_string(),
@@ -586,26 +586,25 @@ pub async fn generate_simulation_turn(
             return Ok(feedback);
         }
     }
-    let citation_limit = if sources.is_empty() {
-        0
-    } else if reviewed_interview {
-        12
-    } else {
-        5
-    };
     let output_tokens = if reviewed_interview { 3_500 } else { 1_500 };
+    let citation = serde_json::json!({
+        "type":"object","additionalProperties":false,
+        "required":["sourceId","versionId","quote"],
+        "properties":{
+            "sourceId":{"type":"string"},"versionId":{"type":"string"},
+            "quote":{"type":"string","minLength":1}
+        }
+    });
+    let citations = if sources.is_empty() {
+        serde_json::json!({"type":"array","maxItems":0,"items":citation})
+    } else {
+        serde_json::json!({"type":"array","items":citation})
+    };
     let schema = serde_json::json!({
         "type":"object","additionalProperties":false,"required":["content","citations"],
         "properties":{
             "content":{"type":"string","minLength":1},
-            "citations":{"type":"array","maxItems":citation_limit,"items":{
-                "type":"object","additionalProperties":false,
-                "required":["sourceId","versionId","quote"],
-                "properties":{
-                    "sourceId":{"type":"string"},"versionId":{"type":"string"},
-                    "quote":{"type":"string","minLength":1}
-                }
-            }}
+            "citations":citations
         }
     });
     let schema = closing_evidence
@@ -685,7 +684,7 @@ pub async fn generate_simulation_turn(
                 return Err(invalid("Keep internal identifiers out of the learner-facing content. Use question numbers or summaries; evaluatedQuestionIds and citation IDs belong only in their structured fields."));
             }
             policy.check(&parsed.content, &cue, &state)?;
-            if parsed.citations.len() > citation_limit {
+            if sources.is_empty() && !parsed.citations.is_empty() {
                 return Err(invalid("Citations must reference supplied source passages and must be empty when no sources are provided."));
             }
             crate::practice_generation::validate_citations(&parsed.citations, sources)?;

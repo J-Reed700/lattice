@@ -334,6 +334,83 @@ async fn a_batch_cut_off_asks_for_fewer_and_a_single_item_cut_off_is_refused() -
     Ok(())
 }
 
+/// Cuts its first answer off at the output limit and completes the second;
+/// records each request's output reservation.
+struct CutOnce(Mutex<Vec<Option<u32>>>);
+
+#[async_trait::async_trait]
+impl LLMPort for CutOnce {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let (_, user) = crate::lessons::structured_call::task_messages(request);
+        let prompt: Value = serde_json::from_str(user).unwrap_or(Value::Null);
+        let mut budgets = self.0.lock().unwrap();
+        budgets.push(request.max_output_tokens);
+        if budgets.len() == 1 {
+            return Ok(CompletionResponse {
+                finish_reason: "length".into(),
+                ..CompletionResponse::from_text("{\"items\":[{\"itemId\":")
+            });
+        }
+        let items: Vec<Value> = prompt["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item["itemId"].as_str())
+            .map(
+                |id| serde_json::json!({"itemId": id, "verdict": "equivalent", "summary": "Same."}),
+            )
+            .collect();
+        Ok(CompletionResponse::from_text(
+            serde_json::json!({ "items": items }).to_string(),
+        ))
+    }
+    fn model_name(&self) -> &str {
+        "cut-once"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+fn doubled(budgets: &Mutex<Vec<Option<u32>>>) -> bool {
+    let budgets = budgets.lock().unwrap().clone();
+    let first = budgets.first().copied().flatten();
+    first.is_some() && budgets.get(1).copied().flatten() == first.map(|b| b * 2)
+}
+
+#[tokio::test]
+async fn a_single_grading_reply_cut_off_is_asked_again_with_twice_the_room() {
+    let grader = CutOnce(Mutex::new(Vec::new()));
+    let graded = judge_short_answers(&grader, &[short("a")]).await.unwrap();
+    assert_eq!(
+        graded.len(),
+        1,
+        "the learner's answer is graded, not left pending"
+    );
+    assert!(doubled(&grader.0));
+}
+
+#[tokio::test]
+async fn a_single_item_cut_off_is_asked_again_with_twice_the_room() -> Result<()> {
+    let need = need("Explain iron oxide reduction.".into(), 1);
+    let documents = documents(&need);
+    let collection = ReferenceCollection::lexical(&documents)?;
+    let batch = Batch {
+        need: &need,
+        count: 1,
+        notes: vec![],
+        repair: None,
+    };
+    let llm = CutOnce(Mutex::new(Vec::new()));
+    let single = batch.author(&llm, &collection).await?;
+    assert!(!matches!(single.as_deref(), Some([Err(reason)]) if reason.contains("cut off")));
+    assert!(doubled(&llm.0));
+    Ok(())
+}
+
 /// Records the schema of each request and grades nothing.
 struct SchemaRecorder(Mutex<Vec<Value>>);
 

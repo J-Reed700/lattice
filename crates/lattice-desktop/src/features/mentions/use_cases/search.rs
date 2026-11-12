@@ -14,6 +14,7 @@ use crate::features::mentions::dto::SearchMentionsResultDto;
 use crate::features::mentions::mapper::MentionMapper;
 use lattice_core::application::ports::MentionRepositoryPort;
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::persistence::Page;
 use std::sync::Arc;
 
 pub struct SearchMentionsUseCase {
@@ -32,22 +33,23 @@ impl SearchMentionsUseCase {
         }
     }
 
+    /// Mentions whose name contains `query`. No `limit` returns every match.
     pub async fn execute(
         &self,
         query: String,
         limit: Option<i64>,
     ) -> Result<SearchMentionsResultDto, AppError> {
-        let limit = limit.unwrap_or(20).clamp(1, 100);
+        let page = Page::new(limit, None)?;
 
         tracing::debug!(
             query = %query,
-            limit = limit,
+            limit = ?page.limit(),
             "Searching mentions"
         );
 
         let mentions_data = self
             .mention_repository
-            .search_mentions(&query, limit)
+            .search_mentions(&query, page)
             .await?;
 
         let mentions: Vec<_> = mentions_data
@@ -102,12 +104,16 @@ mod tests {
         async fn search_mentions(
             &self,
             query: &str,
-            _limit: i64,
+            page: Page,
         ) -> Result<Vec<MentionData>, AppError> {
             let mentions = self.mentions.lock().unwrap();
             let results: Vec<MentionData> = mentions
                 .iter()
                 .filter(|m| m.name.to_lowercase().contains(&query.to_lowercase()))
+                .take(
+                    page.limit()
+                        .map_or(usize::MAX, |n| usize::try_from(n).unwrap_or(0)),
+                )
                 .cloned()
                 .collect();
             Ok(results)
@@ -197,5 +203,50 @@ mod tests {
         let result = use_case.execute("Nobody".to_string(), None).await.unwrap();
 
         assert!(result.mentions.is_empty());
+    }
+
+    fn numbered_mentions(count: usize) -> Vec<MentionData> {
+        (0..count)
+            .map(|n| MentionData {
+                id: n.to_string(),
+                name: format!("Topic {n}"),
+                mention_type: "topic".to_string(),
+                metadata: None,
+                created_at: "2024-01-01T00:00:00Z".to_string(),
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn no_limit_returns_every_match() {
+        let repository = Arc::new(MockMentionRepository::with_mentions(numbered_mentions(150)));
+        let use_case = SearchMentionsUseCase::new(repository, Arc::new(MentionMapper::new()));
+
+        let result = use_case.execute("Topic".to_string(), None).await.unwrap();
+
+        assert_eq!(result.mentions.len(), 150);
+    }
+
+    #[tokio::test]
+    async fn a_limit_returns_at_most_that_many() {
+        let repository = Arc::new(MockMentionRepository::with_mentions(numbered_mentions(150)));
+        let use_case = SearchMentionsUseCase::new(repository, Arc::new(MentionMapper::new()));
+
+        let result = use_case
+            .execute("Topic".to_string(), Some(120))
+            .await
+            .unwrap();
+
+        assert_eq!(result.mentions.len(), 120);
+    }
+
+    #[tokio::test]
+    async fn a_limit_of_zero_is_refused() {
+        let repository = Arc::new(MockMentionRepository::with_mentions(numbered_mentions(3)));
+        let use_case = SearchMentionsUseCase::new(repository, Arc::new(MentionMapper::new()));
+
+        let refused = use_case.execute("Topic".to_string(), Some(0)).await;
+
+        assert!(matches!(refused, Err(AppError::InvalidInput(_))));
     }
 }

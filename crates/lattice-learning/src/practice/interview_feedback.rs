@@ -158,6 +158,11 @@ impl ClosingEvidence {
         } else {
             json!({"type":"string","enum":(1..=self.criteria.len()).map(|index| format!("c{index}")).collect::<Vec<_>>()})
         };
+        let citation_ids = if self.choices.is_empty() {
+            json!({"type":"array","maxItems":0,"items":evidence})
+        } else {
+            json!({"type":"array","uniqueItems":true,"items":evidence})
+        };
         json!({
             "type":"object","additionalProperties":false,
             "required":["referenceApproach","nextPracticeStep","scorecard","evaluatedQuestionIds","citationIds"],
@@ -170,14 +175,13 @@ impl ClosingEvidence {
                     "properties":{
                         "criterionId":criterion,"status":{"enum":["observed","insufficient_evidence"]},
                         "points":{"type":["number","null"],"minimum":0},
-                        "learnerQuotes":{"type":"array","maxItems":4,"items":{"type":"string","minLength":1}},
+                        "learnerQuotes":{"type":"array","items":{"type":"string","minLength":1}},
                         "feedback":{"type":"string","minLength":1}
                     }
                 }},
-                "evaluatedQuestionIds":{"type":"array","maxItems":6,"uniqueItems":true,
+                "evaluatedQuestionIds":{"type":"array","uniqueItems":true,
                     "items":{"type":"string","enum":self.questions.iter().map(|(label,_)| label).collect::<Vec<_>>()}},
-                "citationIds":{"type":"array","maxItems":if self.choices.is_empty() {0} else {12},
-                    "uniqueItems":true,"items":evidence}
+                "citationIds":citation_ids
             }
         })
     }
@@ -191,11 +195,6 @@ impl ClosingEvidence {
             .map_err(|_| invalid("Return the structured closing scorecard, referenceApproach, nextPracticeStep, evaluatedQuestionIds and citationIds."))?;
         present(&response.reference_approach, "Reference approach")?;
         present(&response.next_practice_step, "Next practice step")?;
-        if response.evaluated_question_ids.len() > 6 || response.citation_ids.len() > 12 {
-            return Err(invalid(
-                "Closing feedback allows at most six questions and twelve evidence choices.",
-            ));
-        }
         let mut evaluated = HashSet::new();
         let mut question_ids = Vec::new();
         for label in &response.evaluated_question_ids {
@@ -282,11 +281,6 @@ impl ClosingEvidence {
                 return Err(invalid("Scorecard repeated a criterion."));
             }
             present(&observation.feedback, "Criterion feedback")?;
-            if observation.learner_quotes.len() > 4 {
-                return Err(invalid(
-                    "Each scorecard criterion allows at most four learnerQuotes.",
-                ));
-            }
             for quote in &observation.learner_quotes {
                 present(quote, "Learner evidence quote")?;
                 if !session.turns.iter().any(|turn| {

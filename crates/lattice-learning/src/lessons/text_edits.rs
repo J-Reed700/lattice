@@ -100,7 +100,7 @@ pub(super) fn schema_for(candidate: &Value, lesson: &Value) -> Value {
     properties.insert("path".into(), json!({"type":"string","enum":parts}));
     json!({"type":"object","additionalProperties":false,"required":["edits","citations"],"properties":{
         "edits":edits_schema(candidate, 0),
-        "citations":{"type":"array","maxItems":24,"items":{"type":"object","additionalProperties":false,
+        "citations":{"type":"array","items":{"type":"object","additionalProperties":false,
             "required":["path","sentence","sourceIndex","quote"],"properties":properties}}}})
 }
 

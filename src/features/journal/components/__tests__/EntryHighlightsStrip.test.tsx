@@ -4,7 +4,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { EntryHighlightsStrip, HIGHLIGHT_CHAR_LIMIT } from '@/features/journal/components/EntryHighlightsStrip';
+import { EntryHighlightsStrip } from '@/features/journal/components/EntryHighlightsStrip';
 import type { NoteHighlight } from '@/types/api/dailyNotes';
 
 const highlight = (id: string, text: string, createdAt: string): NoteHighlight => ({ id, text, createdAt } as NoteHighlight);
@@ -109,13 +109,13 @@ describe('EntryHighlightsStrip', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Highlight' })).not.toBeInTheDocument());
   });
 
-  it('caps a saved highlight at the character limit', async () => {
+  it('saves a long highlight whole', async () => {
     const user = userEvent.setup();
-    editor.textContent = 'a'.repeat(HIGHLIGHT_CHAR_LIMIT + 50);
+    editor.textContent = 'a'.repeat(20000);
     const props = renderStrip({ embedded: true });
     select(editor.firstChild!);
     await user.click(await screen.findByRole('button', { name: 'Highlight' }));
-    expect(props.onAddHighlight).toHaveBeenCalledWith('a'.repeat(HIGHLIGHT_CHAR_LIMIT));
+    expect(props.onAddHighlight).toHaveBeenCalledWith('a'.repeat(20000));
   });
 
   it('ignores selections that are empty, blank, outside the page or not laid out', () => {

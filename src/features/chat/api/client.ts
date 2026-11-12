@@ -90,11 +90,10 @@ export const chatApi = {
     }),
 
   /**
-   * Lists all conversations with pagination support.
-   * Returns conversations ordered by most recently updated first.
+   * Lists conversations, most recently updated first.
    *
-   * @param limit - Maximum number of conversations to return (default: 100)
-   * @param offset - Number of conversations to skip for pagination (default: 0)
+   * @param limit - At most this many conversations; omitted, every conversation
+   * @param offset - Number of conversations to skip (default: 0)
    * @returns Response with the page of conversations
    */
   listConversations: async (

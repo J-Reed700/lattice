@@ -62,6 +62,15 @@ describe('usePassageReferencesQuery', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toHaveLength(1);
   });
+
+  it('asks for every saved reference, with no limit', async () => {
+    listPassageReferences.mockResolvedValue({ ok: true, data: [reference()] });
+
+    const { result } = renderHook(() => usePassageReferencesQuery(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(listPassageReferences).toHaveBeenCalledWith();
+  });
 });
 
 describe('usePassageReferenceIds', () => {

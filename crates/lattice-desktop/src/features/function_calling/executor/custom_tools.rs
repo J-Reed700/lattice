@@ -120,13 +120,10 @@ impl FunctionExecutor {
                     })
                 });
 
-            match as_u64 {
-                Some(value) if (1..=100).contains(&value) => {}
-                _ => {
-                    return Err(AppError::InvalidInput(
-                        "Field 'max_results' must be an integer between 1 and 100".to_string(),
-                    ));
-                }
+            if as_u64.is_none() {
+                return Err(AppError::InvalidInput(
+                    "Field 'max_results' must be a whole number".to_string(),
+                ));
             }
         }
 

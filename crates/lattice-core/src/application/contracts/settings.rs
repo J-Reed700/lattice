@@ -21,14 +21,14 @@ mod validation;
 
 pub use generation::{
     presence_penalty_problem, LocalModelConfigDto, SamplingProfileDto, SpeculativeDecodingDto,
-    ThinkingOverrideDto, DEFAULT_MTP_DRAFT_N_MAX, MAX_MTP_DRAFT_N_MAX,
+    ThinkingOverrideDto, DEFAULT_MTP_DRAFT_N_MAX,
 };
 
 pub use llm::{
     CustomToolSettingsDto, LLMPromptSettingsDto, LLMProvider, LLMSettingsDto,
     LLMVerificationSettingsDto, LlamaCppSettingsDto, RouterSettingsDto, ToolOutputSettingsDto,
     ToolOutputTemplatesDto, VisionDeclarationDto, DEFAULT_LLM_STALL_TIMEOUT_SECONDS,
-    DEFAULT_RAG_PROMPT_TEMPLATE, MAX_LLM_STALL_TIMEOUT_SECONDS, MIN_LLM_STALL_TIMEOUT_SECONDS,
+    DEFAULT_RAG_PROMPT_TEMPLATE, MIN_LLM_STALL_TIMEOUT_SECONDS,
 };
 pub use model_window::ModelWindowDto;
 
@@ -39,7 +39,7 @@ pub use preferences::{
 pub use retrieval::{
     IndexingSettingsDto, RetrievalTuningSettingsDto, SearchSettingsDto,
     VectorIndexCompressionModeDto, VectorIndexCompressionSettingsDto, VectorQuantizationDto,
-    DEFAULT_VECTOR_COMPRESSION_DIMS, MAX_VECTOR_COMPRESSION_DIMS, MIN_VECTOR_COMPRESSION_DIMS,
+    DEFAULT_VECTOR_COMPRESSION_DIMS,
 };
 pub use sourcing::{FinderSettingDto, SourcingSettingsDto};
 pub use sourcing_status::{

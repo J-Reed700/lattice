@@ -45,11 +45,20 @@ async fn complete_json(
     schema: serde_json::Value,
     max_tokens: usize,
 ) -> Result<String> {
-    let response = model_call::send(
+    let request = |output_tokens: usize| {
+        let mut request =
+            model_call::structured(system, prompt.clone(), schema.clone(), max_tokens, "low");
+        request.output_tokens = output_tokens;
+        request
+    };
+    let too_large = "Practice request exceeds this model's context window.";
+    let first = model_call::send(llm, request(max_tokens), None, too_large).await?;
+    let response = crate::lessons::structured_call::complete_cut_off(
         llm,
-        model_call::structured(system, prompt, schema, max_tokens, "low"),
-        None,
-        "Practice request exceeds this model's context window.",
+        first,
+        request,
+        max_tokens,
+        |larger| model_call::send(llm, larger, None, too_large),
     )
     .await?;
     complete_reason(&response.finish_reason)?;
@@ -168,12 +177,12 @@ fn tutor_schema() -> serde_json::Value {
         "required":["response","citations","proposals"],
         "properties": {
             "response":{"type":"string","minLength":1},
-            "citations":{"type":"array","maxItems":5,"items":{
+            "citations":{"type":"array","items":{
                 "type":"object","additionalProperties":false,
                 "required":["sourceId","versionId","quote"],
                 "properties":{"sourceId":{"type":"string"},"versionId":{"type":"string"},"quote":{"type":"string","minLength":1}}
             }},
-            "proposals":{"type":"array","maxItems":4,"items":{
+            "proposals":{"type":"array","items":{
                 "type":"object","additionalProperties":false,
                 "required":["kind","text","evidenceQuote"],
                 "properties":{"kind":{"enum":["misconception","follow_up"]},"text":{"type":"string","minLength":1},"evidenceQuote":{"type":["string","null"]}}
@@ -185,7 +194,7 @@ fn solution_schema() -> serde_json::Value {
     serde_json::json!({
         "type":"object", "additionalProperties":false,
         "required":["solution","citations"],
-        "properties":{"solution":{"type":"string","minLength":1},"citations":{"type":"array","maxItems":5,"items":{
+        "properties":{"solution":{"type":"string","minLength":1},"citations":{"type":"array","items":{
             "type":"object","additionalProperties":false,
             "required":["sourceId","versionId","quote"],
             "properties":{"sourceId":{"type":"string"},"versionId":{"type":"string"},"quote":{"type":"string","minLength":1}}
@@ -206,11 +215,8 @@ pub async fn tutor(
     let raw = complete_json(llm, TUTOR_SYSTEM, prompt, tutor_schema(), 1400).await?;
     let parsed: TutorJson = serde_json::from_str(&raw)
         .map_err(|_| invalid("The tutor returned malformed structured feedback."))?;
-    if parsed.response.trim().is_empty() || parsed.citations.len() > 5 || parsed.proposals.len() > 4
-    {
-        return Err(invalid(
-            "The tutor returned an empty response, or more citations or proposals than allowed.",
-        ));
+    if parsed.response.trim().is_empty() {
+        return Err(invalid("The tutor returned an empty response."));
     }
     validate_citations(&parsed.citations, sources)?;
     for p in &parsed.proposals {
@@ -238,10 +244,8 @@ pub async fn solution(
     let raw = complete_json(llm, SOLUTION_SYSTEM, prompt, solution_schema(), 1400).await?;
     let parsed: SolutionJson = serde_json::from_str(&raw)
         .map_err(|_| invalid("The model returned a malformed reference solution."))?;
-    if parsed.solution.trim().is_empty() || parsed.citations.len() > 5 {
-        return Err(invalid(
-            "The reference solution was empty or had more citations than allowed.",
-        ));
+    if parsed.solution.trim().is_empty() {
+        return Err(invalid("The reference solution was empty."));
     }
     validate_citations(&parsed.citations, sources)?;
     Ok(parsed)
@@ -418,6 +422,54 @@ mod window_tests {
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+    }
+
+    /// Cuts its first answer off and completes the second.
+    struct CutOnce(std::sync::Mutex<Vec<Option<u32>>>);
+
+    #[async_trait::async_trait]
+    impl LLMPort for CutOnce {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            let mut budgets = self.0.lock().unwrap();
+            budgets.push(request.max_output_tokens);
+            if budgets.len() == 1 {
+                return Ok(CompletionResponse {
+                    finish_reason: "length".into(),
+                    ..CompletionResponse::from_text("{\"response\":\"The")
+                });
+            }
+            Ok(CompletionResponse::from_text("{}"))
+        }
+        fn model_name(&self) -> &str {
+            "cut-once"
+        }
+        fn max_context_tokens(&self) -> usize {
+            131_072
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cut_off_practice_answer_is_asked_again_with_twice_the_room() {
+        let llm = CutOnce(std::sync::Mutex::new(Vec::new()));
+        let raw = complete_json(
+            &llm,
+            "system",
+            "prompt".into(),
+            serde_json::json!({"type":"object"}),
+            1400,
+        )
+        .await
+        .expect("the doubled request completes");
+        assert_eq!(raw, "{}");
+        let budgets = llm.0.lock().unwrap().clone();
+        assert_eq!(budgets.len(), 2);
+        assert_eq!(
+            budgets.get(1).copied().flatten(),
+            budgets.first().copied().flatten().map(|b| b * 2)
+        );
     }
 
     fn turns(count: usize) -> Vec<LearningPracticeTutorTurnDto> {

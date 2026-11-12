@@ -85,16 +85,19 @@ impl LearningSourceLibraryRepository {
         })
     }
 
+    /// Up to `req.limit` matches, which must be at least 1.
     pub async fn search(
         &self,
         req: &SearchLearningSourcesRequestDto,
     ) -> Result<Vec<LearningSourceSearchResultDto>> {
         Self::validate_program_id(&req.program_id)?;
         let query = req.query.trim();
-        if query.is_empty() || query.chars().count() > 200 {
-            return Err(invalid("Search query must contain 1–200 characters"));
+        if query.is_empty() {
+            return Err(invalid("Search query must not be empty"));
         }
-        let limit = req.limit.clamp(1, 50) as i64;
+        if req.limit < 1 {
+            return Err(invalid("Search limit must be at least 1"));
+        }
         let mut read = self.database.begin_read().await.map_err(db)?;
         let mut rows = stored::searchable_versions(&mut read, &req.program_id);
         let mut results = Vec::new();
@@ -106,7 +109,7 @@ impl LearningSourceLibraryRepository {
                     title: r.title,
                     excerpt: context_excerpt(&r.text, index),
                 });
-                if results.len() as i64 >= limit {
+                if results.len() >= req.limit {
                     break;
                 }
             }

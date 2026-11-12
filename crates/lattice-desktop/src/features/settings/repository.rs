@@ -16,7 +16,7 @@
 
 use crate::features::settings::dto::{
     LLMProvider, SettingsCategory, SettingsDto, DEFAULT_LLM_STALL_TIMEOUT_SECONDS,
-    MAX_LLM_STALL_TIMEOUT_SECONDS, MIN_LLM_STALL_TIMEOUT_SECONDS,
+    MIN_LLM_STALL_TIMEOUT_SECONDS,
 };
 use async_trait::async_trait;
 use lattice_core::application::ports::credentials_port::CredentialsPort;
@@ -63,13 +63,10 @@ impl Default for SettingsFile {
 }
 
 /// Brings a stored document inside the ranges the validator enforces.
-/// `llm.timeout_seconds` is a stall timeout, so values saved under its former
-/// total-timeout meaning fall back to the default rather than failing an
-/// unrelated save or disabling stall detection.
+/// A stored `llm.timeout_seconds` of zero falls back to the default rather
+/// than failing an unrelated save or disabling stall detection.
 fn resolve_out_of_range_values(settings: &mut SettingsDto) {
-    if !(MIN_LLM_STALL_TIMEOUT_SECONDS..=MAX_LLM_STALL_TIMEOUT_SECONDS)
-        .contains(&settings.llm.timeout_seconds)
-    {
+    if settings.llm.timeout_seconds < MIN_LLM_STALL_TIMEOUT_SECONDS {
         tracing::info!(
             stored = settings.llm.timeout_seconds,
             resolved = DEFAULT_LLM_STALL_TIMEOUT_SECONDS,

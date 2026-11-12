@@ -15,17 +15,14 @@ impl LearningRecallRepository {
         validate_uuid(&req.operation_id, "operation")?;
         validate_uuid(&req.program_id, "program")?;
         validate_uuid(&req.card_id, "card")?;
-        if req.source_version_ids.len() > 20
-            || req.source_version_ids.iter().collect::<HashSet<_>>().len()
-                != req.source_version_ids.len()
+        if req.source_version_ids.iter().collect::<HashSet<_>>().len()
+            != req.source_version_ids.len()
         {
-            return Err(invalid(
-                "A recall card may cite up to 20 unique source versions.",
-            ));
+            return Err(invalid("A recall card may cite each source version once."));
         }
         validate_content(req.format, &req.content)?;
-        if req.change_reason.trim().is_empty() || req.change_reason.chars().count() > 500 {
-            return Err(invalid("Card change reason must contain 1–500 characters."));
+        if req.change_reason.trim().is_empty() {
+            return Err(invalid("Card change reason must not be empty."));
         }
         let hash = payload_hash(req)?;
         let mut tx = self.db.begin_write().await.map_err(db)?;
@@ -115,16 +112,6 @@ impl LearningRecallRepository {
         };
         let timestamp = now();
         if new_card {
-            let count: i64 = sqlx::query_scalar("SELECT count(*) FROM study_cards WHERE deck_id=?")
-                .bind(&deck_id)
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(db)?;
-            if count >= MAX_CARDS {
-                return Err(invalid(
-                    "A Learning recall deck can contain at most 2,000 cards.",
-                ));
-            }
             sqlx::query("INSERT INTO study_cards(id,deck_id,question,answer,options_json,correct_index,explanation,source_json,topic,due_at,format) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
                 .bind(&req.card_id)
                 .bind(&deck_id)

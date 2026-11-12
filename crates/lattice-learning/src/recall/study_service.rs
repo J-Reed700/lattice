@@ -8,14 +8,6 @@ use lattice_core::{
     },
 };
 
-fn text(value: &str, label: &str, max: usize) -> Result<()> {
-    if value.trim().is_empty() || value.chars().count() > max {
-        return Err(AppError::InvalidInput(format!(
-            "{label} must contain 1–{max} characters"
-        )));
-    }
-    Ok(())
-}
 fn not_blank(value: &str, label: &str) -> Result<()> {
     if value.trim().is_empty() {
         return Err(AppError::InvalidInput(format!("{label} must not be empty")));
@@ -23,21 +15,14 @@ fn not_blank(value: &str, label: &str) -> Result<()> {
     Ok(())
 }
 pub fn validate_generation(request: &GenerateStudyDeckRequestDto) -> Result<()> {
-    text(&request.title, "Deck title", 120)?;
-    if request.focus.chars().count() > 200 {
+    not_blank(&request.title, "Deck title")?;
+    if request.document_ids.is_empty() {
         return Err(AppError::InvalidInput(
-            "Keep the topic under 200 characters".into(),
+            "Select at least one document".into(),
         ));
     }
-    if request.study_goal.chars().count() > 300 {
-        return Err(AppError::InvalidInput(
-            "Keep the learning goal under 300 characters".into(),
-        ));
-    }
-    if !(1..=3).contains(&request.document_ids.len()) || !(2..=12).contains(&request.count) {
-        return Err(AppError::InvalidInput(
-            "Select 1–3 documents and 2–12 cards".into(),
-        ));
+    if !(2..=12).contains(&request.count) {
+        return Err(AppError::InvalidInput("Choose 2–12 cards".into()));
     }
     let mut seen = std::collections::HashSet::new();
     for id in &request.document_ids {
@@ -158,7 +143,7 @@ pub async fn generate_conversation_deck(
     llm: &dyn LLMPort,
     request: GenerateConversationStudyDeckRequestDto,
 ) -> Result<StudyDeckDto> {
-    text(&request.title, "Deck title", 120)?;
+    not_blank(&request.title, "Deck title")?;
     uuid::Uuid::parse_str(&request.conversation_id)
         .map_err(|_| AppError::InvalidInput("Invalid conversation ID".into()))?;
     let claims = repo.conversation_claims(&request.conversation_id).await?;

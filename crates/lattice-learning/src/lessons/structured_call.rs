@@ -494,7 +494,29 @@ async fn send_completing(
     step: Step,
 ) -> Result<GroundedOutput> {
     let output = send(llm, request(output_tokens), progress, step).await?;
-    if !cut_off(&output.finish_reason) || fills_window(progress, step) {
+    if fills_window(progress, step) {
+        return Ok(output);
+    }
+    complete_cut_off(llm, output, request, output_tokens, |larger| {
+        send(llm, larger, progress, step)
+    })
+    .await
+}
+
+/// `output` when it is whole. An answer cut off at its output reservation is
+/// asked for once more through `resend` with the reservation doubled; a
+/// doubled request the window cannot hold keeps the first answer.
+pub(crate) async fn complete_cut_off<F>(
+    llm: &dyn LLMPort,
+    output: GroundedOutput,
+    request: impl Fn(usize) -> GroundedRequest,
+    output_tokens: usize,
+    resend: impl FnOnce(GroundedRequest) -> F,
+) -> Result<GroundedOutput>
+where
+    F: std::future::Future<Output = Result<GroundedOutput>>,
+{
+    if !cut_off(&output.finish_reason) {
         return Ok(output);
     }
     let larger = request(output_tokens.saturating_mul(2));
@@ -502,11 +524,10 @@ async fn send_completing(
         return Ok(output);
     }
     tracing::warn!(
-        step = step.name(),
         output_tokens,
         "An answer reached its output limit; asking once more with twice the room"
     );
-    send(llm, larger, progress, step).await
+    resend(larger).await
 }
 
 /// Whether a step's answer may take the whole window the prompt leaves: a

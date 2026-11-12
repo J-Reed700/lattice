@@ -120,21 +120,22 @@ pub fn lesson_schema(source_count: usize) -> serde_json::Value {
     })
 }
 
-/// The most sentences a block or question lists in its citations.
-pub(crate) const MAX_CITATIONS: usize = 24;
-
 /// The sentences of a block or question the writer cites, each with its own
 /// source and the words of that source that contain what it states (claim
 /// classes design §3.5): a sentence that states a specific is listed, and no
-/// other. The array is bounded, as llama.cpp drops a grammar whose repetition
-/// bounds run high, and empty for a course without sources.
+/// other. The array is empty for a course without sources.
 fn citations_schema(source_count: usize) -> serde_json::Value {
-    let most = if source_count == 0 { 0 } else { MAX_CITATIONS };
-    json!({"type":"array","maxItems":most,"items":{
+    let mut list = json!({"type":"array","items":{
         "type":"object","additionalProperties":false,"required":["sentence","sourceIndex","quote"],"properties":{
             "sentence":{"type":"string","minLength":1},"sourceIndex":source_index_schema(source_count),"quote":{"type":"string"}
         }
-    }})
+    }});
+    if source_count == 0 {
+        if let Some(object) = list.as_object_mut() {
+            object.insert("maxItems".into(), json!(0));
+        }
+    }
+    list
 }
 
 fn lesson_system(grounded: bool) -> String {
@@ -175,7 +176,7 @@ fn lesson_prompt(
             "Make the lesson substantial enough for its estimated duration. Explanations, worked examples, guided practice and independent assignments each need at least 600 characters of substantive content; contrasts and checks at least 300; reflections and recaps at least 150. Use Markdown headings, lists, equations or code when useful.",
             // The chat's own line, so a lesson's formulas are drawn as an answer's are.
             lattice_core::shared::markdown_math::MATH_GUIDANCE,
-            "For guided_practice and independent_practice supply two to four rubric entries, each with a specific title, dimension and observable description of a successful response. State what distinguishes incomplete, adequate and strong work without disclosing the answer. All other blocks use an empty rubric array.",
+            "For guided_practice and independent_practice supply rubric entries, each with a specific title, dimension and observable description of a successful response. State what distinguishes incomplete, adequate and strong work without disclosing the answer. All other blocks use an empty rubric array.",
             "Reuse the course vocabulary and build on the supplied earlier recaps. When this lesson builds on an earlier idea, open the first explanation with a short question asking the learner to recall it before reading on. Explicitly connect this lesson to the module project milestone; do not re-teach prior explanations.",
             "Do not describe how practice is reviewed. Never promise automatic code execution, external peer review or expert certification. A learner may run code in a lab after starting a supported runtime.",
             "Teach for the learner's own situation, systems and tools as programGoal and priorKnowledge describe them. When an excerpt describes another system, version or setting, say which one it describes instead of presenting it as the learner's.",
@@ -632,7 +633,6 @@ fn cite_sentences(
                 }
             }
             Err(AppError::InvalidInput(message)) => {
-                let shown: String = cited.sentence.chars().take(80).collect();
                 let summary = if cited.sentence.trim().is_empty() {
                     "The quotation cited for a sentence could not be found in its source."
                         .to_owned()
@@ -647,7 +647,8 @@ fn cite_sentences(
                         FindingKind::Quotation,
                         Some(site),
                         format!(
-                            "The source citation of the sentence \"{shown}\" could not be confirmed: {message}"
+                            "The source citation of the sentence \"{}\" could not be confirmed: {message}",
+                            cited.sentence
                         ),
                     )
                     .with_summary(summary)

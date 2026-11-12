@@ -38,6 +38,7 @@ const passThrough: Case[] = [
   ['getFilePathById', () => documentApi.getFilePathById('d1'), 'get_file_path_by_id', { fileId: 'd1' }],
   ['getRecentDocuments', () => documentApi.getRecentDocuments(5), 'get_recent_documents', { limit: 5 }],
   ['listAllDocuments', () => documentApi.listAllDocuments(500), 'list_all_documents', { limit: 500 }],
+  ['listAllDocuments without a limit', () => documentApi.listAllDocuments(), 'list_all_documents', { limit: null }],
   ['getDocument', () => documentApi.getDocument('d1'), 'get_document', { documentId: 'd1' }],
   ['readFileContent', () => documentApi.readFileContent('/notes/ferns.md'), 'read_file_content', { path: '/notes/ferns.md' }],
   ['getFileMetadata', () => documentApi.getFileMetadata('/notes/ferns.md'), 'get_file_metadata', { path: '/notes/ferns.md' }],

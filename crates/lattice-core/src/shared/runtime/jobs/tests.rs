@@ -1,6 +1,6 @@
 use super::*;
 use crate::shared::error::{AppError, Result};
-use crate::shared::persistence::Database;
+use crate::shared::persistence::{Database, Page};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, Semaphore};
@@ -1248,7 +1248,7 @@ async fn listings_show_live_jobs_and_each_imports_latest_attempt() -> Result<()>
         .retry(&first.id, "first-retry", "Retry queued")
         .await?;
     let latest: Vec<String> = store
-        .list_latest(&[KIND], 10, 0)
+        .list_latest(&[KIND], Page::new(Some(10), None)?)
         .await?
         .into_iter()
         .map(|job| job.id)
@@ -1258,8 +1258,20 @@ async fn listings_show_live_jobs_and_each_imports_latest_attempt() -> Result<()>
         !latest.contains(&first.id),
         "a retried attempt is not listed"
     );
-    assert_eq!(store.list_latest(&[KIND, ONCE], 10, 0).await?.len(), 3);
-    assert_eq!(store.list_latest(&[KIND, ONCE], 1, 1).await?.len(), 1);
+    assert_eq!(
+        store
+            .list_latest(&[KIND, ONCE], Page::new(Some(10), None)?)
+            .await?
+            .len(),
+        3
+    );
+    assert_eq!(
+        store
+            .list_latest(&[KIND, ONCE], Page::new(Some(1), Some(1))?)
+            .await?
+            .len(),
+        1
+    );
     Ok(())
 }
 

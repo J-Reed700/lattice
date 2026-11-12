@@ -177,13 +177,10 @@ fn decided(
     evidence: &HashMap<String, EvidenceKind>,
 ) -> Result<Option<ReviewFinding>> {
     let ids: HashSet<_> = finding.evidence_ids.iter().collect();
-    if ids.len() != finding.evidence_ids.len()
-        || ids.len() > 8
-        || ids.iter().any(|id| !evidence.contains_key(*id))
-    {
+    if ids.len() != finding.evidence_ids.len() || ids.iter().any(|id| !evidence.contains_key(*id)) {
         return Err(invalid_finding(
             index,
-            "evidenceIds must contain at most eight unique IDs from the supplied evidence bank.",
+            "evidenceIds must contain unique IDs from the supplied evidence bank.",
         ));
     }
     if finding.reason.trim().is_empty() {
@@ -261,7 +258,7 @@ fn schema(keys: &[String], ids: &[String]) -> Value {
         "issueId":{"type":"string","enum":keys},
         "verdict":{"type":"string","enum":["actionable","not_established"]},
         "basis":{"type":"string","enum":["external_fact","lesson_contract","internal_conflict"]},
-        "evidenceIds":{"type":"array","minItems":0,"maxItems":8,"uniqueItems":true,"items":{"type":"string","enum":ids}},
+        "evidenceIds":{"type":"array","minItems":0,"uniqueItems":true,"items":{"type":"string","enum":ids}},
         "requirementId":{"enum":["requirements",null]},
         "reason":{"type":"string","minLength":1},
         "partId":{"type":"string","enum":parts}}});

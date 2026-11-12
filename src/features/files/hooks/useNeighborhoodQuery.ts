@@ -23,6 +23,7 @@ export interface NeighborhoodData {
 
 const MAX_LINKS = 12;
 const MAX_SIMILAR = 6;
+const MAX_CITED_IN = 10;
 
 export const stripExtension = (fileName: string): string =>
   fileName.replace(/\.[^./\\]+$/, '');
@@ -47,7 +48,7 @@ export async function loadNeighborhood(
     api.getMentionsForDocument(documentId),
     api.getBacklinksForMention(stripExtension(documentTitle)),
     api.findSimilarDocuments(documentId, MAX_SIMILAR),
-    api.listConversationsCitingDocument(documentId),
+    api.listConversationsCitingDocument(documentId, MAX_CITED_IN),
   ]);
 
   // Title index for resolving outgoing mention names back to documents.

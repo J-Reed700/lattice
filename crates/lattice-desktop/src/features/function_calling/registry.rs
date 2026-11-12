@@ -342,17 +342,15 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
                 },
                 "depth": {
                     "type": "integer",
-                    "description": "Recursive deep-research depth (1-4)",
+                    "description": "Recursive deep-research depth",
                     "default": 1,
-                    "minimum": 1,
-                    "maximum": 4
+                    "minimum": 1
                 },
                 "branch_queries": {
                     "type": "integer",
-                    "description": "Maximum follow-up branches per depth step (1-4)",
+                    "description": "Maximum follow-up branches per depth step",
                     "default": 2,
-                    "minimum": 1,
-                    "maximum": 4
+                    "minimum": 1
                 },
                 "followup_queries": {
                     "type": "array",
@@ -548,8 +546,7 @@ pub fn register_custom_query_tools(
                         "type": "integer",
                         "description": "Requested max result count",
                         "default": tool.default_max_results,
-                        "minimum": 1,
-                        "maximum": 100
+                        "minimum": 1
                     }
                 },
                 "required": ["query"]

@@ -98,18 +98,10 @@ pub(super) struct ConversationListing<'a> {
     pub(super) has_message_bookmarks: bool,
     pub(super) include_archived: bool,
     pub(super) search: Option<&'a str>,
-    pub(super) limit: i64,
-    pub(super) offset: i64,
+    pub(super) page: Page,
 }
 
 impl<'a> ConversationListing<'a> {
-    pub(super) fn page(limit: Option<i64>, offset: Option<i64>, default_limit: i64) -> (i64, i64) {
-        (
-            limit.unwrap_or(default_limit).clamp(1, 200),
-            offset.unwrap_or(0).max(0),
-        )
-    }
-
     pub(super) fn query(&self) -> QueryBuilder<'a, Sqlite> {
         let fts_query = self.search.and_then(build_fts_query);
 
@@ -202,9 +194,9 @@ impl<'a> ConversationListing<'a> {
         }
 
         qb.push(" LIMIT ")
-            .push_bind(self.limit)
+            .push_bind(self.page.sql_limit())
             .push(" OFFSET ")
-            .push_bind(self.offset);
+            .push_bind(self.page.offset());
         qb
     }
 }

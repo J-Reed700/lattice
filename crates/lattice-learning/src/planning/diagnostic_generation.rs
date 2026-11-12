@@ -181,7 +181,6 @@ pub async fn evaluate(
             !response_ids.insert(&r.prompt_id)
                 || !attempt.prompts.iter().any(|p| p.id == r.prompt_id)
                 || r.response.trim().is_empty()
-                || r.response.chars().count() > 4000
         })
     {
         return Err(AppError::InvalidInput(

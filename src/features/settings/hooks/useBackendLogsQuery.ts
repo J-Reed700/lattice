@@ -5,8 +5,10 @@ import type { BackendLogEntry } from '@/lib/bindings';
 
 export const BACKEND_LOGS_QUERY_KEY = ['logs', 'backend'] as const;
 
+const BACKEND_LOG_LINES = 300;
+
 /**
- * The newest lines of the backend's log file, oldest first. Read when the
+ * The newest 300 lines of the backend's log file, oldest first. Read when the
  * Logs tab opens and on `refetch`; never polled.
  */
 export function useBackendLogsQuery() {
@@ -14,7 +16,7 @@ export function useBackendLogsQuery() {
   return useQuery<BackendLogEntry[]>({
     queryKey: BACKEND_LOGS_QUERY_KEY,
     queryFn: async () => {
-      const result = await api.getBackendLogs();
+      const result = await api.getBackendLogs(BACKEND_LOG_LINES);
       if (!result.ok) {
         throw new Error(result.error);
       }

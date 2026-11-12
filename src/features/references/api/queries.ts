@@ -40,8 +40,8 @@ export function useInboxBookmarksQuery(search: string) {
         await api.listMessageBookmarks({
           conversationId: null,
           query: query || null,
-          limit: 200,
-          offset: 0,
+          limit: null,
+          offset: null,
         }),
       ).bookmarks,
   });

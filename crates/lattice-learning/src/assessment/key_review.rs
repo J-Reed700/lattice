@@ -74,7 +74,15 @@ async fn check_answers(llm: &dyn LLMPort, candidate: &Value) -> Result<Vec<Revie
             ));
         }
         let selected: Vec<_> = requested.iter().filter_map(|i| blinded.get(*i)).collect();
-        let schema = json!({"type":"object","additionalProperties":false,"required":["answers"],"properties":{"answers":{"type":"array","minItems":requested.len(),"maxItems":requested.len(),"items":{"type":"object","additionalProperties":false,"required":["index","correctIndices","reason"],"properties":{"index":{"type":"integer","enum":requested},"correctIndices":{"type":"array","maxItems":4,"uniqueItems":true,"items":{"type":"integer","minimum":0,"maximum":3}},"reason":{"type":"string","minLength":1}}}}}});
+        let last_option = requested
+            .iter()
+            .filter_map(|i| questions.get(*i))
+            .filter_map(|q| q.get("options").and_then(Value::as_array))
+            .map(Vec::len)
+            .max()
+            .unwrap_or(1)
+            .saturating_sub(1);
+        let schema = json!({"type":"object","additionalProperties":false,"required":["answers"],"properties":{"answers":{"type":"array","minItems":requested.len(),"maxItems":requested.len(),"items":{"type":"object","additionalProperties":false,"required":["index","correctIndices","reason"],"properties":{"index":{"type":"integer","enum":requested},"correctIndices":{"type":"array","uniqueItems":true,"items":{"type":"integer","minimum":0,"maximum":last_option}},"reason":{"type":"string","minLength":1}}}}}});
         let request =
             json!({"questions":selected,"requestedIndices":requested,"responseErrors":problems})
                 .to_string();
@@ -125,8 +133,7 @@ async fn check_answers(llm: &dyn LLMPort, candidate: &Value) -> Result<Vec<Revie
                     .and_then(|q| q.get("options"))
                     .and_then(Value::as_array)
                     .map_or(0, Vec::len);
-                if answer.correct_indices.len() > 4
-                    || answer.correct_indices.iter().any(|i| *i >= options)
+                if answer.correct_indices.iter().any(|i| *i >= options)
                     || answer.correct_indices.iter().collect::<HashSet<_>>().len()
                         != answer.correct_indices.len()
                     || answer.reason.trim().is_empty()
@@ -250,15 +257,15 @@ fn verdict(item: &LearningAssessmentCandidate, solve: &BankSolve) -> KeyVerdict 
     ))
 }
 
-fn bank_schema(indices: &[usize]) -> Value {
+fn bank_schema(indices: &[usize], last_option: usize) -> Value {
     json!({"type":"object","additionalProperties":false,"required":["answers"],"properties":{"answers":{"type":"array","minItems":indices.len(),"maxItems":indices.len(),"items":{"type":"object","additionalProperties":false,"required":["index","reason","correctIndices","answer","blankAnswers","matches","orderedValues"],"properties":{
         "index":{"type":"integer","enum":indices},
         "reason":{"type":"string","minLength":1},
-        "correctIndices":{"type":"array","maxItems":8,"items":{"type":"integer","minimum":0,"maximum":11}},
+        "correctIndices":{"type":"array","items":{"type":"integer","minimum":0,"maximum":last_option}},
         "answer":{"type":"string"},
-        "blankAnswers":{"type":"array","maxItems":8,"items":{"type":"string"}},
-        "matches":{"type":"array","maxItems":8,"items":{"type":"integer","minimum":0,"maximum":11}},
-        "orderedValues":{"type":"array","maxItems":12,"items":{"type":"string"}}
+        "blankAnswers":{"type":"array","items":{"type":"string"}},
+        "matches":{"type":"array","items":{"type":"integer","minimum":0,"maximum":last_option}},
+        "orderedValues":{"type":"array","items":{"type":"string"}}
     }}}}})
 }
 
@@ -283,12 +290,19 @@ pub(crate) async fn review_bank_items(
                 .filter_map(|i| items.get(*i).map(|(c, q)| blinded(*i, c, q)))
                 .collect();
             let prompt = json!({"questions": questions}).to_string();
+            let last_option = indices
+                .iter()
+                .filter_map(|i| items.get(*i))
+                .map(|(c, _)| c.options.len())
+                .max()
+                .unwrap_or(1)
+                .saturating_sub(1);
             (
                 indices.clone(),
                 model_call::structured(
                     BANK_SYSTEM,
                     prompt,
-                    bank_schema(&indices),
+                    bank_schema(&indices, last_option),
                     350 * size + 300,
                     "low",
                 ),
@@ -300,11 +314,19 @@ pub(crate) async fn review_bank_items(
         let indices = request_for(size).0;
         let mut solved: BTreeMap<usize, BankSolve> = BTreeMap::new();
         for attempt in 0..2 {
-            let response = model_call::send(
+            let too_large =
+                || model_call::TooLarge::Window("one quiz question with its reference passage");
+            let first = model_call::send(llm, request_for(size).1, None, too_large()).await?;
+            let response = crate::lessons::structured_call::complete_cut_off(
                 llm,
-                request_for(size).1,
-                None,
-                model_call::TooLarge::Window("one quiz question with its reference passage"),
+                first,
+                |output_tokens| {
+                    let mut request = request_for(size).1;
+                    request.output_tokens = output_tokens;
+                    request
+                },
+                350 * size + 300,
+                |larger| model_call::send(llm, larger, None, too_large()),
             )
             .await?;
             if let Ok(parsed) = crate::generation::parse_json::<Value>(&response.text) {
@@ -360,6 +382,114 @@ mod tests {
     }
     fn answer(index: usize, selected: usize) -> Value {
         json!({"index":index,"correctIndices":[selected],"reason":"The selected option follows from the literal question."})
+    }
+    fn wide_candidate() -> Value {
+        json!({"questions":(0..3).map(|i|json!({"prompt":format!("Question {i}"),"options":["A","B","C","D","E","F"],"correctIndex":0,"explanation":"AUTHORED_SECRET","quote":"Reference context."})).collect::<Vec<_>>()})
+    }
+    #[tokio::test]
+    async fn a_question_with_six_options_may_have_five_correct_and_index_five() -> Result<()> {
+        use crate::practice::practice_tests::Reply;
+        let wide = json!({"index":0,"correctIndices":[0,1,2,3,5],"reason":"Five options follow."});
+        let answers = (0..3)
+            .map(|i| json!({"index":i,"correctIndices":[0,1,2,3,5],"reason":wide["reason"]}))
+            .collect::<Vec<_>>();
+        let llm = Reply::new(json!({"answers":answers}).to_string());
+        let issues = check(&llm, &wide_candidate()).await?;
+        assert_eq!(issues.len(), 3);
+        let schemas = llm.schemas.lock().unwrap().clone();
+        let items = &schemas[0]["properties"]["answers"]["items"]["properties"]["correctIndices"];
+        assert_eq!(items["items"]["maximum"], 5);
+        assert!(items.get("maxItems").is_none());
+        Ok(())
+    }
+    /// Cuts every answer off until a request reserves twice the room of the first.
+    struct NeedsDoubleRoom(Mutex<Vec<Option<u32>>>);
+
+    #[async_trait::async_trait]
+    impl LLMPort for NeedsDoubleRoom {
+        async fn complete(
+            &self,
+            request: &lattice_core::application::ports::llm_port::CompletionRequest,
+        ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+            use lattice_core::application::ports::llm_port::CompletionResponse;
+            let mut budgets = self.0.lock().unwrap();
+            budgets.push(request.max_output_tokens);
+            let first = budgets.first().copied().flatten().unwrap_or(0);
+            if request.max_output_tokens.unwrap_or(0) < first.saturating_mul(2) {
+                return Ok(CompletionResponse {
+                    finish_reason: "length".into(),
+                    ..CompletionResponse::from_text("{\"answers\":[{\"index\":0,\"reason\":")
+                });
+            }
+            Ok(CompletionResponse::from_text(
+                json!({"answers":[{"index":0,"reason":"Alpha follows.","correctIndices":[0],"answer":"","blankAnswers":[],"matches":[],"orderedValues":[]}]}).to_string(),
+            ))
+        }
+        fn model_name(&self) -> &str {
+            "needs-double-room"
+        }
+        fn max_context_tokens(&self) -> usize {
+            131_072
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cut_off_bank_solve_is_asked_again_with_twice_the_room() -> Result<()> {
+        let item = LearningAssessmentCandidate {
+            id: uuid::Uuid::new_v4().to_string(),
+            outcome_ids: vec![uuid::Uuid::new_v4().to_string()],
+            format: engine::LearningItemFormat::SingleChoice,
+            difficulty: 3,
+            prompt: "Which option follows?".into(),
+            options: vec![
+                "Alpha".into(),
+                "Bravo".into(),
+                "Charlie".into(),
+                "Delta".into(),
+            ],
+            left: vec![],
+            source_version_ids: vec![],
+            rubric: vec![],
+            key: engine::LearningAssessmentKey::Choice(0),
+            explanation: "Alpha follows.".into(),
+            distractor_rationales: vec![],
+        };
+        let llm = NeedsDoubleRoom(Mutex::new(Vec::new()));
+        let verdicts = review_bank_items(&llm, &[(&item, "Reference quote.")]).await?;
+        assert!(matches!(verdicts.as_slice(), [KeyVerdict::Agreed]));
+        let budgets = llm.0.lock().unwrap().clone();
+        assert_eq!(budgets.get(1).copied().flatten(), budgets[0].map(|b| b * 2));
+        Ok(())
+    }
+    #[tokio::test]
+    async fn the_bank_solve_schema_follows_the_questions_it_keys() {
+        use crate::practice::practice_tests::Reply;
+        let item = LearningAssessmentCandidate {
+            id: uuid::Uuid::new_v4().to_string(),
+            outcome_ids: vec![uuid::Uuid::new_v4().to_string()],
+            format: engine::LearningItemFormat::MultiSelect,
+            difficulty: 3,
+            prompt: "Which options follow?".into(),
+            options: (0..6).map(|i| format!("Option {i}")).collect(),
+            left: vec![],
+            source_version_ids: vec![],
+            rubric: vec![],
+            key: engine::LearningAssessmentKey::Choices([0, 1].into_iter().collect()),
+            explanation: "Two follow.".into(),
+            distractor_rationales: vec![],
+        };
+        let llm = Reply::new("{}");
+        let _ = review_bank_items(&llm, &[(&item, "Reference quote.")]).await;
+        let schemas = llm.schemas.lock().unwrap().clone();
+        let fields = &schemas[0]["properties"]["answers"]["items"]["properties"];
+        assert_eq!(fields["correctIndices"]["items"]["maximum"], 5);
+        assert_eq!(fields["matches"]["items"]["maximum"], 5);
+        for field in ["correctIndices", "blankAnswers", "matches", "orderedValues"] {
+            assert!(fields[field].get("maxItems").is_none(), "{field}");
+        }
     }
     fn model(replies: Vec<Value>) -> ScriptedModel {
         ScriptedModel {
@@ -465,7 +595,7 @@ mod tests {
             Reply::new(json!({"answers":[answer(0, 0), answer(1, 0), answer(2, 0)]}).to_string());
         check(&llm, &candidate()).await?;
         let mut schemas = llm.schemas.lock().unwrap().clone();
-        schemas.push(bank_schema(&[0, 1]));
+        schemas.push(bank_schema(&[0, 1], 3));
         assert!(schemas.len() >= 2);
         for schema in &schemas {
             let rules = text_length_rules(schema);

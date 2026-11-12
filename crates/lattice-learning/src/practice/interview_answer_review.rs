@@ -246,7 +246,7 @@ pub(super) fn schema(standard: &AnswerStandard) -> Value {
     json!({
         "type":"object","additionalProperties":false,"required":["issues"],
         "properties":{
-            "issues":{"type":"array","maxItems":4,"items":{
+            "issues":{"type":"array","items":{
                 "type":"object","additionalProperties":false,"required":["demonstration","path","quote","problem"],
                 "properties":{
                     "demonstration":{"type":"string","minLength":1},
@@ -262,9 +262,6 @@ pub(super) fn schema(standard: &AnswerStandard) -> Value {
 pub(super) fn read(raw: &str, standard: &AnswerStandard) -> Result<Review> {
     let review: Review = serde_json::from_str(raw)
         .map_err(|_| invalid("The interview answer review was malformed."))?;
-    if review.issues.len() > 4 {
-        return Err(invalid("An answer review may report at most four defects."));
-    }
     let proposed = serde_json::to_value(standard).map_err(|error| invalid(error.to_string()))?;
     for issue in &review.issues {
         present(&issue.demonstration, "Answer review demonstration")?;

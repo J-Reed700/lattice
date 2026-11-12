@@ -69,7 +69,6 @@ pub fn corpus_fingerprint(
 fn format_type_mix(type_mix: &[(String, i64)]) -> String {
     type_mix
         .iter()
-        .take(6)
         .map(|(kind, count)| format!("{} {}", count, kind))
         .collect::<Vec<_>>()
         .join(", ")

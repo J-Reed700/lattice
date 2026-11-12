@@ -16,8 +16,6 @@ import type { ConversationDto, MessageDto } from '@/types/api/conversation';
 import type { SnapshotMessage } from '@/types/api/dailyNotes';
 import type { ConversationMessage as ChatConversationMessage } from '@/types/conversation';
 
-const CONVERSATION_LIMIT = 100;
-
 export interface JournalEntrySummary {
   id: string;
   title: string;
@@ -114,8 +112,8 @@ export const journalEntriesQueryOptions = (journalSpaceId: string, api: ApiClien
         journalSpaceId,
         query: null,
         includeArchived: true,
-        limit: CONVERSATION_LIMIT,
-        offset: 0,
+        limit: null,
+        offset: null,
       });
       if (!result.ok) throw new Error(result.error);
       return parseRawConversations(result.data).map((c) => normalizeConversation(c));

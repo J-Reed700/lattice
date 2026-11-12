@@ -13,6 +13,7 @@ use lattice_core::domain::conversation::{
     ChatModelChoice, CompactionRecord, Conversation, ConversationAggregate,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Page;
 use lattice_core::shared::persistence::WriteTx;
 use lattice_core::shared::types::ConversationId;
 use sqlx::{Row, SqliteConnection};
@@ -156,8 +157,7 @@ impl ConversationRepository {
         limit: Option<i64>,
         offset: Option<i64>,
     ) -> Result<Vec<Conversation>> {
-        let limit = limit.unwrap_or(100);
-        let offset = offset.unwrap_or(0);
+        let page = Page::new(limit, offset)?;
 
         let mut read = self.db.begin_read().await?;
         let db_models = sqlx::query_as::<_, ConversationModel>(
@@ -170,8 +170,8 @@ impl ConversationRepository {
             LIMIT ? OFFSET ?
             "#,
         )
-        .bind(limit)
-        .bind(offset)
+        .bind(page.sql_limit())
+        .bind(page.offset())
         .fetch_all(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("Failed to list conversations: {}", e)))?;

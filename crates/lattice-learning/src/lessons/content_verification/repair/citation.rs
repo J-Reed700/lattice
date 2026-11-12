@@ -6,7 +6,7 @@
 //! numbered sources, as the writer's are, so the citation can name it.
 use super::super::classify::figures;
 use super::super::*;
-use crate::generation::{validate_excerpt_quote, MAX_CITATIONS, MAX_QUOTE_CHARS};
+use crate::generation::{validate_excerpt_quote, MAX_QUOTE_CHARS};
 use crate::reference_collection::{checked_span, shared_terms};
 use lattice_core::domain::learning::claim_review::ClaimEvent;
 use lattice_core::shared::text::{claim_sentence, sentences};
@@ -309,8 +309,7 @@ pub(in crate::lessons::content_verification) fn cite_where_supported(
             Some(entry) => cites(entry.get("quote"), entry.get("sourceIndex")),
             None => cites(section.get("quote"), section.get("sourceIndex")),
         };
-        let full = listed.map_or(0, Vec::len) >= MAX_CITATIONS;
-        if already || (moves.is_none() && full) {
+        if already {
             repairs.push(Cited::Cannot);
             continue;
         }

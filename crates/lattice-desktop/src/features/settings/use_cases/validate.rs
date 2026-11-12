@@ -129,13 +129,13 @@ mod tests {
         let use_case = ValidateSettingsUseCase::new(repository);
 
         let mut settings = SettingsDto::default();
-        settings.indexing.chunk_size = 15000; // Very large, should trigger warning
+        settings.llm.tool_output.highlight_terms_max = 0;
 
         let result = use_case.execute(&settings);
 
         assert!(result.valid);
         assert!(result.has_warnings());
-        assert!(result.warnings.contains_key("indexing"));
+        assert!(result.warnings.contains_key("llm"));
     }
 
     #[test]

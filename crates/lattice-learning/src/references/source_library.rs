@@ -31,8 +31,6 @@ mod user_evidence;
 pub use user_evidence::{ChosenVersion, SavedSource};
 
 const MAX_EXCERPT_CHARS: usize = 2_400;
-/// The characters of a title or publisher the library keeps and shows.
-const SHOWN_CHARS: usize = 180;
 /// The extraction a pasted text is recorded with: the text as written.
 pub const PASTED_TEXT_EXTRACTION: &str = "pasted_text_v1";
 const LEGACY_EXTRACTION: &str = "legacy_bounded_extraction_v1";
@@ -52,13 +50,6 @@ fn normalized(text: &str) -> String {
 }
 fn excerpt(text: &str) -> String {
     text.chars().take(MAX_EXCERPT_CHARS).collect()
-}
-/// `text` cut to what the library shows of a title or publisher.
-fn shown(text: &str) -> &str {
-    text.char_indices()
-        .nth(SHOWN_CHARS)
-        .and_then(|(end, _)| text.get(..end))
-        .unwrap_or(text)
 }
 fn words(text: &str) -> usize {
     text.split_whitespace().count()
