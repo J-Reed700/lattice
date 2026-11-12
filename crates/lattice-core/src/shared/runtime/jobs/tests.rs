@@ -1,5 +1,5 @@
 use super::*;
-use crate::shared::error::{AppError, Result};
+use crate::shared::error::{AppError, ErrorClass, Result};
 use crate::shared::persistence::Database;
 use serde_json::json;
 use std::sync::{Arc, Mutex};
@@ -480,10 +480,8 @@ async fn the_same_failure_twice_with_nothing_saved_ends_the_job() -> Result<()> 
 #[tokio::test]
 async fn a_busy_database_never_ends_a_job_however_often_it_repeats() -> Result<()> {
     for error in [
-        AppError::Database("error returned from database: (code: 5) database is locked".into()),
-        AppError::ServiceNotAvailable(
-            "The database is temporarily busy. Saved work is retained.".into(),
-        ),
+        AppError::DatabaseBusy("error returned from database: (code: 5) database is locked".into()),
+        AppError::DatabaseBusy("The database is temporarily busy. Saved work is retained.".into()),
     ] {
         let (runtime, id) = repeating(error.clone(), false).await?;
         let job = saved_once(&runtime, &id, |job| {
@@ -637,7 +635,7 @@ async fn while_busy<T, F: std::future::Future<Output = Result<T>>>(
 ) -> Result<T> {
     loop {
         match call().await {
-            Err(error) if JobFailure::is_transient(&error) => {
+            Err(error) if ErrorClass::of(&error) == ErrorClass::Outage => {
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
             other => return other,
@@ -731,33 +729,31 @@ async fn transient_errors_defer_and_other_errors_fail() -> Result<()> {
 }
 
 #[test]
-fn an_http_status_is_transient_only_when_waiting_can_change_it() {
+fn an_http_status_is_deferred_only_when_waiting_can_change_it() {
     let answered = |status: u16| AppError::HttpStatus {
         status,
         message: format!("HTTP {status}: the site answered"),
     };
     for status in [429, 502, 503, 504] {
-        let error = answered(status);
-        assert!(JobFailure::is_transient(&error), "{status}");
-        assert!(error.is_recoverable(), "{status}");
         assert!(
-            !JobFailure::is_outage(&error),
-            "{status}: one site's answer is not an outage"
+            matches!(
+                JobFailure::classify(&answered(status)),
+                JobFailure::Defer(_)
+            ),
+            "{status}"
         );
     }
     for status in [400, 401, 403, 404, 410, 500] {
-        let error = answered(status);
-        assert!(!JobFailure::is_transient(&error), "{status}");
-        assert!(!error.is_recoverable(), "{status}");
-        assert!(!JobFailure::is_outage(&error), "{status}");
-        assert!(matches!(
-            JobFailure::classify(&error),
-            JobFailure::Fail { .. }
-        ));
+        assert!(
+            matches!(
+                JobFailure::classify(&answered(status)),
+                JobFailure::Fail { .. }
+            ),
+            "{status}"
+        );
     }
     let lost = AppError::Network("connection reset".into());
-    assert!(JobFailure::is_transient(&lost));
-    assert!(JobFailure::is_outage(&lost));
+    assert!(matches!(JobFailure::classify(&lost), JobFailure::Defer(_)));
 }
 
 #[tokio::test]
@@ -1298,26 +1294,98 @@ async fn deleting_a_finished_job_takes_its_earlier_attempts_and_refuses_live_one
     Ok(())
 }
 
-/// A lesson job failed for good on "database is locked": another connection
-/// held SQLite's lock past the busy timeout. That is waited out like an
-/// outage, while any other database error still fails the attempt.
-#[test]
-fn a_locked_database_is_retried_and_other_database_errors_are_not() {
-    let locked =
-        AppError::Database("error returned from database: (code: 5) database is locked".into());
-    let table_locked = AppError::Database("database table is locked: jobs".into());
+/// Another connection held SQLite's lock past the busy timeout: the work is
+/// untouched, so the job is waited out, while any other database error fails
+/// the attempt.
+#[tokio::test]
+async fn a_locked_sqlite_database_defers_the_job() {
+    let directory = tempfile::tempdir().unwrap();
+    let options = crate::shared::testing::sqlite::file_options(directory.path().join("jobs.db"));
+    let setup = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(options.clone())
+        .await
+        .unwrap();
+    sqlx::migrate!("../lattice-desktop/migrations")
+        .run(&setup)
+        .await
+        .unwrap();
+    let mut holder = setup.acquire().await.unwrap();
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let blocked = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(options.busy_timeout(Duration::ZERO))
+        .await
+        .unwrap();
+    let error = JobStore::new(blocked)
+        .submit(&new_job(KIND, "locked", None))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AppError::DatabaseBusy(_)), "{error}");
+    assert!(matches!(JobFailure::classify(&error), JobFailure::Defer(_)));
     let corrupt = AppError::Database("database disk image is malformed".into());
-    assert!(JobFailure::is_transient(&locked));
-    assert!(JobFailure::is_transient(&table_locked));
-    assert!(matches!(
-        JobFailure::classify(&locked),
-        JobFailure::Defer(_)
-    ));
-    assert!(!JobFailure::is_transient(&corrupt));
     assert!(matches!(
         JobFailure::classify(&corrupt),
         JobFailure::Fail { .. }
     ));
+}
+
+/// A driver error that carries only an SQLite result code.
+#[derive(Debug)]
+struct Coded(&'static str);
+
+impl std::fmt::Display for Coded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "driver failure")
+    }
+}
+
+impl std::error::Error for Coded {}
+
+impl sqlx::error::DatabaseError for Coded {
+    fn message(&self) -> &str {
+        "driver failure"
+    }
+
+    fn code(&self) -> Option<std::borrow::Cow<'_, str>> {
+        Some(self.0.into())
+    }
+
+    fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+        self
+    }
+
+    fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+        self
+    }
+
+    fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+        self
+    }
+
+    fn kind(&self) -> sqlx::error::ErrorKind {
+        sqlx::error::ErrorKind::Other
+    }
+}
+
+/// The driver's busy and locked results defer a job whatever their text says.
+#[test]
+fn a_database_the_driver_calls_busy_defers_the_job_by_its_code() {
+    let timed_out = AppError::from(sqlx::Error::PoolTimedOut);
+    let busy_snapshot = AppError::from(sqlx::Error::Database(Box::new(Coded("517"))));
+    let locked = AppError::from(sqlx::Error::Database(Box::new(Coded("6"))));
+    let constraint = AppError::from(sqlx::Error::Database(Box::new(Coded("2067"))));
+    for busy in [timed_out, busy_snapshot, locked] {
+        assert!(
+            matches!(JobFailure::classify(&busy), JobFailure::Defer(_)),
+            "{busy}"
+        );
+    }
+    assert!(
+        matches!(JobFailure::classify(&constraint), JobFailure::Fail { .. }),
+        "{constraint}"
+    );
 }
 
 fn deferral(error: &AppError) -> Deferral {
@@ -1331,10 +1399,8 @@ fn deferral(error: &AppError) -> Deferral {
 #[test]
 fn a_wait_describes_the_database_when_the_database_is_busy() {
     for busy in [
-        AppError::Database("error returned from database: (code: 5) database is locked".into()),
-        AppError::ServiceNotAvailable(
-            "The database is temporarily busy. Saved work is retained.".into(),
-        ),
+        AppError::DatabaseBusy("error returned from database: (code: 5) database is locked".into()),
+        AppError::DatabaseBusy("The database is temporarily busy. Saved work is retained.".into()),
     ] {
         let deferral = deferral(&busy);
         assert_eq!(deferral.code, "temporarily_unavailable", "{busy}");
@@ -1360,10 +1426,8 @@ fn a_wait_keeps_the_outage_message_when_the_connection_is_lost() {
 #[tokio::test]
 async fn a_job_deferred_on_a_busy_database_records_the_database_as_its_cause() -> Result<()> {
     for error in [
-        AppError::Database("error returned from database: (code: 5) database is locked".into()),
-        AppError::ServiceNotAvailable(
-            "The database is temporarily busy. Saved work is retained.".into(),
-        ),
+        AppError::DatabaseBusy("error returned from database: (code: 5) database is locked".into()),
+        AppError::DatabaseBusy("The database is temporarily busy. Saved work is retained.".into()),
     ] {
         let runtime =
             JobRuntime::with_poll_interval(Database::from(pool().await), Duration::from_millis(10));

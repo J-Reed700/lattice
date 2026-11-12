@@ -9,7 +9,7 @@ use serde::{de::DeserializeOwned, Serialize};
 pub fn db(error: impl Into<PersistenceError>) -> AppError {
     let error = error.into();
     match error.kind() {
-        PersistenceErrorKind::Busy => AppError::ServiceNotAvailable(
+        PersistenceErrorKind::Busy => AppError::DatabaseBusy(
             "The learning database is temporarily busy. Saved work is retained.".into(),
         ),
         _ => AppError::Database(error.to_string()),
@@ -52,11 +52,11 @@ mod tests {
     fn pool_timeouts_are_reported_as_a_busy_database() {
         assert!(matches!(
             db(sqlx::Error::PoolTimedOut),
-            AppError::ServiceNotAvailable(_)
+            AppError::DatabaseBusy(_)
         ));
         assert!(matches!(
             db(PersistenceError::from(sqlx::Error::PoolTimedOut)),
-            AppError::ServiceNotAvailable(message) if message.contains("temporarily busy")
+            AppError::DatabaseBusy(message) if message.contains("temporarily busy")
         ));
     }
 

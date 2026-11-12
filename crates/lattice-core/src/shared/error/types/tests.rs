@@ -44,7 +44,6 @@ fn a_web_status_displays_its_message_alone() {
 
 #[test]
 fn test_error_codes() {
-    assert_eq!(AppError::QueueFull.error_code(), "QUEUE_FULL");
     assert_eq!(
         AppError::Database("test".to_string()).error_code(),
         "DATABASE_ERROR"
@@ -85,11 +84,6 @@ fn test_context_methods() {
 
 #[test]
 fn test_get_suggestions() {
-    let queue_full = AppError::QueueFull;
-    let suggestions = queue_full.get_suggestions();
-    assert!(!suggestions.is_empty());
-    assert!(suggestions.iter().any(|s| s.contains("try again")));
-
     let network = AppError::Network("Connection failed".to_string());
     let suggestions = network.get_suggestions();
     assert!(suggestions
@@ -104,7 +98,6 @@ fn test_error_response_conversion() {
 
     assert_eq!(response.code, "NOT_FOUND");
     assert_eq!(response.status_code, 404);
-    assert!(!response.recoverable);
     assert!(!response.message.is_empty());
 }
 
@@ -135,24 +128,28 @@ fn test_domain_error_integration() {
 }
 
 #[test]
-fn test_is_recoverable() {
-    assert!(AppError::QueueFull.is_recoverable());
-    assert!(AppError::Network("error".to_string()).is_recoverable());
-    assert!(AppError::rate_limited(None).is_recoverable());
-    assert!(!AppError::validation_failed("field", "reason").is_recoverable());
-}
-
-#[test]
-fn test_is_user_fixable() {
-    assert!(AppError::validation_failed("email", "Invalid").is_user_fixable());
-    assert!(AppError::InvalidInput("test".to_string()).is_user_fixable());
-    assert!(AppError::FileTooLarge {
-        path: "test".to_string(),
-        size_bytes: 1000,
-        max_size_bytes: 500
-    }
-    .is_user_fixable());
-    assert!(!AppError::Database("error".to_string()).is_user_fixable());
+fn the_error_kinds_the_classes_name_say_what_the_learner_already_read() {
+    let window = AppError::WindowTooSmall("window".to_string());
+    assert_eq!(
+        window.to_string(),
+        AppError::InvalidConfig("window".to_string()).to_string()
+    );
+    assert_eq!(
+        AppError::Cancelled("Stopped.".to_string()).to_string(),
+        "Stopped."
+    );
+    assert_eq!(
+        AppError::LessonHeld("Held.".to_string()).to_string(),
+        "Held."
+    );
+    assert_eq!(
+        AppError::DatabaseBusy("locked".to_string()).to_string(),
+        "Database busy: locked"
+    );
+    assert_eq!(
+        AppError::DatabaseBusy("locked".to_string()).http_status_code(),
+        503
+    );
 }
 
 #[test]

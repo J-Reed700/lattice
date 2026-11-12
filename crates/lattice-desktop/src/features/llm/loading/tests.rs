@@ -1,6 +1,7 @@
 use super::*;
 use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use lattice_core::application::services::credentials::memory::InMemoryCredentials;
+use lattice_core::shared::error::ErrorClass;
 
 #[test]
 fn generation_settings_are_preserved() {
@@ -470,10 +471,7 @@ async fn an_ollama_that_refuses_connections_is_an_outage_a_job_waits_out() {
         let Some(error @ AppError::Network(_)) = error else {
             panic!("expected a network outage, got {error:?}");
         };
-        assert!(
-            lattice_core::shared::runtime::jobs::JobFailure::is_outage(&error),
-            "{error}"
-        );
+        assert!(ErrorClass::of(&error) == ErrorClass::Outage, "{error}");
         assert!(
             error.to_string().contains("Make sure Ollama is running"),
             "{error}"
@@ -616,7 +614,6 @@ fn a_provider_that_could_not_be_asked_is_why_a_model_that_needs_it_does_not_run(
 
 #[test]
 fn a_bundled_server_that_cannot_run_is_an_install_problem_the_learner_can_act_on() {
-    use lattice_core::shared::runtime::jobs::JobFailure;
     let fault = "llama-server.exe was not found";
     let expected = "The model server could not start: llama-server.exe was not found. \
         Reinstall Lattice, or choose another model in Settings.";
@@ -628,7 +625,7 @@ fn a_bundled_server_that_cannot_run_is_an_install_problem_the_learner_can_act_on
     for error in [mapped, converted] {
         assert!(error.to_string().contains(expected), "{error}");
         assert!(
-            !JobFailure::is_transient(&error),
+            ErrorClass::of(&error) != ErrorClass::Outage,
             "waiting does not bring a missing server back: {error}"
         );
     }
@@ -636,12 +633,11 @@ fn a_bundled_server_that_cannot_run_is_an_install_problem_the_learner_can_act_on
 
 #[test]
 fn a_server_that_is_starting_or_unreachable_stays_transient() {
-    use lattice_core::shared::runtime::jobs::JobFailure;
     for error in [
         LLMError::ClientUnavailable("llama-server is still starting".into()),
         LLMError::Network("connection reset".into()),
     ] {
-        assert!(JobFailure::is_transient(&AppError::from(error)));
+        assert!(ErrorClass::of(&AppError::from(error)) == ErrorClass::Outage);
     }
 }
 
