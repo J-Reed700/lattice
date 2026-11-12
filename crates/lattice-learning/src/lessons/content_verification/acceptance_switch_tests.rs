@@ -426,6 +426,44 @@ async fn a_pass_reads_only_statements_at_reading_nodes_and_a_claim_at_an_end_is_
 }
 
 #[tokio::test]
+async fn an_invariant_breach_in_one_statement_holds_only_that_statement() -> Result<()> {
+    let mut ledger = open().await?;
+    let body = format!("{SENTENCE} {HEADER}");
+    let sound = claim(&mut ledger, "sound", (SENTENCE, SENTENCE), &body, SOURCED).await?;
+    let broken = claim(
+        &mut ledger,
+        "broken",
+        (HEADER, HEADER),
+        &body,
+        (Class::Common, ClassifiedBy::Model),
+    )
+    .await?;
+    let lesson = lesson_of(&body);
+    let claims = [(SENTENCE, SENTENCE), (HEADER, HEADER)];
+    let pass = identified(&mut ledger, &Model::new(), &lesson, &claims, &[]).await?;
+    // The sourced statement is read first; the common one is answered with an
+    // outcome its node has no edge for.
+    let reader = Says::new(&[Outcome::Stands, Outcome::AllCommon]);
+
+    let read = read_pass(&mut ledger, &reader, &pass, &lesson).await;
+
+    assert!(read.is_ok(), "{read:?}");
+    assert!(matches!(
+        ledger.entry(&sound).unwrap().state(),
+        ClaimState::ResolvedByEvidence { .. }
+    ));
+    assert!(!ledger.entry(&broken).unwrap().state().is_verified());
+    let faults = ledger.faults();
+    assert_eq!(faults.len(), 1, "{faults:?}");
+    assert_eq!(faults[0].claim, broken);
+    assert_eq!(
+        faults[0].stage,
+        lattice_core::domain::learning::claim_review::FaultStage::Take
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_sentence_written_over_outside_the_pipeline_is_a_new_statement_with_its_classes_whole_check(
 ) -> Result<()> {
     let policy = StandardPolicy::new();
