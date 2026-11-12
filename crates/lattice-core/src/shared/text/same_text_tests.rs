@@ -69,3 +69,39 @@ fn a_sentence_inside_a_longer_one_is_not_held() {
     assert!(!holds_sentence("There is no.", "is no."));
     assert!(!holds_sentence("Some text.", "  "));
 }
+
+#[test]
+fn recorded_text_stands_byte_for_byte_and_a_blank_quote_nowhere() {
+    assert!(stands("It is **bold**.", "**bold**"));
+    assert!(!stands("It is **bold**.", "bold!"));
+    assert!(!stands("It is bold.", "It Is"));
+    assert!(!stands("It is bold.", "   "));
+    assert!(!stands("It is bold.", ""));
+}
+
+#[test]
+fn spans_overlap_only_when_they_share_a_byte() {
+    assert!(overlaps((0, 5), (4, 9)));
+    assert!(overlaps((2, 3), (0, 9)));
+    assert!(!overlaps((0, 5), (5, 9)));
+    assert!(!overlaps((3, 3), (0, 9)));
+}
+
+#[test]
+fn a_common_prefix_ends_on_a_character_boundary() {
+    assert_eq!(common_prefix("abcd", "abxy"), 2);
+    assert_eq!(common_prefix("日本語", "日本人"), 6);
+    assert_eq!(common_prefix("abc", "abc"), 3);
+    assert_eq!(common_prefix("abc", ""), 0);
+}
+
+#[test]
+fn a_span_is_whole_sentences_only_from_a_start_to_an_end() {
+    let text = "Alpha is first. Beta is second. Gamma.";
+    assert!(whole_sentences(text, (0, 15)));
+    assert!(whole_sentences(text, (0, 31)));
+    assert!(whole_sentences(text, (16, 31)));
+    assert!(!whole_sentences(text, (6, 15)));
+    assert!(!whole_sentences(text, (0, 20)));
+    assert!(!whole_sentences("", (0, 0)));
+}
