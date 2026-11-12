@@ -1782,6 +1782,26 @@ fn omitted_duplicate_and_fabricated_inventory_units_are_rejected() {
     .is_err());
 }
 
+#[test]
+fn a_claim_quoting_only_a_citation_quote_is_not_in_its_section() {
+    let content = vec![json!({
+        "kind": "explanation",
+        "body": "Something else entirely.",
+        "citations": [{"quote": GOOD}],
+    })];
+    let inventory = Inventory {
+        units: vec![UnitClaims {
+            index: 0,
+            claims: vec![Claim {
+                quote: GOOD.into(),
+                statement: GOOD.into(),
+            }],
+            non_factual_reason: String::new(),
+        }],
+    };
+    assert!(validate_inventory(&inventory, &content).is_err());
+}
+
 /// Persistence-only tests use an explicit synthetic attestation. This is
 /// compiled only for tests and does not bypass production verification.
 pub(crate) fn attest(lesson_id: &str, lesson: &PreparedLearningLesson) -> LessonVerificationReport {
