@@ -265,6 +265,40 @@ fn the_pack_goes_round_robin_across_topics_within_the_room_without_cutting_passa
 }
 
 #[test]
+fn the_lesson_pack_charges_one_separator_token_per_item() {
+    let sources = vec![
+        source("a", "Aggregate roots enforce invariants."),
+        source("b", "Command handlers change state."),
+    ];
+    let references = ReferenceCollection::lexical(&sources).unwrap();
+    let gathered = Gathered {
+        expanded: None,
+        passages: vec![
+            passage("a", 0, &sources[0].excerpt),
+            passage("b", 0, &sources[1].excerpt),
+        ],
+        candidates: vec![vec![0, 1]],
+        covering: vec![vec![0, 1]],
+    };
+    let llm = scripted(Vec::new());
+    let cost = |value: Value| llm.count_tokens(&value.to_string()) + 1;
+    let room: usize = sources
+        .iter()
+        .enumerate()
+        .map(|(at, source)| {
+            cost(json!(source.excerpt))
+                + cost(json!({"sourceIndex":at,"title":source.title,"url":null,"excerpt":""}))
+        })
+        .sum();
+    assert_eq!(pack(&llm, &gathered, &references, room), vec![0, 1]);
+}
+
+#[test]
+fn topic_evidence_plans_are_keyed_by_a_versioned_protocol() {
+    assert_eq!(POLICY.to_string(), "lesson-topic-evidence-v1");
+}
+
+#[test]
 fn a_short_collection_is_measured_per_character_not_as_one_passage() {
     let llm = scripted(Vec::new());
     let short =

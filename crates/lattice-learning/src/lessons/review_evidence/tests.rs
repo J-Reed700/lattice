@@ -1000,3 +1000,29 @@ fn a_proposal_asked_for_a_second_time_is_handed_back_once() -> Result<()> {
     assert_eq!(second.left, first.left);
     Ok(())
 }
+
+#[test]
+fn a_finding_may_cite_nine_evidence_ids() -> Result<()> {
+    let issues = proposal("The nine sections contradict one another.");
+    let ids: Vec<String> = (0..9).map(|at| format!("blocks-{at}")).collect();
+    let evidence: HashMap<String, EvidenceKind> = ids
+        .iter()
+        .map(|id| (id.clone(), EvidenceKind::Candidate))
+        .collect();
+    let response = part_decision(
+        "actionable",
+        "internal_conflict",
+        json!(ids),
+        Some("blocks-0"),
+    );
+    assert_eq!(first(&response, &issues, &evidence)?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn the_answer_schema_does_not_cap_evidence_ids() {
+    let ids = vec!["blocks-0".to_string(), "reference-0".to_string()];
+    let answer = schema(&["issue-0".to_string()], &ids, &[], &[]);
+    let cited = &answer["properties"]["decisions"]["items"]["properties"]["evidenceIds"];
+    assert!(cited.get("maxItems").is_none(), "{cited}");
+}

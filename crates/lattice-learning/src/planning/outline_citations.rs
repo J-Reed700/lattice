@@ -179,6 +179,18 @@ mod tests {
     }
 
     #[test]
+    fn a_quote_in_other_letter_case_is_restored_to_the_source_bytes() {
+        let exact = "The borrow checker rejects two mutable borrows of one value.";
+        let sources = [source(exact)];
+        let mut candidate = json!({"modules":[{"summary":{"sourceIndex":0,"quote":"the Borrow Checker rejects two mutable borrows of one value"}}]});
+        assert_eq!(restore_source_quotes(&mut candidate, &sources), 1);
+        assert_eq!(
+            candidate["modules"][0]["summary"]["quote"],
+            "The borrow checker rejects two mutable borrows of one value"
+        );
+    }
+
+    #[test]
     fn does_not_repair_changed_meaning_code_punctuation_wrong_sources_or_missing_evidence() {
         let exact = "The cell’s response does not increase by 5 units: x != 10.";
         let sources = [
