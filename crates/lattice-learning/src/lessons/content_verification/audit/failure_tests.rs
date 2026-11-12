@@ -258,7 +258,7 @@ async fn a_rate_limit_defers_however_often_it_recurs() {
 }
 
 #[tokio::test]
-async fn the_same_failure_twice_with_no_batch_done_between_is_rejected() {
+async fn a_fault_is_final_at_once() {
     let harness = Harness::new(vec![verified("a", "Water boils at 100 °C at sea level.")]);
     let broken = ScriptedVerifier::new(BIG, |_, _| {
         Err(AppError::InternalError(
@@ -266,30 +266,13 @@ async fn the_same_failure_twice_with_no_batch_done_between_is_rejected() {
         ))
     });
 
-    let first = harness.audit(&broken, None).await.unwrap();
-    assert!(matches!(first, AuditOutcome::Deferred { .. }));
+    let outcome = harness.audit(&broken, None).await;
 
-    let second = harness.audit(&broken, None).await;
     assert!(
-        matches!(&second, Err(AppError::ModelRejected(message)) if message.contains("twice")),
-        "{second:?}"
+        matches!(outcome, Err(AppError::InternalError(_))),
+        "{outcome:?}"
     );
-}
-
-#[tokio::test]
-async fn different_failures_are_not_the_same_failure() {
-    let harness = Harness::new(vec![verified("a", "Water boils at 100 °C at sea level.")]);
-    let first = ScriptedVerifier::new(BIG, |_, _| Err(AppError::InternalError("one".into())));
-    let second = ScriptedVerifier::new(BIG, |_, _| Err(AppError::InvalidInput("two".into())));
-
-    assert!(matches!(
-        harness.audit(&first, None).await.unwrap(),
-        AuditOutcome::Deferred { .. }
-    ));
-    assert!(matches!(
-        harness.audit(&second, None).await.unwrap(),
-        AuditOutcome::Deferred { .. }
-    ));
+    assert_eq!(broken.calls(), 1);
 }
 
 #[tokio::test]

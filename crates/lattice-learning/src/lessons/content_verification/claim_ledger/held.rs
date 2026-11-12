@@ -14,7 +14,7 @@ const NEEDS_REVIEW_REF: &str = "needs_review:";
 /// (§6.1, `generation_jobs`). Its text is the hold's own words, with no
 /// failure category in front of them, wherever it is shown or logged.
 pub(crate) fn needs_review(claims: usize) -> AppError {
-    AppError::Other(format!(
+    AppError::LessonHeld(format!(
         "Needs your review: {claims} statement{} could not be verified. Resolve each one, then resume verification.",
         if claims == 1 { "" } else { "s" }
     ))

@@ -159,6 +159,6 @@ impl ClaimLedger {
         };
         self.write_review(LessonReviewState::Stopped, raw, Some(reason.clone()))
             .await?;
-        Ok(AppError::Other(reason.message))
+        Ok(AppError::LessonHeld(reason.message))
     }
 }

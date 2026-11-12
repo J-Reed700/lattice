@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use lattice_core::application::ports::LLMPort;
@@ -18,6 +18,7 @@ use lattice_core::application::services::claim_verification::quote_in;
 use lattice_core::domain::learning::claim_review::{CheckResult, VerdictKind};
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
 use lattice_core::protocol;
+use lattice_core::shared::error::AppError;
 use lattice_core::shared::protocol::Protocol;
 
 use super::batches::{Context, Item};
@@ -104,6 +105,7 @@ pub(super) fn combine(parts: Vec<Judged>) -> Option<Judged> {
 }
 
 /// A batch as sent: the task text, and what its labels stand for.
+#[derive(Clone)]
 pub(super) struct Rendered {
     pub task: String,
     /// `C1`, `C2`, ... in item order.
@@ -270,27 +272,47 @@ pub(super) fn envelope_reserve(llm: &dyn LLMPort) -> usize {
     llm.count_tokens(r#"{"verdicts":[]}"#)
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct RawAnswer {
-    verdicts: Vec<RawVerdict>,
+pub(super) struct RawAnswer {
+    pub verdicts: Vec<RawVerdict>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct RawVerdict {
-    claim: String,
+pub(super) struct RawVerdict {
+    pub claim: String,
     #[serde(default)]
-    passages_used: Vec<RawQuote>,
-    verdict: String,
+    pub passages_used: Vec<RawQuote>,
+    pub verdict: String,
     #[serde(default)]
-    reason: String,
+    pub reason: String,
 }
 
-#[derive(Deserialize)]
-struct RawQuote {
-    passage: String,
-    quote: String,
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub(super) struct RawQuote {
+    pub passage: String,
+    pub quote: String,
+}
+
+/// The audit's JSON answer, parsed; `Err` says why it is not one.
+pub(super) fn parse_answer(answer: &str) -> Result<RawAnswer, String> {
+    serde_json::from_str(answer.trim())
+        .map_err(|error| format!("the answer is not the audit's JSON ({error})"))
+}
+
+/// Every item's grounded verdict, in item order; `Err` when the answer
+/// cannot be read or leaves an item out.
+pub(super) fn verdicts(
+    answer: &str,
+    rendered: &Rendered,
+    fetched: &[(String, AuditPassage)],
+) -> Result<Vec<Judged>, AppError> {
+    read(answer, rendered, fetched)
+        .map_err(AppError::InvalidInput)?
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| AppError::InvalidInput("the answer left out some statements".into()))
 }
 
 /// Each item's grounded verdict, in item order; `None` for an item the
@@ -301,8 +323,7 @@ pub(super) fn read(
     rendered: &Rendered,
     fetched: &[(String, AuditPassage)],
 ) -> Result<Vec<Option<Judged>>, String> {
-    let raw: RawAnswer = serde_json::from_str(answer.trim())
-        .map_err(|error| format!("the answer is not the audit's JSON ({error})"))?;
+    let raw = parse_answer(answer)?;
     let passages: HashMap<&str, &AuditPassage> = rendered
         .passages
         .iter()

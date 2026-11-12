@@ -46,7 +46,7 @@ async fn twice_unreadable_answers_leave_each_claim_could_not_verify_with_the_cau
             }
         );
         assert!(
-            check.reason.contains("could not be used twice"),
+            check.reason.contains("could not be used"),
             "{}",
             check.reason
         );

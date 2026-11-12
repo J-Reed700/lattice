@@ -168,7 +168,7 @@ impl ClaimLedger {
     ) -> Result<AppError> {
         self.write_review(LessonReviewState::Stopped, raw, Some(reason.clone()))
             .await?;
-        Ok(AppError::Other(reason.message))
+        Ok(AppError::LessonHeld(reason.message))
     }
 
     /// The lesson stops: a whole pass moved no statement and changed nothing,
