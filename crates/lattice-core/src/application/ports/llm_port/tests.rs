@@ -197,3 +197,24 @@ fn a_model_sees_nothing_unless_declared() {
     }
     assert_eq!(Plain.vision(), None);
 }
+
+#[test]
+fn a_finish_reason_names_how_the_reply_ended() {
+    use super::Finish;
+    for reason in [
+        "",
+        "stop",
+        "end_turn",
+        "completed",
+        "STOP",
+        "tool_calls",
+        "eos",
+    ] {
+        assert_eq!(Finish::of(reason), Finish::Complete, "{reason:?}");
+    }
+    assert_eq!(Finish::of("refusal"), Finish::Declined);
+    assert_eq!(Finish::of("content_filter"), Finish::Filtered);
+    for reason in ["length", "MAX_TOKENS", "max_output_tokens", "incomplete"] {
+        assert_eq!(Finish::of(reason), Finish::CutOff, "{reason}");
+    }
+}
