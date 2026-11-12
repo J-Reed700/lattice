@@ -553,6 +553,12 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
     if prompt.starts_with("Audit inventory fidelity.") {
         return Some(json!({"missingAssertions":[],"reason":"The fixture inventory faithfully represents the original assertions."}).to_string());
     }
+    if prompt.starts_with("You decide whether one statement is standard knowledge of its field") {
+        return Some(json!({"verdict":"needs_source","reason":"The fixture's statements are not standard knowledge."}).to_string());
+    }
+    if prompt.starts_with("Sentences were taken out of this lesson section") {
+        return Some(json!({"edits":[]}).to_string());
+    }
     if prompt.starts_with("Extract lesson claims.") {
         let data = context(prompt);
         let units = data["units"].as_array().unwrap();

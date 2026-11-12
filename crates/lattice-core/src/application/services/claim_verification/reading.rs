@@ -4,7 +4,7 @@ use super::{
 };
 
 /// The labels of the fields a judge writes.
-pub(super) const FIELD_LABELS: [&str; 8] = [
+const FIELD_LABELS: [&str; 8] = [
     "Label",
     "Reason",
     "Explanation",
