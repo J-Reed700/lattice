@@ -231,7 +231,7 @@ fn read_reply(text: &str) -> Option<(String, String)> {
 }
 
 /// The consistency verdict a reply holds.
-fn read_consistency(text: &str) -> Option<ConsistencyOutcome> {
+pub(super) fn read_consistency(text: &str) -> Option<ConsistencyOutcome> {
     let (word, reason) = read_reply(text)?;
     Some(ConsistencyOutcome {
         verdict: ConsistencyVerdict::from_word(&word)?,
@@ -240,7 +240,7 @@ fn read_consistency(text: &str) -> Option<ConsistencyOutcome> {
 }
 
 /// The knowledge sample a reply holds.
-fn read_sample(text: &str) -> Option<KnowledgeSample> {
+pub(super) fn read_sample(text: &str) -> Option<KnowledgeSample> {
     let (word, reason) = read_reply(text)?;
     Some(KnowledgeSample {
         verdict: KnowledgeVerdict::from_word(&word)?,

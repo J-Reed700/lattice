@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+use super::classes::{read_consistency, read_sample, Consistency, Knowledge};
 use super::*;
 use crate::application::ports::llm_port::CompletionResponse;
 use crate::application::services::model_contract::test_support::{assert_round_trip, RenderAnswer};

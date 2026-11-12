@@ -191,7 +191,7 @@ fn passage_index(value: &Value) -> Option<usize> {
 /// The parts of a reply, when it is one JSON object holding at least one, each
 /// with text and a kind, and every stated part naming one of the `shown`
 /// passages: a part that says where it is stated and does not is not read.
-fn read_bridge(text: &str, shown: usize) -> Option<BridgeOutcome> {
+pub(super) fn read_bridge(text: &str, shown: usize) -> Option<BridgeOutcome> {
     #[derive(Deserialize)]
     struct Reply {
         parts: Vec<Part>,

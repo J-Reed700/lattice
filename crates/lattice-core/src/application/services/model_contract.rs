@@ -348,7 +348,7 @@ pub async fn answer<T: Transport, A>(
         Err(error) => error,
     };
     let correction = transport
-        .correction(llm, &request, &response, &refusal(&error))
+        .correction(&llm, &request, &response, &refusal(&error))
         .await?;
     let (_, response) = complete_reply(&llm, transport, correction).await?;
     accept(&response.text).map_err(|error| AppError::ModelAnswerUnusable(refusal(&error)))

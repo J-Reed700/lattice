@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+use super::bridge::{read_bridge, ClaimParts};
 use super::classes_tests::{checker, conversation, messages, Reply, Scripted};
 use super::*;
 use crate::application::services::model_contract::test_support::{assert_round_trip, RenderAnswer};
