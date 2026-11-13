@@ -170,7 +170,7 @@ pub(crate) fn bank_state(
         ready,
         size: all.len(),
         fresh: fresh.len(),
-        target: requirements.iter().map(|r| 3 * r.count).sum(),
+        target: requirements.iter().map(|r| r.bank_target()).sum(),
         per_requirement,
     }
 }
@@ -319,7 +319,7 @@ impl LearningAssessmentRepository {
                     0
                 }
             } else {
-                (3 * requirement.count).saturating_sub(eligible)
+                requirement.bank_target().saturating_sub(eligible)
             };
             if count == 0 {
                 continue;

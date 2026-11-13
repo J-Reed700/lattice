@@ -63,6 +63,13 @@ pub struct LearningBlueprintRequirement {
     pub difficulty_max: u8,
 }
 
+impl LearningBlueprintRequirement {
+    /// What the bank holds for this requirement: three forms' worth, so a retake draws items the learner has not seen.
+    pub(crate) fn bank_target(&self) -> usize {
+        3 * self.count
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LearningAssessmentBlueprint {
     pub id: String,

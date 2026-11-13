@@ -155,7 +155,7 @@ pub(crate) async fn lesson_bank_stage(
             .chain(written.iter().map(|w| w.candidate.clone().into()))
             .filter(|c| engine::eligible_for(c, requirement))
             .count();
-        let count = (3 * requirement.count).saturating_sub(have);
+        let count = requirement.bank_target().saturating_sub(have);
         if count == 0 {
             continue;
         }
