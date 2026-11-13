@@ -938,7 +938,7 @@ async fn words_that_point_at_what_the_learner_never_sees_are_a_finding() -> Resu
         json!([]),
         json!([]),
         json!([]),
-        json!([{"quote":"which the excerpt does not describe","what":"an excerpt the learner is never shown"}]),
+        json!([{"quote":"which the excerpt does not describe","what":"an excerpt the learner is never shown","neverShown":true}]),
     );
     let model = Routed::new(
         &scripted,
@@ -1837,7 +1837,7 @@ async fn words_pointing_at_what_is_never_seen_are_a_finding_in_every_part_that_h
         json!([]),
         json!([]),
         json!([]),
-        json!([{"quote":"see the excerpt above","what":"an excerpt the learner is never shown"}]),
+        json!([{"quote":"see the excerpt above","what":"an excerpt the learner is never shown","neverShown":true}]),
     );
     let model = Routed::new(
         &scripted,
@@ -1862,6 +1862,29 @@ async fn words_pointing_at_what_is_never_seen_are_a_finding_in_every_part_that_h
             )
         ]
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_unseen_entry_the_check_says_the_learner_sees_is_no_finding() -> Result<()> {
+    let scripted = scripted(vec![reviewed(3), reviewed(3), reviewed(3)]);
+    let dismissed = answer(
+        json!([]),
+        json!([]),
+        json!([]),
+        json!([{"quote":"see the excerpt above","what":"the steps below, which the lesson shows","neverShown":false}]),
+    );
+    let model = Routed::new(
+        &scripted,
+        vec![dismissed.clone(), dismissed.clone(), dismissed],
+    );
+    let candidate = lesson([
+        TYPED,
+        "For sizes, see the excerpt above.",
+        "For names, see the excerpt above.",
+    ]);
+    let result = run(&model, &candidate, &context(&[], &[]), &[]).await?;
+    assert_eq!(waiting(&result), []);
     Ok(())
 }
 
