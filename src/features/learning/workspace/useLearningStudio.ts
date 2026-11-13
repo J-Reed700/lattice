@@ -1,7 +1,7 @@
 import { skipToken, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
-import { LEARNING_PROGRAMS_KEY, learningCoursePlanKey, learningPlanKey, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
+import { LEARNING_PROGRAM_ROOT, LEARNING_PROGRAMS_KEY, learningCoursePlanKey, learningPlanKey, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
 import type VaultAPI from '@/lib/api';
 import type {
   LearningProgramDto,
@@ -37,9 +37,8 @@ export function useLearningPrograms() {
 export function useLearningProgram(id: string | null) {
   const api = useApi();
   return useQuery<LearningProgramDto>({
-    queryKey: id ? learningProgramKey(id) : ['learning-program', 'none'],
-    enabled: Boolean(id),
-    queryFn: async () => unwrap(await api.getLearningProgram(id!)),
+    queryKey: learningProgramKey(id ?? ''),
+    queryFn: id ? async () => unwrap(await api.getLearningProgram(id)) : skipToken,
   });
 }
 
@@ -120,13 +119,10 @@ function useOutlineOperation<T>(key: readonly string[], run: (request: T, option
         throw error;
       }
     },
-    onSuccess: async (program) => {
-      void planTopics(program.summary.id);
-      await client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY });
-    },
+    onSuccess: (program) => { void planTopics(program.summary.id); },
     onSettled: async () => {
       await client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY });
-      await client.invalidateQueries({ queryKey: ['learning-program'] });
+      await client.invalidateQueries({ queryKey: LEARNING_PROGRAM_ROOT });
     },
   });
   const cancel = async () => {
