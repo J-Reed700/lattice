@@ -550,11 +550,11 @@ async fn the_ceiling_falls_as_the_ledger_walks_the_plans_claims_to_their_ends_an
     done?;
 
     // The plan made with the claims identified, nothing done (0 calls made,
-    // 19 for each statement, 17 reserved for each of the two on one passage,
-    // 1 flow repair), then 6 less as each ends: the teaching review may still
-    // rewrite its sentence, so the 13 calls of its successor's readings and
-    // the reserves stay held.
-    assert_eq!(trace.ceilings, [73, 67, 61]);
+    // 19 for each statement, 1 flow repair; each statement stands on its own
+    // sentence of the passage, so neither holds a reserve), then 6 less as
+    // each ends: the teaching review may still rewrite its sentence, so the
+    // 13 calls of its successor's readings stay held.
+    assert_eq!(trace.ceilings, [39, 33, 27]);
     assert!(trace.only_came_down(), "{:?}", trace.ceilings);
     Ok(())
 }

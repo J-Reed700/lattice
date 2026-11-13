@@ -28,6 +28,7 @@
 //! of the reviewer's findings with no passage already at its place.
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::lessons::trace::{self, Stage};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -49,6 +50,8 @@ pub(super) enum Outcome {
     NotApplied(Vec<String>),
     /// Its changes were applied and put back: they touched a sentence that must stay.
     Reverted,
+    /// Its correction as a whole was refused: it changed what must stay or what it was not asked to change.
+    Refused(Vec<String>),
     /// No change named it.
     Unnamed,
     /// Its entry in the repair's answer gave a plan and no change.
@@ -77,6 +80,9 @@ impl Outcome {
             }
             Self::Reverted => {
                 "its edits were put back: they touched a sentence that must stay".to_owned()
+            }
+            Self::Refused(reasons) => {
+                format!("its correction was refused: {}", reasons.join(" "))
             }
             Self::Unnamed => "the repair made no change for it".to_owned(),
             Self::Declined(plan) => {
@@ -324,6 +330,12 @@ impl Passes {
     /// before it (not counting those left out) was not. Of two attempts in a
     /// row one is charged, so the review still ends.
     pub fn charge(&mut self, finding: &ReviewFinding, outcome: Outcome) {
+        trace::decided_finding(
+            Stage::TeachingRepair,
+            finding,
+            "charged",
+            &format!("{outcome:?}"),
+        );
         let id = finding.id();
         let attempts = self.attempts.entry(id.clone()).or_default();
         let missed_before = attempts
@@ -361,6 +373,10 @@ impl Passes {
                 reasons.join(" ")
             ),
             Outcome::Reverted => "The last repair's edits for this finding changed a sentence that must stay as it is; they were put back.".to_owned(),
+            Outcome::Refused(reasons) => format!(
+                "The last repair's correction for this finding was refused, and none of its edits were applied: {}",
+                reasons.join(" ")
+            ),
             Outcome::Unnamed => "The last repair gave no edit for this finding.".to_owned(),
             Outcome::Declined(plan) => format!("The last repair gave no change for this finding; its plan was: \"{plan}\""),
             Outcome::Unusable(reason) => {

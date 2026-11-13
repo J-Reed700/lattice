@@ -13,6 +13,7 @@ use crate::content_verification::research::research_topics;
 use crate::dto::{LearningLessonDto, LearningProgramDto, LearningSourceDto};
 use crate::lesson_drafts::{checkpoint, record_checkpoint};
 use crate::lessons::structured_call::{complete_reasoned_json, CallKind, ReasonFirst};
+use crate::lessons::trace;
 use crate::model_call;
 use crate::model_call::ErrorClass;
 use crate::reference_collection::{
@@ -66,6 +67,16 @@ impl Gathered<'_> {
     }
 }
 
+fn planned_topics(topics: &[Topic]) -> String {
+    format!(
+        "{:?}",
+        topics
+            .iter()
+            .map(|topic| (&topic.topic, &topic.queries))
+            .collect::<Vec<_>>()
+    )
+}
+
 fn plan_schema() -> Value {
     json!({"type":"object","additionalProperties":false,"required":["topics"],"properties":{
         "topics":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["topic","queries"],"properties":{
@@ -102,6 +113,12 @@ pub(super) async fn plan(
         .and_then(|saved| serde_json::from_value::<Vec<Topic>>(saved).ok())
         .filter(|topics| !topics.is_empty())
     {
+        trace::decided(
+            trace::Stage::ReferenceGathering,
+            "evidence plan",
+            "reused a saved plan",
+            &planned_topics(&topics),
+        );
         return Ok(topics);
     }
     let mut prompt = request;
@@ -130,6 +147,12 @@ pub(super) async fn plan(
     let Some(topics) = planned else {
         // Unrecorded, so a resumed job plans again.
         tracing::warn!("The lesson evidence plan was unusable; planning one topic from the lesson title and objective");
+        trace::decided(
+            trace::Stage::ReferenceGathering,
+            "evidence plan",
+            "the model's plan was unusable",
+            "one topic is planned from the lesson title and objective",
+        );
         return Ok(vec![Topic {
             topic: lesson.title.trim().to_owned(),
             queries: vec![format!(
@@ -141,6 +164,12 @@ pub(super) async fn plan(
     };
     record_checkpoint(&key, json!(topics)).await?;
     tracing::info!(topics = topics.len(), "Planned the lesson's evidence");
+    trace::decided(
+        trace::Stage::ReferenceGathering,
+        "evidence plan",
+        "planned",
+        &planned_topics(&topics),
+    );
     Ok(topics)
 }
 
@@ -351,6 +380,28 @@ pub(super) async fn gather<'a>(
             depth,
             "Lesson topics checked against saved references"
         );
+        for (topic, covered) in topics.iter().zip(&covering) {
+            let covering_passages: Vec<String> = covered
+                .iter()
+                .filter_map(|index| passages.get(*index))
+                .map(|passage| {
+                    format!(
+                        "{}@{}-{}",
+                        passage.source_id, passage.start_byte, passage.end_byte
+                    )
+                })
+                .collect();
+            trace::decided(
+                trace::Stage::ReferenceGathering,
+                &format!("topic {}", topic.topic),
+                if covered.is_empty() {
+                    "not covered"
+                } else {
+                    "covered"
+                },
+                &format!("passages {covering_passages:?}"),
+            );
+        }
         if names.is_empty() {
             break;
         }

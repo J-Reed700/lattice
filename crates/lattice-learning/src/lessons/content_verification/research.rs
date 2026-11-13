@@ -1,6 +1,7 @@
 //! Supplement pinned evidence when a lesson's claim checks expose gaps, or
 //! when no saved reference covers a lesson topic before it is written.
 use super::*;
+use crate::lessons::trace::{self, Stage};
 use crate::model_call;
 use crate::references::{admission, web_research};
 #[cfg(test)]
@@ -687,6 +688,18 @@ async fn research<'a>(
     // An empty plan is the planner's answer that public search cannot help
     // these gaps, not a failure: topics stay uncovered, and claims go on to
     // the repair that follows research, or to the user.
+    trace::decided(
+        Stage::Research,
+        "research round",
+        "planned searches",
+        &format!(
+            "{:?}",
+            needs
+                .iter()
+                .map(|(need, _)| need.line())
+                .collect::<Vec<_>>()
+        ),
+    );
     if needs.is_empty() {
         let exhausted = Exhausted {
             claims: gaps.len(),
@@ -754,6 +767,12 @@ async fn research<'a>(
             Ok(results) => results,
             Err(error) => {
                 tracing::warn!(%error, "Lesson reference search unavailable");
+                trace::decided(
+                    Stage::Research,
+                    &format!("search {line}"),
+                    "search unavailable",
+                    &error.to_string(),
+                );
                 // Not searched: a later round may send it again, and the
                 // planner is not told it was tried.
                 context
@@ -767,10 +786,28 @@ async fn research<'a>(
             }
         };
         reached = true;
+        trace::decided(
+            Stage::Research,
+            &format!("search {line}"),
+            "searched",
+            &format!("{} results", results.len()),
+        );
         let mut capture_failed = false;
-        let candidates: Vec<web_research::Candidate> = results
-            .into_iter()
-            .filter(|candidate| !urls.contains(&identity(&candidate.result.url)))
+        let (candidates, held): (Vec<web_research::Candidate>, Vec<web_research::Candidate>) =
+            results
+                .into_iter()
+                .partition(|candidate| !urls.contains(&identity(&candidate.result.url)));
+        for candidate in &held {
+            trace::decided(
+                Stage::Research,
+                &format!("page {}", candidate.result.url),
+                "dropped",
+                "the course already holds this page",
+            );
+        }
+        let offered: Vec<String> = candidates
+            .iter()
+            .map(|candidate| candidate.result.url.clone())
             .collect();
         // The subject's owner, when the search resolved one: a result on its
         // site is the statement's owner-site page.
@@ -780,13 +817,36 @@ async fn research<'a>(
             .map(|owner| owner.domain.clone())
             .collect();
         let selected = select_noted(llm, &context.topic, &need.query, gaps, candidates).await?;
+        for url in offered
+            .iter()
+            .filter(|url| !selected.iter().any(|(result, _)| &result.url == *url))
+        {
+            trace::decided(
+                Stage::Research,
+                &format!("page {url}"),
+                "dropped",
+                "the selector did not choose it for the gap",
+            );
+        }
         for (result, note) in selected {
             let owned =
                 need.site.is_some() || super::provenance_gate::owner_hinted(&result.url, &owner);
             if !pages.allows(gap, owned) {
+                trace::decided(
+                    Stage::Research,
+                    &format!("page {}", result.url),
+                    "dropped",
+                    "the round already took as many pages as it allows for this gap",
+                );
                 continue;
             }
             if !urls.insert(identity(&result.url)) {
+                trace::decided(
+                    Stage::Research,
+                    &format!("page {}", result.url),
+                    "dropped",
+                    "the page was already taken",
+                );
                 continue;
             }
             pages.take(gap, owned);
@@ -794,9 +854,23 @@ async fn research<'a>(
             crate::lesson_progress::stage("Saving an additional reference for lesson verification");
             let captured = match web_research::capture(context.web.as_ref(), &result).await {
                 Ok(Some(captured)) => captured,
-                Ok(None) => continue,
+                Ok(None) => {
+                    trace::decided(
+                        Stage::Research,
+                        &format!("page {}", result.url),
+                        "dropped",
+                        "no readable page was captured",
+                    );
+                    continue;
+                }
                 Err(error) => {
                     tracing::warn!(%error, url = %result.url, "Lesson research page unavailable");
+                    trace::decided(
+                        Stage::Research,
+                        &format!("page {}", result.url),
+                        "dropped",
+                        &format!("the page could not be fetched: {error}"),
+                    );
                     capture_failed = true;
                     continue;
                 }
@@ -807,12 +881,24 @@ async fn research<'a>(
             let address = captured.resolved_url.as_deref().unwrap_or(&result.url);
             if let Err(refusal) = admission::admit(address, &captured.title, &captured.text) {
                 tracing::info!(url = %result.url, %refusal, "A fetched page is not a source; it is not saved");
+                trace::decided(
+                    Stage::Research,
+                    &format!("page {}", result.url),
+                    "dropped",
+                    &format!("it is not a source: {refusal}"),
+                );
                 continue;
             }
             if let Some(version_id) = saving
                 .save(&mut sources, &mut urls, &result.url, captured, Some(&note))
                 .await?
             {
+                trace::decided(
+                    Stage::Research,
+                    &format!("page {}", result.url),
+                    "kept",
+                    &format!("saved as source version {version_id}; chosen because: {note}"),
+                );
                 searched.sources_added.push(version_id);
                 added += 1;
             }

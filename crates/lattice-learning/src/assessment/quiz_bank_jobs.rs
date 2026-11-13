@@ -16,6 +16,7 @@ use crate::dto::{
     LessonQuestion, LessonQuestionKind,
 };
 use crate::grade_rationale::{self, Checked, Grader, Reference};
+use crate::lessons::trace;
 use crate::persistence::now;
 use crate::quiz_blueprints::{self, CourseFacts, LessonFacts};
 use futures::future::BoxFuture;
@@ -29,6 +30,7 @@ use lattice_core::shared::runtime::jobs::{
 };
 use serde_json::json;
 use std::sync::Arc;
+use tracing::Instrument;
 
 pub const QUIZ_BANK: &str = "learning.quiz_bank";
 pub const QUIZ_GRADING: &str = "learning.quiz_grading";
@@ -287,16 +289,19 @@ impl QuizBankWorker {
                 };
                 let pin = pin?;
                 let Some(bank) = context
-                    .until_cancelled(lesson_bank_stage(
-                        pin.llm.as_ref(),
-                        &self.database,
-                        program_id,
-                        lesson_id,
-                        &inputs.title,
-                        &inputs.objective,
-                        inputs.material,
-                        inputs.seeds,
-                    ))
+                    .until_cancelled(
+                        lesson_bank_stage(
+                            pin.llm.as_ref(),
+                            &self.database,
+                            program_id,
+                            lesson_id,
+                            &inputs.title,
+                            &inputs.objective,
+                            inputs.material,
+                            inputs.seeds,
+                        )
+                        .instrument(trace::lesson_span(lesson_id)),
+                    )
                     .await
                 else {
                     return Ok(JobOutcome::Stopped);
@@ -308,6 +313,19 @@ impl QuizBankWorker {
                 bank
             }
         };
+        trace::lesson_span(lesson_id).in_scope(|| {
+            for authored in &bank.items {
+                trace::decided(
+                    trace::Stage::Quiz,
+                    &format!("question {}", authored.candidate.prompt),
+                    "kept",
+                    "written for the quiz bank and reviewed",
+                );
+            }
+            for reason in &bank.dropped {
+                trace::decided(trace::Stage::Quiz, "quiz item", "dropped", reason);
+            }
+        });
         let dropped = bank.dropped.len();
         let items: Vec<BankItem> = bank
             .items
@@ -331,6 +349,14 @@ impl QuizBankWorker {
             bank.author_model.as_deref(),
         )
         .await?;
+        trace::lesson_span(lesson_id).in_scope(|| {
+            trace::decided(
+                trace::Stage::Quiz,
+                "quiz bank",
+                "written",
+                &format!("{written} items inserted, {dropped} dropped"),
+            );
+        });
         Ok(JobOutcome::Completed {
             result_ref: format!("quiz_bank:{written}"),
             message: written_message(written, dropped),
