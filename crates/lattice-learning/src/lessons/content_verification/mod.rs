@@ -26,6 +26,8 @@ mod apparatus;
 #[cfg(test)]
 use apparatus::strip_citation_apparatus;
 pub(crate) use apparatus::strip_draft_apparatus;
+mod right_choice;
+pub(crate) use right_choice::clear_right_choice_reasons;
 mod citations;
 mod claim_ledger;
 mod claim_sentences;

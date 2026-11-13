@@ -935,6 +935,9 @@ mod born_of_repair_tests;
 #[path = "apparatus_tests.rs"]
 mod apparatus_tests;
 
+#[path = "right_choice_tests.rs"]
+mod right_choice_tests;
+
 #[path = "sentence_naming_tests.rs"]
 mod sentence_naming_tests;
 
