@@ -28,6 +28,7 @@
 //! of the reviewer's findings with no passage already at its place.
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::lessons::trace::{self, Stage};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -329,6 +330,12 @@ impl Passes {
     /// before it (not counting those left out) was not. Of two attempts in a
     /// row one is charged, so the review still ends.
     pub fn charge(&mut self, finding: &ReviewFinding, outcome: Outcome) {
+        trace::decided_finding(
+            Stage::TeachingRepair,
+            finding,
+            "charged",
+            &format!("{outcome:?}"),
+        );
         let id = finding.id();
         let attempts = self.attempts.entry(id.clone()).or_default();
         let missed_before = attempts

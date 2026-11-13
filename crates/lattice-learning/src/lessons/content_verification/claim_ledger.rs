@@ -331,6 +331,14 @@ impl ClaimLedger {
         raw: &str,
         stop_reason: Option<StopReason>,
     ) -> Result<()> {
+        crate::lessons::trace::decided(
+            crate::lessons::trace::Stage::Publishing,
+            "lesson",
+            &format!("review state {state:?}"),
+            stop_reason
+                .as_ref()
+                .map_or("no stop reason", |stop| stop.message.as_str()),
+        );
         let Some(sink) = &self.sink else {
             return Ok(());
         };
@@ -417,6 +425,7 @@ impl ClaimLedger {
         let Some(mut entry) = self.probe(claim_id, &provenance, &event)? else {
             return Ok(false);
         };
+        let recorded = event.clone();
         if let Some(sink) = &self.sink {
             let written = sink
                 .store
@@ -448,6 +457,7 @@ impl ClaimLedger {
                 Err(error) => return Err(error),
             };
         }
+        crate::lessons::trace::claim_event(claim_id, entry.statement(), &recorded);
         match self
             .entries
             .iter_mut()
