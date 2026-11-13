@@ -348,6 +348,12 @@ async fn a_section_with_no_quotation_of_its_own_can_be_cited() -> Result<()> {
 
 const NONE: &str = "Missing values in nonblank rows default to None.";
 
+/// A sentence whose statement names context the sentence leaves implicit: the
+/// sentence holds 8 of the statement's 22 terms, under the half the locator
+/// asks for.
+pub(super) const IMPLICIT_SENTENCE: &str = "Writing a new system erases the card, so back up first, then write the image again with remote login enabled in customisation.";
+pub(super) const IMPLICIT_STATEMENT: &str = "Acme Installer lets users turn on remote login from its customisation screen, which is offered whenever a new image is written to the card.";
+
 /// A lesson of one section that says `body` and cites an unrelated quotation.
 fn csv_lesson(body: &str) -> Value {
     json!({"blocks":[{"kind":"explanation","title":"Rows","body":body,"rubric":[],

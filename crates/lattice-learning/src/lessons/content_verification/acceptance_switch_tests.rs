@@ -1129,6 +1129,97 @@ async fn a_second_claim_on_a_sentence_at_recite_waits_a_round_then_is_done_on_th
     Ok(())
 }
 
+#[tokio::test]
+async fn a_claim_naming_context_its_sentence_leaves_implicit_is_cited_at_the_passage_found_and_read_there_next(
+) -> Result<()> {
+    use super::recite_tests::{IMPLICIT_SENTENCE, IMPLICIT_STATEMENT};
+    const OLD: &str = "Missing values in nonblank rows default to None.";
+    let policy = StandardPolicy::new();
+    let sources = [source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let at = sources[0].excerpt.find(GOOD).unwrap();
+    let mut ledger = open().await?;
+    let id = claim(
+        &mut ledger,
+        "implicit",
+        (IMPLICIT_SENTENCE, IMPLICIT_STATEMENT),
+        IMPLICIT_SENTENCE,
+        SOURCED,
+    )
+    .await?;
+    walk(&mut ledger, &id, Class::Sourced, &RECITING).await?;
+    let mut lesson = json!({"blocks":[{"kind":"explanation","title":"Rows","body":IMPLICIT_SENTENCE,
+        "rubric":[],"sourceIndex":0,"quote":OLD}],"questions":[]});
+    identified(
+        &mut ledger,
+        &Model::new(),
+        &lesson,
+        &[(IMPLICIT_SENTENCE, IMPLICIT_STATEMENT)],
+        &sources,
+    )
+    .await?;
+    assert_eq!(ledger.at(&policy, StepKind::Recite).len(), 1);
+    let report = pass_report(vec![elsewhere(
+        IMPLICIT_STATEMENT,
+        &sources[0].id,
+        at..at + GOOD.len(),
+    )]);
+
+    let moved = super::super::repair_loop::recite(
+        &mut ledger,
+        &policy,
+        (&mut lesson, &report),
+        (&mut vec![sources[0].clone()], &mut HashSet::new()),
+        &references,
+    )
+    .await?;
+
+    assert!(moved);
+    assert_eq!(node_of(&ledger, &id), Some("s.citeread"));
+    assert!(events_of(ledger.entry(&id).unwrap())
+        .iter()
+        .any(|event| matches!(event, ClaimEvent::CitationRepaired { .. })));
+    assert_eq!(
+        lesson["blocks"][0]["citations"],
+        json!([{"sentence":IMPLICIT_SENTENCE,"sourceIndex":0,"quote":GOOD}])
+    );
+    // The next reading takes the passage the sentence now cites.
+    let next = section_citations(&lesson, &references)?;
+    assert!(next.is_cited(0, IMPLICIT_SENTENCE));
+    let read = next.of_claim(0, IMPLICIT_SENTENCE);
+    assert!(!read.is_empty() && read.iter().all(|passage| passage.text.contains(GOOD)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_cut_of_a_statement_naming_context_its_sentence_leaves_implicit_takes_out_its_sentence(
+) -> Result<()> {
+    use super::recite_tests::{IMPLICIT_SENTENCE, IMPLICIT_STATEMENT};
+    const NEXT: &str = "Keep the card away from heat.";
+    assert!(lattice_core::shared::text::claim_sentence(
+        IMPLICIT_SENTENCE,
+        (0, IMPLICIT_SENTENCE.len()),
+        IMPLICIT_STATEMENT
+    )
+    .is_none());
+    let text = format!("{IMPLICIT_SENTENCE} {NEXT}");
+    let mut ledger = open().await?;
+    let id = claim(
+        &mut ledger,
+        "implicit",
+        (IMPLICIT_SENTENCE, IMPLICIT_STATEMENT),
+        &text,
+        SOURCED,
+    )
+    .await?;
+
+    assert_eq!(
+        ledger.cut_of(&id, &text),
+        claim_ledger::CutOf::Sentence(IMPLICIT_SENTENCE)
+    );
+    Ok(())
+}
+
 fn cited_lesson(entries: Value) -> Value {
     json!({"blocks":[{"kind":"explanation","title":"Rows","body":GOOD,"rubric":[],
         "sourceIndex":0,"quote":GOOD,"citations":entries}],"questions":[]})

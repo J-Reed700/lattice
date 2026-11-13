@@ -1567,6 +1567,38 @@ async fn a_statement_is_read_against_the_passage_its_own_sentence_cites() -> Res
     Ok(())
 }
 
+#[tokio::test]
+async fn a_statement_naming_context_its_sentence_leaves_implicit_is_read_against_its_sentences_passage(
+) -> Result<()> {
+    const STATEMENT: &str =
+        "Acme's analysis log for the sample lists the pressure at which the beta reading was taken.";
+    assert!(
+        lattice_core::shared::text::claim_sentence(CLAIM, (0, CLAIM.len()), STATEMENT).is_none()
+    );
+    let references = ReferenceCollection::lexical(&marker_collection())?;
+    let model = PagingModel::new(6_000);
+    let lesson = sentence_cited();
+    let citations = section_citations(&lesson, &references)?;
+    let mut world = world_of(&references, citations);
+    world.lesson = lesson;
+    let claim = Claim {
+        quote: CLAIM.into(),
+        statement: STATEMENT.into(),
+    };
+
+    let reads = read_all(Reading::Parts, &model, &world, &[(0, claim)]).await?;
+
+    assert_eq!(reads.len(), 1);
+    let checks = model.checks.lock().unwrap();
+    assert_eq!(checks.len(), 1);
+    assert!(read_marker(&checks[0]), "the sentence's passage was read");
+    assert!(
+        checks[0].iter().all(|text| !text.contains("notes 3:")),
+        "not the section's other passage"
+    );
+    Ok(())
+}
+
 /// Reads `asked` and the two `saved` statements of section 0 by `reading`, the
 /// two having been read before and their receipts saved, and tells, for each
 /// reading the reader reports, its place in the batch, whether a saved check

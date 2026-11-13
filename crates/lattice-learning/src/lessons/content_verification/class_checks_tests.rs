@@ -1793,3 +1793,75 @@ async fn a_saved_class_is_the_models_answer_and_is_settled_where_it_is_restored(
     })
     .await
 }
+
+#[tokio::test]
+async fn a_statement_naming_context_its_sentence_leaves_implicit_is_sourced_by_the_writer_who_cited_the_sentence(
+) -> Result<()> {
+    use super::recite_tests::{IMPLICIT_SENTENCE, IMPLICIT_STATEMENT};
+    assert!(lattice_core::shared::text::claim_sentence(
+        IMPLICIT_SENTENCE,
+        (0, IMPLICIT_SENTENCE.len()),
+        IMPLICIT_STATEMENT
+    )
+    .is_none());
+    let model = Classes::new(&[]);
+    let sources = [source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let candidate = cited(IMPLICIT_SENTENCE);
+    let citations = section_citations(&candidate, &references)?;
+    let claims = vec![(
+        0,
+        Claim {
+            quote: IMPLICIT_SENTENCE.to_owned(),
+            statement: IMPLICIT_STATEMENT.to_owned(),
+        },
+    )];
+
+    let classes = class_checks::sort(&model, &candidate, &claims, &[None], &citations).await?;
+
+    assert_eq!(
+        classes,
+        [Classed {
+            class: Class::Sourced,
+            by: ClassifiedBy::Writer
+        }]
+    );
+    assert_eq!(model.calls("sort"), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_sharing_words_with_another_cited_sentence_is_not_sourced_by_the_writer(
+) -> Result<()> {
+    const CITED: &str =
+        "The installer verifies the written image against its checksum before it reports success.";
+    const UNCITED: &str = "Remove the card only after the installer reports that it has finished.";
+    const STATEMENT: &str = "The installer verifies the written image against its checksum.";
+    assert!(
+        lattice_core::shared::text::claim_sentence(CITED, (0, CITED.len()), STATEMENT).is_some()
+    );
+    let model = Classes::new(&[]);
+    let sources = [source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let candidate = json!({"blocks":[{"kind":"explanation","title":"CSV header names",
+        "body":format!("{CITED} {UNCITED}"),"rubric":[],"sourceIndex":0,"quote":GOOD,
+        "citations":[{"sentence":CITED,"sourceIndex":0,"quote":GOOD}]}],"questions":[]});
+    let citations = section_citations(&candidate, &references)?;
+    let claims = vec![(
+        0,
+        Claim {
+            quote: UNCITED.to_owned(),
+            statement: STATEMENT.to_owned(),
+        },
+    )];
+
+    let classes = class_checks::sort(&model, &candidate, &claims, &[None], &citations).await?;
+
+    assert_eq!(classes.len(), 1);
+    assert_ne!(
+        classes[0].by,
+        ClassifiedBy::Writer,
+        "the writer cited another sentence"
+    );
+    Ok(())
+}
