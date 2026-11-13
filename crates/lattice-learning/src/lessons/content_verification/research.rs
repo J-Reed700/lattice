@@ -354,6 +354,9 @@ pub(super) struct Searched {
     pub(super) queries: Vec<String>,
     /// Source version ids this round saved.
     pub(super) sources_added: Vec<String>,
+    /// Each version this round saved for a claim's gap, with the gap whose
+    /// search chose it. A page a user's hint found is in no gap.
+    pub(super) chosen: Vec<(usize, String)>,
     /// Pages this round fetched, whether it saved them or not.
     pub(super) fetched: usize,
     /// A claim research round's time from its start to its result over the
@@ -485,7 +488,8 @@ pub(super) async fn expand<'a>(
     // Persist the claim-to-source scope before returning. If the app exits
     // between research and rechecking, recovery still reopens only the failed
     // comparisons that requested these automatically captured references.
-    evidence_selection::record_research_scope(&expanded, &looked_for, checks).await?;
+    evidence_selection::record_research_scope(&expanded, &looked_for, &searched.chosen, checks)
+        .await?;
     Ok(Expansion::Saved(Box::new(expanded), searched).timed(started.elapsed().checked_div(claims)))
 }
 
@@ -893,12 +897,22 @@ async fn research<'a>(
                 .save(&mut sources, &mut urls, &result.url, captured, Some(&note))
                 .await?
             {
+                let searched_for = gap
+                    .and_then(|gap| gaps.get(gap))
+                    .and_then(|gap| gap.get("claim").or_else(|| gap.get("topic")))
+                    .and_then(Value::as_str)
+                    .map_or_else(|| "a hint".to_owned(), |what| format!("\"{what}\""));
                 trace::decided(
                     Stage::Research,
                     &format!("page {}", result.url),
                     "kept",
-                    &format!("saved as source version {version_id}; chosen because: {note}"),
+                    &format!(
+                        "saved as source version {version_id} for {searched_for}; chosen because: {note}"
+                    ),
                 );
+                if let Some(gap) = gap {
+                    searched.chosen.push((gap, version_id.clone()));
+                }
                 searched.sources_added.push(version_id);
                 added += 1;
             }

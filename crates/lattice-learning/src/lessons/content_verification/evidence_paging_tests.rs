@@ -383,7 +383,7 @@ async fn research_found_for_a_claim_leads_its_first_page() -> Result<()> {
         format!("{archive} Mineral alpha property records: {MARKER} {archive}"),
     ));
     let expanded = ReferenceCollection::lexical(&expanded_sources)?;
-    evidence_selection::record_research_scope(&expanded, &findings, &retained).await?;
+    evidence_selection::record_research_scope(&expanded, &findings, &[], &retained).await?;
     let second = paged(&model, &expanded, &claims, &retained).await?;
 
     assert_eq!(second[0].finding().verdict, ClaimVerdict::Supported);

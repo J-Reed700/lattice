@@ -25,6 +25,8 @@ const P_MARK: &str = "who is on duty";
 /// In the page chosen for Y, which repeats X's other words in other
 /// statements, so it outranks P by words.
 const Q_MARK: &str = "mute the chime";
+/// In the page a user's hint found.
+const R_MARK: &str = "ledger shelf";
 
 fn page_p() -> String {
     format!(
@@ -67,6 +69,23 @@ fn page_q() -> String {
             .map(|line| line.replace("{Q}", Q_MARK))
             .collect::<Vec<_>>()
             .join(" ")
+    )
+}
+
+fn page_r() -> String {
+    format!(
+        "Archive notes. Old record books are kept on the {R_MARK} at the back of the hall. \
+         Each book is labelled with the year it was opened and the year it was closed. \
+         A book is never lent out, and a reader signs the list before opening one. \
+         The warden counts the books at the turn of each year and files the count. \
+         Books that have gone damp are dried flat and returned to their place. \
+         A new book is opened when the last page of the old one has been written. \
+         The oldest books are wrapped in cloth and kept in the lowest drawer. \
+         A reader who finds a loose page hands it to the warden rather than putting it back. \
+         The shelf is dusted every Friday, and each book is turned so its spine faces out. \
+         A list on the wall gives the place of each book on the shelf by its year. \
+         Pencil is the only thing a reader may write with at the reading table. \
+         The reading table is cleared and wiped when the last reader of the day leaves."
     )
 }
 
@@ -282,4 +301,125 @@ async fn a_claims_first_page_leads_with_the_page_research_chose_for_it() -> Resu
         "the page chosen for the other claim does not take its place"
     );
     Ok(())
+}
+
+/// The id of the saved source whose text holds `mark`.
+fn source_with(references: &ReferenceCollection<'_>, mark: &str) -> String {
+    references
+        .sources
+        .iter()
+        .find(|source| source.excerpt.contains(mark))
+        .map(|source| source.id.clone())
+        .unwrap_or_else(|| panic!("no saved source holds {mark:?}"))
+}
+
+#[tokio::test]
+async fn a_saved_page_is_chosen_for_the_gap_whose_search_chose_it_and_a_hints_page_for_none(
+) -> Result<()> {
+    let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
+    let mut program = crate::tests::fixture();
+    program.summary.status = crate::dto::LearningProgramStatus::Active;
+    repo.create(&program).await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+    let web = Web::serving(&[
+        ("operator", "https://example.org/headers", page_p()),
+        ("rota", "https://example.org/line-notes", page_q()),
+        ("ledger", "https://example.org/archive", page_r()),
+    ]);
+    let expansion = research::run(
+        db.clone(),
+        program.summary.id.clone(),
+        program.summary.goal.clone(),
+        Some(Arc::new(web)),
+        research::expand(
+            &Planner,
+            &references,
+            &[gap(X), gap(Y)],
+            &[(0, "ledger shelf archive".into())],
+            &ClaimChecks::default(),
+        ),
+    )
+    .await?;
+    let research::Expansion::Saved(expanded, searched) = expansion else {
+        panic!("the searches save pages");
+    };
+    let (p, q, r) = (
+        source_with(&expanded, P_MARK),
+        source_with(&expanded, Q_MARK),
+        source_with(&expanded, R_MARK),
+    );
+    let mut chosen = searched.chosen.clone();
+    chosen.sort();
+    let mut expected = vec![(0, p), (1, q)];
+    expected.sort();
+    assert_eq!(chosen, expected);
+    assert!(
+        searched.sources_added.contains(&r),
+        "the hint's page is saved"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_versions_research_chose_for_a_claim_are_restored_from_the_checkpoint() -> Result<()> {
+    let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = super::batch_scheduler_tests::setup(&db).await?;
+    let source = |id: &str, text: String| LearningSourceDto {
+        id: id.into(),
+        title: format!("Reference {id}"),
+        url: None,
+        excerpt: text,
+        acquired_at: 1,
+    };
+    let mut sources = vec![source("base", "Floor plan. The hall has two doors.".into())];
+    crate::lesson_drafts::run(&db, &repo, &job, &lesson, async {
+        let (x, budget, retained) = (claim(X), one_passage(), ClaimChecks::default());
+        let references = ReferenceCollection::lexical(&sources)?;
+        let current = evidence_selection::sources(&references);
+        let llm = Planner;
+        evidence_selection::select(
+            &llm,
+            (&x, X, 0),
+            &references,
+            &current,
+            &retained,
+            (&[], &budget),
+        )
+        .await?;
+        sources.push(source("chosen-for-x", page_p()));
+        sources.push(source("saved-for-y", page_q()));
+        let expanded = ReferenceCollection::lexical(&sources)?;
+        evidence_selection::record_research_scope(
+            &expanded,
+            &[gap(X), gap(Y)],
+            &[(0, "chosen-for-x".into()), (1, "saved-for-y".into())],
+            &ClaimChecks::default(),
+        )
+        .await?;
+        // The scope above is gone from memory: the checkpoint restores it.
+        let current = evidence_selection::sources(&expanded);
+        let selected = evidence_selection::select(
+            &llm,
+            (&x, X, 0),
+            &expanded,
+            &current,
+            &retained,
+            (&[], &budget),
+        )
+        .await?;
+        assert!(selected
+            .evidence
+            .iter()
+            .any(|passage| passage.text.contains(P_MARK)));
+        assert!(!selected
+            .evidence
+            .iter()
+            .any(|passage| passage.text.contains(Q_MARK)));
+        Ok(())
+    })
+    .await
 }

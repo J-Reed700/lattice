@@ -293,7 +293,7 @@ struct ClaimChecks {
     /// as a checkpoint, so a restarted job carries it still.
     latest: HashMap<ClaimId, Finding>,
     selections: std::sync::Mutex<HashMap<String, evidence_selection::Selection>>,
-    research_scopes: std::sync::Mutex<HashMap<String, HashSet<(usize, String)>>>,
+    research_scopes: std::sync::Mutex<HashMap<String, evidence_selection::ResearchTargets>>,
     /// What the judge's answers have cost this job, per claim, across its
     /// readings: the answer size a page of the course is budgeted by
     /// (`evidence_checks::page_budget`).
