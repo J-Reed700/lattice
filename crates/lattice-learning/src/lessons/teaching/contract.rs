@@ -182,12 +182,37 @@ pub(crate) struct Item {
     pub(crate) text: String,
 }
 
+impl Item {
+    /// Whether added teaching of this item goes in `part`: the planned confusion in a contrast section, any other item in a section that takes teaching.
+    fn belongs_in(&self, part: &Part) -> bool {
+        part.block_kind().is_some_and(|kind| {
+            if self.kind == "contrast" {
+                kind == LearningBlockKind::Contrast
+            } else {
+                kind.takes_teaching()
+            }
+        })
+    }
+}
+
 /// A section or question of the lesson, as the check names it.
 struct Part {
     id: String,
     site: FindingSite,
     texts: Vec<String>,
     shown: Value,
+}
+
+impl Part {
+    fn block_kind(&self) -> Option<LearningBlockKind> {
+        if !matches!(self.site, FindingSite::Section(_)) {
+            return None;
+        }
+        self.shown
+            .get("kind")
+            .and_then(Value::as_str)
+            .and_then(LearningBlockKind::parse)
+    }
 }
 
 pub(crate) fn items_of(entry: &Value) -> Vec<Item> {
@@ -342,7 +367,7 @@ pub(crate) fn at_position<'a>(
         .filter(move |entry| entry.get("position").and_then(Value::as_str) == Some(name))
 }
 
-/// The last teaching block before a part that sets a task or asks a question, when the part itself does not teach.
+/// The last section that takes teaching before a part that sets a task or asks a question, when the part itself does not take it.
 fn teaching_before(candidate: &Value, site: FindingSite) -> Option<FindingSite> {
     let blocks = candidate.get("blocks").and_then(Value::as_array)?;
     let teaches = |block: &Value| {
@@ -350,7 +375,7 @@ fn teaching_before(candidate: &Value, site: FindingSite) -> Option<FindingSite> 
             .get("kind")
             .and_then(Value::as_str)
             .and_then(LearningBlockKind::parse)
-            .is_some_and(|kind| kind.teaches())
+            .is_some_and(|kind| kind.takes_teaching())
     };
     let upto = match site {
         FindingSite::Section(index) => {
