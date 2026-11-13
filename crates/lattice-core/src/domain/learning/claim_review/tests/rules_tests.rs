@@ -41,17 +41,28 @@ fn identity_survives_a_reworded_statement_and_a_lightly_edited_sentence() {
     let field = |_: usize, _: &str| Some(FIELD_TEXT);
 
     // Same quote, new wording of the statement.
-    let same_quote = identities(&[&old], &[extracted(QUOTE, "Water's boiling point")], field);
+    let same_quote = identities(
+        &[&old],
+        &[],
+        &[extracted(QUOTE, "Water's boiling point")],
+        field,
+    );
     assert_eq!(same_quote.assigned, vec![Some(ClaimId("c1".into()))]);
     assert!(same_quote.orphaned.is_empty());
 
     // Same statement, different quote.
-    let same_statement = identities(&[&old], &[extracted("Heat it.", old.statement())], field);
+    let same_statement = identities(
+        &[&old],
+        &[],
+        &[extracted("Heat it.", old.statement())],
+        field,
+    );
     assert_eq!(same_statement.assigned, vec![Some(ClaimId("c1".into()))]);
 
     // The extractor quoted part of the sentence: the spans overlap.
     let part = identities(
         &[&old],
+        &[],
         &[extracted("boils at 100 °C", "Water boils at 100 degrees")],
         field,
     );
@@ -71,6 +82,7 @@ fn identity_gives_each_prior_id_once_and_orphans_vanished_sentences() {
     let field = |_: usize, _: &str| Some(FIELD_TEXT);
     let result = identities(
         &[&old, &other],
+        &[],
         &[
             extracted("Water boils", "Water boils"),
             extracted("boils at 100 °C at sea level", "Boiling point at sea level"),
@@ -84,11 +96,52 @@ fn identity_gives_each_prior_id_once_and_orphans_vanished_sentences() {
 
     // A prior quote that now occurs twice falls back to its stored span.
     let doubled = format!("{QUOTE} {QUOTE}");
-    let ambiguous = identities(&[&old], &[extracted("boils at 100 °C", "x")], |_, _| {
-        Some(doubled.as_str())
-    });
+    let ambiguous = identities(
+        &[&old],
+        &[],
+        &[extracted("boils at 100 °C", "x")],
+        |_, _| Some(doubled.as_str()),
+    );
     assert_eq!(ambiguous.assigned, vec![Some(ClaimId("c1".into()))]);
     assert!(ambiguous.orphaned.is_empty());
+}
+
+#[test]
+fn a_narrowed_claim_keeps_its_id_only_by_its_statement_or_quote() {
+    let on_sentence = |id: &str, statement: &str| {
+        ClaimLedgerEntry::extracted(
+            ClaimId(id.into()),
+            machine(1),
+            location(QUOTE),
+            statement.into(),
+        )
+        .unwrap()
+    };
+    let x = on_sentence("x", "Water boils at sea level.");
+    let y = on_sentence("y", "Water boils at 100 degrees.");
+    let narrowed = [ClaimId("x".into())];
+    let field = |_: usize, _: &str| Some(FIELD_TEXT);
+    let part = [extracted("boils at 100 °C", "It is hot.")];
+
+    // Another statement on the sentence takes the id the narrowed claim gave up.
+    let result = identities(&[&x, &y], &narrowed, &part, field);
+    assert_eq!(result.assigned, vec![Some(ClaimId("y".into()))]);
+    assert_eq!(result.orphaned, vec![ClaimId("x".into())]);
+
+    // Control: with nothing narrowed, ledger order gives it to x.
+    let result = identities(&[&x, &y], &[], &part, field);
+    assert_eq!(result.assigned, vec![Some(ClaimId("x".into()))]);
+    assert_eq!(result.orphaned, vec![ClaimId("y".into())]);
+
+    // Its own statement word for word keeps it.
+    let same_statement = [extracted("Heat it.", x.statement())];
+    let result = identities(&[&x, &y], &narrowed, &same_statement, field);
+    assert_eq!(result.assigned, vec![Some(ClaimId("x".into()))]);
+
+    // Its own quote keeps it.
+    let same_quote = [extracted(QUOTE, "It is hot.")];
+    let result = identities(&[&x, &y], &narrowed, &same_quote, field);
+    assert_eq!(result.assigned, vec![Some(ClaimId("x".into()))]);
 }
 
 #[test]
