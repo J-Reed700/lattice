@@ -4,15 +4,13 @@
 use super::{reconcile_line_endings, run_migrations};
 use crate::infrastructure::persistence::database::DatabaseConnection;
 use lattice_core::shared::persistence::Database;
-use parking_lot::Mutex;
+use lattice_core::shared::testing::logs::{capture_logs, CapturedLogs};
 use sha2::{Digest, Sha384};
 use sqlx::migrate::{Migration, Migrator};
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlSafeStr;
 use sqlx::SqlitePool;
 use std::borrow::Cow;
-use std::io::Write;
-use std::sync::Arc;
 
 /// A recorded migration: its version and its checksum in hex.
 type Row = (i64, String);
@@ -123,50 +121,19 @@ fn refusal(version: i64) -> String {
     format!("migration {version} was previously applied but has been modified")
 }
 
-#[derive(Clone, Default)]
-struct Captured(Arc<Mutex<Vec<u8>>>);
-
-impl Write for Captured {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl Captured {
-    /// The lines `run_migrations` logged itself, without the database driver's.
-    fn migrator_lines(&self) -> Vec<String> {
-        let target = module_path!().trim_end_matches("::tests");
-        let text = String::from_utf8(self.0.lock().clone()).unwrap();
-        text.lines()
-            .filter(|line| line.contains(target))
-            .map(str::to_owned)
-            .collect()
-    }
-}
-
-/// Captures what this thread logs at INFO and above, until the returned guard is dropped.
-fn capture_logs() -> (Captured, tracing::subscriber::DefaultGuard) {
-    let captured = Captured::default();
-    let writer = captured.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_ansi(false)
-        .with_writer(move || writer.clone())
-        .finish();
-    let guard = tracing::subscriber::set_default(subscriber);
-    // A callsite first hit on another test's thread while this subscriber was being installed can
-    // keep the "nobody listens" interest it computed then.
-    tracing::callsite::rebuild_interest_cache();
-    (captured, guard)
+/// The lines `run_migrations` logged itself, without the database driver's.
+fn migrator_lines(logs: &CapturedLogs) -> Vec<String> {
+    let target = module_path!().trim_end_matches("::tests");
+    logs.text()
+        .lines()
+        .filter(|line| line.contains(target))
+        .map(str::to_owned)
+        .collect()
 }
 
 /// `run_migrations` logged its own two lines and nothing else: nothing was reconciled.
-fn assert_nothing_reconciled_was_logged(logs: &Captured) {
-    let lines = logs.migrator_lines();
+fn assert_nothing_reconciled_was_logged(logs: &CapturedLogs) {
+    let lines = migrator_lines(logs);
     assert_eq!(lines.len(), 2, "{lines:#?}");
     assert!(
         lines[0].contains("Starting database migrations"),
@@ -187,14 +154,14 @@ async fn a_database_recorded_with_the_other_line_endings_opens_with_this_builds_
         set_other_line_endings(&pool, migration).await;
     }
     watch_updates(&pool).await;
-    let (logs, _capture) = capture_logs();
+    let logs = capture_logs(tracing::Level::INFO);
 
     run_migrations(&db).await.unwrap();
 
     assert_eq!(recorded(&pool).await, embedded_rows(&migrator));
     let versions: Vec<i64> = migrator.iter().map(|migration| migration.version).collect();
     assert_eq!(updates_seen(&pool).await, versions);
-    let lines = logs.migrator_lines();
+    let lines = migrator_lines(&logs);
     assert_eq!(lines.len(), versions.len() + 2, "{lines:#?}");
     for version in &versions {
         let named = version.to_string();
@@ -226,7 +193,7 @@ async fn only_rows_with_other_line_endings_are_updated_and_a_second_start_update
         .execute(&pool)
         .await
         .unwrap();
-    let (logs, _capture) = capture_logs();
+    let logs = capture_logs(tracing::Level::INFO);
     run_migrations(&db).await.unwrap();
     assert!(updates_seen(&pool).await.is_empty());
     assert_nothing_reconciled_was_logged(&logs);
@@ -334,7 +301,7 @@ async fn a_migration_this_build_does_not_embed_is_refused_as_before() {
 async fn a_fresh_database_migrates_as_before() {
     let pool = empty_database().await;
     let db = Database::new(pool.clone());
-    let (logs, _capture) = capture_logs();
+    let logs = capture_logs(tracing::Level::INFO);
 
     run_migrations(&db).await.unwrap();
 
@@ -355,7 +322,7 @@ async fn a_database_that_already_matches_is_not_touched() {
     let db = Database::new(pool.clone());
     let before = recorded(&pool).await;
     watch_updates(&pool).await;
-    let (logs, _capture) = capture_logs();
+    let logs = capture_logs(tracing::Level::INFO);
 
     run_migrations(&db).await.unwrap();
 
@@ -494,13 +461,13 @@ async fn the_rewrites_are_one_transaction_and_are_logged_only_once_committed() {
     .execute(&pool)
     .await
     .unwrap();
-    let (logs, _capture) = capture_logs();
+    let logs = capture_logs(tracing::Level::INFO);
 
     let error = run_migrations(&db).await.unwrap_err().to_string();
 
     assert!(error.contains("refused"), "{error}");
     assert_eq!(recorded(&pool).await, before);
-    let lines = logs.migrator_lines();
+    let lines = migrator_lines(&logs);
     assert!(
         lines.iter().all(|line| !line.contains("checksum updated")),
         "{lines:#?}"
