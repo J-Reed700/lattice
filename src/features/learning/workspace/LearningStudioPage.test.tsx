@@ -5,12 +5,14 @@ import '@/tests/interactionDom';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { programBuilderDraftKeys } from '@/features/learning/curriculum/programBuilderDraft';
 import { PROGRAM_KIND_ID } from '@/features/learning/practice/kinds';
 import { formItem, quizForm, quizOverview } from '@/features/learning/quizzes/quizTestData';
 import { LearningStudioPage } from '@/features/learning/workspace/LearningStudioPage';
 import type { ExportAllLearningPacksResultDto, LearningGenerationJob, LearningLessonDto, LearningModuleDto, LearningProgramDto, LearningProgramSummaryDto, LearningOutlineProgressDto } from '@/lib/bindings';
 import { queryClient as activityClient } from '@/lib/queryClient';
 import { STUDY_ACTIVITY_KEY, type StudyActivity } from '@/lib/studyActivity';
+import { readDraft } from '@/shared/drafts/drafts';
 import { deferred } from '@/tests/deferred';
 import { makeAppSettings } from '@/tests/fixtures/appSettings';
 import type { DocumentMetadata } from '@/types/fileBrowser';
@@ -317,6 +319,47 @@ describe('Learning Studio program workflow', () => {
     expect(screen.getByRole('button', { name: 'Start this course' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Cancel generation' })).toBeVisible();
     await act(async () => finish());
+  });
+
+  it('a finished outline opens the new course without showing the builder again', async () => {
+    const user = userEvent.setup();
+    const draft = program();
+    mocks.list.mockResolvedValue(ok([]));
+    mocks.get.mockResolvedValue(ok(draft));
+    const generation = deferred<ReturnType<typeof ok>>();
+    mocks.generate.mockReturnValue(generation.promise);
+    show('/studio?new=1');
+    await user.type(await screen.findByLabelText('Your goal'), 'Learn biology');
+    await user.click(screen.getByRole('button', { name: 'Create outline' }));
+    mocks.list.mockReturnValue(new Promise(() => {}));
+    await act(async () => generation.resolve(ok(draft)));
+    expect(await screen.findByRole('textbox', { name: 'Program title' })).toHaveValue('A thoughtful course');
+    expect(screen.queryByRole('button', { name: 'Create outline' })).not.toBeInTheDocument();
+  });
+
+  it('a generation that finishes after the learner left the builder leaves them where they are', async () => {
+    const user = userEvent.setup();
+    const earlier = program();
+    earlier.summary.id = 'program-0';
+    earlier.summary.title = 'Earlier draft';
+    const made = program();
+    mocks.list.mockResolvedValue(ok([summary(earlier)]));
+    mocks.get.mockImplementation(async (id: string) => ok(id === 'program-0' ? earlier : made));
+    let update!: (value: LearningOutlineProgressDto) => void;
+    const generation = deferred<ReturnType<typeof ok>>();
+    mocks.generate.mockImplementation((_request, options) => { update = options.onProgress; return generation.promise; });
+    show('/studio?new=1');
+    await user.type(await screen.findByLabelText('Your goal'), 'Learn biology');
+    await user.click(screen.getByRole('button', { name: 'Create outline' }));
+    await act(async () => update({ stage: 'reviewing', programId: 'program-1', elapsedSeconds: 120, stageSeconds: 10, responseCharacters: 0, modelName: 'test' }));
+    await user.click(await screen.findByRole('button', { name: 'Inspect saved draft' }));
+    expect(await screen.findByRole('textbox', { name: 'Program title' })).toHaveValue('A thoughtful course');
+    await user.click(screen.getByRole('button', { name: /All programs/ }));
+    await user.click(await screen.findByRole('button', { name: /Earlier draft/ }));
+    expect(await screen.findByRole('textbox', { name: 'Program title' })).toHaveValue('Earlier draft');
+    await act(async () => generation.resolve(ok(made)));
+    await waitFor(() => expect(readDraft(programBuilderDraftKeys.goal)).toBe(''));
+    expect(screen.getByRole('textbox', { name: 'Program title' })).toHaveValue('Earlier draft');
   });
 
   it('keeps active preparation visible and lets the learner complete other ready lessons', async () => {
