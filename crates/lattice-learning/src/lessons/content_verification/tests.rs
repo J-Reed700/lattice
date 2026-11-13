@@ -890,6 +890,9 @@ mod teaching_release_tests;
 #[path = "evidence_paging_tests.rs"]
 mod evidence_paging_tests;
 
+#[path = "research_provenance_tests.rs"]
+mod research_provenance_tests;
+
 #[path = "recite_tests.rs"]
 mod recite_tests;
 
