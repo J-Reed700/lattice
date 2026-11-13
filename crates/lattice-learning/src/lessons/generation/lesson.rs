@@ -618,6 +618,14 @@ pub async fn prepare_lesson_with_references<'a>(
         &normalized,
         &raw,
     );
+    let stripped = raw.clone();
+    let raw = crate::content_verification::clear_right_choice_reasons(raw);
+    trace::changed(
+        trace::Stage::Drafting,
+        &trace::Cause::none(),
+        &stripped,
+        &raw,
+    );
     // The draft review holds the lesson to what the writer was asked for;
     // verification, which cuts, holds it to what the lesson is kept with.
     // Finish an interrupted section repair before reviewing the assembled
