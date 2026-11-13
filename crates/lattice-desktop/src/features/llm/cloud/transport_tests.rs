@@ -680,3 +680,33 @@ async fn a_retry_after_beyond_the_time_left_gives_the_refusal_without_resending_
     assert!(matches!(error, AppError::RateLimitExceeded(_)), "{error:?}");
     assert_eq!(server.received_requests().await.unwrap().len(), 1);
 }
+
+/// The wait before a resend is the backoff of a refused attempt, not the
+/// model reading the prompt: a streamed answer is timed from the attempt that
+/// was answered.
+#[tokio::test]
+async fn a_streamed_answer_resent_after_a_server_error_is_timed_from_the_resend() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(500))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    let completed = json!({"type":"response.completed","response":{"status":"completed",
+        "usage":{"input_tokens":2000,"output_tokens":300},
+        "output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]}});
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+            "data: {{\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}}\n\ndata: {completed}\n\n"
+        )))
+        .mount(&server)
+        .await;
+    let response = client(&server)
+        .await
+        .complete_with_progress(&CompletionRequest::default(), &|_| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+    let timing = response.timing.unwrap();
+    assert!(timing.prompt_seconds < 0.5, "{timing:?}");
+}
