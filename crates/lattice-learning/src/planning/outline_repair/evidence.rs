@@ -62,6 +62,7 @@ pub(super) fn locate(
 pub(super) async fn insufficient(
     llm: &dyn LLMPort,
     unit: usize,
+    unit_title: &str,
     claim: &str,
     page: &[ReferencePassage],
     source_id: &str,
@@ -71,7 +72,7 @@ pub(super) async fn insufficient(
         source_version_id: source_id.to_owned(),
         supporting_quote: quote.to_owned(),
     };
-    let Some(trust) = weigh_claim(llm, unit, claim, page, supported).await? else {
+    let Some(trust) = weigh_claim(llm, unit, unit_title, claim, page, supported).await? else {
         return Ok(None);
     };
     Ok(match trust.verdict() {

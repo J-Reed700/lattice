@@ -3,10 +3,12 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 
-use super::claim_profile::parse_profiles;
-use super::ownership_judgement::hostname_for_tests;
+use super::claim_profile::{parse_profiles, ProfileCall};
+use super::ownership_judgement::{hostname_for_tests, SourceOwnership};
+use super::standing_judgement::SourceStanding;
 use super::*;
 use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use crate::application::services::model_contract::test_support::assert_round_trip;
 use crate::domain::provenance::{
     AddedBy, Chosen, ClaimKind, ClaimSubject, ContentEvidence, HttpFacts, Origin, PageSignals,
     ProvenanceSignals, ReasonCode, RiskFlag, SourceDates, Standing, SubjectKind, SubjectRelation,
@@ -426,4 +428,105 @@ fn every_schema_names_only_wire_values() {
         .unwrap()
         .iter()
         .any(|n| n == "documentation"));
+}
+
+#[tokio::test]
+async fn a_source_trust_retry_quotes_why_the_reply_failed() {
+    let llm = Scripted::new(WINDOW, &["not json", PSF]);
+    judge_standing(
+        &llm,
+        &page("asyncio"),
+        &ContentEvidence::default(),
+        TrackRecord::default(),
+    )
+    .await
+    .unwrap();
+    let sent = llm.sent.lock().unwrap();
+    assert_eq!(sent.len(), 2);
+    let asked_again = sent[1]
+        .input
+        .iter()
+        .map(|item| match item {
+            crate::application::ports::llm_port::CompletionInput::Message { content, .. } => {
+                content.as_str()
+            }
+            _ => "",
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(asked_again.contains("not the schema"), "{asked_again}");
+}
+
+#[test]
+fn the_profile_contract_reads_what_it_renders() {
+    use super::claim_profile::{Answer, AnswerClaim, AnswerSubject, AnswerTemporal};
+    let claim = |kind, subject, scope: &str| AnswerClaim {
+        id: "c1".into(),
+        kind,
+        subject,
+        temporal: AnswerTemporal {
+            scope: scope.into(),
+            version: None,
+            date: None,
+        },
+        measurement_origin: None,
+        attributed_to: Some("a lab".into()),
+    };
+    let subject = AnswerSubject {
+        name: "Quillet".into(),
+        kind: SubjectKind::ALL[0],
+        aliases: vec!["quill".into()],
+        classes: vec!["lexer".into()],
+    };
+    for kind in ClaimKind::ALL {
+        assert_round_trip::<ProfileCall>(&Answer {
+            claims: vec![claim(*kind, Some(subject.clone()), "timeless")],
+        });
+    }
+    assert_round_trip::<ProfileCall>(&Answer {
+        claims: vec![claim(ClaimKind::General, None, "current")],
+    });
+}
+
+#[test]
+fn the_ownership_contract_reads_what_it_renders() {
+    use super::ownership_judgement::Answer;
+    use crate::domain::provenance::Reason;
+    for relation in SubjectRelation::ALL {
+        assert_round_trip::<SourceOwnership>(&Answer {
+            relation: *relation,
+            basis: vec![Reason::new(
+                ReasonCode::PublisherIsOwner,
+                "It publishes it.",
+            )],
+            owner_origin_hints: vec!["example.org".into()],
+        });
+    }
+}
+
+#[test]
+fn the_standing_contract_reads_what_it_renders() {
+    use super::standing_judgement::{Answer, AnswerPublisher};
+    use crate::domain::provenance::{ContentNature, EditorialProcess, PublisherKind, Reason};
+    for standing in Standing::ALL {
+        assert_round_trip::<SourceStanding>(&Answer {
+            standing: *standing,
+            publisher: Some(AnswerPublisher {
+                name: "A press".into(),
+                kind: PublisherKind::ALL[0],
+            }),
+            editorial: EditorialProcess::ALL[0],
+            nature: ContentNature::ALL[0],
+            flags: vec![RiskFlag::Undated],
+            reasons: vec![Reason::new(ReasonCode::PublisherMetadata, "It names one.")],
+        });
+    }
+    assert_round_trip::<SourceStanding>(&Answer {
+        standing: Standing::ALL[0],
+        publisher: None,
+        editorial: EditorialProcess::ALL[0],
+        nature: ContentNature::ALL[0],
+        flags: vec![],
+        reasons: vec![Reason::new(ReasonCode::NoPublisherMetadata, "None.")],
+    });
 }

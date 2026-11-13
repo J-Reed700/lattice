@@ -223,7 +223,7 @@ async fn open(
         reach: selected.reach,
         cited,
     };
-    Ok((page, restored(at, pending).await?))
+    Ok((page, restored(pending).await?))
 }
 
 /// What the judge's finding on a statement's page comes to: it stands when the
@@ -239,13 +239,6 @@ fn read_of(statement: &Statement<'_>, page: &Paged, finding: Finding, reused: bo
             .as_ref()
             .is_some_and(|found| page.cited.contains(&found.source_id));
     let outcome = page_outcome(finding.verdict, on_cited);
-    if outcome == Outcome::Stands {
-        finding.two_pass.supported_by = None;
-    }
     finding.class = Some(statement.classed);
-    Read {
-        outcome,
-        finding,
-        reused,
-    }
+    Read::new(outcome, finding, reused)
 }

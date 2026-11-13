@@ -37,41 +37,42 @@ pub(in crate::lessons::content_verification) fn attribution_page(
 pub(in crate::lessons::content_verification) const NO_PASSAGES: &str =
     "No relevant saved passages were found for this statement.";
 
-/// One comparison: restored from its receipt (or a receipt saved under an
-/// earlier key for the same claim and evidence), decided on the spot when it
-/// has nothing to compare, or left for the model.
+/// One comparison: derived on the spot when it has nothing to compare, restored
+/// from its receipt, or left for the model.
 pub(in crate::lessons::content_verification) async fn compare(
-    llm: &dyn LLMPort,
     pending: PendingClaim,
 ) -> Result<Comparison> {
     let (unit, claim, evidence) = (pending.unit, &pending.claim, &pending.evidence);
-    if let Some(value) = crate::lesson_drafts::checkpoint(&pending.receipt_key).await? {
-        let parts = bridge::saved_parts(&value);
-        if let Some(mut finding) = serde_json::from_value::<ClaimReceipt>(value)
-            .ok()
-            .and_then(|receipt| receipt.finding(unit, claim, evidence))
-        {
-            finding.two_pass.parts = parts;
-            return Ok(Comparison::Done(Box::new(finding), true));
-        }
-    }
-    if let Some(receipt) = claim_reuse::legacy_receipt(llm, unit, claim, evidence).await? {
-        let saved = serde_json::to_value(&receipt)?;
-        if let Some(finding) = receipt.finding(unit, claim, evidence) {
-            crate::lesson_drafts::record_checkpoint(&pending.receipt_key, saved).await?;
-            return Ok(Comparison::Done(Box::new(finding), true));
-        }
-    }
     if evidence.is_empty() {
-        let judgment = ClaimJudgment::Judged(JudgeOutcome {
-            verdict: ClaimVerdict::Unsupported,
-            reason: Some(NO_PASSAGES.into()),
-            quote: None,
-            confidence: None,
-            uncertain: false,
-        });
-        let (_, _, finding, _) = finish(pending, judgment, None, Vec::new()).await?;
-        return Ok(Comparison::Done(Box::new(finding), false));
+        return Ok(Comparison::Done(Box::new(no_passages(unit, claim)), false));
+    }
+    if let Some(value) = crate::lesson_drafts::checkpoint(&pending.receipt_key).await? {
+        let restored = serde_json::from_value::<ClaimReceipt>(value)
+            .ok()
+            .and_then(|receipt| receipt.restored(unit, claim, evidence));
+        if let Some(finding) = restored {
+            return Ok(Comparison::Done(Box::new(finding), true));
+        }
     }
     Ok(Comparison::Pending(pending))
+}
+
+/// The finding of a statement with no passage to compare: no judge is asked
+/// and no receipt is saved.
+fn no_passages(unit: usize, claim: &Claim) -> Finding {
+    Finding {
+        unit,
+        quote: claim.quote.clone(),
+        statement: claim.statement.clone(),
+        verdict: ClaimVerdict::Unsupported,
+        reason: NO_PASSAGES.into(),
+        evidence: Vec::new(),
+        supporting_quote: None,
+        resolution: None,
+        trust: None,
+        claim_id: None,
+        two_pass: TwoPass::default(),
+        label: None,
+        class: None,
+    }
 }

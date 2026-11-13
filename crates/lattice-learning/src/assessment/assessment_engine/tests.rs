@@ -102,3 +102,117 @@ fn a_number_against_a_key_only_in_words_goes_to_the_judge() {
     assert_eq!(text_matches("3.0", &numbers), Some(true));
     assert_eq!(text_matches("4", &numbers), Some(false));
 }
+
+fn choice_item(prompt: &str, options: &[&str], key: usize) -> LearningAssessmentCandidate {
+    LearningAssessmentCandidate {
+        prompt: prompt.into(),
+        options: options.iter().map(|o| (*o).to_owned()).collect(),
+        key: LearningAssessmentKey::Choice(key),
+        ..candidate(30, 3)
+    }
+}
+
+#[test]
+fn choices_that_differ_only_in_path_punctuation_are_different_choices() {
+    let sets: [(&str, [&str; 4], usize); 3] = [
+        (
+            "Which path is the learner's own folder?",
+            ["/home/learner/videos", "/home", "/home/learner", "/"],
+            2,
+        ),
+        (
+            "Which command enters the sibling folder from here?",
+            [
+                "cd music",
+                "cd /home/learner/music",
+                "cd /music",
+                "cd ../../music",
+            ],
+            3,
+        ),
+        (
+            "Which command enters the folder one level up?",
+            ["cd notes", "cd ../../notes", "cd /notes", "cd ../notes"],
+            3,
+        ),
+    ];
+    for (prompt, options, key) in sets {
+        let item = choice_item(prompt, &options, key);
+        assert!(validate_candidate(&item).is_ok(), "{options:?}");
+    }
+}
+
+#[test]
+fn choices_a_reader_cannot_tell_apart_or_blank_choices_are_still_rejected() {
+    let same = choice_item(
+        "Which program reads the typed commands?",
+        &["The shell", "The shell.", "The kernel", "The editor"],
+        2,
+    );
+    assert!(validate_candidate(&same).is_err());
+    let blank = choice_item(
+        "Which program reads the typed commands?",
+        &["The shell", "  ", "The kernel", "The editor"],
+        2,
+    );
+    assert!(validate_candidate(&blank).is_err());
+}
+
+#[test]
+fn path_like_values_are_distinct_in_a_multi_select_item() {
+    let item = LearningAssessmentCandidate {
+        format: LearningItemFormat::MultiSelect,
+        key: LearningAssessmentKey::Choices([0, 1].into_iter().collect()),
+        ..choice_item(
+            "Which of these are absolute paths?",
+            &["/home/learner/notes", "/home/learner", "home", "/"],
+            0,
+        )
+    };
+    assert!(validate_candidate(&item).is_ok());
+}
+
+fn owned(options: &[&str]) -> Vec<String> {
+    options.iter().map(|o| (*o).to_owned()).collect()
+}
+
+#[test]
+fn choices_that_differ_only_by_letter_case_are_distinct() {
+    assert!(distinct_options(&owned(&[
+        "Alpha", "alpha", "Bravo", "Charlie"
+    ])));
+}
+
+#[test]
+fn choices_that_differ_only_by_an_accent_are_distinct() {
+    assert!(distinct_options(&owned(&[
+        "Resume",
+        "R\u{e9}sum\u{e9}",
+        "Bravo",
+        "Charlie"
+    ])));
+}
+
+#[test]
+fn choices_that_differ_only_by_a_compatibility_form_are_distinct() {
+    assert!(distinct_options(&owned(&[
+        "x\u{b2}", "x2", "Bravo", "Charlie"
+    ])));
+}
+
+#[test]
+fn choices_a_reader_cannot_tell_apart_are_not_distinct() {
+    let pairs: [(&str, &str); 5] = [
+        ("It\u{2019}s done", "It's done"),
+        ("\u{201C}Alpha\u{201D}", "\"Alpha\""),
+        ("Alpha   beta", "Alpha beta"),
+        ("Alpha beta.", "Alpha beta"),
+        ("R\u{e9}sum\u{e9}", "Re\u{301}sume\u{301}"),
+    ];
+    for (a, b) in pairs {
+        assert!(
+            !distinct_options(&owned(&[a, b, "Bravo", "Charlie"])),
+            "{a:?} {b:?}"
+        );
+    }
+}

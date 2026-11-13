@@ -6,12 +6,25 @@ use serde_json::{json, Value};
 
 use super::{data_prompt, judge, names, sanitised, CallOutcome};
 use crate::application::ports::LLMPort;
+#[cfg(any(test, feature = "test-support"))]
+use crate::application::services::model_contract::test_support::RenderAnswer;
+use crate::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use crate::domain::provenance::{
     canonical_json, AuthorityAssessment, ClaimSubject, Judged, JudgementKey, Origin,
     ProvenanceSignals, Reason, ReasonCode, SubjectRelation,
 };
 use crate::shared::error::Result;
 use crate::shared::hash::sha256_hex;
+
+/// The model call of the ownership judgement.
+pub(crate) struct SourceOwnership;
+
+impl Contract for SourceOwnership {
+    const ID: ContractId = ContractId::new("source-ownership");
+    type Input = PromptInput;
+}
 
 pub const OWNERSHIP_POLICY: &str = "subject-ownership-v1";
 
@@ -114,12 +127,22 @@ pub fn ownership_schema() -> Value {
     })
 }
 
+/// The reply as the model wrote it, before it is checked against the origin asked about.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Answer {
-    relation: SubjectRelation,
-    basis: Vec<Reason>,
-    owner_origin_hints: Vec<String>,
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, Debug, PartialEq)
+)]
+pub(crate) struct Answer {
+    pub(crate) relation: SubjectRelation,
+    pub(crate) basis: Vec<Reason>,
+    pub(crate) owner_origin_hints: Vec<String>,
+}
+
+/// The relation a reply holds, when it is the schema's JSON.
+pub(crate) fn read_ownership_answer(text: &str) -> std::result::Result<Answer, String> {
+    serde_json::from_str(text.trim()).map_err(|error| format!("not the schema: {error}"))
 }
 
 pub(super) fn parse_ownership(
@@ -127,8 +150,7 @@ pub(super) fn parse_ownership(
     request: &OwnershipRequest<'_>,
     model: &str,
 ) -> std::result::Result<AuthorityAssessment, String> {
-    let answer: Answer =
-        serde_json::from_str(text.trim()).map_err(|error| format!("not the schema: {error}"))?;
+    let answer = read_ownership_answer(text)?;
     if answer.basis.is_empty() || answer.basis.iter().any(|r| r.text.trim().is_empty()) {
         return Err("the relation needs a basis".into());
     }
@@ -211,8 +233,13 @@ pub async fn judge_ownership(
 ) -> Result<Judged<AuthorityAssessment>> {
     let model = llm.model_name().to_owned();
     let prompt = data_prompt("Subject and origin", &ownership_input(request));
+    let call = ContractCall::of::<SourceOwnership>(&PromptInput {
+        system: OWNERSHIP_SYSTEM.to_owned(),
+        prompt: prompt.clone(),
+    })?;
     let outcome = judge(
         llm,
+        &call,
         OWNERSHIP_SYSTEM,
         &prompt,
         &ownership_schema(),
@@ -263,4 +290,17 @@ pub async fn judge_ownership(
 #[cfg(test)]
 pub(super) fn hostname_for_tests(hint: &str) -> Option<String> {
     hostname(hint)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl RenderAnswer for SourceOwnership {
+    type Answer = Answer;
+
+    fn render(answer: &Answer) -> String {
+        serde_json::to_string(answer).unwrap_or_default()
+    }
+
+    fn read(text: &str) -> Result<Answer> {
+        read_ownership_answer(text).map_err(crate::shared::error::AppError::InvalidInput)
+    }
 }

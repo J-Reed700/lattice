@@ -139,8 +139,47 @@ async fn a_quoted_claim_is_settled_without_a_model_call() -> Result<()> {
 
     let read = read_one(Reading::Parts, &offline, &world, statement).await?;
 
-    assert_eq!(read.outcome, Outcome::Stands);
-    assert_eq!(read.finding.verdict, ClaimVerdict::Supported);
+    assert_eq!(read.outcome(), Outcome::Stands);
+    assert_eq!(read.finding().verdict, ClaimVerdict::Supported);
     assert!(offline.prompts.lock().unwrap().is_empty());
     Ok(())
+}
+
+#[test]
+fn an_emphasised_source_settles_a_quotation_with_its_own_bytes() {
+    let sources = vec![source(
+        "notes",
+        "Borrow Notes",
+        "The compiler is strict. In Rust the checker *rejects* both borrows at once. That is all."
+            .into(),
+    )];
+    let references = ReferenceCollection::lexical(&sources).unwrap();
+    let citations = Citations::new(HashMap::new(), HashMap::from([(0, "notes".to_owned())]));
+    let statement = "Source 0 states: \u{201c}the checker rejects both borrows\u{201d}";
+
+    let finding = quote_claims::settle(&references, &citations, 0, &claim(statement)).unwrap();
+
+    assert_eq!(
+        finding.as_ref().map(|found| found.verdict),
+        Some(ClaimVerdict::Supported)
+    );
+    assert_eq!(
+        finding.and_then(|found| found.supporting_quote).as_deref(),
+        Some("the checker *rejects* both borrows")
+    );
+}
+
+#[test]
+fn two_quotations_settle_in_order() {
+    let sources = sources();
+    let references = ReferenceCollection::lexical(&sources).unwrap();
+    let statement = "Source 0 states: \u{201c}List all enum values explicitly\u{201d} and \u{201c}Prevents the model from inventing invalid values\u{201d}";
+
+    let finding =
+        quote_claims::settle(&references, &citations(&references), 0, &claim(statement)).unwrap();
+
+    assert_eq!(
+        finding.map(|found| found.verdict),
+        Some(ClaimVerdict::Supported)
+    );
 }

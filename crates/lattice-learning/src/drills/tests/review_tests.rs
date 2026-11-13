@@ -17,7 +17,6 @@ use crate::drills::jobs::{spec_of, DRILL_BUILD, DRILL_GRADING};
 use crate::drills::reveal;
 use crate::drills::review::{self, CourseDrill};
 use crate::drills::spec::DrillSpec;
-use crate::persistence::db;
 use crate::tests::pool;
 use lattice_core::domain::learning::drills::{
     line_diff, pattern, targets, DecidedBy, DiffKind, FixOutcome, IssueRating, LessonLink,
@@ -96,7 +95,7 @@ async fn status_of(pool: &SqlitePool, id: &str) -> Result<String> {
         .bind(id)
         .fetch_one(pool)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// What a DTO shows of the key: the texts it holds and the names of the fields it has.
@@ -137,7 +136,7 @@ async fn jobs_of(pool: &SqlitePool, kind: &str) -> Result<i64> {
         .bind(kind)
         .fetch_one(pool)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 fn finding_dtos() -> Vec<CodeReviewFindingDto> {
@@ -304,8 +303,7 @@ async fn the_drill_names_the_lesson_it_was_built_from_while_the_lesson_is_there(
     sqlx::query("UPDATE learning_lessons SET title='Sleep, renamed' WHERE id=?")
         .bind(&lessons[1])
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(
         review::result(&database, &attempt_id).await?.drill.lesson,
         named("Sleep, renamed")
@@ -315,8 +313,7 @@ async fn the_drill_names_the_lesson_it_was_built_from_while_the_lesson_is_there(
         .bind(&program)
         .bind(&lessons[1])
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(
         review::result(&database, &attempt_id).await?.drill.lesson,
         None
@@ -367,10 +364,10 @@ async fn an_attempt_not_yet_graded_shows_the_learner_nothing_of_the_key() -> Res
     assert_eq!(acted.dto.findings, finding_dtos());
     assert_nothing_of_the_key(&serde_json::to_value(&acted.dto).expect("a DTO is JSON"));
 
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     attempts::repository::record_ungraded_in(&mut tx, &attempt_id, Some(GRADER), "No answer.")
         .await?;
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     let ungraded = review::result(&database, &attempt_id).await?;
     assert_eq!(ungraded.status, AttemptStatus::CouldntGrade);
     assert_eq!(ungraded.error.as_deref(), Some("No answer."));
@@ -893,7 +890,7 @@ async fn link_the_first_issue(pool: &SqlitePool) -> Result<()> {
         .execute(pool)
         .await
         .map(drop)
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 #[tokio::test]

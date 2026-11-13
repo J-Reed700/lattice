@@ -4,7 +4,7 @@
 use super::{operation_id, Attempt, AttemptMode, AttemptStatus, Graded, Submission};
 use crate::drills::jobs::{DRILL_GRADING, GRADING_STEPS};
 use crate::drills::repository::{self as drill_repository, StoredDrill};
-use crate::persistence::{db, decode, encode, hash, now};
+use crate::persistence::{decode, encode, hash, now};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::WriteTx;
 use lattice_core::shared::runtime::jobs::{JobStore, NewJob};
@@ -29,7 +29,7 @@ pub(super) async fn insert_in(
     .execute(&mut **tx)
     .await
     .map(drop)
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// Opens an attempt on a drill the caller has taken from the bank.
@@ -56,7 +56,7 @@ pub(super) async fn submit_in(tx: &mut WriteTx, id: &str, submission: &Submissio
         .execute(&mut **tx)
         .await
         .map(drop)
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// Sets an attempt that could not be graded to wait for a new grade, clearing the error of the last try.
@@ -66,7 +66,7 @@ pub(super) async fn regrade_in(tx: &mut WriteTx, id: &str) -> Result<()> {
         .execute(&mut **tx)
         .await
         .map(drop)
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// Writes the grade and marks the attempt graded. False when the attempt was not waiting for a grade.
@@ -84,8 +84,7 @@ pub(crate) async fn record_graded_in(
         .bind(now())
         .bind(id)
         .execute(&mut **tx)
-        .await
-        .map_err(db)?
+        .await?
         .rows_affected()
         == 1)
 }
@@ -103,8 +102,7 @@ pub(crate) async fn record_ungraded_in(
         .bind(model)
         .bind(id)
         .execute(&mut **tx)
-        .await
-        .map_err(db)?
+        .await?
         .rows_affected()
         == 1)
 }
@@ -122,7 +120,7 @@ pub(super) async fn recent_ids_in(
     .bind(i64::from(limit))
     .fetch_all(&mut *connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The attempt with this id.
@@ -133,32 +131,31 @@ pub(super) async fn find_in(
     sqlx::query("SELECT id,drill_id,mode,started_at,submitted_at,time_spent_ms,findings_json,fix_files_json,status,assessment_json,score_json,ratings_json,fix_json,grader_model,graded_at,grading_error,regrades FROM learning_drill_attempts WHERE id=?")
         .bind(id)
         .fetch_optional(connection)
-        .await
-        .map_err(db)?
+        .await?
         .as_ref()
         .map(read)
         .transpose()
 }
 
 fn read(row: &SqliteRow) -> Result<Attempt> {
-    let regrades: i64 = row.try_get("regrades").map_err(db)?;
+    let regrades: i64 = row.try_get("regrades")?;
     Ok(Attempt {
-        id: row.try_get("id").map_err(db)?,
-        drill_id: row.try_get("drill_id").map_err(db)?,
-        mode: AttemptMode::parse(&row.try_get::<String, _>("mode").map_err(db)?)?,
-        started_at: row.try_get("started_at").map_err(db)?,
-        submitted_at: row.try_get("submitted_at").map_err(db)?,
-        time_spent_ms: row.try_get("time_spent_ms").map_err(db)?,
+        id: row.try_get("id")?,
+        drill_id: row.try_get("drill_id")?,
+        mode: AttemptMode::parse(&row.try_get::<String, _>("mode")?)?,
+        started_at: row.try_get("started_at")?,
+        submitted_at: row.try_get("submitted_at")?,
+        time_spent_ms: row.try_get("time_spent_ms")?,
         findings: stored(row, "findings_json")?,
         fix_files: stored(row, "fix_files_json")?,
-        status: AttemptStatus::parse(&row.try_get::<String, _>("status").map_err(db)?)?,
+        status: AttemptStatus::parse(&row.try_get::<String, _>("status")?)?,
         assessment: stored(row, "assessment_json")?,
         score: stored(row, "score_json")?,
         ratings: stored(row, "ratings_json")?,
         fix: stored(row, "fix_json")?,
-        grader_model: row.try_get("grader_model").map_err(db)?,
-        graded_at: row.try_get("graded_at").map_err(db)?,
-        error: row.try_get("grading_error").map_err(db)?,
+        grader_model: row.try_get("grader_model")?,
+        graded_at: row.try_get("graded_at")?,
+        error: row.try_get("grading_error")?,
         regrades: u32::try_from(regrades).map_err(|_| {
             AppError::Database("An attempt has an impossible regrade count.".into())
         })?,
@@ -167,8 +164,7 @@ fn read(row: &SqliteRow) -> Result<Attempt> {
 
 /// A JSON column that may be null.
 fn stored<T: DeserializeOwned>(row: &SqliteRow, column: &str) -> Result<Option<T>> {
-    row.try_get::<Option<String>, _>(column)
-        .map_err(db)?
+    row.try_get::<Option<String>, _>(column)?
         .as_deref()
         .map(decode::<T>)
         .transpose()

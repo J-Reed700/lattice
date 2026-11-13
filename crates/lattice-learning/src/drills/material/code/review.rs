@@ -59,7 +59,6 @@ impl CodeMaterial<'_> {
             ),
             schema(&code.files),
             budget::review(spec.lines),
-            "low",
         );
         let suite = code.suite.as_deref();
         let mut trail = Trail::default();

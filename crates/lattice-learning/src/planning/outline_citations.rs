@@ -1,129 +1,55 @@
-//! Restore exact source typography without treating a fuzzy match as evidence.
+//! Restore a cited source's own bytes over a quote that is the same words apart
+//! from typography, emphasis, spacing and letter case ([`same_text::find`]).
 use crate::{dto::LearningSourceDto, generation, outline_evidence};
+use lattice_core::shared::text::same_text;
 use serde_json::{json, Value};
-
-fn typography(character: char) -> char {
-    match character {
-        '\u{2018}' | '\u{2019}' => '\'',
-        '\u{201c}' | '\u{201d}' => '"',
-        c if c.is_whitespace() => ' ',
-        c => c,
-    }
-}
-
-struct SourceText {
-    comparable: String,
-    // Character positions in comparable map back to complete original UTF-8 spans.
-    spans: Vec<(usize, usize)>,
-}
-impl SourceText {
-    fn new(text: &str) -> Self {
-        Self::folded(text, typography)
-    }
-
-    fn folded(text: &str, fold: impl Fn(char) -> char) -> Self {
-        let mut comparable = String::new();
-        let mut spans: Vec<(usize, usize)> = Vec::new();
-        for (start, character) in text.char_indices() {
-            let end = start + character.len_utf8();
-            let folded = fold(character);
-            if folded == ' ' && comparable.ends_with(' ') {
-                if let Some(span) = spans.last_mut() {
-                    span.1 = end;
-                }
-            } else {
-                comparable.push(folded);
-                spans.push((start, end));
-            }
-        }
-        Self { comparable, spans }
-    }
-
-    fn exact_span<'a>(&self, source: &'a str, quote: &str) -> Option<&'a str> {
-        let needle = Self::new(quote.trim()).comparable;
-        if needle.is_empty() {
-            return None;
-        }
-        let offset = self.comparable.find(&needle)?;
-        let start = self.comparable.get(..offset)?.chars().count();
-        let end = start + needle.chars().count() - 1;
-        source.get(self.spans.get(start)?.0..self.spans.get(end)?.1)
-    }
-}
-
-/// Where `quote` is in `source` at or after byte `from`, apart from
-/// typography, spacing and letter case: its byte span in `source`.
-pub(crate) fn caseless_quote_span(
-    source: &str,
-    quote: &str,
-    from: usize,
-) -> Option<(usize, usize)> {
-    let caseless = |character: char| {
-        let folded = typography(character);
-        folded.to_lowercase().next().unwrap_or(folded)
-    };
-    let text = SourceText::folded(source, caseless);
-    let needle = SourceText::folded(quote.trim(), caseless).comparable;
-    if needle.is_empty() {
-        return None;
-    }
-    let skip = text.spans.iter().position(|(start, _)| *start >= from)?;
-    let skip = text.comparable.char_indices().nth(skip)?.0;
-    let offset = skip + text.comparable.get(skip..)?.find(&needle)?;
-    let start = text.comparable.get(..offset)?.chars().count();
-    let end = start + needle.chars().count() - 1;
-    Some((text.spans.get(start)?.0, text.spans.get(end)?.1))
-}
 
 /// Recover original source bytes for a typography-only mismatch. The copied
 /// span must pass the same quote validator used for publication.
 pub(crate) fn exact_source_quote<'a>(source: &'a str, quote: &str) -> Option<&'a str> {
-    let exact = SourceText::new(source).exact_span(source, quote)?;
+    let (start, end) = same_text::find(source, quote.trim())?;
+    let exact = source.get(start..end)?;
     generation::validate_excerpt_quote(exact, source).ok()?;
     Some(exact)
 }
 
-/// Fix only typography in the cited source, then require the ordinary strict
-/// quote check to pass on the copied span. Claims and source indices never change;
-/// the full semantic review is still required before acceptance.
+/// Copy the cited source's own bytes over a quote that is the same words
+/// apart from typography and spacing, so a quote is the source's text exactly.
+/// The copied span must pass the same quote validator used for publication.
+/// Claims and source indices never change; the full semantic review is still
+/// required before acceptance.
 pub(crate) fn restore_source_quotes(candidate: &mut Value, sources: &[LearningSourceDto]) -> usize {
-    let failures = outline_evidence::quote_checks(candidate, sources);
-    let mut restored = 0;
-    for (index, source) in sources.iter().enumerate() {
-        let matching: Vec<_> = failures
-            .iter()
-            .filter(|check| check["sourceIndex"].as_u64() == Some(index as u64))
-            .collect();
-        if matching.is_empty() {
+    let mut restored = Vec::new();
+    for (path, field) in outline_evidence::citable_fields(candidate) {
+        let Some(index) = field["sourceIndex"]
+            .as_u64()
+            .and_then(|i| usize::try_from(i).ok())
+        else {
             continue;
-        }
-        let text = SourceText::new(&source.excerpt);
-        for check in matching {
-            let Some(quote) = check["quote"].as_str() else {
-                continue;
-            };
-            let Some(exact) = text.exact_span(&source.excerpt, quote) else {
-                continue;
-            };
-            if generation::optional_citation(sources, Some(index), exact).is_err() {
-                continue;
-            }
-            let path = format!(
-                "/{}",
-                check["path"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .replace('[', "/")
-                    .replace(']', "")
-                    .replace('.', "/")
-            );
-            if let Some(field) = candidate.pointer_mut(&path) {
-                field["quote"] = json!(exact);
-                restored += 1;
-            }
+        };
+        let (Some(source), Some(quote)) = (sources.get(index), field["quote"].as_str()) else {
+            continue;
+        };
+        let Some(exact) = same_text::find(&source.excerpt, quote.trim())
+            .and_then(|(start, end)| source.excerpt.get(start..end))
+        else {
+            continue;
+        };
+        if exact != quote && generation::optional_citation(sources, Some(index), exact).is_ok() {
+            restored.push((path, exact.to_owned()));
         }
     }
-    restored
+    let count = restored.len();
+    for (path, exact) in restored {
+        let pointer = format!(
+            "/{}",
+            path.replace('[', "/").replace(']', "").replace('.', "/")
+        );
+        if let Some(field) = candidate.pointer_mut(&pointer) {
+            field["quote"] = json!(exact);
+        }
+    }
+    count
 }
 
 #[cfg(test)]
@@ -150,10 +76,7 @@ mod tests {
         ))];
         let field = |quote: &str| json!({"text":"Keep the attached claim unchanged.","sourceIndex":0,"quote":quote.replace('’', "'")});
         let mut candidate = json!({"modules":[{"summary":{"text":"Summary", "sourceIndex":0,"quote":cargo},"outcomes":[field(api)],"lessons":[field(cargo),field(api)]}]});
-        assert_eq!(
-            outline_evidence::quote_checks(&candidate, &sources).len(),
-            3
-        );
+        assert!(outline_evidence::quote_checks(&candidate, &sources).is_empty());
         assert_eq!(restore_source_quotes(&mut candidate, &sources), 3);
         assert!(outline_evidence::quote_checks(&candidate, &sources).is_empty());
         assert_eq!(candidate["modules"][0]["outcomes"][0]["quote"], api);
@@ -166,18 +89,26 @@ mod tests {
     }
 
     #[test]
-    fn copies_original_smart_quotes_and_whitespace_without_loosening_validation() {
+    fn copies_original_smart_quotes_and_whitespace_from_the_source() {
         let exact = "The pastry’s\n\n‘rest’ takes five minutes before rolling.";
         let sources = [source(exact)];
         let mut candidate = json!({"modules":[{"summary":{"sourceIndex":0,"quote":"The pastry's 'rest' takes five minutes before rolling."}}]});
         assert_eq!(restore_source_quotes(&mut candidate, &sources), 1);
         assert_eq!(candidate["modules"][0]["summary"]["quote"], exact);
-        assert!(generation::generated_source_ids(
-            &sources,
-            Some(0),
-            "The pastry's 'rest' takes five minutes before rolling."
-        )
-        .is_err());
+        assert!(generation::optional_citation(&sources, Some(0), exact).is_ok());
+        assert_eq!(restore_source_quotes(&mut candidate, &sources), 0);
+    }
+
+    #[test]
+    fn a_quote_in_other_letter_case_is_restored_to_the_source_bytes() {
+        let exact = "The borrow checker rejects two mutable borrows of one value.";
+        let sources = [source(exact)];
+        let mut candidate = json!({"modules":[{"summary":{"sourceIndex":0,"quote":"the Borrow Checker rejects two mutable borrows of one value"}}]});
+        assert_eq!(restore_source_quotes(&mut candidate, &sources), 1);
+        assert_eq!(
+            candidate["modules"][0]["summary"]["quote"],
+            "The borrow checker rejects two mutable borrows of one value"
+        );
     }
 
     #[test]

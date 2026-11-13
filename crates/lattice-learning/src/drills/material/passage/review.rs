@@ -147,7 +147,7 @@ async fn rewrite(
         "required": ["sentence"],
         "properties": {"sentence": text_schema()}
     });
-    let request = model_call::structured(REWRITE_SYSTEM, prompt, schema, budget::sentence(), "low");
+    let request = model_call::structured(REWRITE_SYSTEM, prompt, schema, budget::sentence());
     let asked = ask_request(llm, request, |raw| {
         let rewritten: Rewritten = parse_json(raw)?;
         let text = rewritten.sentence.as_str();
@@ -170,7 +170,7 @@ async fn rewrite(
     trail.call("rewrite from the source", llm.model_name());
     match asked {
         Ok(asked) => Ok(Some(asked.value)),
-        Err(AppError::ModelAnswerUnusable(_)) => Ok(None),
+        Err(AppError::ModelAnswerUnusable(_) | AppError::AnswerCutOff(_)) => Ok(None),
         Err(error) => Err(error),
     }
 }

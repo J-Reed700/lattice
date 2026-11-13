@@ -41,7 +41,7 @@ impl LearningRecallRepository {
         validate_owned_id(&req.source_id, "source")?;
         validate_owned_id(&req.source_version_id, "source version")?;
         let hash = payload_hash(req)?;
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         lock_active_program(&mut tx, &req.program_id).await?;
         let operation = Operation {
             id: &req.operation_id,
@@ -54,7 +54,7 @@ impl LearningRecallRepository {
         };
         if let Some(selector_id) = operation.replay::<String>(&mut tx).await? {
             let selector = Self::selector_on(&mut tx, &req.program_id, &selector_id).await?;
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(selector);
         }
         let version = sqlx::query("SELECT full_text FROM learning_source_versions WHERE program_id=? AND source_id=? AND id=?")
@@ -62,8 +62,7 @@ impl LearningRecallRepository {
             .bind(&req.source_id)
             .bind(&req.source_version_id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
+            .await?
             .ok_or_else(|| AppError::NotFound("Source version not found in this program.".into()))?;
         let text: String = version.get("full_text");
         let selector = create_quote_selector(&text, req.start_byte, req.end_byte)?;
@@ -83,11 +82,10 @@ impl LearningRecallRepository {
             .bind(selector_status_name(&matched.status))
             .bind(timestamp)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         operation.record(&mut tx, &req.selector_id).await?;
         let created = Self::selector_on(&mut tx, &req.program_id, &req.selector_id).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(created)
     }
 
@@ -98,9 +96,9 @@ impl LearningRecallRepository {
     ) -> Result<LearningSourceSelectorDto> {
         validate_uuid(program_id, "program")?;
         validate_uuid(selector_id, "selector")?;
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let selector = Self::selector_on(&mut read, program_id, selector_id).await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         Ok(selector)
     }
 
@@ -114,8 +112,7 @@ impl LearningRecallRepository {
                 .bind(program_id)
                 .bind(selector_id)
                 .fetch_optional(connection)
-                .await
-                .map_err(db)?
+                .await?
                 .ok_or_else(|| AppError::NotFound("Source selector not found.".into()))?;
         parse_selector(&row).map(SourceSelectorRecord::dto)
     }
@@ -127,16 +124,15 @@ impl LearningRecallRepository {
         validate_uuid(&req.program_id, "program")?;
         validate_uuid(&req.selector_id, "selector")?;
         validate_uuid(&req.target_version_id, "source version")?;
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let row = sqlx::query("SELECT s.source_id,s.exact_text,s.prefix_text,s.suffix_text,v.full_text FROM learning_source_selectors s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.source_id=s.source_id WHERE s.program_id=? AND s.id=? AND v.id=?")
             .bind(&req.program_id)
             .bind(&req.selector_id)
             .bind(&req.target_version_id)
             .fetch_optional(&mut *read)
-            .await
-            .map_err(db)?
+            .await?
             .ok_or_else(|| AppError::NotFound("Selector or source version not found.".into()))?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         let selector = crate::source_selector::LearningTextQuoteSelector {
             exact: row.get("exact_text"),
             prefix: row.get("prefix_text"),

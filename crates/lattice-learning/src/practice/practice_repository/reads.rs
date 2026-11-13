@@ -6,18 +6,17 @@ use sqlx::SqliteConnection;
 impl LearningPracticeRepository {
     pub async fn workspace(&self, program_id: &str) -> Result<LearningPracticeWorkspaceDto> {
         uuid(program_id, "program")?;
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut *read)
-            .await
-            .map_err(db)?;
+            .await?;
         if exists.is_none() {
             return Err(AppError::NotFound("Learning program not found".into()));
         }
         let rows=sqlx::query("SELECT s.*, a.revision AS artifact_revision, sub.grade_status FROM learning_practice_sessions s LEFT JOIN learning_practice_artifact_revisions a ON a.session_id=s.id AND a.revision=(SELECT max(revision) FROM learning_practice_artifact_revisions WHERE session_id=s.id) LEFT JOIN learning_practice_submissions sub ON sub.session_id=s.id WHERE s.program_id=? ORDER BY s.updated_at DESC,s.id")
-            .bind(program_id).fetch_all(&mut *read).await.map_err(db)?;
-        read.commit().await.map_err(db)?;
+            .bind(program_id).fetch_all(&mut *read).await?;
+        read.commit().await?;
         let sessions = rows
             .into_iter()
             .map(|r| {
@@ -53,9 +52,9 @@ impl LearningPracticeRepository {
     }
 
     pub async fn get_session(&self, session_id: &str) -> Result<LearningPracticeSessionDto> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let session = Self::session_on(&mut read, session_id).await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         Ok(session)
     }
 
@@ -65,7 +64,7 @@ impl LearningPracticeRepository {
     ) -> Result<LearningPracticeSessionDto> {
         uuid(session_id, "session")?;
         let row=sqlx::query("SELECT s.*, a.revision AS artifact_revision,a.text AS artifact_text,a.sha256 AS artifact_sha,a.created_at AS artifact_updated,sub.grade_status,sub.artifact_revision AS result_artifact_revision,sub.artifact_text AS result_artifact_text,sub.rubric_json AS result_rubric,sub.criteria_json,sub.evidence_json,sub.assistance_json AS result_assistance,sub.mode AS result_mode,sub.grader_model,sub.submitted_at AS result_submitted_at FROM learning_practice_sessions s LEFT JOIN learning_practice_artifact_revisions a ON a.session_id=s.id AND a.revision=(SELECT max(revision) FROM learning_practice_artifact_revisions WHERE session_id=s.id) LEFT JOIN learning_practice_submissions sub ON sub.session_id=s.id WHERE s.id=?")
-            .bind(session_id).fetch_optional(&mut *connection).await.map_err(db)?.ok_or_else(||AppError::NotFound("Practice session not found".into()))?;
+            .bind(session_id).fetch_optional(&mut *connection).await?.ok_or_else(||AppError::NotFound("Practice session not found".into()))?;
         let status_text: String = row.get("status");
         let summary = LearningPracticeSessionSummaryDto {
             task_kind: parse_task_kind(row.get("task_kind"))?,
@@ -148,8 +147,7 @@ impl LearningPracticeRepository {
         )
         .bind(session_id)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
         rows.into_iter()
             .map(|r| {
                 Ok(LearningPracticeAssistanceEventDto {
@@ -172,8 +170,7 @@ impl LearningPracticeRepository {
         )
         .bind(session_id)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
         rows.into_iter()
             .map(|r| {
                 Ok(LearningPracticeTutorTurnDto {
@@ -202,8 +199,7 @@ impl LearningPracticeRepository {
         )
         .bind(session_id)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
         rows.into_iter()
             .map(|r| {
                 Ok(LearningPracticeProposalDto {
@@ -232,15 +228,14 @@ impl LearningPracticeRepository {
         i64,
     )> {
         Self::validate_ids(program_id, session_id, None)?;
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let ws = Self::session_on(&mut read, session_id).await?;
         let owner: Option<String> =
             sqlx::query_scalar("SELECT program_id FROM learning_practice_sessions WHERE id=?")
                 .bind(session_id)
                 .fetch_optional(&mut *read)
-                .await
-                .map_err(db)?;
-        read.commit().await.map_err(db)?;
+                .await?;
+        read.commit().await?;
         if owner.as_deref() != Some(program_id) {
             return Err(AppError::NotFound("Practice session not found".into()));
         }
@@ -260,14 +255,13 @@ impl LearningPracticeRepository {
         expected_revision: i64,
         allow_demonstrate: bool,
     ) -> Result<LearningPracticeSessionDto> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let session = Self::session_on(&mut read, session_id).await?;
         let owner: Option<String> =
             sqlx::query_scalar("SELECT program_id FROM learning_practice_sessions WHERE id=?")
                 .bind(session_id)
                 .fetch_optional(&mut *read)
-                .await
-                .map_err(db)?;
+                .await?;
         if owner.as_deref() != Some(program_id) {
             return Err(AppError::NotFound("Practice session not found".into()));
         }
@@ -275,9 +269,8 @@ impl LearningPracticeRepository {
             sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
                 .bind(program_id)
                 .fetch_optional(&mut *read)
-                .await
-                .map_err(db)?;
-        read.commit().await.map_err(db)?;
+                .await?;
+        read.commit().await?;
         if program_status.as_deref() != Some("active") {
             return Err(invalid(
                 "Practice actions require an active learning program.",
@@ -303,10 +296,10 @@ impl LearningPracticeRepository {
         ids: &[String],
     ) -> Result<Vec<LearningSourceVersionDto>> {
         let mut out = Vec::new();
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         for id in ids {
             let row=sqlx::query("SELECT source_id,id,version_number,title,publisher,resolved_url,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at,snapshot_hash,full_text FROM learning_source_versions WHERE program_id=? AND id=?")
-                .bind(program_id).bind(id).fetch_optional(&mut *read).await.map_err(db)?.ok_or_else(||AppError::NotFound("A source version frozen into this attempt is unavailable.".into()))?;
+                .bind(program_id).bind(id).fetch_optional(&mut *read).await?.ok_or_else(||AppError::NotFound("A source version frozen into this attempt is unavailable.".into()))?;
             out.push(LearningSourceVersionDto {
                 source_id: row.get("source_id"),
                 version: LearningSourceVersionSummaryDto {
@@ -327,7 +320,7 @@ impl LearningPracticeRepository {
                 usage: vec![],
             });
         }
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         Ok(out)
     }
 
@@ -340,11 +333,11 @@ impl LearningPracticeRepository {
         payload_hash: &str,
     ) -> Result<bool> {
         uuid(operation_id, "operation")?;
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let seen = practice_operation(operation_id, program_id, session_id, kind, payload_hash)
             .seen(&mut read)
             .await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         Ok(seen)
     }
 }

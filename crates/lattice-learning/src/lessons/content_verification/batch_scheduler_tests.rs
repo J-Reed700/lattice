@@ -134,8 +134,7 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
@@ -162,8 +161,7 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     let repo = LearningCurriculumRepository::new(db.clone());
     JobStore::new(db.clone())
@@ -179,7 +177,7 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
         assert_eq!(reads.len(), 8);
         assert!(reads
             .iter()
-            .all(|read| read.finding.verdict == ClaimVerdict::Supported));
+            .all(|read| read.finding().verdict == ClaimVerdict::Supported));
         assert_eq!(
             *model.batch_sizes.lock().unwrap(),
             vec![4, 4],
@@ -213,7 +211,7 @@ async fn a_group_counted_past_the_window_is_split_and_every_claim_is_judged() ->
         assert_eq!(reads.len(), 8);
         assert!(reads
             .iter()
-            .all(|read| read.finding.verdict == ClaimVerdict::Supported));
+            .all(|read| read.finding().verdict == ClaimVerdict::Supported));
         // The refused group is checked in halves on the same evidence; no
         // claim falls back to a check of its own.
         assert_eq!(*model.batch_sizes.lock().unwrap(), vec![8, 4, 4]);
@@ -282,7 +280,10 @@ async fn connection_loss_rate_limits_and_invalid_requests_do_not_fan_out() -> Re
             paged(&model, &references, &inventory(8), &measured()).await
         })
         .await;
-        assert_eq!(result.unwrap_err().error_code(), error.error_code());
+        assert_eq!(
+            lattice_core::shared::ErrorCode::from(&result.unwrap_err()),
+            lattice_core::shared::ErrorCode::from(&error)
+        );
         assert_eq!(*model.batch_sizes.lock().unwrap(), vec![8]);
     }
     Ok(())
@@ -329,7 +330,7 @@ async fn batched_checks_reuse_individual_receipts_and_recheck_changed_evidence()
             assert_eq!(reads.len(), 10);
             assert!(reads
                 .iter()
-                .all(|read| read.finding.verdict == ClaimVerdict::Supported));
+                .all(|read| read.finding().verdict == ClaimVerdict::Supported));
             let expected = if pass < 2 { 1 } else { 2 };
             assert_eq!(
                 model.calls.lock().unwrap().len(),
@@ -363,8 +364,7 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
@@ -430,8 +430,7 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     let repo = LearningCurriculumRepository::new(db.clone());
     JobStore::new(db.clone())
@@ -442,10 +441,10 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
     lesson_drafts::run(&db, &repo, &job, &lesson, async {
         let reads = paged(&resumed, &references, &inventory(170), &measured()).await?;
         assert_eq!(reads.len(), 170);
-        assert_eq!(reads.iter().filter(|read| read.reused).count(), 167);
+        assert_eq!(reads.iter().filter(|read| read.reused()).count(), 167);
         assert!(reads
             .iter()
-            .all(|read| read.finding.verdict == ClaimVerdict::Supported));
+            .all(|read| read.finding().verdict == ClaimVerdict::Supported));
         Ok(())
     })
     .await?;
@@ -462,8 +461,7 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
@@ -507,8 +505,7 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     let repo = LearningCurriculumRepository::new(db.clone());
     JobStore::new(db.clone())
@@ -520,7 +517,7 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
         let reads = paged(&model, &references, &inventory(8), &measured()).await?;
         assert!(reads
             .iter()
-            .all(|read| read.finding.verdict == ClaimVerdict::Supported));
+            .all(|read| read.finding().verdict == ClaimVerdict::Supported));
         assert_eq!(*model.calls.lock().unwrap(), vec!["individual-evidence"]);
         Ok(())
     })
@@ -559,11 +556,12 @@ async fn restores_the_receipts_behind_a_slow_call(reading: Reading) -> Result<()
                 verdict: ClaimVerdict::Supported,
                 reason: "The earlier key's receipt.".into(),
                 supporting_quote: Some(STATED.into()),
-                interpretation_policy: None,
                 shown: None,
+                parts: Vec::new(),
             };
+            let compared = ClaimChecks::key(0, one, &page);
             lesson_drafts::record_checkpoint(
-                &claim_reuse::legacy_key(&blocked, 0, one, &page),
+                &claim_receipt_key(&blocked, &format!("{compared}|guard:rule-layer")),
                 serde_json::to_value(&receipt)?,
             )
             .await?;
@@ -640,11 +638,11 @@ async fn a_page_batch_restores_the_pages_it_has_saved_before_it_asks_what_an_ans
                 verdict: ClaimVerdict::Supported,
                 reason: "The earlier key's receipt.".into(),
                 supporting_quote: page.first().map(|passage| passage.text.clone()),
-                interpretation_policy: None,
                 shown: None,
+                parts: Vec::new(),
             };
             lesson_drafts::record_checkpoint(
-                &claim_reuse::legacy_key(&blocked, 0, one, &page),
+                &claim_receipt_key(&blocked, &ClaimChecks::key(0, one, &page)),
                 serde_json::to_value(&receipt)?,
             )
             .await?;
@@ -810,10 +808,9 @@ fn claims_are_packed_by_section_with_both_comparisons_together() {
             .find(|comparison| comparison.0 == ordinal && comparison.3 == pass)
             .unwrap()
     };
-    let checker = ClaimChecker::new(
+    let checker = ClaimChecker::for_policy(
         &model,
         SamplingOverride::deterministic(),
-        CHECKER_OUTPUT_TOKENS,
         CheckPolicy::Strict,
     );
     let targets = |request: &[(usize, Pass)]| -> Vec<LocatedClaim> {
@@ -855,4 +852,28 @@ fn claims_are_packed_by_section_with_both_comparisons_together() {
     // The page no request holds goes alone, where its least needed passages
     // give way.
     assert!(requests.contains(&vec![(5, Pass::Corroboration)]));
+}
+
+#[tokio::test]
+async fn a_statement_with_no_passages_is_derived_not_restored() -> Result<()> {
+    let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = setup(&db).await?;
+    let sources: Vec<LearningSourceDto> = Vec::new();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = BatchModel::default();
+    let retained = measured();
+    lesson_drafts::run(&db, &repo, &job, &lesson, async {
+        let first = paged(&model, &references, &inventory(1), &retained).await?;
+        assert!(first.iter().all(|read| !read.reused()));
+        let second = paged(&model, &references, &inventory(1), &retained).await?;
+        assert_eq!(second.len(), 1);
+        assert!(
+            second.iter().all(|read| !read.reused()),
+            "a statement with no passage is derived on every read, never restored from a receipt"
+        );
+        assert!(model.calls.lock().unwrap().is_empty());
+        Ok(())
+    })
+    .await
 }

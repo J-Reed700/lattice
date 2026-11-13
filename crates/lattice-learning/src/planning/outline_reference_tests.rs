@@ -1,5 +1,6 @@
 //! Reference planning and gathering before drafting; the References finding.
 //! Fixtures here are shared with the review-scope tests.
+use crate::lessons::content_verification::tests::fixture_task;
 use crate::{
     dto::*,
     lessons::course_generation_tests::{outline, request, ScriptedModel},
@@ -327,9 +328,6 @@ pub(super) fn references(sources: &[LearningSourceDto]) -> Vec<crate::sources::I
         })
         .collect()
 }
-pub(super) fn payload(prompt: &str) -> Value {
-    serde_json::from_str(prompt.rsplit("\n\n").next().unwrap()).unwrap()
-}
 async fn generate_online(
     repo: &LearningRepository,
     model: &ScriptedModel,
@@ -501,7 +499,7 @@ async fn gather_runs_one_selection_per_subtopic_and_dedupes_by_url_and_content()
     );
     assert_eq!(found.searches, 7);
     assert_eq!(llm.prompts.lock().unwrap().len(), 2);
-    let selection = payload(&llm.prompts.lock().unwrap()[0]);
+    let selection = fixture_task(&llm.prompts.lock().unwrap()[0]).unwrap();
     assert_eq!(selection["topic"], "Random assignment");
     assert_eq!(selection["results"].as_array().unwrap().len(), 3);
     assert!(selection["results"]
@@ -615,7 +613,7 @@ fn one_subtopic(title: &str, query: &str) -> ReferencePlan {
     }
 }
 fn shown_urls(prompt: &str) -> Vec<String> {
-    payload(prompt)["results"]
+    fixture_task(prompt).unwrap()["results"]
         .as_array()
         .unwrap()
         .iter()
@@ -896,7 +894,7 @@ async fn references_are_gathered_before_drafting_and_saved_in_full_with_the_prog
     assert_eq!(prompts.len(), 4);
     // The plan runs first, the draft retrieves by subtopic and sees the deep passage.
     assert!(prompts[0].starts_with("Plan the reference material"));
-    let draft_context = payload(&prompts[2]);
+    let draft_context = fixture_task(&prompts[2]).unwrap();
     assert_eq!(draft_context["sourceCatalog"]["totalSources"], 1);
     assert!(prompts[2].contains(deep));
     assert!(!prompts[2].contains("name the sourceIndex of the passage that supports it"));
@@ -1026,14 +1024,14 @@ async fn user_sources_are_supplemented_and_the_planner_sees_their_catalog() -> R
     assert_eq!(program.sources[0].excerpt, ORIGINAL);
     assert_eq!(program.sources[1].excerpt, ADDITIONAL);
     let prompts = calls(&llm);
-    let plan = payload(&prompts[0]);
+    let plan = fixture_task(&prompts[0]).unwrap();
     assert_eq!(plan["existingSources"]["totalSources"], 1);
     assert!(plan["existingSources"]
         .to_string()
         .contains("Brief reference overview"));
     assert_eq!(plan["depth"]["maxModules"], 6);
     assert!(prompts[0].contains("never copy the learner's goal"));
-    let draft = payload(&prompts[2]);
+    let draft = fixture_task(&prompts[2]).unwrap();
     assert_eq!(draft["sourceCatalog"]["totalSources"], 2);
     assert_eq!(
         repo.verification_sources(&program.summary.id).await?.len(),
@@ -1102,12 +1100,12 @@ async fn typography_only_mismatches_are_restored_before_the_author_citation_is_o
     // The chooser is offered the source's own typography, never the author's.
     let offered = linking_prompts(&llm);
     assert!(!offered.is_empty());
-    assert!(offered
-        .iter()
-        .all(|p| !payload(p)["passages"].to_string().contains("cell's")));
-    assert!(offered
-        .iter()
-        .any(|p| payload(p)["passages"].to_string().contains("cell’s")));
+    assert!(offered.iter().all(|p| !fixture_task(p).unwrap()["passages"]
+        .to_string()
+        .contains("cell's")));
+    assert!(offered.iter().any(|p| fixture_task(p).unwrap()["passages"]
+        .to_string()
+        .contains("cell’s")));
     let saved = repo.outline_draft(&program.summary.id).await?.unwrap();
     assert_eq!(saved.candidate["modules"][0]["summary"]["quote"], exact);
     assert_eq!(

@@ -9,6 +9,7 @@ use lattice_core::application::ports::llm_port::{
 };
 use lattice_core::application::ports::turn_source::SourcePassage;
 use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::AppError;
 use std::sync::Mutex;
 
 /// A model that never answers, and says when it has been asked.
@@ -115,7 +116,7 @@ async fn stopping_the_turn_ends_the_generate_stage_while_the_model_is_still_gene
     .expect("a stop press ends the stage, not the time budget");
 
     let error = result.err().expect("a cancelled turn has no answer");
-    assert!(error.to_string().contains("cancelled"), "{error}");
+    assert!(matches!(error, AppError::Cancelled(_)), "{error}");
     // The bubble is never left generating: the stream still closes.
     assert!(
         events.lock().unwrap().iter().any(|event| event.done),

@@ -4,6 +4,9 @@
 //! not the utility model's window. An oversized or empty candidate gets one
 //! bounded regeneration and is then rejected.
 
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use tracing::{debug, warn};
 
 use lattice_core::application::ports::llm_port::chars_within_tokens;
@@ -14,7 +17,7 @@ use lattice_core::shared::text::split_into_parts;
 use super::prompts::{
     render_summary_prompt, render_summary_shrink_prompt, SummaryPassage, SUMMARIZER_SYSTEM,
 };
-use super::{complete_json_within, CompactionError, Deadline};
+use super::{complete_json, CompactionError, Deadline, EXTRACTOR_OUTPUT_TOKENS};
 
 /// Smallest fold step, in tokens, so a window too small to plan for still
 /// makes progress; a request it cannot hold fails visibly at the provider.
@@ -35,6 +38,18 @@ pub struct FittedSummary {
     /// True when the first candidate overran and the shrink request was used.
     pub regenerated: bool,
     pub calls: usize,
+}
+
+struct MemoryFold;
+impl Contract for MemoryFold {
+    const ID: ContractId = ContractId::new("memory-fold");
+    type Input = PromptInput;
+}
+
+struct MemoryShrink;
+impl Contract for MemoryShrink {
+    const ID: ContractId = ContractId::new("memory-shrink");
+    type Input = PromptInput;
 }
 
 /// Fold the previous summary and the newly processed passages into one summary
@@ -101,13 +116,18 @@ pub async fn fold_summary(
             index + 1 == steps.len(),
         );
         calls += 1;
-        let text = complete_json_within(
+        let call = ContractCall::of::<MemoryFold>(&PromptInput {
+            system: SUMMARIZER_SYSTEM.to_owned(),
+            prompt: prompt.clone(),
+        })?;
+        let text = complete_json(
             llm,
+            &call,
             deadline,
             SUMMARIZER_SYSTEM,
             prompt,
             None,
-            output_tokens,
+            EXTRACTOR_OUTPUT_TOKENS.max(output_tokens),
         )
         .await?;
         let text = text.trim().to_string();
@@ -157,13 +177,18 @@ pub async fn fold_summary(
     for _ in 0..MAX_SUMMARY_REGENERATIONS {
         let prompt = render_summary_shrink_prompt(&attempt, measured, target);
         calls += 1;
-        let text = complete_json_within(
+        let call = ContractCall::of::<MemoryShrink>(&PromptInput {
+            system: SUMMARIZER_SYSTEM.to_owned(),
+            prompt: prompt.clone(),
+        })?;
+        let text = complete_json(
             llm,
+            &call,
             deadline,
             SUMMARIZER_SYSTEM,
             prompt,
             None,
-            output_tokens,
+            EXTRACTOR_OUTPUT_TOKENS.max(output_tokens),
         )
         .await?
         .trim()

@@ -12,7 +12,6 @@ use crate::{
     },
     dto::*,
     grade_rationale::{self, Checked, GraderCriterion, GraderItem, GraderVerdict},
-    persistence::db,
     quiz_blueprints,
     repository::LearningRepository,
 };
@@ -275,6 +274,28 @@ fn candidate_checks_refuse_leaks_length_bias_and_bad_blanks() {
     );
     cloze.prompt = "Plants release {{1}} and {{2}}.".into();
     assert!(engine::validate_candidate(&cloze).is_err());
+}
+
+#[test]
+fn a_long_answer_restating_the_prompts_setting_is_kept() {
+    let mut item = candidate(
+        LearningItemFormat::ShortAnswer,
+        &[],
+        LearningAssessmentKey::Text(text_key(&["it waits when no timeout is given"], None)),
+    );
+    item.prompt = "What does the planner do when no timeout is given?".into();
+    assert!(engine::validate_candidate(&item).is_ok());
+}
+
+#[test]
+fn a_choice_question_whose_other_option_no_is_in_the_prompt_is_kept() {
+    let mut item = candidate(
+        LearningItemFormat::SingleChoice,
+        &["Yes", "No", "Maybe", "It depends"],
+        LearningAssessmentKey::Choice(0),
+    );
+    item.prompt = "A form field accepts yes or no only. Is the field optional?".into();
+    assert!(engine::validate_candidate(&item).is_ok());
 }
 
 #[test]
@@ -630,7 +651,7 @@ pub(crate) async fn fill_bank(
     program_id: &str,
     scope: &LearningQuizScopeDto,
 ) -> Result<usize> {
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     let (blueprint, _) = quiz_blueprints::ensure_blueprint_in(&mut tx, program_id, scope)
         .await?
         .ok_or_else(|| AppError::InvalidState("this quiz has nothing to ask".into()))?;
@@ -641,8 +662,7 @@ pub(crate) async fn fill_bank(
             sqlx::query_scalar("SELECT lesson_id FROM learning_outcome_definitions WHERE id=?")
                 .bind(&requirement.outcome_id)
                 .fetch_one(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         for _ in 0..requirement.count {
             let n = ITEMS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             items.push(BankItem {
@@ -660,7 +680,7 @@ pub(crate) async fn fill_bank(
         }
     }
     insert_bank_items_in(&mut tx, program_id, &items, Some("test-model")).await?;
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(requirements.iter().map(|r| r.count).sum())
 }
 
@@ -1067,8 +1087,7 @@ async fn a_long_grade_summary_is_kept_whole_in_the_evidence_ledger() -> Result<(
         sqlx::query_scalar("SELECT observation FROM learning_evidence_events WHERE source_id=?")
             .bind(&form_id)
             .fetch_all(&pool)
-            .await
-            .map_err(db)?;
+            .await?;
     assert!(
         observations.contains(&summary),
         "the grader's summary reaches the ledger whole"
@@ -1367,8 +1386,7 @@ async fn a_changed_right_answer_does_not_regrade_an_open_quiz() -> Result<()> {
         .bind(r#"{"kind":"choice","value":1}"#)
         .bind(&quiz.keyed)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let result = answer_and_submit(&repo, &quiz, quiz.position("Alpha")).await?;
     assert_eq!(result.correct, Some(true), "{}", result.detail);
     assert_eq!(result.score, 1.0);
@@ -1386,8 +1404,7 @@ async fn a_removed_choice_does_not_break_or_regrade_an_open_quiz() -> Result<()>
         .bind(r#"["Alpha","Bravo","Charlie"]"#)
         .bind(&quiz.keyed)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let result = answer_and_submit(&repo, &quiz, quiz.position("Delta")).await?;
     assert_eq!(result.correct, Some(false));
     assert!(
@@ -1409,14 +1426,12 @@ async fn a_quiz_drawn_after_a_change_uses_the_changed_question() -> Result<()> {
         .bind(r#"["Alpha","Bravo","Charlie"]"#)
         .bind(&first.keyed)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     sqlx::query("UPDATE learning_assessment_answer_keys SET key_json=? WHERE candidate_id=?")
         .bind(r#"{"kind":"choice","value":1}"#)
         .bind(&first.keyed)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     repo.submit(
         &MutateLearningAssessmentFormRequestDto {
             operation_id: id(),
@@ -1460,8 +1475,7 @@ async fn a_submitted_quiz_reveals_the_explanation_it_was_drawn_with() -> Result<
     .bind("Bravo is right because the edited lesson says so.")
     .bind(&quiz.keyed)
     .execute(&pool)
-    .await
-    .map_err(db)?;
+    .await?;
     let form = submit_with_answer(&repo, &quiz, quiz.position("Alpha")).await?;
     let reveal = reveal_of(&form, &quiz.keyed);
     assert_eq!(reveal.explanation, "Because the lesson says so.");
@@ -1486,8 +1500,7 @@ async fn a_submitted_quiz_reveals_the_wrong_choice_reasons_it_was_drawn_with() -
     )
     .bind(&program_id)
     .fetch_all(&pool)
-    .await
-    .map_err(db)?;
+    .await?;
     for candidate in &candidates {
         sqlx::query(
             "UPDATE learning_assessment_answer_keys SET distractor_rationales_json=? WHERE candidate_id=?",
@@ -1495,8 +1508,7 @@ async fn a_submitted_quiz_reveals_the_wrong_choice_reasons_it_was_drawn_with() -
         .bind(serde_json::to_string(&reasons).unwrap())
         .bind(candidate)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     }
     let quiz = start_lesson_quiz(&repo, &program_id, &scope).await?;
     sqlx::query(
@@ -1504,8 +1516,7 @@ async fn a_submitted_quiz_reveals_the_wrong_choice_reasons_it_was_drawn_with() -
     )
     .bind(&quiz.keyed)
     .execute(&pool)
-    .await
-    .map_err(db)?;
+    .await?;
     let form = submit_with_answer(&repo, &quiz, quiz.position("Bravo")).await?;
     let reveal = reveal_of(&form, &quiz.keyed);
     assert_eq!(reveal.distractor_rationales.len(), 4);
@@ -1584,8 +1595,7 @@ async fn a_lesson_question_the_bank_rejects_keeps_its_place_as_dropped() -> Resu
     )
     .bind(&lesson_id)
     .fetch_all(&pool)
-    .await
-    .map_err(db)?;
+    .await?;
     let expected: Vec<(String, String)> = PLACED_PROMPTS
         .iter()
         .zip(["agreed", "dropped", "agreed"])
@@ -1605,8 +1615,7 @@ async fn a_quiz_never_draws_the_dropped_lesson_question() -> Result<()> {
     )
     .bind(&lesson_id)
     .fetch_optional(&pool)
-    .await
-    .map_err(db)?;
+    .await?;
     let dropped = dropped.unwrap_or_default();
     assert!(
         !dropped.is_empty(),
@@ -1617,10 +1626,10 @@ async fn a_quiz_never_draws_the_dropped_lesson_question() -> Result<()> {
         id: Some(lesson_id),
     };
     fill_bank(&database, &program_id, &scope).await?;
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let bank = LearningAssessmentRepository::bank_in(&mut read, &program_id).await?;
     assert!(bank.iter().all(|c| c.candidate.id != dropped));
-    read.commit().await.map_err(db)?;
+    read.commit().await?;
     let form = LearningAssessmentRepository::new(database.clone())
         .start_quiz(
             &StartLearningQuizRequestDto {
@@ -1636,6 +1645,125 @@ async fn a_quiz_never_draws_the_dropped_lesson_question() -> Result<()> {
         .await?;
     assert!(!form.items.is_empty());
     assert!(form.items.iter().all(|item| item.id != dropped));
+    Ok(())
+}
+
+/// The lesson's own question ids in order, with the middle one agreed and a
+/// bank-origin item added; and the ids `bank_in` returns.
+async fn three_own_questions(
+    pool: &SqlitePool,
+    database: &Database,
+) -> Result<(String, String, Vec<String>)> {
+    let (program_id, lesson_id) = placed_lesson(database).await?;
+    sqlx::query("UPDATE learning_assessment_candidates SET review_status='agreed' WHERE lesson_id=? AND origin='lesson'")
+        .bind(&lesson_id)
+        .execute(pool)
+        .await?;
+    let scope = LearningQuizScopeDto {
+        kind: LearningQuizScopeKind::Lesson,
+        id: Some(lesson_id.clone()),
+    };
+    fill_bank(database, &program_id, &scope).await?;
+    let own: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM learning_assessment_candidates WHERE lesson_id=? AND origin='lesson' ORDER BY rowid",
+    )
+    .bind(&lesson_id)
+    .fetch_all(pool)
+    .await?;
+    assert_eq!(own.len(), 3);
+    Ok((program_id, lesson_id, own))
+}
+
+async fn add_finding(
+    pool: &SqlitePool,
+    lesson_id: &str,
+    site: &str,
+    index: i64,
+    state: &str,
+    part_changed_at: Option<i64>,
+) -> Result<()> {
+    let kept_at = (state == "kept").then_some(1_i64);
+    sqlx::query("INSERT INTO learning_lesson_teaching_findings(lesson_id,finding_key,kind,site,unit_index,unit_title,unit_sha256,note,repairs,state,found_at,kept_at,part_changed_at) VALUES(?,?,'answer_key',?,?,'q','sha','note',0,?,1,?,?)")
+        .bind(lesson_id)
+        .bind(format!("{site}-{index}"))
+        .bind(site)
+        .bind(index)
+        .bind(state)
+        .bind(kept_at)
+        .bind(part_changed_at)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+async fn drawn_ids(pool: &SqlitePool, program_id: &str) -> Result<Vec<String>> {
+    let mut connection = pool.acquire().await?;
+    let bank = LearningAssessmentRepository::bank_in(&mut connection, program_id).await?;
+    Ok(bank.into_iter().map(|c| c.candidate.id).collect())
+}
+
+#[tokio::test]
+async fn a_lesson_question_with_a_waiting_finding_is_not_drawn() -> Result<()> {
+    let pool = migrated().await?;
+    let database = Database::new(pool.clone());
+    let (program_id, lesson_id, own) = three_own_questions(&pool, &database).await?;
+    add_finding(&pool, &lesson_id, "question", 1, "waiting", None).await?;
+    let drawn = drawn_ids(&pool, &program_id).await?;
+    assert!(!drawn.contains(&own[1]));
+    assert!(drawn.contains(&own[0]) && drawn.contains(&own[2]));
+    let banked: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM learning_assessment_candidates WHERE program_id=? AND origin='bank'",
+    )
+    .bind(&program_id)
+    .fetch_all(&pool)
+    .await?;
+    assert!(!banked.is_empty() && banked.iter().all(|b| drawn.contains(b)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_kept_finding_leaves_the_question_drawn() -> Result<()> {
+    let pool = migrated().await?;
+    let database = Database::new(pool.clone());
+    let (program_id, lesson_id, own) = three_own_questions(&pool, &database).await?;
+    add_finding(&pool, &lesson_id, "question", 1, "kept", None).await?;
+    assert!(drawn_ids(&pool, &program_id).await?.contains(&own[1]));
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_edited_question_with_a_waiting_finding_is_drawn() -> Result<()> {
+    let pool = migrated().await?;
+    let database = Database::new(pool.clone());
+    let (program_id, lesson_id, own) = three_own_questions(&pool, &database).await?;
+    add_finding(&pool, &lesson_id, "question", 1, "waiting", Some(5)).await?;
+    assert!(drawn_ids(&pool, &program_id).await?.contains(&own[1]));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_waiting_section_finding_leaves_the_question_drawn() -> Result<()> {
+    let pool = migrated().await?;
+    let database = Database::new(pool.clone());
+    let (program_id, lesson_id, own) = three_own_questions(&pool, &database).await?;
+    add_finding(&pool, &lesson_id, "section", 1, "waiting", None).await?;
+    assert!(drawn_ids(&pool, &program_id).await?.contains(&own[1]));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_finding_index_counts_a_dropped_question() -> Result<()> {
+    let pool = migrated().await?;
+    let database = Database::new(pool.clone());
+    let (program_id, lesson_id, own) = three_own_questions(&pool, &database).await?;
+    sqlx::query("UPDATE learning_assessment_candidates SET review_status='dropped' WHERE id=?")
+        .bind(&own[0])
+        .execute(&pool)
+        .await?;
+    add_finding(&pool, &lesson_id, "question", 1, "waiting", None).await?;
+    let drawn = drawn_ids(&pool, &program_id).await?;
+    assert!(!drawn.contains(&own[1]));
+    assert!(drawn.contains(&own[2]));
     Ok(())
 }
 
@@ -1678,7 +1806,7 @@ async fn lesson_rows(pool: &SqlitePool, lesson_id: &str) -> Result<Vec<(String, 
     .bind(lesson_id)
     .fetch_all(pool)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 fn rows_of(prompts: &[&str], statuses: &[&str]) -> Vec<(String, String)> {
@@ -1700,7 +1828,6 @@ async fn near_duplicate_lesson_questions_all_stay_in_the_bank_in_order() -> Resu
         "Which command shows the permissions of every file in the current directory?",
         "Which command shows the owner of every file in the current directory?",
     ];
-    assert!(engine::near_duplicate(prompts[1], prompts[2]));
     publish_questions(
         &database,
         &program.summary.id,
@@ -1726,6 +1853,51 @@ async fn near_duplicate_lesson_questions_all_stay_in_the_bank_in_order() -> Resu
         lesson_rows(&pool, &lesson_id).await?,
         rows_of(&prompts, &["agreed", "agreed", "agreed"])
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn bank_items_sharing_most_of_their_words_are_both_stored() -> Result<()> {
+    let pool = migrated().await?;
+    let database = Database::new(pool.clone());
+    let program = accepted_program(&database).await?;
+    let mut setup = database.begin_write().await?;
+    LearningAssessmentRepository::ensure_outcomes(&mut setup, &program.summary.id).await?;
+    setup.commit().await?;
+    let outcome: String = sqlx::query_scalar("SELECT id FROM learning_outcome_definitions LIMIT 1")
+        .fetch_one(&pool)
+        .await?;
+    let prompts = [
+        "Which command shows the permissions of every file in the current directory?",
+        "Which command shows the owner of every file in the current directory?",
+    ];
+    let items: Vec<BankItem> = prompts
+        .iter()
+        .enumerate()
+        .map(|(n, prompt)| {
+            let mut stored = item(LearningItemFormat::SingleChoice, &outcome, 2, 900 + n);
+            stored.prompt = (*prompt).to_string();
+            BankItem {
+                item: stored,
+                source_quote: String::new(),
+                lesson_id: None,
+                origin: "bank",
+                review_status: "agreed",
+            }
+        })
+        .collect();
+    let mut tx = database.begin_write().await?;
+    let stored =
+        insert_bank_items_in(&mut tx, &program.summary.id, &items, Some("test-model")).await?;
+    tx.commit().await?;
+    assert_eq!(stored, 2);
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT prompt FROM learning_assessment_candidates WHERE program_id=? AND origin='bank' ORDER BY rowid",
+    )
+    .bind(&program.summary.id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(rows, prompts);
     Ok(())
 }
 
@@ -1812,4 +1984,71 @@ fn a_form_draw_of_a_lesson_question_shuffles_and_each_reason_moves_with_its_choi
     let right = order.iter().position(|authored| *authored == 1).unwrap();
     assert_eq!(reveal.correct_indices, vec![right]);
     assert_eq!(reveal.distractor_rationales[right], "");
+}
+
+#[test]
+fn a_lesson_question_that_cannot_be_asked_is_stored_dropped_in_its_place() {
+    let kind = LessonQuestionKind::Quiz;
+    let texts = |options: &[&str]| options.iter().map(|o| (*o).to_owned()).collect::<Vec<_>>();
+    let cases: [(&str, Vec<String>, usize); 6] = [
+        (
+            "Which layer holds most weather?",
+            texts(&["Alpha", "Bravo", "Charlie", "Delta"]),
+            1,
+        ),
+        ("  ", texts(&["Alpha", "Bravo", "Charlie", "Delta"]), 1),
+        ("Which of these is named first?", texts(&["Alpha"]), 0),
+        (
+            "Which of these is named second?",
+            texts(&["Alpha", "Bravo", "Bravo", "Delta"]),
+            1,
+        ),
+        (
+            "Which of these is named third?",
+            texts(&["Alpha", "Bravo", "Charlie", "Delta"]),
+            9,
+        ),
+        (
+            "Which of these is named last?",
+            texts(&["Echo", "Foxtrot", "Golf", "Hotel"]),
+            2,
+        ),
+    ];
+    let (questions, keys): (Vec<_>, Vec<_>) = cases
+        .into_iter()
+        .map(|(prompt, options, correct_index)| {
+            let question_id = id();
+            (
+                LessonQuestion {
+                    id: question_id.clone(),
+                    kind: kind.clone(),
+                    prompt: prompt.into(),
+                    options,
+                    source_ids: vec![],
+                },
+                LessonAnswerKey {
+                    question_id,
+                    correct_index,
+                    explanation: "Because.".into(),
+                    rationales: vec![],
+                },
+            )
+        })
+        .unzip();
+    let seeded = crate::quiz_bank_jobs::lesson_seed_items(&id(), &id(), &questions, &keys);
+    let seen: Vec<(&str, &str)> = seeded
+        .iter()
+        .map(|item| (item.item.prompt.as_str(), item.review_status))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            ("Which layer holds most weather?", "agreed"),
+            ("  ", "dropped"),
+            ("Which of these is named first?", "dropped"),
+            ("Which of these is named second?", "dropped"),
+            ("Which of these is named third?", "dropped"),
+            ("Which of these is named last?", "agreed"),
+        ]
+    );
 }

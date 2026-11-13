@@ -1,7 +1,7 @@
 //! What a drill's lesson is read from: the lesson with its module and course, its blocks, and the bodies of a course's
 //! prepared lessons.
 
-use crate::persistence::db;
+use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
 use sqlx::SqliteConnection;
 
@@ -33,7 +33,7 @@ pub(super) async fn lesson_in(
     .bind(program_id)
     .fetch_optional(&mut *connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The lesson's blocks as (kind, body, source ids as stored), in order.
@@ -47,7 +47,7 @@ pub(super) async fn blocks_in(
     .bind(lesson_id)
     .fetch_all(&mut *connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The bodies of every block of the course's prepared lessons, other than replaced or skipped ones.
@@ -61,5 +61,5 @@ pub(crate) async fn prepared_bodies_in(
     .bind(program_id)
     .fetch_all(connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }

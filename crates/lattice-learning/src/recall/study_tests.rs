@@ -11,13 +11,11 @@ use serde_json::json;
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
 async fn open(path: std::path::PathBuf) -> lattice_core::shared::error::Result<SqlitePool> {
-    let database = |e: sqlx::Error| lattice_core::shared::error::AppError::Database(e.to_string());
     let options = crate::test_support::file_options(path);
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
         .connect_with(options)
-        .await
-        .map_err(database)?;
+        .await?;
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
         .await
@@ -770,7 +768,7 @@ async fn one_claim_the_window_cannot_hold_by_exact_count_names_the_window() {
     let error = super::study_generation::generate_from_conversation(&llm, &claims, "deck", 10)
         .await
         .err();
-    let Some(lattice_core::shared::error::AppError::InvalidConfig(message)) = error else {
+    let Some(lattice_core::shared::error::AppError::WindowTooSmall(message)) = error else {
         panic!("expected the window to be named, got {error:?}");
     };
     assert!(

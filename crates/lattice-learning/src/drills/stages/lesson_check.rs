@@ -108,7 +108,7 @@ impl DrillBuild<'_> {
                 "codeBeforeTheEditFollowsTheSentences": {"type": "boolean"}
             }
         });
-        let request = model_call::structured(SYSTEM, prompt, schema, budget::judgement(), "low");
+        let request = model_call::structured(SYSTEM, prompt, schema, budget::judgement());
         let asked = ask_request(self.llm, request, |raw| {
             let judgement: Judgement = parse_json(raw)?;
             if judgement.reason.trim().is_empty() {
@@ -128,12 +128,14 @@ impl DrillBuild<'_> {
                 reason: asked.value.reason,
                 trail,
             }),
-            Err(AppError::ModelAnswerUnusable(reason)) => Ok(Verdict {
-                breaks: false,
-                follows: false,
-                reason: format!("The check's answer could not be used: {reason}"),
-                trail,
-            }),
+            Err(AppError::ModelAnswerUnusable(reason) | AppError::AnswerCutOff(reason)) => {
+                Ok(Verdict {
+                    breaks: false,
+                    follows: false,
+                    reason: format!("The check's answer could not be used: {reason}"),
+                    trail,
+                })
+            }
             Err(error) => Err(error),
         }
     }

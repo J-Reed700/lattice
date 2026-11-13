@@ -184,23 +184,21 @@ impl OutlineProgress {
     }
 
     fn cancelled_error(&self) -> AppError {
-        self.public_failure(
-            ErrorCode::ServiceNotAvailable,
-            "Course generation cancelled. Your inputs and any saved draft corrections are kept."
-                .into(),
-        )
+        let message =
+            "Course generation cancelled. Your inputs and any saved draft corrections are kept.";
+        self.record_public_failure(ErrorCode::ServiceNotAvailable, message.into());
+        AppError::Cancelled(message.into())
     }
 
-    fn public_failure(&self, code: ErrorCode, message: String) -> AppError {
+    fn record_public_failure(&self, code: ErrorCode, message: String) {
         self.state
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .public_failure = Some(ApiError {
             code,
-            message: message.clone(),
+            message,
             details: None,
         });
-        AppError::ServiceNotAvailable(message)
     }
 
     /// Preserve our safe, stage-specific explanation across IPC. Other errors
@@ -411,7 +409,7 @@ mod tests {
         let progress = OutlineProgress::default();
         progress.model_wait(
             Some(30),
-            Some(&AppError::Database("database is locked".into())),
+            Some(&AppError::DatabaseBusy("database is locked".into())),
         );
         let wire = serde_json::to_value(progress.snapshot().waiting).unwrap();
         assert_eq!(wire["errorCode"], "DATABASE_BUSY");
@@ -433,13 +431,10 @@ mod tests {
         let run = registry.register(Some(id.clone()), |_| {}).unwrap();
         assert!(registry.register(Some(id.clone()), |_| {}).is_err());
         assert!(registry.cancel(&id));
-        assert!(run
-            .progress
-            .run(std::future::pending::<Result<()>>())
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("cancelled"));
+        assert!(matches!(
+            run.progress.run(std::future::pending::<Result<()>>()).await,
+            Err(AppError::Cancelled(_))
+        ));
         assert_eq!(run.progress.snapshot().stage, OutlineStage::Cancelled);
         drop(run);
         assert!(!registry.cancel(&id));

@@ -1,14 +1,17 @@
-//! No repair writes a new statement (acceptance design §2.6): a hunk a pending
-//! repair changed whose new text holds a statement none of those standing on
-//! its old sentences continues is put back before the pass records anything,
-//! and only the targets in it are charged.
-use super::acceptance_switch_tests::{events_of, lesson_of};
+//! A statement a repair writes beside its target's successor is born of the
+//! repair (acceptance design §2.6): it is read once from the post-rewrite node
+//! of its class with the successor's rewrites, and nothing is put back or
+//! charged.
+use super::acceptance_switch_tests::{events_of, lesson_of, open};
 use super::claim_ledger_tests::{prepare, section};
 use super::class_checks_tests::Classes;
 use super::*;
 use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
-use lattice_core::domain::learning::acceptance::{End, Goal, Step, Taken, Then};
+use lattice_core::domain::learning::acceptance::{
+    rewrites_given, AcceptancePolicy, End, Goal, Position, StandardPolicy, Step, Taken, Then,
+    Walked,
+};
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, RepairOutcome,
 };
@@ -16,24 +19,27 @@ use lattice_core::domain::learning::claim_review::{
 /// A sentence that states a figure no source gives and, beside it, what the
 /// course states.
 const SENTENCE: &str =
-    "DictReader buffers 100 rows before parsing, and missing values in nonblank rows default to None.";
+    "DictReader buffers 100 rows before parsing, and missing values default to None in nonblank rows.";
 const BUFFERS: &str = "DictReader buffers 100 rows before parsing.";
-const MISSING: &str = "Missing values in nonblank rows default to None.";
+const MISSING: &str = "Missing values default to None in nonblank rows.";
 /// The figure's part said anew, beside the same neighbour.
 const READS: &str =
-    "DictReader reads one row at a time, and missing values in nonblank rows default to None.";
+    "DictReader reads one row at a time, and missing values default to None in nonblank rows.";
 const READS_ONE: &str = "DictReader reads one row at a time.";
 /// A statement no sentence of these lessons makes.
 const NAMES: &str = "DictReader names each field after its header.";
 /// The neighbour's statement alone, at more length than the whole sentence it
 /// stood on.
-const MISSING_ALONE: &str = "Missing values in nonblank rows default to None, whatever DictReader does with the rows before them.";
+const MISSING_ALONE: &str = "Missing values default to None in nonblank rows, whatever DictReader does with the rows before them.";
 /// The figure's part said anew as a sentence of its own.
 const BUFFERS_ONE: &str = "DictReader buffers rows one at a time before parsing.";
 /// The sentence said anew with another figure no source gives.
 const STILL_FAILING: &str =
-    "DictReader buffers 200 rows before parsing, and missing values in nonblank rows default to None.";
+    "DictReader buffers 200 rows before parsing, and missing values default to None in nonblank rows.";
 const BUFFERS_200: &str = "DictReader buffers 200 rows before parsing.";
+/// A statement that shares more words with `CACHES` than with the figure's
+/// sentence.
+const KEEPS: &str = "DictReader keeps each file's headers.";
 /// A second failed sentence, its correction, and a sentence that states
 /// nothing to keep the two apart.
 const CACHES: &str = "DictReader caches 200 headers per file.";
@@ -41,7 +47,7 @@ const CACHED: &str = "DictReader caches the header row once per file.";
 const BETWEEN: &str = "Open the sample file before you read on.";
 
 /// A model that extracts the statements each scripted sentence makes from a
-/// passage that holds it, finds the `failing` ones unsupported and the others
+/// passage that holds it, finds the `failing` ones contradicted and the others
 /// supported, and answers its repair requests in turn, each by writing its
 /// replacements into the section. It keeps every repair request and every
 /// statement it is asked to sort; a repair request past the script ends the
@@ -52,6 +58,10 @@ struct Script {
     sentences: Vec<(&'static str, Vec<&'static str>)>,
     failing: Vec<&'static str>,
     repairs: Vec<Vec<(&'static str, String)>>,
+    /// Sentences its extraction finds only once a repair was requested.
+    late: Vec<&'static str>,
+    /// Reports another model identity once a repair was requested.
+    renamed_after_repair: bool,
     requests: Mutex<Vec<Value>>,
     sorted: Mutex<Vec<String>>,
 }
@@ -66,6 +76,8 @@ impl Script {
                 .collect(),
             failing: Vec::new(),
             repairs: Vec::new(),
+            late: Vec::new(),
+            renamed_after_repair: false,
             requests: Mutex::new(Vec::new()),
             sorted: Mutex::new(Vec::new()),
         }
@@ -83,6 +95,16 @@ impl Script {
         self
     }
 
+    fn late(mut self, sentences: &[&'static str]) -> Self {
+        self.late = sentences.to_vec();
+        self
+    }
+
+    fn renamed_after_repair(mut self) -> Self {
+        self.renamed_after_repair = true;
+        self
+    }
+
     fn requests(&self) -> Vec<Value> {
         self.requests.lock().unwrap().clone()
     }
@@ -93,7 +115,7 @@ impl Script {
 
     async fn respond(&self, prompt: &str) -> Result<String> {
         if prompt.starts_with("Extract lesson claims.") {
-            let data = context(prompt);
+            let data = fixture_task(prompt).unwrap();
             let units: Vec<Value> = data["units"]
                 .as_array()
                 .unwrap()
@@ -103,8 +125,9 @@ impl Script {
             return Ok(inventory::fixture_response(units).to_string());
         }
         if prompt.starts_with("You sort statements extracted from a lesson") {
-            let statements: serde_json::Map<String, Value> =
-                serde_json::from_str(prompt.rsplit("\n\n").next().unwrap())?;
+            let Some(Value::Object(statements)) = fixture_task(prompt) else {
+                panic!("a JSON task");
+            };
             self.sorted.lock().unwrap().extend(
                 statements
                     .values()
@@ -113,7 +136,7 @@ impl Script {
             );
         }
         if prompt.starts_with("Repair verified lesson defects.") {
-            return self.repair(context(prompt));
+            return self.repair(fixture_task(prompt).unwrap());
         }
         if prompt.starts_with("Source passages:") {
             let claim = prompt
@@ -126,10 +149,9 @@ impl Script {
                 .iter()
                 .any(|failing| claim.starts_with(*failing))
             {
-                return Ok(
-                    "unsupported\nReason: The reference does not state it.\nSource passage: none"
-                        .into(),
-                );
+                return Ok(format!(
+                    "contradicted\nReason: The reference gives another figure.\nSource quote: {GOOD}\nSource passage: passage-0"
+                ));
             }
         }
         self.inner.respond(prompt).await
@@ -139,15 +161,14 @@ impl Script {
     /// scripted sentence its passages hold.
     fn claims_of(&self, unit: &Value) -> Value {
         let mut claims = Vec::new();
+        let asked = self.requests.lock().unwrap().len();
         for passage in unit["passages"].as_array().into_iter().flatten() {
-            let text = passage["text"].as_str().unwrap_or_default();
+            let text = passage_text(passage);
             for (sentence, statements) in &self.sentences {
-                if text.contains(*sentence) {
-                    claims.extend(
-                        statements.iter().map(
-                            |statement| json!({"passageId":passage["id"],"statement":statement}),
-                        ),
-                    );
+                if text.contains(*sentence) && (asked > 0 || !self.late.contains(sentence)) {
+                    claims.extend(statements.iter().map(|statement| {
+                        json!({"sentenceId":sentence_id(passage, sentence),"statement":statement})
+                    }));
                 }
             }
         }
@@ -191,6 +212,9 @@ impl LLMPort for Script {
         Ok(fixture_completion(request, replies))
     }
     fn model_name(&self) -> &str {
+        if self.renamed_after_repair && !self.requests.lock().unwrap().is_empty() {
+            return "script-fixture-after-repair";
+        }
         "script-fixture"
     }
     fn count_tokens(&self, text: &str) -> usize {
@@ -248,12 +272,6 @@ async fn prepared(model: &Script, body: &str) -> Result<Prepared> {
     })
 }
 
-/// Why a correction that wrote `statement`, which its sentence did not make,
-/// was not applied.
-fn wrote(statement: &str) -> String {
-    format!("The correction wrote a statement its sentence did not make (\"{statement}\"), so it was put back; correct only what was asked and add nothing.")
-}
-
 /// The claims of `claims` first extracted as `statement`.
 fn first_stated<'a>(claims: &'a [ClaimLedgerEntry], statement: &str) -> Vec<&'a ClaimLedgerEntry> {
     claims
@@ -273,58 +291,112 @@ fn first_stated<'a>(claims: &'a [ClaimLedgerEntry], statement: &str) -> Vec<&'a 
         .collect()
 }
 
-/// Asserts that no claim of `claims` was ever extracted as `statement`.
-fn never_extracted(claims: &[ClaimLedgerEntry], statement: &str) {
-    let taken: Vec<&ClaimId> = claims
+/// The claims of `claims` that hold a `BornOfRepair`, each with its parent and
+/// the attempts it was given.
+fn born(claims: &[ClaimLedgerEntry]) -> Vec<(&ClaimLedgerEntry, ClaimId, u8)> {
+    claims
         .iter()
-        .filter(|claim| {
-            events_of(claim).iter().any(|event| {
-                matches!(event, ClaimEvent::Extracted { statement: said, .. } if said == statement)
+        .filter_map(|claim| {
+            events_of(claim).into_iter().find_map(|event| match event {
+                ClaimEvent::BornOfRepair {
+                    parent,
+                    attempts_left,
+                } => Some((claim, parent.clone(), *attempts_left)),
+                _ => None,
             })
         })
-        .map(ClaimLedgerEntry::claim_id)
-        .collect();
-    assert!(
-        taken.is_empty(),
-        "the ledger took {statement:?} in as {taken:?}"
-    );
+        .collect()
 }
 
-/// Asserts that the one claim first extracted as `target` waits at the retry
-/// of its rewrite, its correction not applied for writing `written`.
-fn at_its_retry_for_writing(claims: &[ClaimLedgerEntry], target: &str, written: &str) {
-    let found = first_stated(claims, target);
-    let [entry] = found.as_slice() else {
-        panic!("one claim first stated as {target:?}: {}", found.len());
+/// The parent and the attempts of the one claim of `claims` born of a repair,
+/// which states `statement`.
+fn born_stating(claims: &[ClaimLedgerEntry], statement: &str) -> (ClaimId, u8) {
+    let found = born(claims);
+    let [(claim, parent, attempts_left)] = found.as_slice() else {
+        panic!("one claim born of a repair: {}", found.len());
     };
-    let events = events_of(entry);
-    assert_eq!(
-        entry.decided(),
-        Some(&Then::Node {
-            name: "s.rewrite.again".into(),
-            step: Step::Rewrite(Goal::WhatThePassageStates),
-        }),
-        "{events:?}"
-    );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
+    assert_eq!(claim.statement(), statement);
+    (parent.clone(), *attempts_left)
+}
+
+/// Asserts that no rejection recorded for a claim of `claims` says a
+/// correction wrote a statement its sentence did not make.
+fn none_charged_for_writing(claims: &[ClaimLedgerEntry]) {
+    let reasons: Vec<&str> = claims
+        .iter()
+        .flat_map(events_of)
+        .filter_map(|event| match event {
             ClaimEvent::RepairAttempted {
                 outcome: RepairOutcome::Rejected { reason },
-                goal: Some(Goal::WhatThePassageStates),
                 ..
-            } if *reason == wrote(written)
-        )),
-        "{events:?}"
-    );
+            } => Some(reason.as_str()),
+            _ => None,
+        })
+        .filter(|reason| reason.contains("did not make"))
+        .collect();
+    assert!(reasons.is_empty(), "{reasons:?}");
+}
+
+/// Where a ledger that holds the placing events of `entry` (its extraction,
+/// class, steps and birth) up to and including the first that `last` picks
+/// stands it.
+async fn standing_after(
+    entry: &ClaimLedgerEntry,
+    last: impl Fn(&ClaimEvent) -> bool,
+) -> Result<Option<Position>> {
+    let mut ledger = open().await?;
+    for event in events_of(entry) {
+        let placing = matches!(
+            event,
+            ClaimEvent::Extracted { .. }
+                | ClaimEvent::Classified { .. }
+                | ClaimEvent::Stepped { .. }
+                | ClaimEvent::BornOfRepair { .. }
+        );
+        if placing {
+            ledger.append(entry.claim_id(), event.clone()).await?;
+        }
+        if last(event) {
+            break;
+        }
+    }
+    Ok(
+        match ledger.position(&StandardPolicy::new(), entry.claim_id()) {
+            Some(Walked::At(at)) => Some(at),
+            _ => None,
+        },
+    )
+}
+
+/// Asserts that a claim born of a repair, sorted Sourced, stands at the node
+/// after a rewrite of its class with `attempts_left` rewrites, before any step
+/// of its own.
+async fn assert_begins_after_the_rewrite(
+    claim: &ClaimLedgerEntry,
+    attempts_left: u8,
+) -> Result<()> {
+    let policy = StandardPolicy::new();
+    let at = standing_after(claim, |event| {
+        matches!(event, ClaimEvent::BornOfRepair { .. })
+    })
+    .await?;
+    let expected = Position {
+        class: Class::Sourced,
+        changed_class: false,
+        reasked: false,
+        node: policy.graph(Class::Sourced).after_rewrite(),
+        rewrites_left: attempts_left,
+    };
+    assert_eq!(at, Some(expected), "{:?}", events_of(claim));
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_rewrite_that_wrote_a_statement_its_sentence_did_not_make_is_put_back_and_its_target_is_asked_again_told_why(
+async fn a_correction_that_reads_as_two_statements_stands_and_the_second_is_born_of_the_repair(
 ) -> Result<()> {
     // §2.6 of the acceptance policy design: the correction keeps the
     // neighbour's words, says the figure's part anew, and writes a statement
-    // the sentence did not make.
+    // beside it.
     let model = Script::new(&[
         (SENTENCE, &[BUFFERS, MISSING]),
         (READS, &[READS_ONE, MISSING]),
@@ -335,36 +407,57 @@ async fn a_rewrite_that_wrote_a_statement_its_sentence_did_not_make_is_put_back_
 
     let run = prepared(&model, &section(SENTENCE)).await?;
 
-    never_extracted(&run.claims, NAMES);
-    at_its_retry_for_writing(&run.claims, BUFFERS, NAMES);
-    // The neighbour on the sentence keeps its claim, with no successor.
-    let mates = first_stated(&run.claims, MISSING);
-    let [mate] = mates.as_slice() else {
-        panic!("the neighbour's claim and no other: {}", mates.len());
+    let corrected = section(&format!("{READS} {NAMES}"));
+    assert_eq!(run.published().as_deref(), Some(corrected.as_str()));
+    if let Some(saved) = &run.saved {
+        assert_eq!(saved, &corrected);
+    }
+    assert_eq!(model.requests().len(), 1, "the correction alone");
+    none_charged_for_writing(&run.claims);
+    // The target continues as what its rewrite wrote.
+    let targets = first_stated(&run.claims, BUFFERS);
+    let [target] = targets.as_slice() else {
+        panic!("one target: {}", targets.len());
     };
     assert!(
-        events_of(mate)
-            .iter()
-            .all(|event| !matches!(event, ClaimEvent::Superseded { .. })),
+        events_of(target).iter().any(|event| matches!(
+            event,
+            ClaimEvent::RepairAttempted {
+                outcome: RepairOutcome::Rewritten,
+                goal: Some(Goal::WhatThePassageStates),
+                ..
+            }
+        )),
         "{:?}",
-        events_of(mate)
+        events_of(target)
     );
-    assert!(
-        matches!(mate.state(), ClaimState::Consistent { .. }),
-        "{:?}",
-        mate.state()
-    );
-    // The draft holds the sentence as it was, and the retry is asked of it,
-    // told why.
-    assert_eq!(run.saved.as_deref(), Some(section(SENTENCE).as_str()));
-    let requests = model.requests();
-    assert_eq!(requests.len(), 2, "the correction, then its retry");
+    // The other statement is born of the repair with the successor's rewrites,
+    // and is read from the node after a rewrite, not from its class's entry.
+    let (parent, attempts_left) = born_stating(&run.claims, NAMES);
+    assert_eq!(&parent, target.claim_id());
+    let heir = standing_after(target, |event| {
+        matches!(
+            event,
+            ClaimEvent::Stepped {
+                step: Step::Rewrite(_),
+                ..
+            }
+        )
+    })
+    .await?;
+    assert_eq!(heir.map(|at| at.rewrites_left), Some(attempts_left));
+    let names = first_stated(&run.claims, NAMES);
+    let [names] = names.as_slice() else {
+        panic!("one claim first stated as {NAMES:?}: {}", names.len());
+    };
+    assert_begins_after_the_rewrite(names, attempts_left).await?;
     assert_eq!(
-        requests[1]["candidate"]["blocks"][0]["body"],
-        section(SENTENCE)
+        names.steps().first().map(|(taken, _)| *taken),
+        Some(Taken {
+            step: Step::Read(Reading::Parts),
+            outcome: Outcome::Stands,
+        })
     );
-    assert_eq!(requests[1]["failedClaims"][0]["notApplied"], wrote(NAMES));
-    assert!(run.ended.is_err(), "the run ends at the retry's request");
     Ok(())
 }
 
@@ -454,73 +547,63 @@ async fn a_rewrite_with_one_successor_for_each_statement_it_touched_stands_and_e
 }
 
 #[tokio::test]
-async fn only_the_hunk_that_wrote_a_statement_is_put_back_and_only_its_target_is_charged(
+async fn both_hunks_of_a_request_stand_and_the_extra_statement_is_born_of_the_repair_whose_sentence_shares_most_words_with_it(
 ) -> Result<()> {
     // Two failed sentences of one field, with a sentence that stands between
-    // them, are corrected in one request: one correction is clean, the other
-    // writes a statement its sentence did not make.
+    // them, are corrected in one request; the second correction writes a
+    // statement beside its own that is nearer in words to the first sentence.
     let model = Script::new(&[
         (CACHES, &[CACHES]),
         (BUFFERS, &[BUFFERS]),
         (CACHED, &[CACHED]),
         (READS_ONE, &[READS_ONE]),
-        (NAMES, &[NAMES]),
+        (KEEPS, &[KEEPS]),
     ])
     .failing(&[CACHES, BUFFERS])
     .repairs(vec![vec![
         (CACHES, CACHED.to_owned()),
-        (BUFFERS, format!("{READS_ONE} {NAMES}")),
+        (BUFFERS, format!("{READS_ONE} {KEEPS}")),
     ]]);
 
     let run = prepared(&model, &section(&format!("{CACHES} {BETWEEN} {BUFFERS}"))).await?;
 
-    never_extracted(&run.claims, NAMES);
-    at_its_retry_for_writing(&run.claims, BUFFERS, NAMES);
-    // The clean correction stands, recorded as made, and nothing is charged
-    // to its target.
-    let others = first_stated(&run.claims, CACHES);
-    let [other] = others.as_slice() else {
-        panic!("one claim first stated as {CACHES:?}: {}", others.len());
-    };
-    let steps = other.steps();
-    assert!(
-        steps.iter().any(|(taken, _)| *taken
-            == Taken {
-                step: Step::Rewrite(Goal::WhatThePassageStates),
-                outcome: Outcome::Rewritten,
-            }),
-        "{steps:?}"
-    );
-    assert!(
-        events_of(other).iter().all(|event| !matches!(
-            event,
-            ClaimEvent::RepairAttempted {
-                outcome: RepairOutcome::Rejected { .. },
-                ..
-            }
-        )),
-        "{:?}",
-        events_of(other)
-    );
-    let kept = section(&format!("{CACHED} {BETWEEN} {BUFFERS}"));
-    assert_eq!(run.saved.as_deref(), Some(kept.as_str()));
-    let requests = model.requests();
-    assert_eq!(requests.len(), 2, "the corrections, then one retry");
-    assert_eq!(requests[1]["candidate"]["blocks"][0]["body"], kept);
-    let retried = requests[1]["failedClaims"].as_array().unwrap();
-    assert_eq!(retried.len(), 1, "{retried:?}");
-    assert_eq!(retried[0]["statement"], BUFFERS);
-    assert_eq!(retried[0]["notApplied"], wrote(NAMES));
+    let corrected = section(&format!("{CACHED} {BETWEEN} {READS_ONE} {KEEPS}"));
+    assert_eq!(run.published().as_deref(), Some(corrected.as_str()));
+    if let Some(saved) = &run.saved {
+        assert_eq!(saved, &corrected);
+    }
+    assert_eq!(model.requests().len(), 1, "the corrections alone");
+    none_charged_for_writing(&run.claims);
+    for target in [CACHES, BUFFERS] {
+        let found = first_stated(&run.claims, target);
+        let [entry] = found.as_slice() else {
+            panic!("one claim first stated as {target:?}: {}", found.len());
+        };
+        assert!(
+            events_of(entry).iter().any(|event| matches!(
+                event,
+                ClaimEvent::RepairAttempted {
+                    outcome: RepairOutcome::Rewritten,
+                    ..
+                }
+            )),
+            "{target}: {:?}",
+            events_of(entry)
+        );
+    }
+    let caches = first_stated(&run.claims, CACHES);
+    let (parent, _) = born_stating(&run.claims, KEEPS);
+    assert_eq!(Some(&parent), caches.first().map(|entry| entry.claim_id()));
     Ok(())
 }
 
 #[tokio::test]
-async fn a_narrowing_that_wrote_a_statement_is_put_back_and_spent_and_the_next_round_cuts_its_sentence_whole(
+async fn a_narrowing_stands_and_the_statement_it_wrote_is_born_of_the_narrowed_claims_repair(
 ) -> Result<()> {
     // The figure's correction is as unsupported as the figure, so the
     // statement comes to its cut; the neighbour stands on its sentence, so the
     // cut asks the model to take the statement out (step 7b-1), and the
-    // narrowed sentence comes with a statement the sentence did not make.
+    // narrowed sentence comes with a statement beside the neighbour's.
     let model = Script::new(&[
         (SENTENCE, &[BUFFERS, MISSING]),
         (GOOD, &[GOOD]),
@@ -536,68 +619,48 @@ async fn a_narrowing_that_wrote_a_statement_is_put_back_and_spent_and_the_next_r
 
     let run = prepared(&model, &section(&format!("{SENTENCE} {GOOD}"))).await?;
 
-    never_extracted(&run.claims, NAMES);
+    let corrected = section(&format!("{MISSING_ALONE} {NAMES} {GOOD}"));
+    assert_eq!(run.published().as_deref(), Some(corrected.as_str()));
+    assert_eq!(
+        model.requests().len(),
+        2,
+        "the correction and the narrowing"
+    );
+    none_charged_for_writing(&run.claims);
     let targets = first_stated(&run.claims, BUFFERS);
     let [target] = targets.as_slice() else {
         panic!("one target: {}", targets.len());
     };
     let events = events_of(target);
-    let Some(spent) = events.iter().position(|event| {
-        matches!(
+    assert!(
+        events.iter().any(|event| matches!(
             event,
             ClaimEvent::RepairAttempted {
-                outcome: RepairOutcome::Rejected { .. },
+                outcome: RepairOutcome::Removed,
                 goal: Some(Goal::KeepTheOthers),
                 ..
             }
-        )
-    }) else {
-        panic!("the narrowing was never spent: {events:?}");
-    };
-    assert!(
-        matches!(
-            events[spent],
-            ClaimEvent::RepairAttempted {
-                outcome: RepairOutcome::Rejected { reason },
-                ..
-            } if *reason == wrote(NAMES)
-        ),
-        "{:?}",
-        events[spent]
+        )),
+        "{events:?}"
     );
-    // The narrowing takes no step: the next the statement takes is its cut.
-    let after: Vec<(Step, Outcome)> = events[spent + 1..]
-        .iter()
-        .filter_map(|event| match event {
-            ClaimEvent::Stepped { step, outcome, .. } => Some((*step, *outcome)),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(after, [(Step::Cut, Outcome::Cut)], "{events:?}");
     assert_eq!(
         target.decided(),
         Some(&Then::End(End::Removed {
             section_goes: false
         }))
     );
-    // Cut whole: the neighbour's words went with the sentence.
-    assert_eq!(run.published().as_deref(), Some(section(GOOD).as_str()));
-    assert_eq!(
-        model.requests().len(),
-        2,
-        "the correction and the narrowing; the code makes the cut"
-    );
+    let (parent, _) = born_stating(&run.claims, NAMES);
+    assert_eq!(&parent, target.claim_id());
     Ok(())
 }
 
 #[tokio::test]
-async fn a_statement_a_split_rewrite_wrote_beside_its_targets_successor_is_no_child_it_is_taken_back(
+async fn a_statement_a_split_rewrite_wrote_beside_its_targets_successor_is_born_of_the_repair_and_sorted(
 ) -> Result<()> {
     // The correction puts the neighbour's statement first, at more length
     // than the whole sentence, so nothing it wrote stands where the figure's
     // part stood: the figure's part said anew continues the claim as the
-    // repair's successor, and the statement after it would be the repair's
-    // child.
+    // repair's successor, and the statement after it is born of the repair.
     let model = Script::new(&[
         (SENTENCE, &[BUFFERS, MISSING]),
         (MISSING_ALONE, &[MISSING]),
@@ -612,24 +675,123 @@ async fn a_statement_a_split_rewrite_wrote_beside_its_targets_successor_is_no_ch
 
     let run = prepared(&model, &section(SENTENCE)).await?;
 
-    let born: Vec<&ClaimId> = run
-        .claims
-        .iter()
-        .filter(|claim| {
-            events_of(claim)
-                .iter()
-                .any(|event| matches!(event, ClaimEvent::BornOfRepair { .. }))
-        })
-        .map(ClaimLedgerEntry::claim_id)
-        .collect();
-    assert!(born.is_empty(), "born of a repair: {born:?}");
-    never_extracted(&run.claims, NAMES);
+    let corrected = section(&format!("{MISSING_ALONE} {BUFFERS_ONE} {NAMES}"));
+    assert_eq!(run.published().as_deref(), Some(corrected.as_str()));
+    if let Some(saved) = &run.saved {
+        assert_eq!(saved, &corrected);
+    }
+    assert_eq!(model.requests().len(), 1, "the correction alone");
+    none_charged_for_writing(&run.claims);
+    let targets = first_stated(&run.claims, BUFFERS);
+    let [target] = targets.as_slice() else {
+        panic!("one target: {}", targets.len());
+    };
+    let (parent, _) = born_stating(&run.claims, NAMES);
+    assert_eq!(&parent, target.claim_id());
     let sorted = model.sorted();
     assert!(
-        !sorted.iter().any(|statement| statement == NAMES),
+        sorted.iter().any(|statement| statement == NAMES),
         "{sorted:?}"
     );
-    at_its_retry_for_writing(&run.claims, BUFFERS, NAMES);
-    assert_eq!(run.saved.as_deref(), Some(section(SENTENCE).as_str()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_born_statement_whose_reading_does_not_stand_goes_to_its_cut_with_no_rewrite_asked_for_it(
+) -> Result<()> {
+    // The correction adds a statement of its own that the passages
+    // contradict, in a sentence of its own.
+    let model = Script::new(&[
+        (SENTENCE, &[BUFFERS, MISSING]),
+        (READS, &[READS_ONE, MISSING]),
+        (NAMES, &[NAMES]),
+        (GOOD, &[GOOD]),
+    ])
+    .failing(&[BUFFERS, NAMES])
+    .repairs(vec![vec![(SENTENCE, format!("{READS} {NAMES}"))]]);
+
+    let run = prepared(&model, &section(&format!("{SENTENCE} {GOOD}"))).await?;
+
+    assert_eq!(
+        model.requests().len(),
+        1,
+        "no rewrite for the born statement"
+    );
+    let (_, attempts_left) = born_stating(&run.claims, NAMES);
+    let names = first_stated(&run.claims, NAMES);
+    let [names] = names.as_slice() else {
+        panic!("one claim first stated as {NAMES:?}: {}", names.len());
+    };
+    assert_begins_after_the_rewrite(names, attempts_left).await?;
+    assert_eq!(
+        names.steps(),
+        vec![
+            (
+                Taken {
+                    step: Step::Read(Reading::Parts),
+                    outcome: Outcome::Refuted,
+                },
+                Then::Node {
+                    name: "s.cut".into(),
+                    step: Step::Cut,
+                }
+            ),
+            (
+                Taken {
+                    step: Step::Cut,
+                    outcome: Outcome::Cut,
+                },
+                Then::End(End::Removed {
+                    section_goes: false
+                })
+            ),
+        ]
+    );
+    let published = run.published().unwrap_or_default();
+    assert!(!published.contains(NAMES), "{published:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_new_to_the_ledger_outside_any_repaired_region_begins_at_its_class_entry_born_of_nothing(
+) -> Result<()> {
+    // The model finds the second sentence's statement only on the pass after
+    // the correction, which reports another identity, has no basis, and
+    // extracts the section whole: it is new, but the correction did not write it.
+    let model = Script::new(&[
+        (SENTENCE, &[BUFFERS, MISSING]),
+        (READS, &[READS_ONE, MISSING]),
+        (GOOD, &[GOOD]),
+    ])
+    .late(&[GOOD])
+    .renamed_after_repair()
+    .failing(&[BUFFERS])
+    .repairs(vec![vec![(SENTENCE, READS.to_owned())]]);
+
+    let run = prepared(&model, &section(&format!("{SENTENCE} {GOOD}"))).await?;
+
+    let corrected = section(&format!("{READS} {GOOD}"));
+    assert_eq!(run.published().as_deref(), Some(corrected.as_str()));
+    let found = born(&run.claims);
+    assert!(found.is_empty(), "born of a repair: {}", found.len());
+    let fresh = first_stated(&run.claims, GOOD);
+    let [fresh] = fresh.as_slice() else {
+        panic!("one claim first stated as {GOOD:?}: {}", fresh.len());
+    };
+    let policy = StandardPolicy::new();
+    let at = standing_after(fresh, |event| {
+        matches!(event, ClaimEvent::Classified { .. })
+    })
+    .await?;
+    assert_eq!(
+        at,
+        Some(Position {
+            class: Class::Sourced,
+            changed_class: false,
+            reasked: false,
+            node: policy.graph(Class::Sourced).entry(),
+            rewrites_left: rewrites_given(&policy, Class::Sourced),
+        })
+    );
     Ok(())
 }

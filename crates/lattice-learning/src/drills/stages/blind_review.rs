@@ -102,7 +102,6 @@ impl DrillBuild<'_> {
             format!("{subject}\n\n{}", render_files(&proved.files)),
             review_schema(&proved.files),
             budget::findings(spec.lines),
-            "low",
         );
         let asked = ask_request(self.llm, request, |raw| read_findings(raw, &proved.files)).await?;
         trail.call("blind review", &model);
@@ -167,7 +166,6 @@ impl DrillBuild<'_> {
                 ),
                 entry_schema(&patterns, &proved.files),
                 budget::key_entry(),
-                "low",
             );
             let asked = ask_request(self.llm, request, |raw| {
                 describe(raw, &proved.files, &patterns)
@@ -178,7 +176,7 @@ impl DrillBuild<'_> {
                     trail.call("key entry", &model);
                     asked.value
                 }
-                Err(AppError::ModelAnswerUnusable(_)) => {
+                Err(AppError::ModelAnswerUnusable(_) | AppError::AnswerCutOff(_)) => {
                     // An entry that cannot be described exactly is not added; a learner who finds the problem is
                     // still credited as a valid extra by the grader.
                     trail.call("key entry (not used)", &model);

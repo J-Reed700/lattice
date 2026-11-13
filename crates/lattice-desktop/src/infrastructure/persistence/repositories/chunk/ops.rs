@@ -390,7 +390,7 @@ pub async fn delete_batch_optimized(tx: &mut WriteTx, ids: &[&str]) -> Result<()
         let placeholders = batch.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let query = format!("DELETE FROM text_chunks WHERE id IN ({})", placeholders);
 
-        let mut query_builder = sqlx::query(&query);
+        let mut query_builder = sqlx::query(sqlx::AssertSqlSafe(query.as_str()));
         for id in batch {
             query_builder = query_builder.bind(id);
         }

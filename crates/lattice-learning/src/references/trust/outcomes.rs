@@ -17,7 +17,6 @@ use lattice_core::shared::persistence::{Database, WriteTx};
 
 use super::calibration::{bars_of, moved_kinds};
 use super::repository::outcomes as stored;
-use crate::persistence::db;
 
 /// Where a claim's verdict is recorded.
 #[derive(Debug, Clone, Copy)]
@@ -39,9 +38,9 @@ pub async fn record(
     if outcomes.is_empty() {
         return Ok(Vec::new());
     }
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     let moved = write_in(&mut tx, scope, entry, outcomes).await?;
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(moved)
 }
 
@@ -97,9 +96,9 @@ pub async fn forget(
     claim_id: &str,
     verdict: TrustVerdict,
 ) -> Result<Vec<ClaimKind>> {
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     let moved = forget_in(&mut tx, claim_id, verdict).await?;
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(moved)
 }
 

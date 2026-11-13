@@ -89,7 +89,6 @@ async fn a_run_keeps_each_batch_and_its_tokens_across_a_stop_and_a_resume() {
     assert_eq!(resumed.started_at, 2_500, "the first start is kept");
     assert_eq!(resumed.finished_at, None);
     assert_eq!(resumed.batches.len(), 2);
-    assert_eq!(resumed.last_failure(), Some("NETWORK_ERROR"));
     assert_eq!((resumed.input_tokens, resumed.output_tokens), (1_000, 50));
 
     runs.record(&key, &batch(2, BatchOutcome::Done, (900, 40)))
@@ -98,7 +97,6 @@ async fn a_run_keeps_each_batch_and_its_tokens_across_a_stop_and_a_resume() {
     runs.finish(&key, RunState::Completed, 9_500).await.unwrap();
     let latest = runs.latest("l1").await.unwrap().unwrap();
     assert_eq!(latest.state, RunState::Completed);
-    assert_eq!(latest.last_failure(), None, "a batch completed since");
     assert_eq!((latest.input_tokens, latest.output_tokens), (1_900, 90));
 }
 

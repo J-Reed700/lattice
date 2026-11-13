@@ -33,10 +33,6 @@ fn options_of(value: &Value) -> Result<ProgramOptions> {
     })
 }
 
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
-}
-
 #[async_trait]
 impl NothingStore for CodingBuilds {
     async fn nothing_known(&self, _target: &Target<'_>) -> Result<Option<String>> {
@@ -66,7 +62,7 @@ impl Exercises for CodingBuilds {
             )));
         }
         let options = options_of(options)?;
-        let mut transaction = self.database.begin_read().await.map_err(database_error)?;
+        let mut transaction = self.database.begin_read().await?;
         let profile = profile_in(&mut transaction, program_id).await?;
         let language = Some(options.language.trim())
             .filter(|language| !language.is_empty())
@@ -91,7 +87,7 @@ impl Exercises for CodingBuilds {
             .into_iter()
             .take(wanted)
             .collect();
-        transaction.commit().await.map_err(database_error)?;
+        transaction.commit().await?;
         serde_json::to_value(ProgramFacts {
             language,
             patterns,

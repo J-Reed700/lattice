@@ -33,6 +33,13 @@ export function shownPhase(activity: LearningGenerationActivity): PreparationPha
   };
 }
 
+export const WAITING_FOR_THE_MODEL = 'Waiting for the model';
+
+/** The stage a preparing lesson shows: that it waits for the model, while its model requests wait for a slot and none holds one. */
+export function stageText(activity: LearningGenerationActivity | null | undefined, stage: string): string {
+  return activity?.waitingForModel ? WAITING_FOR_THE_MODEL : stage;
+}
+
 /** "73 statements: 36 to check against their sources, 29 to check for consistency, 8 common knowledge". */
 export function statementsLine(plan: LearningStatementPlan): string {
   const total = plan.sourced + plan.reasoning + plan.common;
@@ -59,10 +66,10 @@ export function callsLine(activity: LearningGenerationActivity): string | null {
  */
 export function preparingLine(activity: LearningGenerationActivity | null | undefined): string {
   if (!activity) return 'Preparing';
-  if (activity.phase === 'evidence' && activity.checksTotal > 0) {
-    return `Preparing · ${activity.checksCompleted} of ${activity.checksTotal} checked`;
-  }
-  return `Preparing · ${shownPhase(activity).title}`;
+  const stage = activity.phase === 'evidence' && activity.checksTotal > 0
+    ? `${activity.checksCompleted} of ${activity.checksTotal} checked`
+    : shownPhase(activity).title;
+  return `Preparing · ${stageText(activity, stage)}`;
 }
 
 export function preparationDuration(seconds: number): string {
@@ -108,7 +115,7 @@ export function preparationSummary(job: LearningGenerationJob | undefined, state
   const named = (label: string) => (title ? `${label}: ${title}` : label);
   if (state.held.length > 0) return named('Lesson waiting for your review');
   if (state.reconnecting) return named('Lesson preparation will resume automatically');
-  if (state.active) return `${named('Preparing lesson')} · ${state.queued ? 'Queued' : state.phase?.title ?? 'Starting'}${queuedMore > 0 ? ` · ${queuedMore} more queued` : ''}`;
+  if (state.active) return `${named('Preparing lesson')} · ${stageText(job?.activity, state.queued ? 'Queued' : state.phase?.title ?? 'Starting')}${queuedMore > 0 ? ` · ${queuedMore} more queued` : ''}`;
   if (state.paused) return named('Lesson preparation paused');
   if (job && job.status !== 'completed') return named(`Lesson preparation ${job.status}`);
   if (error) return 'Lesson preparation failed';

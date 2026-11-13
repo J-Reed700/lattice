@@ -4,10 +4,10 @@
 use super::support::{code, files, planted, proved, quiet, review, spec, unchecked, MODEL, SUITE};
 use crate::drills::build::Evidence;
 use crate::drills::repository::{self, DrillStatus, NewDrill};
-use crate::persistence::db;
 use crate::repository::LearningRepository;
 use crate::tests::{fixture, pool};
 use lattice_core::domain::learning::drills::{Drill, Material};
+use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::Database;
 use sqlx::{Row, SqlitePool};
@@ -52,7 +52,10 @@ async fn add(database: &Database, id: &str, program_id: Option<&str>) -> Result<
 }
 
 async fn scalar(pool: &SqlitePool, sql: &str) -> Result<i64> {
-    sqlx::query_scalar(sql).fetch_one(pool).await.map_err(db)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .fetch_one(pool)
+        .await
+        .map_err(AppError::from)
 }
 
 #[tokio::test]
@@ -62,8 +65,7 @@ async fn the_tables_and_their_indexes_exist() -> Result<()> {
         "SELECT name FROM sqlite_master WHERE name LIKE 'learning_drill%' ORDER BY name",
     )
     .fetch_all(&pool)
-    .await
-    .map_err(db)?;
+    .await?;
     for name in [
         "learning_drill_code_checks",
         "learning_drill_lesson_fits",
@@ -92,7 +94,7 @@ async fn a_drill_comes_back_as_it_went_in_with_a_row_for_each_pattern() -> Resul
     let pool = pool().await?;
     let database = Database::new(pool.clone());
     add(&database, "drill", None).await?;
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut connection = pool.acquire().await?;
     let stored = repository::find_in(&mut connection, "drill")
         .await?
         .expect("the drill");
@@ -133,8 +135,7 @@ async fn deleting_a_drill_deletes_its_pattern_rows() -> Result<()> {
     add(&database, "kept", None).await?;
     sqlx::query("DELETE FROM learning_drills WHERE id='gone'")
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(
         scalar(
             &pool,
@@ -167,20 +168,17 @@ async fn deleting_a_course_leaves_its_drills_with_no_course() -> Result<()> {
     let before: Option<String> =
         sqlx::query_scalar("SELECT program_id FROM learning_drills WHERE id='about-the-course'")
             .fetch_one(&pool)
-            .await
-            .map_err(db)?;
+            .await?;
     assert_eq!(before.as_deref(), Some(id.as_str()));
 
     sqlx::query("DELETE FROM learning_programs WHERE id=?")
         .bind(&id)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let after: Option<String> =
         sqlx::query_scalar("SELECT program_id FROM learning_drills WHERE id='about-the-course'")
             .fetch_one(&pool)
-            .await
-            .map_err(db)?;
+            .await?;
     assert_eq!(after, None);
     assert_eq!(
         scalar(&pool, "SELECT count(*) FROM learning_drills").await?,
@@ -197,8 +195,7 @@ async fn a_course_that_is_not_there_is_not_kept() -> Result<()> {
     let program: Option<String> =
         sqlx::query_scalar("SELECT program_id FROM learning_drills WHERE id='orphan'")
             .fetch_one(&pool)
-            .await
-            .map_err(db)?;
+            .await?;
     assert_eq!(program, None);
     Ok(())
 }
@@ -257,15 +254,15 @@ async fn the_banks_queries_use_their_indexes() -> Result<()> {
     let any = format!("EXPLAIN QUERY PLAN {}", repository::ANY_READY_IN);
     for (query, index) in [
         (
-            sqlx::query(&oldest).bind("p").bind("code").bind("python").bind(None::<&str>),
+            sqlx::query(sqlx::AssertSqlSafe(oldest.as_str())).bind("p").bind("code").bind("python").bind(None::<&str>),
             "learning_drills_shelf",
         ),
         (
-            sqlx::query(&oldest).bind("p").bind("code").bind("python").bind(Some("l")),
+            sqlx::query(sqlx::AssertSqlSafe(oldest.as_str())).bind("p").bind("code").bind("python").bind(Some("l")),
             "learning_drills_shelf",
         ),
         (
-            sqlx::query(&any).bind("p").bind("code").bind("python"),
+            sqlx::query(sqlx::AssertSqlSafe(any.as_str())).bind("p").bind("code").bind("python"),
             "learning_drills_shelf",
         ),
         (
@@ -283,8 +280,7 @@ async fn the_banks_queries_use_their_indexes() -> Result<()> {
     ] {
         let plan: Vec<String> = query
             .fetch_all(&pool)
-            .await
-            .map_err(db)?
+            .await?
             .iter()
             .map(|row| row.get::<String, _>("detail"))
             .collect();

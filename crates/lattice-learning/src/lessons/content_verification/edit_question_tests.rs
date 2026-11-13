@@ -10,6 +10,7 @@
 //! stays honest.
 use super::claim_ledger_tests::{figure, lesson, section, unreadable, Course};
 use super::GOOD;
+use crate::assessment::assessment_engine::checks::answer_in_prompt_message;
 use crate::assessment_engine::{
     LearningAssessmentCandidate, LearningAssessmentKey, LearningItemFormat,
 };
@@ -925,7 +926,7 @@ async fn notes(course: &Course) -> Result<TeachingFindingsRepository> {
         {"prompt":P1,"options":C1,"explanation":E1}
     ]});
     let note = |kind, site, text: &str| SetAside {
-        finding: ReviewFinding::new(kind, Some(site), text),
+        finding: ReviewFinding::of_kind(kind, site, text),
         repairs: 0,
     };
     store
@@ -1093,7 +1094,9 @@ async fn a_prompt_change_keeps_the_reasons_and_the_right_choice_is_left_with_non
 
 const LONGEST: &str = "It keeps them exactly as the file wrote them, spaces and all.";
 const LONGEST_REFUSAL: &str = "The correct option stands out as much the longest.";
-const LEAK_REFUSAL: &str = "The question's stem gives away its answer.";
+fn leak_refusal() -> String {
+    answer_in_prompt_message(C0[0])
+}
 
 fn right_choice_much_the_longest() -> QuestionText {
     let mut choices = C0.map(String::from).to_vec();
@@ -1113,8 +1116,8 @@ async fn an_edit_the_quiz_engine_would_refuse_is_refused_and_writes_nothing() ->
     let course = published().await?;
     let seen = snapshot(&course).await?;
     let cases = [
-        (right_choice_much_the_longest(), LONGEST_REFUSAL),
-        (prompt_giving_away_the_right_choice(), LEAK_REFUSAL),
+        (right_choice_much_the_longest(), LONGEST_REFUSAL.to_owned()),
+        (prompt_giving_away_the_right_choice(), leak_refusal()),
     ];
 
     for (after, text) in cases {
@@ -1134,8 +1137,8 @@ async fn a_dry_run_gives_the_same_refusals_as_the_save() -> Result<()> {
     let course = published().await?;
     let seen = snapshot(&course).await?;
     let cases = [
-        (right_choice_much_the_longest(), LONGEST_REFUSAL),
-        (prompt_giving_away_the_right_choice(), LEAK_REFUSAL),
+        (right_choice_much_the_longest(), LONGEST_REFUSAL.to_owned()),
+        (prompt_giving_away_the_right_choice(), leak_refusal()),
     ];
 
     for (after, text) in cases {

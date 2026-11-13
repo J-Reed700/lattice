@@ -66,7 +66,7 @@ async fn rows(pool: &SqlitePool, program_id: &str) -> Result<Vec<Row>> {
     .bind(program_id)
     .fetch_all(pool)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 type FullRow = (String, String, i64, String, String, i64);
@@ -78,15 +78,14 @@ async fn full_rows(pool: &SqlitePool, program_id: &str) -> Result<Vec<FullRow>> 
     .bind(program_id)
     .fetch_all(pool)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 async fn change_outline(pool: &SqlitePool, lesson_id: &str) -> Result<()> {
     sqlx::query("UPDATE learning_lessons SET title='A different lesson' WHERE id=?")
         .bind(lesson_id)
         .execute(pool)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(())
 }
 
@@ -496,13 +495,11 @@ async fn recording_fits_replaces_the_courses_earlier_rows_and_skips_a_deleted_co
     sqlx::query("DELETE FROM learning_practice_fits WHERE program_id=?")
         .bind(&program_id)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     sqlx::query("DELETE FROM learning_programs WHERE id=?")
         .bind(&program_id)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     repo.record_fits(
         &program_id,
         "basis-3",

@@ -7,8 +7,7 @@ async fn require_program(connection: &mut SqliteConnection, program_id: &str) ->
     let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
         .bind(program_id)
         .fetch_optional(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
     match exists {
         Some(_) => Ok(()),
         None => Err(AppError::NotFound("Learning program not found".into())),
@@ -19,10 +18,10 @@ impl LearningPracticeRepository {
     /// A course's practice profile; the empty profile at revision 0 when none was saved.
     pub async fn get_profile(&self, program_id: &str) -> Result<LearningPracticeProfileDto> {
         uuid(program_id, "program")?;
-        let mut tx = self.db.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await?;
         require_program(&mut tx, program_id).await?;
         let profile = course_profile(&mut tx, program_id).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(profile)
     }
 
@@ -36,7 +35,7 @@ impl LearningPracticeRepository {
         uuid(program_id, "program")?;
         let decks = study_service::interview_deck_ids(&self.db, program_id).await?;
         let now = now();
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         require_program(&mut tx, program_id).await?;
         let current = profile_in(&mut tx, program_id).await?;
         let current_revision = current.as_ref().map_or(0, |profile| profile.revision);
@@ -65,9 +64,8 @@ impl LearningPracticeRepository {
         .bind(revision)
         .bind(now)
         .execute(&mut *tx)
-        .await
-        .map_err(db)?;
-        tx.commit().await.map_err(db)?;
+        .await?;
+        tx.commit().await?;
         Ok(LearningPracticeProfileDto {
             program_id: program_id.to_owned(),
             details: request.details.clone(),
@@ -107,17 +105,16 @@ pub(crate) async fn profile_in(
     )
     .bind(program_id)
     .fetch_optional(&mut *connection)
-    .await
-    .map_err(db)?;
+    .await?;
     row.map(|row| {
         Ok::<_, AppError>(LearningPracticeProfileDto {
             program_id: program_id.to_owned(),
-            details: row.try_get("details").map_err(db)?,
-            language: row.try_get("language").map_err(db)?,
-            interview_at: row.try_get("interview_at").map_err(db)?,
-            company: row.try_get("company").map_err(db)?,
-            role: row.try_get("role").map_err(db)?,
-            revision: row.try_get("revision").map_err(db)?,
+            details: row.try_get("details")?,
+            language: row.try_get("language")?,
+            interview_at: row.try_get("interview_at")?,
+            company: row.try_get("company")?,
+            role: row.try_get("role")?,
+            revision: row.try_get("revision")?,
         })
     })
     .transpose()

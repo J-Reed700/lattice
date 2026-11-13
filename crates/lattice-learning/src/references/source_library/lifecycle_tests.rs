@@ -166,8 +166,7 @@ async fn check_row(
     )
     .bind(operation_id)
     .fetch_one(pool)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok((
         row.get("status"),
         row.get("message"),
@@ -616,8 +615,7 @@ async fn capture_validates_metadata_and_keeps_only_a_meaningful_selection_note()
         .bind(&program_id)
         .bind(&source_id)
         .fetch_one(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
         noted.push(stored);
     }
     assert_eq!(
@@ -736,8 +734,7 @@ async fn shown_title_and_publisher(
     let row = sqlx::query("SELECT title,publisher FROM learning_source_versions WHERE id=?")
         .bind(version_id)
         .fetch_one(pool)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok((row.get("title"), row.get("publisher")))
 }
 
@@ -808,7 +805,7 @@ async fn library_rows(pool: &SqlitePool, program_id: &str) -> Result<i64> {
         .bind(program_id)
         .fetch_one(pool)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// A legacy bounded snapshot as the migration leaves it: not yet finalized.
@@ -816,13 +813,13 @@ async fn legacy_snapshot(pool: &SqlitePool, program_id: &str) -> Result<String> 
     let legacy_id = id();
     sqlx::query("INSERT INTO learning_sources(id,program_id,title,url,excerpt,acquired_at) VALUES(?,?,?,NULL,?,7)")
         .bind(&legacy_id).bind(program_id).bind("Legacy excerpt").bind("migration text has four words")
-        .execute(pool).await.map_err(db)?;
+        .execute(pool).await?;
     sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at) VALUES(?,?, 'document',?,NULL,'fixed',?,NULL,0,7,7)")
         .bind(&legacy_id).bind(program_id).bind(&legacy_id).bind(&legacy_id)
-        .execute(pool).await.map_err(db)?;
+        .execute(pool).await?;
     sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES(?,?,?,1,'Legacy excerpt',NULL,NULL,NULL,'migration text has four words','migration text has four words','',0,1,'legacy_bounded_extraction_v1',7)")
         .bind(&legacy_id).bind(program_id).bind(&legacy_id)
-        .execute(pool).await.map_err(db)?;
+        .execute(pool).await?;
     Ok(legacy_id)
 }
 
@@ -836,16 +833,14 @@ async fn backfilling_legacy_snapshots_keeps_none_when_one_is_refused() -> Result
     legacy_snapshot(&pool, &program_id).await?;
     sqlx::query("CREATE TRIGGER refuse_for_test BEFORE UPDATE ON learning_source_versions WHEN (SELECT COUNT(*) FROM learning_source_versions WHERE extraction_version='legacy_bounded_extraction_v1' AND content_sha256<>'')>=1 BEGIN SELECT RAISE(ABORT, 'refused for the test'); END")
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
 
     assert!(library.backfill_legacy(&program_id).await.is_err());
 
     let finalized: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_source_versions WHERE program_id=? AND extraction_version='legacy_bounded_extraction_v1' AND content_sha256<>''")
         .bind(&program_id)
         .fetch_one(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(finalized, 0);
     Ok(())
 }
@@ -858,8 +853,7 @@ async fn a_selected_source_whose_note_cannot_be_saved_is_not_added() -> Result<(
     let library = LearningSourceLibraryRepository::new(database.clone());
     sqlx::query("CREATE TRIGGER refuse_for_test BEFORE UPDATE ON learning_source_library BEGIN SELECT RAISE(ABORT, 'refused for the test'); END")
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let before = library_rows(&pool, &program_id).await?;
     let (op, source_id, version_id) = (id(), id(), id());
 

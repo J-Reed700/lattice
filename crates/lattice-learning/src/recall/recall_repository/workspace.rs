@@ -18,13 +18,12 @@ impl LearningRecallRepository {
     pub async fn workspace(&self, program_id: &str) -> Result<LearningRecallWorkspaceDto> {
         validate_uuid(program_id, "program")?;
         self.bootstrap_deck_cards(program_id).await?;
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let program_exists: Option<i64> =
             sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
                 .bind(program_id)
                 .fetch_optional(&mut *read)
-                .await
-                .map_err(db)?;
+                .await?;
         if program_exists.is_none() {
             return Err(AppError::NotFound("Learning program not found.".into()));
         }
@@ -32,8 +31,7 @@ impl LearningRecallRepository {
             sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
                 .bind(program_id)
                 .fetch_optional(&mut *read)
-                .await
-                .map_err(db)?
+                .await?
                 .flatten();
         let Some(deck_id) = deck_id else {
             return Ok(LearningRecallWorkspaceDto {
@@ -48,8 +46,7 @@ impl LearningRecallRepository {
             .bind(program_id)
             .bind(&deck_id)
             .fetch_all(&mut *read)
-            .await
-            .map_err(db)?;
+            .await?;
         let mut cards = Vec::with_capacity(rows.len());
         for row in &rows {
             let card_id: String = row.get("card_id");
@@ -72,7 +69,7 @@ impl LearningRecallRepository {
             });
         }
         let duplicates = Self::duplicate_suggestions_on(&mut read, program_id).await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         let due_count = cards
             .iter()
             .filter(|card| card.scheduler.due_at <= now())
@@ -95,8 +92,7 @@ impl LearningRecallRepository {
         )
         .bind(card_id)
         .fetch_all(connection)
-        .await
-        .map_err(db)?;
+        .await?;
         rows.iter()
             .map(|row| {
                 let format = parse_format(row.get("format"))?;
@@ -128,8 +124,7 @@ impl LearningRecallRepository {
         let rows = sqlx::query("SELECT * FROM learning_recall_duplicate_suggestions WHERE program_id=? ORDER BY created_at,id LIMIT 500")
             .bind(program_id)
             .fetch_all(connection)
-            .await
-            .map_err(db)?;
+            .await?;
         rows.iter()
             .map(|row| {
                 Ok(LearningRecallDuplicateSuggestionDto {

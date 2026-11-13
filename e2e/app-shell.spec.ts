@@ -119,7 +119,7 @@ for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'
           const turn = args as { conversationId: string; message: string; cancelOnly?: boolean };
           if (turn.conversationId !== 'tangent-1') throw new Error('Tangent question was sent to the main conversation');
           if (turn.cancelOnly) {
-            cancelPending?.({ code: 'INVALID_STATE', message: 'Generation cancelled' });
+            cancelPending?.({ code: 'CANCELLED', message: 'Generation cancelled by user.' });
             cancelPending = null;
             return { conversationId: turn.conversationId, messages: state.messages, contextUsed: 2 };
           }
@@ -1900,7 +1900,17 @@ test('Learning Studio integrates with the app shell and opens its Quizzes tab', 
       list_conversation_spaces: () => [],
       list_learning_programs: () => [program.summary],
       get_learning_program: () => program,
+      prepare_learning_ahead: (args) => {
+        const request = (args as { request?: { programId?: string; lessonId?: string } })?.request;
+        if (request?.programId !== program.summary.id || !program.modules.some((module) => module.lessons.some((entry) => entry.id === request.lessonId))) throw new Error('That lesson is not in this course.');
+        return program;
+      },
       get_learning_outline_evidence: () => null,
+      get_learning_course_plan: (args) => {
+        const { programId } = args as { programId: string };
+        if (programId !== program.summary.id) throw new Error('Learning program not found');
+        return { programId, outlineRevision: program.summary.revision, state: 'none', error: null, entries: [] };
+      },
       get_learning_memory: () => ({ programId: program.summary.id, journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0 }),
       get_learning_practice_workspace: () => ({ programId: program.summary.id, sessions: [] }),
       // The open lesson's warm-up asks for due review cards; none are due.

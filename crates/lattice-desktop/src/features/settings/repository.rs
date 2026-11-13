@@ -25,6 +25,7 @@ use lattice_core::application::ports::settings_port::SettingsImportOutcome;
 use lattice_core::application::ports::{merge_json_update, SettingsRepositoryPort};
 use lattice_core::application::services::credentials::CredentialKey;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::ErrorCode;
 use serde_json;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -132,7 +133,7 @@ impl SettingsRepository {
         let repository = Self::open(app_data_dir, Some(credentials)).await?;
         if let Err(error) = repository.migrate_legacy_secrets().await {
             tracing::warn!(
-                error_code = error.error_code(),
+                error_code = %ErrorCode::from(&error),
                 "Could not move auth header values to the keyring; the settings file keeps them and the move is retried at the next start"
             );
         }

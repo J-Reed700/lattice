@@ -33,7 +33,7 @@ impl LearningRepository {
         title: &str,
         content: &str,
     ) -> Result<(String, bool)> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let (journal_id, _) = ensure_memory_resources(&mut tx, program_id).await?;
         validate_memory_lesson(&mut tx, program_id, lesson_id, false).await?;
         if let Some(note_id) = sqlx::query_scalar::<_, String>(
@@ -42,10 +42,9 @@ impl LearningRepository {
         .bind(program_id)
         .bind(lesson_id)
         .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?
+        .await?
         {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok((note_id, false));
         }
         let note_id = uuid::Uuid::new_v4().to_string();
@@ -69,8 +68,8 @@ impl LearningRepository {
             .await?;
         sqlx::query("INSERT INTO learning_lesson_note_links(program_id,lesson_id,note_id,created_at) VALUES(?,?,?,?)")
             .bind(program_id).bind(lesson_id).bind(&note_id).bind(chrono::Utc::now().timestamp_millis())
-            .execute(&mut *tx).await.map_err(db)?;
-        tx.commit().await.map_err(db)?;
+            .execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok((note_id, true))
     }
 
@@ -80,7 +79,7 @@ impl LearningRepository {
         lesson_id: &str,
         drafts: &[crate::generation::GeneratedLearningCardDraft],
     ) -> Result<()> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         ensure_memory_resources(&mut tx, program_id).await?;
         validate_memory_lesson(&mut tx, program_id, lesson_id, true).await?;
         let now = chrono::Utc::now().timestamp_millis();
@@ -88,21 +87,21 @@ impl LearningRepository {
             validate_draft_sources(&mut tx, program_id, lesson_id, &draft.source_ids, true).await?;
             sqlx::query("INSERT INTO learning_card_drafts(id,program_id,lesson_id,question,answer,explanation,source_ids_json,origin,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'generated','pending',?,?)")
                 .bind(uuid::Uuid::new_v4().to_string()).bind(program_id).bind(lesson_id).bind(&draft.question).bind(&draft.answer).bind(&draft.explanation).bind(json(&draft.source_ids)?).bind(now).bind(now)
-                .execute(&mut *tx).await.map_err(db)?;
+                .execute(&mut *tx).await?;
         }
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     pub async fn save_manual_draft(
         &self,
         request: &SaveLearningCardDraftRequestDto,
     ) -> Result<String> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         ensure_memory_resources(&mut tx, &request.program_id).await?;
         validate_memory_lesson(&mut tx, &request.program_id, &request.lesson_id, true).await?;
         let existing_origin = if let Some(id) = request.draft_id.as_deref() {
             sqlx::query_scalar::<_, String>("SELECT origin FROM learning_card_drafts WHERE id=? AND program_id=? AND lesson_id=? AND status='pending'")
-                .bind(id).bind(&request.program_id).bind(&request.lesson_id).fetch_optional(&mut *tx).await.map_err(db)?
+                .bind(id).bind(&request.program_id).bind(&request.lesson_id).fetch_optional(&mut *tx).await?
         } else {
             None
         };
@@ -121,7 +120,7 @@ impl LearningRepository {
             Some(draft_id) => {
                 let result = sqlx::query("UPDATE learning_card_drafts SET question=?,answer=?,explanation=?,source_ids_json=?,updated_at=? WHERE id=? AND program_id=? AND lesson_id=? AND status='pending'")
                     .bind(request.question.trim()).bind(request.answer.trim()).bind(request.explanation.trim()).bind(source_json).bind(now).bind(draft_id).bind(&request.program_id).bind(&request.lesson_id)
-                    .execute(&mut *tx).await.map_err(db)?;
+                    .execute(&mut *tx).await?;
                 if result.rows_affected() != 1 {
                     return Err(AppError::NotFound(
                         "Editable learning card draft not found.".into(),
@@ -133,18 +132,18 @@ impl LearningRepository {
                 let draft_id = uuid::Uuid::new_v4().to_string();
                 sqlx::query("INSERT INTO learning_card_drafts(id,program_id,lesson_id,question,answer,explanation,source_ids_json,origin,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'manual','pending',?,?)")
                     .bind(&draft_id).bind(&request.program_id).bind(&request.lesson_id).bind(request.question.trim()).bind(request.answer.trim()).bind(request.explanation.trim()).bind(source_json).bind(now).bind(now)
-                    .execute(&mut *tx).await.map_err(db)?;
+                    .execute(&mut *tx).await?;
                 draft_id
             }
         };
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(draft_id)
     }
 
     pub async fn discard_card_draft(&self, program_id: &str, draft_id: &str) -> Result<()> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let result = sqlx::query("UPDATE learning_card_drafts SET status='discarded',updated_at=? WHERE id=? AND program_id=? AND status='pending'")
-            .bind(chrono::Utc::now().timestamp_millis()).bind(draft_id).bind(program_id).execute(&mut *tx).await.map_err(db)?;
+            .bind(chrono::Utc::now().timestamp_millis()).bind(draft_id).bind(program_id).execute(&mut *tx).await?;
         if result.rows_affected() == 0 {
             let status: Option<String> = sqlx::query_scalar(
                 "SELECT status FROM learning_card_drafts WHERE id=? AND program_id=?",
@@ -152,29 +151,28 @@ impl LearningRepository {
             .bind(draft_id)
             .bind(program_id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
             if status.as_deref() != Some("discarded") {
                 return Err(AppError::NotFound(
                     "Pending learning card draft not found.".into(),
                 ));
             }
         }
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     pub async fn accept_card_draft(&self, program_id: &str, draft_id: &str) -> Result<String> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let (_journal_id, deck_id) = ensure_memory_resources(&mut tx, program_id).await?;
         let row = sqlx::query("SELECT d.*,l.title lesson_title FROM learning_card_drafts d JOIN learning_lessons l ON l.id=d.lesson_id WHERE d.id=? AND d.program_id=?")
-            .bind(draft_id).bind(program_id).fetch_optional(&mut *tx).await.map_err(db)?
+            .bind(draft_id).bind(program_id).fetch_optional(&mut *tx).await?
             .ok_or_else(|| AppError::NotFound("Learning card draft not found.".into()))?;
         let status: String = row.get("status");
         if status == "accepted" {
-            let card_id: Option<String> = row.try_get("accepted_card_id").map_err(db)?;
+            let card_id: Option<String> = row.try_get("accepted_card_id")?;
             let card_id = card_id
                 .ok_or_else(|| AppError::NotFound("Accepted Study card was deleted.".into()))?;
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(card_id);
         }
         if status != "pending" {
@@ -195,8 +193,7 @@ impl LearningRepository {
             .bind(program_id)
             .bind(source_id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
+            .await?
             .ok_or_else(|| {
                 AppError::InvalidInput("Learning card refers to a missing source snapshot.".into())
             })?;
@@ -214,8 +211,7 @@ impl LearningRepository {
                 sqlx::query_scalar::<_, String>("SELECT file_path FROM documents WHERE id=?")
                     .bind(&document_id)
                     .fetch_optional(&mut *tx)
-                    .await
-                    .map_err(db)?
+                    .await?
                     .unwrap_or_default()
             } else {
                 String::new()
@@ -276,47 +272,45 @@ impl LearningRepository {
         let origin: String = row.get("origin");
         sqlx::query("INSERT INTO learning_card_origins(card_id,program_id,lesson_id,origin,source_ids_json,accepted_at) VALUES(?,?,?,?,?,?)")
             .bind(&card_id).bind(program_id).bind(&lesson_id).bind(&origin).bind(json(&source_ids)?).bind(now)
-            .execute(&mut *tx).await.map_err(db)?;
+            .execute(&mut *tx).await?;
         sqlx::query("UPDATE learning_card_drafts SET status='accepted',accepted_card_id=?,updated_at=? WHERE id=? AND program_id=? AND status='pending'")
-            .bind(&card_id).bind(now).bind(draft_id).bind(program_id).execute(&mut *tx).await.map_err(db)?;
-        tx.commit().await.map_err(db)?;
+            .bind(&card_id).bind(now).bind(draft_id).bind(program_id).execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(card_id)
     }
 
     pub async fn memory_state(&self, program_id: &str) -> Result<LearningMemoryState> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let exists: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_one(&mut *read)
-            .await
-            .map_err(db)?;
+            .await?;
         if exists == 0 {
             return Err(AppError::NotFound("Learning program not found.".into()));
         }
         let root = sqlx::query("SELECT journal_id,deck_id FROM learning_memory WHERE program_id=?")
             .bind(program_id)
             .fetch_optional(&mut *read)
-            .await
-            .map_err(db)?;
+            .await?;
         let (journal_id, deck_id) = match root {
             Some(r) => (
-                r.try_get::<Option<String>, _>("journal_id").map_err(db)?,
-                r.try_get::<Option<String>, _>("deck_id").map_err(db)?,
+                r.try_get::<Option<String>, _>("journal_id")?,
+                r.try_get::<Option<String>, _>("deck_id")?,
             ),
             None => (None, None),
         };
         let lesson_notes = sqlx::query("SELECT lesson_id,note_id FROM learning_lesson_note_links WHERE program_id=? ORDER BY rowid")
-            .bind(program_id).fetch_all(&mut *read).await.map_err(db)?.into_iter().map(|r| (r.get("lesson_id"),r.get("note_id"))).collect();
+            .bind(program_id).fetch_all(&mut *read).await?.into_iter().map(|r| (r.get("lesson_id"),r.get("note_id"))).collect();
         let drafts = sqlx::query("SELECT * FROM learning_card_drafts WHERE program_id=? AND status='pending' ORDER BY created_at,id")
-            .bind(program_id).fetch_all(&mut *read).await.map_err(db)?.into_iter().map(|r| Ok(LearningCardDraftDto {
+            .bind(program_id).fetch_all(&mut *read).await?.into_iter().map(|r| Ok(LearningCardDraftDto {
                 id:r.get("id"),lesson_id:r.get("lesson_id"),question:r.get("question"),answer:r.get("answer"),explanation:r.get("explanation"),
                 source_ids:decode(r.get("source_ids_json"))?,origin:parse_draft_origin(r.get("origin"))?,created_at:r.get("created_at"),
             })).collect::<Result<Vec<_>>>()?;
         let accepted_cards = sqlx::query("SELECT card_id,lesson_id,origin,source_ids_json,accepted_at FROM learning_card_origins WHERE program_id=? ORDER BY accepted_at,card_id")
-            .bind(program_id).fetch_all(&mut *read).await.map_err(db)?.into_iter().map(|r| Ok(LearningCardOriginDto {
+            .bind(program_id).fetch_all(&mut *read).await?.into_iter().map(|r| Ok(LearningCardOriginDto {
                 card_id:r.get("card_id"),lesson_id:r.get("lesson_id"),origin:parse_draft_origin(r.get("origin"))?,source_ids:decode(r.get("source_ids_json"))?,accepted_at:r.get("accepted_at"),
             })).collect::<Result<Vec<_>>>()?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         Ok(LearningMemoryState {
             journal_id,
             deck_id,
@@ -344,7 +338,7 @@ async fn validate_memory_lesson(
     require_ready: bool,
 ) -> Result<()> {
     let row = sqlx::query("SELECT p.status,l.preparation FROM learning_programs p JOIN learning_lessons l ON l.program_id=p.id WHERE p.id=? AND l.id=?")
-        .bind(program_id).bind(lesson_id).fetch_optional(&mut *tx).await.map_err(db)?
+        .bind(program_id).bind(lesson_id).fetch_optional(&mut *tx).await?
         .ok_or_else(|| AppError::NotFound("Lesson does not belong to this learning program.".into()))?;
     if row.get::<String, _>("status") != "active" {
         return Err(AppError::InvalidInput(
@@ -367,7 +361,7 @@ async fn validate_draft_sources(
     generated: bool,
 ) -> Result<()> {
     let cited_blocks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM learning_blocks WHERE lesson_id=? AND json_array_length(source_ids_json)>0")
-        .bind(lesson_id).fetch_one(&mut *tx).await.map_err(db)?;
+        .bind(lesson_id).fetch_one(&mut *tx).await?;
     if generated && source_ids.is_empty() && cited_blocks > 0 {
         return Err(AppError::InvalidInput(
             "Generated card drafts must cite lesson sources.".into(),
@@ -385,8 +379,7 @@ async fn validate_draft_sources(
                 .bind(program_id)
                 .bind(source_id)
                 .fetch_one(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         if exists == 0 {
             return Err(AppError::InvalidInput(
                 "Learning card cites a source outside this program.".into(),
@@ -394,7 +387,7 @@ async fn validate_draft_sources(
         }
         if generated {
             let references: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM learning_blocks WHERE lesson_id=? AND EXISTS (SELECT 1 FROM json_each(learning_blocks.source_ids_json) WHERE value=?)) + (SELECT count(*) FROM learning_assessment_candidates WHERE lesson_id=? AND review_status<>'dropped' AND EXISTS (SELECT 1 FROM json_each(learning_assessment_candidates.source_version_ids_json) WHERE value=?))")
-                .bind(lesson_id).bind(source_id).bind(lesson_id).bind(source_id).fetch_one(&mut *tx).await.map_err(db)?;
+                .bind(lesson_id).bind(source_id).bind(lesson_id).bind(source_id).fetch_one(&mut *tx).await?;
             if references == 0 {
                 return Err(AppError::InvalidInput(
                     "Generated card sources must be referenced by its lesson.".into(),
@@ -411,13 +404,12 @@ pub(crate) async fn ensure_memory_resources(
 ) -> Result<(String, String)> {
     // First write serializes concurrent ensures before checking resource links.
     sqlx::query("INSERT OR IGNORE INTO learning_memory(program_id,journal_id,deck_id,created_at) VALUES(?,NULL,NULL,?)")
-        .bind(program_id).bind(chrono::Utc::now().timestamp_millis()).execute(&mut **tx).await.map_err(db)?;
+        .bind(program_id).bind(chrono::Utc::now().timestamp_millis()).execute(&mut **tx).await?;
     let program =
         sqlx::query("SELECT title,goal,status,model_name FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut **tx)
-            .await
-            .map_err(db)?
+            .await?
             .ok_or_else(|| AppError::NotFound("Learning program not found.".into()))?;
     if program.get::<String, _>("status") != "active" {
         return Err(AppError::InvalidInput(
@@ -428,15 +420,11 @@ pub(crate) async fn ensure_memory_resources(
     let root = sqlx::query("SELECT journal_id,deck_id FROM learning_memory WHERE program_id=?")
         .bind(program_id)
         .fetch_one(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
     let base_title: String = program.get("title");
     let safe_id: String = program_id.chars().take(8).collect();
 
-    let journal_id: String = match root
-        .try_get::<Option<String>, _>("journal_id")
-        .map_err(db)?
-    {
+    let journal_id: String = match root.try_get::<Option<String>, _>("journal_id")? {
         Some(id) => id,
         None => {
             let id = format!("journal_learning_{program_id}");
@@ -444,25 +432,23 @@ pub(crate) async fn ensure_memory_resources(
             let now = chrono::Utc::now().to_rfc3339();
             sqlx::query("INSERT OR IGNORE INTO journals(id,name,description,icon,is_archived,sort_order,created_at,updated_at) VALUES(?,?,?,?,0,0,?,?)")
                 .bind(&id).bind(&name).bind("Learning Studio notebook").bind("📖").bind(&now).bind(&now)
-                .execute(&mut **tx).await.map_err(db)?;
+                .execute(&mut **tx).await?;
             let canonical_id: String =
                 sqlx::query_scalar("SELECT id FROM journals WHERE id=? OR name=?")
                     .bind(&id)
                     .bind(&name)
                     .fetch_one(&mut **tx)
-                    .await
-                    .map_err(db)?;
+                    .await?;
             sqlx::query("UPDATE learning_memory SET journal_id=? WHERE program_id=?")
                 .bind(&canonical_id)
                 .bind(program_id)
                 .execute(&mut **tx)
-                .await
-                .map_err(db)?;
+                .await?;
             canonical_id
         }
     };
 
-    let deck_id: String = match root.try_get::<Option<String>, _>("deck_id").map_err(db)? {
+    let deck_id: String = match root.try_get::<Option<String>, _>("deck_id")? {
         Some(id) => id,
         None => {
             let id = format!("learning-studio-{program_id}");
@@ -480,8 +466,7 @@ pub(crate) async fn ensure_memory_resources(
                 .bind(&id)
                 .bind(program_id)
                 .execute(&mut **tx)
-                .await
-                .map_err(db)?;
+                .await?;
             id
         }
     };

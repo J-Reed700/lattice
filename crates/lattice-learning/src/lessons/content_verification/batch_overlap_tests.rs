@@ -53,7 +53,7 @@ impl LLMPort for Flaky {
         let mut replies = Vec::new();
         for prompt in fixture_prompts(request) {
             let only_last = prompt.starts_with("Extract lesson claims.")
-                && context(&prompt)["requestedIndices"] == json!([4]);
+                && fixture_task(&prompt).unwrap()["requestedIndices"] == json!([4]);
             let reply = self.inner.respond(&prompt).await?;
             if only_last && self.asked.fetch_add(1, Ordering::SeqCst) < self.bad {
                 replies.push(json!({"units":{}}).to_string());
@@ -120,7 +120,7 @@ async fn a_batch_with_a_malformed_first_answer_is_asked_once_more() -> Result<()
 }
 
 #[tokio::test]
-async fn a_batch_failing_twice_names_its_sections_and_the_others_are_kept() -> Result<()> {
+async fn a_batch_failing_twice_fails_the_inventory_and_the_other_batches_are_kept() -> Result<()> {
     let pool = crate::tests::pool().await?;
     let db = Database::new(pool.clone());
     let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
@@ -131,7 +131,11 @@ async fn a_batch_failing_twice_names_its_sections_and_the_others_are_kept() -> R
             .await
             .err()
             .unwrap();
-        assert!(error.to_string().contains("sections 5"), "{error}");
+        assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error}");
+        assert!(
+            error.to_string().contains("Unit 4 needs an inventory"),
+            "{error}"
+        );
         assert_eq!(
             sorted(&model.inner.extracted_sections),
             vec![vec![0, 1, 2, 3], vec![4], vec![4]]

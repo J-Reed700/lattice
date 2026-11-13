@@ -6,7 +6,8 @@
 use super::*;
 use async_trait::async_trait;
 use lattice_core::domain::learning::acceptance::{
-    decide, End, NodeId, Outcome, Position, StandardPolicy, Step, Taken, Then, Walked, CLASSES,
+    decide, start, End, NodeId, Outcome, Position, StandardPolicy, Step, Taken, Then, Walked,
+    CLASSES,
 };
 use std::collections::VecDeque;
 
@@ -36,6 +37,7 @@ impl Scripted {
                 changed_class: false,
                 reasked: false,
                 node: NodeId(node),
+                rewrites_left: 2,
             }),
             script: outcomes.into_iter().collect(),
             stuck: false,
@@ -102,12 +104,12 @@ struct Call {
 enum Ended {
     Published,
     Held(usize),
-    Stopped(String),
+    Stopped(StopCode),
     /// Each statement that waited, the node it waited at and that node's
     /// step, and whether research reached nothing.
     NoProgress {
         waiting: Vec<(String, &'static str, Step)>,
-        unreached: bool,
+        unresearched: Option<Unresearched>,
     },
 }
 
@@ -243,11 +245,6 @@ impl Review for ScriptedReview {
         Ok(())
     }
 
-    async fn take_back(&mut self, _policy: &dyn AcceptancePolicy) -> Result<Option<String>> {
-        self.log("take_back", Vec::new());
-        Ok(None)
-    }
-
     async fn identify(&mut self, _policy: &dyn AcceptancePolicy) -> Result<()> {
         self.log("identify", Vec::new());
         Ok(())
@@ -289,7 +286,7 @@ impl Review for ScriptedReview {
         if !due || stuck {
             self.log("research", Vec::new());
             return Ok(if due {
-                Researched::Unreached
+                Researched::Unresearched(Unresearched::Unreached)
             } else {
                 Researched::Nothing
             });
@@ -314,7 +311,7 @@ impl Review for ScriptedReview {
     fn decide(&self, policy: &dyn AcceptancePolicy, stopped: &[ClaimId]) -> Decision {
         if !stopped.is_empty() {
             return Decision::Stop(Box::new(StopReason {
-                code: "checker_unreadable".into(),
+                code: StopCode::CheckerUnreadable,
                 message: String::new(),
                 fix: String::new(),
                 at: 0,
@@ -385,12 +382,8 @@ impl Review for ScriptedReview {
         Ok(Settled::Done)
     }
 
-    async fn publish_unverified(
-        &mut self,
-        _policy: &dyn AcceptancePolicy,
-        unsettled: Unsettled,
-    ) -> Result<usize> {
-        self.log("publish_unverified", Vec::new());
+    async fn publish_unsettled(&mut self, unsettled: Unsettled) -> Result<usize> {
+        self.log("publish_unsettled", Vec::new());
         let claims = match unsettled {
             Unsettled::Waiting(claims) | Unsettled::Unreadable(claims) => claims,
             Unsettled::AwaitingUser => {
@@ -442,12 +435,15 @@ impl Review for ScriptedReview {
             Verdict::Publish => Ended::Published,
             Verdict::Hold { claims, .. } => Ended::Held(claims),
             Verdict::Stop(reason) => Ended::Stopped(reason.code),
-            Verdict::NoProgress { waiting, unreached } => Ended::NoProgress {
+            Verdict::NoProgress {
+                waiting,
+                unresearched,
+            } => Ended::NoProgress {
                 waiting: waiting
                     .into_iter()
                     .map(|waits| (waits.claim.0, waits.node, waits.step))
                     .collect(),
-                unreached,
+                unresearched,
             },
         })
     }
@@ -466,12 +462,7 @@ struct Path {
 fn paths(policy: &dyn AcceptancePolicy) -> Vec<Path> {
     let mut found = Vec::new();
     for class in CLASSES {
-        let entry = Position {
-            class,
-            changed_class: false,
-            reasked: false,
-            node: policy.graph(class).entry(),
-        };
+        let entry = start(policy, class);
         extend(policy, (class, entry), &mut Vec::new(), &mut found);
     }
     found
@@ -511,7 +502,7 @@ fn after_the_mark(review: &ScriptedReview) -> Vec<&'static str> {
     let marked = review
         .calls
         .iter()
-        .position(|call| call.phase == "publish_unverified")
+        .position(|call| call.phase == "publish_unsettled")
         .expect("the round marked statements");
     review.calls[marked + 1..]
         .iter()
@@ -578,7 +569,7 @@ async fn a_round_that_moves_nothing_stops_naming_what_each_statement_waits_for()
                 ("unreached".to_owned(), "s.research", Step::Research),
                 ("deferred".to_owned(), "s.recite", Step::Recite),
             ],
-            unreached: true,
+            unresearched: Some(Unresearched::Unreached),
         }
     );
     assert_eq!(review.rounds, 3);
@@ -671,7 +662,7 @@ async fn a_round_that_cannot_mark_what_waits_stops_as_it_did() {
         ended,
         Ended::NoProgress {
             waiting: vec![("deferred".to_owned(), "s.recite", Step::Recite)],
-            unreached: false,
+            unresearched: None,
         }
     );
     assert!(review.unverified.is_empty());
@@ -696,7 +687,7 @@ async fn a_claim_the_machine_ended_whose_sentence_stands_is_published_not_verifi
     let standing = || {
         Some((
             StopReason {
-                code: "ended_claim_stands".into(),
+                code: StopCode::EndedClaimStands,
                 message: String::new(),
                 fix: String::new(),
                 at: 0,
@@ -738,7 +729,7 @@ async fn a_round_reads_then_researches_then_recites_then_repairs_and_settles_onc
         [
             Outcome::Unproven,
             Outcome::FoundNothing,
-            Outcome::Unproven,
+            Outcome::Refuted,
             Outcome::Rewritten,
             Outcome::Stands,
         ],
@@ -762,7 +753,6 @@ async fn a_round_reads_then_researches_then_recites_then_repairs_and_settles_onc
             ("sync", vec![]),
             ("resume", vec![]),
             ("extract", vec![]),
-            ("take_back", vec![]),
             ("identify", vec![]),
             ("read", vec![step("rewritten", "s.read")]),
             ("unmend", vec![]),

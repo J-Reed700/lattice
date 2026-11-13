@@ -15,7 +15,7 @@ use crate::drills::dto::{
 use crate::drills::jobs::{spec_of, DRILL_BUILD};
 use crate::drills::review::{self, CourseDrill};
 use crate::drills::spec::DrillSpec;
-use crate::persistence::{db, encode, now};
+use crate::persistence::{encode, now};
 use crate::tests::pool;
 use lattice_core::domain::learning::drills::{Material, LANGUAGES};
 use lattice_core::shared::error::{AppError, Result};
@@ -55,7 +55,7 @@ async fn in_language(pool: &SqlitePool, id: &str, language: &str) -> Result<()> 
         .execute(pool)
         .await
         .map(drop)
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// Makes the stocked drill `id` a drill on a passage.
@@ -68,7 +68,7 @@ async fn on_a_passage(pool: &SqlitePool, id: &str) -> Result<()> {
     .execute(pool)
     .await
     .map(drop)
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// Gives the lesson a schedule that makes it due at `due_at`.
@@ -85,7 +85,7 @@ async fn schedule_lesson(
         .execute(pool)
         .await
         .map(drop)
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 async fn builds(pool: &SqlitePool) -> Result<i64> {
@@ -93,7 +93,7 @@ async fn builds(pool: &SqlitePool) -> Result<i64> {
         .bind(DRILL_BUILD)
         .fetch_one(pool)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// What a start with no lesson comes to.
@@ -146,8 +146,7 @@ async fn a_new_course_lists_every_lesson_as_new_by_module_with_the_current_lesso
         sqlx::query_as("SELECT id,title FROM learning_modules WHERE program_id=? ORDER BY ordinal")
             .bind(&program)
             .fetch_all(&pool)
-            .await
-            .map_err(db)?;
+            .await?;
     let titles = [SPACING_LESSON, SLEEP_LESSON, "Lesson 1-0", "Lesson 1-1"];
     let lesson = |position: usize| unseen(&lessons[position], titles[position], position == 0);
 
@@ -496,8 +495,7 @@ async fn a_graded_attempt_is_listed_with_its_score() -> Result<()> {
         .bind(&program)
         .bind(&lessons[0])
         .execute(&waiting.pool)
-        .await
-        .map_err(db)?;
+        .await?;
 
     let revealed = review::result(&waiting.db, &waiting.attempt)
         .await?

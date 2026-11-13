@@ -130,7 +130,6 @@ impl CodeMaterial<'_> {
             prompt(language, spec.lines, &brief),
             schema(self.runner.is_some()),
             budget::code(spec.lines, self.runner.is_some()),
-            "low",
         );
         let answer = ask_until_suite_passes(
             ctx.llm,

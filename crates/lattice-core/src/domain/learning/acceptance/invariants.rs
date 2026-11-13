@@ -3,10 +3,10 @@
 use std::collections::HashSet;
 
 use super::ceiling::Ceiling;
-use super::walk::{follow, start, Moved};
+use super::walk::{follow, next_rewrite, onward, start, Moved};
 use super::{
-    AcceptancePolicy, End, Graph, Next, Node, NodeId, Outcome, Position, Reading, Step, Target,
-    CLASSES,
+    AcceptancePolicy, End, Graph, Next, Node, NodeId, Otherwise, Outcome, Position, Reading, Step,
+    Target, CLASSES,
 };
 use crate::domain::learning::claim_review::Class;
 
@@ -50,6 +50,9 @@ pub enum Violation {
     /// 8: a rewrite's successor can be rewritten again, or can change class
     /// into an entry.
     RewrittenTwice { class: Class, node: NodeId },
+    /// 9: a rewrite or a cut is reachable from an entry without crossing an
+    /// edge on `Refuted`.
+    RewriteWithoutRefutation { class: Class, node: NodeId },
 }
 
 /// Every invariant of §2.5 that `policy` breaks, each once. The ceiling is
@@ -67,6 +70,7 @@ pub fn violations(policy: &dyn AcceptancePolicy) -> Vec<Violation> {
     found.extend(unretried_rewrites(policy));
     found.extend(foreign_ends(policy));
     found.extend(rewritten_twice(policy));
+    found.extend(rewrites_without_refutation(policy));
     if ends {
         let mut ceiling = Ceiling::new(policy);
         found.extend(ceiling_rises(policy, &mut |at: Position| ceiling.most(at)));
@@ -88,11 +92,16 @@ fn dedupe(all: Vec<Violation>) -> Vec<Violation> {
 fn nodes_of(next: Next) -> Vec<NodeId> {
     match next {
         Next::Go(Target::Node(id)) => vec![id],
-        Next::FirstChange {
-            change: Target::Node(id),
-            otherwise,
-        } => vec![id, otherwise],
-        Next::FirstChange { otherwise, .. } => vec![otherwise],
+        Next::FirstChange { change, otherwise } => {
+            let mut nodes = Vec::new();
+            if let Target::Node(id) = change {
+                nodes.push(id);
+            }
+            if let Otherwise::Node(id) = otherwise {
+                nodes.push(id);
+            }
+            nodes
+        }
         Next::Go(Target::Enter(_) | Target::EnterAfterRewrite(_)) | Next::End(_) => Vec::new(),
     }
 }
@@ -116,14 +125,11 @@ fn reachable(policy: &dyn AcceptancePolicy) -> Vec<Position> {
             continue;
         }
         found.push(at);
-        let Some(node) = policy.graph(at.class).node(at.node) else {
+        if policy.graph(at.class).node(at.node).is_none() {
             continue;
-        };
-        for &(_, next) in node.edges() {
-            if let Moved::To(to) = follow(policy, at, next) {
-                stack.push(to);
-            }
         }
+        stack.extend(onward(policy, at));
+        stack.extend(next_rewrite(policy, at));
     }
     found
 }
@@ -282,8 +288,8 @@ fn reads_the_passages(policy: &dyn AcceptancePolicy, at: Position, next: Next) -
             Step::Rewrite(_) | Step::Cut => return false,
             _ => {}
         }
-        for &(_, onward) in node.edges() {
-            match follow(policy, here, onward) {
+        for &(_, edge) in node.edges() {
+            match follow(policy, here, edge) {
                 Moved::To(to) => stack.push(to),
                 Moved::Ended(_) | Moved::Illegal => return false,
             }
@@ -397,21 +403,26 @@ fn retry_of(node: &Node) -> Option<NodeId> {
     }
 }
 
-/// 6: a class's ends are its own, or Removed.
+/// 6: a class's ends are its own, or Removed or Unverified.
 fn foreign_ends(policy: &dyn AcceptancePolicy) -> Vec<Violation> {
     let mut found = Vec::new();
     for class in CLASSES {
         for node in policy.graph(class).nodes() {
             for &(_, next) in node.edges() {
-                match next {
-                    Next::End(end) if !is_own(class, end) => {
-                        found.push(Violation::ForeignEnd {
-                            class,
-                            node: node.id(),
-                            end,
-                        });
-                    }
-                    _ => {}
+                let end = match next {
+                    Next::End(end)
+                    | Next::FirstChange {
+                        otherwise: Otherwise::End(end),
+                        ..
+                    } => end,
+                    _ => continue,
+                };
+                if !is_own(class, end) {
+                    found.push(Violation::ForeignEnd {
+                        class,
+                        node: node.id(),
+                        end,
+                    });
                 }
             }
         }
@@ -426,7 +437,7 @@ fn is_own(class: Class, end: End) -> bool {
             | (Class::Reasoning, End::Consistent)
             | (Class::Common, End::GeneralKnowledge)
             | (Class::Internal, End::NotAClaim)
-            | (_, End::Removed { .. })
+            | (_, End::Removed { .. } | End::Unverified)
     )
 }
 
@@ -445,6 +456,7 @@ fn rewritten_twice(policy: &dyn AcceptancePolicy) -> Vec<Violation> {
                     changed_class,
                     reasked,
                     node: policy.graph(class).after_rewrite(),
+                    rewrites_left: 0,
                 });
             }
         }
@@ -476,6 +488,42 @@ fn rewritten_twice(policy: &dyn AcceptancePolicy) -> Vec<Violation> {
     found
 }
 
+/// 9: no rewrite or cut is reachable from a class's entry without crossing an
+/// edge on `Refuted`: only a statement shown false is rewritten or cut. A
+/// reading that finds the sources silent says nothing is wrong.
+fn rewrites_without_refutation(policy: &dyn AcceptancePolicy) -> Vec<Violation> {
+    let mut found = Vec::new();
+    let mut seen = HashSet::new();
+    let mut stack: Vec<Position> = CLASSES
+        .iter()
+        .rev()
+        .map(|&class| start(policy, class))
+        .collect();
+    while let Some(at) = stack.pop() {
+        if !seen.insert(at) {
+            continue;
+        }
+        let Some(node) = policy.graph(at.class).node(at.node) else {
+            continue;
+        };
+        if matches!(node.step, Step::Rewrite(_) | Step::Cut) {
+            found.push(Violation::RewriteWithoutRefutation {
+                class: at.class,
+                node: at.node,
+            });
+        }
+        for &(outcome, next) in node.edges() {
+            if outcome == Outcome::Refuted {
+                continue;
+            }
+            if let Moved::To(to) = follow(policy, at, next) {
+                stack.push(to);
+            }
+        }
+    }
+    found
+}
+
 /// Whether `next`, taken from `at`, changes class at an entry.
 fn enters_an_entry(at: Position, next: Next) -> bool {
     match next {
@@ -489,8 +537,9 @@ fn enters_an_entry(at: Position, next: Next) -> bool {
 }
 
 /// 7: along every edge from a position, in either state of the re-ask,
-/// `cost(n) + most(m) <= most(n)`, and so for using the re-ask. `most` is
-/// the ceiling being held to it.
+/// `cost(n) + most(m) <= most(n)`, and so for using the re-ask and for the
+/// successor a further rewrite of the sentence gives, waiting or ended. `most`
+/// is the ceiling being held to it.
 pub(super) fn ceiling_rises(
     policy: &dyn AcceptancePolicy,
     most: &mut dyn FnMut(Position) -> u32,
@@ -504,10 +553,13 @@ pub(super) fn ceiling_rises(
             };
             let here = most(at);
             let mut ways: Vec<u32> = Vec::new();
-            for &(_, next) in node.edges() {
-                if let Moved::To(to) = follow(policy, at, next) {
-                    ways.push(node.calls.saturating_add(most(to)));
-                }
+            ways.extend(
+                onward(policy, at)
+                    .into_iter()
+                    .map(|to| node.calls.saturating_add(most(to))),
+            );
+            if let Some(rewritten) = next_rewrite(policy, at) {
+                ways.push(most(rewritten));
             }
             if !reasked && matches!(node.step, Step::Read(_)) {
                 let again = most(Position {

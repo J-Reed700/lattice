@@ -10,7 +10,6 @@ use crate::drills::bank::queue_build;
 use crate::drills::jobs::{drill_job_config, judge_grader, spec_of, DrillBuildWorker, DRILL_BUILD};
 use crate::embedded_runtime::BuiltinRuntimes;
 use crate::generation_jobs::pinned_for_test;
-use crate::persistence::db;
 use crate::practice::practice_tests::text_length_rules;
 use crate::tests::pool;
 use async_trait::async_trait;
@@ -46,7 +45,7 @@ async fn drills(pool: &SqlitePool) -> Result<i64> {
     sqlx::query_scalar("SELECT count(*) FROM learning_drills")
         .fetch_one(pool)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 #[test]

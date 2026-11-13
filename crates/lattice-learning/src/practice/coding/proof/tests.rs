@@ -190,10 +190,7 @@ async fn a_cancelled_build_stops_before_running_anything() {
         cancel,
     )
     .await;
-    assert!(
-        matches!(result, Err(AppError::InvalidState(_))),
-        "{result:?}"
-    );
+    assert!(matches!(result, Err(AppError::Cancelled(_))), "{result:?}");
     assert!(runner.codes().is_empty());
 }
 

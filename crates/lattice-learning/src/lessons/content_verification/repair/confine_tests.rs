@@ -6,12 +6,13 @@ fn sentence(field: &str, quote: &str) -> Protected {
         unit: 0,
         field: field.into(),
         quote: quote.into(),
+        released: false,
     }
 }
 
 const VERIFIED: &str = "Water boils at 100 °C at sea level.";
 const FAILED: &str = "Salt lowers the boiling point.";
-const OTHER: &str = "Stir while it heats.";
+const OTHER: &str = "Stir the water while it heats.";
 
 fn section(body: &str) -> Value {
     json!({ "kind": "explanation", "title": "Boiling", "body": body })
@@ -78,7 +79,7 @@ fn confinement_reverts_changes_outside_the_failed_sentences_and_keeps_protected_
 /// What a correction is told when it was put back for a change it shared with
 /// the sentences `passed`.
 fn put_back_for(passed: &str) -> String {
-    format!("The correction also changed a sentence that passed its check (\"{passed}\"), so it was put back; change only this sentence.")
+    format!("The correction also changed a sentence it was not asked to change (\"{passed}\"), so it was put back; change only this sentence.")
 }
 
 #[test]
@@ -268,4 +269,95 @@ fn a_failed_sentence_is_repaired_beside_verified_ones_in_the_same_passage() {
     };
     assert_eq!(back.target, failed);
     assert_eq!(back.reason, put_back_for(PASSAGE));
+}
+
+#[test]
+fn a_new_sentence_equal_to_one_the_section_already_has_is_not_kept() {
+    let before = section(&format!("{VERIFIED} {FAILED} {OTHER}"));
+    let repeated = section(&format!("{VERIFIED} {FAILED} {VERIFIED} {OTHER}"));
+    let confined = confine(&before, &repeated, &[sentence("body", FAILED)], &[])
+        .unwrap()
+        .section;
+    assert_eq!(confined["body"], format!("{VERIFIED} {FAILED} {OTHER}"));
+
+    let with_note = |body: &str| json!({"kind":"explanation","body":body,"note":OTHER});
+    let before = with_note(&format!("{VERIFIED} {FAILED}"));
+    let repeated = with_note(&format!("{VERIFIED} {FAILED} {OTHER}"));
+    let confined = confine(&before, &repeated, &[sentence("body", FAILED)], &[])
+        .unwrap()
+        .section;
+    assert_eq!(confined["body"], format!("{VERIFIED} {FAILED}"));
+}
+
+const KETTLE: &str = "The kettle sits on the top shelf by the window.";
+const ROPE: &str = "A long rope hangs on the hook beside the kettle.";
+const BEADS: &str = "Glass beads fill the jar on the lowest shelf.";
+
+fn cited(first: &str, second: &str) -> Value {
+    json!({
+        "kind": "explanation",
+        "body": format!("{KETTLE} {ROPE} {BEADS}"),
+        "citations": [
+            {"sentence": first, "sourceIndex": 0, "quote": "a line about it"},
+            {"sentence": second, "sourceIndex": 0, "quote": "another line about it"},
+        ],
+    })
+}
+
+/// `value` and everything under it as targets, a string by its whole text.
+fn whole(value: &Value, path: &str, targets: &mut Vec<Protected>) {
+    targets.push(sentence(path, value.as_str().unwrap_or_default()));
+    match value {
+        Value::Object(fields) => fields
+            .iter()
+            .for_each(|(key, value)| whole(value, &format!("{path}/{key}"), targets)),
+        Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .for_each(|(at, value)| whole(value, &format!("{path}/{at}"), targets)),
+        _ => {}
+    }
+}
+
+fn citation_targets(section: &Value) -> Vec<Protected> {
+    let mut targets = Vec::new();
+    if let Some(citations) = section.get("citations") {
+        whole(citations, "citations", &mut targets);
+    }
+    targets
+}
+
+#[test]
+fn citations_that_name_other_sentences_of_the_body_are_kept_when_a_repair_shifts_them() {
+    let before = cited(KETTLE, ROPE);
+    let repaired = cited(ROPE, BEADS);
+    let confined = confine(&before, &repaired, &citation_targets(&before), &[])
+        .unwrap()
+        .section;
+    assert_eq!(confined["citations"], repaired["citations"]);
+    assert_eq!(confined["citations"][0]["sentence"], ROPE);
+    assert_eq!(confined["citations"][1]["sentence"], BEADS);
+}
+
+#[test]
+fn citations_no_target_names_stand_as_they_were() {
+    let before = cited(KETTLE, ROPE);
+    let repaired = cited(ROPE, BEADS);
+    let confined = confine(&before, &repaired, &[], &[]).unwrap().section;
+    assert_eq!(confined["citations"], before["citations"]);
+}
+
+#[test]
+fn a_citation_that_names_another_sentence_of_the_body_in_place_is_kept() {
+    let before = json!({
+        "kind": "explanation",
+        "body": format!("{KETTLE} {ROPE}"),
+        "citations": [{"sentence": KETTLE, "sourceIndex": 0, "quote": "a line about it"}],
+    });
+    let mut repaired = before.clone();
+    repaired["citations"][0]["sentence"] = json!(ROPE);
+    let confined = confine(&before, &repaired, &citation_targets(&before), &[])
+        .unwrap()
+        .section;
+    assert_eq!(confined["citations"][0]["sentence"], ROPE);
 }

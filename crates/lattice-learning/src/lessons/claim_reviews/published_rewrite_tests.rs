@@ -138,7 +138,7 @@ fn old() -> String {
 fn a_claim_on_an_unchanged_sentence_is_kept() {
     let old = old();
     let new = format!("{A} {B} {C} D four is added.");
-    let plan = plan(&[body_claim("b", B, &old)], 0, "body", &old, &new);
+    let plan = plan(&[body_claim("b", B, &old)], 0, true, "body", &old, &new);
     assert_eq!(ids(&plan.kept), ["b"]);
     assert!(plan.edited.is_empty() && plan.removed.is_empty());
 }
@@ -147,7 +147,7 @@ fn a_claim_on_an_unchanged_sentence_is_kept() {
 fn a_claim_on_a_changed_sentence_is_edited_with_the_new_sentence_as_its_successor() {
     let old = old();
     let new = format!("{A} B is now different. {C}");
-    let plan = plan(&[body_claim("b", B, &old)], 0, "body", &old, &new);
+    let plan = plan(&[body_claim("b", B, &old)], 0, true, "body", &old, &new);
     assert_eq!(plan.written.len(), 1);
     assert_eq!(plan.written[0].text, "B is now different.");
     assert_eq!(plan.edited.len(), 1);
@@ -164,7 +164,7 @@ fn two_claims_on_one_changed_sentence_both_go_to_it() {
         body_claim("one", B, &old),
         body_claim("two", "two is second", &old),
     ];
-    let plan = plan(&claims, 0, "body", &old, &new);
+    let plan = plan(&claims, 0, true, "body", &old, &new);
     assert_eq!(plan.written.len(), 1);
     let edited: Vec<(&str, usize)> = plan
         .edited
@@ -178,7 +178,7 @@ fn two_claims_on_one_changed_sentence_both_go_to_it() {
 fn a_claim_on_a_deleted_sentence_is_removed() {
     let old = old();
     let new = format!("{A} {C}");
-    let plan = plan(&[body_claim("b", B, &old)], 0, "body", &old, &new);
+    let plan = plan(&[body_claim("b", B, &old)], 0, true, "body", &old, &new);
     assert_eq!(ids(&plan.removed), ["b"]);
     assert!(plan.kept.is_empty() && plan.edited.is_empty() && plan.written.is_empty());
 }
@@ -190,7 +190,7 @@ fn a_claim_over_a_kept_and_a_deleted_sentence_is_removed() {
     let across = format!("{A} {B}");
     // A statement sharing no word with either sentence keeps the whole quote.
     let both = stating("both", "body", 0, &across, "", &old);
-    let plan = plan(&[both], 0, "body", &old, &new);
+    let plan = plan(&[both], 0, true, "body", &old, &new);
     assert_eq!(ids(&plan.removed), ["both"]);
     assert!(plan.kept.is_empty() && plan.edited.is_empty());
 }
@@ -199,7 +199,7 @@ fn a_claim_over_a_kept_and_a_deleted_sentence_is_removed() {
 fn every_new_sentence_is_written_once_at_its_place_in_the_new_text() {
     let old = old();
     let new = format!("{A} X is new. Y is also new. {B} {C} Z comes last.");
-    let plan = plan(&[], 0, "body", &old, &new);
+    let plan = plan(&[], 0, true, "body", &old, &new);
     let written: Vec<(&str, &str)> = plan
         .written
         .iter()
@@ -245,7 +245,7 @@ fn a_claim_already_removed_or_edited_or_in_another_section_or_field_is_left_out(
         claim("other-section", "body", 1, B, &old),
         claim("other-field", "title", 0, B, &old),
     ];
-    let plan = plan(&claims, 0, "body", &old, &new);
+    let plan = plan(&claims, 0, true, "body", &old, &new);
     assert!(plan.kept.is_empty(), "{plan:?}");
     assert!(plan.edited.is_empty(), "{plan:?}");
     assert!(plan.removed.is_empty(), "{plan:?}");
@@ -257,7 +257,7 @@ fn a_claim_whose_sentence_is_not_in_the_text_is_kept() {
     let new = format!("{A} {C}");
     let missing = "Not in the text.";
     let elsewhere = claim("lost", "body", 0, missing, missing);
-    let plan = plan(&[elsewhere], 0, "body", &old, &new);
+    let plan = plan(&[elsewhere], 0, true, "body", &old, &new);
     assert_eq!(ids(&plan.kept), ["lost"]);
 }
 
@@ -267,6 +267,7 @@ fn a_claim_on_the_title_field_follows_the_title_text() {
     let plan = plan(
         &[claim("t", "title", 0, title, title)],
         0,
+        true,
         "title",
         title,
         "Boiling is not a phase change.",
@@ -288,7 +289,7 @@ fn a_claim_on_a_choices_reason_is_an_answer_key_claim_edited_when_that_reason_is
     )
     .unwrap();
 
-    let plan = plan(&[claim], 2, "rationales/1", &old, new);
+    let plan = plan(&[claim], 2, false, "rationales/1", &old, new);
 
     assert_eq!(plan.edited.len(), 1);
     assert_eq!(plan.edited[0].0, ClaimId("reason".into()));

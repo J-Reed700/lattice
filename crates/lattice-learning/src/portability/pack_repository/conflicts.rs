@@ -3,7 +3,6 @@
 //! ahead, and records another course owns. Every conflict says which
 //! policies clear it, so the renderer never re-derives these rules.
 use super::{
-    db,
     entries::CheckedPack,
     guards::active_job_exists,
     guards::PREPARING,
@@ -123,15 +122,14 @@ impl IdClaim {
         connection: &mut SqliteConnection,
         program_id: &str,
     ) -> Result<Option<LearningPackConflictDto>> {
-        let Some(row) = sqlx::query(&self.owner_sql)
+        let Some(row) = sqlx::query(sqlx::AssertSqlSafe(&*self.owner_sql))
             .bind(&self.id)
             .fetch_optional(connection)
-            .await
-            .map_err(db)?
+            .await?
         else {
             return Ok(None);
         };
-        let owner: String = row.try_get(0).map_err(db)?;
+        let owner: String = row.try_get(0)?;
         if owner == program_id {
             return Ok(None);
         }
@@ -163,8 +161,7 @@ pub(super) async fn scan(
         sqlx::query_scalar("SELECT title FROM learning_programs WHERE id=?")
             .bind(id)
             .fetch_optional(&mut *read)
-            .await
-            .map_err(db)?;
+            .await?;
     let mut conflicts = Vec::new();
     let mut warnings = checked.warnings;
     let mut action = "import";

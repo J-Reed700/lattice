@@ -5,6 +5,7 @@
 //! and fidelity audit the complete revised section before any factual receipts
 //! can be reused.
 use super::*;
+use lattice_core::domain::learning::claim_review::span_of;
 use lattice_core::shared::text::segmentation::{align, Alignment, Fate, Span};
 use std::collections::BTreeSet;
 
@@ -61,7 +62,7 @@ fn moved(
     let Some((path, was)) = homes.next() else {
         return stays();
     };
-    if homes.next().is_some() || was.match_indices(&claim.quote).nth(1).is_some() {
+    if homes.next().is_some() || span_of(was, &claim.quote).is_none() {
         return stays();
     }
     // A field with no text left has no passages.
@@ -82,7 +83,7 @@ fn moved(
     match alignment.fate(start..end) {
         Fate::Kept(span) => match now.get(span) {
             Some(text) if !text.trim().is_empty() => Some(Claim {
-                quote: claim_ledger::clip(text).to_owned(),
+                quote: text.to_owned(),
                 statement: claim.statement.clone(),
             }),
             _ => stays(),
@@ -133,7 +134,7 @@ pub(super) fn relocate(before: &Basis, current: &Value) -> Relocated {
         .claims
         .iter()
         .filter_map(|claim| moved(claim, (&old, &new), &mut alignments))
-        .filter(|claim| contains_text(current, &claim.quote))
+        .filter(|claim| claim_ledger::stands_in_part(current, &claim.quote))
         .collect();
     let changed = written((&old, &new), &mut alignments);
     Relocated { inventory, changed }

@@ -5,7 +5,8 @@
 use std::time::Duration;
 
 use lattice_core::domain::learning::claim_review::{
-    ClaimId, ClaimLocation, EvidenceFingerprint, HumanBinding, UnitKind, UserAction, VerdictKind,
+    Check, CheckResult, ClaimId, ClaimLocation, EvidenceFingerprint, HumanBinding, UnitKind,
+    UserAction, VerdictKind,
 };
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;

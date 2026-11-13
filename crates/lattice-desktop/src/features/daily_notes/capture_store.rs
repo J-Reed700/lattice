@@ -24,7 +24,7 @@ async fn capture_target(
 ) -> Result<(WorkspaceNoteDto, bool)> {
     if let Some(id) = preferred {
         let query = format!("SELECT {NOTE_COLUMNS} FROM daily_notes_workspace WHERE id = ?");
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(id)
             .try_map(note_from_row)
             .fetch_optional(&mut **tx)
@@ -37,7 +37,7 @@ async fn capture_target(
             .ok_or_else(|| AppError::NotFound(format!("Workspace note not found: {id}")));
     }
     let query = format!("SELECT {NOTE_COLUMNS} FROM daily_notes_workspace WHERE title = ? AND journal_id IS ? ORDER BY updated_at DESC, created_at, id LIMIT 1");
-    if let Some(row) = sqlx::query(&query)
+    if let Some(row) = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
         .bind(title)
         .bind(journal_id)
         .try_map(note_from_row)

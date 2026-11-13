@@ -48,9 +48,9 @@ impl LearningSourceLibraryRepository {
     ) -> Result<LearningSourceWorkspaceDto> {
         Self::validate_program_id(program_id)?;
         self.backfill_legacy(program_id).await?;
-        let mut tx = self.database.begin_read().await.map_err(db)?;
+        let mut tx = self.database.begin_read().await?;
         let workspace = stored::workspace_in(&mut tx, program_id, include_deleted).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(workspace)
     }
 
@@ -98,7 +98,7 @@ impl LearningSourceLibraryRepository {
         if req.limit < 1 {
             return Err(invalid("Search limit must be at least 1"));
         }
-        let mut read = self.database.begin_read().await.map_err(db)?;
+        let mut read = self.database.begin_read().await?;
         let mut rows = stored::searchable_versions(&mut read, &req.program_id);
         let mut results = Vec::new();
         while let Some(r) = rows.try_next().await? {
@@ -115,7 +115,7 @@ impl LearningSourceLibraryRepository {
             }
         }
         drop(rows);
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         Ok(results)
     }
 

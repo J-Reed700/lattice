@@ -308,9 +308,11 @@ async fn live_complete_python_course() -> Result<()> {
         }
         println!("Preparing lesson {}/{}", index + 1, lesson_ids.len());
         program = service::prepare(
+            &db,
             &repo,
             &model,
             &runtimes,
+            &Default::default(),
             PrepareLearningLessonRequestDto {
                 program_id: program.summary.id.clone(),
                 lesson_id: lesson_id.clone(),
@@ -481,7 +483,6 @@ async fn live_retained_lesson_review() -> Result<()> {
         .filter_map(|item| item["sourceIndex"].as_u64())
         .max()
         .map_or(0, |index| index as usize + 1);
-    let schema = lattice::features::learning::generation::lesson_schema(source_count);
     let raw_context = retained["input"][1]["content"]
         .as_str()
         .expect("Original context");
@@ -490,11 +491,11 @@ async fn live_retained_lesson_review() -> Result<()> {
         .get("originalRequirements")
         .unwrap_or(&context)
         .to_string();
-    let repaired = lattice::features::learning::teaching::review_and_repair(
+    let repaired = lattice::features::learning::teaching::review_and_repair_lesson(
         &model,
         "Teach a rigorous lesson. Return only the corrected lesson JSON, preserving the original block and question fields.",
         &context,
-        &schema,
+        source_count,
         candidate.into(),
         8192,
     ).await?;

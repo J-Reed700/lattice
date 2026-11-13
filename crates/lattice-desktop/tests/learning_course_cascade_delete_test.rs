@@ -163,11 +163,11 @@ async fn test_delete_cascades_migration_preserves_existing_rows(
     // Bring the database to the schema just before the migration under test.
     {
         let mut conn = pool.acquire().await?;
-        conn.ensure_migrations_table().await?;
+        conn.ensure_migrations_table("_sqlx_migrations").await?;
         for migration in migrator.iter().filter(|m| {
             m.version < DELETE_CASCADES_VERSION && !m.migration_type.is_down_migration()
         }) {
-            conn.apply(migration).await?;
+            conn.apply("_sqlx_migrations", migration).await?;
         }
     }
 
@@ -217,9 +217,11 @@ async fn test_delete_cascades_migration_preserves_existing_rows(
         "learning_assessment_candidates",
         "learning_assessment_form_items",
     ] {
-        let formats: Vec<String> = sqlx::query_scalar(&format!("SELECT format FROM \"{table}\";"))
-            .fetch_all(&pool)
-            .await?;
+        let formats: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT format FROM \"{table}\";"
+        )))
+        .fetch_all(&pool)
+        .await?;
         assert_eq!(formats, ["single_choice", "single_choice"], "{table}");
     }
     let keys: Vec<String> = sqlx::query_scalar(
@@ -281,9 +283,11 @@ async fn learning_row_counts(
     .await?;
     let mut counts = BTreeMap::new();
     for table in tables {
-        let count: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM \"{table}\";"))
-            .fetch_one(pool)
-            .await?;
+        let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM \"{table}\";"
+        )))
+        .fetch_one(pool)
+        .await?;
         counts.insert(table, count);
     }
     Ok(counts)

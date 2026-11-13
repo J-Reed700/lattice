@@ -34,7 +34,7 @@ impl LessonVerificationReport {
         for finding in &mut self.findings {
             for passage in &mut finding.evidence {
                 // Execution identities are not source-library identifiers.
-                if passage.retrieval_kind != "execution" {
+                if !passage.is_run() {
                     remap(&mut passage.source_id);
                 }
             }

@@ -77,7 +77,7 @@ pub(super) fn build_fts_query(raw: &str) -> Option<String> {
 }
 
 /// `rank` rather than `bm25()`: an auxiliary function cannot run inside `MIN`.
-fn push_conversation_matches(qb: &mut QueryBuilder<'_, Sqlite>, fts: &str) {
+fn push_conversation_matches(qb: &mut QueryBuilder<Sqlite>, fts: &str) {
     qb.push(
         " FROM conversation_search_fts fts
         WHERE fts.conversation_id = c.id
@@ -102,7 +102,7 @@ pub(super) struct ConversationListing<'a> {
 }
 
 impl<'a> ConversationListing<'a> {
-    pub(super) fn query(&self) -> QueryBuilder<'a, Sqlite> {
+    pub(super) fn query(&self) -> QueryBuilder<Sqlite> {
         let fts_query = self.search.and_then(build_fts_query);
 
         let mut qb = QueryBuilder::<Sqlite>::new(

@@ -231,8 +231,10 @@ fn a_conflict_reaches_the_frontend_as_an_error_with_code_conflict() {
     let sent = serde_json::to_value(&api_err).unwrap();
     assert_eq!(sent["code"], "CONFLICT");
     assert_eq!(sent["message"], "Practice profile changed");
-    assert_eq!(AppError::Conflict(String::new()).error_code(), "CONFLICT");
-    assert_eq!(AppError::Conflict(String::new()).http_status_code(), 409);
+    assert_eq!(
+        ErrorCode::from(&AppError::Conflict(String::new())),
+        ErrorCode::Conflict
+    );
 }
 
 #[test]
@@ -291,19 +293,104 @@ fn a_web_status_converts_to_its_own_code_with_its_message_as_the_message() {
 fn a_busy_database_converts_to_its_own_code() {
     let code = |error: AppError| serde_json::to_value(ApiError::from(error).code).unwrap();
     assert_eq!(
-        code(AppError::Database(
-            "error returned from database: (code: 5) database is locked".into()
-        )),
-        "DATABASE_BUSY"
-    );
-    assert_eq!(
-        code(AppError::ServiceNotAvailable(
-            "The database is temporarily busy. Saved work is retained.".into()
-        )),
+        code(AppError::from(sqlx::Error::PoolTimedOut)),
         "DATABASE_BUSY"
     );
     assert_eq!(
         code(AppError::Database("no such table: x".into())),
         "DATABASE_ERROR"
     );
+}
+
+#[test]
+fn each_model_and_lesson_error_has_a_code_of_its_own() {
+    for (error, code) in [
+        (
+            AppError::WindowTooSmall("x".into()),
+            ErrorCode::WindowTooSmall,
+        ),
+        (
+            AppError::ModelRejected("x".into()),
+            ErrorCode::ModelRejected,
+        ),
+        (
+            AppError::ModelAnswerUnusable("x".into()),
+            ErrorCode::ModelAnswerUnusable,
+        ),
+        (AppError::AnswerCutOff("x".into()), ErrorCode::AnswerCutOff),
+        (AppError::Cancelled("x".into()), ErrorCode::Cancelled),
+        (AppError::LessonHeld("x".into()), ErrorCode::LessonHeld),
+    ] {
+        assert_eq!(ErrorCode::from(&error), code, "{error}");
+        assert_eq!(ApiError::from(error.clone()).code, code, "{error}");
+    }
+}
+
+#[test]
+fn the_code_of_an_api_error_is_the_code_of_its_source_error() {
+    let errors = [
+        AppError::NotFound("x".into()),
+        AppError::DatabaseBusy("x".into()),
+        AppError::ServiceNotAvailable("x".into()),
+        AppError::ValidationFailed("x".into()),
+        AppError::InternalError("x".into()),
+        AppError::Domain(Box::new(DomainError::InvalidState {
+            details: "x".into(),
+        })),
+        AppError::Domain(Box::new(DomainError::ConstraintViolation {
+            constraint: "x".into(),
+        })),
+        AppError::Application(Box::new(ApplicationError::JsonError {
+            message: "x".into(),
+            line: 1,
+            column: 2,
+        })),
+        AppError::Application(Box::new(ApplicationError::UseCaseFailed {
+            use_case: "x".into(),
+            reason: "y".into(),
+        })),
+    ];
+    for error in errors {
+        assert_eq!(
+            ApiError::from(error.clone()).code,
+            ErrorCode::from(&error),
+            "{error}"
+        );
+    }
+    assert_eq!(
+        ErrorCode::from(&AppError::Domain(Box::new(DomainError::InvalidState {
+            details: "x".into()
+        }))),
+        ErrorCode::InvalidState
+    );
+    assert_eq!(
+        ErrorCode::from(&AppError::Application(Box::new(
+            ApplicationError::UseCaseFailed {
+                use_case: "x".into(),
+                reason: "y".into()
+            }
+        ))),
+        ErrorCode::ProcessingError
+    );
+}
+
+#[test]
+fn an_error_code_prints_as_it_serializes() {
+    assert_eq!(ErrorCode::AnswerCutOff.to_string(), "ANSWER_CUT_OFF");
+    for code in [
+        ErrorCode::WindowTooSmall,
+        ErrorCode::ModelRejected,
+        ErrorCode::ModelAnswerUnusable,
+        ErrorCode::AnswerCutOff,
+        ErrorCode::Cancelled,
+        ErrorCode::LessonHeld,
+        ErrorCode::NotFound,
+        ErrorCode::DatabaseBusy,
+        ErrorCode::ServiceNotAvailable,
+    ] {
+        assert_eq!(
+            serde_json::to_value(code).unwrap(),
+            serde_json::Value::String(code.to_string())
+        );
+    }
 }

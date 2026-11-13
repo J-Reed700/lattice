@@ -4,7 +4,7 @@ use super::{LearningNumericKey, LearningTextKey};
 use unicode_normalization::UnicodeNormalization;
 
 /// Whitespace-collapsed, lowercased text with diacritics removed.
-fn folded(value: &str) -> String {
+pub(super) fn folded(value: &str) -> String {
     value
         .nfkd()
         .filter(|c| !unicode_normalization::char::is_combining_mark(*c))

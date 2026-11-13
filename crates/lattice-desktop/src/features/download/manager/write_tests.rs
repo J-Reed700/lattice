@@ -62,10 +62,10 @@ fn request(destination: PathBuf) -> DownloadRequest {
 
 async fn refuse(connection: &DatabaseConnection, event: &str) {
     let mut tx = connection.database().begin_write().await.unwrap();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE TRIGGER refuse_{event} BEFORE {event} ON download_sessions
          BEGIN SELECT RAISE(ABORT, 'injected'); END"
-    ))
+    )))
     .execute(&mut *tx)
     .await
     .unwrap();

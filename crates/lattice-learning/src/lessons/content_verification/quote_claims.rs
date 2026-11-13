@@ -3,43 +3,39 @@
 //! from spacing, typography and letter case, the words are there or they are
 //! not. A match is support, with the passages around it as evidence. Anything
 //! else, including a quotation that is not found, goes to the model's check.
+use super::classify::{inner, quotations};
 use super::*;
+use lattice_core::shared::text::same_text;
 
-/// Marks that open or close a quotation in a claim.
-const QUOTE_MARKS: &[char] = &['"', '\u{201c}', '\u{201d}'];
 /// Marks a quotation uses for words it leaves out.
 const ELLIPSES: &[&str] = &["[\u{2026}]", "[...]", "\u{2026}", "..."];
 
-/// The quotation `statement` attributes to a source: the text before its
-/// first quotation mark (the attribution), and the parts of the quotation
-/// between its outermost marks, split where it leaves words out. None when
-/// the statement asserts anything after the quotation.
+/// The quotations `statement` attributes to a source: the text before its
+/// first quotation mark (the attribution), and the parts of its quotations,
+/// split where they leave words out. None when the statement asserts anything
+/// after the last quotation.
 fn quotation(statement: &str) -> Option<(&str, Vec<&str>)> {
-    let open = statement.find(QUOTE_MARKS)?;
-    let close = statement.rfind(QUOTE_MARKS)?;
-    let quoted = statement.get(open..close)?;
-    let quoted = quoted.get(quoted.chars().next()?.len_utf8()..)?;
-    let after = statement.get(close..)?;
-    if open >= close || after.chars().any(char::is_alphanumeric) {
+    let spans = quotations(statement);
+    let (first, last) = (spans.first()?, spans.last()?);
+    if statement.get(last.1..)?.chars().any(char::is_alphanumeric) {
         return None;
     }
-    let mut parts = vec![quoted];
-    for ellipsis in ELLIPSES {
-        parts = parts
-            .into_iter()
-            .flat_map(|part| part.split(ellipsis))
-            .collect();
+    let mut parts: Vec<&str> = Vec::new();
+    for wording in spans.iter().filter_map(|span| inner(statement, *span)) {
+        let mut pieces = vec![wording];
+        for ellipsis in ELLIPSES {
+            pieces = pieces
+                .into_iter()
+                .flat_map(|piece| piece.split(ellipsis))
+                .collect();
+        }
+        parts.extend(pieces.into_iter().filter_map(|piece| {
+            let piece = piece
+                .trim_matches(|c: char| c.is_whitespace() || matches!(c, '.' | ',' | ';' | ':'));
+            (!piece.is_empty()).then_some(piece)
+        }));
     }
-    let parts: Vec<_> = parts
-        .into_iter()
-        .map(|part| {
-            part.trim_matches(|c: char| {
-                c.is_whitespace() || QUOTE_MARKS.contains(&c) || matches!(c, '.' | ',' | ';' | ':')
-            })
-        })
-        .filter(|part| !part.is_empty())
-        .collect();
-    (!parts.is_empty()).then_some((statement.get(..open)?, parts))
+    (!parts.is_empty()).then_some((statement.get(..first.0)?, parts))
 }
 
 /// The source `attribution` names: the lesson's source by the index its text
@@ -85,8 +81,11 @@ pub(super) fn settle(
     let mut spans = Vec::new();
     let mut from = 0;
     for part in parts {
-        let Some((start, end)) =
-            crate::outline_citations::caseless_quote_span(&source.excerpt, part, from)
+        let Some((start, end)) = source
+            .excerpt
+            .get(from..)
+            .and_then(|rest| same_text::find(rest, part.trim()))
+            .map(|(start, end)| (from + start, from + end))
         else {
             return Ok(None);
         };
@@ -111,7 +110,7 @@ pub(super) fn settle(
         statement: claim.statement.clone(),
         verdict: ClaimVerdict::Supported,
         reason: format!(
-            "The quoted wording is in \"{}\", word for word apart from spacing, typography and letter case.",
+            "The quoted wording is in \"{}\", word for word apart from spacing, typography, emphasis marks and letter case.",
             source.title
         ),
         evidence,

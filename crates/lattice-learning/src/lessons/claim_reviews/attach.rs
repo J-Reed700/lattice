@@ -17,8 +17,8 @@ use lattice_core::application::ports::{
     ClaimReviewStore, LLMPort, LibraryPassagesPort, ReferenceSnapshotPort, WebServiceTrait,
 };
 use lattice_core::domain::learning::claim_review::{
-    Actor, AttachOutcome, Check, CheckResult, ClaimActionKind, ClaimEvent, ClaimId,
-    ClaimLedgerEntry, ClaimState, EventProvenance, Ledger, Revision, TrustVerdict,
+    Actor, AttachOutcome, Check, ClaimActionKind, ClaimEvent, ClaimId, ClaimLedgerEntry,
+    ClaimState, EventProvenance, Ledger, Revision, TrustVerdict,
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
@@ -32,11 +32,11 @@ use self::report::{
     ClaimAttachProgressDto, ClaimAttachReportDto, OtherClaimsCheckedDto, PutBackOutcomeDto,
 };
 use super::checker_examples::CheckerExamples;
+use super::count;
 use super::dto::AttachEvidenceDto;
 use super::repository::{ClaimReviewRepository, ShownPassage};
 use super::trust_changed::{redecide_kinds, Redecided};
 use crate::dto::LearningSourceDto;
-use crate::persistence::db;
 use crate::reference_collection::{ReferenceCollection, ReferencePassage};
 use crate::references::course_index::{CourseIndexes, CourseSearch};
 use crate::references::trust::outcomes::{self, VerdictScope};
@@ -274,10 +274,10 @@ async fn write_check(
     in_collection: bool,
     count_verdict: bool,
 ) -> Result<Vec<ClaimKind>> {
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     ClaimReviewRepository::show_passages_in(&mut tx, lesson_id, flagged.claim_id(), shown).await?;
     let mut moved = Vec::new();
-    if matches!(check.result, CheckResult::Supported { .. }) {
+    if check.result.passed() {
         CheckerExamples::record_evidence_added_in(
             &mut tx,
             program_id,
@@ -300,7 +300,7 @@ async fn write_check(
             .await?;
         }
     }
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(moved)
 }
 
@@ -575,7 +575,7 @@ async fn put_back_for(
 ) -> Result<PutBackOutcomeDto> {
     let supported = matches!(
         outcome,
-        AttachOutcome::Checked(check) if matches!(check.result, CheckResult::Supported { .. })
+        AttachOutcome::Checked(check) if check.result.passed()
     );
     if !supported {
         return Ok(PutBackOutcomeDto::StaysOut);
@@ -630,7 +630,7 @@ pub(super) async fn check_others(
             tally.no_passage += 1;
             continue;
         };
-        let supported = matches!(check.result, CheckResult::Supported { .. });
+        let supported = check.result.passed();
         let appended = append_current(
             deps.store,
             lesson_id,
@@ -664,8 +664,4 @@ pub(super) async fn check_others(
         }
     }
     Ok((tally, revision))
-}
-
-fn count(value: usize) -> u32 {
-    u32::try_from(value).unwrap_or(u32::MAX)
 }

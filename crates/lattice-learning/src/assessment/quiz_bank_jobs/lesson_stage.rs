@@ -10,6 +10,34 @@ fn seed_difficulty(kind: &LessonQuestionKind) -> u8 {
     }
 }
 
+/// A lesson question with its key as the single-choice item it is in the bank
+/// and in review. Options and their reasons keep the writer's order.
+pub(crate) fn lesson_question_item(
+    q: &LessonQuestion,
+    key: &LessonAnswerKey,
+    outcome_ids: Vec<String>,
+) -> engine::LearningAssessmentCandidate {
+    engine::LearningAssessmentCandidate {
+        id: q.id.clone(),
+        outcome_ids,
+        format: LearningItemFormat::SingleChoice,
+        difficulty: seed_difficulty(&q.kind),
+        prompt: q.prompt.clone(),
+        options: q.options.clone(),
+        left: vec![],
+        source_version_ids: q
+            .source_ids
+            .iter()
+            .filter(|id| uuid::Uuid::parse_str(id).is_ok())
+            .cloned()
+            .collect(),
+        rubric: vec![],
+        key: engine::LearningAssessmentKey::Choice(key.correct_index),
+        explanation: key.explanation.clone(),
+        distractor_rationales: key.rationales.clone(),
+    }
+}
+
 /// A prepared lesson's own reviewed questions as bank items (single choice;
 /// difficulty from their kind: practice 2, quiz 3, test 4). Options and their
 /// reasons keep the writer's order, which claims and the published editor
@@ -26,25 +54,7 @@ pub(crate) fn lesson_seed_items(
         .iter()
         .filter_map(|q| {
             let key = keys.iter().find(|k| k.question_id == q.id)?;
-            let candidate = engine::LearningAssessmentCandidate {
-                id: q.id.clone(),
-                outcome_ids: vec![outcome_id.to_string()],
-                format: LearningItemFormat::SingleChoice,
-                difficulty: seed_difficulty(&q.kind),
-                prompt: q.prompt.clone(),
-                options: q.options.clone(),
-                left: vec![],
-                source_version_ids: q
-                    .source_ids
-                    .iter()
-                    .filter(|id| uuid::Uuid::parse_str(id).is_ok())
-                    .cloned()
-                    .collect(),
-                rubric: vec![],
-                key: engine::LearningAssessmentKey::Choice(key.correct_index),
-                explanation: key.explanation.clone(),
-                distractor_rationales: key.rationales.clone(),
-            };
+            let candidate = lesson_question_item(q, key, vec![outcome_id.to_string()]);
             let review_status = match engine::validate_candidate(&candidate) {
                 Ok(()) => "agreed",
                 Err(error) => {
@@ -90,13 +100,13 @@ pub(crate) async fn lesson_bank_stage(
     seeds: Vec<StoredItem>,
 ) -> Result<LessonBank> {
     let (outcome_id, settings, quiz_formats) = {
-        let mut tx = database.begin_read().await.map_err(db)?;
+        let mut tx = database.begin_read().await?;
         let existing =
             quiz_blueprints::repository::lesson_outcome_in(&mut tx, program_id, lesson_id).await?;
         let settings = quiz_blueprints::settings_in(&mut tx, program_id).await?;
         let quiz_formats =
             quiz_blueprints::lesson_quiz_formats_in(&mut tx, program_id, lesson_id).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         (
             existing.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             settings,

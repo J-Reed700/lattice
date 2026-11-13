@@ -5,16 +5,16 @@
 //! through its class's graph from where it is, so the calls a statement makes
 //! come out of its share as it moves and the ceiling does not rise. A successor
 //! that reads again is paid from its statement's reserve, as it starts, and a
-//! cut that narrows its sentence holds the narrowing's call. A statement the
-//! plan was not made for, which a stage outside the checks wrote after the
-//! sort, is taken in where it first stands, sized as a statement sorted there
-//! would be. A rise, beyond a reserve or for a statement taken in, is shown.
-use lattice_core::application::services::claim_verification::KNOWLEDGE_SAMPLES;
-use lattice_core::domain::learning::acceptance::{most_calls, AcceptancePolicy, Position, Walked};
+//! cut that narrows its sentence holds the narrowing's call. The plan starts
+//! empty: every statement enters it where it first stands, when the pass that
+//! identifies it is named, sized as a statement standing there would be. A
+//! rise, beyond a reserve or for a statement taken in, is shown. A statement
+//! whose path is over still holds the readings of the successor the teaching
+//! review may give it, while a rewrite is left.
+use lattice_core::domain::learning::acceptance::{
+    most_calls, start, AcceptancePolicy, Position, Walked,
+};
 use lattice_core::domain::learning::claim_review::Class;
-
-/// The calls of one knowledge check: its samples.
-pub(crate) const SAMPLES: u32 = KNOWLEDGE_SAMPLES as u32;
 
 /// Where a statement is in its class's graph.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,8 +25,9 @@ pub(crate) enum PlannedAt {
     /// At a cut that narrows its sentence: the narrowing's call is still to
     /// come.
     Narrowing(Position),
-    /// Its path is over.
-    Ended,
+    /// Its path is over. `Some` holds where a successor would begin when the
+    /// teaching review may still rewrite its sentence.
+    Ended(Option<Position>),
 }
 
 impl PlannedAt {
@@ -36,7 +37,7 @@ impl PlannedAt {
     pub(crate) fn of(walked: Option<Walked>) -> Self {
         match walked {
             Some(Walked::At(at)) => Self::At(at),
-            Some(Walked::Ended(_) | Walked::Stopped) => Self::Ended,
+            Some(Walked::Ended(_) | Walked::Stopped) => Self::Ended(None),
             Some(Walked::Diverged { .. }) | None => Self::Entry,
         }
     }
@@ -48,13 +49,9 @@ pub(crate) struct Planned {
     /// The class it was sorted into.
     pub(crate) class: Class,
     pub(crate) at: PlannedAt,
-    /// The group of statements standing on its sentence, none when it stands
-    /// alone. Read when the plan is made: one it takes in later is grouped by
-    /// the statements beside it ([`Joining`]).
-    pub(crate) sentence: Option<u32>,
 }
 
-/// A statement the plan was not made for, taken in where it stands.
+/// A statement the plan does not hold yet, taken in where it stands.
 pub(crate) struct Joining {
     pub(crate) planned: Planned,
     /// The plan's statements, by their place in its order, that stand on its
@@ -70,7 +67,7 @@ struct Slot {
     group: Option<u32>,
     /// The most calls it can still cost: its longest path from where it is.
     most: u32,
-    /// M, sized at the sort or when the statement is taken in: the readings of
+    /// M, sized when the statement is taken in: the readings of
     /// its class after a neighbour's rewrite and after a neighbour's narrowing
     /// cut. A successor that reads again draws on it; it goes when the
     /// statement and its whole sentence have ended.
@@ -84,31 +81,24 @@ pub(crate) struct CallPlan {
     /// K: flow repairs still to be made, one for each section that can take a
     /// cut.
     flow_repairs: u32,
-    /// The label a group of statements the plan takes in gets: none the sort
-    /// gave.
+    /// The label the next group of statements gets.
     next_group: u32,
 }
 
 /// The most calls a statement of `class` can still cost at `at`.
 fn most(policy: &dyn AcceptancePolicy, class: Class, at: PlannedAt) -> u32 {
     match at {
-        PlannedAt::Entry => most_calls(
-            policy,
-            Position {
-                class,
-                changed_class: false,
-                reasked: false,
-                node: policy.graph(class).entry(),
-            },
-        ),
-        PlannedAt::At(at) => most_calls(policy, at),
+        PlannedAt::Entry => most_calls(policy, start(policy, class)),
+        PlannedAt::At(at) | PlannedAt::Ended(Some(at)) => most_calls(policy, at),
         PlannedAt::Narrowing(at) => most_calls(policy, at).saturating_add(1),
-        PlannedAt::Ended => 0,
+        PlannedAt::Ended(None) => 0,
     }
 }
 
 /// M for a statement of `class`: two readings from its post-rewrite node,
-/// each with the statement's re-ask still possible, and the narrowing call.
+/// each with the statement's re-ask still possible, and the narrowing call. A
+/// successor beyond the statement's budget, or a neighbour's change of a
+/// statement with no rewrite left, is covered by it, so it holds no rewrite.
 fn reserve(policy: &dyn AcceptancePolicy, class: Class) -> u32 {
     let reading = most_calls(
         policy,
@@ -117,6 +107,7 @@ fn reserve(policy: &dyn AcceptancePolicy, class: Class) -> u32 {
             changed_class: false,
             reasked: false,
             node: policy.graph(class).after_rewrite(),
+            rewrites_left: 0,
         },
     );
     reading.saturating_mul(2).saturating_add(1)
@@ -140,50 +131,27 @@ fn settled(policy: &dyn AcceptancePolicy, at: PlannedAt) -> PlannedAt {
 /// The class a statement sorted into `sorted` is in at `at`: where its walk is.
 fn class_at(sorted: Class, at: PlannedAt) -> Class {
     match at {
-        PlannedAt::At(position) | PlannedAt::Narrowing(position) => position.class,
-        PlannedAt::Entry | PlannedAt::Ended => sorted,
+        PlannedAt::At(position)
+        | PlannedAt::Narrowing(position)
+        | PlannedAt::Ended(Some(position)) => position.class,
+        PlannedAt::Entry | PlannedAt::Ended(None) => sorted,
     }
 }
 
 impl CallPlan {
-    /// The plan once `statements` are sorted, in `sections` sections that
-    /// could take cuts.
-    pub(crate) fn new(
-        policy: &dyn AcceptancePolicy,
-        statements: &[Planned],
-        sections: u32,
-    ) -> Self {
-        let slots = statements
-            .iter()
-            .map(|statement| {
-                let at = settled(policy, statement.at);
-                let class = class_at(statement.class, at);
-                Slot {
-                    class,
-                    group: statement.sentence,
-                    most: most(policy, class, at),
-                    reserve: if statement.sentence.is_some() {
-                        reserve(policy, statement.class)
-                    } else {
-                        0
-                    },
-                    ended: at == PlannedAt::Ended,
-                }
-            })
-            .collect();
-        let mut plan = Self {
-            slots,
+    /// A plan with no statements, in `sections` sections that could take cuts.
+    pub(crate) fn empty(sections: u32) -> Self {
+        Self {
+            slots: Vec::new(),
             flow_repairs: sections,
-            next_group: u32::try_from(statements.len()).unwrap_or(u32::MAX),
-        };
-        plan.release();
-        plan
+            next_group: 0,
+        }
     }
 
-    /// Takes in `joining`, statements the plan was not made for, each where it
+    /// Takes in `joining`, statements the plan does not hold, each where it
     /// stands: its longest path from there and, when other statements stand on
-    /// its sentence, the reserve the sort gives such a statement. Gives the
-    /// calls it took in.
+    /// its sentence, a reserve. Reserves of statements whose sentences are over
+    /// are released. Gives the calls it took in.
     pub(crate) fn take_in(&mut self, policy: &dyn AcceptancePolicy, joining: &[Joining]) -> u32 {
         let before = self.shares().saturating_add(self.reserves());
         for statement in joining {
@@ -199,9 +167,10 @@ impl CallPlan {
                 } else {
                     0
                 },
-                ended: at == PlannedAt::Ended,
+                ended: at == PlannedAt::Ended(None),
             });
         }
+        self.release();
         self.shares()
             .saturating_add(self.reserves())
             .saturating_sub(before)
@@ -284,9 +253,9 @@ impl CallPlan {
     }
 
     /// `statements` are the plan's statements in its order, each now at its
-    /// place; the sentence they carry is not read, the plan fixed it when it
-    /// was made, and their class is where their walk is. Those beyond the
-    /// plan's are ignored.
+    /// place; the sentence they carry is not read, the plan fixed it when the
+    /// statement was taken in, and their class is where their walk is. Those
+    /// beyond the plan's are ignored.
     ///
     /// A statement's number falls to what its place costs. Where the place
     /// costs more, a successor of the statement reads again and the increase
@@ -306,7 +275,7 @@ impl CallPlan {
         for (slot, statement) in self.slots.iter_mut().zip(statements) {
             let at = settled(policy, statement.at);
             slot.class = class_at(slot.class, at);
-            slot.ended = at == PlannedAt::Ended;
+            slot.ended = at == PlannedAt::Ended(None);
             let now = most(policy, slot.class, at);
             if now <= slot.most {
                 slot.most = now;

@@ -24,8 +24,7 @@ pub(super) async fn pool(dir: &Path) -> Result<SqlitePool> {
     let pool = SqlitePoolOptions::new()
         .max_connections(4)
         .connect_with(options)
-        .await
-        .map_err(|error| AppError::Database(error.to_string()))?;
+        .await?;
     sqlx::migrate!("./migrations")
         .run(&pool)
         .await

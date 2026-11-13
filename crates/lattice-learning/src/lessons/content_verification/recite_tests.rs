@@ -34,7 +34,8 @@ async fn supported_elsewhere(references: &ReferenceCollection<'_>) -> Result<Fin
     let world = world_of(references, citing_the_wrong_passage(references)?);
     Ok(read_one(Reading::Page, &model, &world, CLAIM)
         .await?
-        .finding)
+        .finding()
+        .clone())
 }
 
 #[tokio::test]
@@ -152,11 +153,12 @@ async fn a_source_the_lesson_does_not_number_is_added_and_cited() -> Result<()> 
         }
     ));
     // A lesson schema's source indices then allow the new source.
-    let mut schema = json!({"properties":{"blocks":{"items":{"properties":{
-        "sourceIndex":{"type":"integer","minimum":0,"maximum":0}}}}}});
-    repair::number_sources(&mut schema, numbered.len());
+    let policy = crate::lessons::shape::policy();
+    let schema = policy
+        .schema(crate::lessons::shape::Phase::Kept, 1)
+        .numbered(policy, numbered.len());
     assert_eq!(
-        schema["properties"]["blocks"]["items"]["properties"]["sourceIndex"]["maximum"],
+        schema.value()["properties"]["blocks"]["items"]["properties"]["sourceIndex"]["maximum"],
         1
     );
     Ok(())
@@ -531,3 +533,7 @@ fn a_claim_that_draws_on_several_sentences_of_its_quote_cannot_be_cited() -> Res
     assert_eq!(candidate, before);
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "recite_entry_tests.rs"]
+mod entry_tests;

@@ -9,7 +9,10 @@ use crate::{
     practice_generation::validate_citations,
 };
 use lattice_core::{
-    application::ports::{llm_port::SamplingOverride, LLMPort},
+    application::{
+        ports::{llm_port::SamplingOverride, LLMPort},
+        services::model_contract::{Contract, ContractCall, ContractId, PromptInput},
+    },
     shared::error::Result,
 };
 use serde::{Deserialize, Serialize};
@@ -26,6 +29,13 @@ pub mod interview_answer_review;
 #[cfg(any(test, feature = "test-support"))]
 #[path = "interview_answers_test_support.rs"]
 pub mod test_support;
+
+struct AnswerStandardAuthor;
+
+impl Contract for AnswerStandardAuthor {
+    const ID: ContractId = ContractId::new("interview-answer-standard");
+    type Input = PromptInput;
+}
 
 pub const INTERVIEW_ANSWERS_FILE_PATH: &str = "interview/answer-guides.json";
 
@@ -294,7 +304,6 @@ async fn standard_for_question(
         skeleton.to_string(),
         standard_schema(&[]),
         2_200,
-        "low",
     );
     let room = crate::model_call::source_room(llm, &request, usize::MAX);
     let evidence =
@@ -325,11 +334,15 @@ async fn standard_for_question(
             prompt,
             standard_schema(&evidence.ids()),
             2_200,
-            "low",
         );
         request.call.sampling = Some(SamplingOverride::deterministic());
+        let call = ContractCall::of::<AnswerStandardAuthor>(&PromptInput {
+            system: request.instructions.clone(),
+            prompt: request.task.clone(),
+        })?;
         let standard = crate::lessons::structured_call::complete_checked_request(
             llm,
+            &call,
             request,
             None,
             None,

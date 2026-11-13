@@ -8,12 +8,25 @@
 
 use std::future::Future;
 
+use lattice_core::application::ports::llm_port::ANSWER_EFFORT;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::{
     self, CallOptions, GroundedGenerationError, GroundedOutput, GroundedRequest, Measured,
     Streaming,
 };
+use lattice_core::application::services::model_contract::{tagged, ContractCall};
+pub use lattice_core::shared::error::ErrorClass;
 use lattice_core::shared::error::{AppError, Result};
+
+tokio::task_local! {
+    /// Set while a packer's call runs: a size refusal there makes it send less.
+    pub(crate) static PACKED: ();
+}
+
+/// Whether the running call was sent by a packer that sends less on a size refusal.
+pub(crate) fn sent_by_packer() -> bool {
+    PACKED.try_with(|_| ()).is_ok()
+}
 
 /// Whether authoring calls (outline and lesson drafts and their reviews) work
 /// through the task in prose before the schema-constrained answer: asking for
@@ -34,13 +47,12 @@ pub(crate) fn structured(
     prompt: String,
     schema: serde_json::Value,
     output_tokens: usize,
-    reasoning_effort: &str,
 ) -> GroundedRequest {
     let mut request = GroundedRequest::new(system, prompt);
     request.output_tokens = output_tokens;
     request.call = CallOptions {
         json_schema: Some(schema),
-        reasoning_effort: Some(reasoning_effort.to_owned()),
+        reasoning_effort: Some(ANSWER_EFFORT.to_owned()),
         ..Default::default()
     };
     request
@@ -61,19 +73,23 @@ impl<'a> From<&'a str> for TooLarge<'a> {
     }
 }
 
-/// Send `request` with no elapsed-time limit. A request the model's window
-/// cannot hold fails as `too_large` says and is never sent.
+/// Send `request` with no elapsed-time limit, tagged with `call`. A request
+/// the model's window cannot hold fails as `too_large` says and is never sent.
 pub(crate) async fn send<'a>(
     llm: &dyn LLMPort,
+    call: &ContractCall,
     mut request: GroundedRequest,
     streaming: Option<&Streaming<'_>>,
     too_large: impl Into<TooLarge<'a>>,
 ) -> Result<GroundedOutput> {
     request.call.time_budget = None;
     request.call.no_time_limit = true;
+    let sender = tagged(llm, call);
     let result = match streaming {
-        Some(streaming) => grounded_generation::generate_streaming(llm, request, streaming).await,
-        None => grounded_generation::generate(llm, request).await,
+        Some(streaming) => {
+            grounded_generation::generate_streaming(&sender, request, streaming).await
+        }
+        None => grounded_generation::generate(&sender, request).await,
     };
     result.map_err(|error| match error {
         GroundedGenerationError::Budget(_) => match too_large.into() {
@@ -86,10 +102,10 @@ pub(crate) async fn send<'a>(
 
 /// The refusal for material that does not fit the Learning model's window:
 /// `what` says what does not fit, and the message names the model, its
-/// window and the fix. A configuration error, because the window is a
-/// setting, not something the learner typed.
+/// window and the fix. Its own error, because the window is a setting, not
+/// something the learner typed and not a missing model.
 pub(crate) fn window_too_small(llm: &dyn LLMPort, what: &str) -> AppError {
-    AppError::InvalidConfig(format!(
+    AppError::WindowTooSmall(format!(
         "{what} in {}'s {}-token context window. Raise your Learning model's context length in Settings → Downloaded, or choose a Learning model with a larger window",
         llm.model_name(),
         llm.max_context_tokens()
@@ -253,7 +269,7 @@ where
         }
         let sent = fit.room;
         let measured = fit.measured;
-        room = match call(fit.request).await {
+        room = match PACKED.scope((), call(fit.request)).await {
             Err(AppError::PromptExceedsWindow {
                 prompt_tokens,
                 counted_exactly,

@@ -169,10 +169,12 @@ async fn migrated_before_model_choice(pool: &SqlitePool) -> tempfile::TempDir {
 }
 
 async fn columns(pool: &SqlitePool, table: &str) -> Vec<String> {
-    sqlx::query_scalar(&format!("SELECT name FROM pragma_table_info('{table}')"))
-        .fetch_all(pool)
-        .await
-        .unwrap()
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT name FROM pragma_table_info('{table}')"
+    )))
+    .fetch_all(pool)
+    .await
+    .unwrap()
 }
 
 #[tokio::test]

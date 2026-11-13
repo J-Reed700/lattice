@@ -8,7 +8,7 @@ use super::DrillBuild;
 use crate::drills::repository::{self, NewDrill};
 use crate::drills::schedules;
 use crate::drills::spec::DrillSpec;
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use lattice_core::domain::learning::drills::{check_key, Drill, KeyFault};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
@@ -54,7 +54,7 @@ impl DrillBuild<'_> {
             built.checked,
             built.blind,
         );
-        let mut transaction = self.database.begin_write().await.map_err(db)?;
+        let mut transaction = self.database.begin_write().await?;
         repository::insert_in(
             &mut transaction,
             &NewDrill {
@@ -96,10 +96,10 @@ impl DrillBuild<'_> {
         )
         .await?;
         if !completed {
-            transaction.rollback().await.map_err(db)?;
+            transaction.rollback().await?;
             return Ok(JobOutcome::Stopped);
         }
-        transaction.commit().await.map_err(db)?;
+        transaction.commit().await?;
         Ok(JobOutcome::Committed)
     }
 }

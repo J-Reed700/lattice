@@ -7,14 +7,15 @@ use super::{
 use crate::assessment_engine::{self as engine, LearningBlueprintRequirement};
 use crate::assessment_generation::{AuthoringNeed, MaterialPassage, StoredItem};
 use crate::dto::{LearningQuizScopeDto, LearningQuizScopeKind};
-use crate::persistence::{db, now};
+use crate::lessons::claim_reviews::repository::waiting_questions_in;
+use crate::persistence::now;
 use crate::quiz_blueprints;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::{Database, WriteTx};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// An item on its way into the bank.
 #[derive(Debug, Clone)]
@@ -44,7 +45,7 @@ pub(crate) fn content_hash(item: &StoredItem) -> String {
 }
 
 /// Store items, skipping any generated item the bank already holds (same
-/// content, or a near-duplicate stem for the same outcome). A lesson's own
+/// content). A lesson's own
 /// question is always stored in its place: one whose content the program
 /// already holds is stored `dropped`, its token salted by its ID. Returns how
 /// many were stored.
@@ -68,8 +69,7 @@ pub(crate) async fn insert_bank_items_in(
         .bind(program_id)
         .bind(&item.id)
         .fetch_optional(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
         if id_taken.is_some() {
             continue;
         }
@@ -79,28 +79,13 @@ pub(crate) async fn insert_bank_items_in(
         .bind(program_id)
         .bind(&hash)
         .fetch_optional(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
         if repeated.is_some() {
             if entry.origin != "lesson" {
                 continue;
             }
             hash = sha256_hex(format!("{hash}\0{}", item.id));
             review_status = "dropped";
-        }
-        let near = entry.origin == "bank"
-            && sqlx::query_scalar::<_, String>(
-            "SELECT prompt FROM learning_assessment_candidates WHERE program_id=? AND outcome_id=? AND review_status<>'dropped'",
-        )
-        .bind(program_id)
-        .bind(outcome)
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(db)?
-        .iter()
-        .any(|prompt| engine::near_duplicate(prompt, &item.prompt));
-        if near {
-            continue;
         }
         sqlx::query("INSERT INTO learning_assessment_candidates(id,program_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,source_version_ids_json,authored_by,author_model,content_sha256,created_at,review_status,origin,lesson_id,source_quote,left_items_json) VALUES(?,?,?,?,?,?,?,NULL,?,?,'model',?,?,?,?,?,?,?,?)")
             .bind(&item.id)
@@ -121,15 +106,13 @@ pub(crate) async fn insert_bank_items_in(
             .bind(&entry.source_quote)
             .bind(json(&item.left)?)
             .execute(&mut **tx)
-            .await
-            .map_err(db)?;
+            .await?;
         for outcome in &item.outcome_ids {
             sqlx::query("INSERT OR IGNORE INTO learning_assessment_candidate_outcomes(candidate_id,outcome_id) VALUES(?,?)")
                 .bind(&item.id)
                 .bind(outcome)
                 .execute(&mut **tx)
-                .await
-                .map_err(db)?;
+                .await?;
         }
         sqlx::query("INSERT INTO learning_assessment_answer_keys(candidate_id,explanation,key_json,distractor_rationales_json) VALUES(?,?,?,?)")
             .bind(&item.id)
@@ -137,8 +120,7 @@ pub(crate) async fn insert_bank_items_in(
             .bind(json(&item.key)?)
             .bind(json(&item.distractor_rationales)?)
             .execute(&mut **tx)
-            .await
-            .map_err(db)?;
+            .await?;
         stored += 1;
     }
     Ok(stored)
@@ -194,18 +176,35 @@ pub(crate) fn bank_state(
 }
 
 impl LearningAssessmentRepository {
-    /// The bank's agreed items: what forms may draw from.
+    /// The bank's agreed items: what forms may draw from, less a lesson question
+    /// whose check finding still waits for the user.
     pub(crate) async fn bank_in(
         connection: &mut SqliteConnection,
         program_id: &str,
     ) -> Result<Vec<StoredCandidate>> {
         let outcomes = candidate_outcomes_in(connection, program_id).await?;
-        let rows = sqlx::query(&format!("SELECT {CANDIDATE_COLUMNS} FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.program_id=? AND c.review_status='agreed' ORDER BY c.id"))
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {CANDIDATE_COLUMNS} FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.program_id=? AND c.review_status='agreed' ORDER BY c.id")))
             .bind(program_id)
             .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?;
+            .await?;
+        let waiting = waiting_questions_in(connection, program_id).await?;
+        let mut held_back = HashSet::new();
+        if !waiting.is_empty() {
+            let own: Vec<(String, String)> = sqlx::query_as("SELECT id, lesson_id FROM learning_assessment_candidates WHERE program_id=? AND origin IN ('lesson','migrated') AND lesson_id IS NOT NULL ORDER BY rowid")
+                .bind(program_id)
+                .fetch_all(&mut *connection)
+                .await?;
+            let mut seen: HashMap<String, usize> = HashMap::new();
+            for (id, lesson_id) in own {
+                let index = seen.entry(lesson_id.clone()).or_insert(0);
+                if waiting.contains(&(lesson_id, *index)) {
+                    held_back.insert(id);
+                }
+                *index += 1;
+            }
+        }
         rows.iter()
+            .filter(|row| !held_back.contains(&row.get::<String, _>("id")))
             .map(|row| {
                 let id: String = row.get("id");
                 candidate_from_row(row, outcomes.get(&id).cloned().unwrap_or_default())
@@ -221,8 +220,7 @@ impl LearningAssessmentRepository {
         Ok(sqlx::query_scalar::<_, String>("SELECT i.candidate_id FROM learning_assessment_form_items i JOIN learning_assessment_forms f ON f.id=i.form_id WHERE f.program_id=? AND f.status IN ('submitted','interrupted')")
             .bind(program_id)
             .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?
+            .await?
             .into_iter()
             .collect())
     }
@@ -235,8 +233,7 @@ impl LearningAssessmentRepository {
         sqlx::query("SELECT b.title,b.body,b.source_ids_json,l.title lesson_title FROM learning_blocks b JOIN learning_lessons l ON l.id=b.lesson_id WHERE b.lesson_id=? ORDER BY b.ordinal")
             .bind(lesson_id)
             .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?
+            .await?
             .into_iter()
             .map(|row| {
                 Ok(MaterialPassage {
@@ -256,12 +253,11 @@ impl LearningAssessmentRepository {
         program_id: &str,
         lesson_id: &str,
     ) -> Result<Vec<StoredItem>> {
-        let rows = sqlx::query(&format!("SELECT {CANDIDATE_COLUMNS} FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.program_id=? AND c.lesson_id=? AND c.origin='lesson' AND c.review_status='agreed' ORDER BY c.id"))
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {CANDIDATE_COLUMNS} FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.program_id=? AND c.lesson_id=? AND c.origin='lesson' AND c.review_status='agreed' ORDER BY c.id")))
             .bind(program_id)
             .bind(lesson_id)
             .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?;
+            .await?;
         rows.iter()
             .map(|row| candidate_from_row(row, vec![]).map(|c| c.candidate.into()))
             .collect()
@@ -275,9 +271,9 @@ impl LearningAssessmentRepository {
         scope: &LearningQuizScopeDto,
         top_up: bool,
     ) -> Result<Vec<AuthoringNeed>> {
-        let mut tx = database.begin_write().await.map_err(db)?;
+        let mut tx = database.begin_write().await?;
         let needs = Self::bank_needs_in(&mut tx, program_id, scope, top_up).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(needs)
     }
 
@@ -288,9 +284,9 @@ impl LearningAssessmentRepository {
         items: &[BankItem],
         author_model: Option<&str>,
     ) -> Result<usize> {
-        let mut tx = database.begin_write().await.map_err(db)?;
+        let mut tx = database.begin_write().await?;
         let stored = insert_bank_items_in(&mut tx, program_id, items, author_model).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(stored)
     }
 
@@ -332,8 +328,7 @@ impl LearningAssessmentRepository {
                 .bind(&requirement.outcome_id)
                 .bind(program_id)
                 .fetch_one(&mut **tx)
-                .await
-                .map_err(db)?;
+                .await?;
             let lesson_id: Option<String> = outcome.get("lesson_id");
             let lessons: Vec<String> = match (&lesson_id, outcome.get::<Option<String>, _>("module_id")) {
                 (Some(lesson), _) => vec![lesson.clone()],
@@ -341,8 +336,7 @@ impl LearningAssessmentRepository {
                     .bind(program_id)
                     .bind(module)
                     .fetch_all(&mut **tx)
-                    .await
-                    .map_err(db)?,
+                    .await?,
                 (None, None) => vec![],
             };
             let mut material = Vec::new();

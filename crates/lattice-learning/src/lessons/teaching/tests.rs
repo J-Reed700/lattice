@@ -1,3 +1,4 @@
+use super::quotes::QuoteCheck;
 use super::*;
 use crate::dto::LearningProjectMilestoneDto;
 use crate::lessons::course_generation_tests::length_bounds;
@@ -5,6 +6,15 @@ use crate::lessons::course_generation_tests::length_bounds;
 const TITLE: &str = "Experiment project milestone";
 const BRIEF: &str = "Develop the next stage of the randomized experiment and revise it.";
 const ITEM: &str = "A written protocol identifying the treatment and control groups.";
+
+fn check(path: &str, quote: &str, error: &str) -> QuoteCheck {
+    QuoteCheck {
+        path: path.to_owned(),
+        source_index: None,
+        quote: quote.to_owned(),
+        error: error.to_owned(),
+    }
+}
 
 fn milestone(title: &str, brief: &str, item: &str) -> LearningProjectMilestoneDto {
     serde_json::from_value(json!({"title":title,"brief":brief,
@@ -99,14 +109,19 @@ fn the_rubric_schema_bounds_no_text_but_a_blank() {
 
 fn structure(blocks: Value) -> Vec<ReviewFinding> {
     let candidate = json!({"blocks":blocks,"questions":[]});
-    structural_findings(&json!({"type":"object"}), &candidate.to_string()).unwrap()
+    structural_findings(
+        ReviewSchema::Other(&json!({"type":"object"})),
+        &candidate.to_string(),
+        &Default::default(),
+    )
+    .unwrap()
 }
 
 #[test]
 fn a_block_of_any_length_is_no_finding_for_its_length() {
     let rubric = json!([
-        {"title":"One","description":"Observable."},
-        {"title":"Two","description":"Observable."}
+        {"title":"One","description":"Observable.","dimension":"recall"},
+        {"title":"Two","description":"Observable.","dimension":"application"}
     ]);
     let blocks: Vec<_> = [
         "explanation",
@@ -136,12 +151,12 @@ fn a_block_without_a_body_is_a_finding_at_its_place() {
     assert_eq!(
         notes,
         [
-            "Teaching block 2 has no body.",
-            "Teaching block 3 has no body.",
-            "Practice block 3 needs observable, task-specific rubric criteria."
+            "Section 2 (candidate blocks-1) has no body.",
+            "Section 3 (candidate blocks-2) has no body.",
+            "Section 3 (candidate blocks-2) needs observable, task-specific rubric criteria."
         ]
     );
-    let sites: Vec<_> = found.iter().map(|finding| finding.key().site).collect();
+    let sites: Vec<_> = found.iter().map(|finding| finding.place().site).collect();
     assert_eq!(
         sites,
         [
@@ -174,8 +189,33 @@ fn a_block_without_a_body_or_a_rubric_is_named_in_plain_words() {
 }
 
 #[test]
+fn a_schema_violation_s_note_holds_no_part_of_the_lesson() {
+    let first = "The first idea is stated here.";
+    let long = format!("{first} {}", "More text follows. ".repeat(200));
+    let candidate = json!({"blocks":[{"kind":"explanation","title":"Part","body":{"text":long}}],"questions":[]});
+    let schema = json!({"type":"object","properties":{"blocks":{"type":"array","items":{"type":"object","properties":{"body":{"type":"string"}}}}}});
+    let found = structural_findings(
+        ReviewSchema::Other(&schema),
+        &candidate.to_string(),
+        &Default::default(),
+    )
+    .unwrap();
+    let notes: Vec<_> = found.iter().map(|finding| finding.note.as_str()).collect();
+    assert!(notes.iter().all(|note| !note.contains(first)), "{notes:?}");
+    assert!(
+        notes.iter().any(|note| note.contains("/blocks/0/body")),
+        "{notes:?}"
+    );
+}
+
+#[test]
 fn material_that_cannot_be_read_is_named_in_plain_words() {
-    let found = structural_findings(&json!({"type":"object"}), "not json").unwrap();
+    let found = structural_findings(
+        ReviewSchema::Other(&json!({"type":"object"})),
+        "not json",
+        &Default::default(),
+    )
+    .unwrap();
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].summary, "The lesson could not be read as a whole.");
 }
@@ -183,8 +223,12 @@ fn material_that_cannot_be_read_is_named_in_plain_words() {
 #[test]
 fn a_quotation_that_matches_no_saved_reference_shows_the_quote_that_failed() {
     let found = quotation_findings(&[
-        json!({"path":"blocks[2]","quote":"A span the source does not hold.","error":"it was not found."}),
-        json!({"path":"questions[0]","quote":"","error":"it was not found."}),
+        check(
+            "blocks[2]",
+            "A span the source does not hold.",
+            "it was not found.",
+        ),
+        check("questions[0]", "", "it was not found."),
     ]);
     let passages: Vec<_> = found
         .iter()
@@ -194,11 +238,25 @@ fn a_quotation_that_matches_no_saved_reference_shows_the_quote_that_failed() {
 }
 
 #[test]
+fn a_quotation_note_is_whole() {
+    let error = "Citation 12 of this part: The generated quotation does not match a valid passage in the saved reference. No material was published.";
+    let found = quotation_findings(&[check("blocks[2]", "", error)]);
+    let note = &found[0].note;
+    assert!(note.contains(error), "{note}");
+    assert!(
+        note.ends_with(&format!(
+            "quotes contain at least {MIN_QUOTE_CHARS} characters and {MIN_QUOTE_WORDS} words."
+        )),
+        "{note}"
+    );
+}
+
+#[test]
 fn a_quotation_that_matches_no_saved_reference_is_named_by_its_part() {
     let found = quotation_findings(&[
-        json!({"path":"blocks[2]","error":"it was not found."}),
-        json!({"path":"questions[0]","error":"it was not found."}),
-        json!({"path":"requirements","error":"it was not found."}),
+        check("blocks[2]", "", "it was not found."),
+        check("questions[0]", "", "it was not found."),
+        check("requirements", "", "it was not found."),
     ]);
     let summaries: Vec<_> = found
         .iter()

@@ -176,6 +176,10 @@ pub enum ErrorCode {
     InvalidState,
     /// Constraint violation
     ConstraintViolation,
+    /// The work was stopped on request
+    Cancelled,
+    /// A lesson was held back for review
+    LessonHeld,
 
     // File System Errors
     /// File not found
@@ -222,8 +226,16 @@ pub enum ErrorCode {
     ModelLoadError,
     /// A request's prompt alone fills the model's context window
     PromptExceedsWindow,
+    /// The configured context window cannot hold what the work needs
+    WindowTooSmall,
     /// No Learning model is set
     LearningModelNotSet,
+    /// The model server turned the request down
+    ModelRejected,
+    /// A model answered, but the answer could not be used
+    ModelAnswerUnusable,
+    /// A model's answer ended before it was complete
+    AnswerCutOff,
 
     // Processing Errors
     /// Data processing failed
@@ -246,8 +258,6 @@ pub enum ErrorCode {
     ConcurrentModification,
     /// Conflict detected (e.g. revision mismatch)
     Conflict,
-    /// Processing queue is full
-    QueueFull,
 
     // Backup & Recovery Errors
     /// Backup creation failed
@@ -264,6 +274,12 @@ pub enum ErrorCode {
     NotImplemented,
     /// Generic error
     Unknown,
+}
+
+impl std::fmt::Display for ErrorCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.serialize(f)
+    }
 }
 
 /// Sanitizes database error messages to avoid leaking sensitive information.

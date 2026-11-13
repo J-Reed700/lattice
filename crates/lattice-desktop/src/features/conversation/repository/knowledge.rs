@@ -66,7 +66,8 @@ impl ConversationRepository {
             "SELECT i.id,i.conversation_id,c.title AS conversation_title,i.label,i.kind,i.state,COALESCE(a.scope_kind,CASE WHEN i.kind IN ({SHARED_KINDS}) THEN ? ELSE 'conversation' END) AS scope,i.created_at AS learned_at,a.valid_from,a.valid_until,a.verified_at,COALESCE(a.forgotten,0) AS forgotten,i.superseded_by FROM conversation_memory_items i JOIN conversations c ON c.id=i.conversation_id LEFT JOIN conversation_memory_attributes a ON a.item_id=i.id LEFT JOIN conversation_memory_state s ON s.conversation_id=i.conversation_id WHERE {} AND (?=0 OR (i.state='active' AND COALESCE(a.forgotten,0)=0 AND s.validity='ready' AND s.schema_version=1 AND (a.valid_from IS NULL OR julianday(a.valid_from)<=julianday('now')) AND (a.valid_until IS NULL OR julianday(a.valid_until)>julianday('now')))) ORDER BY i.created_at DESC,i.id LIMIT ? OFFSET ?",
             chat_pool.readable_by_sql(),
         );
-        let mut rows = sqlx::query_as::<_, Row>(&sql).bind(chat_pool.kind.name());
+        let mut rows =
+            sqlx::query_as::<_, Row>(sqlx::AssertSqlSafe(sql.as_str())).bind(chat_pool.kind.name());
         for value in chat_pool.bind_values(conversation)? {
             rows = rows.bind(value);
         }
@@ -228,7 +229,8 @@ impl ConversationRepository {
             let sql = format!(
                 "SELECT i.conversation_id FROM conversation_memory_items i JOIN conversations c ON c.id=i.conversation_id LEFT JOIN conversation_memory_attributes a ON a.item_id=i.id WHERE i.id=? AND i.state='active' AND {reach}"
             );
-            let mut owner = sqlx::query_scalar::<_, String>(&sql).bind(id);
+            let mut owner =
+                sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str())).bind(id);
             if across_chats {
                 for value in chat_pool.bind_values(&r.conversation_id)? {
                     owner = owner.bind(value);
@@ -674,7 +676,7 @@ impl ConversationRepository {
         let mut offset = 0i64;
         loop {
             let sql = format!("SELECT e.item_id,v.embedding FROM conversation_memory_evidence e JOIN conversation_memory_items i ON i.id=e.item_id JOIN conversations c ON c.id=i.conversation_id JOIN conversation_messages m ON m.id=e.message_id AND m.conversation_id=i.conversation_id JOIN conversation_memory_vectors v ON v.message_id=m.id AND v.content=m.content LEFT JOIN conversation_memory_attributes a ON a.item_id=i.id WHERE {readable} AND i.state='active' AND COALESCE(a.forgotten,0)=0 AND v.embedding_model=? AND v.dimension=? ORDER BY i.updated_at DESC, e.item_id, e.ordinal LIMIT ? OFFSET ?");
-            let mut rows = sqlx::query_as::<_, VectorRow>(&sql);
+            let mut rows = sqlx::query_as::<_, VectorRow>(sqlx::AssertSqlSafe(sql.as_str()));
             for value in &values {
                 rows = rows.bind(value);
             }

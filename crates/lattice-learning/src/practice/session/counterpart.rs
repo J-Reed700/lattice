@@ -7,6 +7,9 @@ use crate::practice::session::kind::Kind;
 use crate::practice::session::observation::Observation;
 use crate::practice::session::policy::{Cue, Policy};
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::domain::learning::practice::work::{Exercise, PartRef};
 use lattice_core::shared::error::{AppError, Result};
 use serde::de::DeserializeOwned;
@@ -16,6 +19,13 @@ use tokio_util::sync::CancellationToken;
 
 #[cfg(test)]
 mod tests;
+
+struct CounterpartReply;
+
+impl Contract for CounterpartReply {
+    const ID: ContractId = ContractId::new("practice-counterpart-reply");
+    type Input = PromptInput;
+}
 
 /// What the model is asked to reserve for one reply, schema fields included.
 const REPLY_OUTPUT_TOKENS: usize = 2048;
@@ -131,15 +141,19 @@ pub async fn respond(
         observation.render(kind)?,
         reply_schema(kind, observation, cue)?,
         REPLY_OUTPUT_TOKENS,
-        "low",
     );
+    let call = ContractCall::of::<CounterpartReply>(&PromptInput {
+        system: request.instructions.clone(),
+        prompt: request.task.clone(),
+    })?;
     let mut again = false;
     loop {
-        let (raw, reply) = complete_checked_request(llm, request.clone(), None, None, |raw| {
-            accept(raw, kind, exercise, policy, cue, observation)
-                .map(|reply| (raw.to_owned(), reply))
-        })
-        .await?;
+        let (raw, reply) =
+            complete_checked_request(llm, &call, request.clone(), None, None, |raw| {
+                accept(raw, kind, exercise, policy, cue, observation)
+                    .map(|reply| (raw.to_owned(), reply))
+            })
+            .await?;
         let Some(reply) = reply else {
             return Ok(None);
         };

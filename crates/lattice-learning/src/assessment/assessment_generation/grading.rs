@@ -1,6 +1,53 @@
 //! Grading written answers against their rubrics, and judging short answers
 //! that matched no accepted variant, in one rationale shape (section 4.3a).
 use super::*;
+use crate::assessment::batched;
+
+/// The grader of written answers, and what a call is told about it.
+pub(crate) struct GradeWritten;
+
+impl Contract for GradeWritten {
+    const ID: ContractId = ContractId::new("quiz-grade-written");
+    type Input = PromptInput;
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for GradeWritten
+{
+    type Answer = Vec<RawGradeItem>;
+
+    fn render(answer: &Vec<RawGradeItem>) -> String {
+        json!({ "items": answer }).to_string()
+    }
+
+    fn read(text: &str) -> Result<Vec<RawGradeItem>> {
+        read_graded(text)
+    }
+}
+
+/// The judge of short answers, and what a call is told about it.
+pub(crate) struct JudgeShort;
+
+impl Contract for JudgeShort {
+    const ID: ContractId = ContractId::new("quiz-judge-short");
+    type Input = PromptInput;
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for JudgeShort
+{
+    type Answer = Vec<RawJudgeItem>;
+
+    fn render(answer: &Vec<RawJudgeItem>) -> String {
+        json!({ "items": answer }).to_string()
+    }
+
+    fn read(text: &str) -> Result<Vec<RawJudgeItem>> {
+        read_judged(text)
+    }
+}
 
 /// A written answer to grade against its rubric.
 #[derive(Debug, Clone)]
@@ -92,8 +139,12 @@ fn add_note_field(item: &mut Value) {
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, Debug, PartialEq)
+)]
 #[serde(rename_all = "camelCase")]
-struct RawGradeItem {
+pub(crate) struct RawGradeItem {
     item_id: String,
     criteria: Vec<GraderCriterion>,
     summary: String,
@@ -102,8 +153,12 @@ struct RawGradeItem {
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, Debug, PartialEq)
+)]
 #[serde(rename_all = "camelCase")]
-struct RawJudgeItem {
+pub(crate) struct RawJudgeItem {
     item_id: String,
     #[serde(default)]
     your_words: Vec<String>,
@@ -117,24 +172,46 @@ struct RawJudgeItem {
     response_to_note: Option<String>,
 }
 
+/// The items a reply holds: none when it names no `items`, and an item that
+/// cannot be read is left out.
+fn read_items<T: serde::de::DeserializeOwned>(text: &str) -> Result<Vec<T>> {
+    let parsed = crate::generation::parse_json::<Value>(text)?;
+    Ok(parsed
+        .get("items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| serde_json::from_value::<T>(item.clone()).ok())
+        .collect())
+}
+
+fn read_graded(text: &str) -> Result<Vec<RawGradeItem>> {
+    read_items(text)
+}
+
+fn read_judged(text: &str) -> Result<Vec<RawJudgeItem>> {
+    read_items(text)
+}
+
 /// Sends `values` in as many requests as the window needs, each holding as
-/// many items as fit, and collects each request's parsed `items`. A reply cut
-/// off at its output limit, or not JSON, goes again in halves; an item whose
-/// reply fails alone stays pending.
-async fn batched(
+/// many items as fit, and collects each request's parsed `items`, matched to
+/// their values by item id (see [`batched::answers`]). A reply may leave items
+/// out, and an item whose reply fails alone stays pending.
+async fn graded_items<C: Contract<Input = PromptInput>, T: Send>(
     llm: &dyn LLMPort,
     system: &str,
     values: Vec<(String, Value)>,
     schema: impl Fn(&[String]) -> Value,
     tokens_per_item: usize,
-) -> Result<Vec<Value>> {
-    let mut out = Vec::new();
-    let mut start = 0;
-    // The most items a request may take: every item, until a reply fails.
-    let mut most = values.len();
-    while start < values.len() {
-        let request_for = |size: usize| {
-            let slice: Vec<&(String, Value)> = values.iter().skip(start).take(size).collect();
+    read: fn(&str) -> Result<Vec<T>>,
+    item_id: fn(&T) -> &str,
+) -> Result<Vec<T>> {
+    let answered = batched::answers::<C, T>(
+        llm,
+        values.len(),
+        |indices| {
+            let slice: Vec<&(String, Value)> =
+                indices.iter().filter_map(|i| values.get(*i)).collect();
             let ids: Vec<String> = slice.iter().map(|(id, _)| id.clone()).collect();
             let prompt = json!({"items": slice.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>()})
                 .to_string();
@@ -142,67 +219,26 @@ async fn batched(
                 system,
                 prompt,
                 schema(&ids),
-                tokens_per_item * size + 300,
-                "low",
+                tokens_per_item * indices.len() + 300,
             )
-        };
-        let mut size = (values.len() - start).min(most);
-        while size > 1 && !model_call::fits(llm, &request_for(size)).await {
-            size = size.div_ceil(2);
-        }
-        let too_large = model_call::TooLarge::Window("one answer with its rubric");
-        let mut response = model_call::send(llm, request_for(size), None, too_large).await?;
-        if size == 1 {
-            let one = |output_tokens: usize| {
-                let mut request = request_for(1);
-                request.output_tokens = output_tokens;
-                request
-            };
-            response = crate::lessons::structured_call::complete_cut_off(
-                llm,
-                response,
-                one,
-                tokens_per_item + 300,
-                |larger| {
-                    model_call::send(
-                        llm,
-                        larger,
-                        None,
-                        model_call::TooLarge::Window("one answer with its rubric"),
-                    )
-                },
-            )
-            .await?;
-        }
-        let cut_off = ["length", "max_tokens", "incomplete", "content_filter"]
-            .iter()
-            .any(|s| response.finish_reason.to_ascii_lowercase().contains(s));
-        let parsed = (!cut_off)
-            .then(|| crate::generation::parse_json::<Value>(&response.text).ok())
-            .flatten();
-        let Some(parsed) = parsed else {
-            if size > 1 {
-                most = size / 2;
-            } else {
-                tracing::warn!(
-                    item = values.get(start).map(|(id, _)| id.as_str()),
-                    cut_off,
-                    "The grader's answer for one item was unusable; it stays pending"
-                );
-                start += 1;
-            }
-            continue;
-        };
-        out.extend(
-            parsed
-                .get("items")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default(),
-        );
-        start += size;
-    }
-    Ok(out)
+        },
+        |text, indices| {
+            Ok(read(text)?
+                .into_iter()
+                .filter_map(|item| {
+                    let index = indices
+                        .iter()
+                        .copied()
+                        .find(|i| values.get(*i).is_some_and(|(id, _)| id == item_id(&item)))?;
+                    Some((index, item))
+                })
+                .collect())
+        },
+        "one answer with its rubric",
+        batched::Alone::Pending,
+    )
+    .await?;
+    Ok(answered.into_iter().flatten().collect())
 }
 
 /// Grade written answers against their rubrics. Items the grader omitted or
@@ -227,17 +263,18 @@ pub async fn grade_written(llm: &dyn LLMPort, answers: &[WrittenAnswer]) -> Resu
             )
         })
         .collect();
-    let raw = batched(
+    let graded = graded_items::<GradeWritten, _>(
         llm,
         GRADE_SYSTEM,
         values,
         |ids| grade_schema(ids, &criteria, with_note),
         900,
+        read_graded,
+        |item| item.item_id.as_str(),
     )
     .await?;
-    Ok(raw
+    Ok(graded
         .into_iter()
-        .filter_map(|v| serde_json::from_value::<RawGradeItem>(v).ok())
         .map(|g| RawGrade {
             item_id: g.item_id,
             item: GraderItem {
@@ -268,17 +305,18 @@ pub async fn judge_short_answers(
             )
         })
         .collect();
-    let raw = batched(
+    let judged = graded_items::<JudgeShort, _>(
         llm,
         JUDGE_SYSTEM,
         values,
         |ids| judge_schema(ids, with_note),
         400,
+        read_judged,
+        |item| item.item_id.as_str(),
     )
     .await?;
-    Ok(raw
+    Ok(judged
         .into_iter()
-        .filter_map(|v| serde_json::from_value::<RawJudgeItem>(v).ok())
         .map(|j| {
             let equivalent = j.verdict == "equivalent";
             RawGrade {

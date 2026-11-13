@@ -2,6 +2,7 @@
 //! for, which the user resolved meanwhile, and what is left after a request.
 use super::claim_ledger::ClaimLedger;
 use super::*;
+use crate::model_call::ErrorClass;
 use lattice_core::domain::learning::acceptance::AcceptancePolicy;
 use lattice_core::domain::learning::claim_review::ClaimId;
 
@@ -29,10 +30,10 @@ pub(super) fn section_examples(context: &Value, unit: usize) -> Vec<Value> {
 /// Whether a section repair's failure is its answer's, so the claims it was
 /// for use their attempt and the loop goes on (§3 `Rejected`), rather than an
 /// outage or a cancellation, which stop the job.
-pub(super) fn rejected(error: &AppError) -> bool {
+pub(super) fn unmade(error: &AppError) -> bool {
     matches!(
-        error,
-        AppError::InvalidInput(_) | AppError::PromptExceedsWindow { .. }
+        ErrorClass::of(error),
+        ErrorClass::Unusable | ErrorClass::DoesNotFit
     )
 }
 

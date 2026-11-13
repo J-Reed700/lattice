@@ -80,9 +80,7 @@ impl WaitObserver for Recorder {
     }
     fn check_cancelled(&self) -> Result<()> {
         if self.cancelled.load(Ordering::Relaxed) {
-            Err(AppError::ServiceNotAvailable(
-                "Course generation cancelled.".into(),
-            ))
+            Err(AppError::Cancelled("Course generation cancelled.".into()))
         } else {
             Ok(())
         }
@@ -145,7 +143,7 @@ async fn cancelling_during_the_wait_stops_it() {
         .await
         .err()
         .unwrap();
-    assert!(error.to_string().contains("cancelled"), "{error}");
+    assert!(matches!(error, AppError::Cancelled(_)), "{error}");
     assert!(started.elapsed() < Duration::from_secs(5));
     assert_eq!(flaky.calls.load(Ordering::Relaxed), 1);
 }
@@ -176,7 +174,7 @@ async fn the_stop_button_ends_a_wait_in_an_outline_run() {
         .err()
         .unwrap();
     assert!(stopper.await.unwrap());
-    assert!(error.to_string().contains("cancelled"), "{error}");
+    assert!(matches!(error, AppError::Cancelled(_)), "{error}");
 }
 
 #[tokio::test]

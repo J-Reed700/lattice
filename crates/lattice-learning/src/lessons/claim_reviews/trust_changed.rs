@@ -7,9 +7,9 @@
 
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
-    end_state, Actor, Check, CheckResult, Checker, ClaimEvent, ClaimLedgerEntry, ClaimState,
-    EventProvenance, GateVerdict, Ledger, LessonReview, LessonReviewState, TrustAssessment,
-    TrustCause, TrustVerdict,
+    end_state, Actor, Checker, ClaimEvent, ClaimLedgerEntry, ClaimState, EventProvenance,
+    GateVerdict, Ledger, LessonReview, LessonReviewState, TrustAssessment, TrustCause,
+    TrustVerdict,
 };
 use lattice_core::domain::provenance::{ClaimKind, EffectiveBars};
 use lattice_core::shared::error::{AppError, Result};
@@ -18,7 +18,7 @@ use serde::Serialize;
 
 use super::repository::{hold_in, load_in, reviews, ClaimReviewRepository};
 use crate::content_verification::{gate_reason, relevel};
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use crate::references::trust::outcomes::{self, VerdictScope};
 use crate::references::trust::{calibration, overrides};
 
@@ -204,11 +204,9 @@ pub async fn record_verifier_agreements(
             .any(|record| {
                 matches!(
                     &record.event,
-                    ClaimEvent::Checked(Check {
-                        checker: Checker::Verifier { .. },
-                        result: CheckResult::Supported { .. },
-                        ..
-                    })
+                    ClaimEvent::Checked(check)
+                        if matches!(check.checker, Checker::Verifier { .. })
+                            && check.result.passed()
                 )
             });
         if agreed {
@@ -325,7 +323,7 @@ async fn redecide_lesson(
 /// A published lesson with a claim reopened needs the user's review again,
 /// as a Verifier dispute on demand does; the lesson stays published.
 async fn hold_if_published(database: &Database, lesson_id: &str) -> Result<()> {
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     let ledger = load_in(&mut tx, lesson_id).await?;
     if ledger
         .review
@@ -334,7 +332,7 @@ async fn hold_if_published(database: &Database, lesson_id: &str) -> Result<()> {
     {
         hold_in(&mut tx, lesson_id, None).await?;
     }
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(())
 }
 

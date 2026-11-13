@@ -1045,7 +1045,7 @@ export async function installLearningStudioBackend(page: Page) {
           return job;
         }
         const next: LearningGenerationJob = {
-          ...job, id: crypto.randomUUID(), operationId: request.operationId, retryOfJobId: job.id,
+          ...job, id: crypto.randomUUID(), operationId: request.operationId, retryOfJobId: job.id, heldLessonIds: [],
           status: "pending", createdAt: Date.now(), startedAt: null, finishedAt: null, progressMessage: "Retry queued", error: null,
         };
         state.planWorkspace.jobs.unshift(next);
@@ -1158,6 +1158,12 @@ export async function installLearningStudioBackend(page: Page) {
       list_learning_tangents: (): LearningTangentDto[] => [],
       set_conversation_course: (): null => null,
       get_learning_program: () => program,
+      prepare_learning_ahead: (args) => {
+        const request = getRequest<{ programId: string; lessonId: string }>(args);
+        if (request.programId !== program.summary.id) throw new Error("Learning program not found");
+        findLesson(request.lessonId);
+        return program;
+      },
       get_learning_outline_evidence: () => {
         if (state.outlineEvidenceFailuresRemaining > 0) {
           state.outlineEvidenceFailuresRemaining -= 1;
@@ -1243,7 +1249,7 @@ export async function installLearningStudioBackend(page: Page) {
         if (review.claims.some((item) => item.state.state === "queued") && !review.changedSinceStop)
           throw { code: "INVALID_STATE", message: "Nothing changed since the last pass. Resolve a statement or add evidence first." };
         review.state = "verifying";
-        const next: LearningGenerationJob = { ...holding, id: crypto.randomUUID(), operationId: request.operationId, retryOfJobId: holding.id, status: "pending", resultId: null, createdAt: Date.now(), startedAt: null, finishedAt: null, progressMessage: "Resuming verification", error: null };
+        const next: LearningGenerationJob = { ...holding, id: crypto.randomUUID(), operationId: request.operationId, retryOfJobId: holding.id, status: "pending", resultId: null, heldLessonIds: [], createdAt: Date.now(), startedAt: null, finishedAt: null, progressMessage: "Resuming verification", error: null };
         state.planWorkspace.jobs.unshift(next);
         return next;
       },
@@ -2307,6 +2313,16 @@ export async function installLearningStudioBackend(page: Page) {
       skip_learning_diagnostic: () => {
         state.planWorkspace.latestDiagnostic = { id: "diagnostic-skipped", programId: program.summary.id, status: "skipped", revision: 0, prompts: [], responses: [], findings: [], sourceCoverageGaps: [], interpretation: "Skipped", createdAt: Date.now(), submittedAt: null };
         return state.planWorkspace.latestDiagnostic;
+      },
+      get_learning_course_plan: (args) => {
+        const { programId } = args as { programId: string };
+        if (programId !== program.summary.id) throw new Error("Learning program not found");
+        return { programId, outlineRevision: program.summary.revision, state: "none", error: null, entries: [] };
+      },
+      plan_learning_course: (args) => {
+        const { programId } = (args as { request: { programId: string } }).request;
+        if (programId !== program.summary.id) throw new Error("Learning program not found");
+        return { programId, outlineRevision: program.summary.revision, state: "planning", error: null, entries: [] };
       },
       get_learning_plan: () => {
         state.planWorkspace.programRevision = program.summary.revision;

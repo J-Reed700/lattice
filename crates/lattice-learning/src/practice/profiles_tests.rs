@@ -164,8 +164,7 @@ async fn save_interview(
         .bind(&program.summary.id)
         .bind(lesson)
         .execute(pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let plan = json!({
         "companyName": "A company",
         "targetRole": "Backend engineer",
@@ -184,8 +183,7 @@ async fn save_interview(
         .bind(&activity_id)
         .bind(plan.to_string())
         .execute(pool)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(activity_id)
 }
 

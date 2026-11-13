@@ -85,12 +85,12 @@ impl JudgingModel {
     async fn respond(&self, prompt: &str) -> Result<String> {
         if self.premise_missed && prompt.starts_with("Extract lesson claims.") {
             let mut response: Value = serde_json::from_str(&fixture_response(prompt).unwrap())?;
-            for unit in context(prompt)["units"].as_array().unwrap() {
+            for unit in fixture_task(prompt).unwrap()["units"].as_array().unwrap() {
                 let exercise = unit["passages"]
                     .as_array()
                     .unwrap()
                     .iter()
-                    .any(|passage| passage["text"] == self.proposed_passage);
+                    .any(|passage| passage_text(passage) == self.proposed_passage);
                 if exercise {
                     response["units"][format!("unit-{}", unit["index"])] = json!({"claims":[],"nonFactualReason":"An exercise instruction: the lesson's own task."});
                 }
@@ -98,15 +98,23 @@ impl JudgingModel {
             return Ok(response.to_string());
         }
         if prompt.starts_with("Audit inventory fidelity.") {
-            let data = context(prompt);
-            if data["targetPassage"]["text"] == self.proposed_passage {
+            let data = fixture_task(prompt).unwrap();
+            if passage_text(&data["targetPassage"]) == self.proposed_passage {
                 self.judged.fetch_add(1, Ordering::Relaxed);
-                return Ok(self.judge_reply.to_string());
+                let sentence = &data["targetPassage"]["sentences"][0]["id"];
+                let mut reply = self.judge_reply.clone();
+                reply["missingAssertions"] = reply["missingAssertions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|statement| json!({"sentenceId":sentence,"statement":statement}))
+                    .collect();
+                return Ok(reply.to_string());
             }
         }
         if prompt.starts_with("Audit claim coverage independently.") {
             let mut response: Value = serde_json::from_str(&fixture_response(prompt).unwrap())?;
-            for unit in context(prompt)["units"].as_array().unwrap() {
+            for unit in fixture_task(prompt).unwrap()["units"].as_array().unwrap() {
                 for passage in unit["passages"].as_array().unwrap() {
                     if passage["text"] == self.proposed_passage {
                         let id = passage["id"].as_str().unwrap();
@@ -199,7 +207,7 @@ async fn an_assertion_the_sources_contradict_is_adopted_and_checked() -> Result<
 
 /// A figure the extractor missed in an exercise is a statement the lesson
 /// makes, and a source must back it: the audit's gap joins the inventory,
-/// located at the judged passage, and the rule layer sorts it Sourced.
+/// located at the judged passage, and the model sorts it Sourced.
 #[tokio::test]
 async fn a_body_gap_with_a_figure_becomes_a_sourced_claim_and_gets_its_strict_check() -> Result<()>
 {
@@ -225,7 +233,7 @@ async fn a_body_gap_with_a_figure_becomes_a_sourced_claim_and_gets_its_strict_ch
         finding.class,
         Some(Classed {
             class: Class::Sourced,
-            by: ClassifiedBy::Rule
+            by: ClassifiedBy::Model
         })
     );
     assert_eq!(finding.verdict, ClaimVerdict::Unsupported);
@@ -258,6 +266,7 @@ fn a_gap_in_a_question_or_an_option_is_never_adopted() {
     };
     let gap = |passage_id: &str| MissingAssertion {
         passage_id: passage_id.into(),
+        sentence_id: None,
         statement: FIGURE.into(),
     };
     let mut coverage = Coverage {
@@ -336,6 +345,7 @@ fn a_later_pass_adopts_only_a_gap_in_a_sentence_written_since_the_last() {
                     reason: FIGURE.into(),
                     missing_assertions: vec![MissingAssertion {
                         passage_id: "unit-1-passage-0".into(),
+                        sentence_id: Some("unit-1-passage-0-sentence-0".into()),
                         statement: FIGURE.into(),
                     }],
                 }],
@@ -360,11 +370,11 @@ fn a_later_pass_adopts_only_a_gap_in_a_sentence_written_since_the_last() {
     // The first pass reads the whole lesson.
     assert_eq!(adopt(&claim_ledger::Rewrites::default()), (1, 1, true));
     // A later pass over text that did not change adopts nothing.
-    let unchanged = claim_ledger::Rewrites::new(true, Some(candidate.clone()), Default::default());
+    let unchanged = claim_ledger::Rewrites::new(true, Some(candidate.clone()));
     assert_eq!(adopt(&unchanged), (0, 0, false));
     // The sentence is new to a later pass when something wrote it since.
     let before = lesson("Exercise: write code that reads a file one row at a time.");
-    let rewritten = claim_ledger::Rewrites::new(true, Some(before), Default::default());
+    let rewritten = claim_ledger::Rewrites::new(true, Some(before));
     assert_eq!(adopt(&rewritten), (1, 1, true));
 }
 
@@ -393,6 +403,7 @@ fn adopt_one(statement: &str, rewrites: &claim_ledger::Rewrites) -> (usize, usiz
             reason: statement.into(),
             missing_assertions: vec![MissingAssertion {
                 passage_id: "unit-1-passage-0".into(),
+                sentence_id: Some("unit-1-passage-0-sentence-0".into()),
                 statement: statement.into(),
             }],
         }],
@@ -420,25 +431,14 @@ fn a_gap_the_rule_layer_leaves_unsorted_is_adopted() {
     );
 }
 
-/// A remark about the lesson's own sources is Internal by rule: it is no claim.
-#[test]
-fn a_gap_the_rule_layer_makes_internal_is_not_adopted() {
-    let remark = "The sources above do not say how many rows it buffers.";
-    assert_eq!(
-        adopt_one(remark, &claim_ledger::Rewrites::default()),
-        (0, 0, false)
-    );
-}
-
 /// The guard holds for an unsorted gap as for a Sourced one: text no pass
 /// has rewritten is not adopted after the first pass.
 #[test]
 fn an_unsorted_gap_in_text_no_pass_rewrote_is_not_adopted_again() {
-    let unchanged =
-        claim_ledger::Rewrites::new(true, Some(lesson(FIGURE_PREMISE)), Default::default());
+    let unchanged = claim_ledger::Rewrites::new(true, Some(lesson(FIGURE_PREMISE)));
     assert_eq!(adopt_one(UNSOURCED, &unchanged), (0, 0, false));
     let before = lesson("Exercise: write code that reads a file one row at a time.");
-    let rewritten = claim_ledger::Rewrites::new(true, Some(before), Default::default());
+    let rewritten = claim_ledger::Rewrites::new(true, Some(before));
     assert_eq!(adopt_one(UNSOURCED, &rewritten), (1, 1, true));
 }
 
@@ -500,13 +500,13 @@ async fn a_rubric_without_a_missing_assertion_reports_nothing() -> Result<()> {
 #[test]
 fn a_report_whose_audit_names_a_gap_is_still_a_complete_report() {
     let lesson = PreparedLearningLesson {
-        blocks: vec![LearningBlockDto {
-            kind: LearningBlockKind::Explanation,
-            title: "CSV header names".into(),
-            body: GOOD.into(),
-            rubric: vec![],
-            source_ids: vec![],
-        }],
+        blocks: vec![LearningBlockDto::new(
+            LearningBlockKind::Explanation,
+            "CSV header names".into(),
+            GOOD.into(),
+            vec![],
+            vec![],
+        )],
         questions: vec![],
         keys: vec![],
         verification: None,
@@ -520,6 +520,7 @@ fn a_report_whose_audit_names_a_gap_is_still_a_complete_report() {
         reason: "unit-0-passage-0: A premise.".into(),
         missing_assertions: vec![MissingAssertion {
             passage_id: "unit-0-passage-0".into(),
+            sentence_id: None,
             statement: "A premise.".into(),
         }],
     };
@@ -528,4 +529,53 @@ fn a_report_whose_audit_names_a_gap_is_still_a_complete_report() {
         report.validate("lesson", &lesson).is_ok(),
         "a gap is not a defect of the report"
     );
+}
+
+/// A gap that opens "The sources" is no longer Internal by rule: the model sorts it.
+#[test]
+fn a_gap_that_opens_the_sources_is_adopted_for_the_model_to_sort() {
+    let remark = "The sources above do not say how many rows it buffers.";
+    assert_eq!(
+        adopt_one(remark, &claim_ledger::Rewrites::default()),
+        (1, 1, true)
+    );
+}
+
+#[tokio::test]
+async fn a_typographic_variant_of_a_represented_statement_is_no_gap() -> Result<()> {
+    const BODY: &str = "The borrow checker\u{2019}s rule holds.";
+    let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
+    let model = JudgingModel::new(BODY, &["The borrow checker's rule holds"], BODY);
+    let content = units(&lesson(BODY))?;
+    let inventory = Inventory {
+        units: vec![
+            UnitClaims {
+                index: 0,
+                claims: vec![],
+                non_factual_reason: "A section.".into(),
+            },
+            UnitClaims {
+                index: 1,
+                claims: vec![Claim {
+                    quote: BODY.into(),
+                    statement: BODY.into(),
+                }],
+                non_factual_reason: String::new(),
+            },
+        ],
+    };
+
+    lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        lesson_drafts::resume("gaps-fixture".into()).await?;
+        let audited = coverage::audit(&model, &content, &inventory, None).await?;
+        assert!(
+            audited.units[1].missing_assertions.is_empty(),
+            "{:?}",
+            audited.units[1].missing_assertions
+        );
+        Ok(())
+    })
+    .await
 }

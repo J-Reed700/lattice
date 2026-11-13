@@ -9,16 +9,23 @@
 //! the checks keep per unit stays valid, and the last step takes them out in
 //! code and moves the report and the ledger to the lesson's new numbering.
 use super::claim_ledger::ClaimLedger;
-use super::repair_work::rejected;
+use super::repair::accept_edits;
+use super::repair_work::unmade;
 use super::*;
-use crate::dto::LessonQuestionKind;
+use crate::dto::LearningSourceDto;
 use crate::generation::{parse_json, split_check, teaching_sentences};
+use crate::lessons::copied_wording::Wording;
+use crate::lessons::shape::{LessonShape, ShapePolicy};
 use crate::lessons::text_edits;
+use crate::review_findings::{site_sha256, FindingSite};
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::domain::learning::claim_review::ClaimId;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// What the flow repair is told besides the edit protocol.
-const FLOW: &str = "Sentences were taken out of this lesson section because the course's sources do not support them. Restore the flow of what is left: fix a word that now points at nothing (\"this\", \"these\", \"as above\", a step number) and join the sentences on either side of a gap if they no longer follow, changing as little as you can. gaps lists, for each place a sentence was taken out, the sentence kept before it and the one kept after it: change only those sentences, or add a short connecting sentence between them. verifiedSentences are checked and must stay exactly as they are; connect around them. Add no statement of fact: no new claim, figure, name, quotation, cause or consequence. If the section reads well as it is, give no edits.";
+const FLOW: &str = "Sentences were taken out of this lesson section because they were shown to be wrong. Restore the flow of what is left: fix a word that now points at nothing (\"this\", \"these\", \"as above\", a step number) and join the sentences on either side of a gap if they no longer follow, changing as little as you can. gaps lists, for each place a sentence was taken out, the sentence kept before it and the one kept after it: change only those sentences, or add a short connecting sentence between them. verifiedSentences are checked and must stay exactly as they are; connect around them. Add no statement of fact: no new claim, figure, name, quotation, cause or consequence. If the section reads well as it is, give no edits.";
 
 /// What a lesson is told when the cuts leave it no statement: the part of it
 /// that would have to be taken out.
@@ -63,6 +70,9 @@ pub(super) struct Cuts {
     /// The sections that go, with the title or prompt of each.
     pub(super) going: BTreeMap<usize, String>,
     pub(super) mended: BTreeMap<usize, Mended>,
+    /// The units that go only because a finding on them could not be settled.
+    #[serde(default)]
+    pub(super) unsettled: BTreeSet<usize>,
     #[serde(default)]
     pub(crate) reviewed_without_going: Option<String>,
 }
@@ -78,6 +88,7 @@ impl Cuts {
         let same = |unit: &usize, label: &str| unit_label(lesson, *unit).as_deref() == Some(label);
         self.taken.retain(|unit, taken| same(unit, &taken.label));
         self.going.retain(|unit, label| same(unit, label));
+        self.unsettled.retain(|unit| self.going.contains_key(unit));
         self.mended.retain(|unit, mended| same(unit, &mended.label));
     }
 
@@ -102,6 +113,22 @@ impl Cuts {
     pub(super) fn go(&mut self, unit: usize, label: String) {
         self.going.insert(unit, label);
     }
+
+    /// Sends a unit out because a finding on it could not be settled.
+    pub(super) fn go_unsettled(&mut self, unit: usize, label: String) {
+        self.going.insert(unit, label);
+        self.unsettled.insert(unit);
+    }
+
+    /// Puts back the units that went because a finding could not be settled;
+    /// whether it put back any.
+    pub(super) fn readmit(&mut self) -> bool {
+        let back = std::mem::take(&mut self.unsettled);
+        for unit in &back {
+            self.going.remove(unit);
+        }
+        !back.is_empty()
+    }
 }
 
 /// The units that go out of a lesson, numbered as the lesson is: sections
@@ -117,6 +144,10 @@ impl Going {
 
     pub(super) fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    pub(super) fn units(&self) -> &BTreeSet<usize> {
+        &self.0
     }
 
     pub(super) fn contains(&self, unit: usize) -> bool {
@@ -211,22 +242,12 @@ impl LessonVerificationReport {
     }
 }
 
-/// The pointer to a unit of a lesson: a section, or a question after them.
-fn unit_pointer(lesson: &Value, unit: usize) -> Option<String> {
-    let blocks = lesson.get("blocks")?.as_array()?.len();
-    Some(if unit < blocks {
-        format!("/blocks/{unit}")
-    } else {
-        format!("/questions/{}", unit - blocks)
-    })
-}
-
 fn unit_at(lesson: &Value, unit: usize) -> Option<&Value> {
-    lesson.pointer(&unit_pointer(lesson, unit)?)
+    lesson.pointer(&FindingSite::in_candidate(lesson, unit).pointer()?)
 }
 
 fn set_unit(lesson: &mut Value, unit: usize, section: Value) -> bool {
-    let Some(pointer) = unit_pointer(lesson, unit) else {
+    let Some(pointer) = FindingSite::in_candidate(lesson, unit).pointer() else {
         return false;
     };
     match lesson.pointer_mut(&pointer) {
@@ -241,89 +262,154 @@ fn set_unit(lesson: &mut Value, unit: usize, section: Value) -> bool {
 /// A section's title, or a question's prompt: what a record of it is checked
 /// against.
 pub(super) fn unit_label(lesson: &Value, unit: usize) -> Option<String> {
-    let blocks = lesson.get("blocks")?.as_array()?.len();
-    let field = if unit < blocks { "title" } else { "prompt" };
+    let (list, _) = FindingSite::in_candidate(lesson, unit).array()?;
+    let field = if list == "blocks" { "title" } else { "prompt" };
     unit_at(lesson, unit)?
         .get(field)?
         .as_str()
         .map(str::to_owned)
 }
 
-/// The sections that took cuts and are left with too little to teach: fewer
-/// than two teaching sentences, or a check whose answer went.
-fn too_little(lesson: &Value, cuts: &Cuts) -> Vec<usize> {
-    let blocks = lesson
-        .get("blocks")
-        .and_then(Value::as_array)
-        .map_or(0, Vec::len);
+/// The sections `cuts` leaves with too little to teach in `lesson`, whatever
+/// else of it could be published.
+pub(super) fn left_with_too_little(
+    lesson: &Value,
+    cuts: &Cuts,
+    shape: &dyn ShapePolicy,
+) -> Vec<usize> {
+    let mut cuts = cuts.clone();
+    cuts.keep_current(lesson);
+    too_little(lesson, &cuts, shape)
+}
+
+/// Puts `units` of `lesson` back as they are in `from`, and what `cuts` took
+/// from them back as it is in `earlier`.
+pub(super) fn restore_units(
+    (lesson, cuts): (&mut Value, &mut Cuts),
+    (from, earlier): (&Value, &Cuts),
+    units: &[usize],
+) {
+    for unit in units {
+        if let Some(section) = unit_at(from, *unit).cloned() {
+            set_unit(lesson, *unit, section);
+        }
+        match earlier.taken.get(unit) {
+            Some(taken) => cuts.taken.insert(*unit, taken.clone()),
+            None => cuts.taken.remove(unit),
+        };
+    }
+}
+
+/// The sections that took cuts and are left with too little to teach, by the
+/// shape policy's measure.
+fn too_little(lesson: &Value, cuts: &Cuts, shape: &dyn ShapePolicy) -> Vec<usize> {
     cuts.taken
         .iter()
-        .filter(|(unit, _)| **unit < blocks)
         .filter(|(unit, taken)| {
-            taken.answer_lost
-                || lesson
-                    .pointer(&format!("/blocks/{unit}/body"))
-                    .and_then(Value::as_str)
-                    .is_none_or(|body| teaching_sentences(body).len() < 2)
+            let site = FindingSite::in_candidate(lesson, **unit);
+            site.array().is_some_and(|(list, _)| list == "blocks")
+                && shape.too_little(
+                    site.field_pointer("body")
+                        .and_then(|pointer| lesson.pointer(&pointer))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                    taken.answer_lost,
+                )
         })
         .map(|(unit, _)| *unit)
         .collect()
 }
 
-/// Why `lesson`, with the sections `cuts` takes out and those left with too
-/// little, could not be published, when it could not.
-pub(super) fn unpublishable(lesson: &Value, cuts: &Cuts) -> Option<String> {
-    let mut cuts = cuts.clone();
-    cuts.keep_current(lesson);
-    for unit in too_little(lesson, &cuts) {
-        if let Some(label) = unit_label(lesson, unit) {
+/// Sends the sections that go out of `lesson` into `cuts`: those left with too
+/// little to teach, then the checks that lose the worked example they follow.
+/// Whether it sent any.
+fn send_out(lesson: &Value, cuts: &mut Cuts, shape: &dyn ShapePolicy) -> bool {
+    let mut sent = false;
+    for unit in too_little(lesson, cuts, shape) {
+        if let (false, Some(label)) = (cuts.going.contains_key(&unit), unit_label(lesson, unit)) {
             cuts.go(unit, label);
+            sent = true;
         }
     }
-    thin(lesson, &cuts.units())
+    for unit in shape.dependants(lesson, cuts.units().units()) {
+        if let (false, Some(label)) = (cuts.going.contains_key(&unit), unit_label(lesson, unit)) {
+            cuts.go(unit, label);
+            sent = true;
+        }
+    }
+    sent
 }
 
-/// Why a lesson that loses the sections that go cannot be published, when it
-/// cannot: more than a third of its sections, its first explanation, all its
-/// questions or every question of a kind it asks, without which it cannot be
-/// saved.
-fn thin(lesson: &Value, going: &Going) -> Option<String> {
-    let blocks = lesson.get("blocks")?.as_array()?;
-    let sections = blocks.len();
-    let lost = (0..sections).filter(|unit| going.contains(*unit)).count();
-    let first = blocks
-        .iter()
-        .position(|block| block.get("kind").and_then(Value::as_str) == Some("explanation"));
-    let questions = lesson
-        .get("questions")
-        .and_then(Value::as_array)
-        .map_or(0, Vec::len);
-    let questions_lost = (sections..sections + questions)
-        .filter(|unit| going.contains(*unit))
-        .count();
-    let asks = |unit: usize, kind: &LessonQuestionKind| {
+/// Why `lesson`, with the sections `cuts` takes out, those left with too
+/// little and the checks that lose their example, could not be published, when
+/// it could not.
+pub(super) fn unpublishable(
+    lesson: &Value,
+    cuts: &Cuts,
+    shape: &dyn ShapePolicy,
+) -> Option<String> {
+    let mut cuts = cuts.clone();
+    cuts.keep_current(lesson);
+    send_out(lesson, &mut cuts, shape);
+    shape.floor(lesson, cuts.units().units())
+}
+
+/// The questions of `lesson` that go because a finding on them waits for the
+/// user and the lesson's shape can spare them, each with its unit and label.
+pub(super) fn unsettled_questions(
+    lesson: &Value,
+    waiting: &BTreeSet<String>,
+    cuts: &Cuts,
+    shape: &dyn ShapePolicy,
+) -> Vec<(usize, String)> {
+    let count = |list: &str| {
         lesson
-            .pointer(&format!("/questions/{}/kind", unit - sections))
-            .and_then(Value::as_str)
-            == Some(kind.as_str())
+            .get(list)
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len)
     };
-    let kind_lost = LessonQuestionKind::ALL.into_iter().find(|kind| {
-        let asked: Vec<usize> = (sections..sections + questions)
-            .filter(|unit| asks(*unit, kind))
-            .collect();
-        !asked.is_empty() && asked.iter().all(|unit| going.contains(*unit))
-    });
-    if first.is_some_and(|unit| going.contains(unit)) {
-        Some("its first explanation would have to be taken out".to_owned())
-    } else if 3 * lost > sections {
-        Some(format!(
-            "{lost} of its {sections} sections would have to be taken out"
-        ))
-    } else if questions > 0 && questions_lost == questions {
-        Some("all of its questions would have to be taken out".to_owned())
-    } else {
-        kind_lost.map(|kind| format!("it would be left without a {} question", kind.as_str()))
+    let blocks = count("blocks");
+    let mut going = cuts.units().units().clone();
+    let mut chosen = Vec::new();
+    for index in 0..count("questions") {
+        let unit = blocks + index;
+        if going.contains(&unit)
+            || !waiting.contains(&site_sha256(lesson, FindingSite::Question(index)))
+        {
+            continue;
+        }
+        let mut with = going.clone();
+        with.insert(unit);
+        if shape.floor(lesson, &with).is_some() {
+            continue;
+        }
+        let Some(label) = unit_label(lesson, unit) else {
+            continue;
+        };
+        going = with;
+        chosen.push((unit, label));
     }
+    chosen
+}
+
+/// Sends out the questions whose findings wait for the user and that the
+/// lesson's shape can spare; whether any went.
+pub(super) async fn send_out_unsettled(
+    lesson: &Value,
+    cuts: &mut Cuts,
+    shape: &dyn ShapePolicy,
+) -> Result<bool> {
+    let waiting = crate::teaching::question_texts().await?;
+    let chosen = unsettled_questions(lesson, &waiting, cuts, shape);
+    let sent = !chosen.is_empty();
+    for (unit, label) in chosen {
+        tracing::info!(
+            unit,
+            "A question whose finding the review could not settle goes"
+        );
+        cuts.go_unsettled(unit, label);
+    }
+    Ok(sent)
 }
 
 /// Whether a cut took the answer of a check: the first teaching sentence under
@@ -374,12 +460,7 @@ pub(super) fn gaps(field: &str, before: &str, after: &str) -> Vec<Gap> {
 /// The place `after` lost a code block `before` held at, with the sentences
 /// kept beside it.
 pub(super) fn gap_around_code(field: &str, before: &str, after: &str) -> Vec<Gap> {
-    let shared: usize = before
-        .chars()
-        .zip(after.chars())
-        .take_while(|(a, b)| a == b)
-        .map(|(a, _)| a.len_utf8())
-        .sum();
+    let shared = lattice_core::shared::text::same_text::common_prefix(before, after);
     let before_it = before
         .get(..shared)
         .and_then(|head| teaching_sentences(head).pop());
@@ -396,6 +477,29 @@ pub(super) fn gap_around_code(field: &str, before: &str, after: &str) -> Vec<Gap
     }]
 }
 
+/// What a flow repair is asked: the edits of the sentences beside a gap.
+struct FlowRepair;
+
+impl Contract for FlowRepair {
+    const ID: ContractId = ContractId::new("flow-repair");
+    type Input = PromptInput;
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for FlowRepair
+{
+    type Answer = text_edits::Patch;
+
+    fn render(answer: &text_edits::Patch) -> String {
+        serde_json::to_string(answer).unwrap_or_default()
+    }
+
+    fn read(text: &str) -> Result<text_edits::Patch> {
+        text_edits::read_patch(text)
+    }
+}
+
 /// One section's flow repair: the section with the edits the model gave for
 /// its gaps, or `None` when it gave none that can stand. A change to a
 /// sentence a claim stands on is no repair, and neither is one outside the
@@ -405,6 +509,7 @@ async fn mend_section(
     (schema, output_tokens): (&Value, usize),
     (unit, block, section): (usize, bool, &Value),
     (taken, protected): (&Taken, &[Protected]),
+    (lesson, wording): (&Value, &Wording),
 ) -> Result<Option<Value>> {
     let stands = |gap: &Gap, sentence: &Option<String>| -> Option<String> {
         let text = section.pointer(&format!("/{}", gap.field))?.as_str()?;
@@ -434,6 +539,7 @@ async fn mend_section(
                 unit,
                 field: gap.field.clone(),
                 quote: quote.clone(),
+                released: false,
             });
         }
     }
@@ -445,42 +551,51 @@ async fn mend_section(
         ("questions", json!({"blocks":[],"questions":[section]}))
     };
     let system = format!("{FLOW} {}", text_edits::INSTRUCTIONS);
-    let raw = {
-        let _model_call =
-            crate::lesson_progress::model_call(crate::lesson_progress::Term::FlowRepair);
-        crate::generation::complete_json(
-            llm,
-            &system,
-            local.to_string(),
-            text_edits::schema_for(&original, schema),
-            output_tokens,
-        )
-        .await?
-    };
-    let reply: Value = parse_json(&raw)?;
-    let asked = |key: &str| {
-        reply
-            .get(key)
-            .and_then(Value::as_array)
-            .is_some_and(|items| !items.is_empty())
-    };
-    if !asked("edits") && !asked("citations") {
-        return Ok(None);
-    }
-    let repaired = text_edits::apply(&original, &raw)?;
+    let prompt = local.to_string();
+    let call = ContractCall::of::<FlowRepair>(&PromptInput {
+        system: system.clone(),
+        prompt: prompt.clone(),
+    })?;
+    let request = crate::model_call::structured(
+        &system,
+        prompt,
+        text_edits::schema_for(&original, schema),
+        output_tokens,
+    );
+    let _model_call = crate::lesson_progress::model_call(crate::lesson_progress::Term::FlowRepair);
+    let (repaired, _) = crate::lessons::structured_call::complete_checked_request(
+        llm,
+        &call,
+        request,
+        None,
+        None,
+        |raw| {
+            if text_edits::read_patch(raw)?.asks_nothing() {
+                return Ok((original.clone(), Vec::new()));
+            }
+            accept_edits(
+                raw,
+                (&original, lesson, wording),
+                (schema, list),
+                (&targets, protected),
+            )
+        },
+    )
+    .await?;
     let pointer = format!("/{list}/0");
-    let (Some(before), Some(after)) = (original.pointer(&pointer), repaired.pointer(&pointer))
+    let (Some(before), Some(confined)) = (original.pointer(&pointer), repaired.pointer(&pointer))
     else {
         return Ok(None);
     };
-    let confined = confine(before, after, &targets, protected)?.section;
-    Ok((confined != *before).then_some(confined))
-}
-
-/// Whether a flow repair failed in what the model answered, so that the
-/// section keeps its text as cut, rather than in an outage or a cancellation.
-fn unusable(error: &AppError) -> bool {
-    rejected(error) || matches!(error, AppError::ModelAnswerUnusable(_))
+    if crate::generation::reads_as_part(before, block)
+        && !crate::generation::reads_as_part(confined, block)
+    {
+        tracing::info!(
+            "claim.state: a flow repair left the section no lesson; it keeps the text as cut"
+        );
+        return Ok(None);
+    }
+    Ok((confined != before).then(|| confined.clone()))
 }
 
 /// What the lesson needs once nothing is left for the checks.
@@ -499,29 +614,25 @@ pub(super) enum Settled {
 /// one flow repair, and the teaching review reads the lesson as it will be.
 pub(super) async fn settle(
     llm: &dyn LLMPort,
-    (prompt, schema, output_tokens): (&str, &Value, usize),
-    references: &ReferenceCollection<'_>,
+    (prompt, shape, output_tokens): (&str, LessonShape<'_>, usize),
+    (references, numbered): (&ReferenceCollection<'_>, &[LearningSourceDto]),
     raw: &str,
     ledger: &mut ClaimLedger,
 ) -> Result<Settled> {
     let lesson: Value = parse_json(raw)?;
     ledger.cuts.keep_current(&lesson);
-    let mut grew = false;
-    for unit in too_little(&lesson, &ledger.cuts) {
-        if let (false, Some(label)) = (
-            ledger.cuts.going.contains_key(&unit),
-            unit_label(&lesson, unit),
-        ) {
-            ledger.cuts.go(unit, label);
-            grew = true;
-        }
-    }
-    if grew {
+    let mut sent = send_out(&lesson, &mut ledger.cuts, shape.policy);
+    sent |= send_out_unsettled(&lesson, &mut ledger.cuts, shape.policy).await?;
+    if sent {
         ledger.save_cuts().await?;
         return Ok(Settled::Again(raw.to_owned()));
     }
     let going = ledger.cuts.units();
-    if let Some(what) = thin(&lesson, &going) {
+    if let Some(what) = shape.policy.floor(&lesson, going.units()) {
+        if ledger.cuts.readmit() {
+            ledger.save_cuts().await?;
+            return Ok(Settled::Again(raw.to_owned()));
+        }
         return Ok(Settled::Stopped(ledger.stop_unsupported(raw, &what).await?));
     }
     if ledger.nothing_left(&[]) {
@@ -547,6 +658,7 @@ pub(super) async fn settle(
         .get("blocks")
         .and_then(Value::as_array)
         .map_or(0, Vec::len);
+    let wording = Wording::of(references);
     let mut edited = lesson.clone();
     for (position, unit) in todo.into_iter().enumerate() {
         crate::lesson_progress::phase(
@@ -570,14 +682,15 @@ pub(super) async fn settle(
         let known = ledger.live_in(unit);
         let outcome = match mend_section(
             llm,
-            (schema, output_tokens),
+            (shape.value(), output_tokens),
             (unit, unit < blocks, &section),
             (&taken, &protected),
+            (&edited, &wording),
         )
         .await
         {
             Ok(outcome) => outcome,
-            Err(error) if unusable(&error) => {
+            Err(error) if unmade(&error) => {
                 tracing::info!(unit, %error, "claim.state: a flow repair could not be used; the section keeps the text as cut");
                 None
             }
@@ -618,10 +731,10 @@ pub(super) async fn settle(
             llm,
             crate::teaching::LESSON_REPAIR_SYSTEM,
             prompt,
-            schema,
+            shape,
             without_going.to_string(),
             output_tokens,
-            references,
+            (references, numbered),
             &protected,
         ))
         .await?;
@@ -635,6 +748,10 @@ pub(super) async fn settle(
     }
     if edited != lesson {
         return Ok(Settled::Again(edited.to_string()));
+    }
+    if send_out_unsettled(&lesson, &mut ledger.cuts, shape.policy).await? {
+        ledger.save_cuts().await?;
+        return Ok(Settled::Again(raw.to_owned()));
     }
     Ok(Settled::Done)
 }
@@ -707,3 +824,6 @@ pub(super) async fn excise(
 #[cfg(test)]
 #[path = "sections_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "unsettled_question_tests.rs"]
+mod unsettled_question_tests;

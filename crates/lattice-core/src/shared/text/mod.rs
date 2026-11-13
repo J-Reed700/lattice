@@ -1,6 +1,7 @@
 mod claim_sentence;
 mod line_refs;
 mod salience;
+pub mod same_text;
 pub mod segmentation;
 mod sentences;
 mod value_terms;
@@ -8,7 +9,7 @@ mod value_terms;
 pub use claim_sentence::claim_sentence;
 pub use line_refs::{contains_line_reference, is_line_reference};
 pub use salience::{informative_terms, is_stopword, select_informative_terms};
-pub use segmentation::sentences;
+pub use segmentation::{code_spans, item_marker_end, sentences};
 pub use sentences::{plain_sentence_context, plain_text};
 pub use value_terms::{
     capitalised_words, has_digit, padded_lowercase, MONTH_MARKERS, NEGATION_MARKERS,

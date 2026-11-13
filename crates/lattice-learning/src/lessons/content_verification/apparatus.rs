@@ -1,6 +1,7 @@
 //! The schema's citation apparatus is structured data. A writer that also
 //! types it into the prose leaves a learner reading it, and verification
 //! reading its quotations as the lesson's own statements.
+use lattice_core::shared::text::segmentation::code_fences;
 use regex::Regex;
 use serde_json::Value;
 use std::sync::LazyLock;
@@ -87,19 +88,6 @@ fn without_mentions(line: &str) -> (String, bool) {
     (out, found)
 }
 
-fn fence_of(line: &str) -> Option<(char, usize)> {
-    let trimmed = line.trim_start();
-    let mark = trimmed.chars().next().filter(|c| *c == '`' || *c == '~')?;
-    let run = trimmed.chars().take_while(|c| *c == mark).count();
-    let info = trimmed.trim_start_matches(mark);
-    (run >= 3 && !(mark == '`' && info.contains('`'))).then_some((mark, run))
-}
-
-fn closes(line: &str, mark: char, run: usize) -> bool {
-    let trimmed = line.trim();
-    trimmed.len() >= run && trimmed.chars().all(|c| c == mark)
-}
-
 fn is_heading(line: &str) -> bool {
     let label = line
         .trim()
@@ -124,8 +112,9 @@ fn is_quotation(text: &str) -> bool {
 /// beside such a mention, and the heading left over a list that is gone.
 /// Code is left alone, and so is everything else, byte for byte.
 pub(crate) fn strip_citation_apparatus(text: &str) -> String {
+    let fences = code_fences(text);
     let mut lines = Vec::new();
-    let mut fence: Option<(char, usize)> = None;
+    let mut start = 0;
     for raw in text.split_inclusive('\n') {
         let ending = if raw.ends_with("\r\n") {
             "\r\n"
@@ -135,18 +124,8 @@ pub(crate) fn strip_citation_apparatus(text: &str) -> String {
             ""
         };
         let content = raw.strip_suffix(ending).unwrap_or(raw);
-        let in_code = match fence {
-            Some((mark, run)) => {
-                if closes(content, mark, run) {
-                    fence = None;
-                }
-                true
-            }
-            None => {
-                fence = fence_of(content);
-                fence.is_some()
-            }
-        };
+        let in_code = fences.iter().any(|fence| fence.whole().contains(&start));
+        start += raw.len();
         let mut line = Line {
             body: content.to_owned(),
             ending,

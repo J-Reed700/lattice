@@ -1,22 +1,28 @@
 //! The ledger's record of a reading: the check it observed named by the
-//! reading, the policy's decision on it and the state that follows, a change
-//! of class, and the fault of a check that disagrees with the outcome.
+//! reading, the policy's decision on it and the state that follows, and a
+//! change of class.
 use super::super::class_checks::finding_of;
+use super::super::provenance_gate::FindingTrust;
 use super::super::readings::driver::ReadStep;
 use super::super::readings::Read;
+use super::bridge_tests::{
+    citing, half_stated, parts_reply, sources, Reading as ScriptedBridge, STATEMENT,
+};
+use super::readings_tests::{read_one, world_of};
 use super::resume_upgrade_tests::assessment;
 use super::*;
 use lattice_core::application::services::claim_verification::{
     CONSISTENCY_POLICY, KNOWLEDGE_POLICY,
 };
 use lattice_core::domain::learning::acceptance::{
-    decide, rewrite_ahead, AcceptancePolicy, End, Outcome, Position, Reading, Step, Taken, Then,
-    Walked,
+    decide, rewrite_ahead, start, AcceptancePolicy, End, Outcome, Position, Reading, Step, Taken,
+    Then, Walked, STANDARD_POLICY,
 };
 use lattice_core::domain::learning::claim_review::{
     text_sha256, Actor, Check, CheckResult, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation,
     ClaimState, EvidenceFingerprint, EvidenceSeen, UnitKind, VerdictKind,
 };
+use lattice_core::domain::provenance::{ClaimKind, ClaimProfile, Decision, TemporalScope};
 
 const SENTENCE: &str = "The reader hands over one row at a time.";
 const PASSAGE: &str = "The reader hands over one row at a time, as a dict.";
@@ -89,12 +95,7 @@ fn finding(
 
 /// Where a statement of `class` begins.
 fn entry(policy: &dyn AcceptancePolicy, class: Class) -> Position {
-    Position {
-        class,
-        changed_class: false,
-        reasked: false,
-        node: policy.graph(class).entry(),
-    }
+    start(policy, class)
 }
 
 /// Where a statement of `class` stands at `node`.
@@ -115,7 +116,7 @@ fn step_of(
 ) -> (ReadStep, Option<Position>) {
     let taken = Taken {
         step: Step::Read(reading),
-        outcome: read.outcome,
+        outcome: read.outcome(),
     };
     let (then, next) = decide(policy, at, taken).unwrap();
     let step = ReadStep {
@@ -169,7 +170,7 @@ fn stepped(
     rewrite_ahead: bool,
 ) -> ClaimEvent {
     ClaimEvent::Stepped {
-        policy: "acceptance-v1".into(),
+        policy: STANDARD_POLICY.as_str().into(),
         step,
         outcome,
         then,
@@ -188,17 +189,17 @@ async fn a_reading_that_stands_resolves_the_claim_on_the_passage_that_states_it(
     let mut ledger = open().await?;
     let id = claim(&mut ledger, "cited", SOURCED.0, SOURCED.1).await?;
     let evidence = [passage("source-1")];
-    let read = Read {
-        outcome: Outcome::Stands,
-        reused: false,
-        finding: finding(
+    let read = Read::new(
+        Outcome::Stands,
+        finding(
             SOURCED,
             ClaimVerdict::Supported,
             "Stated.",
             &evidence,
             Some(PASSAGE),
         ),
-    };
+        false,
+    );
     let (step, _) = step_of(
         &policy,
         entry(&policy, Class::Sourced),
@@ -225,7 +226,7 @@ async fn a_reading_that_stands_resolves_the_claim_on_the_passage_that_states_it(
     assert_eq!(
         check.fingerprint,
         EvidenceFingerprint::of(
-            evidence_policy(),
+            Judged::Passages.policy(),
             Model::new().model_name(),
             &[seen(&evidence[0])]
         )
@@ -256,17 +257,17 @@ async fn a_reading_that_sends_the_statement_to_a_remedy_leaves_it_open_with_a_re
     let policy = StandardPolicy::new();
     let mut ledger = open().await?;
     let id = claim(&mut ledger, "cited", SOURCED.0, SOURCED.1).await?;
-    let read = Read {
-        outcome: Outcome::Unproven,
-        reused: false,
-        finding: finding(
+    let read = Read::new(
+        Outcome::Unproven,
+        finding(
             SOURCED,
             ClaimVerdict::Unsupported,
             "No passage states it.",
             &[passage("source-1")],
             None,
         ),
-    };
+        false,
+    );
     let (step, _) = step_of(
         &policy,
         entry(&policy, Class::Sourced),
@@ -301,17 +302,17 @@ async fn a_passed_veto_records_not_false_and_ends_the_claim_consistent() -> Resu
     let mut ledger = open().await?;
     let id = claim(&mut ledger, "reasoned", REASONED.0, REASONED.1).await?;
     let evidence = [passage("source-1")];
-    let consistent = Read {
-        outcome: Outcome::Stands,
-        reused: false,
-        finding: finding(
+    let consistent = Read::new(
+        Outcome::Stands,
+        finding(
             REASONED,
             ClaimVerdict::Supported,
             "Consistent.",
             &evidence,
             None,
         ),
-    };
+        false,
+    );
     let (step, next) = step_of(
         &policy,
         entry(&policy, Class::Reasoning),
@@ -328,17 +329,17 @@ async fn a_passed_veto_records_not_false_and_ends_the_claim_consistent() -> Resu
         Some(&node("r.veto", Step::Read(Reading::Veto)))
     );
 
-    let not_called_false = Read {
-        outcome: Outcome::Stands,
-        reused: false,
-        finding: finding(
+    let not_called_false = Read::new(
+        Outcome::Stands,
+        finding(
             REASONED,
             ClaimVerdict::Supported,
             "Asked on its own, the model does not call this false (0 of 3).",
             &[],
             None,
         ),
-    };
+        false,
+    );
     let next = next.unwrap();
     let (step, _) = step_of(&policy, next, Reading::Veto, not_called_false);
     ledger.record_reading(&policy, &id, &step).await?;
@@ -353,7 +354,7 @@ async fn a_passed_veto_records_not_false_and_ends_the_claim_consistent() -> Resu
     assert_eq!(
         first.fingerprint,
         EvidenceFingerprint::of(
-            CONSISTENCY_POLICY,
+            CONSISTENCY_POLICY.as_str(),
             model.model_name(),
             &[seen(&evidence[0])]
         )
@@ -361,7 +362,7 @@ async fn a_passed_veto_records_not_false_and_ends_the_claim_consistent() -> Resu
     assert_eq!(second.result, CheckResult::NotFalse);
     assert_eq!(
         second.fingerprint,
-        EvidenceFingerprint::of(KNOWLEDGE_POLICY, model.model_name(), &[])
+        EvidenceFingerprint::of(KNOWLEDGE_POLICY.as_str(), model.model_name(), &[])
     );
     assert!(matches!(held.state(), ClaimState::Consistent { .. }));
     assert_eq!(held.decided(), Some(&Then::End(End::Consistent)));
@@ -374,17 +375,17 @@ async fn a_unanimous_knowledge_reading_records_known_common_and_ends_as_general_
     let policy = StandardPolicy::new();
     let mut ledger = open().await?;
     let id = claim(&mut ledger, "common", COMMON.0, COMMON.1).await?;
-    let read = Read {
-        outcome: Outcome::Stands,
-        reused: false,
-        finding: finding(
+    let read = Read::new(
+        Outcome::Stands,
+        finding(
             COMMON,
             ClaimVerdict::Supported,
             "Standard knowledge: it is how readers work.",
             &[],
             None,
         ),
-    };
+        false,
+    );
     let (step, _) = step_of(
         &policy,
         entry(&policy, Class::Common),
@@ -402,7 +403,7 @@ async fn a_unanimous_knowledge_reading_records_known_common_and_ends_as_general_
     assert_eq!(check.result, CheckResult::KnownCommon);
     assert_eq!(
         check.fingerprint,
-        EvidenceFingerprint::of(KNOWLEDGE_POLICY, Model::new().model_name(), &[])
+        EvidenceFingerprint::of(KNOWLEDGE_POLICY.as_str(), Model::new().model_name(), &[])
     );
     assert!(matches!(held.state(), ClaimState::GeneralKnowledge { .. }));
     Ok(())
@@ -428,11 +429,7 @@ async fn a_page_that_supports_the_statement_on_another_source_records_supported_
         end_byte: PASSAGE.len(),
         cited: vec!["source-1".into()],
     });
-    let read = Read {
-        outcome: Outcome::StandsElsewhere,
-        reused: false,
-        finding: found,
-    };
+    let read = Read::new(Outcome::StandsElsewhere, found, false);
     let (step, _) = step_of(
         &policy,
         at(&policy, Class::Sourced, "s.reread"),
@@ -477,11 +474,7 @@ async fn the_gates_weighing_is_recorded_between_the_check_and_the_decision() -> 
         decision: weighed.decision,
         available: None,
     }));
-    let read = Read {
-        outcome: Outcome::Stands,
-        reused: false,
-        finding: found,
-    };
+    let read = Read::new(Outcome::Stands, found, false);
     let (step, _) = step_of(
         &policy,
         entry(&policy, Class::Sourced),
@@ -512,16 +505,18 @@ async fn a_second_unreadable_answer_is_recorded_as_its_check_alone_so_the_claim_
     let policy = StandardPolicy::new();
     let mut ledger = open().await?;
     let id = claim(&mut ledger, "cited", SOURCED.0, SOURCED.1).await?;
-    let unreadable = || Read {
-        outcome: Outcome::Unjudged,
-        reused: false,
-        finding: finding(
-            SOURCED,
-            ClaimVerdict::Unverified,
-            "The answer to this statement's check could not be read.",
-            &[],
-            None,
-        ),
+    let unreadable = || {
+        Read::new(
+            Outcome::Unjudged,
+            finding(
+                SOURCED,
+                ClaimVerdict::Unverified,
+                "The answer to this statement's check could not be read.",
+                &[],
+                None,
+            ),
+            false,
+        )
     };
     let (first, next) = step_of(
         &policy,
@@ -577,17 +572,17 @@ async fn a_change_of_class_is_recorded_as_the_evidences_and_the_claim_takes_it()
     let policy = StandardPolicy::new();
     let mut ledger = open().await?;
     let id = claim(&mut ledger, "common", COMMON.0, COMMON.1).await?;
-    let read = Read {
-        outcome: Outcome::NeedsSource,
-        reused: false,
-        finding: finding(
+    let read = Read::new(
+        Outcome::NeedsSource,
+        finding(
             COMMON,
             ClaimVerdict::Unsupported,
             "Asked on its own, the model does not call this standard knowledge (2 of 3).",
             &[],
             None,
         ),
-    };
+        false,
+    );
     let (step, _) = step_of(
         &policy,
         entry(&policy, Class::Common),
@@ -627,69 +622,20 @@ async fn a_change_of_class_is_recorded_as_the_evidences_and_the_claim_takes_it()
 }
 
 #[tokio::test]
-async fn a_check_that_disagrees_with_the_outcome_is_a_fault_and_records_nothing() -> Result<()> {
+async fn a_reading_of_a_claim_the_ledger_does_not_hold_is_a_fault() -> Result<()> {
     let policy = StandardPolicy::new();
     let mut ledger = open().await?;
-    let id = claim(&mut ledger, "cited", SOURCED.0, SOURCED.1).await?;
-    let before = ledger.entry(&id).unwrap().events().len();
-
-    // The gate refuses a quotation that is in no passage, so the check fails
-    // a statement the reading stood.
-    let misquoted = Read {
-        outcome: Outcome::Stands,
-        reused: false,
-        finding: finding(
-            SOURCED,
-            ClaimVerdict::Supported,
-            "Stated.",
-            &[passage("source-1")],
-            Some("a quotation that is in no passage"),
-        ),
-    };
-    // A check that passes a statement the reading did not stand.
-    let overruled = Read {
-        outcome: Outcome::Refuted,
-        reused: false,
-        finding: finding(
+    let read = Read::new(
+        Outcome::Stands,
+        finding(
             SOURCED,
             ClaimVerdict::Supported,
             "Stated.",
             &[passage("source-1")],
             Some(PASSAGE),
         ),
-    };
-    for read in [misquoted, overruled] {
-        let (step, _) = step_of(
-            &policy,
-            entry(&policy, Class::Sourced),
-            Reading::Parts,
-            read,
-        );
-        let fault = ledger
-            .record_reading(&policy, &id, &step)
-            .await
-            .unwrap_err();
-        let AppError::InternalError(message) = fault else {
-            panic!("an internal error: {fault:?}");
-        };
-        let outcome = format!("{:?}", step.read.outcome);
-        for named in ["cited", "Parts", outcome.as_str()] {
-            assert!(message.contains(named), "{named}: {message}");
-        }
-        assert_eq!(ledger.entry(&id).unwrap().events().len(), before);
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_reading_of_a_claim_the_ledger_does_not_hold_is_a_fault() -> Result<()> {
-    let policy = StandardPolicy::new();
-    let mut ledger = open().await?;
-    let read = Read {
-        outcome: Outcome::Stands,
-        reused: false,
-        finding: finding(SOURCED, ClaimVerdict::Supported, "Stated.", &[], None),
-    };
+        false,
+    );
     let (step, _) = step_of(
         &policy,
         entry(&policy, Class::Sourced),
@@ -717,17 +663,17 @@ async fn a_claim_the_user_settled_first_keeps_its_state_and_takes_no_class_chang
     ledger.append(&id, gone).await?;
     let removed = ledger.entry(&id).unwrap().state().clone();
     assert!(matches!(removed, ClaimState::Removed { .. }));
-    let read = Read {
-        outcome: Outcome::NeedsSource,
-        reused: false,
-        finding: finding(
+    let read = Read::new(
+        Outcome::NeedsSource,
+        finding(
             COMMON,
             ClaimVerdict::Unsupported,
             "Asked on its own, the model does not call this standard knowledge (2 of 3).",
             &[],
             None,
         ),
-    };
+        false,
+    );
     let (step, _) = step_of(
         &policy,
         entry(&policy, Class::Common),
@@ -747,5 +693,181 @@ async fn a_claim_the_user_settled_first_keeps_its_state_and_takes_no_class_chang
         ["extracted", "classified", "superseded", "checked"],
         "what it observed is kept, and nothing that follows from a decision"
     );
+    Ok(())
+}
+
+const PART_KINDS: [&str; 5] = [
+    "stated",
+    "common",
+    "own",
+    "specific_missing",
+    "contradicted",
+];
+
+/// The part-wise judge's reply with one part of each kind in `kinds`.
+fn reply_of(kinds: &[&str]) -> String {
+    let parts: Vec<Value> = kinds
+        .iter()
+        .map(|kind| {
+            let cites = matches!(*kind, "stated" | "contradicted");
+            let passage = if cites {
+                json!("passage-0")
+            } else {
+                Value::Null
+            };
+            json!({"part": format!("a {kind} part"), "kind": kind, "passage": passage})
+        })
+        .collect();
+    let word = if kinds.contains(&"contradicted") {
+        "contradicted"
+    } else if kinds.contains(&"specific_missing") || !kinds.contains(&"stated") {
+        "unsupported"
+    } else if kinds.contains(&"common") {
+        "supported_with_common"
+    } else {
+        "supported"
+    };
+    parts_reply(Value::Array(parts), word)
+}
+
+#[tokio::test]
+async fn every_bridge_answer_any_reader_gives_records_a_check_that_agrees_with_its_outcome(
+) -> Result<()> {
+    let policy = StandardPolicy::new();
+    let sources = sources();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let world = world_of(&references, citing(&references)?);
+    let readers = [
+        (Reading::Parts, Class::Sourced, "s.read"),
+        (Reading::Ground, Class::Reasoning, "r.ground"),
+        (Reading::Ground, Class::Common, "c.ground"),
+    ];
+    for mask in 1_usize..(1 << PART_KINDS.len()) {
+        let kinds: Vec<&str> = PART_KINDS
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| mask & (1 << index) != 0)
+            .map(|(_, kind)| *kind)
+            .collect();
+        for (reading, class, node) in readers {
+            let model = ScriptedBridge::new(vec![reply_of(&kinds)]);
+            let read = read_one(reading, &model, &world, STATEMENT).await?;
+            let mut ledger = open().await?;
+            let id = claim(&mut ledger, "read", class, ClassifiedBy::Model).await?;
+            let (step, _) = step_of(&policy, at(&policy, class, node), reading, read);
+            let stands = matches!(
+                step.read.outcome(),
+                Outcome::Stands | Outcome::StandsElsewhere
+            );
+
+            let recorded = ledger.record_reading(&policy, &id, &step).await;
+
+            assert!(recorded.is_ok(), "{reading:?} of {kinds:?}: {recorded:?}");
+            let held = ledger.entry(&id).unwrap();
+            let recorded = checks(held);
+            let [check] = recorded.as_slice() else {
+                panic!("{reading:?} of {kinds:?}: one check");
+            };
+            let passed = !matches!(check.result, CheckResult::Failed { .. });
+            assert_eq!(
+                passed, stands,
+                "{reading:?} of {kinds:?}: {:?}",
+                check.result
+            );
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_ground_reading_of_a_stated_and_a_common_part_records_an_unsupported_check() -> Result<()>
+{
+    let policy = StandardPolicy::new();
+    let sources = sources();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let world = world_of(&references, citing(&references)?);
+    let model = ScriptedBridge::new(vec![half_stated()]);
+    let read = read_one(Reading::Ground, &model, &world, STATEMENT).await?;
+    let mut ledger = open().await?;
+    let id = claim(
+        &mut ledger,
+        "grounded",
+        Class::Reasoning,
+        ClassifiedBy::Model,
+    )
+    .await?;
+    let (step, _) = step_of(
+        &policy,
+        at(&policy, Class::Reasoning, "r.ground"),
+        Reading::Ground,
+        read,
+    );
+
+    let recorded = ledger.record_reading(&policy, &id, &step).await;
+
+    assert!(recorded.is_ok(), "{recorded:?}");
+    let held = ledger.entry(&id).unwrap();
+    let failed = CheckResult::Failed {
+        kind: VerdictKind::Unsupported,
+    };
+    assert_eq!(checks(held)[0].result, failed);
+    assert!(held.events().iter().any(|record| matches!(
+        record.event,
+        ClaimEvent::Stepped {
+            outcome: Outcome::Refuted,
+            ..
+        }
+    )));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_check_of_a_supported_finding_names_the_strongest_holder_of_its_quotation() -> Result<()>
+{
+    let policy = StandardPolicy::new();
+    let mut ledger = open().await?;
+    let id = claim(&mut ledger, "cited", SOURCED.0, SOURCED.1).await?;
+    let mut held_by_both = finding(
+        SOURCED,
+        ClaimVerdict::Supported,
+        "Stated.",
+        &[passage("web"), passage("book")],
+        Some(PASSAGE),
+    );
+    held_by_both.trust = Some(Box::new(FindingTrust {
+        profile: ClaimProfile {
+            kind: ClaimKind::Specification,
+            subject: None,
+            temporal: TemporalScope::Timeless,
+            measurement_origin: None,
+            attributed_to: None,
+            reasons: Vec::new(),
+            policy: "test".into(),
+            model: "test".into(),
+        },
+        supports: Vec::new(),
+        contrary: Vec::new(),
+        decision: Decision::Sufficient {
+            met_by: vec!["book".to_owned()],
+            label: None,
+            reasons: Vec::new(),
+        },
+        available: None,
+    }));
+    let read = Read::new(Outcome::Stands, held_by_both, false);
+    let (step, _) = step_of(
+        &policy,
+        entry(&policy, Class::Sourced),
+        Reading::Parts,
+        read,
+    );
+
+    ledger.record_reading(&policy, &id, &step).await?;
+
+    let supported = CheckResult::Supported {
+        source_version_id: "book".into(),
+        supporting_quote: PASSAGE.into(),
+    };
+    assert_eq!(checks(ledger.entry(&id).unwrap())[0].result, supported);
     Ok(())
 }

@@ -10,6 +10,7 @@ mod audit;
 mod checks;
 mod cotenancy;
 mod cuts;
+mod faults;
 mod fields;
 mod held;
 mod history;
@@ -21,19 +22,18 @@ mod readings;
 mod receipts;
 mod stops;
 mod successor;
+mod teaching;
 mod unverified;
-mod written;
 
 pub(super) use audit::Audited;
-pub(super) use cotenancy::{sentences, CutOf};
+pub(super) use cotenancy::CutOf;
+pub(super) use faults::contain;
+pub(crate) use faults::StatementFault;
 pub(super) use position::StepKind;
-pub(super) use stops::UNREADABLE;
 pub(super) use successor::Rewrites;
 
-use super::provenance_gate::ProvenanceGate;
 use super::resolution::{ended_mark, standing, Placed, Resolution, Standing};
 use super::sections::Cuts;
-use super::support_gate::SupportGate;
 use super::*;
 use crate::curriculum::LearningClaimTally;
 use crate::curriculum_repository::LearningCurriculumRepository;
@@ -41,19 +41,25 @@ use crate::lessons::claim_reviews::repository::{ClaimReviewRepository, ShownPass
 use crate::persistence::now;
 use identify::Carried;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
-use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal, Outcome, Step, Then};
+use lattice_core::domain::learning::acceptance::{
+    repair_at, AcceptancePolicy, Goal, Outcome, Step,
+};
 use lattice_core::domain::learning::claim_review::{
     end_state, Actor, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation,
     ClaimState, CutPlace, EventProvenance, LessonReview, LessonReviewState, RepairOutcome,
-    Revision, StopReason, UserAction, MACHINE_ATTEMPTS,
+    Revision, StopReason, UserAction,
 };
+use lattice_core::shared::protocol::Protocol;
+use lattice_core::shared::text::same_text;
 
-pub(crate) use fields::{field_pointer, field_text, locate, unit_fields, unit_texts};
+pub(crate) use fields::{
+    field_pointer, field_text, locate, stands, stands_in_part, unit_fields, unit_texts,
+};
 pub(crate) use held::{held_for_review, held_lessons, needs_review, review_outcome, HeldForReview};
-pub(crate) use located::{claim_quote, clip, located, located_quote, narrow};
+pub(crate) use located::{claim_quote, located, located_quote, narrow};
 
-/// The lesson checkpoint holding repairs awaiting the pass that decides them.
-const PENDING_KEY: &str = "claim-ledger-v1:pending";
+/// The rule the ledger's checkpoints are kept under.
+pub(super) const LEDGER_KEYS: Protocol = lattice_core::protocol!("claim-ledger", 1);
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Where a statement stands in the lesson: its section, field and quote.
@@ -82,7 +88,7 @@ pub(super) fn stand_together(a: &Place<'_>, b: &Place<'_>) -> bool {
         && a.field == b.field
         && !a.quote.trim().is_empty()
         && !b.quote.trim().is_empty()
-        && (a.quote.contains(b.quote) || b.quote.contains(a.quote))
+        && (same_text::stands(a.quote, b.quote) || same_text::stands(b.quote, a.quote))
 }
 
 /// A repair sent for a claim, awaiting the pass that shows what became of
@@ -194,21 +200,20 @@ pub(super) struct ClaimLedger {
     /// What the lesson's cuts left: the sections that go and the flow repairs
     /// made (claim classes design §3.10).
     pub(super) cuts: Cuts,
-    gate: Box<dyn SupportGate>,
 }
 
-/// A code example's claim: the ledger holds no class for it, which every
-/// statement has.
+/// Whether the claim is a code example: it carries a code example.
 fn is_example(entry: &ClaimLedgerEntry) -> bool {
-    entry.classified().is_none()
+    entry.code_example().is_some()
 }
 
-/// A claim the machine may not act on any more: its sentence is gone.
-fn is_gone(state: &ClaimState) -> bool {
-    matches!(
-        state,
-        ClaimState::Removed { .. } | ClaimState::Edited { .. }
-    )
+/// The repair the loop sends next for a claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct NextRepair {
+    /// The policy's step for a statement; `None` for a code example.
+    pub(super) step: Option<Step>,
+    pub(super) attempt: u8,
+    pub(super) last: bool,
 }
 
 /// The issue line a pass reports for a claim no passage supports.
@@ -238,7 +243,6 @@ impl ClaimLedger {
             unplaced: Vec::new(),
             edited_now: HashSet::new(),
             cuts: Cuts::default(),
-            gate: Box::new(ProvenanceGate),
         };
         let Some(scope) = crate::lesson_drafts::scope() else {
             return Ok(ledger);
@@ -257,12 +261,31 @@ impl ClaimLedger {
             .write_review(LessonReviewState::Verifying, raw, None)
             .await?;
         ledger.sync().await?;
-        ledger.pending = crate::lesson_drafts::checkpoint(PENDING_KEY)
+        ledger.pending = crate::lesson_drafts::checkpoint(&LEDGER_KEYS.key("pending"))
             .await?
             .and_then(|saved| serde_json::from_value(saved).ok())
             .unwrap_or_default();
         ledger.load_cuts().await?;
         Ok(ledger)
+    }
+
+    /// A ledger holding `entries`, in memory, for tests that read a stored one.
+    #[cfg(test)]
+    pub(super) fn holding(entries: Vec<ClaimLedgerEntry>) -> Self {
+        Self {
+            sink: None,
+            entries,
+            revision: Revision(0),
+            checker_model: String::new(),
+            window_tokens: 0,
+            pending: Pending::default(),
+            findings: Vec::new(),
+            examples: HashMap::new(),
+            carried: HashMap::new(),
+            unplaced: Vec::new(),
+            edited_now: HashSet::new(),
+            cuts: Cuts::default(),
+        }
     }
 
     /// A sync point (§9): reload what the user did since the last one.
@@ -289,6 +312,17 @@ impl ClaimLedger {
     /// The claims of the latest observed findings, in report order.
     pub(super) fn finding_claims(&self) -> &[ClaimId] {
         &self.findings
+    }
+
+    /// The sections the latest observed findings stand in.
+    pub(super) fn finding_sections(&self) -> u32 {
+        let sections: HashSet<usize> = self
+            .findings
+            .iter()
+            .filter_map(|id| self.entry(id))
+            .map(|entry| entry.location().unit_index)
+            .collect();
+        u32::try_from(sections.len()).unwrap_or(u32::MAX)
     }
 
     async fn write_review(
@@ -318,8 +352,11 @@ impl ClaimLedger {
     }
 
     pub(super) async fn save_pending(&self) -> Result<()> {
-        crate::lesson_drafts::record_checkpoint(PENDING_KEY, serde_json::to_value(&self.pending)?)
-            .await
+        crate::lesson_drafts::record_checkpoint(
+            &LEDGER_KEYS.key("pending"),
+            serde_json::to_value(&self.pending)?,
+        )
+        .await
     }
 
     fn provenance(&self) -> EventProvenance {
@@ -495,8 +532,7 @@ impl ClaimLedger {
                 if state == LessonReviewState::Verifying {
                     tracing::warn!("claim.state: claims are the machine's but nothing is left for it to do; handing the lesson to the user");
                 }
-                let counts = ClaimCounts::tally(self.entries.iter());
-                Decision::NeedsReview(counts.queued + counts.open)
+                Decision::NeedsReview(ClaimCounts::tally(self.entries.iter()).unresolved())
             }
         }
     }
@@ -511,16 +547,11 @@ impl ClaimLedger {
             .count()
     }
 
-    /// What the next pass keeps of the ledger: whether it is a later pass, the
-    /// lesson as it was before the repairs or edits, and the place in its
-    /// graph of each statement the ledger holds (acceptance design §2.9).
-    pub(super) fn rewrites(&self, policy: &dyn AcceptancePolicy) -> Rewrites {
-        Rewrites::new(
-            !self.entries.is_empty(),
-            self.pending.previous.clone(),
-            self.walks(policy),
-        )
-        .holding(self.held())
+    /// What the next pass keeps of the ledger: whether it is a later pass and
+    /// the lesson as it was before the repairs or edits (acceptance design
+    /// §2.9).
+    pub(super) fn rewrites(&self) -> Rewrites {
+        Rewrites::new(!self.entries.is_empty(), self.pending.previous.clone()).holding(self.held())
     }
 
     /// The claims of the statements neither the user nor the machine has
@@ -528,7 +559,7 @@ impl ClaimLedger {
     fn held(&self) -> Vec<ClaimLedgerEntry> {
         self.entries
             .iter()
-            .filter(|entry| !is_gone(entry.state()) && !is_example(entry))
+            .filter(|entry| !entry.state().is_gone() && !is_example(entry))
             .cloned()
             .collect()
     }
@@ -629,43 +660,41 @@ impl ClaimLedger {
         id: &ClaimId,
     ) -> Option<RepairRecord> {
         let entry = self.entry(id)?;
-        let unit = entry.location().unit_index;
-        let before = entry.location().quote.clone();
-        if is_example(entry) {
-            let ClaimState::Open {
-                machine_attempts_left,
-                ..
-            } = entry.state()
-            else {
-                return None;
-            };
-            return Some(RepairRecord {
-                claim_id: id.clone(),
-                unit,
-                attempt: (MACHINE_ATTEMPTS + 1).saturating_sub(*machine_attempts_left),
-                escalated: entry.next_repair_escalates(),
-                before,
-                rides_on: None,
-                step: None,
-                narrowing: false,
-            });
-        }
-        let (at, step) = self.waits_at(policy, id)?;
-        let node = policy.graph(at.class).node(at.node)?;
-        let (attempt, escalated) = match step {
-            Step::Rewrite(_) => (if node.name.ends_with(".again") { 2 } else { 1 }, false),
-            Step::Cut => (2, true),
-            _ => return None,
-        };
+        let repair = self.next_repair(policy, id)?;
         Some(RepairRecord {
             claim_id: id.clone(),
-            unit,
-            attempt,
-            escalated,
-            before,
+            unit: entry.location().unit_index,
+            attempt: repair.attempt,
+            escalated: repair.last,
+            before: entry.location().quote.clone(),
             rides_on: None,
-            step: Some(step),
-            narrowing: step == Step::Cut && self.narrows(candidate, id),
+            step: repair.step,
+            narrowing: repair.step == Some(Step::Cut) && self.narrows(candidate, id),
+        })
+    }
+
+    /// The repair of `id` the loop sends next: a statement's is its node's, a
+    /// failed example's its own attempt. `None` when it has none to take.
+    pub(super) fn next_repair(
+        &self,
+        policy: &dyn AcceptancePolicy,
+        id: &ClaimId,
+    ) -> Option<NextRepair> {
+        let entry = self.entry(id)?;
+        if is_example(entry) {
+            let repair = entry.next_machine_repair()?;
+            return Some(NextRepair {
+                step: None,
+                attempt: repair.attempt,
+                last: repair.last,
+            });
+        }
+        let (at, _) = self.waits_at(policy, id)?;
+        let repair = repair_at(policy, at)?;
+        Some(NextRepair {
+            step: Some(repair.step),
+            attempt: repair.attempt,
+            last: repair.last,
         })
     }
 
@@ -673,11 +702,8 @@ impl ClaimLedger {
     /// `Cut` node, a failed example on its last attempt. What the cut of a
     /// statement takes out is `cut_of`'s.
     pub(super) fn cuts_next(&self, policy: &dyn AcceptancePolicy, claim_id: &ClaimId) -> bool {
-        match self.entry(claim_id) {
-            Some(entry) if is_example(entry) => entry.next_repair_escalates(),
-            Some(_) => matches!(self.waits_at(policy, claim_id), Some((_, Step::Cut))),
-            None => false,
-        }
+        self.next_repair(policy, claim_id)
+            .is_some_and(|repair| repair.last)
     }
 
     /// The repair of these claims produced nothing usable. A failed example
@@ -725,16 +751,24 @@ impl ClaimLedger {
     }
 
     /// The last attempt on these statements took their sentence out
-    /// (`Outcome::Cut`, also when it was out already) or, refused, took their
-    /// section out (`Outcome::CannotCut`): the repair is closed as the removal
-    /// it was, and the policy's step ends the claims removed.
+    /// (`Outcome::Cut`, also when it was out already) or could not
+    /// (`Outcome::CannotCut`): the repair is closed as the removal it was or
+    /// as not applied, and the policy's step ends the claims removed or
+    /// published not verified.
     pub(super) async fn cut(
         &mut self,
         policy: &dyn AcceptancePolicy,
         claims: &[ClaimId],
         outcome: Outcome,
     ) -> Result<()> {
-        self.close_records(claims, RepairOutcome::Removed).await?;
+        let closed = if outcome == Outcome::CannotCut {
+            RepairOutcome::Rejected {
+                reason: "The sentence could not be cut out.".into(),
+            }
+        } else {
+            RepairOutcome::Removed
+        };
+        self.close_records(claims, closed).await?;
         for id in claims {
             self.record_step(policy, id, Step::Cut, outcome).await?;
         }
@@ -794,14 +828,7 @@ impl ClaimLedger {
     /// a statement at a `Rewrite` or a `Cut` node, a failed example by its own
     /// rule.
     pub(super) fn may_repair(&self, policy: &dyn AcceptancePolicy, claim_id: &ClaimId) -> bool {
-        match self.entry(claim_id) {
-            Some(entry) if is_example(entry) => entry.may_repair(),
-            Some(_) => matches!(
-                self.waits_at(policy, claim_id),
-                Some((_, Step::Rewrite(_) | Step::Cut))
-            ),
-            None => false,
-        }
+        self.next_repair(policy, claim_id).is_some()
     }
 
     /// The report the lesson publishes with: each finding carries the user's
@@ -885,8 +912,35 @@ impl ClaimLedger {
             .await
     }
 
-    pub(super) fn tally(&self) -> LearningClaimTally {
-        claim_tally(&self.entries)
+    /// Where the lesson's claims stand (§6.3). The machine's are told apart by
+    /// what is done to them next: a first check, research, or a repair.
+    pub(super) fn tally(&self, policy: &dyn AcceptancePolicy) -> LearningClaimTally {
+        let counts = ClaimCounts::tally(self.entries.iter());
+        let count = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
+        let unchecked = self
+            .entries
+            .iter()
+            .filter(|entry| matches!(entry.state(), ClaimState::Unchecked))
+            .count();
+        let searching = self
+            .entries
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    self.waits_at(policy, entry.claim_id()),
+                    Some((_, Step::Research))
+                )
+            })
+            .count();
+        LearningClaimTally {
+            unchecked: count(unchecked),
+            searching: count(searching),
+            repairing: count(counts.open.saturating_sub(unchecked + searching)),
+            waiting: count(counts.queued),
+            verified: count(counts.verified),
+            resolved_by_you: count(counts.resolved_by_you()),
+            rewritten: count(counts.rewritten),
+        }
     }
 
     /// The user's last action on a claim, when it is the one that set its
@@ -904,77 +958,5 @@ impl ClaimLedger {
     }
 }
 
-/// Where the lesson's claims stand (§6.3). The machine's are told apart by
-/// what is done to them next: a first check, research then a recheck, or a
-/// rewrite; only the last is a repair.
-pub(super) fn claim_tally(entries: &[ClaimLedgerEntry]) -> LearningClaimTally {
-    let counts = ClaimCounts::tally(entries.iter());
-    let count = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
-    let (mut unchecked, mut searching) = (0, 0);
-    for entry in entries {
-        match (entry.state(), entry.decided()) {
-            (ClaimState::Unchecked, _) => unchecked += 1,
-            (
-                ClaimState::Open { .. },
-                Some(Then::Node {
-                    step: Step::Research,
-                    ..
-                }),
-            ) => searching += 1,
-            (ClaimState::Open { .. }, None) if entry.may_research() => searching += 1,
-            _ => {}
-        }
-    }
-    LearningClaimTally {
-        unchecked: count(unchecked),
-        searching: count(searching),
-        repairing: count(counts.open.saturating_sub(unchecked + searching)),
-        waiting: count(counts.queued),
-        verified: count(counts.verified),
-        resolved_by_you: count(counts.resolved_by_you()),
-        rewritten: count(counts.rewritten),
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_saved_repair_from_before_narrowing_loads_as_not_narrowing() {
-        let saved = serde_json::json!({
-            "repairs": [{"claim_id": "c", "unit": 0, "attempt": 2, "escalated": true, "before": "A sentence."}],
-        });
-
-        let pending: Pending = serde_json::from_value(saved).unwrap();
-
-        let record = &pending.repairs[0];
-        assert!(!record.narrowing);
-        assert_eq!(record.goal(), None);
-        // Only a narrowing writes the flag, and it reads back as one.
-        let written = serde_json::to_value(record).unwrap();
-        assert!(written.get("narrowing").is_none(), "{written}");
-        let narrowing = RepairRecord {
-            narrowing: true,
-            ..record.clone()
-        };
-        let written = serde_json::to_value(&narrowing).unwrap();
-        assert_eq!(written["narrowing"], true);
-        let read: RepairRecord = serde_json::from_value(written).unwrap();
-        assert!(read.narrowing);
-        assert_eq!(read.goal(), Some(Goal::KeepTheOthers));
-    }
-
-    #[test]
-    fn a_reference_change_found_at_publication_is_verified_again_not_an_error() {
-        assert!(sources_changed(&AppError::InvalidInput(
-            "A verified source is no longer active; verify this lesson again.".into()
-        )));
-        assert!(sources_changed(&AppError::InvalidInput(
-            "Verification source content changed; verify this lesson again.".into()
-        )));
-        assert!(!sources_changed(&AppError::InvalidInput(
-            "A complete verification report for this exact lesson revision is required before publication.".into()
-        )));
-    }
-}
+mod tests;

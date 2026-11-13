@@ -1,6 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+use super::classes::{Consistency, Knowledge};
 use super::*;
 use crate::application::ports::llm_port::CompletionResponse;
+use crate::application::services::model_contract::test_support::assert_round_trip;
+use crate::application::services::model_contract::CORRECTION_LEAD;
+use crate::domain::learning::acceptance::KNOWLEDGE_SAMPLES;
 use crate::shared::error::AppError;
 use async_trait::async_trait;
 use serde_json::json;
@@ -86,6 +90,22 @@ fn judged<T: std::fmt::Debug>(judgment: ClassJudgment<T>) -> T {
     }
 }
 
+/// Every message of a request, in order, as one text.
+pub(super) fn conversation(request: &CompletionRequest) -> String {
+    request
+        .input
+        .iter()
+        .filter_map(|item| match item {
+            CompletionInput::Message { content, .. } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        )
+}
+
 /// The system and the user message of a request.
 pub(super) fn messages(request: &CompletionRequest) -> (String, String) {
     let content = |wanted: &str| {
@@ -150,23 +170,23 @@ async fn an_unreadable_answer_is_asked_for_once_more_and_then_left_unchecked() {
     assert_eq!(outcome.verdict, ConsistencyVerdict::Consistent);
     let sent = llm.sent();
     assert_eq!(sent.len(), 2);
-    let (_, again) = messages(&sent[1]);
-    assert!(again.contains("could not be read") && again.contains("not json"));
+    let again = conversation(&sent[1]);
+    assert!(again.contains(CORRECTION_LEAD) && again.contains("not json"));
 
     let unreadable = || Reply::Text("{}".into());
     let unknown = || answer("maybe");
     let cut = || Reply::Cut(r#"{"verdict": "consistent", "reason": "Fine."}"#.into());
-    for replies in [
-        vec![unreadable(), unreadable()],
-        vec![unknown(), unknown()],
-        vec![cut(), cut()],
+    for (replies, sends) in [
+        (vec![unreadable(), unreadable()], 2),
+        (vec![unknown(), unknown()], 2),
+        (vec![cut(), cut()], 2),
     ] {
         let llm = Scripted::new(replies);
         let judgment = checker(&llm, CheckPolicy::Consistency)
             .check_consistency("S.", &passages())
             .await;
         assert!(matches!(judgment, ClassJudgment::Unusable), "{judgment:?}");
-        assert_eq!(llm.sent().len(), 2);
+        assert_eq!(llm.sent().len(), sends);
     }
 }
 
@@ -185,7 +205,7 @@ async fn an_outage_stays_an_error_and_another_policy_makes_no_call() {
         .await;
     assert!(matches!(wrong, ClassJudgment::Unusable));
     let wrong = checker(&llm, CheckPolicy::Consistency)
-        .check_knowledge("S.")
+        .check_knowledge("S.", None)
         .await;
     assert!(matches!(wrong, ClassJudgment::Unusable));
     assert!(llm.sent().is_empty());
@@ -200,7 +220,7 @@ async fn the_knowledge_judge_asks_three_times_at_temperature_and_keeps_every_sam
     ]);
     let outcome = judged(
         checker(&llm, CheckPolicy::Knowledge)
-            .check_knowledge("OCR reads pixels into text.")
+            .check_knowledge("OCR reads pixels into text.", None)
             .await,
     );
     let verdicts: Vec<KnowledgeVerdict> = outcome.samples.iter().map(|s| s.verdict).collect();
@@ -213,12 +233,37 @@ async fn the_knowledge_judge_asks_three_times_at_temperature_and_keeps_every_sam
         ]
     );
     let sent = llm.sent();
-    assert_eq!(sent.len(), KNOWLEDGE_SAMPLES);
+    assert_eq!(sent.len(), usize::try_from(KNOWLEDGE_SAMPLES).unwrap());
     for request in &sent {
         let (system, user) = messages(request);
         assert_eq!(system, KNOWLEDGE_SYSTEM);
         assert_eq!(user, "Statement: OCR reads pixels into text.");
         assert_eq!(request.sampling.and_then(|s| s.temperature), Some(0.7));
+    }
+}
+
+#[tokio::test]
+async fn a_knowledge_check_with_a_case_sends_the_case_before_the_statement_and_says_what_it_is() {
+    let llm = Scripted::new(vec![
+        answer("true_common"),
+        answer("true_common"),
+        answer("true_common"),
+    ]);
+    let case = "A rope is cut into a piece of 3 units and a piece of 4 units.";
+    judged(
+        checker(&llm, CheckPolicy::Knowledge)
+            .check_knowledge("Together the pieces make 7 units.", Some(case))
+            .await,
+    );
+    let sent = llm.sent();
+    assert_eq!(sent.len(), usize::try_from(KNOWLEDGE_SAMPLES).unwrap());
+    for request in &sent {
+        let (system, user) = messages(request);
+        assert_eq!(system, format!("{KNOWLEDGE_SYSTEM}{KNOWLEDGE_CASE}"));
+        assert_eq!(
+            user,
+            format!("Case:\n{case}\n\nStatement: Together the pieces make 7 units.")
+        );
     }
 }
 
@@ -230,7 +275,7 @@ async fn a_sample_that_cannot_be_read_leaves_the_statement_unchecked() {
         Reply::Text("{}".into()),
     ]);
     let judgment = checker(&llm, CheckPolicy::Knowledge)
-        .check_knowledge("OCR reads pixels into text.")
+        .check_knowledge("OCR reads pixels into text.", None)
         .await;
     assert!(matches!(judgment, ClassJudgment::Unusable), "{judgment:?}");
     assert_eq!(llm.sent().len(), 3, "no further samples after a bad one");
@@ -251,12 +296,15 @@ fn the_samples_decide_a_pass_a_falsity_veto_and_a_need_for_a_source() {
     let unanimous = outcome([TrueCommon; 3]);
     assert!(unanimous.is_common() && !unanimous.is_false() && !unanimous.needs_source());
 
-    // A lone dissent forfeits the pass but is no majority, so it never vetoes.
+    // A dissent forfeits the pass, and only every sample calling it false vetoes.
     let lone = outcome([TrueCommon, False, TrueCommon]);
     assert!(!lone.is_common() && !lone.is_false());
 
-    let majority = outcome([False, TrueCommon, False]);
-    assert!(majority.is_false() && !majority.is_common());
+    let split = outcome([False, TrueCommon, False]);
+    assert!(!split.is_false() && !split.is_common());
+
+    let every = outcome([False; 3]);
+    assert!(every.is_false() && !every.is_common());
 
     let doubtful = outcome([TrueCommon, NeedsSource, TrueCommon]);
     assert!(doubtful.needs_source() && !doubtful.is_common() && !doubtful.is_false());
@@ -286,10 +334,10 @@ fn every_mix_of_three_samples_has_the_outcome_a_common_statement_and_a_veto_give
         ([Common, Common, False], Source, Stands),
         ([Common, Needs, Needs], Source, Stands),
         ([Common, Needs, False], Source, Stands),
-        ([Common, False, False], Refuted, Refuted),
+        ([Common, False, False], Source, Stands),
         ([Needs, Needs, Needs], Source, Stands),
         ([Needs, Needs, False], Source, Stands),
-        ([Needs, False, False], Refuted, Refuted),
+        ([Needs, False, False], Source, Stands),
         ([False, False, False], Refuted, Refuted),
     ];
     for (verdicts, knowledge, veto) in rows {
@@ -327,8 +375,16 @@ fn a_consistency_check_fits_the_window_only_beside_its_answer() {
     let checker = checker(&llm, CheckPolicy::Consistency);
     assert!(checker.consistency_fits("S.", &passages()));
     assert!(!checker.consistency_fits("S.", &["word ".repeat(40_000)]));
-    let room = checker.consistency_evidence_room("S.");
-    assert!(room > 0 && room < 8_192, "{room}");
+}
+
+#[test]
+fn the_consistency_and_knowledge_judges_are_told_what_the_lesson_s_own_figures_are() {
+    let own_figures = "The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them.";
+    assert!(
+        CONSISTENCY_SYSTEM.contains(own_figures),
+        "{CONSISTENCY_SYSTEM}"
+    );
+    assert!(KNOWLEDGE_SYSTEM.contains(own_figures), "{KNOWLEDGE_SYSTEM}");
 }
 
 #[tokio::test]
@@ -344,4 +400,28 @@ async fn a_reason_past_600_characters_is_kept_whole() {
             .await,
     );
     assert_eq!(outcome.reason, reason);
+}
+
+#[test]
+fn the_class_contracts_read_what_they_render() {
+    for verdict in [
+        ConsistencyVerdict::Consistent,
+        ConsistencyVerdict::Contradicted,
+        ConsistencyVerdict::UnfoundedSpecific,
+    ] {
+        assert_round_trip::<Consistency>(&ConsistencyOutcome {
+            verdict,
+            reason: "A figure no passage gives.".into(),
+        });
+    }
+    for verdict in [
+        KnowledgeVerdict::TrueCommon,
+        KnowledgeVerdict::False,
+        KnowledgeVerdict::NeedsSource,
+    ] {
+        assert_round_trip::<Knowledge>(&KnowledgeSample {
+            verdict,
+            reason: "A textbook would cite it.".into(),
+        });
+    }
 }

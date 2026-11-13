@@ -36,6 +36,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeo
   getLearningLessonEvidence: mocks.evidence,
   getLearningLessonClaimReview: mocks.review,
   getLearningPlan: mocks.plan,
+  prepareLearningAhead: () => new Promise(() => {}),
   getLearningPracticeWorkspace: async (programId: string) => ({ ok: true, data: { programId, sessions: [] } }),
   getLearningMemory: async () => ({ ok: true, data: { programId: 'program-1', journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0 } }),
   listStudyDecks: async () => ({ ok: true, data: [] }),

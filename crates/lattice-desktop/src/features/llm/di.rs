@@ -318,6 +318,7 @@ impl Container {
                 let message = match &error {
                     AppError::AiModelsNotInstalled(message)
                     | AppError::InvalidConfig(message)
+                    | AppError::WindowTooSmall(message)
                     | AppError::ModelLoadFailed(message)
                     | AppError::ServiceNotAvailable(message) => message.clone(),
                     _ => error.to_string(),

@@ -34,7 +34,10 @@ async fn open() -> (tempfile::TempDir, SqlitePool, ConversationRepository) {
 /// Another connection takes the write lock now, runs `sql`, and commits after `HELD`.
 async fn another_writer(pool: &SqlitePool, sql: &str) -> tokio::task::JoinHandle<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-    sqlx::query(sql).execute(&mut *tx).await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(sql))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
     tokio::spawn(async move {
         tokio::time::sleep(HELD).await;
         tx.commit().await.unwrap();
@@ -42,7 +45,10 @@ async fn another_writer(pool: &SqlitePool, sql: &str) -> tokio::task::JoinHandle
 }
 
 async fn run(pool: &SqlitePool, sql: &str) {
-    sqlx::query(sql).execute(pool).await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(sql))
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 async fn seed_document(pool: &SqlitePool, id: &str) {
@@ -59,7 +65,10 @@ async fn seed_document(pool: &SqlitePool, id: &str) {
 }
 
 async fn count(pool: &SqlitePool, sql: &str) -> i64 {
-    sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .fetch_one(pool)
+        .await
+        .unwrap()
 }
 
 #[tokio::test]

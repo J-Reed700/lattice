@@ -301,11 +301,12 @@ async fn schema_rejects_malformed_identity() {
 async fn malformed_identity_fails_the_read() {
     let (_, pool) = setup_repo().await;
     let query = build_model_select_query("WHERE m.model_id = ?1");
-    let mut record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
-        .bind("__ollama_server__")
-        .fetch_one(&pool)
-        .await
-        .expect("read synthetic row");
+    let mut record =
+        sqlx::query_as::<_, DownloadedModelRecord>(sqlx::AssertSqlSafe(query.as_str()))
+            .bind("__ollama_server__")
+            .fetch_one(&pool)
+            .await
+            .expect("read synthetic row");
     record.embedding_artifact_identity = Some(format!("sha256:{}", "AB".repeat(32)));
 
     let err = DownloadedModel::try_from(record).expect_err("malformed identity");

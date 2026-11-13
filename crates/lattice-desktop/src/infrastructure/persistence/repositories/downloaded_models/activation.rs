@@ -264,7 +264,7 @@ async fn active_model_in(
     slot: &str,
 ) -> Result<Option<DownloadedModel>> {
     let query = build_model_select_query(filter);
-    let record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
+    let record = sqlx::query_as::<_, DownloadedModelRecord>(sqlx::AssertSqlSafe(query.as_str()))
         .fetch_optional(&mut *conn)
         .await
         .map_err(|e| {

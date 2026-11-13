@@ -10,7 +10,7 @@ import { type ApiError, type ApiFailure } from '../types/api/result';
 
 /**
  * User-friendly error messages mapped to error codes
- * SYNCHRONIZED WITH RUST BACKEND - All 42 error codes
+ * SYNCHRONIZED WITH RUST BACKEND - every error code
  */
 const USER_MESSAGES: Record<ErrorCode, string> = {
   // Resource Errors
@@ -28,6 +28,8 @@ const USER_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.INVALID_CONFIG]: 'Configuration error. Please check settings.',
   [ErrorCode.INVALID_STATE]: 'Operation cannot be performed in the current state.',
   [ErrorCode.CONSTRAINT_VIOLATION]: 'Operation violates data constraints.',
+  [ErrorCode.CANCELLED]: 'Stopped on request.',
+  [ErrorCode.LESSON_HELD]: 'The lesson was held back for review.',
 
   // File System Errors
   [ErrorCode.FILE_NOT_FOUND]: 'File not found.',
@@ -55,7 +57,11 @@ const USER_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.MODEL_NOT_LOADED]: 'Model not loaded. Please download it first.',
   [ErrorCode.MODEL_LOAD_ERROR]: "The model server couldn't start. Reinstall Lattice, or choose another model in Settings.",
   [ErrorCode.PROMPT_EXCEEDS_WINDOW]: 'That is too much for the model to read at once. Try a smaller course or a model with a larger context window.',
+  [ErrorCode.WINDOW_TOO_SMALL]: 'This needs a larger context window than the model has. Choose a model with a larger context window in Settings.',
   [ErrorCode.LEARNING_MODEL_NOT_SET]: 'Courses need a model to write them.',
+  [ErrorCode.MODEL_REJECTED]: 'The model server turned the request down.',
+  [ErrorCode.MODEL_ANSWER_UNUSABLE]: "The model's answer could not be used.",
+  [ErrorCode.ANSWER_CUT_OFF]: "The model's answer was cut off before it finished.",
 
   // Processing Errors
   [ErrorCode.PROCESSING_ERROR]: 'Data processing failed.',
@@ -69,7 +75,6 @@ const USER_MESSAGES: Record<ErrorCode, string> = {
   // Concurrency Errors
   [ErrorCode.CONCURRENT_MODIFICATION]: 'Resource was modified by another process.',
   [ErrorCode.CONFLICT]: 'This resource was updated elsewhere. Reload and try again.',
-  [ErrorCode.QUEUE_FULL]: 'Processing queue is full. Please try again later.',
 
   // Backup & Recovery Errors
   [ErrorCode.BACKUP_CREATION_FAILED]: 'Failed to create backup.',

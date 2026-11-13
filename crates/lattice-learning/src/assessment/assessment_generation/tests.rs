@@ -141,7 +141,7 @@ async fn passages_twice_as_dense_as_estimated_are_packed_until_the_request_fits(
 
     let sent = batch.send(&llm, &collection).await?;
 
-    let Some((_, _, carried)) = sent else {
+    let Some((_, carried)) = sent else {
         panic!("expected the request to be sent with the passages that fit");
     };
     assert_eq!(llm.refusals.load(Ordering::SeqCst), 0);
@@ -169,7 +169,7 @@ async fn instructions_the_window_cannot_hold_by_exact_count_name_the_window() {
     );
     let llm = notation();
     let error = author_items(&llm, &need(description, 4)).await.err();
-    let Some(AppError::InvalidConfig(message)) = error else {
+    let Some(AppError::WindowTooSmall(message)) = error else {
         panic!("expected the window to be named, got {error:?}");
     };
     assert!(
@@ -279,19 +279,60 @@ async fn an_item_whose_reply_is_cut_off_alone_stays_pending_and_the_rest_are_gra
     assert_eq!(ids, ["a", "c"], "[b] stays pending");
 }
 
-#[test]
-fn a_disputed_item_may_keep_its_own_question_when_repaired() {
-    let mut authored = need("Reduce iron oxide.".into(), 1);
-    authored.existing_prompts = vec![
-        "Which gas reduces the ore?".into(),
-        "Why is coke added?".into(),
-    ];
-    let repair = repair_need(&authored, "Which gas reduces the ore?");
-    assert_eq!(repair.existing_prompts, ["Why is coke added?"]);
+/// Declines every request that holds the item `b`; grades any other.
+struct Decliner(Mutex<Vec<usize>>);
+
+#[async_trait::async_trait]
+impl LLMPort for Decliner {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let (_, user) = crate::lessons::structured_call::task_messages(request);
+        let prompt: Value = serde_json::from_str(user)?;
+        let ids: Vec<String> = prompt["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item["itemId"].as_str().map(str::to_owned))
+            .collect();
+        self.0.lock().unwrap().push(ids.len());
+        if ids.iter().any(|id| id == "b") {
+            return Ok(CompletionResponse {
+                finish_reason: "refusal".into(),
+                ..CompletionResponse::from_text("")
+            });
+        }
+        let items: Vec<Value> = ids
+            .iter()
+            .map(
+                |id| serde_json::json!({"itemId": id, "verdict": "equivalent", "summary": "Same."}),
+            )
+            .collect();
+        Ok(CompletionResponse::from_text(
+            serde_json::json!({ "items": items }).to_string(),
+        ))
+    }
+    fn model_name(&self) -> &str {
+        "decliner"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn an_item_the_model_declines_stays_pending_and_the_rest_are_graded() {
+    let llm = Decliner(Mutex::new(Vec::new()));
+    let answers: Vec<ShortAnswer> = ["a", "b", "c"].map(short).to_vec();
+    let graded = judge_short_answers(&llm, &answers).await.unwrap();
+    let mut ids: Vec<_> = graded.iter().map(|grade| grade.item_id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["a", "c"], "[b] stays pending");
     assert_eq!(
-        authored.existing_prompts.len(),
-        2,
-        "the bank's list is unchanged"
+        llm.0.lock().unwrap().clone(),
+        [3, 1, 1, 1],
+        "the batch is declined and split; a and c are graded; b is declined alone"
     );
 }
 
@@ -329,8 +370,8 @@ async fn a_batch_cut_off_asks_for_fewer_and_a_single_item_cut_off_is_refused() -
         repair: None,
     };
     assert!(batch(2).author(&CutOff, &collection).await?.is_none());
-    let single = batch(1).author(&CutOff, &collection).await?.unwrap();
-    assert!(matches!(single.as_slice(), [Err(reason)] if reason.contains("cut off")));
+    let single = batch(1).author(&CutOff, &collection).await;
+    assert!(matches!(single, Err(AppError::AnswerCutOff(_))));
     Ok(())
 }
 
@@ -406,7 +447,7 @@ async fn a_single_item_cut_off_is_asked_again_with_twice_the_room() -> Result<()
     };
     let llm = CutOnce(Mutex::new(Vec::new()));
     let single = batch.author(&llm, &collection).await?;
-    assert!(!matches!(single.as_deref(), Some([Err(reason)]) if reason.contains("cut off")));
+    assert!(single.is_some(), "the answer given twice the room is read");
     assert!(doubled(&llm.0));
     Ok(())
 }
@@ -477,7 +518,7 @@ fn the_item_schemas_hold_no_text_length_cap() {
             .into_iter()
             .filter(|rule| {
                 !rule.starts_with("/properties/rubric/")
-                    && rule.as_str() != "/properties/quote/minLength = 12"
+                    && rule.as_str() != "/properties/quote/minLength = 25"
             })
             .collect();
         assert!(rules.is_empty(), "{format:?}: {rules:?}");
@@ -541,4 +582,457 @@ fn a_long_distractor_rationale_is_kept_whole() {
         .candidate
         .distractor_rationales
         .contains(&rationale.trim().to_string()));
+}
+
+/// Keeps the instructions of each request and writes nothing.
+struct InstructionRecorder(Mutex<Vec<String>>);
+
+#[async_trait::async_trait]
+impl LLMPort for InstructionRecorder {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let (system, _) = crate::lessons::structured_call::task_messages(request);
+        self.0.lock().unwrap().push(system.to_owned());
+        Ok(CompletionResponse::from_text("{\"items\":[]}"))
+    }
+    fn model_name(&self) -> &str {
+        "instruction-recorder"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+async fn writer_instructions() -> Result<String> {
+    let need = need("Explain iron oxide reduction.".into(), 2);
+    let documents = documents(&need);
+    let collection = ReferenceCollection::lexical(&documents)?;
+    let batch = Batch {
+        need: &need,
+        count: 1,
+        notes: vec![],
+        repair: None,
+    };
+    let llm = InstructionRecorder(Mutex::new(Vec::new()));
+    batch.send(&llm, &collection).await?;
+    let sent = llm.0.lock().unwrap().clone();
+    Ok(sent.into_iter().next().unwrap_or_default())
+}
+
+#[tokio::test]
+async fn the_writer_is_told_what_the_learner_sees_and_never_to_cite_passages() -> Result<()> {
+    let system = writer_instructions().await?;
+    for sentence in [
+        "The learner sees each question with its options, explanation and rationales beside the lesson, never these passages as excerpts or the sources behind them.",
+        "mentions a passage, an excerpt, a tutorial, a document or a source",
+        "never give what a passage says or does not say as the reason an answer is right or wrong",
+    ] {
+        assert!(system.contains(sentence), "missing \"{sentence}\" in {system}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_writer_is_told_an_explanation_is_about_its_own_question() -> Result<()> {
+    let system = writer_instructions().await?;
+    let sentence = "An explanation and its rationales are about the question's own case: they use the names and values its prompt gives, never another example's.";
+    assert!(
+        system.contains(sentence),
+        "missing \"{sentence}\" in {system}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_writer_is_told_a_prompt_states_every_value_its_answer_depends_on() -> Result<()> {
+    let system = writer_instructions().await?;
+    let sentence = "the question depends on a value its prompt never gives";
+    assert!(
+        system.contains(sentence),
+        "missing \"{sentence}\" in {system}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_bank_writer_names_no_subjects_values() -> Result<()> {
+    let system = writer_instructions().await?;
+    let start = system
+        .find("An explanation and its rationales are about the question's own case")
+        .unwrap_or_default();
+    let end = system.find("doNotRepeat lists").unwrap_or_default();
+    assert!(start < end, "the two rules are missing from {system}");
+    let rules = &system[start..end];
+    assert!(!rules.contains("path"), "{rules}");
+    assert!(!rules.contains("such as"), "{rules}");
+    assert!(
+        rules.contains("they use the names and values its prompt gives"),
+        "{rules}"
+    );
+    assert!(
+        rules.contains("the question depends on a value its prompt never gives"),
+        "{rules}"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_writer_is_told_options_are_shuffled_so_they_are_named_by_their_words() {
+    assert!(
+        system().contains("shuffled order"),
+        "SYSTEM must say options are shown in a shuffled order"
+    );
+    assert!(
+        system().contains("names an option by its position, number or letter"),
+        "SYSTEM must forbid naming an option by position, number or letter"
+    );
+}
+
+#[test]
+fn the_instructions_say_what_do_not_repeat_requires() {
+    assert!(
+        system().contains("doNotRepeat"),
+        "SYSTEM never names doNotRepeat"
+    );
+    assert!(
+        system().contains("never asks one of them again"),
+        "SYSTEM never says a new item does not ask one of its questions again"
+    );
+}
+
+#[test]
+fn do_not_repeat_holds_every_existing_prompt_in_full() {
+    let mut need = need("Explain iron oxide reduction.".into(), 1);
+    need.existing_prompts = (0..45)
+        .map(|i| format!("Question {i}: {}", "which case decides it? ".repeat(12)))
+        .collect();
+    assert!(need
+        .existing_prompts
+        .iter()
+        .all(|p| p.chars().count() > 160));
+    let batch = Batch {
+        need: &need,
+        count: 1,
+        notes: vec![],
+        repair: None,
+    };
+
+    let skeleton = batch.skeleton();
+
+    let listed: Vec<&str> = skeleton["doNotRepeat"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(listed.len(), need.existing_prompts.len());
+    for prompt in &need.existing_prompts {
+        assert!(
+            listed.contains(&prompt.as_str()),
+            "cut or missing: {prompt}"
+        );
+    }
+}
+
+#[test]
+fn the_quiz_bank_writer_is_asked_for_choices_alike_in_form() {
+    assert!(system().contains("Write all the choices of a question alike in form: close in length and detail, the same grammatical shape and opening, none alone hedged or absolute, none alone carrying a reason or an example, and none repeating the question's distinctive words, so that the right one cannot be told from the others without knowing the material."));
+    assert!(!system().contains("distractors of similar length"));
+}
+
+const STAMPS: &str =
+    "A stamp goes into the box that matches its colour, and a torn stamp goes into the repair tray.";
+const STAMP_QUOTE: &str = "goes into the box that matches its colour";
+const TRAY: &str = "The repair tray";
+const LONG_TRAY: &str =
+    "The repair tray, where every torn stamp is set aside before anything else happens to it";
+const SORTED: &str = "A torn blue stamp arrives at the desk. Which place takes it first?";
+const SORTED_AGAIN: &str =
+    "A torn red stamp arrives at the desk. Which place takes it first, and why?";
+const GAP: &str = "The question depends on a value it never gives.";
+
+fn stamp_item(prompt: &str, right: &str) -> Value {
+    json!({
+        "prompt": prompt,
+        "options": [right, "The green box", "The red box", "The blue box"],
+        "distractorRationales": ["", "A green box takes green stamps.", "The red box takes red stamps.", "The blue box takes blue stamps."],
+        "answerIndex": 0,
+        "explanation": "A torn stamp is set aside whatever its colour.",
+        "blockIndex": 0,
+        "quote": STAMP_QUOTE,
+        "difficulty": 3
+    })
+}
+
+/// Writes from a queue, solves by the repair tray, and flags the prompt `flag`.
+struct Rewriter {
+    writes: Mutex<std::collections::VecDeque<Value>>,
+    requests: Mutex<Vec<Value>>,
+    flag: &'static str,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Rewriter {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let (system, user) = crate::lessons::structured_call::task_messages(request);
+        let context: Value = serde_json::from_str(user).unwrap_or(Value::Null);
+        let reply = if system.starts_with("Write quiz questions") {
+            self.requests.lock().unwrap().push(context);
+            self.writes
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| json!({"items": []}))
+        } else if system.starts_with("Solve quiz questions") {
+            let answers: Vec<Value> = context["questions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|question| {
+                    let right = question["options"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .position(|o| o.as_str().is_some_and(|o| o.starts_with(TRAY)));
+                    json!({"index": question["index"], "reason": "Torn stamps are set aside.", "correctIndices": right.into_iter().collect::<Vec<_>>(), "answer": "", "blankAnswers": [], "matches": [], "orderedValues": []})
+                })
+                .collect();
+            json!({"answers": answers})
+        } else {
+            let checks: Vec<Value> = context["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|item| {
+                    let flagged = item["prompt"] == self.flag;
+                    json!({"id": item["id"], "hasDefect": flagged, "finding": if flagged { GAP } else { "" }, "repeats": []})
+                })
+                .collect();
+            json!({"checks": checks})
+        };
+        Ok(CompletionResponse::from_text(reply.to_string()))
+    }
+    fn model_name(&self) -> &str {
+        "rewriter"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+fn rewriter(writes: Vec<Value>, flag: &'static str) -> Rewriter {
+    Rewriter {
+        writes: Mutex::new(writes.into()),
+        requests: Mutex::new(Vec::new()),
+        flag,
+    }
+}
+
+fn stamp_need() -> AuthoringNeed {
+    AuthoringNeed {
+        requirement: LearningBlueprintRequirement {
+            outcome_id: uuid::Uuid::new_v4().to_string(),
+            format: LearningItemFormat::SingleChoice,
+            count: 1,
+            difficulty_min: 2,
+            difficulty_max: 3,
+        },
+        outcome_title: "Sorting stamps".into(),
+        outcome_description: "Say where a stamp goes by its colour and condition.".into(),
+        lesson_id: Some("lesson".into()),
+        count: 1,
+        material: vec![MaterialPassage {
+            lesson_title: "Stamps".into(),
+            title: "The boxes".into(),
+            text: STAMPS.into(),
+            source_version_ids: vec![],
+        }],
+        existing_prompts: vec![],
+    }
+}
+
+#[tokio::test]
+async fn a_quiz_item_whose_right_choice_is_much_the_longest_is_rewritten_not_dropped() -> Result<()>
+{
+    let llm = rewriter(
+        vec![
+            json!({"items": [stamp_item(SORTED, LONG_TRAY)]}),
+            json!({"items": [stamp_item(SORTED_AGAIN, TRAY)]}),
+        ],
+        "",
+    );
+    let authored = author_items(&llm, &stamp_need()).await?;
+    let requests = llm.requests.lock().unwrap();
+    let rewrites: Vec<&Value> = requests.iter().filter(|r| !r["repair"].is_null()).collect();
+    assert_eq!(rewrites.len(), 1, "rewrite requests: {}", rewrites.len());
+    assert!(rewrites[0]["repair"]["findings"]
+        .to_string()
+        .contains("longest"));
+    assert_eq!(authored.items.len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_rewrite_that_fails_the_checks_is_dropped_with_its_own_fault() -> Result<()> {
+    let llm = rewriter(
+        vec![
+            json!({"items": [stamp_item(SORTED, TRAY)]}),
+            json!({"items": [stamp_item(SORTED_AGAIN, LONG_TRAY)]}),
+        ],
+        SORTED,
+    );
+    let authored = author_items(&llm, &stamp_need()).await?;
+    assert!(authored.items.is_empty(), "{:?}", authored.items);
+    assert!(
+        authored
+            .dropped
+            .iter()
+            .any(|reason| reason.contains("longest")),
+        "dropped: {:?}",
+        authored.dropped
+    );
+    Ok(())
+}
+
+/// Answers a blind solve, and a judge whose first reply misses the item; keeps each judge request whole.
+struct Incomplete {
+    judged: Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Incomplete {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let rendered = request
+            .input
+            .iter()
+            .flat_map(|item| match item {
+                CompletionInput::Message { role, content } => vec![role.clone(), content.clone()],
+                _ => Vec::new(),
+            })
+            .collect::<Vec<_>>()
+            .join(
+                "
+",
+            );
+        let (system, _) = crate::lessons::structured_call::task_messages(request);
+        let reply = if system.starts_with("Solve quiz questions") {
+            json!({"answers": [{"index": 0, "reason": "It follows.", "correctIndices": [0], "answer": "", "blankAnswers": [], "matches": [], "orderedValues": []}]})
+        } else {
+            let mut judged = self.judged.lock().unwrap();
+            judged.push(rendered);
+            if judged.len() == 1 {
+                json!({"checks": []})
+            } else {
+                json!({"checks": [{"id": "new-0", "finding": "", "hasDefect": false, "repeats": []}]})
+            }
+        };
+        Ok(CompletionResponse::from_text(reply.to_string()))
+    }
+    fn model_name(&self) -> &str {
+        "incomplete"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn an_incomplete_item_review_is_corrected_with_why() -> Result<()> {
+    let item = crate::assessment_engine::LearningAssessmentCandidate {
+        id: uuid::Uuid::new_v4().to_string(),
+        outcome_ids: vec![uuid::Uuid::new_v4().to_string()],
+        format: LearningItemFormat::SingleChoice,
+        difficulty: 3,
+        prompt: SORTED.into(),
+        options: vec![
+            TRAY.into(),
+            "The green box".into(),
+            "The red box".into(),
+            "The blue box".into(),
+        ],
+        left: vec![],
+        source_version_ids: vec![],
+        rubric: vec![],
+        key: LearningAssessmentKey::Choice(0),
+        explanation: "A torn stamp is set aside.".into(),
+        distractor_rationales: vec![],
+    };
+    let llm = Incomplete {
+        judged: Mutex::new(Vec::new()),
+    };
+    let entries = [item_review::Entry {
+        item: &item,
+        quote: STAMP_QUOTE,
+    }];
+    let context = item_review::Context {
+        outcome: "Sorting stamps",
+        outcome_description: "Where stamps go.",
+        learner_has: &[],
+    };
+    let findings = item_review::review(&llm, &entries, &context).await?;
+    assert!(findings.iter().all(item_review::Findings::is_sound));
+    let judged = llm.judged.lock().unwrap();
+    assert_eq!(judged.len(), 2);
+    assert!(
+        judged[1].contains("That answer could not be used"),
+        "second request: {}",
+        judged[1]
+    );
+    Ok(())
+}
+
+#[test]
+fn the_grading_contracts_read_what_they_render() {
+    let criterion = |verdict: &str| {
+        json!({"criterionId":"c1","yourWords":["a phrase"],"whatWasMissing":"","fullCreditIncludes":"",
+            "sourceQuote":"","verdict":verdict,"points":1.0})
+    };
+    let graded: Vec<grading::RawGradeItem> = serde_json::from_value(json!([
+        {"itemId":"i1","criteria":[criterion("met"),criterion("partly_met"),criterion("missed")],"summary":"Fair.","responseToNote":"Noted."}
+    ]))
+    .unwrap();
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        grading::GradeWritten,
+    >(&graded);
+    for verdict in ["equivalent", "not_equivalent"] {
+        let judged: Vec<grading::RawJudgeItem> = serde_json::from_value(json!([{
+            "itemId":"i1","yourWords":[],"whatWasMissing":"","fullCreditIncludes":"",
+            "verdict":verdict,"summary":"Judged."
+        }]))
+        .unwrap();
+        lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+            grading::JudgeShort,
+        >(&judged);
+    }
+}
+
+#[test]
+fn the_quiz_writing_contracts_read_what_they_render() {
+    let items: Vec<formats::RawItem> = serde_json::from_value(json!([{
+        "prompt":"Which one?","options":["A","B","C","D"],"answerIndex":1,
+        "distractorRationales":["No.","","No.","No."],"explanation":"B follows.",
+        "blockIndex":0,"quote":"A passage.","difficulty":2,
+        "blanks":[{"acceptedAnswers":["x"]}],"pairs":[{"left":"l","right":"r"}],
+        "rubric":[
+            {"title":"T","description":"D","dimension":"recall"},
+            {"title":"T","description":"D","dimension":"explanation"},
+            {"title":"T","description":"D","dimension":"application"},
+            {"title":"T","description":"D","dimension":"transfer"}
+        ]
+    }]))
+    .unwrap();
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        QuizAuthor,
+    >(&items);
+    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+        QuizRewrite,
+    >(&items);
 }

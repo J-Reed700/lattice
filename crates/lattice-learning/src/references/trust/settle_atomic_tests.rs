@@ -114,9 +114,9 @@ async fn stored(course: &Course, lesson_id: &str, claim: &ClaimId) -> Result<Sto
 }
 
 async fn refuse(course: &Course, statement: &str, table: &str) {
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE TRIGGER refuse_for_test BEFORE {statement} ON {table} BEGIN SELECT RAISE(ABORT, 'refused for the test'); END"
-    ))
+    )))
     .execute(&course.pool)
     .await
     .unwrap();
