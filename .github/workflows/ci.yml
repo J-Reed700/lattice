@@ -381,7 +381,7 @@ jobs:
         working-directory: crates/lattice-desktop
         shell: bash
         run: |
-          cargo build --locked ${{ env.PACKAGE_ARGS }} --features lattice-desktop/bindings-export --bins
+          cargo build --locked ${{ env.PACKAGE_ARGS }} --features lattice-desktop/bindings-export --bins --tests
           ../../target/debug/export_bindings
           cd ../..
           if git diff --quiet -- src/lib/bindings.ts src/shared/ipc/routes.generated.ts; then exit 0; fi
