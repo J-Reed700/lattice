@@ -4,7 +4,6 @@
 use super::class_checks_tests::Classes;
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 
 /// Practice that states nothing to check and shares no word with the
 /// statements below.
@@ -140,33 +139,13 @@ fn block(index: usize, body: &str) -> Value {
     json!({"kind":"explanation","title":format!("Section {index}"),"body":body,"rubric":[],"quote":""})
 }
 
-/// What a test logs, every level.
-#[derive(Clone, Default)]
-struct Captured(Arc<Mutex<Vec<u8>>>);
-
-impl std::io::Write for Captured {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl Captured {
-    /// The lines of the call plan's log.
-    fn plan_lines(&self) -> Vec<String> {
-        let logs =
-            String::from_utf8_lossy(&self.0.lock().unwrap_or_else(|e| e.into_inner())).into_owned();
-        logs.lines()
-            .filter(|line| line.contains("claim.plan"))
-            .map(str::to_owned)
-            .collect()
-    }
+/// The lines of the call plan's log.
+fn plan_lines(logs: &lattice_core::shared::testing::logs::CapturedLogs) -> Vec<String> {
+    logs.text()
+        .lines()
+        .filter(|line| line.contains("claim.plan"))
+        .map(str::to_owned)
+        .collect()
 }
 
 const ROWS: &str = "Parsing the header row turns each later record into a list of positions.";
@@ -180,15 +159,7 @@ const HEADER_FIRST: &str = "A CSV file keeps its header row before its first rec
 #[tokio::test]
 async fn a_statement_the_teaching_review_writes_after_the_sort_is_held_by_the_plan_and_every_rise_of_the_ceiling_names_its_cause(
 ) -> Result<()> {
-    let captured = Captured::default();
-    let writer = captured.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
-        .with_ansi(false)
-        .with_writer(move || writer.clone())
-        .finish();
-    let _logs = tracing::subscriber::set_default(subscriber);
-    tracing::callsite::rebuild_interest_cache();
+    let logs = lattice_core::shared::testing::logs::capture_logs(tracing::Level::TRACE);
     // The first section's statement is contradicted and rewritten; the
     // teaching review after that repair writes a statement into the second
     // section, in a sentence no claim stood on. It is new to the ledger, sorted
@@ -241,7 +212,7 @@ async fn a_statement_the_teaching_review_writes_after_the_sort_is_held_by_the_pl
     // The ceiling may rise where the plan takes in a statement it was not
     // made for, and the log says so; it never rises for calls no slot held,
     // which is how the run rose twice with no line of the plan's log.
-    let lines = captured.plan_lines();
+    let lines = plan_lines(&logs);
     let rises = trace
         .ceilings
         .windows(2)

@@ -392,33 +392,12 @@ async fn a_schema_claude_refuses_is_asked_for_in_words() {
     assert_eq!(response.text, "{\"ok\":true}");
 }
 
-#[derive(Clone, Default)]
-struct Captured(std::sync::Arc<parking_lot::Mutex<Vec<u8>>>);
-
-impl std::io::Write for Captured {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
 /// The reason Claude gives for refusing a schema is what tells a schema that
 /// is too large from one it cannot read, so the fallback logs it with the
 /// fields of the schema it refused.
 #[tokio::test]
 async fn a_schema_claude_refuses_is_logged_with_the_apis_reason() {
-    let captured = Captured::default();
-    let writer = captured.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::WARN)
-        .with_ansi(false)
-        .with_writer(move || writer.clone())
-        .finish();
-    let _logs = tracing::subscriber::set_default(subscriber);
-    tracing::callsite::rebuild_interest_cache();
+    let logs = lattice_core::shared::testing::logs::capture_logs(tracing::Level::WARN);
 
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -445,7 +424,7 @@ async fn a_schema_claude_refuses_is_logged_with_the_apis_reason() {
         .await
         .unwrap();
 
-    let logs = String::from_utf8(captured.0.lock().clone()).unwrap();
+    let logs = logs.text();
     assert!(logs.contains("compiled grammar is too large"), "{logs}");
     assert!(logs.contains("schema_fields=ok"), "{logs}");
 }
