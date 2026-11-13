@@ -288,6 +288,34 @@ fn a_long_answer_restating_the_prompts_setting_is_kept() {
 }
 
 #[test]
+fn a_short_answer_read_out_of_shown_output_is_kept() {
+    let mut item = candidate(
+        LearningItemFormat::ShortAnswer,
+        &[],
+        LearningAssessmentKey::Text(text_key(&["3"], None)),
+    );
+    item.prompt =
+        "A tool prints found 12 files, 3 hidden. How many hidden files did it find? Give the number."
+            .into();
+    assert!(engine::validate_candidate(&item).is_ok());
+    assert!(engine::checks::item_faults(&item).is_empty());
+}
+
+#[test]
+fn a_short_answer_naming_its_alternatives_is_kept() {
+    let mut item = candidate(
+        LearningItemFormat::ShortAnswer,
+        &[],
+        LearningAssessmentKey::Text(text_key(&["draft"], None)),
+    );
+    item.prompt =
+        "A file's label reads draft. Is the file a draft or a final copy? Answer with one word."
+            .into();
+    assert!(engine::validate_candidate(&item).is_ok());
+    assert!(engine::checks::item_faults(&item).is_empty());
+}
+
+#[test]
 fn a_choice_question_whose_other_option_no_is_in_the_prompt_is_kept() {
     let mut item = candidate(
         LearningItemFormat::SingleChoice,
