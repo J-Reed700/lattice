@@ -27,6 +27,7 @@ pub(crate) mod structured_call;
 pub mod teaching;
 pub mod teaching_review;
 mod text_edits;
+pub(crate) mod trace;
 /// The Verifier audit (lesson claim review §14). Its files live under
 /// `content_verification/audit/`; declared here so that module's list stays
 /// track L1's. Integration may move the declaration there.

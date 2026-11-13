@@ -658,7 +658,9 @@ fn a_finding_with_no_passage_about_a_released_sentence_changes_that_sentence_and
         protected::on_protected(&previous, std::slice::from_ref(&finding), &protected).is_empty()
     );
     let touched = std::collections::BTreeMap::from([("/blocks/0".to_owned(), vec![&finding])]);
-    let kept = protected::confine_review(&previous, &repaired, &touched, &protected).unwrap();
+    let kept = protected::confine_review(&previous, &repaired, &touched, &protected)
+        .unwrap()
+        .unwrap();
 
     assert_eq!(kept["blocks"][0]["body"], repaired["blocks"][0]["body"]);
 }
@@ -1667,13 +1669,12 @@ fn a_review_repair_with_no_passage_cannot_rewrite_the_kind_or_quote() -> Result<
         "improve the second sentence",
     );
     let touched = std::collections::BTreeMap::from([("/blocks/0".to_owned(), vec![&finding])]);
-    let confined = protected::confine_review(&previous, &repaired, &touched, &protected)?;
-    assert_eq!(
-        confined["blocks"][0]["quote"],
-        previous["blocks"][0]["quote"]
-    );
-    assert_eq!(confined["blocks"][0]["kind"], previous["blocks"][0]["kind"]);
-    assert_eq!(confined["blocks"][0]["body"], repaired["blocks"][0]["body"]);
+    let reasons = protected::confine_review(&previous, &repaired, &touched, &protected)?
+        .expect_err("the kind and the quote were changed, which no finding may do");
+    assert!(!reasons.is_empty());
+    assert!(reasons
+        .iter()
+        .all(|reason| reason.starts_with("it changes \"")));
     Ok(())
 }
 
@@ -2138,7 +2139,7 @@ async fn a_reverted_edit_gets_a_second_attempt() -> Result<()> {
     assert_eq!(asked.len(), 2);
     assert!(asked[1]["issuesToFix"][0]["lastAttempt"]
         .as_str()
-        .is_some_and(|attempt| attempt.contains("put back")));
+        .is_some_and(|attempt| attempt.contains("must stay as it is")));
     let after: Value = serde_json::from_str(&reviewed.candidate)?;
     assert_eq!(after["blocks"][0]["body"], block0_body);
     assert!(after["blocks"][1]["body"]
@@ -4128,4 +4129,156 @@ fn judged_issues(issues: &[&str]) -> String {
         ],
         &[],
     )
+}
+
+const ALPHA: &str = "Alpha is first.";
+const GAMMA: &str = "Gamma is third.";
+
+fn guarded_lesson() -> Value {
+    let mut lesson = shaped_lesson();
+    lesson["blocks"][0]["body"] = json!(format!("{ALPHA} Beta is second. {GAMMA}"));
+    lesson
+}
+
+fn gamma_protected() -> crate::lessons::content_verification::Protected {
+    crate::lessons::content_verification::Protected {
+        unit: 0,
+        field: "body".into(),
+        quote: GAMMA.into(),
+        released: false,
+    }
+}
+
+fn change(finding: &ReviewFinding, path: &str, before: &str, after: &str) -> Value {
+    json!({"finding":finding.id().as_str(),"path":path,"before":before,"after":after})
+}
+
+/// What a repair settles to under protected sentences: the lesson it left,
+/// if it changed it, and what each sent finding's next attempt is told.
+fn settle_protected(
+    previous: &Value,
+    send: &[ReviewFinding],
+    repaired: super::repair::Repaired,
+) -> Result<(Option<Value>, Vec<Option<String>>)> {
+    use super::subject::{Settled, Subject};
+    let sources = references();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let protected = [gamma_protected()];
+    let mut subject = LessonSubject::new(&references, &sources, &protected, Held::default());
+    let settled = subject.settle_repair(previous, send, repaired)?;
+    let told = send
+        .iter()
+        .map(|finding| subject.last_attempt(finding))
+        .collect();
+    let changed = match settled {
+        Settled::Changed(text) => Some(serde_json::from_str(&text)?),
+        _ => None,
+    };
+    Ok((changed, told))
+}
+
+fn patch_of(edits: Vec<Value>) -> super::repair::Repaired {
+    super::repair::Repaired::Patch {
+        patch: json!({ "edits": edits }).to_string(),
+        plans: std::collections::BTreeMap::new(),
+    }
+}
+
+/// What the next attempt of a finding whose correction changed GAMMA is told.
+const REFUSED_FOR_GAMMA: &str = "The last repair's correction for this finding was refused, and none of its edits were applied: it changes \"Gamma is third.\", which states a checked claim and must stay as it is.";
+
+#[test]
+fn a_correction_that_edits_a_protected_sentence_is_refused_whole() -> Result<()> {
+    let previous = guarded_lesson();
+    let finding = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "It is wrong.");
+    let (changed, told) = settle_protected(
+        &previous,
+        std::slice::from_ref(&finding),
+        patch_of(vec![
+            change(&finding, "/blocks/0/body", ALPHA, "Alpha comes first."),
+            change(&finding, "/blocks/0/body", GAMMA, "Gamma comes third."),
+        ]),
+    )?;
+    assert_eq!(changed, None, "no edit of the refused correction stands");
+    assert_eq!(told[0].as_deref(), Some(REFUSED_FOR_GAMMA));
+    Ok(())
+}
+
+#[test]
+fn a_correction_inside_its_targets_applies_while_a_sentence_is_protected() -> Result<()> {
+    let previous = guarded_lesson();
+    let finding = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "It is wrong.");
+    let (changed, told) = settle_protected(
+        &previous,
+        std::slice::from_ref(&finding),
+        patch_of(vec![change(
+            &finding,
+            "/blocks/0/body",
+            ALPHA,
+            "Alpha comes first.",
+        )]),
+    )?;
+    let changed = changed.unwrap();
+    assert_eq!(
+        changed["blocks"][0]["body"],
+        format!("Alpha comes first. Beta is second. {GAMMA}")
+    );
+    assert!(told[0].as_deref().is_some_and(
+        |told| told.starts_with("The last repair's edits for this finding were applied")
+    ));
+    Ok(())
+}
+
+#[test]
+fn of_two_corrections_only_the_one_inside_its_targets_applies() -> Result<()> {
+    let previous = guarded_lesson();
+    let refused = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "It is wrong.");
+    let inside = ReviewFinding::reviewer(2, Some(FindingSite::Section(1)), "It is vague.");
+    let (changed, told) = settle_protected(
+        &previous,
+        &[refused.clone(), inside.clone()],
+        patch_of(vec![
+            change(&refused, "/blocks/0/body", ALPHA, "Alpha comes first."),
+            change(&refused, "/blocks/0/body", GAMMA, "Gamma comes third."),
+            change(
+                &inside,
+                "/blocks/1/body",
+                "Body of First example.",
+                "Body of the first example.",
+            ),
+        ]),
+    )?;
+    let changed = changed.unwrap();
+    assert_eq!(
+        changed["blocks"][0]["body"], previous["blocks"][0]["body"],
+        "the refused finding's edits are all left out"
+    );
+    assert_eq!(changed["blocks"][1]["body"], "Body of the first example.");
+    assert_eq!(told[0].as_deref(), Some(REFUSED_FOR_GAMMA));
+    assert!(told[1].as_deref().is_some_and(
+        |told| told.starts_with("The last repair's edits for this finding were applied")
+    ));
+    Ok(())
+}
+
+#[test]
+fn a_whole_rewrite_that_changes_a_protected_sentence_changes_nothing_and_charges_every_finding(
+) -> Result<()> {
+    let previous = guarded_lesson();
+    let mut rewritten = previous.clone();
+    rewritten["blocks"][0]["body"] = json!("Alpha comes first. Beta is second. Gamma comes third.");
+    let send = [
+        ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "It is wrong."),
+        ReviewFinding::reviewer(2, Some(FindingSite::Section(0)), "It is vague."),
+    ];
+    let (changed, told) = settle_protected(
+        &previous,
+        &send,
+        super::repair::Repaired::Whole(rewritten.to_string()),
+    )?;
+    assert_eq!(changed, None);
+    for told in told {
+        assert_eq!(told.as_deref(), Some(REFUSED_FOR_GAMMA));
+    }
+    Ok(())
 }

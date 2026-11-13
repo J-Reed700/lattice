@@ -184,7 +184,7 @@ fn keep_held(inventory: &mut Inventory, candidate: &Value, held: &[ClaimLedgerEn
         })
         .collect();
     let prior: Vec<&ClaimLedgerEntry> = held.iter().collect();
-    let left = identities(&prior, &found, |unit, field| {
+    let left = identities(&prior, &[], &found, |unit, field| {
         texts.get(&(unit, field.to_owned())).map(String::as_str)
     })
     .orphaned;

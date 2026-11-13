@@ -12,6 +12,7 @@ use crate::dto::LearningSourceDto;
 use crate::lessons::copied_wording::Wording;
 use crate::lessons::shape::LessonShape;
 use crate::lessons::text_edits;
+use crate::lessons::trace::{self, Cause, Stage};
 use crate::review_findings::FindingSite;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::application::services::model_contract::{
@@ -23,9 +24,9 @@ use std::collections::{BTreeSet, VecDeque};
 mod citation;
 mod confine;
 mod cut;
-#[cfg(test)]
-pub(super) use citation::quotation;
 pub(super) use citation::{cite_where_supported, number_evidence, uncite, Cited};
+#[cfg(test)]
+pub(super) use citation::{quotation, Unwritten};
 use confine::PutBack;
 pub(crate) use confine::{confine, Protected};
 #[cfg(test)]
@@ -409,7 +410,21 @@ pub(crate) async fn candidate(
     // A claim on its last attempt has its sentence taken out in code; the
     // model is asked only for the others, and for a statement whose cut is a
     // narrowing (`ClaimLedger::cut_of`).
+    let before_cuts = context
+        .get("candidate")
+        .map(|lesson| lesson.to_string())
+        .unwrap_or_default();
     let handled = cut::last_attempts(policy, shape.policy, &mut context, ledger).await?;
+    if handled > 0 {
+        if let Some(after) = context.get("candidate") {
+            trace::changed(
+                Stage::ClaimRepair,
+                &Cause::none().claims(&sent),
+                &before_cuts,
+                &after.to_string(),
+            );
+        }
+    }
     let candidate = if handled > 0 && targets(&context)?.is_empty() {
         let candidate = context
             .get("candidate")
@@ -561,6 +576,7 @@ async fn repair_sections(
                 of_unit(Protected::of_claims(ledger, &sent)),
                 of_unit(Protected::of_ledger(ledger, &sent)),
             );
+            let before_group = candidate.to_string();
             let (repaired, put_back) = match repair_group(
                 llm,
                 &system,
@@ -580,6 +596,13 @@ async fn repair_sections(
                     return Err(error);
                 }
                 ledger.reject(policy, &claims, &error.to_string()).await?;
+            } else {
+                trace::changed(
+                    Stage::ClaimRepair,
+                    &Cause::none().claims(&claims),
+                    &before_group,
+                    &candidate.to_string(),
+                );
             }
             // A target whose correction shared a change with a sentence it was
             // not asked to change was put back: it alone is charged and told why, and the

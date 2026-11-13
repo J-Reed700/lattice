@@ -28,7 +28,7 @@ impl Reader for Consistency {
             let (shown, _) = attribution_page(
                 at.executions,
                 at.citations,
-                (unit, &claim.statement),
+                (unit, &claim.quote),
                 &claim.statement,
                 consistency_fit(at.llm),
             );

@@ -520,9 +520,8 @@ impl<'a> ReferenceCollection<'a> {
         self.verification_context(passages)
     }
 
-    /// Verification needs nearby conditions as well as the matching paragraph.
-    /// Keep retrieval ranking unchanged, then restore surrounding source bytes
-    /// and remove overlapping windows so repeated hits do not crowd out sources.
+    /// Each passage, in ranked order, widened to its verification window and cut to the bytes
+    /// no earlier passage of its source holds: every uncovered run is a passage of its own hit.
     fn verification_context(
         &self,
         passages: Vec<ReferencePassage>,
@@ -535,26 +534,29 @@ impl<'a> ReferenceCollection<'a> {
                 .find(|source| source.id == passage.source_id)
                 .ok_or_else(|| invalid("Unknown verification source."))?;
             let window = verification_window(&source.excerpt, passage.start_byte..passage.end_byte);
-            let Some(widened) = ReferencePassage::of(source, window, passage.kind(), passage.score)
-            else {
-                continue;
-            };
-            if let Some(previous) = selected
-                .iter_mut()
-                .find(|previous| previous.overlaps(&widened))
-            {
-                // Retain both original hits when their expanded windows only
-                // partly overlap; dropping the later hit could lose a caveat.
-                let union = previous.start_byte.min(widened.start_byte)
-                    ..previous.end_byte.max(widened.end_byte);
-                if let Some(merged) =
-                    ReferencePassage::of(source, union, previous.kind(), previous.score)
-                {
-                    *previous = merged;
+            let mut held: Vec<(usize, usize)> = selected
+                .iter()
+                .filter(|held| held.source_id == passage.source_id)
+                .map(|held| (held.start_byte, held.end_byte))
+                .collect();
+            held.sort_unstable();
+            let mut runs = Vec::new();
+            let mut next = window.start;
+            for (start, end) in held {
+                if start >= window.end {
+                    break;
                 }
-                continue;
+                if start > next {
+                    runs.push(next..start);
+                }
+                next = next.max(end);
             }
-            selected.push(widened);
+            if next < window.end {
+                runs.push(next..window.end);
+            }
+            selected.extend(runs.into_iter().filter_map(|run| {
+                ReferencePassage::of(source, run, passage.kind(), passage.score)
+            }));
         }
         Ok(selected)
     }

@@ -96,6 +96,31 @@ pub(crate) struct PutBack {
     pub(crate) reason: String,
 }
 
+/// A change `confine` reverted, with the text it concerns.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Undone {
+    /// It changed a protected sentence (its quotation).
+    Protected(String),
+    /// It changed or added text outside the targets.
+    Outside(String),
+    /// It added a sentence the lesson already has.
+    Repeated(String),
+}
+
+impl Undone {
+    fn reason(&self) -> String {
+        match self {
+            Self::Protected(quote) => format!(
+                "it changes \"{quote}\", which states a checked claim and must stay as it is"
+            ),
+            Self::Outside(text) => format!(
+                "it changes \"{text}\", which is outside what the correction was asked to change"
+            ),
+            Self::Repeated(text) => format!("it adds \"{text}\", which the lesson already says"),
+        }
+    }
+}
+
 /// A repaired section confined to its failed sentences.
 #[derive(Debug)]
 pub(crate) struct Confined {
@@ -103,6 +128,28 @@ pub(crate) struct Confined {
     /// The targets whose correction was put back, each once, with the reason
     /// of the first change put back that touched it.
     pub(crate) put_back: Vec<PutBack>,
+    /// Every change that was reverted.
+    pub(crate) undone: Vec<Undone>,
+}
+
+impl Confined {
+    /// One reason for each distinct change that was reverted.
+    pub(crate) fn reasons(&self) -> Vec<String> {
+        let mut reasons: Vec<String> = Vec::new();
+        for reason in self.undone.iter().map(Undone::reason) {
+            if !reasons.contains(&reason) {
+                reasons.push(reason);
+            }
+        }
+        reasons
+    }
+}
+
+/// The text of a value that was reverted.
+fn said(value: &Value) -> String {
+    value
+        .as_str()
+        .map_or_else(|| value.to_string(), str::to_owned)
 }
 
 /// `repaired`, a section, with every change outside the sentences of
@@ -119,24 +166,31 @@ pub(crate) fn confine(
     targets: &[Protected],
     protected: &[Protected],
 ) -> Result<Confined> {
-    let mut put_back = Vec::new();
+    let (mut put_back, mut undone) = (Vec::new(), Vec::new());
     let held = repeats::fields_of(previous);
     let section = confine_at(
         previous,
         repaired,
         "",
         (targets, protected),
-        (&held, &mut put_back),
+        (&held, &mut put_back, &mut undone),
     )?;
-    Ok(Confined { section, put_back })
+    Ok(Confined {
+        section,
+        put_back,
+        undone,
+    })
 }
+
+/// The sentences the section's fields hold, by field path.
+type Held = [(String, Vec<String>)];
 
 fn confine_at(
     previous: &Value,
     repaired: &Value,
     path: &str,
     (targets, protected): (&[Protected], &[Protected]),
-    (held, put_back): (&[(String, Vec<String>)], &mut Vec<PutBack>),
+    (held, put_back, undone): (&Held, &mut Vec<PutBack>, &mut Vec<Undone>),
 ) -> Result<Value> {
     let targeted = |path: &str| {
         targets
@@ -168,12 +222,13 @@ fn confine_at(
                     .flat_map(|(_, keys)| keys.iter().map(String::as_str))
                     .collect()
             });
-            let (text, reverted) = confine_text(
+            let (text, reverted, gone) = confine_text(
                 before,
                 after,
                 (&quotes(&mine), &quotes(&passed)),
                 elsewhere.as_ref(),
             )?;
+            undone.extend(gone);
             for back in reverted {
                 let mut said: Vec<&str> = Vec::new();
                 for item in back.protected.iter().filter_map(|&at| passed.get(at)) {
@@ -205,16 +260,24 @@ fn confine_at(
                         new,
                         &child(key),
                         (targets, protected),
-                        (held, &mut *put_back),
+                        (held, &mut *put_back, &mut *undone),
                     )?,
                     None if targeted(&child(key)) => continue,
-                    None => old.clone(),
+                    None => {
+                        undone.push(Undone::Outside(said(old)));
+                        old.clone()
+                    }
                 };
                 out.insert(key.clone(), value);
             }
             for (key, new) in after {
-                if !before.contains_key(key) && targeted(&child(key)) {
+                if before.contains_key(key) {
+                    continue;
+                }
+                if targeted(&child(key)) {
                     out.insert(key.clone(), new.clone());
+                } else {
+                    undone.push(Undone::Outside(said(new)));
                 }
             }
             Ok(Value::Object(out))
@@ -229,13 +292,16 @@ fn confine_at(
                     new,
                     &child(&index.to_string()),
                     (targets, protected),
-                    (held, &mut *put_back),
+                    (held, &mut *put_back, &mut *undone),
                 )
             })
             .collect::<Result<Vec<_>>>()
             .map(Value::Array),
         _ if previous == repaired || targeted(path) => Ok(repaired.clone()),
-        _ => Ok(previous.clone()),
+        _ => {
+            undone.push(Undone::Outside(said(previous)));
+            Ok(previous.clone())
+        }
     }
 }
 
@@ -316,9 +382,9 @@ fn confine_text(
     after: &str,
     (targets, protected): (&[String], &[String]),
     elsewhere: Option<&HashSet<&str>>,
-) -> Result<(String, Vec<Reverted>)> {
+) -> Result<(String, Vec<Reverted>, Vec<Undone>)> {
     if before == after {
-        return Ok((after.to_owned(), Vec::new()));
+        return Ok((after.to_owned(), Vec::new(), Vec::new()));
     }
     let (old, new) = (Pieces::of(before), Pieces::of(after));
     let old_sentences = old.sentences(before);
@@ -348,6 +414,7 @@ fn confine_text(
     // What comes before the first sentence is whitespace no repair needs.
     let mut out = String::from(old.lead);
     let mut reverted = Vec::new();
+    let mut undone = Vec::new();
     let (mut i, mut j) = (0, 0);
     for (match_i, match_j) in pairs
         .iter()
@@ -378,19 +445,46 @@ fn confine_text(
             // A change that rewrites a target together with a sentence that
             // passed is put back, and only the targets it touched lose their
             // correction.
+            let touched_protected = touching(protected, |quote| {
+                replaced
+                    .iter()
+                    .any(|&k| overlaps(k, std::slice::from_ref(quote)))
+            });
             if on_target && on_protected {
                 reverted.push(Reverted {
                     targets: touching(targets, |quote| {
                         reach().any(|k| overlaps(k, std::slice::from_ref(quote)))
                     }),
-                    protected: touching(protected, |quote| {
-                        replaced
-                            .iter()
-                            .any(|&k| overlaps(k, std::slice::from_ref(quote)))
-                    }),
+                    protected: touched_protected.clone(),
                 });
             }
+            if on_protected {
+                undone.extend(
+                    touched_protected
+                        .iter()
+                        .filter_map(|&at| protected.get(at))
+                        .map(|quote| Undone::Protected(quote.clone())),
+                );
+            }
             let failed = !on_protected && (on_target || reach().any(repeats_failed));
+            if !failed && !on_protected {
+                let texts: Vec<&str> = if replaced.is_empty() {
+                    written
+                        .clone()
+                        .filter_map(|k| new_sentences.get(k).copied())
+                        .collect()
+                } else {
+                    replaced
+                        .iter()
+                        .filter_map(|&k| old_sentences.get(k).copied())
+                        .collect()
+                };
+                undone.extend(
+                    texts
+                        .into_iter()
+                        .map(|text| Undone::Outside(text.to_owned())),
+                );
+            }
             if failed {
                 let replaced_keys: HashSet<String> = replaced
                     .iter()
@@ -408,6 +502,11 @@ fn confine_text(
                     });
                     if repeat {
                         dropped = true;
+                        undone.extend(
+                            new_sentences
+                                .get(k)
+                                .map(|sentence| Undone::Repeated((*sentence).to_owned())),
+                        );
                     } else {
                         out.push_str(new.piece(k));
                     }
@@ -434,7 +533,7 @@ fn confine_text(
     if dropped && !before.ends_with(char::is_whitespace) {
         out.truncate(out.trim_end().len());
     }
-    Ok((out, reverted))
+    Ok((out, reverted, undone))
 }
 
 #[cfg(test)]

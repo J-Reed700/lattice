@@ -56,7 +56,7 @@ pub(crate) use fields::{
     field_pointer, field_text, locate, stands, stands_in_part, unit_fields, unit_texts,
 };
 pub(crate) use held::{held_for_review, held_lessons, needs_review, review_outcome, HeldForReview};
-pub(crate) use located::{claim_quote, located, located_quote, narrow};
+pub(crate) use located::{located, located_quote, narrow};
 
 /// The rule the ledger's checkpoints are kept under.
 pub(super) const LEDGER_KEYS: Protocol = lattice_core::protocol!("claim-ledger", 1);
@@ -331,6 +331,14 @@ impl ClaimLedger {
         raw: &str,
         stop_reason: Option<StopReason>,
     ) -> Result<()> {
+        crate::lessons::trace::decided(
+            crate::lessons::trace::Stage::Publishing,
+            "lesson",
+            &format!("review state {state:?}"),
+            stop_reason
+                .as_ref()
+                .map_or("no stop reason", |stop| stop.message.as_str()),
+        );
         let Some(sink) = &self.sink else {
             return Ok(());
         };
@@ -417,6 +425,7 @@ impl ClaimLedger {
         let Some(mut entry) = self.probe(claim_id, &provenance, &event)? else {
             return Ok(false);
         };
+        let recorded = event.clone();
         if let Some(sink) = &self.sink {
             let written = sink
                 .store
@@ -448,6 +457,7 @@ impl ClaimLedger {
                 Err(error) => return Err(error),
             };
         }
+        crate::lessons::trace::claim_event(claim_id, entry.statement(), &recorded);
         match self
             .entries
             .iter_mut()

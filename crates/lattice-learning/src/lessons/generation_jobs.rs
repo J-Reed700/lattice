@@ -1,6 +1,7 @@
 //! Learning's lesson-preparation handler for the job runtime. The runtime owns
 //! delivery, cancellation, per-course exclusivity and shutdown; this handler
 //! prepares, verifies and publishes the requested lessons.
+use crate::lessons::trace;
 use crate::{
     content_verification::Rounds,
     curriculum_repository::{lesson_failure, LearningCurriculumRepository},
@@ -22,6 +23,7 @@ use lattice_core::{
     },
 };
 use std::sync::Arc;
+use tracing::Instrument;
 
 /// The Learning model, pinned for the whole job.
 type ModelLoader = Arc<dyn Fn() -> BoxFuture<'static, Result<PinnedModel>> + Send + Sync>;
@@ -132,7 +134,23 @@ impl JobHandler for LessonGenerationWorker {
                     rounds.publishing_failed(error)?;
                 }
                 Err(error) => return Err(error),
-                Ok(()) => return Ok(JobOutcome::Committed),
+                Ok(()) => {
+                    for (lesson_id, lesson) in &prepared.staged {
+                        trace::lesson_span(lesson_id).in_scope(|| {
+                            trace::published(
+                                "lesson",
+                                "published",
+                                lesson.blocks.len(),
+                                lesson.questions.len(),
+                                lesson
+                                    .verification
+                                    .as_ref()
+                                    .map_or(0, |report| report.unverified_count()),
+                            );
+                        });
+                    }
+                    return Ok(JobOutcome::Committed);
+                }
             }
         }
     }
@@ -173,6 +191,16 @@ impl LessonGenerationWorker {
             crate::source_library::LearningSourceLibraryRepository::new(self.database.clone())
                 .sweep_admission(program_id)
                 .await?;
+        trace::course_span(program_id).in_scope(|| {
+            for page in &refused {
+                trace::decided(
+                    trace::Stage::CourseSetup,
+                    &format!("page {} ({})", page.title, page.source_id),
+                    "left out of retrieval",
+                    &page.reason,
+                );
+            }
+        });
         if !refused.is_empty() {
             tracing::info!(
                 program_id,
@@ -282,6 +310,7 @@ impl LessonGenerationWorker {
                     continue;
                 }
                 crate::lesson_progress::lesson(&lesson.title);
+                let span = trace::lesson_span(&lesson.id);
                 let sources = program_repo.verification_sources(&job.program_id).await?;
                 program.sources = sources;
                 let current_plan =
@@ -306,6 +335,14 @@ impl LessonGenerationWorker {
                     });
                 let (generated, used_plan) = if let Some(saved) = saved {
                     crate::lesson_progress::stage("Resuming from a verified lesson checkpoint");
+                    span.in_scope(|| {
+                        trace::decided(
+                            trace::Stage::Publishing,
+                            "lesson",
+                            "resumed from a verified checkpoint",
+                            "its saved report still holds for the course plan and the sources",
+                        );
+                    });
                     (saved.lesson, saved.plan)
                 } else {
                     // Made once for the outline revision and read by every
@@ -363,6 +400,7 @@ impl LessonGenerationWorker {
                             ),
                         ),
                     )
+                    .instrument(span.clone())
                     .await;
                     let used_plan = plan_digest(&plan)?;
                     let written = match prepared {
@@ -380,6 +418,14 @@ impl LessonGenerationWorker {
                                 return Err(error);
                             };
                             tracing::info!(lesson_id = %lesson.id, job_id, claims = hold.claims, "lesson.needs_review");
+                            span.in_scope(|| {
+                                trace::decided(
+                                    trace::Stage::Publishing,
+                                    "lesson",
+                                    "held for the user's review",
+                                    &format!("{} claims wait for the user", hold.claims),
+                                );
+                            });
                             held.push(hold);
                             completed_count = completed_count.max(index as u32 + 1);
                             crate::lesson_progress::completed(completed_count);

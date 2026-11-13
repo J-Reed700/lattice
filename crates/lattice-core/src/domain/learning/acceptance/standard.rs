@@ -4,14 +4,14 @@ use super::Outcome::{
     AllCommon, CannotCut, Done, FoundNothing, NeedsSource, NotApplied, Refuted, Rewritten, Saved,
     Stands, StandsElsewhere, Unproven,
 };
-use super::{AcceptancePolicy, End, Goal, Graph, Next, Node, Outcome, Reading, Step, Target};
+use super::{AcceptancePolicy, End, Goal, Graph, Next, Node, Outcome, Reading, Step};
 use crate::domain::learning::claim_review::Class;
 use crate::protocol;
 use crate::shared::protocol::Protocol;
 
 /// The standard policy's version: part of every receipt's and checkpoint's
 /// key, so a change to any of its graphs changes it.
-pub const STANDARD_POLICY: Protocol = protocol!("acceptance", 3);
+pub const STANDARD_POLICY: Protocol = protocol!("acceptance", 4);
 
 /// Samples one knowledge or veto read asks the model alone; the read holds
 /// only when every sample agrees.
@@ -108,7 +108,7 @@ fn sourced() -> Graph {
                 .on(&[Stands], Next::End(End::Resolved))
                 .on(
                     &[AllCommon],
-                    Next::first_change(Target::node("s.uncite"), "s.research"),
+                    Next::first_entry_by("s.uncite", Class::Common, "s.research"),
                 )
                 .on(&[Unproven], Next::to("s.research"))
                 .on(&[Refuted], Next::to("s.rewrite")),
@@ -125,7 +125,7 @@ fn sourced() -> Graph {
                 .on(&[Refuted], Next::to("s.rewrite"))
                 .on(
                     &[Unproven],
-                    Next::first_change(Target::node("s.uncite"), End::Unverified),
+                    Next::first_entry_by("s.uncite", Class::Common, End::Unverified),
                 ),
         )
         .with(Node::new("s.recite", Step::Recite, 0).on(&[Done], Next::to("s.citeread")))
@@ -135,7 +135,7 @@ fn sourced() -> Graph {
                 .on(&[Refuted], Next::to("s.rewrite"))
                 .on(
                     &[Unproven, AllCommon],
-                    Next::first_change(Target::node("s.uncite"), End::Unverified),
+                    Next::first_entry_by("s.uncite", Class::Common, End::Unverified),
                 ),
         )
         .with(rewrite(
@@ -173,7 +173,7 @@ fn reasoning() -> Graph {
                 .on(&[Refuted], Next::to("r.rewrite"))
                 .on(
                     &[NeedsSource],
-                    Next::first_change(Target::Enter(Class::Sourced), End::Unverified),
+                    Next::first_entry(Class::Sourced, End::Unverified),
                 ),
         )
         .with(
@@ -230,7 +230,7 @@ fn common() -> Graph {
                 .on(&[Stands], Next::End(End::GeneralKnowledge))
                 .on(
                     &[NeedsSource],
-                    Next::first_change(Target::Enter(Class::Sourced), End::Unverified),
+                    Next::first_entry(Class::Sourced, End::Unverified),
                 )
                 .on(&[Refuted], Next::to("c.ground")),
         )

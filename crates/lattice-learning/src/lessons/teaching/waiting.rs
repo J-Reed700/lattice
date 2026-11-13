@@ -68,6 +68,14 @@ pub(crate) async fn record(candidate: &Value, findings: Vec<ReviewFinding>) -> R
             repairs: 0,
         })
         .collect();
+    for aside in &set_aside {
+        crate::lessons::trace::decided_finding(
+            crate::lessons::trace::Stage::TeachingReview,
+            &aside.finding,
+            "waits for the user",
+            "found once the review was over, on the lesson as it publishes",
+        );
+    }
     store
         .record(&lesson_id, &job_id, candidate, &set_aside, false)
         .await

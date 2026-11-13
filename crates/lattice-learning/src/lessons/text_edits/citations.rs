@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[cfg_attr(
     any(test, feature = "test-support"),
     derive(Serialize, Debug, PartialEq)
@@ -26,10 +26,58 @@ impl Patch {
     pub(crate) fn asks_nothing(&self) -> bool {
         self.edits.is_empty() && self.citations.is_empty() && self.uncite.is_empty()
     }
+
+    /// The findings its changes name, each once, in the order first named:
+    /// edits, then citations, then uncites.
+    pub(crate) fn findings(&self) -> Vec<String> {
+        let named = self
+            .edits
+            .iter()
+            .filter_map(|edit| edit.finding.as_deref())
+            .chain(
+                self.citations
+                    .iter()
+                    .filter_map(|cite| cite.finding.as_deref()),
+            )
+            .chain(self.uncite.iter().filter_map(Uncite::finding));
+        let mut ids: Vec<String> = Vec::new();
+        for id in named {
+            if !ids.iter().any(|known| known == id) {
+                ids.push(id.to_owned());
+            }
+        }
+        ids
+    }
+
+    /// The patch with only the changes that name one of `ids`: unnamed edits
+    /// and citations and path-only uncites are left out.
+    pub(crate) fn only(&self, ids: &[String]) -> Self {
+        let wanted = |id: Option<&str>| id.is_some_and(|id| ids.iter().any(|known| known == id));
+        Self {
+            edits: self
+                .edits
+                .iter()
+                .filter(|edit| wanted(edit.finding.as_deref()))
+                .cloned()
+                .collect(),
+            citations: self
+                .citations
+                .iter()
+                .filter(|cite| wanted(cite.finding.as_deref()))
+                .cloned()
+                .collect(),
+            uncite: self
+                .uncite
+                .iter()
+                .filter(|uncite| wanted(uncite.finding()))
+                .cloned()
+                .collect(),
+        }
+    }
 }
 
 /// A citation to take back, as a path alone or with the finding it is for.
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[cfg_attr(
     any(test, feature = "test-support"),
     derive(Serialize, Debug, PartialEq)
@@ -40,7 +88,7 @@ pub(crate) enum Uncite {
     Named(NamedUncite),
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[cfg_attr(
     any(test, feature = "test-support"),
     derive(Serialize, Debug, PartialEq)
@@ -71,7 +119,7 @@ impl Uncite {
 /// of its body or explanation it is for, the excerpt that states it and an
 /// exact span of that excerpt. The quote is checked after the edits, as any
 /// other quotation is.
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[cfg_attr(
     any(test, feature = "test-support"),
     derive(Serialize, Debug, PartialEq)

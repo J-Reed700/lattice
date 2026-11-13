@@ -1,7 +1,8 @@
 //! What a cloud or OpenAI-compatible request cost in time, for the backend's
 //! pace (`LLMPort::pace`): a llama-server `timings` object as reported,
 //! otherwise a streamed answer timed by the app's clock (reading until the
-//! first delta, writing after). A whole answer without timings is not timed.
+//! model began its answer, shown or not, writing after). A whole answer
+//! without timings is not timed.
 
 use crate::features::llm::llama_cpp::streaming::ServerTimings;
 use lattice_core::application::ports::llm_port::ServedTiming;
@@ -21,27 +22,27 @@ pub(super) fn reported(value: &Value) -> Option<ServedTiming> {
 /// The app's clock on one streamed request.
 pub(super) struct StreamClock {
     sent: Instant,
-    first_delta: OnceLock<Instant>,
+    began: OnceLock<Instant>,
 }
 
 impl StreamClock {
     pub(super) fn started(sent: Instant) -> Self {
         Self {
             sent,
-            first_delta: OnceLock::new(),
+            began: OnceLock::new(),
         }
     }
 
-    /// A streamed delta arrived now; only the first one counts.
-    pub(super) fn delta(&self) {
-        self.first_delta.get_or_init(Instant::now);
+    /// The model's answer began now; only the first call counts.
+    pub(super) fn began(&self) {
+        self.began.get_or_init(Instant::now);
     }
 
     /// The request's timing, ending now, for `prompt_tokens` read and
-    /// `output_tokens` written. `None` when nothing streamed (an answer of
-    /// tool calls alone), which leaves no edge between the two.
+    /// `output_tokens` written. `None` when no answer began (a stream with no
+    /// output at all), which leaves no edge between the two.
     pub(super) fn timing(&self, prompt_tokens: u64, output_tokens: u64) -> Option<ServedTiming> {
-        let first = *self.first_delta.get()?;
+        let first = *self.began.get()?;
         Some(ServedTiming {
             prompt_tokens,
             prompt_seconds: first.duration_since(self.sent).as_secs_f64(),

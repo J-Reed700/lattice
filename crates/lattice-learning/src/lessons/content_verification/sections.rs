@@ -17,6 +17,7 @@ use crate::generation::{parse_json, split_check, teaching_sentences};
 use crate::lessons::copied_wording::Wording;
 use crate::lessons::shape::{LessonShape, ShapePolicy};
 use crate::lessons::text_edits;
+use crate::lessons::trace::{self, Cause, Stage};
 use crate::review_findings::{site_sha256, FindingSite};
 use lattice_core::application::services::model_contract::{
     Contract, ContractCall, ContractId, PromptInput,
@@ -593,6 +594,12 @@ async fn mend_section(
         tracing::info!(
             "claim.state: a flow repair left the section no lesson; it keeps the text as cut"
         );
+        trace::refused(
+            Stage::FlowRepair,
+            &format!("the flow repair of section {unit}"),
+            "it left the section no lesson, so the section keeps the text as cut",
+            Some((&before.to_string(), &confined.to_string())),
+        );
         return Ok(None);
     }
     Ok((confined != before).then(|| confined.clone()))
@@ -692,12 +699,24 @@ pub(super) async fn settle(
             Ok(outcome) => outcome,
             Err(error) if unmade(&error) => {
                 tracing::info!(unit, %error, "claim.state: a flow repair could not be used; the section keeps the text as cut");
+                trace::refused(
+                    Stage::FlowRepair,
+                    &format!("the flow repair of section {unit}"),
+                    &error.to_string(),
+                    None,
+                );
                 None
             }
             Err(error) => return Err(error),
         };
         let unchanged = outcome.is_none();
         if let Some(repaired) = outcome {
+            trace::changed(
+                Stage::FlowRepair,
+                &Cause::none(),
+                &section.to_string(),
+                &repaired.to_string(),
+            );
             set_unit(&mut edited, unit, repaired);
             crate::lesson_drafts::save(&edited.to_string()).await?;
         }

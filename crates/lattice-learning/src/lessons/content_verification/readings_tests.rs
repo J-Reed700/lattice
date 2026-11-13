@@ -827,7 +827,7 @@ async fn no_passage_of_the_section_leaves_the_veto_standing_and_nothing_is_asked
 }
 
 #[tokio::test]
-async fn ground_reads_the_passages_of_the_sentence_its_statement_restates() -> Result<()> {
+async fn ground_reads_the_passages_of_the_sentence_its_claim_stands_on() -> Result<()> {
     const SECOND: &str = "A parser consumes the tokens a lexer emits.";
     const SENTENCE: &str = "Quillet feeds a parser the tokens it lexes.";
     let sources = vec![
@@ -1564,6 +1564,86 @@ async fn a_statement_is_read_against_the_passage_its_own_sentence_cites() -> Res
         Some(Pass::Attribution),
         "the sentence's passage was read, not the section's"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_naming_context_its_sentence_leaves_implicit_is_read_against_its_sentences_passage(
+) -> Result<()> {
+    const STATEMENT: &str =
+        "Acme's analysis log for the sample lists the pressure at which the beta reading was taken.";
+    assert!(
+        lattice_core::shared::text::claim_sentence(CLAIM, (0, CLAIM.len()), STATEMENT).is_none()
+    );
+    let references = ReferenceCollection::lexical(&marker_collection())?;
+    let model = PagingModel::new(6_000);
+    let lesson = sentence_cited();
+    let citations = section_citations(&lesson, &references)?;
+    let mut world = world_of(&references, citations);
+    world.lesson = lesson;
+    let claim = Claim {
+        quote: CLAIM.into(),
+        statement: STATEMENT.into(),
+    };
+
+    let reads = read_all(Reading::Parts, &model, &world, &[(0, claim)]).await?;
+
+    assert_eq!(reads.len(), 1);
+    let checks = model.checks.lock().unwrap();
+    assert_eq!(checks.len(), 1);
+    assert!(read_marker(&checks[0]), "the sentence's passage was read");
+    assert!(
+        checks[0].iter().all(|text| !text.contains("notes 3:")),
+        "not the section's other passage"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_claim_is_read_against_the_entries_that_hold_its_sentence_and_no_other() -> Result<()> {
+    const SECOND: &str = "Tides rise twice a day on most coasts.";
+    const THIRD: &str = "Granite is an igneous rock.";
+    const ELSEWHERE: &str = "Something else entirely.";
+    let references = ReferenceCollection::lexical(&marker_collection())?;
+    let lesson = json!({"blocks":[{
+        "kind":"explanation","title":"Alpha","body":format!("{CLAIM} {SECOND} {THIRD}"),"rubric":[],
+        "quote":"Mineral alpha notes 3: property beta was measured, pressure varied.",
+        "sourceIndex":0,
+        "citations":[
+            {"sentence":CLAIM,"sourceIndex":1,"quote":MARKER},
+            {"sentence":format!("{SECOND} {THIRD}"),"sourceIndex":2,
+             "quote":"Mineral alpha notes 5: property beta was measured, pressure varied."},
+        ]
+    }],"questions":[]});
+    let citations = section_citations(&lesson, &references)?;
+    let sources = |unit: usize, sentence: &str| -> Vec<String> {
+        let mut ids: Vec<String> = citations
+            .of_claim(unit, sentence)
+            .into_iter()
+            .map(|passage| passage.source_id)
+            .collect();
+        ids.sort();
+        ids.dedup();
+        ids
+    };
+
+    assert_eq!(sources(0, CLAIM), vec!["marker"]);
+    assert_eq!(sources(0, SECOND), vec!["related-5"]);
+    assert_eq!(sources(0, THIRD), vec!["related-5"]);
+    assert_eq!(
+        sources(0, ELSEWHERE),
+        vec!["marker", "related-3", "related-5"],
+        "a sentence with no entry reads the section's passages"
+    );
+    assert!(
+        sources(1, CLAIM).is_empty(),
+        "another section's entries are not its own"
+    );
+    for sentence in [CLAIM, SECOND, THIRD] {
+        assert!(citations.is_cited(0, sentence));
+        assert!(!citations.is_cited(1, sentence));
+    }
+    assert!(!citations.is_cited(0, ELSEWHERE));
     Ok(())
 }
 

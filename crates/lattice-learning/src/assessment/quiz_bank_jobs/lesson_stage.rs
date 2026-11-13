@@ -59,6 +59,14 @@ pub(crate) fn lesson_seed_items(
                 Ok(()) => "agreed",
                 Err(error) => {
                     tracing::info!(question = %q.id, %error, "A lesson question was kept out of the quiz bank's draws");
+                    crate::lessons::trace::lesson_span(lesson_id).in_scope(|| {
+                        crate::lessons::trace::decided(
+                            crate::lessons::trace::Stage::Quiz,
+                            &format!("question {}", q.prompt),
+                            "kept out of the bank's draws",
+                            &error.to_string(),
+                        );
+                    });
                     "dropped"
                 }
             };

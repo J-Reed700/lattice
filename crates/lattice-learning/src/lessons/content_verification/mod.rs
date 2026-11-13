@@ -30,11 +30,11 @@ mod citations;
 mod claim_ledger;
 mod claim_sentences;
 pub(crate) use citations::names_a_source;
-use citations::{restates, section_citations, source_mentions, take_cited, Citations};
+use citations::{section_citations, source_mentions, take_cited, Citations};
 #[cfg(test)]
 pub(crate) use claim_ledger::locate;
 pub(crate) use claim_ledger::{
-    claim_quote, field_pointer, field_text, held_for_review, held_lessons, located, located_quote,
+    field_pointer, field_text, held_for_review, held_lessons, located, located_quote, narrow,
     review_outcome, stands_in_part, unit_fields, unit_texts, HeldForReview,
 };
 mod class_checks;
@@ -293,7 +293,7 @@ struct ClaimChecks {
     /// as a checkpoint, so a restarted job carries it still.
     latest: HashMap<ClaimId, Finding>,
     selections: std::sync::Mutex<HashMap<String, evidence_selection::Selection>>,
-    research_scopes: std::sync::Mutex<HashMap<String, HashSet<(usize, String)>>>,
+    research_scopes: std::sync::Mutex<HashMap<String, evidence_selection::ResearchTargets>>,
     /// What the judge's answers have cost this job, per claim, across its
     /// readings: the answer size a page of the course is budgeted by
     /// (`evidence_checks::page_budget`).
