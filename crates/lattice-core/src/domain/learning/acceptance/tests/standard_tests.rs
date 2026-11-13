@@ -10,9 +10,9 @@ fn the_standard_policy_breaks_no_invariant() {
 }
 
 #[test]
-fn the_standard_policy_is_acceptance_v3() {
-    assert_eq!(StandardPolicy::new().version(), "acceptance-v3");
-    assert_eq!(STANDARD_POLICY.as_str(), "acceptance-v3");
+fn the_standard_policy_is_acceptance_v4() {
+    assert_eq!(StandardPolicy::new().version(), "acceptance-v4");
+    assert_eq!(STANDARD_POLICY.as_str(), "acceptance-v4");
 }
 
 #[test]
@@ -93,7 +93,7 @@ fn the_standard_policys_nodes_are_the_designs_tables() {
 }
 
 #[test]
-fn the_edges_that_change_a_class_are_first_changes_or_enter_after_a_rewrite() {
+fn the_edges_that_change_a_class_are_first_entries_or_enter_after_a_rewrite() {
     let policy = StandardPolicy::new();
     let edge = |class: Class, node: &'static str, outcome: Outcome| {
         policy
@@ -103,15 +103,19 @@ fn the_edges_that_change_a_class_are_first_changes_or_enter_after_a_rewrite() {
     };
     assert_eq!(
         edge(Sourced, "s.read", Outcome::AllCommon),
-        Some(Next::first_change(Target::node("s.uncite"), "s.research"))
+        Some(Next::first_entry_by("s.uncite", Common, "s.research"))
     );
-    assert_eq!(
-        edge(Sourced, "s.citeread", Outcome::AllCommon),
-        Some(Next::first_change(
-            Target::node("s.uncite"),
-            End::Unverified
-        ))
-    );
+    for (node, outcome) in [
+        ("s.reread", Outcome::Unproven),
+        ("s.citeread", Outcome::Unproven),
+        ("s.citeread", Outcome::AllCommon),
+    ] {
+        assert_eq!(
+            edge(Sourced, node, outcome),
+            Some(Next::first_entry_by("s.uncite", Common, End::Unverified)),
+            "{node} {outcome:?}"
+        );
+    }
     assert_eq!(
         edge(Sourced, "s.uncite", Outcome::Done),
         Some(Next::enter(Common))
@@ -126,11 +130,11 @@ fn the_edges_that_change_a_class_are_first_changes_or_enter_after_a_rewrite() {
     );
     assert_eq!(
         edge(Common, "c.read", Outcome::NeedsSource),
-        Some(Next::first_change(Target::Enter(Sourced), End::Unverified))
+        Some(Next::first_entry(Sourced, End::Unverified))
     );
     assert_eq!(
         edge(Reasoning, "r.read", Outcome::NeedsSource),
-        Some(Next::first_change(Target::Enter(Sourced), End::Unverified))
+        Some(Next::first_entry(Sourced, End::Unverified))
     );
 }
 

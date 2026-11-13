@@ -445,8 +445,8 @@ fn claims_on_two_sentences_of_a_section_are_both_cited_in_one_call() -> Result<(
     let references = ReferenceCollection::lexical(&sources)?;
     let body = format!("{GOOD} {NONE}");
     let findings = [
-        found_in(&sources[0], GOOD, (body.as_str(), GOOD)),
-        found_in(&sources[0], NONE, (body.as_str(), NONE)),
+        found_in(&sources[0], GOOD, (GOOD, GOOD)),
+        found_in(&sources[0], NONE, (NONE, NONE)),
     ];
     let mut candidate = csv_lesson(&body);
 

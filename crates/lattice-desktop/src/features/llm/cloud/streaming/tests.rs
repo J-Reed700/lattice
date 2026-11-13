@@ -365,7 +365,10 @@ fn begun_after(provider: CloudProvider, events: &[Value]) -> bool {
 fn a_claude_answer_begins_with_its_first_content_block() {
     let start = json!({"type":"message_start","message":{"id":"m1","content":[],"usage":{"input_tokens":10,"output_tokens":1},"stop_reason":null}});
     let thinking = json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}});
-    assert!(!begun_after(CloudProvider::Anthropic, &[start.clone()]));
+    assert!(!begun_after(
+        CloudProvider::Anthropic,
+        std::slice::from_ref(&start)
+    ));
     assert!(begun_after(CloudProvider::Anthropic, &[start, thinking]));
 }
 
@@ -373,7 +376,10 @@ fn a_claude_answer_begins_with_its_first_content_block() {
 fn an_openai_answer_begins_with_its_first_output_item() {
     let created = json!({"type":"response.created","response":{"status":"in_progress"}});
     let item = json!({"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","id":"rs_1","summary":[]}});
-    assert!(!begun_after(CloudProvider::Openai, &[created.clone()]));
+    assert!(!begun_after(
+        CloudProvider::Openai,
+        std::slice::from_ref(&created)
+    ));
     assert!(begun_after(CloudProvider::Openai, &[created, item]));
 }
 
@@ -381,6 +387,9 @@ fn an_openai_answer_begins_with_its_first_output_item() {
 fn a_chat_answer_begins_with_its_first_content_not_its_role() {
     let role = json!({"choices":[{"index":0,"delta":{"role":"assistant"}}]});
     let content = json!({"choices":[{"index":0,"delta":{"content":"Hi"}}]});
-    assert!(!begun_after(CloudProvider::Google, &[role.clone()]));
+    assert!(!begun_after(
+        CloudProvider::Google,
+        std::slice::from_ref(&role)
+    ));
     assert!(begun_after(CloudProvider::Google, &[role, content]));
 }

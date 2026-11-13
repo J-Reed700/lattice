@@ -35,7 +35,7 @@ fn the_entry_holds_the_exact_sentence_of_the_body() -> Result<()> {
     let sources = [source()];
     let references = ReferenceCollection::lexical(&sources)?;
     let body = format!("{NONE} {GOOD}");
-    let finding = found_in(&sources[0], GOOD, (body.as_str(), GOOD));
+    let finding = found_in(&sources[0], GOOD, (GOOD, GOOD));
     let mut candidate = csv_lesson(&body);
     let cited = repair::cite_where_supported(
         &mut candidate,
@@ -50,6 +50,30 @@ fn the_entry_holds_the_exact_sentence_of_the_body() -> Result<()> {
         candidate["blocks"][0]["citations"],
         json!([{"sentence":GOOD,"sourceIndex":0,"quote":GOOD}])
     );
+    Ok(())
+}
+
+#[test]
+fn a_finding_that_quotes_several_sentences_is_not_cited_and_says_why() -> Result<()> {
+    let sources = [source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let body = format!("{NONE} {GOOD}");
+    let finding = found_in(&sources[0], GOOD, (body.as_str(), GOOD));
+    let lesson = csv_lesson(&body);
+    let mut candidate = lesson.clone();
+    let cited = repair::cite_where_supported(
+        &mut candidate,
+        std::slice::from_ref(&finding),
+        &[],
+        &mut sources.to_vec(),
+        &references,
+        &mut HashSet::new(),
+    )?;
+    assert!(matches!(
+        cited.as_slice(),
+        [repair::Cited::Cannot(repair::Unwritten::SeveralSentences)]
+    ));
+    assert_eq!(candidate, lesson);
     Ok(())
 }
 

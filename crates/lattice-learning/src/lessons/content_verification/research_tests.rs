@@ -622,34 +622,10 @@ async fn an_empty_claim_plan_ends_research_honestly_instead_of_failing() -> Resu
     .await
 }
 
-#[derive(Clone, Default)]
-struct Captured(Arc<Mutex<Vec<u8>>>);
-
-impl std::io::Write for Captured {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
 #[tokio::test]
 async fn a_hint_with_no_terms_besides_its_sites_is_not_searched_and_the_log_says_so() -> Result<()>
 {
-    let captured = Captured::default();
-    let writer = captured.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
-        .with_ansi(false)
-        .with_writer(move || writer.clone())
-        .finish();
-    let _logs = tracing::subscriber::set_default(subscriber);
-    tracing::callsite::rebuild_interest_cache();
+    let logs = lattice_core::shared::testing::logs::capture_logs(tracing::Level::TRACE);
 
     let pool = crate::tests::pool().await?;
     let db = Database::new(pool.clone());
@@ -677,7 +653,7 @@ async fn a_hint_with_no_terms_besides_its_sites_is_not_searched_and_the_log_says
                 "a hint that is not a search adds none"
             );
             assert_eq!(llm.prompts.lock().unwrap().len(), 1, "only the planner ran");
-            let logs = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+            let logs = logs.text();
             assert!(
                 logs.contains(
                     "A research hint is not a search: no terms are left once any site: operators are lifted out"
