@@ -539,3 +539,120 @@ fn replayed(response: &CompletionResponse) -> Value {
             .collect(),
     )
 }
+
+/// Let the client and the mock server run until `count` requests have
+/// arrived, without a timer that a paused clock could advance.
+async fn wait_for_requests(server: &MockServer, count: usize) {
+    for _ in 0..5_000 {
+        if server.received_requests().await.unwrap().len() >= count {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+        tokio::task::yield_now().await;
+    }
+    panic!("the server did not receive {count} requests");
+}
+
+/// Let the client act on what it has been given, with the clock paused.
+async fn let_the_client_run() {
+    for _ in 0..100 {
+        std::thread::sleep(Duration::from_millis(2));
+        tokio::task::yield_now().await;
+    }
+}
+
+/// The provider's `retry-after` is its own statement of when to come back:
+/// resending sooner is refused again, so it is honoured as given.
+#[tokio::test]
+async fn a_rate_limit_is_resent_only_after_the_wait_the_provider_asked_for() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("retry-after", "45")
+                .set_body_json(json!({"error":{"type":"requests","code":"rate_limit_exceeded"}})),
+        )
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]
+        })))
+        .mount(&server)
+        .await;
+    let client = client(&server).await;
+    let call = tokio::spawn(async move { client.complete(&CompletionRequest::default()).await });
+
+    wait_for_requests(&server, 1).await;
+    tokio::time::pause();
+    let_the_client_run().await;
+    tokio::time::advance(Duration::from_secs(30)).await;
+    let_the_client_run().await;
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        1,
+        "resent before the 45 s the provider asked for"
+    );
+
+    tokio::time::advance(Duration::from_secs(16)).await;
+    wait_for_requests(&server, 2).await;
+    tokio::time::resume();
+    assert_eq!(call.await.unwrap().unwrap().text, "ok");
+}
+
+/// A monthly spend limit is refused with a 429 that no waiting changes until
+/// the next month, so it is told once, as a setting, and never resent.
+#[tokio::test]
+async fn a_spend_limit_refusal_is_sent_once_and_names_the_spend_limit() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(429).set_body_json(json!({"type":"error","error":{
+                "type":"rate_limit_error",
+                "message":"sensitive-provider-reason",
+                "details":{"error_code":"enforced_spend_limit_reached"}
+            }})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let error = anthropic_client(&server)
+        .await
+        .complete(&CompletionRequest::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AppError::InvalidConfig(_)), "{error:?}");
+    assert!(!ErrorClass::of(&error).is_temporary());
+    assert!(error.to_string().contains("monthly spend limit"), "{error}");
+    assert!(!error.to_string().contains("sensitive-provider-reason"));
+}
+
+/// A request with less time left than the provider asked it to wait gives the
+/// provider's refusal back, and is never resent before the time asked for.
+#[tokio::test]
+async fn a_retry_after_beyond_the_time_left_gives_the_refusal_without_resending_early() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("retry-after", "45")
+                .set_body_json(json!({"error":{"type":"requests","code":"rate_limit_exceeded"}})),
+        )
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]
+        })))
+        .mount(&server)
+        .await;
+    let request = CompletionRequest {
+        time_budget: Some(Duration::from_secs(35)),
+        ..Default::default()
+    };
+    let error = client(&server).await.complete(&request).await.unwrap_err();
+    assert!(matches!(error, AppError::RateLimitExceeded(_)), "{error:?}");
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}

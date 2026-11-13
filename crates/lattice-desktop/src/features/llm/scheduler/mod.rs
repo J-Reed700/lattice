@@ -585,6 +585,9 @@ impl Drop for Waiting<'_> {
 }
 
 #[cfg(test)]
+mod adaptive_tests;
+
+#[cfg(test)]
 mod tests;
 
 #[cfg(test)]
