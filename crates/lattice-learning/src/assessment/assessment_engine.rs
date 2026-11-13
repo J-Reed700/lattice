@@ -65,7 +65,7 @@ pub struct LearningBlueprintRequirement {
 
 impl LearningBlueprintRequirement {
     /// What the bank holds for this requirement: three forms' worth, so a retake draws items the learner has not seen.
-    pub(crate) fn bank_target(&self) -> usize {
+    pub fn bank_target(&self) -> usize {
         3 * self.count
     }
 }
