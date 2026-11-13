@@ -15,17 +15,20 @@ const REMOVED: Walked = Walked::Ended(End::Removed {
 });
 const UNVERIFIED: Walked = Walked::Ended(End::Unverified);
 
-/// `class`'s `node` with `rewrites_left` rewrites still to give.
+/// `class`'s `node` with `rewrites_left` rewrites still to give, for a statement
+/// that was in the classes of `came_from` before it.
 fn position(
     class: Class,
-    changed_class: bool,
+    came_from: &[Class],
     reasked: bool,
     node: &'static str,
     rewrites_left: u8,
 ) -> Position {
     Position {
         class,
-        changed_class,
+        visited: came_from
+            .iter()
+            .fold(Classes::of(class), |visited, &before| visited.with(before)),
         reasked,
         node: NodeId(node),
         rewrites_left,
@@ -35,12 +38,12 @@ fn position(
 /// A statement left at `node`.
 fn placed(
     class: Class,
-    changed_class: bool,
+    came_from: &[Class],
     reasked: bool,
     node: &'static str,
     rewrites_left: u8,
 ) -> Walked {
-    Walked::At(position(class, changed_class, reasked, node, rewrites_left))
+    Walked::At(position(class, came_from, reasked, node, rewrites_left))
 }
 
 fn read(reading: Reading, outcome: Outcome) -> Taken {

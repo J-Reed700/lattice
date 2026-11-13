@@ -382,7 +382,7 @@ async fn assert_begins_after_the_rewrite(
     .await?;
     let expected = Position {
         class: Class::Sourced,
-        changed_class: false,
+        visited: lattice_core::domain::learning::acceptance::Classes::of(Class::Sourced),
         reasked: false,
         node: policy.graph(Class::Sourced).after_rewrite(),
         rewrites_left: attempts_left,
@@ -787,7 +787,7 @@ async fn a_statement_new_to_the_ledger_outside_any_repaired_region_begins_at_its
         at,
         Some(Position {
             class: Class::Sourced,
-            changed_class: false,
+            visited: lattice_core::domain::learning::acceptance::Classes::of(Class::Sourced),
             reasked: false,
             node: policy.graph(Class::Sourced).entry(),
             rewrites_left: rewrites_given(&policy, Class::Sourced),

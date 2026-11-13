@@ -3064,7 +3064,7 @@ async fn a_run_stopped_on_a_second_unreadable_answer_is_resumed_by_the_next_run_
         ledger.position(&policy, &id),
         Some(Walked::At(Position {
             class: Class::Sourced,
-            changed_class: false,
+            visited: lattice_core::domain::learning::acceptance::Classes::of(Class::Sourced),
             reasked: true,
             node: policy.graph(Class::Sourced).entry(),
             rewrites_left: 2,

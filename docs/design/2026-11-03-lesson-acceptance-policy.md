@@ -88,12 +88,12 @@ The four graphs (`→ end X` is a terminal state; `⇒ Class` enters that class'
 
 | Node | Step | Calls | Outcomes |
 |---|---|---|---|
-| `s.read` | `Read(Parts)` on the passages of the cited sentence it restates, else its section's quote (every block carries one) | 1 | Stands → end Resolved · AllCommon → `s.uncite` the first time the statement changes class, `s.research` once it has · Unproven → `s.research` · Refuted → `s.rewrite` |
+| `s.read` | `Read(Parts)` on the passages of the cited sentence it restates, else its section's quote (every block carries one) | 1 | Stands → end Resolved · AllCommon → `s.uncite` if the statement has not been in Common, `s.research` if it has · Unproven → `s.research` · Refuted → `s.rewrite` |
 | `s.uncite` | `Uncite` | 0 | Done ⇒ Common |
 | `s.research` | `Research` | 0 | Saved, FoundNothing → `s.reread` |
-| `s.reread` | `Read(Page)` with what research saved | 1 | Stands → end Resolved · StandsElsewhere → `s.recite` · Refuted → `s.rewrite` · Unproven → `s.uncite` the first time the statement changes class, end Unverified once it has |
+| `s.reread` | `Read(Page)` with what research saved | 1 | Stands → end Resolved · StandsElsewhere → `s.recite` · Refuted → `s.rewrite` · Unproven → `s.uncite` if the statement has not been in Common, end Unverified if it has |
 | `s.recite` | `Recite` | 0 | Done → `s.citeread` |
-| `s.citeread` | `Read(Parts)` on the new citation | 1 | Stands → end Resolved · AllCommon → `s.uncite` the first time the statement changes class, end Unverified once it has · Refuted → `s.rewrite` · Unproven → as AllCommon |
+| `s.citeread` | `Read(Parts)` on the new citation | 1 | Stands → end Resolved · AllCommon → `s.uncite` if the statement has not been in Common, end Unverified if it has · Refuted → `s.rewrite` · Unproven → as AllCommon |
 | `s.rewrite` | `Rewrite(what the passage states, or the point without the specific)` | 1 | Rewritten → `s.final` (the successor) · NotApplied → `s.rewrite.again` |
 | `s.rewrite.again` | the same, told why the first was not applied | 1 | Rewritten → `s.final` · NotApplied → `s.cut` |
 | `s.final` | `Read(Parts)` | 1 | Stands → end Resolved · AllCommon → `s.final.uncite` · Refuted → `s.cut` · Unproven → end Unverified |
@@ -106,7 +106,7 @@ A statement with no passage to be read against (no citation and no section quote
 
 | Node | Step | Calls | Outcomes |
 |---|---|---|---|
-| `r.read` | `Read(Consistency)` | 1 | Stands → `r.veto` · Refuted → `r.rewrite` · NeedsSource ⇒ Sourced the first time the statement changes class, → end Unverified once it has |
+| `r.read` | `Read(Consistency)` | 1 | Stands → `r.veto` · Refuted → `r.rewrite` · NeedsSource ⇒ Sourced if the statement has not been in Sourced, → end Unverified if it has |
 | `r.veto` | `Read(Veto)` | 3 | Stands → end Consistent · Refuted → `r.ground` |
 | `r.ground` | `Read(Ground)` | 1 | Stands → end Consistent · Refuted → `r.correct` |
 | `r.correct` | `Rewrite(correct what the veto found; keep the rest of the sentence)`, told the veto's reason and the ground's | 1 | Rewritten → `r.final` · NotApplied → `r.correct.again` |
@@ -122,7 +122,7 @@ A statement with no passage to be read against (no citation and no section quote
 
 | Node | Step | Calls | Outcomes |
 |---|---|---|---|
-| `c.read` | `Read(Knowledge)` | 3 | Stands → end GeneralKnowledge · NeedsSource ⇒ Sourced the first time the statement changes class, end Unverified once it has · Refuted → `c.ground` |
+| `c.read` | `Read(Knowledge)` | 3 | Stands → end GeneralKnowledge · NeedsSource ⇒ Sourced if the statement has not been in Sourced, end Unverified if it has · Refuted → `c.ground` |
 | `c.ground` | `Read(Ground)` | 1 | Stands → end GeneralKnowledge, the passage on its check · Refuted → `c.rewrite` |
 | `c.rewrite` | `Rewrite(state it as the field has it, per the reason)` | 1 | Rewritten → `c.final` · NotApplied → `c.rewrite.again` |
 | `c.rewrite.again` | the same, told why | 1 | Rewritten → `c.final` · NotApplied → `c.cut` |
@@ -152,19 +152,20 @@ What changed from the code, deliberately (§3): Sourced's `AllCommon` edges, at 
 - **What a rewrite is asked** is the `Rewrite` step's goal, with the reading that failed the statement: the repair prompt says exactly what the next reading will test.
 - **The call ceiling** is the calls made so far and the most still to come: per statement, the longest path in calls from where it is to an end, plus the costliest reading still ahead of it while its one re-ask is unused (U), plus two reserves the graphs cannot see: one flow repair per section that can take a cut (K), which each flow repair uses up as it is made, and M. The sorting calls are among the calls made; the plan is made once the pass's statements are identified, and every statement enters it the same way, at its place. For each statement whose sentence carries another live statement when the statement is taken into the plan, M holds two readings of its class from its post-rewrite node, one after a neighbour's rewrite and one after a neighbour's narrowing cut, each with the statement's re-ask still possible, plus that narrowing call: `2 × most_calls(post-rewrite node, re-ask unspent) + 1`, which is 2 × 8 + 1 = 17 for Sourced and Reasoning and 2 × 7 + 1 = 15 for Common and Internal. (A re-reading that leaves the re-ask unused gives its allowance up as it ends, so this is an upper bound by up to three calls, never a count that can be passed.) It is fixed when the statement is taken into the plan, at its place there (a continued claim at its ledger position, not at an entry it left), so it cannot rise. A statement whose successor reads again takes those calls from its own reserve, since that is what the reserve was held for; anything beyond it would be a rise, which is shown and counted, never hidden. The reserve is released once the statement and every other statement on its sentence have ended, since then none is left to rewrite the sentence or to be read again. `call_plan.rs`'s constants go. From the graphs of §2.3, at entry: Sourced 13 + 3 (its longest path re-cites, reads all common on the new citation and takes Common's whole check), Reasoning 12 + 3, Common 13 + 3 (sent to its source, rewritten there, then all common after the rewrite), model-Internal 10 + 3; from the post-rewrite node: Sourced 5, Reasoning 5, Common 4, Internal 4. `call_plan.rs` has Reasoning's and Common's by hand today and Sourced's as 1, because its post-rewrite reading had no path but the cut. Because a node's longest path is at least its own cost plus the longest path of any successor, the ceiling cannot rise as statements move; a test holds every edge of every graph to that. The teaching review may rewrite the sentence of a statement that ends, or waits, with a rewrite left; its successor is read again from the post-rewrite node. The rewrites a statement has left are part of its position: the most `Rewrite` steps any path of its class takes (a rewrite and its retry, so 2), one spent by each `Rewrite` step it takes whatever its outcome and one by each machine change of its sentence. The ceiling and the teaching release read that count through the same functions (`next_rewrite`, `successor`), so a statement that ends with a rewrite left still holds its successor's readings, and one whose repair took both steps is not rewritten again, which brings each statement's share at entry to 19 (Sourced, Reasoning, Common) and 16 (Internal).
 - **A statement's end state** is the end it reaches: Resolved (`ResolvedByEvidence`), Consistent, GeneralKnowledge, Removed by the machine.
-- **That the loop ends**: the graphs are acyclic (a class changes at an entry at most once, and after a rewrite only into a post-rewrite node, from which no rewrite and no entry is reachable), each statement's path is finite, a rewrite's successor continues its parent's path (it does not start over), and a round in which no statement moved is a fault that stops the lesson with its reason (§2.7), not a count that runs out.
+- **That the loop ends**: the graphs are acyclic (a statement enters each class at most once at its entry, and after a rewrite only into a post-rewrite node, from which no rewrite and no entry is reachable), each statement's path is finite, a rewrite's successor continues its parent's path (it does not start over), and a round in which no statement moved is a fault that stops the lesson with its reason (§2.7), not a count that runs out.
 
 ### 2.5 Invariants, held by tests on every graph of every policy
 
-1. Acyclic, counting class changes: a statement changes class at an entry at most once; after its rewrite it may change once more, into a post-rewrite node.
+1. Acyclic, counting class changes: a statement enters each class at most once at its entry; after its rewrite it may change class once more, into a post-rewrite node.
 2. Every path to end Removed passes a `Rewrite` (no statement is cut without one rewrite).
 3. Every `Refuted` edge out of `Read(Knowledge)` or `Read(Veto)` reaches a `Read(Ground)` before any `Rewrite` or `Cut`.
-4. A citation's fault is answered on the citation: every `StandsElsewhere` edge leads to a `Recite`, and every `AllCommon` edge to an `Uncite`, directly or as a first change's `change`; only a first change's `otherwise`, taken by a statement that has already changed class, may lead elsewhere.
+4. A citation's fault is answered on the citation: every `StandsElsewhere` edge leads to a `Recite`, and every `AllCommon` edge to an `Uncite`, directly or as a first entry's `by`; only a first entry's `otherwise`, taken by a statement that has been in the class already, may lead elsewhere.
 5. No node has an `Unjudged` edge (the walk keeps the statement in place once, then stops the lesson), and every `Rewrite` node's `NotApplied` edge leads to its `.again` node, whose own leads to the cut.
 6. A class's ends are its own: Sourced Resolved, Removed or Unverified, Reasoning Consistent, Removed or Unverified, Common GeneralKnowledge, Removed or Unverified (the acceptance run's pairings, classes design §3.11), Internal NotAClaim or Removed.
 7. For every edge `n → m` and either state of the re-ask: `cost(n) + most(m) ≤ most(n)`, and using the re-ask never raises `most` (the ceiling never rises).
 8. A rewrite's successor is never rewritten again: from every class's post-rewrite node no `Rewrite` node is reachable, and the only change of class is into another class's post-rewrite node.
 9. No `Rewrite` or `Cut` node is reachable from an entry without crossing a `Refuted` edge: nothing is changed or removed on a statement the sources are merely silent about.
+10. A first entry leads into the class it names: its `by` is an entry into that class, or a node of the same graph whose every edge is.
 
 A policy is a set of graphs; another policy (a stricter one for answer keys, one with the Verifier's reading before publication) is another set, and the same tests hold it.
 
@@ -368,7 +369,7 @@ pub enum Outcome {
 pub enum End { Resolved, Consistent, GeneralKnowledge, NotAClaim, Removed { section_goes: bool }, Unverified }
 pub enum Target {
     Node(NodeId),
-    /// Another class's graph, at its entry: the statement changes class by evidence.
+    /// Another class's graph, at its entry: the statement enters the class by evidence, once.
     Enter(Class),
     /// Another class's graph, at its post-rewrite node: a rewrite's successor
     /// changes class, and is never rewritten again.
@@ -376,15 +377,15 @@ pub enum Target {
 }
 pub enum Next {
     Go(Target),
-    /// `change` the first time the evidence moves the statement; `otherwise` once it
-    /// has changed class (no class changes twice).
-    FirstChange { change: Target, otherwise: NodeId },
+    /// `by` unless the statement has been in `into`; `otherwise` once it has
+    /// (a statement enters each class at most once).
+    FirstEntry { into: Class, by: Target, otherwise: NodeId },
     End(End),
 }
 pub struct Node { pub name: &'static str, pub step: Step, pub calls: u32, /* edges: (Outcome, Next) */ }
 pub struct Graph { /* class, entry, nodes, after_rewrite */ }
 
-pub struct Position { pub class: Class, pub changed_class: bool, pub reasked: bool, pub node: NodeId }
+pub struct Position { pub class: Class, pub visited: Classes, pub reasked: bool, pub node: NodeId }
 pub struct Taken { pub step: Step, pub outcome: Outcome }
 pub enum Walked { At(Position), Ended(End), Stopped, Diverged { at: Position, taken: Taken } }
 

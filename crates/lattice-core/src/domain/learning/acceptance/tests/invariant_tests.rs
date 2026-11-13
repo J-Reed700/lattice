@@ -55,7 +55,7 @@ fn a_statement_that_can_come_back_to_a_node_it_left_breaks_the_first_invariant()
 }
 
 #[test]
-fn a_statement_that_can_change_class_twice_breaks_the_first_invariant() {
+fn a_statement_that_can_enter_a_class_twice_breaks_the_first_invariant() {
     assert_eq!(
         broken(Common, "c.read", |node| {
             node.on(&[Outcome::NeedsSource], Next::enter(Sourced))
@@ -151,26 +151,32 @@ fn a_citation_fault_answered_with_anything_but_the_remedy_breaks_the_fourth_inva
 }
 
 #[test]
-fn a_first_change_must_change_by_the_remedy_but_its_otherwise_goes_where_it_must() {
+fn a_first_entry_must_enter_by_the_remedy_but_its_otherwise_goes_where_it_must() {
     let found = broken(Sourced, "s.read", |node| {
         node.on(
             &[AllCommon],
-            Next::first_change(Target::node("s.rewrite"), "s.research"),
+            Next::first_entry_by("s.rewrite", Common, "s.research"),
         )
     });
     assert_eq!(
         without_the_ninth(found),
-        vec![Violation::CitationFaultNotRepaired {
-            class: Sourced,
-            node: id("s.read"),
-            outcome: AllCommon,
-        }]
+        vec![
+            Violation::CitationFaultNotRepaired {
+                class: Sourced,
+                node: id("s.read"),
+                outcome: AllCommon,
+            },
+            Violation::FirstEntryMisled {
+                class: Sourced,
+                node: id("s.read"),
+            },
+        ]
     );
     assert_eq!(
         broken(Sourced, "s.read", |node| {
             node.on(
                 &[AllCommon],
-                Next::first_change(Target::node("s.uncite"), "s.research"),
+                Next::first_entry_by("s.uncite", Common, "s.research"),
             )
         }),
         Vec::<Violation>::new()
@@ -255,12 +261,9 @@ fn a_rewrites_successor_that_changes_class_at_an_entry_breaks_the_eighth_invaria
     };
     assert!(found.contains(&enters), "{found:?}");
 
-    // A first change into an entry counts while the class has not changed.
+    // A first entry counts while the class has not been visited.
     let found = broken(Common, "c.final", |node| {
-        node.on(
-            &[NeedsSource],
-            Next::first_change(Target::Enter(Sourced), "c.cut"),
-        )
+        node.on(&[NeedsSource], Next::first_entry(Sourced, "c.cut"))
     });
     let enters = Violation::RewrittenTwice {
         class: Common,
@@ -391,11 +394,11 @@ fn a_rewrite_reached_without_a_refuted_edge_breaks_the_ninth_invariant() {
     };
     assert!(found.contains(&rewrite), "{found:?}");
 
-    // A first change's `otherwise` counts too.
+    // A first entry's `otherwise` counts too.
     let found = broken(Common, "c.read", |node| {
         node.on(
             &[Outcome::NeedsSource],
-            Next::first_change(Target::Enter(Sourced), "c.rewrite"),
+            Next::first_entry(Sourced, "c.rewrite"),
         )
     });
     let rewrite = Violation::RewriteWithoutRefutation {
@@ -415,4 +418,39 @@ fn a_cut_reached_without_a_refuted_edge_breaks_the_ninth_invariant() {
         node: id("r.cut"),
     };
     assert!(found.contains(&cut), "{found:?}");
+}
+
+#[test]
+fn a_first_entry_that_does_not_lead_into_its_class_breaks_the_tenth_invariant() {
+    let misled = Violation::FirstEntryMisled {
+        class: Sourced,
+        node: id("s.read"),
+    };
+    // By a node that goes somewhere else, by an entry into another class and by
+    // a node that has an edge that does not enter.
+    let found = broken(Sourced, "s.read", |node| {
+        node.on(
+            &[AllCommon],
+            Next::first_entry_by("s.research", Common, "s.research"),
+        )
+    });
+    assert!(found.contains(&misled), "{found:?}");
+    let found = broken(Sourced, "s.read", |node| {
+        node.on(
+            &[AllCommon],
+            Next::FirstEntry {
+                into: Common,
+                by: Target::Enter(Class::Reasoning),
+                otherwise: Otherwise::Node(id("s.research")),
+            },
+        )
+    });
+    assert!(found.contains(&misled), "{found:?}");
+    let found = violations(&changed(Sourced, "s.uncite", |node| {
+        node.on(&[Done], Next::to("s.research"))
+    }));
+    assert!(found.contains(&misled), "{found:?}");
+
+    let standard = violations(&StandardPolicy::new());
+    assert_eq!(standard, Vec::<Violation>::new());
 }
