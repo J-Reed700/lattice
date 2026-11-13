@@ -285,8 +285,7 @@ struct ClaimChecks {
     /// Claims the ledger holds as resolved by evidence the user brought, by
     /// unit and statement: that check is their receipt (`claim_ledger`).
     settled: HashMap<(usize, String), Finding>,
-    /// What the ledger keeps for the next pass: where the lesson's statements
-    /// stand in their graphs, and the lesson before the repairs
+    /// What the ledger keeps for the next pass: the lesson before the repairs
     /// (`claim_ledger`).
     rewrites: claim_ledger::Rewrites,
     /// The finding of each statement's latest reading, by claim: what the

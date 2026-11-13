@@ -28,14 +28,13 @@ struct State {
     /// The course this job prepares; its model calls share the course's
     /// sources as a prompt prefix.
     program_id: Option<String>,
-    /// The most calls the lesson's checks can make, once its statements are
-    /// sorted.
+    /// The most calls the lesson's checks can make, once the pass that
+    /// identifies its statements is named.
     plan: Option<CallPlan>,
-    /// The claims the plan follows, in its order: those of the pass it was
-    /// made for, then each it took in.
+    /// The claims the plan follows, in its order: each as it was taken in.
     planned: Vec<ClaimId>,
-    /// The sorting calls made since the plan's last event: once it is made, a
-    /// sort sorts only statements new to it, which it takes in.
+    /// The sorting calls made since the plan's last event: a sort sorts only
+    /// statements new to the ledger, which the plan takes in.
     sorted: u32,
     /// Every ceiling the plan published, in order.
     #[cfg(test)]
@@ -404,31 +403,6 @@ pub(crate) fn new_references(count: Option<usize>) {
     });
 }
 
-/// The lesson's statements are sorted: from here its checks' calls have a
-/// ceiling (claim classes design §3.12). A later sort changes nothing here: a
-/// statement new to the ledger is taken in when its pass is named
-/// ([`statements_moved`]).
-pub(crate) fn calls_planned(policy: &dyn AcceptancePolicy, statements: &[Planned], sections: u32) {
-    let _ = CURRENT.try_with(|progress| {
-        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
-        if state.plan.is_none() {
-            let count = |class: Class| {
-                let of_class = statements
-                    .iter()
-                    .filter(|statement| statement.class == class);
-                u32::try_from(of_class.count()).unwrap_or(u32::MAX)
-            };
-            state.activity.statements = Some(LearningStatementPlan {
-                sourced: count(Class::Sourced),
-                reasoning: count(Class::Reasoning),
-                common: count(Class::Common),
-            });
-            state.plan = Some(CallPlan::new(policy, statements, sections));
-            publish_ceiling(&mut state, Change::default());
-        }
-    });
-}
-
 /// The cuts are known: `sections` took one and are left, and only they get a
 /// flow repair (claim classes design §3.10).
 pub(crate) fn cuts_known(sections: usize) {
@@ -452,33 +426,50 @@ pub(crate) fn flow_repaired() {
     });
 }
 
-/// The claims the plan follows, in its order, once it is made: none until a
-/// pass names the claims it was made for.
+/// The claims the plan follows, in its order: none until a pass names the
+/// statements it is made of, and `None` outside a job's progress.
 pub(crate) fn plan_claims() -> Option<Vec<ClaimId>> {
     CURRENT
         .try_with(|progress| {
-            let state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
-            state.plan.as_ref().map(|_| state.planned.clone())
+            progress
+                .0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .planned
+                .clone()
         })
         .ok()
-        .flatten()
 }
 
 /// The plan's statements have moved through their graphs: `moved` are where
 /// the ledger now has the plan's claims, in its order, and `joining` the
-/// statements of `claims` beyond them, which it was not made for and takes in
-/// where they stand. The plan follows `claims` from now on.
+/// statements of `claims` beyond them, which it takes in where they stand. A
+/// job with no plan makes it here, from `joining` alone, in `sections`
+/// sections that could take cuts: from here its checks' calls have a ceiling
+/// (claim classes design §3.12). The plan follows `claims` from now on.
 pub(crate) fn statements_moved(
     policy: &dyn AcceptancePolicy,
+    sections: u32,
     claims: &[ClaimId],
     moved: &[Planned],
     joining: &[Joining],
 ) {
     let _ = CURRENT.try_with(|progress| {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(plan) = state.plan.as_mut() else {
-            return;
-        };
+        if state.plan.is_none() {
+            let count = |class: Class| {
+                let of_class = joining
+                    .iter()
+                    .filter(|statement| statement.planned.class == class);
+                u32::try_from(of_class.count()).unwrap_or(u32::MAX)
+            };
+            state.activity.statements = Some(LearningStatementPlan {
+                sourced: count(Class::Sourced),
+                reasoning: count(Class::Reasoning),
+                common: count(Class::Common),
+            });
+        }
+        let plan = state.plan.get_or_insert_with(|| CallPlan::empty(sections));
         let taken_in = plan.take_in(policy, joining);
         let beyond = plan.moved(policy, moved);
         state.planned = claims.to_vec();
@@ -489,7 +480,7 @@ pub(crate) fn statements_moved(
 /// What an event of the plan changed in it beside the calls made.
 #[derive(Clone, Copy, Default)]
 struct Change {
-    /// The calls of the statements it took in, which it was not made for.
+    /// The calls of the statements it took in.
     taken_in: u32,
     /// The calls statements can cost beyond their share and their reserve.
     beyond: u32,

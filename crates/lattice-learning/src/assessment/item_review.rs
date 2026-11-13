@@ -3,18 +3,17 @@
 //! with its key, explanation, reasons, criteria, passage and the blind
 //! solution, and says what is wrong with it and which other questions it
 //! repeats (docs/design/2026-10-23-quizzes-and-tests.md, section 5.2).
+use super::batched;
 use crate::assessment_engine::{
     LearningAssessmentCandidate as Item, LearningAssessmentKey as Key, LearningTextKey,
 };
-use crate::assessment_generation::text_call;
 use crate::key_review::{self, KeyVerdict, Solution};
-use crate::lessons::structured_call::complete_checked_request;
 use crate::model_call;
 use lattice_core::{
     application::ports::LLMPort,
     application::services::grounded_generation::GroundedRequest,
     application::services::model_contract::{Contract, ContractId, PromptInput},
-    shared::error::{smaller_parts_may_succeed, AppError, Result},
+    shared::error::{AppError, Result},
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -290,15 +289,15 @@ struct Judge<'a> {
 }
 
 impl Judge<'_> {
-    fn ids(&self, start: usize, size: usize) -> Vec<String> {
-        (start..start + size).map(|n| format!("new-{n}")).collect()
+    fn ids(indices: &[usize]) -> Vec<String> {
+        indices.iter().map(|n| format!("new-{n}")).collect()
     }
 
-    fn request(&self, start: usize, size: usize) -> GroundedRequest {
-        let chunk: Vec<&Value> = self.items.iter().skip(start).take(size).collect();
-        let chunk_ids = self.ids(start, chunk.len());
+    fn request(&self, indices: &[usize]) -> GroundedRequest {
+        let chunk: Vec<&Value> = indices.iter().filter_map(|n| self.items.get(*n)).collect();
+        let chunk_ids = Self::ids(indices);
         let mut all_ids = self.have_ids.clone();
-        all_ids.extend(self.ids(0, self.items.len()));
+        all_ids.extend((0..self.items.len()).map(|n| format!("new-{n}")));
         let mut prompt = json!({
             "outcome": self.context.outcome,
             "outcomeDescription": self.context.outcome_description,
@@ -310,7 +309,7 @@ impl Judge<'_> {
                 .others
                 .iter()
                 .enumerate()
-                .filter(|(n, _)| *n < start || *n >= start + chunk.len())
+                .filter(|(n, _)| !indices.contains(n))
                 .map(|(_, other)| other)
                 .collect();
             if let Some(fields) = prompt.as_object_mut() {
@@ -324,28 +323,10 @@ impl Judge<'_> {
             300 * chunk.len() + 300,
         )
     }
-
-    /// One check per item of the chunk, corrected once by the shared driver
-    /// when the answer misses an item or reports a defect without saying what
-    /// it is. None when more than one item cannot be answered in one call and
-    /// smaller parts may succeed: the caller then asks for fewer.
-    async fn checks(
-        &self,
-        llm: &dyn LLMPort,
-        start: usize,
-        size: usize,
-    ) -> Result<Option<Vec<Check>>> {
-        let wanted = self.ids(start, size);
-        let request = self.request(start, size);
-        let call = text_call::<QuizItemReview>(&request)?.splitting(size > 1);
-        let read = |text: &str| read_checks(text, &wanted);
-        match complete_checked_request(llm, &call, request, None, None, read).await {
-            Ok(checks) => Ok(Some(checks)),
-            Err(error) if size > 1 && smaller_parts_may_succeed(&error) => Ok(None),
-            Err(error) => Err(error),
-        }
-    }
 }
+
+/// What the review fails with when the model cannot judge an item even alone.
+const UNREVIEWED: &str = "The model could not complete the quiz item review.";
 
 /// The checks a reply lists, before they are held to the items asked about.
 fn read_check_list(text: &str) -> Result<Vec<Check>> {
@@ -430,31 +411,35 @@ pub(crate) async fn review(
         items,
     };
     let mut repeats: BTreeMap<usize, BTreeSet<String>> = BTreeMap::new();
-    let mut start = 0;
-    let mut room = usize::MAX;
-    while start < entries.len() {
-        let mut size = (entries.len() - start).min(room);
-        while size > 1 && !model_call::fits(llm, &judge.request(start, size)).await {
-            size = size.div_ceil(2);
-        }
-        let Some(checks) = judge.checks(llm, start, size).await? else {
-            room = size.div_ceil(2);
+    let checks = batched::answers::<QuizItemReview, Check>(
+        llm,
+        entries.len(),
+        |indices| judge.request(indices),
+        |text, indices| {
+            let checks = read_checks(text, &Judge::ids(indices))?;
+            Ok(checks
+                .into_iter()
+                .filter_map(|check| {
+                    let position = check
+                        .id
+                        .strip_prefix("new-")
+                        .and_then(|n| n.parse::<usize>().ok())?;
+                    Some((position, check))
+                })
+                .collect())
+        },
+        "one quiz question with its review",
+        batched::Alone::Fails(UNREVIEWED),
+    )
+    .await?;
+    for (position, check) in checks.into_iter().enumerate() {
+        let Some(check) = check else {
             continue;
         };
-        for check in checks {
-            let Some(position) = check
-                .id
-                .strip_prefix("new-")
-                .and_then(|n| n.parse::<usize>().ok())
-            else {
-                continue;
-            };
-            if let (true, Some(slot)) = (check.has_defect, findings.get_mut(position)) {
-                slot.defects.push(check.finding.trim().to_owned());
-            }
-            repeats.entry(position).or_default().extend(check.repeats);
+        if let (true, Some(slot)) = (check.has_defect, findings.get_mut(position)) {
+            slot.defects.push(check.finding.trim().to_owned());
         }
-        start += size;
+        repeats.entry(position).or_default().extend(check.repeats);
     }
     add_repeats(entries, context, &repeats, &mut findings);
     Ok(findings)

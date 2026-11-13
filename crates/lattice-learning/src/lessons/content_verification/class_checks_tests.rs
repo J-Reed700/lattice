@@ -289,18 +289,8 @@ async fn a_sentence_the_writer_cited_is_sourced_by_the_writer_with_no_sort_call(
             statement: REASONED.to_owned(),
         },
     )];
-    let nothing = claim_ledger::Rewrites::default();
 
-    let classes = class_checks::sort(
-        &model,
-        &StandardPolicy::new(),
-        &candidate,
-        &claims,
-        &[None],
-        &nothing,
-        &citations,
-    )
-    .await?;
+    let classes = class_checks::sort(&model, &candidate, &claims, &[None], &citations).await?;
 
     assert_eq!(
         classes,
@@ -313,11 +303,9 @@ async fn a_sentence_the_writer_cited_is_sourced_by_the_writer_with_no_sort_call(
     // Uncited, the model's word stands.
     let uncited = class_checks::sort(
         &model,
-        &StandardPolicy::new(),
         &lesson(REASONED),
         &claims,
         &[None],
-        &nothing,
         &Citations::default(),
     )
     .await?;
@@ -356,15 +344,12 @@ async fn a_worked_examples_figures_are_the_models_to_sort_and_its_quotations_the
             )
         })
         .collect();
-    let nothing = claim_ledger::Rewrites::default();
 
     let classes = class_checks::sort(
         &model,
-        &StandardPolicy::new(),
         &example,
         &claims,
         &[None, None],
-        &nothing,
         &Citations::default(),
     )
     .await?;
@@ -386,11 +371,9 @@ async fn a_worked_examples_figures_are_the_models_to_sort_and_its_quotations_the
     // Internal, and what the model calls Internal is read as Reasoning.
     let stated = class_checks::sort(
         &model,
-        &StandardPolicy::new(),
         &lesson(CASE),
         &claims[..1],
         &[None],
-        &nothing,
         &Citations::default(),
     )
     .await?;
@@ -430,15 +413,12 @@ async fn a_figure_an_answer_shares_with_its_question_is_a_given_not_a_specific()
             )
         })
         .collect();
-    let nothing = claim_ledger::Rewrites::default();
 
     let classes = class_checks::sort(
         &model,
-        &StandardPolicy::new(),
         &candidate,
         &claims,
         &[None, None],
-        &nothing,
         &Citations::default(),
     )
     .await?;
@@ -1597,51 +1577,37 @@ async fn what_the_rules_make_internal_never_enters_the_ledger_and_asks_the_model
 }
 
 #[tokio::test]
-async fn the_ceiling_after_the_sort_counts_a_statement_the_model_calls_internal_from_its_entry_and_one_the_rules_leave_out_not_at_all(
+async fn the_ceiling_made_with_the_identified_pass_counts_a_statement_the_model_calls_internal_from_its_entry_and_one_the_rules_leave_out_not_at_all(
 ) -> Result<()> {
     let policy = StandardPolicy::new();
     let model = Classes::new(&[SCENARIO]).classed(&[(SCENARIO, "internal")]);
     let candidate = json!({"blocks":[{"kind":"explanation","title":"Rows","body":SCENARIO,
         "rubric":[{"title":"Trade-offs","description":RUBRIC_LINE}]}],"questions":[]});
-    let claims: Vec<(usize, Claim)> = [SCENARIO, RUBRIC_LINE]
-        .into_iter()
-        .map(|statement| {
-            (
-                0,
-                Claim {
-                    quote: statement.to_owned(),
-                    statement: statement.to_owned(),
-                },
-            )
-        })
-        .collect();
-    let nothing = claim_ledger::Rewrites::default();
+    let references = ReferenceCollection::lexical(&[])?;
+    let mut ledger = open().await?;
 
-    let (sorted, trace) =
-        crate::lesson_progress::traced(crate::lesson_progress::checks(class_checks::sort(
+    let (done, trace) = crate::lesson_progress::traced(async {
+        let pass = crate::lesson_progress::checks(passes::identify(
             &model,
             &policy,
-            &candidate,
-            &claims,
-            &[None, None],
-            &nothing,
-            &Citations::default(),
-        )))
-        .await;
+            &mut ledger,
+            (&candidate, &references),
+            extracting(&[(0, SCENARIO), (0, RUBRIC_LINE)]),
+            &ClaimChecks::default(),
+        ))
+        .await?;
+        repair_loop::plan_moved(&policy, &ledger, &candidate);
+        Ok::<_, AppError>(pass)
+    })
+    .await;
 
-    assert_eq!(
-        sorted?,
-        [
-            Classed {
-                class: Class::Internal,
-                by: ClassifiedBy::Model
-            },
-            Classed {
-                class: Class::Internal,
-                by: ClassifiedBy::Rule
-            },
-        ]
-    );
+    let pass = done?;
+    let statements: Vec<&str> = pass
+        .statements
+        .iter()
+        .map(|known| known.claim.statement.as_str())
+        .collect();
+    assert_eq!(statements, [SCENARIO]);
     // The one sorting call, made; the model's statement at the longest path of
     // the Internal graph from its entry; a flow repair for its section; and
     // nothing for the rubric line the rules left out.
@@ -1760,11 +1726,9 @@ async fn a_sentence_that_only_names_the_documentation_is_the_models_to_sort() ->
 
     let classes = class_checks::sort(
         &model,
-        &StandardPolicy::new(),
         &lesson(NAMES),
         &claims,
         &[None],
-        &claim_ledger::Rewrites::default(),
         &Citations::default(),
     )
     .await?;
@@ -1795,18 +1759,15 @@ async fn a_saved_class_is_the_models_answer_and_is_settled_where_it_is_restored(
             statement: CASE.to_owned(),
         },
     )];
-    let nothing = claim_ledger::Rewrites::default();
 
     lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
         lesson_drafts::resume("class-fixture".into()).await?;
         // An explanation settles what the model calls Internal to Reasoning.
         let stated = class_checks::sort(
             &model,
-            &StandardPolicy::new(),
             &lesson(CASE),
             &claims,
             &[None],
-            &nothing,
             &Citations::default(),
         )
         .await?;
@@ -1818,16 +1779,8 @@ async fn a_saved_class_is_the_models_answer_and_is_settled_where_it_is_restored(
             }]
         );
         // A worked example's ruling leaves it as the model sorted it.
-        let hypothetical = class_checks::sort(
-            &model,
-            &StandardPolicy::new(),
-            &example,
-            &claims,
-            &[None],
-            &nothing,
-            &Citations::default(),
-        )
-        .await?;
+        let hypothetical =
+            class_checks::sort(&model, &example, &claims, &[None], &Citations::default()).await?;
         assert_eq!(
             hypothetical,
             [Classed {

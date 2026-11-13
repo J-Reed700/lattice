@@ -471,36 +471,6 @@ async fn a_claim_the_user_edited_began_afresh_and_a_record_that_loops_still_ends
 }
 
 #[tokio::test]
-async fn the_sort_is_told_where_each_live_statement_is_and_a_statement_with_more_to_do_wins(
-) -> Result<()> {
-    let policy = StandardPolicy::new();
-    let mut ledger = open().await?;
-    let sorted = [(Class::Reasoning, ClassifiedBy::Model)];
-    let start = at(&policy, Class::Reasoning, (false, false), "r.read", 2);
-    let passed = claim(&mut ledger, "passed", "Said twice.", &sorted).await?;
-    step(
-        &mut ledger,
-        &policy,
-        &passed,
-        start,
-        &[
-            taken(Reading::Consistency, Outcome::Stands),
-            taken(Reading::Veto, Outcome::Stands),
-        ],
-    )
-    .await?;
-    claim(&mut ledger, "waiting", "Said twice.", &sorted).await?;
-    claim(&mut ledger, "unsorted", "Never sorted.", &[]).await?;
-
-    let rewrites = ledger.rewrites(&policy);
-
-    assert_eq!(rewrites.walked(0, "Said twice."), Some(Walked::At(start)));
-    assert_eq!(rewrites.walked(0, "Never sorted."), None);
-    assert_eq!(rewrites.walked(1, "Said twice."), None);
-    Ok(())
-}
-
-#[tokio::test]
 async fn the_plans_statements_are_followed_to_the_claims_that_carry_their_sentences_on(
 ) -> Result<()> {
     let policy = StandardPolicy::new();
@@ -526,11 +496,7 @@ async fn the_plans_statements_are_followed_to_the_claims_that_carry_their_senten
 
     let planned = ledger.planned(&policy, &Value::Null, &[first, second, third]);
 
-    let plan = |class, at| Planned {
-        class,
-        at,
-        sentence: None,
-    };
+    let plan = |class, at| Planned { class, at };
     assert_eq!(
         planned,
         [
@@ -560,15 +526,10 @@ async fn the_ceiling_falls_as_the_ledger_walks_the_plans_claims_to_their_ends_an
 
     let (done, trace) = crate::lesson_progress::traced(async {
         let mut ledger = open().await?;
-        // The sort planned two Reasoning statements, in one section.
-        let statement = Planned {
-            class: Class::Reasoning,
-            at: PlannedAt::Entry,
-            sentence: None,
-        };
-        crate::lesson_progress::calls_planned(&policy, &[statement, statement], 1);
         let report = pass_report(vec![finding(FIRST), finding(SECOND)]);
         identify_findings(&mut ledger, &lesson, &report).await?;
+        // The first move makes the plan: two Reasoning statements on one
+        // passage, in one section.
         repair_loop::plan_moved(&policy, &ledger, &lesson);
         let planned = ledger.finding_claims().to_vec();
         assert_eq!(crate::lesson_progress::plan_claims(), Some(planned.clone()));
@@ -588,48 +549,14 @@ async fn the_ceiling_falls_as_the_ledger_walks_the_plans_claims_to_their_ends_an
     .await;
     done?;
 
-    // The sort's ceiling (0 sorting calls, 19 for each statement, 1 flow
-    // repair), the same once the claims were identified with nothing done,
-    // then 6 less as each ends: the teaching review may still rewrite its
-    // sentence, so the 13 calls of its successor's readings stay held.
-    assert_eq!(trace.ceilings, [39, 39, 33, 27]);
+    // The plan made with the claims identified, nothing done (0 calls made,
+    // 19 for each statement, 17 reserved for each of the two on one passage,
+    // 1 flow repair), then 6 less as each ends: the teaching review may still
+    // rewrite its sentence, so the 13 calls of its successor's readings and
+    // the reserves stay held.
+    assert_eq!(trace.ceilings, [73, 67, 61]);
     assert!(trace.only_came_down(), "{:?}", trace.ceilings);
     Ok(())
-}
-
-#[test]
-fn statements_standing_on_one_sentence_share_a_group_and_the_rest_have_none() {
-    let place = |unit, quote| claim_ledger::Place {
-        unit,
-        field: "body",
-        quote,
-    };
-    let places = [
-        place(0, "One. Two."),
-        place(0, "One."),
-        place(0, "Two."),
-        place(0, "Three."),
-        place(1, "One."),
-        place(0, "Three."),
-        place(0, ""),
-        place(0, ""),
-    ];
-
-    let groups = claim_ledger::sentences(&places);
-
-    // The passage holds both sentences, so the statements on them are one
-    // group; the same words in another section, or no words, are not.
-    assert_eq!(groups.len(), places.len());
-    assert!(groups[0].is_some());
-    assert_eq!(groups[0], groups[1]);
-    assert_eq!(groups[0], groups[2]);
-    assert!(groups[3].is_some());
-    assert_eq!(groups[3], groups[5]);
-    assert_ne!(groups[0], groups[3]);
-    assert_eq!(groups[4], None);
-    assert_eq!(groups[6], None);
-    assert_eq!(groups[7], None);
-    assert!(claim_ledger::sentences(&[]).is_empty());
 }
 
 #[tokio::test]
@@ -740,7 +667,7 @@ async fn a_job_that_starts_over_ended_statements_plans_their_teaching_rewrites()
 
     // A new job extracts the same statement, which continues the claim.
     let checks = ClaimChecks {
-        rewrites: ledger.rewrites(&policy),
+        rewrites: ledger.rewrites(),
         ..ClaimChecks::default()
     };
     let extraction = passes::Extraction {

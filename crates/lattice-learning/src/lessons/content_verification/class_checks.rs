@@ -4,15 +4,13 @@
 //! statement is asked next is the acceptance policy's; the readings in
 //! `readings` ask these judges along its graphs. Every judgment is saved as a
 //! receipt, so a resumed pass asks nothing twice.
-use super::claim_ledger::{sentences, Place, Rewrites};
 use super::classify::{classify, ruling, saved_class, Case, ToSort};
 use super::*;
-use crate::lessons::call_plan::{Planned, PlannedAt};
 use lattice_core::application::services::claim_verification::{
     ClassJudgment, ConsistencyOutcome, KnowledgeOutcome, KnowledgeSample, KnowledgeVerdict,
     CONSISTENCY_POLICY, KNOWLEDGE_POLICY,
 };
-use lattice_core::domain::learning::acceptance::{AcceptancePolicy, KNOWLEDGE_SAMPLES};
+use lattice_core::domain::learning::acceptance::KNOWLEDGE_SAMPLES;
 
 /// The class of each of `claims`, in order: the one `given` holds for it,
 /// which the match of the pass gave (that of the claim it continues, or of the
@@ -22,11 +20,9 @@ use lattice_core::domain::learning::acceptance::{AcceptancePolicy, KNOWLEDGE_SAM
 /// in its lineage, so only a statement new to the ledger is sorted.
 pub(super) async fn sort(
     llm: &dyn LLMPort,
-    policy: &dyn AcceptancePolicy,
     candidate: &Value,
     claims: &[(usize, Claim)],
     given: &[Option<Classed>],
-    rewrites: &Rewrites,
     citations: &Citations,
 ) -> Result<Vec<Classed>> {
     let fields: Vec<String> = claims
@@ -95,53 +91,7 @@ pub(super) async fn sort(
         .into_iter()
         .collect::<Option<Vec<_>>>()
         .ok_or_else(|| AppError::InternalError("A statement was left without a class".into()))?;
-    plan_calls(policy, rewrites, &classes, claims, &fields);
     Ok(classes)
-}
-
-/// The calls the statements' checks can make, now that each has a class: where
-/// each stands in its class's graph, as the ledger has it, and which of them
-/// stand on one sentence. A statement the rule layer leaves out asks nothing
-/// and is not counted (`Classed::checked`).
-fn plan_calls(
-    policy: &dyn AcceptancePolicy,
-    rewrites: &Rewrites,
-    classes: &[Classed],
-    claims: &[(usize, Claim)],
-    fields: &[String],
-) {
-    let counted: Vec<(Class, Place<'_>, &str)> = classes
-        .iter()
-        .zip(claims.iter().zip(fields))
-        .filter(|(classed, _)| classed.checked())
-        .map(|(classed, ((unit, claim), field))| {
-            (
-                classed.class,
-                Place {
-                    unit: *unit,
-                    field: field.as_str(),
-                    quote: claim.quote.as_str(),
-                },
-                claim.statement.as_str(),
-            )
-        })
-        .collect();
-    let places: Vec<Place<'_>> = counted.iter().map(|(_, place, _)| *place).collect();
-    let statements: Vec<Planned> = counted
-        .iter()
-        .zip(sentences(&places))
-        .map(|((class, place, statement), sentence)| Planned {
-            class: *class,
-            at: PlannedAt::of(rewrites.walked(place.unit, statement)),
-            sentence,
-        })
-        .collect();
-    let sections: HashSet<usize> = places.iter().map(|place| place.unit).collect();
-    crate::lesson_progress::calls_planned(
-        policy,
-        &statements,
-        u32::try_from(sections.len()).unwrap_or(u32::MAX),
-    );
 }
 
 /// The finding of a statement a reading decided.

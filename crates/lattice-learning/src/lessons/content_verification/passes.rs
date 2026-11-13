@@ -179,16 +179,7 @@ pub(super) async fn identify(
     let mut extracted = ledger.extracted(candidate, &claims, &extraction.executions);
     let matched = ledger.match_pass(candidate, &extracted);
     let given = ledger.classes_given(&matched, claims.len());
-    let classes = class_checks::sort(
-        llm,
-        policy,
-        candidate,
-        &claims,
-        &given,
-        &checks.rewrites,
-        &citations,
-    )
-    .await?;
+    let classes = class_checks::sort(llm, candidate, &claims, &given, &citations).await?;
     let left: Vec<bool> = classes.iter().map(|classed| !classed.checked()).collect();
     for (found, classed) in extracted.iter_mut().zip(&classes) {
         found.class = Some(*classed);
