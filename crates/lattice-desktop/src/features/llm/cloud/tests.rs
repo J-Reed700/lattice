@@ -855,13 +855,15 @@ async fn a_streamed_answer_is_timed_from_its_first_output() {
 fn paused(
     first: Vec<u8>,
     second: Vec<u8>,
-) -> impl futures::Stream<Item = std::result::Result<Vec<u8>, String>> + Unpin {
+) -> impl futures::Stream<Item = std::result::Result<Vec<u8>, std::io::Error>> + Unpin {
     use futures::StreamExt as _;
     Box::pin(
-        futures::stream::iter([Ok::<_, String>(first)]).chain(futures::stream::once(async move {
-            tokio::time::sleep(Duration::from_millis(500)).await;
-            Ok::<_, String>(second)
-        })),
+        futures::stream::iter([Ok::<_, std::io::Error>(first)]).chain(futures::stream::once(
+            async move {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                Ok::<_, std::io::Error>(second)
+            },
+        )),
     )
 }
 
