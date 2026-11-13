@@ -6,7 +6,7 @@
 use super::bank::Shelf;
 use super::build::{Evidence, SourcePassage};
 use super::spec::DrillSpec;
-use crate::persistence::{db, decode, encode, now};
+use crate::persistence::{decode, encode, now};
 use lattice_core::domain::learning::drills::{Drill, DrillFile, KeyIssue, Material};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::{Database, WriteTx};
@@ -85,11 +85,12 @@ pub struct StoredDrill {
 /// exists, and the lesson only if it is a lesson of that course. Call inside the transaction that completes the build.
 pub(crate) async fn insert_in(tx: &mut WriteTx, new: &NewDrill<'_>) -> Result<()> {
     let program_id: Option<String> = match &new.spec.program_id {
-        Some(id) => sqlx::query_scalar("SELECT id FROM learning_programs WHERE id=?")
-            .bind(id)
-            .fetch_optional(&mut **tx)
-            .await
-            .map_err(db)?,
+        Some(id) => {
+            sqlx::query_scalar("SELECT id FROM learning_programs WHERE id=?")
+                .bind(id)
+                .fetch_optional(&mut **tx)
+                .await?
+        }
         None => None,
     };
     let lesson_id: Option<String> = match (&program_id, &new.spec.lesson_id) {
@@ -98,8 +99,7 @@ pub(crate) async fn insert_in(tx: &mut WriteTx, new: &NewDrill<'_>) -> Result<()
                 .bind(lesson_id)
                 .bind(program_id)
                 .fetch_optional(&mut **tx)
-                .await
-                .map_err(db)?
+                .await?
         }
         _ => None,
     };
@@ -136,8 +136,7 @@ pub(crate) async fn insert_in(tx: &mut WriteTx, new: &NewDrill<'_>) -> Result<()
         .bind(new.model)
         .bind(now())
         .execute(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
     let mut patterns: Vec<&str> = Vec::new();
     for issue in &new.drill.key {
         if patterns.contains(&issue.pattern.as_str()) {
@@ -148,8 +147,7 @@ pub(crate) async fn insert_in(tx: &mut WriteTx, new: &NewDrill<'_>) -> Result<()
             .bind(&new.drill.id)
             .bind(&issue.pattern)
             .execute(&mut **tx)
-            .await
-            .map_err(db)?;
+            .await?;
     }
     Ok(())
 }
@@ -178,17 +176,18 @@ pub(crate) async fn oldest_ready_on(
     shelf: Shelf<'_>,
     lesson: Option<&str>,
 ) -> Result<Option<StoredDrill>> {
-    sqlx::query(&format!("SELECT {COLUMNS} {OLDEST_READY_ON}"))
-        .bind(shelf.program_id)
-        .bind(material_name(shelf.material))
-        .bind(shelf.material.language())
-        .bind(lesson)
-        .fetch_optional(connection)
-        .await
-        .map_err(db)?
-        .as_ref()
-        .map(read)
-        .transpose()
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLUMNS} {OLDEST_READY_ON}"
+    )))
+    .bind(shelf.program_id)
+    .bind(material_name(shelf.material))
+    .bind(shelf.material.language())
+    .bind(lesson)
+    .fetch_optional(connection)
+    .await?
+    .as_ref()
+    .map(read)
+    .transpose()
 }
 
 /// Whether a drill of `shelf` built from a lesson is ready.
@@ -202,7 +201,7 @@ pub(crate) async fn any_ready_in(
         .bind(shelf.material.language())
         .fetch_one(connection)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// The source passages the drills of the course `program_id` were built on, ready or taken.
@@ -210,15 +209,14 @@ pub(crate) async fn drilled_passages(
     database: &Database,
     program_id: &str,
 ) -> Result<Vec<SourcePassage>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let stored: Vec<String> = sqlx::query_scalar(
         "SELECT source_json FROM learning_drills WHERE material='passage' AND program_id=? AND source_json IS NOT NULL ORDER BY created_at,rowid",
     )
     .bind(program_id)
     .fetch_all(&mut *read)
-    .await
-    .map_err(db)?;
-    read.commit().await.map_err(db)?;
+    .await?;
+    read.commit().await?;
     stored.iter().map(|json| decode(json)).collect()
 }
 
@@ -227,27 +225,27 @@ pub(crate) async fn source_owners(
     database: &Database,
     program_id: &str,
 ) -> Result<HashMap<String, String>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let rows: Vec<(String, String)> =
         sqlx::query_as("SELECT id,source_id FROM learning_source_versions WHERE program_id=?")
             .bind(program_id)
             .fetch_all(&mut *read)
-            .await
-            .map_err(db)?;
-    read.commit().await.map_err(db)?;
+            .await?;
+    read.commit().await?;
     Ok(rows.into_iter().collect())
 }
 
 /// A drill by its id, ready or taken.
 pub async fn find_in(connection: &mut SqliteConnection, id: &str) -> Result<Option<StoredDrill>> {
-    sqlx::query(&format!("SELECT {COLUMNS} FROM learning_drills WHERE id=?"))
-        .bind(id)
-        .fetch_optional(connection)
-        .await
-        .map_err(db)?
-        .as_ref()
-        .map(read)
-        .transpose()
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLUMNS} FROM learning_drills WHERE id=?"
+    )))
+    .bind(id)
+    .fetch_optional(connection)
+    .await?
+    .as_ref()
+    .map(read)
+    .transpose()
 }
 
 /// Marks a ready drill taken. False when it was not ready, so a drill is never given to two learners.
@@ -258,8 +256,7 @@ pub(crate) async fn mark_taken_in(tx: &mut WriteTx, id: &str, at: i64) -> Result
     .bind(at)
     .bind(id)
     .execute(&mut **tx)
-    .await
-    .map_err(db)?
+    .await?
     .rows_affected()
         == 1)
 }

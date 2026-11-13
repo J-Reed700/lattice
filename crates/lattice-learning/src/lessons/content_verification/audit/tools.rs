@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use lattice_core::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, InferencePriority, SamplingOverride, ToolChoice,
-    ToolDefinition,
+    CompletionInput, CompletionRequest, CompletionResponse, InferencePriority, SamplingOverride,
+    ToolChoice, ToolDefinition,
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::context_assembler::budget::{
@@ -19,7 +19,7 @@ use lattice_core::shared::error::Result;
 
 use crate::references::web_research::{self, PlannedNeed, Room};
 
-use super::calls::{cut_off, fit_text, Answer, AskError};
+use super::calls::{fit_text, Answer, AskError};
 use super::AuditPassage;
 
 /// One search result: what the model may choose to fetch.
@@ -82,6 +82,7 @@ pub(super) async fn ask(
     let tool_tokens = llm.count_tokens(&serde_json::to_string(&tools).unwrap_or_default());
     let mut input = opening(system, task);
     let mut answer = Answer::default();
+    let (mut input_tokens, mut output_tokens) = (0, 0);
     loop {
         let room = room_left(llm, &input, tool_tokens, reserve).ok_or(AskError::TooLarge)?;
         let offer = room > 0;
@@ -101,11 +102,14 @@ pub(super) async fn ask(
             ..Default::default()
         };
         let response = llm.complete(&request).await.map_err(AskError::from)?;
-        answer.input_tokens += response.input_tokens;
-        answer.output_tokens += response.output_tokens;
+        input_tokens += response.input_tokens;
+        output_tokens += response.output_tokens;
         if response.tool_calls.is_empty() || !offer {
-            answer.cut_off = cut_off(&response.finish_reason);
-            answer.text = response.text;
+            answer.response = CompletionResponse {
+                input_tokens,
+                output_tokens,
+                ..response
+            };
             return Ok(answer);
         }
         input.extend(response.replay.iter().cloned());

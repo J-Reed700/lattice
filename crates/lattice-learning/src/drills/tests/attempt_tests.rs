@@ -9,7 +9,6 @@ use crate::drills::attempts::{self, Attempt, AttemptMode, AttemptStatus, Graded,
 use crate::drills::bank::Shelf;
 use crate::drills::jobs::{DRILL_BUILD, DRILL_GRADING, GRADING_STEPS};
 use crate::drills::repository::DrillStatus;
-use crate::persistence::db;
 use crate::tests::pool;
 use lattice_core::domain::learning::drills::{
     ratings, score, Assessment, DrillFile, Finding, IssueFix, IssueRating, LineSpan, Material,
@@ -22,7 +21,10 @@ use serde_json::json;
 use sqlx::SqlitePool;
 
 async fn scalar(pool: &SqlitePool, sql: &str) -> Result<i64> {
-    sqlx::query_scalar(sql).fetch_one(pool).await.map_err(db)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .fetch_one(pool)
+        .await
+        .map_err(AppError::from)
 }
 
 fn on(path: &str, start: u32, end: u32) -> Option<LineSpan> {
@@ -64,7 +66,7 @@ async fn jobs_of(pool: &SqlitePool, kind: &str) -> Result<i64> {
         .bind(kind)
         .fetch_one(pool)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 #[tokio::test]
@@ -74,8 +76,7 @@ async fn the_table_and_its_index_exist() -> Result<()> {
         "SELECT name FROM sqlite_master WHERE name LIKE 'learning_drill_attempts%' ORDER BY name",
     )
     .fetch_all(&pool)
-    .await
-    .map_err(db)?;
+    .await?;
     assert_eq!(
         names,
         ["learning_drill_attempts", "learning_drill_attempts_drill"]
@@ -114,9 +115,10 @@ async fn a_row_must_agree_with_its_status() -> Result<()> {
     for (name, sql, accepted) in cases {
         sqlx::query("DELETE FROM learning_drill_attempts")
             .execute(&pool)
-            .await
-            .map_err(db)?;
-        let result = sqlx::query(&sql).execute(&pool).await;
+            .await?;
+        let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .execute(&pool)
+            .await;
         assert_eq!(result.is_ok(), accepted, "{name}: {result:?}");
     }
     Ok(())
@@ -133,8 +135,7 @@ async fn deleting_a_drill_deletes_its_attempts() -> Result<()> {
     );
     sqlx::query("DELETE FROM learning_drills WHERE id='drill'")
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(
         scalar(&pool, "SELECT count(*) FROM learning_drill_attempts").await?,
         1

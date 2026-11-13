@@ -282,7 +282,7 @@ impl ConversationRepository {
             ),
         ] {
             let from = format!("{table} WHERE {column} IN {SUBTREE}");
-            sqlx::query(&record_releases_sql(store, name, &from))
+            sqlx::query(sqlx::AssertSqlSafe(record_releases_sql(store, name, &from)))
                 .bind(run_id())
                 .bind(id)
                 .execute(&mut *tx)

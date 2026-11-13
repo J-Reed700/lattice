@@ -39,7 +39,7 @@ impl LearningPracticeRepository {
         {
             return self.workspace(&req.program_id).await;
         }
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         if practice_operation(
             &req.operation_id,
             &req.program_id,
@@ -50,7 +50,7 @@ impl LearningPracticeRepository {
         .seen(&mut tx)
         .await?
         {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return self.workspace(&req.program_id).await;
         }
         let (s, ar) = self
@@ -80,13 +80,12 @@ impl LearningPracticeRepository {
         .bind(&req.source_id)
         .bind(&req.version_id)
         .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
         if found.is_none() {
             return Err(AppError::NotFound("Frozen source version not found".into()));
         }
         let t = now();
-        let update=sqlx::query("UPDATE learning_practice_sessions SET revision=revision+1,updated_at=? WHERE program_id=? AND id=? AND revision=? AND status='active'").bind(t).bind(&req.program_id).bind(&req.session_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
+        let update=sqlx::query("UPDATE learning_practice_sessions SET revision=revision+1,updated_at=? WHERE program_id=? AND id=? AND revision=? AND status='active'").bind(t).bind(&req.program_id).bind(&req.session_id).bind(req.expected_revision).execute(&mut *tx).await?;
         if update.rows_affected() != 1 {
             return Err(conflict("Practice session changed; reload and retry."));
         }
@@ -111,7 +110,7 @@ impl LearningPracticeRepository {
         )
         .record(&mut tx, &())
         .await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         self.workspace(&req.program_id).await
     }
 
@@ -124,7 +123,7 @@ impl LearningPracticeRepository {
     ) -> Result<LearningPracticeWorkspaceDto> {
         Self::validate_ids(program_id, session_id, Some(&turn.operation_id))?;
         uuid(&turn.id, "tutor turn")?;
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         if practice_operation(
             &turn.operation_id,
             program_id,
@@ -135,7 +134,7 @@ impl LearningPracticeRepository {
         .seen(&mut tx)
         .await?
         {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return self.workspace(program_id).await;
         }
         let (s, ar) = self
@@ -154,15 +153,15 @@ impl LearningPracticeRepository {
             "Worked explanations are available only in Explore mode.",
         )?;
         let t = now();
-        let upd=sqlx::query("UPDATE learning_practice_sessions SET revision=revision+1,updated_at=? WHERE program_id=? AND id=? AND revision=? AND status='active'").bind(t).bind(program_id).bind(session_id).bind(expected_revision).execute(&mut *tx).await.map_err(db)?;
+        let upd=sqlx::query("UPDATE learning_practice_sessions SET revision=revision+1,updated_at=? WHERE program_id=? AND id=? AND revision=? AND status='active'").bind(t).bind(program_id).bind(session_id).bind(expected_revision).execute(&mut *tx).await?;
         if upd.rows_affected() != 1 {
             return Err(conflict("Practice session changed; reload and retry."));
         }
         let citations = json(&turn.citations)?;
         let proposal_ids: Vec<String> = turn.proposals.iter().map(|p| p.id.clone()).collect();
-        sqlx::query("INSERT INTO learning_practice_tutor_turns(id,program_id,session_id,operation_id,prompt,response,request_kind,hint_level,citations_json,proposal_ids_json,model_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").bind(&turn.id).bind(program_id).bind(session_id).bind(&turn.operation_id).bind(&turn.prompt).bind(&turn.response).bind(tutor_kind(&turn.request_kind)).bind(turn.hint_level.as_ref().map(hint)).bind(citations).bind(json(&proposal_ids)?).bind(&turn.model_name).bind(t).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_practice_tutor_turns(id,program_id,session_id,operation_id,prompt,response,request_kind,hint_level,citations_json,proposal_ids_json,model_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").bind(&turn.id).bind(program_id).bind(session_id).bind(&turn.operation_id).bind(&turn.prompt).bind(&turn.response).bind(tutor_kind(&turn.request_kind)).bind(turn.hint_level.as_ref().map(hint)).bind(citations).bind(json(&proposal_ids)?).bind(&turn.model_name).bind(t).execute(&mut *tx).await?;
         for proposal in &turn.proposals {
-            sqlx::query("INSERT INTO learning_practice_proposals(id,program_id,session_id,tutor_turn_id,kind,text,evidence_quote,status,created_at) VALUES(?,?,?,?,?,?,?,'pending',?)").bind(&proposal.id).bind(program_id).bind(session_id).bind(&turn.id).bind(proposal_kind(&proposal.kind)).bind(&proposal.text).bind(&proposal.evidence_quote).bind(t).execute(&mut *tx).await.map_err(db)?;
+            sqlx::query("INSERT INTO learning_practice_proposals(id,program_id,session_id,tutor_turn_id,kind,text,evidence_quote,status,created_at) VALUES(?,?,?,?,?,?,?,'pending',?)").bind(&proposal.id).bind(program_id).bind(session_id).bind(&turn.id).bind(proposal_kind(&proposal.kind)).bind(&proposal.text).bind(&proposal.evidence_quote).bind(t).execute(&mut *tx).await?;
         }
         let details =
             serde_json::json!({"turnId":turn.id,"hintLevel":turn.hint_level.as_ref().map(hint)});
@@ -192,7 +191,7 @@ impl LearningPracticeRepository {
         )
         .record(&mut tx, &turn.id)
         .await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         self.workspace(program_id).await
     }
 
@@ -204,7 +203,7 @@ impl LearningPracticeRepository {
         citations: &[LearningPracticeCitationDto],
     ) -> Result<LearningPracticeWorkspaceDto> {
         Self::validate_ids(&req.program_id, &req.session_id, Some(&req.operation_id))?;
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         if practice_operation(
             &req.operation_id,
             &req.program_id,
@@ -215,7 +214,7 @@ impl LearningPracticeRepository {
         .seen(&mut tx)
         .await?
         {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return self.workspace(&req.program_id).await;
         }
         let (s, ar) = self
@@ -234,7 +233,7 @@ impl LearningPracticeRepository {
             "Worked solutions are available only in Explore mode.",
         )?;
         let t = now();
-        let upd=sqlx::query("UPDATE learning_practice_sessions SET revealed_solution=?,revealed_solution_citations_json=?,revision=revision+1,updated_at=? WHERE program_id=? AND id=? AND revision=? AND status='active'").bind(solution).bind(json(citations)?).bind(t).bind(&req.program_id).bind(&req.session_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
+        let upd=sqlx::query("UPDATE learning_practice_sessions SET revealed_solution=?,revealed_solution_citations_json=?,revision=revision+1,updated_at=? WHERE program_id=? AND id=? AND revision=? AND status='active'").bind(solution).bind(json(citations)?).bind(t).bind(&req.program_id).bind(&req.session_id).bind(req.expected_revision).execute(&mut *tx).await?;
         if upd.rows_affected() != 1 {
             return Err(conflict("Practice session changed; reload and retry."));
         }
@@ -259,7 +258,7 @@ impl LearningPracticeRepository {
         )
         .record(&mut tx, &())
         .await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         self.workspace(&req.program_id).await
     }
 }

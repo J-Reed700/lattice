@@ -55,7 +55,10 @@ where
     Fut: std::future::Future<Output = T>,
 {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-    sqlx::query(statement).execute(&mut *tx).await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(statement))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
     let other = tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(300)).await;
         tx.commit().await.unwrap();

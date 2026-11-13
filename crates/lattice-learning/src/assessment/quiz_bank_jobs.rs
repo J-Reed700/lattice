@@ -16,7 +16,7 @@ use crate::dto::{
     LessonQuestion, LessonQuestionKind,
 };
 use crate::grade_rationale::{self, Checked, Grader, Reference};
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use crate::quiz_blueprints::{self, CourseFacts, LessonFacts};
 use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::PinnedModel;
@@ -58,7 +58,7 @@ pub async fn queue_bank(
     top_up: bool,
 ) -> Result<String> {
     quiz_blueprints::validate_scope(scope)?;
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     let needs =
         LearningAssessmentRepository::bank_needs_in(&mut tx, program_id, scope, top_up).await?;
     let rank = match (&scope.kind, &scope.id) {
@@ -76,7 +76,7 @@ pub async fn queue_bank(
         rank,
     )
     .await?;
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(id)
 }
 
@@ -345,4 +345,6 @@ mod repository;
 pub(crate) use repository::{queue_grading_in, queue_lesson_bank_in};
 
 pub use grading::{grade_written_answer, judge_short_answer, QuizGradingWorker};
-pub(crate) use lesson_stage::{lesson_bank_stage, lesson_seed_items, LessonBank};
+pub(crate) use lesson_stage::{
+    lesson_bank_stage, lesson_question_item, lesson_seed_items, LessonBank,
+};

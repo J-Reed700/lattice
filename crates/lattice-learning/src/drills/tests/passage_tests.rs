@@ -27,7 +27,7 @@ use crate::drills::material::{
 use crate::drills::proof::Tools;
 use crate::drills::repository::{self, NewDrill};
 use crate::drills::spec::DrillSpec;
-use crate::persistence::{db, encode};
+use crate::persistence::encode;
 use crate::source_library::LearningSourceLibraryRepository;
 use crate::tests::pool;
 use async_trait::async_trait;
@@ -190,8 +190,7 @@ async fn at(pool: &SqlitePool, id: &str, created_at: i64) -> Result<()> {
         .bind(created_at)
         .bind(id)
         .execute(pool)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(())
 }
 
@@ -772,13 +771,11 @@ async fn a_block_citing_an_older_version_of_a_source_takes_the_passage_from_its_
     sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) SELECT 'newer-sleep',program_id,source_id,2,title,publisher,requested_url,resolved_url,full_text,excerpt,'newer-sha',word_count,truncated,extraction_version,acquired_at+1 FROM learning_source_versions WHERE id=?")
         .bind(&older)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     sqlx::query("UPDATE learning_source_library SET active_version_id='newer-sleep' WHERE active_version_id=?")
         .bind(&older)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
     prepare_lesson(
         &pool,
@@ -832,9 +829,8 @@ async fn assert_not_fitting(pool: &SqlitePool, program: &str, lesson: &str) -> R
     .bind(program)
     .bind(lesson)
     .fetch_all(pool)
-    .await
-    .map_err(db)?;
-    let mut connection = pool.acquire().await.map_err(db)?;
+    .await?;
+    let mut connection = pool.acquire().await?;
     let basis = crate::drills::schedules::fit_basis_in(&mut connection, program, lesson).await?;
     assert_eq!(recorded, [(0, basis)]);
     Ok(())
@@ -923,7 +919,7 @@ async fn lesson_facts(pool: &SqlitePool, lesson_id: &str) -> Result<(String, Str
     .bind(lesson_id)
     .fetch_one(pool)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The message the passage check is sent for `passage` of the source titled `source_title`.
@@ -964,7 +960,7 @@ async fn verdicts(pool: &SqlitePool, lesson_id: &str) -> Result<Vec<(i64, i64, i
     .bind(lesson_id)
     .fetch_all(pool)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// A course of one source, "Harbour notes", whose two paragraphs of four sentences both hold words of the query of
@@ -1033,8 +1029,7 @@ async fn before_the_explanation_the_passage_is_asked_whether_it_teaches_the_less
     .bind(&program)
     .bind(&lesson)
     .fetch_all(&pool)
-    .await
-    .map_err(db)?;
+    .await?;
     assert_eq!(rows.len(), 1, "{rows:?}");
     let (start, end, basis, teaches, reason, stored_model) = &rows[0];
     assert_eq!(
@@ -1115,8 +1110,7 @@ async fn a_place_that_does_not_teach_the_lesson_gives_way_to_the_next_place_in_t
     )
     .bind(&places.lesson)
     .fetch_all(&pool)
-    .await
-    .map_err(db)?;
+    .await?;
     assert_eq!(reasons, [NOT_TEACHES_REASON, TEACHES_REASON]);
     Ok(())
 }
@@ -1165,8 +1159,7 @@ async fn a_verdict_made_on_another_basis_is_asked_again() -> Result<()> {
     first?;
     sqlx::query("UPDATE learning_drill_passage_checks SET basis='stale'")
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
 
     let (model, second) = clean_with(
         &database,
@@ -1189,8 +1182,7 @@ async fn a_verdict_made_on_another_basis_is_asked_again() -> Result<()> {
     .bind(start)
     .bind(end)
     .fetch_one(&pool)
-    .await
-    .map_err(db)?;
+    .await?;
     assert_eq!(row.0, 1, "the old row was replaced");
     assert_ne!(row.1, "stale");
     assert_eq!(verdicts(&pool, &places.lesson).await?.len(), 2);
@@ -1219,8 +1211,7 @@ async fn changing_the_lessons_objective_asks_again() -> Result<()> {
         .bind(&changed)
         .bind(&places.lesson)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
 
     let (model, second) = clean_with(
         &database,
@@ -2021,7 +2012,7 @@ async fn a_passage_drill_builds_end_to_end_and_is_stored_with_its_source() -> Re
         "four clean sentences, two for each proof"
     );
 
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut connection = pool.acquire().await?;
     let stored = repository::oldest_ready_on(
         &mut connection,
         Shelf::of(&spec)?,
@@ -2417,7 +2408,7 @@ async fn a_passage_drill_comes_back_as_it_went_in() -> Result<()> {
     let source = spacing_passage();
     let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
     drilled(&database, "passage", &program, &lesson, &source).await?;
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut connection = pool.acquire().await?;
     let stored = repository::find_in(&mut connection, "passage")
         .await?
         .expect("the drill");
@@ -2435,8 +2426,7 @@ async fn a_passage_drill_comes_back_as_it_went_in() -> Result<()> {
     let (material, language): (String, Option<String>) =
         sqlx::query_as("SELECT material,language FROM learning_drills WHERE id='passage'")
             .fetch_one(&pool)
-            .await
-            .map_err(db)?;
+            .await?;
     assert_eq!(material, "passage");
     assert_eq!(language, None);
     assert_eq!(
@@ -2509,15 +2499,13 @@ async fn the_table_holds_a_language_for_code_and_a_source_for_a_passage() -> Res
         "SELECT \"notnull\" FROM pragma_table_info('learning_drills') WHERE name='language'",
     )
     .fetch_one(&pool)
-    .await
-    .map_err(db)?;
+    .await?;
     assert_eq!(null, 0, "a passage has no language");
     let index: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='learning_drills_shelf'",
     )
     .fetch_one(&pool)
-    .await
-    .map_err(db)?;
+    .await?;
     assert_eq!(index, 1);
     assert!(raw(&pool, "code", "code", Some("python"), None)
         .await
@@ -2571,9 +2559,8 @@ async fn a_code_drill_stored_before_passages_still_reads() -> Result<()> {
         .bind(encode(&proved().planted_key(&unchecked()))?)
         .bind(encode(&evidence)?)
         .execute(&pool)
-        .await
-        .map_err(db)?;
-    let mut connection = pool.acquire().await.map_err(db)?;
+        .await?;
+    let mut connection = pool.acquire().await?;
     let stored = repository::find_in(&mut connection, "old")
         .await?
         .expect("the old drill");
@@ -3060,8 +3047,7 @@ async fn a_stored_passage_drill_records_that_the_lesson_fits_passages() -> Resul
         "SELECT fits,basis FROM learning_drill_lesson_fits WHERE material='passage'",
     )
     .fetch_all(&harness.pool)
-    .await
-    .map_err(db)?;
+    .await?;
     assert_eq!(fits, [(1, "basis-1".to_owned())]);
     Ok(())
 }

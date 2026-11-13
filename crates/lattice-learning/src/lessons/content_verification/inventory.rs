@@ -1,5 +1,6 @@
 //! Claim locations are selected from lossless, app-owned text passages.
 use super::*;
+use lattice_core::application::services::model_contract::{Contract, ContractId, PromptInput};
 use lattice_core::shared::text::segmentation::{
     partition, Chars, Overflow, Plan, Prose, Rung, Strength,
 };
@@ -13,7 +14,7 @@ use batches::ask;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ExtractedClaim {
-    passage_id: String,
+    sentence_id: String,
     statement: String,
 }
 #[derive(Deserialize)]
@@ -24,11 +25,43 @@ struct ExtractedUnit {
     non_factual_reason: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
-struct ExtractionResponse {
+pub(crate) struct ExtractionResponse {
     #[serde(deserialize_with = "unique_units")]
     units: BTreeMap<String, Value>,
+}
+
+/// The call that reads a batch of sections for their claims.
+pub(crate) struct InventoryExtraction;
+
+impl Contract for InventoryExtraction {
+    const ID: ContractId = ContractId::new("inventory-extraction");
+    type Input = PromptInput;
+}
+
+impl InventoryExtraction {
+    /// The units of a reply, or what is wrong with its shape.
+    fn read(raw: &str) -> Result<ExtractionResponse> {
+        crate::generation::parse_json(raw).map_err(|error| {
+            AppError::InvalidInput(format!(
+                "Return a units object with unique requested unit-N keys: {error}"
+            ))
+        })
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for InventoryExtraction
+{
+    type Answer = ExtractionResponse;
+    fn render(answer: &ExtractionResponse) -> String {
+        serde_json::to_string(answer).unwrap_or_default()
+    }
+    fn read(text: &str) -> Result<ExtractionResponse> {
+        Self::read(text)
+    }
 }
 
 fn unique_units<'de, D: serde::Deserializer<'de>>(
@@ -175,11 +208,12 @@ fn schema(indices: &[usize], input: &[Value]) -> Value {
     // App-owned slots prevent a constrained decoder from spending an array
     // entry on a duplicate index or choosing a branch before its index field.
     let slots: serde_json::Map<_, _> = indices.iter().map(|index| {
-        let ids: Vec<_> = input.get(*index)
-            .and_then(|unit| unit.get("passages")).and_then(Value::as_array)
-            .into_iter().flatten()
-            .filter_map(|passage| passage.get("id").and_then(Value::as_str)).collect();
-        (format!("unit-{index}"), json!({"type":"object","additionalProperties":false,"required":["claims","nonFactualReason"],"properties":{"nonFactualReason":{"type":"string"},"claims":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["passageId","statement"],"properties":{"passageId":{"type":"string","enum":ids},"statement":{"type":"string","minLength":1}}}}}}))
+        let ids = claim_sentences::ids(
+            input.get(*index)
+                .and_then(|unit| unit.get("passages")).and_then(Value::as_array)
+                .map_or(&[][..], Vec::as_slice),
+        );
+        (format!("unit-{index}"), json!({"type":"object","additionalProperties":false,"required":["claims","nonFactualReason"],"properties":{"nonFactualReason":{"type":"string"},"claims":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["sentenceId","statement"],"properties":{"sentenceId":{"type":"string","enum":ids},"statement":{"type":"string","minLength":1}}}}}}))
     }).collect();
     json!({"type":"object","additionalProperties":false,"required":["units"],"properties":{"units":{"type":"object","additionalProperties":false,"required":slots.keys().collect::<Vec<_>>(),"properties":slots}}})
 }
@@ -198,22 +232,18 @@ fn resolve(unit: ExtractedUnit, input: &[Value]) -> std::result::Result<UnitClai
     }
     let mut claims = Vec::new();
     for claim in unit.claims {
-        let passage = passages
-            .iter()
-            .find(|p| p.get("id").and_then(Value::as_str) == Some(&claim.passage_id))
-            .and_then(|p| p.get("text"))
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
+        let (_, sentence) =
+            claim_sentences::quote(passages, &claim.sentence_id).ok_or_else(|| {
                 format!(
-                    "Section {} has an unknown passage ID {}",
-                    unit.index, claim.passage_id
+                    "Section {} has an unknown sentence ID {}",
+                    unit.index, claim.sentence_id
                 )
             })?;
         if claim.statement.trim().is_empty() {
             return Err(format!("Section {} has an empty statement", unit.index));
         }
         claims.push(Claim {
-            quote: claim_ledger::claim_quote(passage, &claim.statement).into(),
+            quote: sentence,
             statement: claim.statement,
         });
     }
@@ -233,54 +263,6 @@ pub(crate) async fn extract(llm: &dyn LLMPort, content: &[Value]) -> Result<Inve
         BTreeMap::new(),
     )
     .await
-}
-
-/// The error for sections extraction could not complete after its correction
-/// attempt. A first failure defers the job, since the model may answer
-/// differently on a retry. The same sections failing again on the same model
-/// and content is not progress, so the job stops naming them instead of being
-/// deferred indefinitely. A different set of sections may defer again.
-async fn unfinished_sections(
-    llm: &dyn LLMPort,
-    content: &[Value],
-    missing: &[usize],
-    errors: &[String],
-) -> Result<AppError> {
-    let sections = missing
-        .iter()
-        .map(|index| (index + 1).to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let key = format!(
-        "inventory-unfinished-v1:{}",
-        sha256_hex(
-            json!({
-                "policy": INVENTORY_POLICY,
-                "model": llm.model_name(),
-                "sections": missing
-                    .iter()
-                    .map(|index| (index, content.get(*index).map(|unit| sha256_hex(unit.to_string()))))
-                    .collect::<Vec<_>>(),
-            })
-            .to_string()
-        )
-    );
-    if crate::lesson_drafts::checkpoint(&key).await?.is_some() {
-        return Ok(AppError::InvalidInput(format!(
-            "Statement extraction failed again on the same sections ({sections}) after a retry: {}. No lesson was published.",
-            errors.join("; ")
-        )));
-    }
-    crate::lesson_drafts::record_checkpoint(&key, json!(true)).await?;
-    let recovery = if crate::lesson_drafts::active() {
-        "The lesson draft is saved; retry resumes it."
-    } else {
-        "Retry the statement check."
-    };
-    Ok(AppError::ServiceNotAvailable(format!(
-        "Statement extraction could not complete sections {sections}: {}. {recovery} No lesson was published.",
-        errors.join("; ")
-    )))
 }
 
 pub(super) async fn extract_remaining(
@@ -317,7 +299,7 @@ async fn extract_scoped(
         let unread = input
             .get(*index)
             .and_then(|unit| unit["passages"].as_array())
-            .is_some_and(Vec::is_empty);
+            .is_some_and(|passages| claim_sentences::ids(passages).is_empty());
         if unread {
             accepted.insert(
                 *index,
@@ -357,8 +339,9 @@ mod tests {
     use lattice_core::shared::persistence::Database;
     use std::sync::Mutex;
 
+    /// An answer that locates one claim at the first sentence of `passage`.
     fn answer(index: usize, passage: &str) -> Value {
-        json!({"index":index,"claims":[{"passageId":passage,"statement":"A scoped factual statement."}],"nonFactualReason":""})
+        json!({"index":index,"claims":[{"sentenceId":format!("{passage}-sentence-0"),"statement":"A scoped factual statement."}],"nonFactualReason":""})
     }
     fn model(responses: Vec<Value>) -> ScriptedModel {
         ScriptedModel {
@@ -367,47 +350,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_extraction_contract_reads_what_it_renders() {
+        let answer = ExtractionResponse {
+            units: BTreeMap::from([(
+                "unit-0".to_owned(),
+                json!({"claims":[],"nonFactualReason":"A label."}),
+            )]),
+        };
+        lattice_core::application::services::model_contract::test_support::assert_round_trip::<
+            InventoryExtraction,
+        >(&answer);
+    }
+
     #[tokio::test]
-    async fn a_failed_section_defers_once_then_fails_and_completed_inventory_is_kept() -> Result<()>
-    {
+    async fn an_unreadable_inventory_fails_the_job_instead_of_deferring() -> Result<()> {
         let pool = crate::tests::pool().await?;
         let db = Database::new(pool.clone());
         let (repo, job, lesson) =
             crate::content_verification::tests::batch_scheduler_tests::setup(&db).await?;
-        let content = vec![
-            json!({"body":"The first section states a fact."}),
-            json!({"body":"The second section states another fact."}),
-        ];
-        let broken = model(vec![
-            fixture_response(vec![answer(0, "unit-0-passage-0")]),
-            json!({"units":{}}),
-        ]);
-        let resumed = model(vec![fixture_response(vec![answer(1, "unit-1-passage-0")])]);
+        let content = vec![json!({"body":"The first section states a fact."})];
+        let unreadable = model(vec![json!({"units":{}}), json!({"units":{}})]);
         crate::lesson_drafts::run(&db, &repo, &job, &lesson, async {
-            crate::lesson_drafts::resume("inventory-retry-fixture".into()).await?;
-            // The first failure is deferred: a retry may answer differently.
-            let error = extract_remaining(&broken, &content, vec![])
+            let error = extract_remaining(&unreadable, &content, vec![])
                 .await
                 .err()
                 .unwrap();
-            assert!(matches!(error, AppError::ServiceNotAvailable(_)));
-            // The same sections failing again on a retry stop the job.
-            let again = model(vec![json!({"units":{}}), json!({"units":{}})]);
-            let error = extract_remaining(&again, &content, vec![])
-                .await
-                .err()
-                .unwrap();
-            assert!(matches!(error, AppError::InvalidInput(_)), "{error}");
-            assert!(error.to_string().contains("same sections (2)"), "{error}");
-            let result = extract_remaining(&resumed, &content, vec![]).await?;
-            assert_eq!(result.units.len(), 2);
-            let prompts = resumed.prompts.lock().unwrap();
-            assert_eq!(
-                prompts.len(),
-                1,
-                "Only the unfinished section calls the model"
-            );
-            assert!(prompts[0].contains("\"requestedIndices\":[1]"));
+            assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error}");
             Ok(())
         })
         .await
@@ -422,7 +391,7 @@ mod tests {
         ];
         let llm = model(vec![fixture_response(vec![
             json!({"index":0,"claims":[],"nonFactualReason":"lesson-internal"}),
-            json!({"index":1,"claims":[{"passageId":"unit-1-passage-0","statement":"SaveChangesAsync writes tracked changes to the database."}],"nonFactualReason":""}),
+            json!({"index":1,"claims":[{"sentenceId":"unit-1-passage-0-sentence-0","statement":"SaveChangesAsync writes tracked changes to the database."}],"nonFactualReason":""}),
         ])]);
 
         let inventory = extract_remaining(&llm, &content, vec![]).await?;
@@ -442,7 +411,7 @@ mod tests {
             json!({"body":"The Infrastructure layer implements data access interfaces defined by the Application Core, such as IOrderRepository, using technologies like EF Core."}),
         ];
         let llm = model(vec![fixture_response(vec![
-            json!({"index":0,"claims":[{"passageId":"unit-0-passage-0","statement":"In Clean Architecture, the Infrastructure layer implements data access interfaces that the Application Core defines, using technologies such as EF Core."}],"nonFactualReason":""}),
+            json!({"index":0,"claims":[{"sentenceId":"unit-0-passage-0-sentence-0","statement":"In Clean Architecture, the Infrastructure layer implements data access interfaces that the Application Core defines, using technologies such as EF Core."}],"nonFactualReason":""}),
         ])]);
 
         let inventory = extract_remaining(&llm, &content, vec![]).await?;
@@ -461,7 +430,7 @@ mod tests {
     fn dense_sections_keep_every_claim_in_schema_resolution_and_validation() {
         let content = vec![json!({"body":"The measurements describe individual samples."})];
         let input = inputs(&content);
-        let claims: Vec<_> = (0..64).map(|i| json!({"passageId":"unit-0-passage-0","statement":format!("Sample {i} has measured value {i}.")})).collect();
+        let claims: Vec<_> = (0..64).map(|i| json!({"sentenceId":"unit-0-passage-0-sentence-0","statement":format!("Sample {i} has measured value {i}.")})).collect();
         let response = fixture_response(vec![
             json!({"index":0,"claims":claims,"nonFactualReason":""}),
         ]);
@@ -535,7 +504,10 @@ mod tests {
             &input,
         )
         .unwrap();
-        assert!(contains_text(&content[0], &valid.claims[0].quote));
+        assert!(claim_ledger::stands_in_part(
+            &content[0],
+            &valid.claims[0].quote
+        ));
     }
 
     /// A check's reveal names misconceptions as wrong; the extractor is told
@@ -669,8 +641,39 @@ mod tests {
         Ok(())
     }
 
+    fn two_sections() -> Vec<Value> {
+        vec![
+            json!({"body":"First assertion."}),
+            json!({"body":"Second assertion."}),
+        ]
+    }
+
     #[tokio::test]
-    async fn correction_keeps_valid_sections_and_requests_only_missing_checks() -> Result<()> {
+    async fn a_correction_reply_is_used_alone_and_nothing_of_the_refused_reply_is_kept(
+    ) -> Result<()> {
+        let mut stale = answer(0, "unit-0-passage-0");
+        stale["claims"][0]["statement"] = json!("A statement only the refused reply made.");
+        let model = model(vec![
+            fixture_response(vec![stale, answer(1, "unit-0-passage-0")]),
+            fixture_response(vec![
+                answer(0, "unit-0-passage-0"),
+                answer(1, "unit-1-passage-0"),
+            ]),
+        ]);
+        let inventory = extract(&model, &two_sections()).await?;
+        assert_eq!(inventory.units.len(), 2);
+        assert_eq!(
+            inventory.units[0].claims[0].statement,
+            "A scoped factual statement."
+        );
+        let prompts = model.prompts.lock().unwrap();
+        assert_eq!(prompts.len(), 2, "one answer and one correction");
+        assert!(prompts[1].contains("\"requestedIndices\":[0,1]"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_correction_reply_leaving_a_section_out_fails_even_when_the_refused_reply_had_it() {
         let model = model(vec![
             fixture_response(vec![
                 answer(0, "unit-0-passage-0"),
@@ -678,19 +681,11 @@ mod tests {
             ]),
             fixture_response(vec![answer(1, "unit-1-passage-0")]),
         ]);
-        let inventory = extract(
-            &model,
-            &[
-                json!({"body":"First assertion."}),
-                json!({"body":"Second assertion."}),
-            ],
-        )
-        .await?;
-        assert_eq!(inventory.units.len(), 2);
-        let prompts = model.prompts.lock().unwrap();
-        assert!(prompts[1].contains("\"requestedIndices\":[1]"));
-        assert!(!prompts[1].contains("First assertion."));
-        Ok(())
+        let error = extract(&model, &two_sections()).await.err().unwrap();
+        assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error}");
+        assert!(error.to_string().contains("Unit 0 needs an inventory"));
+        assert!(!error.to_string().contains("Unit 1"), "{error}");
+        assert_eq!(model.prompts.lock().unwrap().len(), 2);
     }
 
     #[tokio::test]
@@ -811,18 +806,17 @@ mod tests {
         );
     }
 
-    /// The one claim `statement`, located at passage `passage`.
-    fn extracted(passage: &str, statement: &str) -> ExtractedUnit {
-        serde_json::from_value(json!({"index":0,"claims":[{"passageId":passage,"statement":statement}],"nonFactualReason":""})).unwrap()
+    /// The one claim `statement`, located at sentence `sentence`.
+    fn extracted(sentence: &str, statement: &str) -> ExtractedUnit {
+        serde_json::from_value(json!({"index":0,"claims":[{"sentenceId":sentence,"statement":statement}],"nonFactualReason":""})).unwrap()
     }
 
     #[test]
-    fn a_claims_quote_is_the_sentence_it_restates_and_a_statement_no_sentence_holds_keeps_the_passage(
-    ) {
+    fn a_claims_quote_is_the_sentence_it_names_and_never_the_passage() {
         let body = "Alpha holds the line. Bravo stands firm today. Charlie rests in the shade.";
         let content = vec![json!({"body":body})];
         let unit = resolve(
-            extracted("unit-0-passage-0", "Bravo stands firm today."),
+            extracted("unit-0-passage-0-sentence-1", "Bravo stands firm today."),
             &inputs(&content),
         )
         .unwrap();
@@ -832,13 +826,16 @@ mod tests {
         let history = "The Peace of Westphalia was signed in 1648 in the cities of Osnabrück and Münster. It ended the Thirty Years' War in the Holy Roman Empire. It also closed the Eighty Years' War between Spain and the Dutch Republic. Historians often date the modern order of sovereign states from these treaties.";
         let unit = resolve(
             extracted(
-                "unit-0-passage-0",
+                "unit-0-passage-0-sentence-3",
                 "Signed in 1648, the Peace of Westphalia ended the Thirty Years' War and is often seen by historians as the start of the order of sovereign states.",
             ),
             &inputs(&[json!({"body":history})]),
         )
         .unwrap();
-        assert_eq!(unit.claims[0].quote, history);
+        assert_eq!(
+            unit.claims[0].quote,
+            "Historians often date the modern order of sovereign states from these treaties."
+        );
     }
 
     #[test]
@@ -850,7 +847,7 @@ mod tests {
             "under every condition the section states ".repeat(60)
         );
         let unit: ExtractedUnit = serde_json::from_value(json!({"index":0,
-            "claims":[{"passageId":"unit-0-passage-0","statement":statement}],
+            "claims":[{"sentenceId":"unit-0-passage-0-sentence-0","statement":statement}],
             "nonFactualReason":"The section frames its scope first. ".repeat(20)}))
         .unwrap();
         let unit = resolve(unit, &inputs(&content));
@@ -870,22 +867,39 @@ mod tests {
     }
 
     #[test]
-    fn a_sentence_longer_than_the_inventory_keeps_is_quoted_by_its_first_1600_characters() {
+    fn a_long_sentence_is_quoted_whole() {
         let long = format!("Alpha {}omega.", "beta gamma delta ".repeat(100));
         let content = vec![json!({"body":long})];
         let input =
             vec![json!({"passages":[{"id":"unit-0-passage-0","field":"/body","text":long}]})];
-        // One statement restates the sentence; the other no sentence holds, so
-        // it is quoted by the passage, which is the sentence and no more.
+        // The named sentence is the quote, whatever the statement says.
         for statement in [
             "Alpha beta gamma delta omega.",
             "A scoped factual statement.",
         ] {
-            let unit = resolve(extracted("unit-0-passage-0", statement), &input).unwrap();
+            let unit =
+                resolve(extracted("unit-0-passage-0-sentence-0", statement), &input).unwrap();
             let quote = &unit.claims[0].quote;
-            assert_eq!(quote.chars().count(), 1_600, "{statement}");
-            assert!(long.starts_with(quote.as_str()), "{statement}");
+            assert_eq!(quote, &long, "{statement}");
             validate_inventory(&Inventory { units: vec![unit] }, &content).unwrap();
         }
+    }
+
+    #[test]
+    fn an_inventory_may_quote_a_long_contained_span() {
+        let long = format!("Alpha {}omega.", "beta gamma delta ".repeat(100));
+        let content = vec![json!({"body":long})];
+        let inventory = Inventory {
+            units: vec![UnitClaims {
+                index: 0,
+                claims: vec![Claim {
+                    quote: long.clone(),
+                    statement: "A scoped factual statement.".into(),
+                }],
+                non_factual_reason: String::new(),
+            }],
+        };
+        let validated = validate_inventory(&inventory, &content);
+        assert!(validated.is_ok(), "{:?}", validated.as_ref().err());
     }
 }

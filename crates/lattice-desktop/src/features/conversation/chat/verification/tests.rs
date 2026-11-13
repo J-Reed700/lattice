@@ -5,7 +5,9 @@ use async_trait::async_trait;
 
 use super::test_support::source;
 use super::*;
+use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::services::model_contract::CORRECTION_LEAD;
 use lattice_core::shared::error::Result;
 
 /// Replies with a scripted body, after an optional delay, counting calls.
@@ -14,6 +16,8 @@ struct ScriptedLlm {
     delay: Duration,
     calls: AtomicUsize,
     logprobs: Option<Vec<(String, f32)>>,
+    /// The last message of each request, in the order the requests came.
+    last_messages: std::sync::Mutex<Vec<String>>,
 }
 
 impl ScriptedLlm {
@@ -23,6 +27,7 @@ impl ScriptedLlm {
             delay: Duration::ZERO,
             calls: AtomicUsize::new(0),
             logprobs: None,
+            last_messages: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -35,6 +40,13 @@ impl ScriptedLlm {
         self.calls.load(Ordering::SeqCst)
     }
 
+    fn last_messages(&self) -> Vec<String> {
+        self.last_messages
+            .lock()
+            .map(|sent| sent.clone())
+            .unwrap_or_default()
+    }
+
     fn with_logprobs(mut self, logprobs: Vec<(String, f32)>) -> Self {
         self.logprobs = Some(logprobs);
         self
@@ -43,8 +55,14 @@ impl ScriptedLlm {
 
 #[async_trait]
 impl LLMPort for ScriptedLlm {
-    async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        if let Ok(mut sent) = self.last_messages.lock() {
+            sent.push(match request.input.last() {
+                Some(CompletionInput::Message { content, .. }) => content.clone(),
+                _ => String::new(),
+            });
+        }
         if !self.delay.is_zero() {
             tokio::time::sleep(self.delay).await;
         }
@@ -210,7 +228,9 @@ async fn garbage_judge_output_does_not_certify_an_unresolved_claim() {
         .verify(CONTRADICTING_RESPONSE, &sources)
         .await;
 
-    assert_eq!(llm.call_count(), 1);
+    // The reply holds no verdict: refused once, asked again once.
+    assert_eq!(llm.call_count(), 2);
+    assert!(llm.last_messages()[1].starts_with(CORRECTION_LEAD));
     assert_eq!(report.supported_claims, 0);
     // Not checked is not "not found": the claim is neither certified by
     // overlap nor reported as missing from its source.
@@ -333,7 +353,12 @@ async fn an_unreached_copy_that_cut_a_negation_is_not_checked_rather_than_suppor
         )
         .await;
 
-    assert_eq!(llm.call_count(), 1, "the copy was escalated");
+    assert_eq!(
+        llm.call_count(),
+        2,
+        "the copy was escalated, and its unreadable reply corrected once"
+    );
+    assert!(llm.last_messages()[1].starts_with(CORRECTION_LEAD));
     assert_eq!(report.claims[0].verdict, ClaimVerdict::Unverified);
     assert_eq!(
         report.claims[0].unverified_reason,
@@ -566,7 +591,12 @@ async fn an_unreached_plain_claim_is_not_checked() {
         .verify(response, &sources)
         .await;
 
-    assert_eq!(llm.call_count(), 1, "the claim was escalated");
+    assert_eq!(
+        llm.call_count(),
+        2,
+        "the claim was escalated, and its unreadable reply corrected once"
+    );
+    assert!(llm.last_messages()[1].starts_with(CORRECTION_LEAD));
     assert_eq!(report.claims[0].verdict, ClaimVerdict::Unverified);
     assert_eq!(report.claims[0].method, VerificationMethod::Lexical);
     assert_eq!(

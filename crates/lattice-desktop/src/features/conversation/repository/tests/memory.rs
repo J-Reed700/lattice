@@ -2013,3 +2013,40 @@ async fn a_forget_writes_the_suppression_the_summary_fold_redacts_with() {
         "another conversation's forgotten facts stay its own"
     );
 }
+
+#[tokio::test]
+async fn a_busy_store_makes_a_memory_commit_a_busy_error() {
+    use crate::features::conversation::memory::CompactionError;
+    use lattice_core::shared::error::AppError;
+
+    let options =
+        <sqlx::sqlite::SqliteConnectOptions as std::str::FromStr>::from_str("sqlite::memory:")
+            .unwrap();
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_millis(100))
+        .connect_lazy_with(options);
+    let repo = ConversationRepository::new(Database::new(pool.clone()));
+    let _held = pool.acquire().await.unwrap();
+
+    let error = repo
+        .commit_memory(
+            &MemoryCommitPreconditions {
+                conversation_id: "conv-busy".into(),
+                operation_id: "busy".into(),
+                expected_memory_revision: 0,
+                expected_transcript_revision: 0,
+            },
+            &candidate(MemoryCommit::default(), 0, None),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(
+            AppError::from(CompactionError::Commit(error)),
+            AppError::DatabaseBusy(_)
+        ),
+        "a pool admission timeout must stay a busy error"
+    );
+}

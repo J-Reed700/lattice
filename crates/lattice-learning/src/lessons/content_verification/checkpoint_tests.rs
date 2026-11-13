@@ -18,8 +18,7 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
@@ -86,8 +85,7 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     let repo = LearningCurriculumRepository::new(db.clone());
     JobStore::new(db.clone())
@@ -220,8 +218,7 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
@@ -289,8 +286,7 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     let repo = LearningCurriculumRepository::new(db.clone());
     JobStore::new(db.clone())
@@ -350,8 +346,7 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
@@ -449,8 +444,7 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     let repo = LearningCurriculumRepository::new(db.clone());
     JobStore::new(db.clone())
@@ -482,8 +476,8 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
             1,
             "Only the interrupted comparison should repeat"
         );
-        assert_eq!(reads[0].finding.verdict, ClaimVerdict::Supported);
-        assert_eq!(reads[1].finding.verdict, ClaimVerdict::Contradicted);
+        assert_eq!(reads[0].finding().verdict, ClaimVerdict::Supported);
+        assert_eq!(reads[1].finding().verdict, ClaimVerdict::Contradicted);
         let mut changed = sources.clone();
         changed[0]
             .excerpt
@@ -636,44 +630,9 @@ fn incomplete_or_unquoted_receipts_never_resume_as_approval() {
             verdict,
             reason: "Incomplete fixture".into(),
             supporting_quote: None,
-            interpretation_policy: None,
             shown: None,
+            parts: vec![],
         };
-        assert!(receipt.finding(0, &claim, &[]).is_none());
-    }
-}
-
-#[test]
-fn interpretation_update_keeps_approvals_and_reconsiders_old_negative_receipts() {
-    let claim = Claim {
-        quote: GOOD.into(),
-        statement: GOOD.into(),
-    };
-    let evidence = vec![EvidencePassage {
-        source_id: "reference".into(),
-        text: GOOD.into(),
-        start_byte: 0,
-        end_byte: GOOD.len(),
-        retrieval_kind: "test".into(),
-        score: 0.0,
-    }];
-    for (verdict, policy, reusable) in [
-        (ClaimVerdict::Supported, None, true),
-        (ClaimVerdict::Unsupported, None, false),
-        (ClaimVerdict::Contradicted, None, false),
-        (
-            ClaimVerdict::Unsupported,
-            Some(lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY),
-            true,
-        ),
-    ] {
-        let receipt = ClaimReceipt {
-            verdict,
-            reason: "Recorded comparison".into(),
-            supporting_quote: Some(GOOD.into()),
-            interpretation_policy: policy.map(str::to_owned),
-            shown: None,
-        };
-        assert_eq!(receipt.finding(0, &claim, &evidence).is_some(), reusable);
+        assert!(receipt.finding(0, &claim, vec![]).is_none());
     }
 }

@@ -10,6 +10,9 @@ use crate::{
     dto::*, generation, outline_draft::*, outline_progress::OutlineProgress,
     repository::LearningRepository,
 };
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -304,6 +307,12 @@ pub(super) fn follow_new_order(
     }
 }
 
+struct OutlineModuleRewrite;
+impl Contract for OutlineModuleRewrite {
+    const ID: ContractId = ContractId::new("outline-module-rewrite");
+    type Input = PromptInput;
+}
+
 /// Rewrite one module for its listed findings and save the correction.
 pub(super) async fn rewrite_module(
     repo: &LearningRepository,
@@ -383,10 +392,16 @@ pub(super) async fn rewrite_module(
         let modules = preserve_identities(modules, &program.modules, index, &origins)?;
         Ok(Some((candidate, modules, origins)))
     };
+    let prompt = json!({"goal":draft.request.goal,"priorKnowledge":draft.request.prior_knowledge,"minutesPerSession":draft.request.minutes_per_session,"moduleIndex":index,"moduleNumber":index+1,"moduleNumbering":module_numbering(&draft.candidate),"module":module,"courseSequence":sequence,"findings":findings,"sources":passages}).to_string();
+    let call = ContractCall::of::<OutlineModuleRewrite>(&PromptInput {
+        system: REPAIR_SYSTEM.to_owned(),
+        prompt: prompt.clone(),
+    })?;
     let answer = generation::complete_checked(
         llm,
+        &call,
         REPAIR_SYSTEM,
-        json!({"goal":draft.request.goal,"priorKnowledge":draft.request.prior_knowledge,"minutesPerSession":draft.request.minutes_per_session,"moduleIndex":index,"moduleNumber":index+1,"moduleNumbering":module_numbering(&draft.candidate),"module":module,"courseSequence":sequence,"findings":findings,"sources":passages}).to_string(),
+        prompt,
         repair_schema,
         6000,
         Some(progress),
@@ -400,7 +415,7 @@ pub(super) async fn rewrite_module(
         // Told what was wrong, the model still broke the outline's rules. The
         // saved module stands and its findings stay open for the next pass or
         // the user; the other modules are still repaired.
-        Err(AppError::ModelAnswerUnusable(reason)) => {
+        Err(AppError::ModelAnswerUnusable(reason) | AppError::AnswerCutOff(reason)) => {
             tracing::warn!(
                 module = index + 1,
                 %reason,

@@ -1,6 +1,7 @@
 use super::spans::{last_sentence_end, sentence_ends};
 use super::*;
 use crate::dto::{GenerateLearningProgramRequestDto, LearningCourseDepth};
+use crate::lessons::content_verification::tests::fixture_task;
 use crate::lessons::course_generation_tests::ScriptedModel;
 use crate::reference_collection::ReferencePassage;
 use lattice_core::shared::error::AppError;
@@ -64,10 +65,6 @@ fn model(outputs: Vec<Value>) -> ScriptedModel {
     }
 }
 
-fn payload(prompt: &str) -> Value {
-    serde_json::from_str(prompt.rsplit("\n\n").next().unwrap()).unwrap()
-}
-
 #[tokio::test]
 async fn the_chooser_links_items_to_the_apps_own_passage_text() {
     let mut draft = draft(candidate());
@@ -110,7 +107,7 @@ async fn the_chooser_links_items_to_the_apps_own_passage_text() {
     assert_eq!(item_count(&draft.candidate), 4);
     let prompts = llm.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 1);
-    let payload = payload(&prompts[0]);
+    let payload = fixture_task(&prompts[0]).unwrap();
     assert_eq!(payload["passages"][0]["passage"], ASSIGNMENT);
     assert_eq!(payload["passages"][1]["passage"], UNCERTAINTY);
     assert_eq!(payload["passages"].as_array().unwrap().len(), 2);
@@ -219,7 +216,13 @@ async fn receipts_make_a_second_run_free_and_only_changed_items_are_asked_again(
     assert_eq!(log.linked, 3);
     let prompts = again.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 1);
-    assert_eq!(payload(&prompts[0])["items"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        fixture_task(&prompts[0]).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     assert_eq!(
         draft.candidate["modules"][0]["lessons"][0]["quote"],
         UNCERTAINTY
@@ -321,7 +324,7 @@ async fn an_author_fragment_is_not_offered_and_the_whole_sentence_replaces_it() 
     );
     // The author's exact but unfinished sentence is not evidence a reader
     // can use, so only retrieval's whole sentence is offered.
-    let payload = payload(&llm.prompts.lock().unwrap()[0]);
+    let payload = fixture_task(&llm.prompts.lock().unwrap()[0]).unwrap();
     assert_eq!(payload["items"][0]["candidates"], json!(["p1"]));
     let summary = &draft.candidate["modules"][0]["summary"];
     assert_eq!(summary["sourceIndex"], 0);
@@ -465,7 +468,7 @@ async fn sixty_four_items_are_linked_in_eight_calls_that_each_fit() {
     let prompts = llm.prompts.lock().unwrap().clone();
     assert_eq!(prompts.len(), 8, "batches of eight, not one call for all");
     for prompt in prompts.iter() {
-        let request = payload(prompt);
+        let request = fixture_task(prompt).unwrap();
         let items = request["items"].as_array().unwrap();
         assert_eq!(items.len(), 8);
         assert!(items
@@ -589,7 +592,10 @@ async fn one_item_on_notation_twice_as_dense_as_estimated_is_offered_the_candida
     let prompts = llm.inner.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 1, "one chooser call, never refused");
     assert_eq!(llm.refusals.load(std::sync::atomic::Ordering::SeqCst), 0);
-    let listed = payload(&prompts[0])["passages"].as_array().unwrap().len();
+    let listed = fixture_task(&prompts[0]).unwrap()["passages"]
+        .as_array()
+        .unwrap()
+        .len();
     assert!(listed > 0 && listed < sources.len(), "{listed} passages");
     assert_eq!(log.linked, 1);
     assert!(draft.candidate["modules"][0]["summary"]["sourceIndex"].is_u64());

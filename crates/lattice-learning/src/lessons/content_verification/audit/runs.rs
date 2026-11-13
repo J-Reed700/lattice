@@ -39,7 +39,7 @@ pub struct BatchRecord {
     pub output_tokens: u64,
     /// The provider's error, sanitized, for a failed batch.
     pub error: Option<String>,
-    /// The failure's kind (`AppError::error_code`): what two failures are
+    /// The failure's kind (`ErrorCode`): what two failures are
     /// compared by, since an error's words may carry an id that changes.
     pub error_code: Option<String>,
     /// Why web search could not be used in this batch.
@@ -89,17 +89,6 @@ pub struct AuditRun {
     pub output_tokens: u64,
     pub started_at: i64,
     pub finished_at: Option<i64>,
-}
-
-impl AuditRun {
-    /// The kind of error the last batch failed with, when the last batch
-    /// failed: no batch has completed since.
-    pub(crate) fn last_failure(&self) -> Option<&str> {
-        self.batches
-            .last()
-            .filter(|batch| batch.outcome == BatchOutcome::Failed)
-            .and_then(|batch| batch.error_code.as_deref())
-    }
 }
 
 #[async_trait]

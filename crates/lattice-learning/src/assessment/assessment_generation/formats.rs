@@ -1,8 +1,20 @@
 //! Per-format item schemas, and turning a model's item into a checked bank
 //! item (section 5.2).
 use super::*;
+use crate::assessment_engine::checks::{
+    CHOICES_PER_QUESTION, MATCHING_PAIRS, MULTI_SELECT_CORRECT, MULTI_SELECT_OPTIONS,
+};
+use crate::generation::{validate_excerpt_quote, MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
+use std::ops::RangeInclusive;
+
+/// How many ordered values a writer is asked for.
+pub(super) const ORDERING_ASKED: RangeInclusive<usize> = 3..=8;
 
 #[derive(Deserialize, Default)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, Debug, PartialEq)
+)]
 #[serde(rename_all = "camelCase", default)]
 struct RawPair {
     left: String,
@@ -10,14 +22,22 @@ struct RawPair {
 }
 
 #[derive(Deserialize, Default)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, Debug, PartialEq)
+)]
 #[serde(rename_all = "camelCase", default)]
 struct RawBlank {
     accepted_answers: Vec<String>,
 }
 
 #[derive(Deserialize, Default)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, Debug, PartialEq)
+)]
 #[serde(rename_all = "camelCase", default)]
-pub(super) struct RawItem {
+pub(crate) struct RawItem {
     prompt: String,
     options: Vec<String>,
     answer_index: usize,
@@ -44,8 +64,8 @@ fn strings_from(min: usize) -> Value {
     json!({"type":"array","minItems":min,"items":{"type":"string","minLength":1}})
 }
 
-fn strings(min: usize, max: usize) -> Value {
-    json!({"type":"array","minItems":min,"maxItems":max,"items":{"type":"string","minLength":1}})
+fn strings(count: &RangeInclusive<usize>) -> Value {
+    json!({"type":"array","minItems":count.start(),"maxItems":count.end(),"items":{"type":"string","minLength":1}})
 }
 
 pub(super) fn item_schema(
@@ -61,20 +81,21 @@ pub(super) fn item_schema(
     put("prompt", json!({"type":"string","minLength":1}));
     match format {
         LearningItemFormat::SingleChoice => {
-            put("options", strings(4, 4));
-            put("distractorRationales", strings(4, 4));
+            let choices = CHOICES_PER_QUESTION..=CHOICES_PER_QUESTION;
+            put("options", strings(&choices));
+            put("distractorRationales", strings(&choices));
             put(
                 "answerIndex",
-                json!({"type":"integer","minimum":0,"maximum":3}),
+                json!({"type":"integer","minimum":0,"maximum":CHOICES_PER_QUESTION.saturating_sub(1)}),
             );
         }
         LearningItemFormat::TrueFalse => put("isTrue", json!({"type":"boolean"})),
         LearningItemFormat::MultiSelect => {
-            put("options", strings(4, 6));
-            put("distractorRationales", strings(4, 6));
+            put("options", strings(&MULTI_SELECT_OPTIONS));
+            put("distractorRationales", strings(&MULTI_SELECT_OPTIONS));
             put(
                 "correctIndices",
-                json!({"type":"array","minItems":2,"maxItems":3,"uniqueItems":true,"items":{"type":"integer","minimum":0,"maximum":5}}),
+                json!({"type":"array","minItems":MULTI_SELECT_CORRECT.start(),"maxItems":MULTI_SELECT_CORRECT.end(),"uniqueItems":true,"items":{"type":"integer","minimum":0,"maximum":MULTI_SELECT_OPTIONS.end().saturating_sub(1)}}),
             );
         }
         LearningItemFormat::ShortAnswer => {
@@ -91,11 +112,11 @@ pub(super) fn item_schema(
         LearningItemFormat::Matching => {
             put(
                 "pairs",
-                json!({"type":"array","minItems":3,"maxItems":5,"items":{"type":"object","additionalProperties":false,"required":["left","right"],"properties":{"left":{"type":"string","minLength":1},"right":{"type":"string","minLength":1}}}}),
+                json!({"type":"array","minItems":MATCHING_PAIRS.start(),"maxItems":MATCHING_PAIRS.end(),"items":{"type":"object","additionalProperties":false,"required":["left","right"],"properties":{"left":{"type":"string","minLength":1},"right":{"type":"string","minLength":1}}}}),
             );
             put("extraRight", json!({"type":"string"}));
         }
-        LearningItemFormat::Ordering => put("orderedValues", strings(3, 8)),
+        LearningItemFormat::Ordering => put("orderedValues", strings(&ORDERING_ASKED)),
         LearningItemFormat::Explanation | LearningItemFormat::Artifact => {
             put("rubric", crate::teaching::rubric_schema())
         }
@@ -105,7 +126,10 @@ pub(super) fn item_schema(
         "blockIndex",
         json!({"type":"integer","minimum":0,"maximum":passages.saturating_sub(1)}),
     );
-    put("quote", json!({"type":"string","minLength":12}));
+    put(
+        "quote",
+        json!({"type":"string","minLength":MIN_QUOTE_CHARS}),
+    );
     put(
         "difficulty",
         json!({"type":"integer","minimum":min_d,"maximum":max_d}),
@@ -114,32 +138,68 @@ pub(super) fn item_schema(
     json!({"type":"object","additionalProperties":false,"required":required,"properties":properties})
 }
 
-const ABSOLUTES: [&str; 8] = [
-    "always", "never", "all", "none", "every", "only", "cannot", "must",
-];
-
-fn spaced_lower(value: &str) -> String {
-    value
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
+/// An item the checks refused: what it said, and every fault, in words its rewrite is told.
+#[derive(Debug)]
+pub(super) struct Unbuilt {
+    pub(super) prompt: String,
+    pub(super) options: Vec<String>,
+    pub(super) faults: Vec<String>,
 }
 
-/// Turn one model item into a validated candidate, or say why it is refused.
+/// Turn one model item into a validated candidate, or say every fault it has.
 pub(super) fn to_candidate(
     raw: RawItem,
     need: &AuthoringNeed,
     passages: &[&MaterialPassage],
-) -> std::result::Result<AuthoredItem, String> {
-    let format = need.requirement.format;
-    let Some(passage) = passages.get(raw.block_index) else {
-        return Err("The item names a passage that was not supplied.".into());
-    };
+) -> std::result::Result<AuthoredItem, Unbuilt> {
+    let prompt = raw.prompt.trim().to_string();
+    let said = raw.options.clone();
     let quote = raw.quote.trim().to_string();
-    if quote.chars().count() < 12 || !spaced_lower(&passage.text).contains(&spaced_lower(&quote)) {
-        return Err("The item's quote is not copied exactly from its passage.".into());
+    let refuse = |options: Vec<String>, faults: Vec<String>| Unbuilt {
+        prompt: prompt.clone(),
+        options,
+        faults,
+    };
+    let Some(passage) = passages.get(raw.block_index) else {
+        return Err(refuse(
+            said,
+            vec!["The item names a passage that was not supplied.".into()],
+        ));
+    };
+    let mut faults = Vec::new();
+    if validate_excerpt_quote(&quote, &passage.text).is_err() {
+        faults.push(format!("The item's quote is not copied exactly from its passage, or is shorter than {MIN_QUOTE_CHARS} characters or {MIN_QUOTE_WORDS} words."));
     }
+    let mut candidate = match candidate_of(raw, need, passage) {
+        Ok(candidate) => candidate,
+        Err(fault) => {
+            faults.push(fault);
+            return Err(refuse(said, faults));
+        }
+    };
+    faults.extend(engine::checks::item_faults(&candidate));
+    if let (true, Err(error)) = (faults.is_empty(), engine::validate_candidate(&candidate)) {
+        faults.push(error.to_string());
+    }
+    if !faults.is_empty() {
+        return Err(refuse(candidate.options, faults));
+    }
+    // Code, not the model, decides where the key sits.
+    engine::shuffle_authored(&mut candidate);
+    Ok(AuthoredItem {
+        candidate: candidate.into(),
+        source_quote: quote,
+        lesson_id: need.lesson_id.clone(),
+    })
+}
+
+/// The bank candidate a model item makes, unchecked; a fault when its rubric cannot be built.
+fn candidate_of(
+    raw: RawItem,
+    need: &AuthoringNeed,
+    passage: &MaterialPassage,
+) -> std::result::Result<LearningAssessmentCandidate, String> {
+    let format = need.requirement.format;
     let mut options = vec![];
     let mut left = vec![];
     let mut rationales = vec![];
@@ -151,16 +211,6 @@ pub(super) fn to_candidate(
             LearningAssessmentKey::Choice(raw.answer_index)
         }
         LearningItemFormat::TrueFalse => {
-            let statement = engine::normalize_answer(&raw.prompt);
-            let source = engine::normalize_answer(&passage.text);
-            if let Some(word) = ABSOLUTES.iter().find(|w| {
-                format!(" {statement} ").contains(&format!(" {w} "))
-                    && !format!(" {source} ").contains(&format!(" {w} "))
-            }) {
-                return Err(format!(
-                    "The statement says “{word}”, which its passage does not."
-                ));
-            }
             options = engine::TRUE_FALSE.map(String::from).to_vec();
             LearningAssessmentKey::Choice(if raw.is_true { 0 } else { 1 })
         }
@@ -224,7 +274,7 @@ pub(super) fn to_candidate(
         need.requirement.difficulty_min,
         need.requirement.difficulty_max,
     );
-    let mut candidate = LearningAssessmentCandidate {
+    Ok(LearningAssessmentCandidate {
         id: uuid::Uuid::new_v4().to_string(),
         outcome_ids: vec![need.requirement.outcome_id.clone()],
         format,
@@ -245,20 +295,5 @@ pub(super) fn to_candidate(
             .into_iter()
             .map(|r| r.trim().to_string())
             .collect(),
-    };
-    engine::validate_candidate(&candidate).map_err(|e| e.to_string())?;
-    if need
-        .existing_prompts
-        .iter()
-        .any(|p| engine::near_duplicate(p, &candidate.prompt))
-    {
-        return Err("The item repeats a question already in the bank.".into());
-    }
-    // Code, not the model, decides where the key sits.
-    engine::shuffle_authored(&mut candidate);
-    Ok(AuthoredItem {
-        candidate: candidate.into(),
-        source_quote: quote,
-        lesson_id: need.lesson_id.clone(),
     })
 }

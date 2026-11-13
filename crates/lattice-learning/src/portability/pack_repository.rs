@@ -26,7 +26,7 @@ mod validation;
 use crate::{
     dto::LearningProgramDto,
     pack::{decode_learning_pack, encode_learning_pack, DecodedLearningPack},
-    persistence::{db, hash, now},
+    persistence::{hash, now},
     portability_dto::*,
 };
 use entries::ImportScope;
@@ -243,14 +243,13 @@ impl LearningPackRepository {
             sqlx::query("SELECT program_id,status FROM learning_pack_import_previews WHERE id=?")
                 .bind(&req.preview_id)
                 .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?
+                .await?
                 .ok_or_else(|| AppError::NotFound("Pack preview not found".into()))?;
         if row.get::<String, _>("status") != "pending" {
             return Err(invalid("Only a pending pack preview can be cancelled."));
         }
         let program_id: String = row.get("program_id");
-        sqlx::query("UPDATE learning_pack_import_previews SET status='cancelled',decided_at=? WHERE id=? AND status='pending'").bind(now).bind(&req.preview_id).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("UPDATE learning_pack_import_previews SET status='cancelled',decided_at=? WHERE id=? AND status='pending'").bind(now).bind(&req.preview_id).execute(&mut *tx).await?;
         pack_operation(&req.operation_id, "cancel_import", &payload)
             .record(&mut tx, &req.preview_id)
             .await?;
@@ -308,12 +307,11 @@ impl LearningPackRepository {
             local_links =
                 Some(replacement::snapshot_local_links(&mut tx, &preview.target_id).await?);
             sqlx::query("DELETE FROM study_decks WHERE id=(SELECT deck_id FROM learning_memory WHERE program_id=? AND deck_id IS NOT NULL)")
-                .bind(&preview.target_id).execute(&mut *tx).await.map_err(db)?;
+                .bind(&preview.target_id).execute(&mut *tx).await?;
             sqlx::query("DELETE FROM learning_programs WHERE id=?")
                 .bind(&preview.target_id)
                 .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         }
         let scope = ImportScope {
             pack: &decoded,
@@ -353,8 +351,7 @@ impl LearningPackRepository {
             sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
                 .bind(&preview.target_id)
                 .fetch_optional(&mut *connection)
-                .await
-                .map_err(db)?;
+                .await?;
         if preview.policy.on_existing() == ExistingAction::Block && existing.is_some() {
             return Err(invalid(
                 "Merge-safe import is blocked because the incoming program ID already exists.",

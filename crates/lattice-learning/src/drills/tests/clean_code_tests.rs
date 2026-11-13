@@ -9,7 +9,6 @@ use crate::drills::build::{CleanCode, ModelCall, RunRecord};
 use crate::drills::runner::RunOutcome;
 use crate::drills::schedules;
 use crate::drills::spec::DrillSpec;
-use crate::persistence::db;
 use crate::tests::pool;
 use lattice_core::domain::learning::drills::{DrillFile, Material};
 use lattice_core::shared::error::{AppError, Result};
@@ -391,10 +390,7 @@ async fn a_cancelled_run_is_a_cancelled_build_and_the_answer_is_not_blamed() -> 
         .clean_code(&code_spec(&pool, &database).await?)
         .await
         .unwrap_err();
-    assert!(
-        matches!(&error, AppError::InvalidState(message) if message.contains("cancelled")),
-        "{error:?}"
-    );
+    assert!(matches!(&error, AppError::Cancelled(_)), "{error:?}");
     assert_eq!(model.requests().len(), 2, "nothing is asked again");
     Ok(())
 }
@@ -661,7 +657,7 @@ async fn lesson_facts(pool: &SqlitePool, lesson_id: &str) -> Result<(String, Str
     .bind(lesson_id)
     .fetch_one(pool)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The message the code fit check is sent for a lesson with `facts`.
@@ -699,7 +695,7 @@ async fn verdicts(pool: &SqlitePool, lesson_id: &str) -> Result<Vec<(i64, String
         .bind(lesson_id)
         .fetch_all(pool)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// Runs the clean stage for `spec` on a model that answers `answers` in order, and returns the model and what the
@@ -719,7 +715,7 @@ async fn clean_with(
 }
 
 async fn fits_code(pool: &SqlitePool, spec: &DrillSpec) -> Result<bool> {
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut connection = pool.acquire().await?;
     schedules::lesson_fits_in(
         &mut connection,
         spec.course().expect("a course"),
@@ -769,8 +765,7 @@ async fn before_the_code_is_written_the_lesson_is_asked_whether_it_teaches_what_
         sqlx::query_scalar("SELECT basis FROM learning_drill_code_checks WHERE lesson_id=?")
             .bind(&lesson)
             .fetch_one(&pool)
-            .await
-            .map_err(db)?;
+            .await?;
     assert!(!basis.trim().is_empty());
     assert!(fits_code(&pool, &spec).await?);
     Ok(())
@@ -798,7 +793,7 @@ async fn a_lesson_that_teaches_nothing_code_can_show_gives_no_drill_and_writes_n
         [(0, CODE_NOT_TEACHES_REASON.to_owned(), MODEL.to_owned())]
     );
     assert!(!fits_code(&pool, &spec).await?);
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut connection = pool.acquire().await?;
     let states =
         schedules::lesson_states_in(&mut connection, &program, &spec.material, None).await?;
     let state = states
@@ -869,8 +864,7 @@ async fn a_verdict_made_on_another_basis_is_asked_again() -> Result<()> {
     first.unwrap_err();
     sqlx::query("UPDATE learning_drill_code_checks SET basis='stale'")
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
 
     let (model, second) = clean_with(
         &database,
@@ -885,8 +879,7 @@ async fn a_verdict_made_on_another_basis_is_asked_again() -> Result<()> {
         sqlx::query_as("SELECT teaches,basis FROM learning_drill_code_checks WHERE lesson_id=?")
             .bind(&lesson)
             .fetch_one(&pool)
-            .await
-            .map_err(db)?;
+            .await?;
     assert_eq!(row.0, 1, "the old row was replaced");
     assert_ne!(row.1, "stale");
     Ok(())
@@ -911,8 +904,7 @@ async fn changing_the_lessons_objective_asks_again() -> Result<()> {
         .bind(&changed)
         .bind(&lesson)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
 
     let (model, second) = clean_with(
         &database,

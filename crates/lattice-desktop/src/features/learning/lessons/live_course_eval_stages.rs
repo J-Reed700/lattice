@@ -238,7 +238,7 @@ pub(super) fn stage_cost(run: &Path, calls: std::ops::Range<usize>, seconds: f64
 pub(super) async fn run_stages(
     run: &mut Run,
     database: &Database,
-    options: &sqlx::sqlite::SqliteConnectOptions,
+    database_path: &std::path::Path,
     request: &GenerateLearningProgramRequestDto,
     selectors: &[String],
 ) -> Result<(Value, Value)> {
@@ -248,7 +248,8 @@ pub(super) async fn run_stages(
         let outcome = match &accepted {
             Some(program) => {
                 let outcome =
-                    lesson_stage(run, database, options, &program.summary.id, selector).await?;
+                    lesson_stage(run, database, database_path, &program.summary.id, selector)
+                        .await?;
                 if outcome == "ready" {
                     super::quiz::quiz_stage(run, database, &program.summary.id, selector).await?;
                 }
@@ -272,12 +273,11 @@ async fn outline_stage(
 ) -> Result<Option<LearningProgramDto>> {
     let repo = LearningRepository::new(database.clone());
     let drafts = DraftRunRegistry::new();
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM learning_programs")
         .fetch_all(&mut *read)
-        .await
-        .map_err(db)?;
-    read.commit().await.map_err(db)?;
+        .await?;
+    read.commit().await?;
     if ids.len() > 1 {
         return Err(refuse("the run database holds more than one course"));
     }
@@ -477,7 +477,7 @@ async fn record_outline(
 async fn lesson_stage(
     run: &mut Run,
     database: &Database,
-    options: &sqlx::sqlite::SqliteConnectOptions,
+    database_path: &std::path::Path,
     program_id: &str,
     selector: &str,
 ) -> Result<String> {
@@ -610,13 +610,8 @@ async fn lesson_stage(
     let seconds = started.elapsed().as_secs_f64();
 
     // Read what was published from a new connection, as the app would.
-    let reopened = Database::new(
-        sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(options.clone())
-            .await
-            .map_err(db)?,
-    );
+    let reopened_connection = small::open_app_database(database_path, true).await?;
+    let reopened = reopened_connection.database().clone();
     let library = LearningRepository::new(reopened.clone());
     let lesson = library
         .get(program_id)
@@ -626,16 +621,15 @@ async fn lesson_stage(
         .and_then(|m| m.lessons.get(position))
         .cloned()
         .ok_or_else(|| refuse(format!("lesson {selector} is no longer in the course")))?;
-    let mut read = reopened.begin_read().await.map_err(db)?;
+    let mut read = reopened.begin_read().await?;
     let report: Option<String> = sqlx::query_scalar(
         "SELECT report_json FROM learning_lesson_verifications WHERE program_id=? AND lesson_id=?",
     )
     .bind(program_id)
     .bind(&lesson.id)
     .fetch_optional(&mut *read)
-    .await
-    .map_err(db)?;
-    read.commit().await.map_err(db)?;
+    .await?;
+    read.commit().await?;
     let report: Option<Value> = report.as_deref().map(serde_json::from_str).transpose()?;
     // The lesson's questions are bank items now; the quiz stage records them with their keys.
     let sources = library.verification_sources(program_id).await?;
@@ -647,7 +641,7 @@ async fn lesson_stage(
         .load(&lesson.id)
         .await?
     };
-    reopened.close().await;
+    reopened_connection.close().await?;
 
     use LearningGenerationJobStatus as Status;
     let (outcome, error) = match job.status {

@@ -1,6 +1,5 @@
 //! Deck saves, card edits, listing and deletion in the Study repository.
 use super::{study_dto::*, study_repository::StudyRepository};
-use crate::persistence::db;
 use crate::tests::pool;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Database;
@@ -12,10 +11,7 @@ fn id() -> String {
 
 async fn fk_pool() -> Result<SqlitePool> {
     let pool = pool().await?;
-    sqlx::query("PRAGMA foreign_keys=ON")
-        .execute(&pool)
-        .await
-        .map_err(db)?;
+    sqlx::query("PRAGMA foreign_keys=ON").execute(&pool).await?;
     Ok(pool)
 }
 
@@ -100,8 +96,7 @@ async fn a_deck_with_one_malformed_card_is_not_saved_at_all() -> Result<()> {
     let orphan_cards: i64 = sqlx::query_scalar("SELECT count(*) FROM study_cards WHERE deck_id=?")
         .bind(&out_of_range.id)
         .fetch_one(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(orphan_cards, 0);
 
     assert_invalid(
@@ -164,8 +159,7 @@ async fn decks_list_newest_first_with_due_counts_and_round_trip_citations() -> R
     let cards: i64 = sqlx::query_scalar("SELECT count(*) FROM study_cards WHERE deck_id=?")
         .bind(&newer.id)
         .fetch_one(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(cards, 0, "deleting a deck removes its cards");
     assert_eq!(repo.list(0).await?.len(), 1);
     Ok(())
@@ -270,8 +264,7 @@ async fn a_target_pulls_late_cards_due_and_spaces_reviews_to_land_before_it() ->
     repo.delete_deck(&saved.id).await?;
     let orphans: i64 = sqlx::query_scalar("SELECT count(*) FROM study_deck_targets")
         .fetch_one(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(orphans, 0, "deleting a deck deletes its target");
     assert!(matches!(
         repo.set_target(&saved.id, Some(target), now).await,

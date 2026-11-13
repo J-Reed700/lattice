@@ -1,4 +1,5 @@
 use super::*;
+use crate::dto::LearningPreparation;
 use crate::{
     curriculum::LearningGenerationJobStatus as Status,
     curriculum_repository::{lesson_job_config, LESSON_PREPARATION},
@@ -6,6 +7,7 @@ use crate::{
     plan_dto::LearningGenerationJobActionRequestDto,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::ErrorClass;
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobStore, RecoveryPolicy};
 use serde_json::json;
@@ -90,10 +92,10 @@ async fn a_busy_database_is_waited_out_and_never_blamed_on_the_model() {
     let (_, job) = repository_tests::queued_job(&db).await;
     let job = JobStore::new(db).get(&job.id).await.unwrap();
     for busy in [
-        crate::persistence::db(sqlx::Error::PoolTimedOut),
-        AppError::Database("error returned from database: (code: 5) database is locked".into()),
+        AppError::from(sqlx::Error::PoolTimedOut),
+        AppError::DatabaseBusy("error returned from database: (code: 5) database is locked".into()),
     ] {
-        assert!(JobFailure::is_outage(&busy), "{busy}");
+        assert_eq!(ErrorClass::of(&busy), ErrorClass::Outage, "{busy}");
         let JobFailure::Defer(deferral) = lesson_failure(&job, &busy) else {
             panic!("a busy database is deferred, not failed");
         };
@@ -142,8 +144,7 @@ async fn outage_schedule_and_checkpoints_survive_reopen_and_cancellation_wins() 
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
         .await
@@ -173,8 +174,7 @@ async fn outage_schedule_and_checkpoints_survive_reopen_and_cancellation_wins() 
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     let repo = LearningCurriculumRepository::new(db.clone());
     JobStore::new(db.clone())
@@ -191,8 +191,7 @@ async fn outage_schedule_and_checkpoints_survive_reopen_and_cancellation_wins() 
     sqlx::query("UPDATE jobs SET retry_not_before=0 WHERE id=?")
         .bind(&job.id)
         .execute(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     assert!(JobStore::new(db.clone())
         .due(LESSON_PREPARATION)
         .await?
@@ -240,8 +239,7 @@ async fn outage_schedule_and_checkpoints_survive_reopen_and_cancellation_wins() 
         sqlx::query("UPDATE jobs SET retry_not_before=0 WHERE id=?")
             .bind(&job.id)
             .execute(&pool)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .await?;
         assert!(JobStore::new(db.clone()).claim(&job.id).await?.is_some());
     }
     defer(
@@ -315,8 +313,7 @@ async fn source_limit_failure_retries_after_restart_without_losing_saved_checks(
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
         .await
@@ -380,8 +377,7 @@ async fn source_limit_failure_retries_after_restart_without_losing_saved_checks(
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        .await?;
     let db = Database::new(pool.clone());
     let repo = LearningCurriculumRepository::new(db.clone());
     let retry = repo
@@ -717,7 +713,9 @@ async fn a_deferred_lesson_says_what_it_waits_on() {
     let job = JobStore::new(db).get(&job.id).await.unwrap();
     for (error, code, progress) in [
         (
-            AppError::Database("error returned from database: (code: 5) database is locked".into()),
+            AppError::DatabaseBusy(
+                "error returned from database: (code: 5) database is locked".into(),
+            ),
             "temporarily_unavailable",
             "Another task is using the database; preparation will retry automatically",
         ),

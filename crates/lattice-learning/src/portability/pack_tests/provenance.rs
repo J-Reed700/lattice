@@ -41,13 +41,13 @@ async fn ready_course(db: &Database) -> Result<LearningProgramDto> {
     let lesson = &program.modules[0].lessons[0];
     let question_id = id();
     let mut prepared = PreparedLearningLesson {
-        blocks: vec![LearningBlockDto {
-            kind: LearningBlockKind::Explanation,
-            title: "Traceable teaching".into(),
-            body: QUOTE.into(),
-            source_ids: vec![program.sources[0].id.clone()],
-            rubric: vec![],
-        }],
+        blocks: vec![LearningBlockDto::new(
+            LearningBlockKind::Explanation,
+            "Traceable teaching".into(),
+            QUOTE.into(),
+            vec![program.sources[0].id.clone()],
+            vec![],
+        )],
         questions: vec![LessonQuestion {
             id: question_id.clone(),
             kind: LessonQuestionKind::Quiz,
@@ -148,7 +148,7 @@ async fn copied_course_retains_citations_bound_to_copied_ids_without_exposing_an
         evidence.content_sha256, before.content_sha256,
         "import must not mint a new verification fingerprint"
     );
-    assert_eq!(evidence.claim_count, 2);
+    assert_eq!(evidence.claim_count, evidence.teaching_claims.len());
     assert_eq!(evidence.teaching_claims.len(), 1);
     assert!(!serde_json::to_string(&evidence)?.contains("PRIVATE"));
     assert!(evidence.sources_current);

@@ -12,16 +12,12 @@ use std::collections::{HashMap, HashSet};
 use chrono::Utc;
 use lattice_core::application::contracts::images::{ChatImageDto, ImageOrigin};
 use lattice_core::application::ports::chat_images::DRAFT_REQUEST_PREFIX;
-use lattice_core::shared::persistence::{Database, PersistenceError};
+use lattice_core::shared::persistence::Database;
 use sqlx::{QueryBuilder, Sqlite, SqliteConnection};
 
 use crate::infrastructure::storage::file_intents::{record_releases_sql, run_id};
 use crate::infrastructure::storage::{FileIntents, FileStore};
-use lattice_core::shared::error::{AppError, Result};
-
-fn db(error: impl Into<PersistenceError>) -> AppError {
-    AppError::from(error.into())
-}
+use lattice_core::shared::error::Result;
 
 const COLUMNS: &str = "id, conversation_id, request_id, message_id, ref AS image_ref, ext, mime, \
     sha256, byte_size, width, height, caption, source_url, source_title, image_url, origin, \
@@ -138,7 +134,7 @@ impl ImageRepository {
     /// the same ref.
     pub async fn insert(&self, row: &NewImageRow) -> Result<String> {
         let prefix = row.ref_prefix();
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let image_ref = sqlx::query_scalar(
             "INSERT INTO chat_images (id, conversation_id, request_id, message_id, ref, ext, \
              mime, sha256, byte_size, width, height, caption, source_url, source_title, \
@@ -171,9 +167,8 @@ impl ImageRepository {
         .bind(&row.request_id)
         .bind(prefix)
         .fetch_one(&mut *tx)
-        .await
-        .map_err(db)?;
-        tx.commit().await.map_err(db)?;
+        .await?;
+        tx.commit().await?;
         Ok(image_ref)
     }
 
@@ -188,8 +183,8 @@ impl ImageRepository {
         request_id: &str,
         message_id: &str,
     ) -> Result<Option<ImageRow>> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
-        let copy = sqlx::query_as(&format!(
+        let mut tx = self.db.begin_write().await?;
+        let copy = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "INSERT INTO chat_images (id, conversation_id, request_id, message_id, ref, ext, \
              mime, sha256, byte_size, width, height, caption, source_url, source_title, \
              image_url, origin, license, attribution, original_name, created_at) \
@@ -198,7 +193,7 @@ impl ImageRepository {
                     original_name, ? \
              FROM chat_images WHERE id = ? \
              RETURNING {COLUMNS}"
-        ))
+        )))
         .bind(id)
         .bind(conversation_id)
         .bind(request_id)
@@ -206,9 +201,8 @@ impl ImageRepository {
         .bind(Utc::now().to_rfc3339())
         .bind(source_id)
         .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?;
-        tx.commit().await.map_err(db)?;
+        .await?;
+        tx.commit().await?;
         Ok(copy)
     }
 
@@ -222,8 +216,8 @@ impl ImageRepository {
         conversation_id: &str,
         request_id: &str,
     ) -> Result<Option<ImageRow>> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
-        let copy = sqlx::query_as(&format!(
+        let mut tx = self.db.begin_write().await?;
+        let copy = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "INSERT INTO chat_images (id, conversation_id, request_id, message_id, ref, ext, \
              mime, sha256, byte_size, width, height, caption, source_url, source_title, \
              image_url, origin, license, attribution, original_name, created_at) \
@@ -232,16 +226,15 @@ impl ImageRepository {
                     origin, license, attribution, original_name, ? \
              FROM chat_images WHERE id = ? AND conversation_id = ? \
              RETURNING {COLUMNS}"
-        ))
+        )))
         .bind(id)
         .bind(request_id)
         .bind(Utc::now().to_rfc3339())
         .bind(source_id)
         .bind(conversation_id)
         .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?;
-        tx.commit().await.map_err(db)?;
+        .await?;
+        tx.commit().await?;
         Ok(copy)
     }
 
@@ -251,9 +244,9 @@ impl ImageRepository {
         conversation_id: &str,
         ids: &[String],
     ) -> Result<Vec<ImageRow>> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let rows = rows_in_conversation(&mut read, conversation_id, ids).await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         Ok(rows)
     }
 
@@ -272,7 +265,7 @@ impl ImageRepository {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let candidates = rows_in_conversation(&mut tx, conversation_id, ids).await?;
         let claimable: Vec<String> = candidates
             .into_iter()
@@ -296,8 +289,7 @@ impl ImageRepository {
             .bind(id)
             .bind(message_id)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         }
         for (index, id) in claimable.iter().enumerate() {
             sqlx::query("UPDATE chat_images SET ref = ? WHERE id = ? AND message_id = ?")
@@ -305,11 +297,10 @@ impl ImageRepository {
                 .bind(id)
                 .bind(message_id)
                 .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         }
         let rows = rows_in_conversation(&mut tx, conversation_id, &claimable).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(rows
             .into_iter()
             .filter(|row| row.message_id.as_deref() == Some(message_id))
@@ -333,13 +324,14 @@ impl ImageRepository {
     }
 
     pub async fn get(&self, id: &str) -> Result<Option<ImageRow>> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
-        let row = sqlx::query_as(&format!("SELECT {COLUMNS} FROM chat_images WHERE id = ?"))
-            .bind(id)
-            .fetch_optional(&mut *read)
-            .await
-            .map_err(db)?;
-        read.commit().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
+        let row = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT {COLUMNS} FROM chat_images WHERE id = ?"
+        )))
+        .bind(id)
+        .fetch_optional(&mut *read)
+        .await?;
+        read.commit().await?;
         Ok(row)
     }
 
@@ -352,7 +344,7 @@ impl ImageRepository {
         message_id: &str,
         refs: &[String],
     ) -> Result<Vec<ImageRow>> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         if !refs.is_empty() {
             let mut update: QueryBuilder<Sqlite> =
                 QueryBuilder::new("UPDATE chat_images SET message_id = ");
@@ -366,57 +358,53 @@ impl ImageRepository {
                 list.push_bind(r);
             }
             list.push_unseparated(")");
-            update.build().execute(&mut *tx).await.map_err(db)?;
+            update.build().execute(&mut *tx).await?;
         }
-        let rows = sqlx::query_as(&format!(
+        let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {COLUMNS} FROM chat_images WHERE request_id = ? AND message_id = ? {BY_REF}"
-        ))
+        )))
         .bind(request_id)
         .bind(message_id)
         .fetch_all(&mut *tx)
-        .await
-        .map_err(db)?;
-        tx.commit().await.map_err(db)?;
+        .await?;
+        tx.commit().await?;
         Ok(rows)
     }
 
     /// The request's rows no message holds.
     pub async fn unattached(&self, request_id: &str) -> Result<Vec<ImageRow>> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
-        let rows = sqlx::query_as(&format!(
+        let mut read = self.db.begin_read().await?;
+        let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {COLUMNS} FROM chat_images WHERE request_id = ? AND message_id IS NULL {BY_REF}"
-        ))
+        )))
         .bind(request_id)
         .fetch_all(&mut *read)
-        .await
-        .map_err(db)?;
-        read.commit().await.map_err(db)?;
+        .await?;
+        read.commit().await?;
         Ok(rows)
     }
 
     pub async fn for_message(&self, message_id: &str) -> Result<Vec<ImageRow>> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
-        let rows = sqlx::query_as(&format!(
+        let mut read = self.db.begin_read().await?;
+        let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {COLUMNS} FROM chat_images WHERE message_id = ? {BY_REF}"
-        ))
+        )))
         .bind(message_id)
         .fetch_all(&mut *read)
-        .await
-        .map_err(db)?;
-        read.commit().await.map_err(db)?;
+        .await?;
+        read.commit().await?;
         Ok(rows)
     }
 
     pub async fn for_conversation(&self, conversation_id: &str) -> Result<Vec<ImageRow>> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
-        let rows = sqlx::query_as(&format!(
+        let mut read = self.db.begin_read().await?;
+        let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {COLUMNS} FROM chat_images WHERE conversation_id = ? ORDER BY created_at"
-        ))
+        )))
         .bind(conversation_id)
         .fetch_all(&mut *read)
-        .await
-        .map_err(db)?;
-        read.commit().await.map_err(db)?;
+        .await?;
+        read.commit().await?;
         Ok(rows)
     }
 
@@ -438,24 +426,24 @@ impl ImageRepository {
             return Ok(0);
         }
         let placeholders = vec!["?"; ids.len()].join(", ");
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let record_sql = record_releases_sql(
             FileStore::ChatImage,
             "id || '.' || ext",
             &format!("chat_images WHERE id IN ({placeholders}){condition}"),
         );
-        let mut record = sqlx::query(&record_sql).bind(run_id());
+        let mut record = sqlx::query(sqlx::AssertSqlSafe(record_sql.as_str())).bind(run_id());
         for id in ids {
             record = record.bind(id);
         }
-        record.execute(&mut *tx).await.map_err(db)?;
+        record.execute(&mut *tx).await?;
         let delete_sql = format!("DELETE FROM chat_images WHERE id IN ({placeholders}){condition}");
-        let mut delete = sqlx::query(&delete_sql);
+        let mut delete = sqlx::query(sqlx::AssertSqlSafe(delete_sql.as_str()));
         for id in ids {
             delete = delete.bind(id);
         }
-        let done = delete.execute(&mut *tx).await.map_err(db)?;
-        tx.commit().await.map_err(db)?;
+        let done = delete.execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(done.rows_affected())
     }
 
@@ -486,12 +474,11 @@ impl ImageRepository {
 
     /// `(id, ext)` of every row: the files the sweep must keep.
     pub async fn live_files(&self) -> Result<HashSet<(String, String)>> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let rows: Vec<(String, String)> = sqlx::query_as("SELECT id, ext FROM chat_images")
             .fetch_all(&mut *read)
-            .await
-            .map_err(db)?;
-        read.commit().await.map_err(db)?;
+            .await?;
+        read.commit().await?;
         Ok(rows.into_iter().collect())
     }
 
@@ -499,14 +486,13 @@ impl ImageRepository {
     /// and a composer's draft cannot survive a restart, so no age bound is
     /// needed beyond the sweep's own start (see `ChatImageGc::sweep`).
     pub async fn orphans_without_message(&self) -> Result<Vec<ImageRow>> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
-        let rows = sqlx::query_as(&format!(
+        let mut read = self.db.begin_read().await?;
+        let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {COLUMNS} FROM chat_images WHERE message_id IS NULL"
-        ))
+        )))
         .fetch_all(&mut *read)
-        .await
-        .map_err(db)?;
-        read.commit().await.map_err(db)?;
+        .await?;
+        read.commit().await?;
         Ok(rows)
     }
 }
@@ -529,11 +515,7 @@ async fn rows_in_conversation(
         list.push_bind(id);
     }
     list.push_unseparated(")");
-    let rows: Vec<ImageRow> = select
-        .build_query_as()
-        .fetch_all(connection)
-        .await
-        .map_err(db)?;
+    let rows: Vec<ImageRow> = select.build_query_as().fetch_all(connection).await?;
     Ok(in_order(rows, ids))
 }
 

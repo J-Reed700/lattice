@@ -105,6 +105,6 @@ async fn a_cancelled_check_runs_nothing() {
     let cancel = CancellationToken::new();
     cancel.cancel();
     let result = check(&tools, cancel).await;
-    assert!(matches!(result, Err(AppError::InvalidState(_))));
+    assert!(matches!(result, Err(AppError::Cancelled(_))));
     assert!(tools.runner.codes().is_empty());
 }

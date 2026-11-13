@@ -71,12 +71,14 @@ async fn an_outline_page_saved_from_the_web_before_the_mark_stays_under_the_swee
     assert!(migrator.iter().any(|m| m.version == FOUND_BY_SEARCH));
     {
         let mut conn = pool.acquire().await.unwrap();
-        conn.ensure_migrations_table().await.unwrap();
+        conn.ensure_migrations_table("_sqlx_migrations")
+            .await
+            .unwrap();
         for migration in migrator
             .iter()
             .filter(|m| m.version < FOUND_BY_SEARCH && !m.migration_type.is_down_migration())
         {
-            conn.apply(migration).await.unwrap();
+            conn.apply("_sqlx_migrations", migration).await.unwrap();
         }
     }
     sqlx::query("INSERT INTO learning_programs (id, title, goal, status, revision, prior_knowledge, minutes_per_session, model_name, created_at) VALUES ('p1', 'Retrieval', 'Understand retrieval-augmented generation', 'active', 1, 'none', 30, 'qwen', 1000)")

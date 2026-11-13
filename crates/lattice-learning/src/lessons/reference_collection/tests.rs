@@ -47,16 +47,20 @@ fn verification_windows_restore_conditions_without_changing_source_bytes() -> Re
     assert_eq!(expanded[0].score, hit.score);
     let mut invented = hit;
     invented.text = "A fabricated quotation".into();
-    assert!(collection.verification_context(vec![invented]).is_err());
+    let rebuilt = collection.verification_context(vec![invented])?;
+    assert_eq!(
+        &text[rebuilt[0].start_byte..rebuilt[0].end_byte],
+        rebuilt[0].text
+    );
     Ok(())
 }
 
 #[test]
 fn merging_context_keeps_both_partly_overlapping_hits() -> Result<()> {
     let text = format!(
-        "{}first matching fact\n{}second matching caveat\n{}",
+        "{}first matching fact. {}second matching caveat. {}",
         "préfixe ".repeat(400),
-        "background ".repeat(250),
+        "Background sentence here. ".repeat(105),
         "suffix ".repeat(400)
     );
     let source = LearningSourceDto {
@@ -158,10 +162,9 @@ async fn large_collection_keeps_evidence_after_the_former_twenty_million_charact
 
 #[test]
 fn unicode_passage_offsets_remain_lossless_without_a_whole_document_offset_array() {
-    use crate::references::course_index::{CHUNK_CHARS, STEP_CHARS};
-    use lattice_index::passage_index::chunking::spans::span_chunks;
+    use crate::references::course_index::{chunks, CHUNK_CHARS};
     let text = "🧪é中sample\n".repeat(400);
-    let passages = span_chunks(&text, CHUNK_CHARS, STEP_CHARS);
+    let passages = chunks(&text);
     assert!(passages.len() > 1);
     for passage in &passages {
         assert_eq!(
@@ -323,5 +326,78 @@ async fn term_weights_are_the_bm25_idf_of_each_query_term_over_the_passages() ->
     assert!(close(weights.get("alpha"), 1e-6), "{weights:?}");
     assert!(!weights.contains_key("omega"), "{weights:?}");
     assert_eq!(weights.len(), 3, "{weights:?}");
+    Ok(())
+}
+
+/// 120 sentences with no line break and irregular lengths; sentence 60 is the
+/// only one that says `zebra`. Also their start and end offsets.
+fn sentence_source() -> (String, Vec<usize>, Vec<usize>, String) {
+    use lattice_core::shared::text::segmentation::sentences;
+    let said: Vec<String> = (0..120)
+        .map(|i| {
+            let word = if i == 60 { "zebra" } else { "plainly" };
+            format!("Sentence {i} records fact {} {word}.", "x".repeat(i % 7))
+        })
+        .collect();
+    let excerpt = said.join(" ");
+    let spans = sentences(&excerpt);
+    let starts = spans.iter().map(|span| span.0).collect();
+    let ends = spans.iter().map(|span| span.1).collect();
+    (excerpt, starts, ends, said[60].clone())
+}
+
+fn single(excerpt: &str) -> LearningSourceDto {
+    LearningSourceDto {
+        id: "reference".into(),
+        title: "Reference".into(),
+        url: None,
+        excerpt: excerpt.into(),
+        acquired_at: 1,
+    }
+}
+
+#[tokio::test]
+async fn a_retrieved_passage_starts_and_ends_on_sentence_breaks() -> Result<()> {
+    let (excerpt, starts, ends, _) = sentence_source();
+    let collection = ReferenceCollection::lexical(&[single(&excerpt)])?;
+    let found = collection.retrieve_within("zebra", |_| true).await?;
+    let holding = found
+        .iter()
+        .find(|passage| passage.text.contains("zebra"))
+        .expect("the passage holding zebra");
+    assert!(
+        starts.contains(&holding.start_byte),
+        "{}",
+        holding.start_byte
+    );
+    assert!(ends.contains(&holding.end_byte), "{}", holding.end_byte);
+    Ok(())
+}
+
+#[test]
+fn a_verification_window_is_whole_sentences() -> Result<()> {
+    let (excerpt, starts, ends, sentence) = sentence_source();
+    let collection = ReferenceCollection::lexical(&[single(&excerpt)])?;
+    let cited = collection.cited_passages(&[sentence.as_str()])?;
+    assert_eq!(cited.len(), 1);
+    assert!(
+        starts.contains(&cited[0].start_byte),
+        "{}",
+        cited[0].start_byte
+    );
+    assert!(ends.contains(&cited[0].end_byte), "{}", cited[0].end_byte);
+    Ok(())
+}
+
+#[test]
+fn a_quote_in_other_letter_case_cites_its_passage() -> Result<()> {
+    let excerpt = "The borrow checker rejects two mutable borrows of one value at once.";
+    let collection = ReferenceCollection::lexical(&[single(excerpt)])?;
+    let cited = collection
+        .cited_passages(&["the Borrow Checker rejects two mutable borrows of one value"])?;
+    assert_eq!(cited.len(), 1);
+    assert!(cited[0]
+        .text
+        .contains("The borrow checker rejects two mutable borrows"));
     Ok(())
 }

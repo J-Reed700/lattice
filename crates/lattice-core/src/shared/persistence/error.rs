@@ -90,6 +90,9 @@ impl From<PersistenceError> for sqlx::Error {
 
 impl From<PersistenceError> for AppError {
     fn from(error: PersistenceError) -> Self {
-        AppError::Database(error.to_string())
+        match error.kind() {
+            PersistenceErrorKind::Busy => AppError::DatabaseBusy(error.to_string()),
+            _ => AppError::Database(error.to_string()),
+        }
     }
 }

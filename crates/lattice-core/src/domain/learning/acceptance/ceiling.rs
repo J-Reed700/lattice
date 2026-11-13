@@ -1,31 +1,18 @@
 //! What a statement can still cost, derived from the graphs: the longest path
 //! in model calls to an end, with the one re-ask on the costliest reading
-//! while it is unused.
+//! while it is unused, and the rewrite the teaching review may still give a
+//! sentence: a statement that ends with a rewrite left, or waits with one,
+//! can continue as a successor that is read again.
 
 use std::collections::{HashMap, HashSet};
 
-use super::walk::{follow, Moved};
+use super::walk::{next_rewrite, onward};
 use super::{AcceptancePolicy, Position, Step};
-use crate::domain::learning::claim_review::Class;
 
 /// The most calls a statement at `at` can still cost: its longest path to an
 /// end, and its re-ask on the costliest reading ahead while it is unused.
 pub fn most_calls(policy: &dyn AcceptancePolicy, at: Position) -> u32 {
     Ceiling::new(policy).most(at)
-}
-
-/// The longest path from `class`'s post-rewrite node: what a neighbour's
-/// rewrite can cost.
-pub fn after_rewrite_calls(policy: &dyn AcceptancePolicy, class: Class) -> u32 {
-    most_calls(
-        policy,
-        Position {
-            class,
-            changed_class: false,
-            reasked: true,
-            node: policy.graph(class).after_rewrite(),
-        },
-    )
 }
 
 /// The longest paths of a policy, remembered per position.
@@ -64,18 +51,21 @@ impl<'a> Ceiling<'a> {
         let Some(node) = policy.graph(at.class).node(at.node) else {
             return 0;
         };
-        let mut onward: u32 = 0;
-        for &(_, next) in node.edges() {
-            if let Moved::To(to) = follow(policy, at, next) {
-                onward = onward.max(self.most(to));
-            }
-        }
+        let mut ahead = onward(policy, at)
+            .into_iter()
+            .map(|to| self.most(to))
+            .max()
+            .unwrap_or(0);
         if !at.reasked && matches!(node.step, Step::Read(_)) {
-            onward = onward.max(self.most(Position {
+            ahead = ahead.max(self.most(Position {
                 reasked: true,
                 ..at
             }));
         }
-        node.calls.saturating_add(onward)
+        let along = node.calls.saturating_add(ahead);
+        match next_rewrite(policy, at) {
+            Some(rewritten) => along.max(self.most(rewritten)),
+            None => along,
+        }
     }
 }

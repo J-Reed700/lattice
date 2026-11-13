@@ -3,7 +3,6 @@ use super::{
     schedule::{answered, CardSchedule, FINAL_WINDOW_MS},
     study_dto::*,
 };
-use crate::persistence::db;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::{Database, WriteTx};
 use serde::Deserialize;
@@ -293,8 +292,7 @@ pub(crate) async fn record_review(
     )
     .bind(review.review_id)
     .fetch_optional(&mut **tx)
-    .await
-    .map_err(db)?;
+    .await?;
     if let Some(existing) = existing {
         let matches = existing.get::<String, _>("card_id") == review.card_id
             && existing.get::<String, _>("rating") == rating_name(review.rating)
@@ -311,8 +309,7 @@ pub(crate) async fn record_review(
     let row = sqlx::query("SELECT c.stability,c.difficulty,c.last_reviewed_at,c.due_at,c.interval_days,c.review_count,c.lapses,t.target_at FROM study_cards c LEFT JOIN study_deck_targets t ON t.deck_id=c.deck_id WHERE c.id=?")
         .bind(review.card_id)
         .fetch_optional(&mut **tx)
-        .await
-        .map_err(db)?
+        .await?
         .ok_or_else(|| AppError::NotFound("Study card no longer exists".into()))?;
     let current = schedule(&row);
     if current.review_count != review.expected_reviews {
@@ -328,8 +325,7 @@ pub(crate) async fn record_review(
         .bind(review.correct)
         .bind(selected_option)
         .execute(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
     sqlx::query("UPDATE study_cards SET stability=?,difficulty=?,last_reviewed_at=?,due_at=?,interval_days=?,review_count=?,lapses=? WHERE id=?")
         .bind(next.stability)
         .bind(next.difficulty)
@@ -340,8 +336,7 @@ pub(crate) async fn record_review(
         .bind(next.lapses)
         .bind(review.card_id)
         .execute(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(ReviewOutcome::Recorded)
 }
 
@@ -380,8 +375,7 @@ async fn insert_card(tx: &mut WriteTx, deck_id: &str, card: &StudyCardDto) -> Re
         .bind(card.due_at)
         .bind(format_name(card.format))
         .execute(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(())
 }
 
@@ -397,8 +391,7 @@ async fn save_deck_in(tx: &mut WriteTx, deck: &StudyDeckDto) -> Result<()> {
     .bind(&deck.model_name)
     .bind(deck.created_at)
     .execute(&mut **tx)
-    .await
-    .map_err(db)?;
+    .await?;
     for card in &deck.cards {
         insert_card(tx, &deck.id, card).await?;
     }
@@ -410,14 +403,12 @@ async fn deck_in(conn: &mut SqliteConnection, id: &str) -> Result<StudyDeckDto> 
     let row = sqlx::query("SELECT d.*,t.target_at FROM study_decks d LEFT JOIN study_deck_targets t ON t.deck_id=d.id WHERE d.id=?")
         .bind(id)
         .fetch_optional(&mut *conn)
-        .await
-        .map_err(db)?
+        .await?
         .ok_or_else(|| AppError::NotFound("Study deck no longer exists".into()))?;
     let rows = sqlx::query("SELECT * FROM study_cards WHERE deck_id=? ORDER BY rowid")
         .bind(id)
         .fetch_all(&mut *conn)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(StudyDeckDto {
         id: row.get("id"),
         title: row.get("title"),
@@ -443,8 +434,7 @@ pub(crate) async fn set_target_in(
     let exists = sqlx::query("SELECT 1 FROM study_decks WHERE id=?")
         .bind(deck_id)
         .fetch_optional(&mut **tx)
-        .await
-        .map_err(db)?;
+        .await?;
     if exists.is_none() {
         return Ok(false);
     }
@@ -454,22 +444,19 @@ pub(crate) async fn set_target_in(
                 .bind(deck_id)
                 .bind(target)
                 .execute(&mut **tx)
-                .await
-                .map_err(db)?;
+                .await?;
             sqlx::query("UPDATE study_cards SET due_at=? WHERE deck_id=? AND due_at>?")
                 .bind(now)
                 .bind(deck_id)
                 .bind(target.saturating_sub(FINAL_WINDOW_MS))
                 .execute(&mut **tx)
-                .await
-                .map_err(db)?;
+                .await?;
         }
         None => {
             sqlx::query("DELETE FROM study_deck_targets WHERE deck_id=?")
                 .bind(deck_id)
                 .execute(&mut **tx)
-                .await
-                .map_err(db)?;
+                .await?;
         }
     }
     Ok(true)
@@ -493,7 +480,7 @@ impl StudyRepository {
     ) -> Result<()> {
         sqlx::query("INSERT OR IGNORE INTO study_decks(id,title,focus,study_goal,model_name,created_at) VALUES(?,?,?,?,?,?)")
             .bind(id).bind(title).bind(focus).bind(study_goal).bind(model_name).bind(created_at)
-            .execute(&mut **tx).await.map_err(db)?;
+            .execute(&mut **tx).await?;
         Ok(())
     }
 
@@ -509,18 +496,17 @@ impl StudyRepository {
         &self,
         conversation_id: &str,
     ) -> Result<Vec<VerifiedConversationClaim>> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let exists: i64 = sqlx::query_scalar("SELECT count(*) FROM conversations WHERE id=?")
             .bind(conversation_id)
             .fetch_one(&mut *read)
-            .await
-            .map_err(db)?;
+            .await?;
         if exists == 0 {
             return Err(AppError::NotFound("Conversation no longer exists".into()));
         }
         let rows = sqlx::query("SELECT content, metadata FROM conversation_messages WHERE conversation_id=? AND role='assistant' AND status='completed' AND metadata IS NOT NULL ORDER BY created_at, id")
-            .bind(conversation_id).fetch_all(&mut *read).await.map_err(db)?;
-        read.commit().await.map_err(db)?;
+            .bind(conversation_id).fetch_all(&mut *read).await?;
+        read.commit().await?;
         let mut claims = Vec::new();
         let mut seen_claims = std::collections::HashSet::new();
         for row in rows {
@@ -584,9 +570,9 @@ impl StudyRepository {
     }
 
     pub async fn save(&self, deck: &StudyDeckDto) -> Result<()> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         save_deck_in(&mut tx, deck).await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     /// The interview deck for `deck.id`: saved when it is new, with `target_at`
@@ -599,7 +585,7 @@ impl StudyRepository {
         target_at: Option<i64>,
         now: i64,
     ) -> Result<StudyDeckDto> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let saved_target = match deck_in(&mut tx, &deck.id).await {
             Ok(saved) => saved.target_at,
             Err(AppError::NotFound(_)) => {
@@ -618,15 +604,15 @@ impl StudyRepository {
             return Err(AppError::NotFound("Study deck no longer exists".into()));
         }
         let result = deck_in(&mut tx, &deck.id).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(result)
     }
 
     pub async fn list(&self, now: i64) -> Result<Vec<StudyDeckSummaryDto>> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let rows = sqlx::query("SELECT d.*, (SELECT count(*) FROM study_cards c WHERE c.deck_id=d.id) card_count, (SELECT count(*) FROM study_cards c WHERE c.deck_id=d.id AND c.due_at<=?) due_count, (SELECT count(*) FROM study_reviews r JOIN study_cards c ON r.card_id=c.id WHERE c.deck_id=d.id AND r.mode='quiz') quiz_attempts, (SELECT count(*) FROM study_reviews r JOIN study_cards c ON r.card_id=c.id WHERE c.deck_id=d.id AND r.mode='quiz' AND r.correct=1) quiz_correct, (SELECT t.target_at FROM study_deck_targets t WHERE t.deck_id=d.id) target_at FROM study_decks d ORDER BY d.created_at DESC, d.id")
-            .bind(now).fetch_all(&mut *read).await.map_err(db)?;
-        read.commit().await.map_err(db)?;
+            .bind(now).fetch_all(&mut *read).await?;
+        read.commit().await?;
         Ok(rows
             .into_iter()
             .map(|r| StudyDeckSummaryDto {
@@ -645,9 +631,9 @@ impl StudyRepository {
     }
 
     pub async fn get(&self, id: &str) -> Result<StudyDeckDto> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let deck = deck_in(&mut read, id).await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         Ok(deck)
     }
 
@@ -655,11 +641,11 @@ impl StudyRepository {
     /// makes every card that would next come up after it due now, so each is
     /// recalled at least once before the target.
     pub async fn set_target(&self, deck_id: &str, target_at: Option<i64>, now: i64) -> Result<()> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         if !set_target_in(&mut tx, deck_id, target_at, now).await? {
             return Err(AppError::NotFound("Study deck no longer exists".into()));
         }
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     pub async fn review(
@@ -667,12 +653,11 @@ impl StudyRepository {
         request: &ReviewStudyCardRequestDto,
         now: i64,
     ) -> Result<StudyCardDto> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let row = sqlx::query("SELECT * FROM study_cards WHERE id=?")
             .bind(&request.card_id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
+            .await?
             .ok_or_else(|| AppError::NotFound("Study card no longer exists".into()))?;
         let current = card(&row)?;
         if current.format == StudyCardFormat::QuestionAnswer && request.selected_option.is_some() {
@@ -714,20 +699,18 @@ impl StudyRepository {
         let row = sqlx::query("SELECT * FROM study_cards WHERE id=?")
             .bind(&current.id)
             .fetch_one(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         let result = card(&row)?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(result)
     }
 
     pub async fn update_card(&self, request: &UpdateStudyCardRequestDto) -> Result<()> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let row = sqlx::query("SELECT * FROM study_cards WHERE id=?")
             .bind(&request.card_id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
+            .await?
             .ok_or_else(|| AppError::NotFound("Study card no longer exists".into()))?;
         let mut current = card(&row)?;
         if current.format == StudyCardFormat::QuestionAnswer {
@@ -737,9 +720,8 @@ impl StudyRepository {
                 .bind(request.explanation.trim())
                 .bind(&request.card_id)
                 .execute(&mut *tx)
-                .await
-                .map_err(db)?;
-            tx.commit().await.map_err(db)?;
+                .await?;
+            tx.commit().await?;
             return Ok(());
         }
         if current.options.iter().enumerate().any(|(i, text)| {
@@ -765,19 +747,17 @@ impl StudyRepository {
         .bind(serde_json::to_string(&current.options).map_err(json)?)
         .bind(&request.card_id)
         .execute(&mut *tx)
-        .await
-        .map_err(db)?;
-        tx.commit().await.map_err(db)
+        .await?;
+        tx.commit().await.map_err(AppError::from)
     }
 
     pub async fn delete_deck(&self, id: &str) -> Result<()> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         sqlx::query("DELETE FROM study_decks WHERE id=?")
             .bind(id)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        tx.commit().await.map_err(db)?;
+            .await?;
+        tx.commit().await?;
         Ok(())
     }
 }

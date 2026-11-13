@@ -1,8 +1,9 @@
 import type { GetLearningSourceTrustRequestDto } from '@/lib/bindings';
 
 export const LEARNING_PROGRAMS_KEY = ['learning-programs'] as const;
+export const LEARNING_PROGRAM_ROOT = ['learning-program'] as const;
 export const learningProgramKey = (id: string) =>
-  ['learning-program', id] as const;
+  [...LEARNING_PROGRAM_ROOT, id] as const;
 export const learningPlanKey = (programId: string) =>
   ['learning-plan', programId] as const;
 export const learningOutlineEvidenceKey = (programId: string, revision: number) =>
@@ -51,3 +52,4 @@ export const learningSourceTrustKey = (request: GetLearningSourceTrustRequestDto
 ] as const;
 export const LEARNING_SOURCE_TRUST_OVERRIDES_KEY = ['learning-source-trust-overrides'] as const;
 export const LEARNING_SOURCE_TRUST_CALIBRATION_KEY = ['learning-source-trust-calibration'] as const;
+export const learningCoursePlanKey = (programId: string) => ['learning-course-plan', programId] as const;

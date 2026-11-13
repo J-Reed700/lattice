@@ -7,11 +7,16 @@
 //! replaced. Coverage of the entire changed section is still audited
 //! independently before fact checking.
 use super::*;
+use lattice_core::protocol;
 use lattice_core::shared::hash::sha256_hex;
 #[cfg(any(test, feature = "test-support"))]
 use lattice_core::shared::persistence::Database;
+use lattice_core::shared::protocol::Protocol;
 
 mod locations;
+
+const BASIS_KEYS: Protocol = protocol!("inventory-basis", 1);
+const DELTA_KEYS: Protocol = protocol!("inventory-delta", 1);
 
 /// Why a section whose every claim was taken out has none, when what the edit
 /// wrote has none.
@@ -29,7 +34,7 @@ struct Basis {
 }
 
 fn key(llm: &dyn LLMPort, index: usize) -> String {
-    format!("inventory-basis-v1:{}", sha256_hex(json!({"policy":INVENTORY_POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"index":index}).to_string()))
+    BASIS_KEYS.key(sha256_hex(json!({"policy":INVENTORY_POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"index":index}).to_string()))
 }
 
 /// Whether `now` is the section `before` was: of its kind and role, under its
@@ -177,10 +182,9 @@ pub(in crate::lessons::content_verification) async fn update(
     }
     // The delta is relative to a specific inventory, not just its model/index.
     // A later repair may revisit the same text with a different saved basis.
-    let delta_key = format!(
-        "inventory-delta-v1:{}",
-        sha256_hex(json!({"model":key(llm,index),"basis":before,"content":section}).to_string())
-    );
+    let delta_key = DELTA_KEYS.key(sha256_hex(
+        json!({"model":key(llm,index),"basis":before,"content":section}).to_string(),
+    ));
     if let Some(saved) = crate::lesson_drafts::checkpoint(&delta_key)
         .await?
         .and_then(|v| serde_json::from_value::<UnitClaims>(v).ok())
@@ -313,7 +317,9 @@ mod capacity_tests {
 #[cfg(test)]
 mod revision_tests {
     use super::*;
-    use crate::content_verification::tests::{fixture_completion, fixture_prompts};
+
+    const REVISION_KEYS: Protocol = protocol!("inventory-revision", 2);
+    use crate::content_verification::tests::{fixture_completion, fixture_prompts, fixture_task};
     use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     use std::sync::Mutex;
 
@@ -490,7 +496,7 @@ mod revision_tests {
     /// `unit-0-change-0`.
     fn finds(statement: &str) -> String {
         fixture_response(vec![
-            json!({"index":0,"claims":[{"passageId":"unit-0-change-0","statement":statement}],"nonFactualReason":""}),
+            json!({"index":0,"claims":[{"sentenceId":"unit-0-change-0-sentence-0","statement":statement}],"nonFactualReason":""}),
         ])
         .to_string()
     }
@@ -529,6 +535,17 @@ mod revision_tests {
             .collect()
     }
 
+    /// The texts of the sentences a unit's passages are shown as.
+    fn shown_texts(passages: &Value) -> Vec<&str> {
+        passages
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|passage| passage["sentences"].as_array().into_iter().flatten())
+            .filter_map(|sentence| sentence["text"].as_str())
+            .collect()
+    }
+
     #[tokio::test]
     async fn a_rewritten_sentence_is_read_afresh_from_its_own_text_beside_the_sentences_that_stand(
     ) -> Result<()> {
@@ -563,11 +580,11 @@ mod revision_tests {
                 "a rewritten sentence is extracted, not revised from its saved statement: {}",
                 prompt.chars().take(60).collect::<String>()
             );
-            let shown: Value = serde_json::from_str(prompt.rsplit("\n\n").next().unwrap())?;
+            let shown: Value = fixture_task(prompt).expect("a JSON task");
             let unit = &shown["units"][0];
             // The request carries the rewritten sentence alone as a passage,
             // and the two that stand as context.
-            assert_eq!(texts(&unit["passages"]), [rewritten]);
+            assert_eq!(shown_texts(&unit["passages"]), [rewritten]);
             assert_eq!(unit["passages"][0]["id"], "unit-0-change-0");
             assert_eq!(texts(&unit["context"]), [ALPHA, CHARLIE]);
             for (_, statement) in saved {
@@ -618,10 +635,10 @@ mod revision_tests {
             let [_, (prompt, _)] = asked.as_slice() else {
                 panic!("one request for each edit: {asked:?}");
             };
-            let shown: Value = serde_json::from_str(prompt.rsplit("\n\n").next().unwrap())?;
+            let shown: Value = fixture_task(prompt).expect("a JSON task");
             // The first edit's sentence was read once, after the first edit;
             // the second edit's request reads only what it wrote.
-            assert_eq!(texts(&shown["units"][0]["passages"]), [third]);
+            assert_eq!(shown_texts(&shown["units"][0]["passages"]), [third]);
             Ok(())
         })
         .await
@@ -659,9 +676,9 @@ mod revision_tests {
                 );
             }
             assert!(prompt.starts_with("Extract lesson claims."));
-            let shown: Value = serde_json::from_str(prompt.rsplit("\n\n").next().unwrap())?;
+            let shown: Value = fixture_task(prompt).expect("a JSON task");
             let unit = &shown["units"][0];
-            assert_eq!(texts(&unit["passages"]), [BRAVO]);
+            assert_eq!(shown_texts(&unit["passages"]), [BRAVO]);
             assert_eq!(texts(&unit["context"]), [ALPHA, CHARLIE]);
             assert_eq!(
                 left(&updated),
@@ -757,12 +774,9 @@ mod revision_tests {
                 (ALPHA, "Alpha is steady."),
                 ("Bravo yields at noon.", "Bravo is firm."),
             ]);
-            let old_key = format!(
-                "inventory-revision-v2:{}",
-                sha256_hex(
-                    json!({"model":key(&model,0),"basis":basis,"content":after[0]}).to_string()
-                )
-            );
+            let old_key = REVISION_KEYS.key(sha256_hex(
+                json!({"model":key(&model,0),"basis":basis,"content":after[0]}).to_string(),
+            ));
             crate::lesson_drafts::record_checkpoint(&old_key, serde_json::to_value(&kept)?).await?;
 
             let updated = update(&model, &after, 0).await?.unwrap();
@@ -807,9 +821,9 @@ mod revision_tests {
             let [(prompt, schema)] = asked.as_slice() else {
                 panic!("one request: {asked:?}");
             };
-            let shown: Value = serde_json::from_str(prompt.rsplit("\n\n").next().unwrap())?;
+            let shown: Value = fixture_task(prompt).expect("a JSON task");
             let unit = &shown["units"][0];
-            assert_eq!(texts(&unit["passages"]), ["Second reason is new."]);
+            assert_eq!(shown_texts(&unit["passages"]), ["Second reason is new."]);
             assert_eq!(unit["passages"][0]["field"], "/explanation");
             // The stem and the options are context still, beside the rest of
             // the explanation, and the answer is told.
@@ -829,9 +843,9 @@ mod revision_tests {
             // A claim can be located in what was written and nowhere else.
             assert_eq!(
                 schema.pointer(
-                    "/properties/units/properties/unit-0/properties/claims/items/properties/passageId/enum"
+                    "/properties/units/properties/unit-0/properties/claims/items/properties/sentenceId/enum"
                 ),
-                Some(&json!(["unit-0-change-0"]))
+                Some(&json!(["unit-0-change-0-sentence-0"]))
             );
             assert_eq!(
                 left(&updated),

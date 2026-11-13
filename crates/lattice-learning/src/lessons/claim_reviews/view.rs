@@ -40,7 +40,7 @@ use super::teaching_findings::TeachingFindingsRepository;
 use crate::content_verification::{field_text, located};
 use crate::dto::LearningSourceKind;
 use crate::lesson_evidence::LearningEvidencePassageDto;
-use crate::persistence::db;
+use crate::reference_collection::PassageKind;
 use crate::references::trust::dto_map;
 use crate::repository::LearningRepository;
 use crate::source_library::{workspace_in, LearningSourceLibraryRepository};
@@ -92,10 +92,6 @@ struct PassageText {
     text: String,
     retrieval_kind: String,
 }
-
-/// The retrieval kind of a passage a check compared that no card shows any
-/// more, read back from its saved source version.
-const SAVED_VERSION: &str = "source_version";
 
 fn key(seen: &EvidenceSeen) -> PassageKey {
     (
@@ -255,13 +251,13 @@ impl ClaimReviewService {
             let slice = versions
                 .get(&seen.source_version_id)
                 .and_then(Option::as_deref)
-                .and_then(|text| text.get(seen.start_byte..seen.end_byte));
+                .and_then(|text| seen.text_in(text));
             if let Some(text) = slice {
                 texts.insert(
                     key(seen),
                     PassageText {
                         text: text.to_owned(),
-                        retrieval_kind: SAVED_VERSION.into(),
+                        retrieval_kind: PassageKind::SavedVersion.label().into(),
                     },
                 );
             }
@@ -272,9 +268,9 @@ impl ClaimReviewService {
     /// Every version of the course's sources, deleted ones included: a card
     /// still names a source the user removed.
     async fn sources(&self, program_id: &str) -> Result<HashMap<String, SourceFacts>> {
-        let mut read = self.database.begin_read().await.map_err(db)?;
+        let mut read = self.database.begin_read().await?;
         let workspace = workspace_in(&mut read, program_id, true).await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         Ok(workspace
             .sources
             .into_iter()

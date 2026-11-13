@@ -20,13 +20,9 @@ use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
-use crate::persistence::db;
 
 async fn setup(pool: &SqlitePool, database: &Database) -> Result<(LearningProgramDto, String)> {
-    sqlx::query("PRAGMA foreign_keys=ON")
-        .execute(pool)
-        .await
-        .map_err(db)?;
+    sqlx::query("PRAGMA foreign_keys=ON").execute(pool).await?;
     let repo = LearningRepository::new(database.clone());
     let p = crate::tests::fixture();
     repo.create(&p).await?;
@@ -39,8 +35,7 @@ async fn setup(pool: &SqlitePool, database: &Database) -> Result<(LearningProgra
     sqlx::query("UPDATE learning_lessons SET preparation='ready' WHERE program_id=?")
         .bind(&p.summary.id)
         .execute(pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let ready = repo.get(&p.summary.id).await?;
     let lesson = ready
         .modules
@@ -59,8 +54,7 @@ async fn file_pool(path: std::path::PathBuf) -> Result<SqlitePool> {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
-        .await
-        .map_err(db)?;
+        .await?;
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
         .await

@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { ExternalLink, FileSearch, ShieldCheck } from 'lucide-react';
 
 import { useLearningLessonEvidence, type LessonEvidenceQuery } from '@/features/learning/api/evidenceQueries';
-import { checkWords, commonParts, passageKey, passageNumbersFor } from '@/features/learning/model/evidencePresentation';
+import { checkWords, partsOfKind, passageKey, passageNumbersFor } from '@/features/learning/model/evidencePresentation';
 import { TrustLevelChip } from '@/features/learning/sources/trust/TrustBadge';
 import { sufficiencyNote, verifiedByLevel } from '@/features/learning/sources/trust/trustPresentation';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
@@ -113,7 +113,7 @@ export function evidenceSummary(report: LearningLessonEvidenceDto): string {
   const notVerified = unverifiedCount(report);
   const consistent = report.teachingClaims.filter((claim) => passedAs(claim, 'reasoning')).length;
   const common = report.teachingClaims.filter((claim) => passedAs(claim, 'common')).length;
-  const verified = Math.max(0, report.claimCount - report.confirmedCount - consistent - common - notVerified);
+  const verified = Math.max(0, report.claimCount - report.confirmedCount - consistent - common - notVerified - sourceRemovedCount(report));
   const byLevel = verifiedByLevel(report.teachingClaims.filter((claim) => !passedAs(claim, 'reasoning') && !passedAs(claim, 'common')));
   const against = byLevel.length ? byLevel : verified > 0 || consistent + common === 0 ? [`${verified} ${verified === 1 ? 'statement' : 'statements'} verified against sources`] : [];
   return [
@@ -133,6 +133,11 @@ export function sourceRemovedCount(report: LearningLessonEvidenceDto | null | un
   return report?.teachingClaims.filter((claim) => claim.resolution === 'source_removed').length ?? 0;
 }
 
+const UNSTATED_PARTS = [
+  { kind: 'common', label: 'Common knowledge, not in the source: ' },
+  { kind: 'own', label: "The lesson's own figures, not in the source: " },
+] as const;
+
 function ClaimEvidence({
   claim,
   passageNumbers,
@@ -143,7 +148,6 @@ function ClaimEvidence({
   onOpenPassage?: (passage: LearningEvidencePassageDto, number: number) => void;
 }) {
   const how = checkWords(claim) ?? (claim.sufficiency ? sufficiencyNote(claim.sufficiency) : null);
-  const common = commonParts(claim);
   return (
     <article className="wrap-anywhere rounded-lg border border-border p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -163,9 +167,12 @@ function ClaimEvidence({
         </blockquote>
       )}
       {how && <p className="mt-2 text-xs leading-5 text-text-primary">{how}</p>}
-      {common.length > 0 && (
-        <p className="mt-2 text-xs leading-5 text-text-secondary"><span className="font-medium text-text-primary">Common knowledge, not in the source: </span>{common.join('; ')}</p>
-      )}
+      {UNSTATED_PARTS.map(({ kind, label }) => {
+        const parts = partsOfKind(claim, kind);
+        return parts.length > 0 && (
+          <p key={kind} className="mt-2 text-xs leading-5 text-text-secondary"><span className="font-medium text-text-primary">{label}</span>{parts.join('; ')}</p>
+        );
+      })}
       <p className="mt-2 text-xs leading-5 text-text-secondary">{claim.reason}</p>
       {claim.supportingQuote && (
         <blockquote className="mt-2 border-l-2 border-accent pl-3 text-xs leading-5 text-text-primary">

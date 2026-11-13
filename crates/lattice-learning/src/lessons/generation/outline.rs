@@ -2,8 +2,8 @@
 //! references, and decoding a drafted outline into modules and lessons.
 
 use super::{
-    grounding_instructions, invalid, normalize, optional_citation, optional_source_index_schema,
-    parse_json, validate_outline_request, validate_text, OUTLINE_OUTPUT_RESERVE,
+    grounding_instructions, invalid, optional_citation, optional_source_index_schema, parse_json,
+    validate_outline_request, validate_text, OUTLINE_OUTPUT_RESERVE,
     OUTLINE_REFERENCE_INSTRUCTIONS,
 };
 use crate::dto::{
@@ -13,23 +13,57 @@ use crate::dto::{
 use crate::lessons::structured_call::{complete_checked_request, CallKind, ReasonFirst};
 use crate::model_call;
 use lattice_core::application::ports::LLMPort;
-use lattice_core::shared::error::{AppError, Result};
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
+use lattice_core::shared::error::{AppError, ErrorClass, Result};
+use lattice_core::shared::text::same_text::fold;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, PoisonError};
+
+pub(super) struct OutlineDescription;
+
+impl Contract for OutlineDescription {
+    const ID: ContractId = ContractId::new("outline-description");
+    type Input = PromptInput;
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for OutlineDescription
+{
+    type Answer = GeneratedOutline;
+
+    fn render(answer: &GeneratedOutline) -> String {
+        json!(answer).to_string()
+    }
+
+    fn read(text: &str) -> Result<GeneratedOutline> {
+        read_outline(text)
+    }
+}
 
 /// What the prose step of an outline works through before the outline is
 /// written to its schema.
 const OUTLINE_DRAFT_BRIEF: &str = "Decide the final capstone and what evidence each of its deliverables needs. Then lay out the modules in order: each module's title and two-sentence summary, its outcomes, its project milestone with deliverables and success criteria, the earlier modules it builds on, and its lessons with their objectives and estimated minutes.";
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, PartialEq)
+)]
 #[serde(rename_all = "camelCase")]
-struct GeneratedOutline {
+pub(crate) struct GeneratedOutline {
     modules: Vec<GeneratedModule>,
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, PartialEq)
+)]
 #[serde(rename_all = "camelCase")]
 struct GeneratedModule {
     prerequisite_indices: Vec<usize>,
@@ -41,6 +75,10 @@ struct GeneratedModule {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, PartialEq)
+)]
 #[serde(rename_all = "camelCase")]
 struct GeneratedEvidenceText {
     text: String,
@@ -49,6 +87,10 @@ struct GeneratedEvidenceText {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, PartialEq)
+)]
 #[serde(rename_all = "camelCase")]
 struct GeneratedOutlineLesson {
     title: String,
@@ -56,6 +98,11 @@ struct GeneratedOutlineLesson {
     estimated_minutes: i64,
     source_index: Option<usize>,
     quote: String,
+}
+
+/// The outline a reply holds, before it is held to the depth asked for.
+fn read_outline(raw: &str) -> Result<GeneratedOutline> {
+    parse_json(raw)
 }
 
 pub(crate) fn outline_schema(
@@ -118,7 +165,7 @@ pub async fn generate_outline_with_progress(
         &outline_schema(request.course_depth, sources.len()),
         raw,
         output_tokens,
-        Some(crate::teaching::OutlineReviewContext { progress, sources }),
+        crate::teaching::OutlineReviewContext { progress, sources },
     )
     .await?;
     decode_outline(&raw, request, sources)
@@ -135,7 +182,7 @@ pub(crate) async fn draft_outline<T>(
     sources: &[LearningSourceDto],
     subtopics: &[String],
     progress: &crate::outline_progress::OutlineProgress,
-    accept: impl Fn(&str) -> Result<T>,
+    accept: impl Fn(&str) -> Result<T> + Send + Sync,
 ) -> Result<(T, serde_json::Value, usize)> {
     validate_outline_request(request)?;
     let (min_modules, max_modules, min_lessons, max_lessons) =
@@ -190,20 +237,26 @@ pub(crate) async fn draft_outline<T>(
             context.to_string(),
             outline_schema(request.course_depth, sources.len()),
             output_tokens,
-            "low",
         );
         *built.lock().unwrap_or_else(PoisonError::into_inner) = context;
         grounded
     };
-    let room = model_call::source_room(llm, &build(0), usize::MAX);
+    let bare = build(0);
+    let room = model_call::source_room(llm, &bare, usize::MAX);
+    let call = ContractCall::of::<OutlineDescription>(&PromptInput {
+        system: system.clone(),
+        prompt: bare.task,
+    })?;
     progress.stage(crate::outline_progress::OutlineStage::Drafting);
     let outline = super::send_packed(
         llm,
+        &call,
         room,
         build,
         |grounded| {
             complete_checked_request(
                 llm,
+                &call,
                 grounded,
                 Some(progress),
                 Some(ReasonFirst {
@@ -234,16 +287,7 @@ fn description_too_long(llm: &dyn LLMPort, error: AppError) -> AppError {
     if llm.max_context_tokens() < window_needed {
         return error;
     }
-    let refusals = [
-        OUTLINE_DOES_NOT_FIT,
-        crate::lessons::structured_call::MATERIAL_DOES_NOT_FIT,
-    ]
-    .map(|what| model_call::window_too_small(llm, what));
-    if matches!(error, AppError::InvalidConfig(_))
-        && refusals
-            .iter()
-            .any(|refusal| refusal.to_string() == error.to_string())
-    {
+    if ErrorClass::of(&error) == ErrorClass::DoesNotFit {
         return AppError::InvalidInput(
             "Your course description is too long for the Learning model's context window. Shorten the course description and try again."
                 .into(),
@@ -393,7 +437,7 @@ pub(crate) fn decode_outline(
 ) -> Result<Vec<LearningModuleDto>> {
     let (min_modules, max_modules, min_lessons, max_lessons) =
         LearningCourseDepth::bounds(request.course_depth);
-    let generated: GeneratedOutline = parse_json(raw)?;
+    let generated = read_outline(raw)?;
     if !(min_modules..=max_modules).contains(&generated.modules.len()) {
         return Err(invalid(format!(
             "The outline needs {min_modules} to {max_modules} modules; this answer has {}.",
@@ -445,7 +489,7 @@ pub(crate) fn decode_outline(
                 module.lessons.len()
             )));
         }
-        if let Some(earlier) = module_titles.insert(normalize(&module.title), number) {
+        if let Some(earlier) = module_titles.insert(fold(&module.title), number) {
             return Err(invalid(format!(
                 "Modules {earlier} and {number} share the title \"{}\"; give each module its own title.",
                 module.title.trim()
@@ -478,7 +522,7 @@ pub(crate) fn decode_outline(
                     "{at} needs an estimate of at least one minute."
                 )));
             }
-            if let Some((m, l)) = lesson_titles.insert(normalize(&lesson.title), place) {
+            if let Some((m, l)) = lesson_titles.insert(fold(&lesson.title), place) {
                 return Err(invalid(format!(
                     "Lessons {m}.{l} and {}.{} share the title \"{}\"; give each lesson its own title.",
                     place.0,

@@ -19,6 +19,7 @@
 //!   - `CloudLlm` - OpenAI Responses, Anthropic Messages and Google
 
 use crate::application::contracts::settings::LLMSettingsDto;
+use crate::application::services::model_contract::ContractCall;
 use crate::domain::models::model_ref::{CloudProvider, ModelRef};
 use crate::domain::models::vision::VisionGeometry;
 use crate::shared::error::Result;
@@ -467,12 +468,19 @@ impl ThinkingMode {
     }
 }
 
+/// The reasoning effort every structured answer is asked with: the lowest
+/// setting every adapter accepts (Ollama refuses anything below "low").
+pub const ANSWER_EFFORT: &str = "low";
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CompletionRequest {
     pub input: Vec<CompletionInput>,
     pub tools: Vec<ToolDefinition>,
     pub json_schema: Option<serde_json::Value>,
     pub reasoning_effort: Option<String>,
+    /// The model call this request belongs to; never sent to a provider.
+    #[serde(skip)]
+    pub contract: Option<ContractCall>,
     /// How the model may use the offered tools. `None` leaves the provider's
     /// default (auto). `Some(ToolChoice::None)` keeps the tools in the prompt,
     /// so the cached prefix stays valid, while forbidding calls this round.
@@ -661,7 +669,39 @@ pub struct CompletionResponse {
     pub timing: Option<ServedTiming>,
 }
 
+/// How a reply ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Finish {
+    Complete,
+    CutOff,
+    Declined,
+    Filtered,
+}
+
+/// Fragments of a finish reason that mean the reply stopped at its output limit.
+const CUT_OFF_MARKERS: [&str; 4] = ["length", "max_tokens", "max_output_tokens", "incomplete"];
+
+impl Finish {
+    /// What a provider's finish reason says, compared without case.
+    pub fn of(reason: &str) -> Self {
+        let reason = reason.to_ascii_lowercase();
+        if CUT_OFF_MARKERS.iter().any(|marker| reason.contains(marker)) {
+            Self::CutOff
+        } else if reason.contains("content_filter") {
+            Self::Filtered
+        } else if reason == "refusal" {
+            Self::Declined
+        } else {
+            Self::Complete
+        }
+    }
+}
+
 impl CompletionResponse {
+    pub fn finish(&self) -> Finish {
+        Finish::of(&self.finish_reason)
+    }
+
     /// An answer that stopped on its own, replayed as one assistant message.
     pub fn from_text(text: impl Into<String>) -> Self {
         let text = text.into();

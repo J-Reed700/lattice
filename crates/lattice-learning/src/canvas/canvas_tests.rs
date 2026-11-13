@@ -3,7 +3,7 @@ use crate::{
     dto::*,
     repository::LearningRepository,
 };
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Database;
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::time::Duration;
@@ -34,16 +34,12 @@ async fn persistent_pool(path: std::path::PathBuf) -> Result<SqlitePool> {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
-        .await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+        .await?;
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
         .await
         .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
-    sqlx::query("PRAGMA foreign_keys=ON")
-        .execute(&pool)
-        .await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+    sqlx::query("PRAGMA foreign_keys=ON").execute(&pool).await?;
     Ok(pool)
 }
 
@@ -53,7 +49,7 @@ async fn concurrent_pool(path: std::path::PathBuf) -> Result<SqlitePool> {
         .max_connections(4)
         .connect_with(options)
         .await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))
+        .map_err(AppError::from)
 }
 
 fn uuid() -> String {
@@ -186,10 +182,7 @@ fn excalidraw_validation_checks_shape_and_disallows_unmanaged_files() {
 async fn canvas_revisions_operations_snapshots_and_restore_are_transactional() -> Result<()> {
     let pool = crate::tests::pool().await?;
     let db = Database::new(pool.clone());
-    sqlx::query("PRAGMA foreign_keys=ON")
-        .execute(&pool)
-        .await
-        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    sqlx::query("PRAGMA foreign_keys=ON").execute(&pool).await?;
     let program = active_program(&db).await?;
     let lesson_id = program
         .modules
@@ -360,8 +353,7 @@ async fn canvas_revisions_operations_snapshots_and_restore_are_transactional() -
         sqlx::query_scalar("SELECT count(*) FROM learning_canvases WHERE program_id=?")
             .bind(&program.summary.id)
             .fetch_one(&pool)
-            .await
-            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+            .await?;
     assert_eq!(remaining, 0);
     Ok(())
 }
@@ -472,8 +464,7 @@ async fn concurrent_retry_of_identical_save_commits_one_revision_and_receipt() -
     )
     .bind(&save.operation_id)
     .fetch_one(&pool)
-    .await
-    .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+    .await?;
     assert_eq!(receipts, 1);
     pool.close().await;
     Ok(())

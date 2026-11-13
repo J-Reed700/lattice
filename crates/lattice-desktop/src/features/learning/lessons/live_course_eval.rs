@@ -81,10 +81,6 @@ fn refuse(message: impl std::fmt::Display) -> AppError {
     AppError::InvalidInput(format!("course eval: {message}"))
 }
 
-fn db(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
-}
-
 impl CourseRecipe {
     pub(super) fn parse(text: &str) -> Result<Self> {
         let recipe: Self = serde_json::from_str(text)?;
@@ -387,7 +383,7 @@ pub(super) fn quiz_job_step(status: JobStatus) -> QuizJobStep {
 }
 
 /// Whether a job's error text is the display of an error the job runtime
-/// treats as transient (`JobFailure::is_transient`).
+/// treats as temporary (`ErrorClass::is_temporary`).
 pub(super) fn transient_text(error: &str) -> bool {
     let variants: [fn(String) -> AppError; 3] = [
         AppError::Network,
@@ -691,20 +687,8 @@ async fn live_course_eval() -> Result<()> {
     merge(&mut manifest["server"], &weights);
     write_json(&dir.join("run.json"), &manifest)?;
 
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(&database)
-        .foreign_keys(true)
-        .create_if_missing(true);
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(options.clone())
-        .await
-        .map_err(db)?;
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .map_err(db)?;
-    let database = lattice_core::shared::persistence::Database::new(pool);
+    let connection = small::open_app_database(&database, false).await?;
+    let handle = connection.database().clone();
     let mut run = Run {
         metrics: read_json(&dir.join("metrics.json"))?.unwrap_or_else(|| json!({})),
         dir,
@@ -712,8 +696,7 @@ async fn live_course_eval() -> Result<()> {
         web,
         embedder,
     };
-    let (outline, lessons) =
-        run_stages(&mut run, &database, &options, &request, &selectors).await?;
+    let (outline, lessons) = run_stages(&mut run, &handle, &database, &request, &selectors).await?;
     let finished = chrono::Utc::now().to_rfc3339();
     write_json(
         &run.dir.join("done.json"),
@@ -725,6 +708,6 @@ async fn live_course_eval() -> Result<()> {
     manifest["web"]["entries_at_end"] = json!(run.web.report().entries_at_end);
     write_json(&run.dir.join("run.json"), &manifest)?;
     println!("COURSE EVAL DONE: outline {outline}, lessons {lessons}");
-    database.close().await;
+    connection.close().await?;
     Ok(())
 }

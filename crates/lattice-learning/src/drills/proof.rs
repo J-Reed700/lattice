@@ -207,7 +207,7 @@ pub(crate) async fn judge(
             "cleanLacksIt": {"type": "boolean"}
         }
     });
-    let request = model_call::structured(system, prompt, schema, budget::judgement(), "low");
+    let request = model_call::structured(system, prompt, schema, budget::judgement());
     let asked = ask_request(tools.llm, request, |raw| {
         let judgement: Judgement = parse_json(raw)?;
         if judgement.reason.trim().is_empty() {
@@ -221,7 +221,7 @@ pub(crate) async fn judge(
     trail.call("judge", tools.llm.model_name());
     let judgement = match asked {
         Ok(asked) => asked.value,
-        Err(AppError::ModelAnswerUnusable(reason)) => {
+        Err(AppError::ModelAnswerUnusable(reason) | AppError::AnswerCutOff(reason)) => {
             return Ok(unproven(
                 format!("The judge's answer could not be used: {reason}"),
                 trail,

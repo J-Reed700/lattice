@@ -3,6 +3,7 @@
 //! module budgets exhaust, plan repair never adds citations, and targeted
 //! research saves pages that the judge then reads.
 use super::outline_reference_tests::*;
+use crate::lessons::content_verification::tests::fixture_task;
 use crate::{
     dto::*,
     lessons::course_generation_tests::{repair_answer, repair_answer_with, request},
@@ -153,7 +154,7 @@ async fn a_contradicted_factual_finding_is_rewritten_with_the_contradicting_pass
     let prompts = calls(&llm);
     assert_eq!(prompts.len(), 5);
     assert!(prompts[3].starts_with("Repair a saved curriculum module"));
-    let repair = payload(&prompts[3]);
+    let repair = fixture_task(&prompts[3]).unwrap();
     assert_eq!(repair["findings"][0]["id"], "finding-1");
     assert_eq!(repair["findings"][0]["instruction"], CORRECT);
     assert_eq!(
@@ -228,14 +229,20 @@ async fn an_unsupported_assertion_is_narrowed_then_removed_then_left_for_the_use
     let prompts = calls(&llm);
     assert_eq!(prompts.len(), 7);
     assert!(prompts[2].starts_with("Source passages:"));
-    assert_eq!(payload(&prompts[3])["findings"][0]["instruction"], NARROW);
-    assert!(payload(&prompts[3])["findings"][0]["reason"]
+    assert_eq!(
+        fixture_task(&prompts[3]).unwrap()["findings"][0]["instruction"],
+        NARROW
+    );
+    assert!(fixture_task(&prompts[3]).unwrap()["findings"][0]["reason"]
         .as_str()
         .unwrap()
         .starts_with("Not supported by the saved references"));
     // The second attempt neither researches nor judges again.
     assert!(prompts[5].starts_with("Repair a saved curriculum module"));
-    assert_eq!(payload(&prompts[5])["findings"][0]["instruction"], REMOVE);
+    assert_eq!(
+        fixture_task(&prompts[5]).unwrap()["findings"][0]["instruction"],
+        REMOVE
+    );
     assert_eq!(
         prompts
             .iter()
@@ -347,7 +354,10 @@ async fn plan_repair_never_adds_a_citation() -> Result<()> {
     assert_eq!(review.citations_verified, 0);
     let prompts = calls(&llm);
     assert_eq!(prompts.len(), 4);
-    assert_eq!(payload(&prompts[2])["findings"][0]["kind"], "plan");
+    assert_eq!(
+        fixture_task(&prompts[2]).unwrap()["findings"][0]["kind"],
+        "plan"
+    );
     // The rewrite changed no item text, so no item was offered for linking
     // again: every linking call precedes the first review.
     {
@@ -411,11 +421,11 @@ async fn second_plan_attempt_asks_for_the_smallest_edit() -> Result<()> {
     let prompts = llm.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 6);
     assert_ne!(
-        payload(&prompts[2])["findings"][0]["instruction"],
+        fixture_task(&prompts[2]).unwrap()["findings"][0]["instruction"],
         PLAN_SMALLEST
     );
     assert_eq!(
-        payload(&prompts[4])["findings"][0]["instruction"],
+        fixture_task(&prompts[4]).unwrap()["findings"][0]["instruction"],
         PLAN_SMALLEST
     );
     Ok(())
@@ -474,12 +484,12 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
     let prompts = calls(&llm);
     assert_eq!(prompts.len(), 7);
     assert!(prompts[3].starts_with("Plan focused reference searches"));
-    let planned = payload(&prompts[3]);
+    let planned = fixture_task(&prompts[3]).unwrap();
     assert_eq!(planned["topic"], "Experimental design module 0");
     assert_eq!(planned["gaps"][0]["claim"], claim);
     assert_eq!(planned["gaps"][0]["missingEvidence"], reason);
     assert_eq!(planned["alreadySearched"], json!([]));
-    let selection = payload(&prompts[4]);
+    let selection = fixture_task(&prompts[4]).unwrap();
     assert_eq!(selection["topic"], "Experimental design module 0");
     assert_eq!(selection["gaps"][0]["missingEvidence"], reason);
     // The judge saw the page captured a moment earlier, never a snippet.
@@ -529,17 +539,20 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
     let prompts = calls(&llm);
     // The strict judgment is the only check: no challenge call follows it.
     assert_eq!(prompts.len(), 4);
-    assert_eq!(payload(&prompts[0])["openFindings"][0]["attempts"], 0);
     assert_eq!(
-        payload(&prompts[0])["reviewScope"]["mode"],
+        fixture_task(&prompts[0]).unwrap()["openFindings"][0]["attempts"],
+        0
+    );
+    assert_eq!(
+        fixture_task(&prompts[0]).unwrap()["reviewScope"]["mode"],
         "changed_modules"
     );
     assert_eq!(
-        payload(&prompts[0])["reviewScope"]["moduleIndices"],
+        fixture_task(&prompts[0]).unwrap()["reviewScope"]["moduleIndices"],
         json!([0])
     );
     assert_eq!(
-        payload(&prompts[1])["alreadySearched"],
+        fixture_task(&prompts[1]).unwrap()["alreadySearched"],
         json!(["random assignment confounding primary source"])
     );
     assert_eq!(
@@ -683,7 +696,7 @@ async fn a_correction_that_repeats_another_modules_title_is_asked_again_and_save
     let prompts = llm.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 5);
     // The second answer was asked for on the same module task.
-    assert_eq!(payload(&prompts[3])["moduleIndex"], 0);
+    assert_eq!(fixture_task(&prompts[3]).unwrap()["moduleIndex"], 0);
     Ok(())
 }
 
@@ -744,9 +757,9 @@ async fn a_correction_still_unusable_keeps_its_module_and_repair_goes_on() -> Re
     );
     let prompts = llm.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 8);
-    assert_eq!(payload(&prompts[4])["moduleIndex"], 1);
+    assert_eq!(fixture_task(&prompts[4]).unwrap()["moduleIndex"], 1);
     assert_eq!(
-        payload(&prompts[6])["findings"][0]["instruction"],
+        fixture_task(&prompts[6]).unwrap()["findings"][0]["instruction"],
         PLAN_SMALLEST
     );
     Ok(())
@@ -914,7 +927,7 @@ async fn a_repair_may_add_a_lesson_and_keeps_every_saved_identity_in_order() -> 
     // The finding on the second lesson follows that lesson to its new place.
     let prompts = llm.prompts.lock().unwrap();
     assert_eq!(
-        payload(&prompts[2])["openFindings"][0]["path"],
+        fixture_task(&prompts[2]).unwrap()["openFindings"][0]["path"],
         "/modules/0/lessons/2"
     );
     Ok(())

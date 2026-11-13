@@ -145,7 +145,7 @@ pub(super) async fn document_updated_at(
         placeholders
     );
 
-    let mut query_builder = sqlx::query(&query);
+    let mut query_builder = sqlx::query(sqlx::AssertSqlSafe(query.as_str()));
     for id in document_ids {
         query_builder = query_builder.bind(id);
     }

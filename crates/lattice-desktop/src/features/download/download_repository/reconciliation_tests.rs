@@ -158,9 +158,9 @@ async fn reconciliation_query_uses_terminal_candidate_and_covering_status_indexe
     run_migrations(connection.database()).await.unwrap();
 
     let mut read = connection.database().begin_read().await.unwrap();
-    let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(&format!(
+    let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "EXPLAIN QUERY PLAN {TERMINAL_RECONCILIATION_QUERY}"
-    ))
+    )))
     .bind(Option::<String>::None)
     .bind(Option::<String>::None)
     .bind(64_i64)

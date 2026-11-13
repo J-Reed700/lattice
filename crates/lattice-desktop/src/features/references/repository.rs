@@ -73,7 +73,7 @@ impl PassageReferenceRepository {
     pub async fn get(&self, id: &str) -> Result<PassageReferenceRecord> {
         let query = format!("SELECT {REFERENCE_COLUMNS} FROM passage_references WHERE id = ?");
         let mut read = self.db.begin_read().await?;
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(id)
             .try_map(reference_from_row)
             .fetch_optional(&mut *read)
@@ -92,7 +92,7 @@ impl PassageReferenceRepository {
              ORDER BY created_at DESC LIMIT ? OFFSET ?"
         );
         let mut read = self.db.begin_read().await?;
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(page.sql_limit())
             .bind(page.offset())
             .try_map(reference_from_row)
@@ -114,7 +114,7 @@ impl PassageReferenceRepository {
              WHERE created_at >= ? ORDER BY created_at DESC"
         );
         let mut read = self.db.begin_read().await?;
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(cutoff)
             .try_map(reference_from_row)
             .fetch_all(&mut *read)

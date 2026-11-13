@@ -302,12 +302,14 @@ impl Waiting {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|block| LearningBlockDto {
-                    kind: LearningBlockKind::Explanation,
-                    title: block["title"].as_str().unwrap().into(),
-                    body: block["body"].as_str().unwrap().into(),
-                    source_ids: Vec::new(),
-                    rubric: Vec::new(),
+                .map(|block| {
+                    LearningBlockDto::new(
+                        LearningBlockKind::Explanation,
+                        block["title"].as_str().unwrap().into(),
+                        block["body"].as_str().unwrap().into(),
+                        Vec::new(),
+                        Vec::new(),
+                    )
                 })
                 .collect(),
             questions: Vec::new(),
@@ -687,9 +689,11 @@ mod loop_bound {
 
     #[tokio::test]
     async fn a_repair_pass_touches_only_the_failed_sentences() -> Result<()> {
+        use super::super::acceptance_switch_tests::{node_of, walk, REWRITING};
         use super::super::claim_ledger_tests::{
-            check_findings, identify_findings, only_passage, pass_report, passage_finding,
+            check_findings, identify_findings, only_passage, pass_report, passage_finding, sourced,
         };
+        use lattice_core::domain::learning::claim_review::Class;
         const SOURCE: &str = "Pure water boils at 100 °C at sea level; ice melts at 0 °C.";
         const BOILS: &str = "At sea level, water boils at 100 °C.";
         let lesson = |body: &str| json!({"blocks":[{"kind":"explanation","title":"Boiling","body":body,"rubric":[]}],"questions":[]});
@@ -701,7 +705,7 @@ mod loop_bound {
         let model = Model::new();
         let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
         let before = lesson(&body);
-        let report = pass_report(vec![
+        let report = pass_report(sourced(vec![
             passage_finding(&body, BOILS, true, SOURCE),
             passage_finding(&body, ALSO_VERIFIED, true, SOURCE),
             passage_finding(
@@ -710,9 +714,10 @@ mod loop_bound {
                 false,
                 SOURCE,
             ),
-        ]);
+        ]));
         let ids = identify_findings(&mut ledger, &before, &report).await?;
         check_findings(&mut ledger, &ids, &report.findings).await?;
+        walk(&mut ledger, &ids[2], Class::Sourced, &REWRITING).await?;
         let quotes: Vec<String> = ids
             .iter()
             .map(|id| ledger.entry(id).unwrap().location().quote.clone())
@@ -780,8 +785,8 @@ mod loop_bound {
         check_findings(&mut ledger, &ids_after[2..], &report.findings[2..]).await?;
 
         // The verified claims keep their ids, states and bases, and nothing
-        // is recorded for them; the target continues with one attempt fewer,
-        // and its check is the pass's only one.
+        // is recorded for them; the target continues at its class's post-rewrite
+        // node, and its check is the pass's only one.
         assert_eq!(ledger.finding_claims(), ids.as_slice());
         for entry in &verified {
             assert_eq!(ledger.entry(entry.claim_id()).unwrap(), entry);
@@ -789,7 +794,7 @@ mod loop_bound {
         assert_eq!(checks(&ledger), checked + 1, "one model check in the pass");
         let target = ledger.entry(&target).unwrap();
         assert_eq!(target.location().quote, FIXED);
-        assert_eq!(left(target), MACHINE_ATTEMPTS - 1);
+        assert_eq!(node_of(&ledger, &ids[2]), Some("s.final"));
         Ok(())
     }
 

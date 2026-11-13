@@ -8,17 +8,25 @@
 //! strays from its schema never stops the lesson: an unusable plan becomes
 //! one topic, and a topic an unusable judgement leaves out is uncovered.
 
-use super::{complete_json, parse_json};
+use super::{complete_json, invalid, parse_json};
 use crate::content_verification::research::research_topics;
 use crate::dto::{LearningLessonDto, LearningProgramDto, LearningSourceDto};
 use crate::lesson_drafts::{checkpoint, record_checkpoint};
 use crate::lessons::structured_call::{complete_reasoned_json, CallKind, ReasonFirst};
 use crate::model_call;
-use crate::reference_collection::{ReferenceCollection, ReferencePassage, PASSAGE_CHARS};
+use crate::model_call::ErrorClass;
+use crate::reference_collection::{
+    item_tokens, ReferenceCollection, ReferencePassage, PASSAGE_CHARS,
+};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
-use lattice_core::shared::error::{AppError, Result};
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
+use lattice_core::protocol;
+use lattice_core::shared::error::Result;
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::shared::protocol::Protocol;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -26,7 +34,7 @@ use std::collections::{HashMap, HashSet};
 /// Changes when the plan, the coverage question or their answers change.
 /// Distinct from content verification's `lesson-evidence` policy: these
 /// keys hold the lesson's topic plan and coverage judgements, not claims.
-const POLICY: &str = "lesson-topic-evidence";
+const POLICY: Protocol = protocol!("lesson-topic-evidence", 1);
 /// The plan answer's reservation; inside a lesson job an answer may take
 /// whatever its window leaves.
 const PLAN_OUTPUT_TOKENS: usize = 2000;
@@ -83,12 +91,12 @@ pub(super) async fn plan(
         .map(|module| json!({"title":module.title,"outcomes":module.outcomes,"lessonSequence":module.lessons.iter().map(|item| item.title.as_str()).collect::<Vec<_>>()}));
     let request =
         json!({"lesson":{"title":lesson.title,"objective":lesson.objective},"module":module});
-    let key = format!(
-        "{POLICY}:plan:{}",
+    let key = POLICY.key(format!(
+        "plan:{}",
         sha256_hex(
             json!({"model":llm.model_name(),"system":PLAN_SYSTEM,"request":request}).to_string()
         )
-    );
+    ));
     if let Some(topics) = checkpoint(&key)
         .await?
         .and_then(|saved| serde_json::from_value::<Vec<Topic>>(saved).ok())
@@ -100,17 +108,23 @@ pub(super) async fn plan(
     if let Some(fields) = prompt.as_object_mut() {
         fields.insert("referenceCatalog".into(), references.catalog(llm));
     }
+    let prompt = prompt.to_string();
+    let contract = ContractCall::of::<EvidencePlan>(&PromptInput {
+        system: PLAN_SYSTEM.to_owned(),
+        prompt: prompt.clone(),
+    })?;
     let planned = match complete_json(
         llm,
+        &contract,
         PLAN_SYSTEM,
-        prompt.to_string(),
+        prompt,
         plan_schema(),
         PLAN_OUTPUT_TOKENS,
     )
     .await
     {
         Ok(raw) => parse_plan(&raw),
-        Err(AppError::ModelAnswerUnusable(_)) => None,
+        Err(error) if ErrorClass::of(&error) == ErrorClass::Unusable => None,
         Err(error) => return Err(error),
     };
     let Some(topics) = planned else {
@@ -130,25 +144,96 @@ pub(super) async fn plan(
     Ok(topics)
 }
 
+/// The model call that plans the topics a lesson's evidence must cover.
+pub(crate) struct EvidencePlan;
+
+impl Contract for EvidencePlan {
+    const ID: ContractId = ContractId::new("evidence-plan");
+    type Input = PromptInput;
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for EvidencePlan
+{
+    type Answer = Vec<PlannedTopic>;
+
+    fn render(answer: &Vec<PlannedTopic>) -> String {
+        json!({ "topics": answer }).to_string()
+    }
+
+    fn read(text: &str) -> Result<Vec<PlannedTopic>> {
+        read_topics(text)
+    }
+}
+
+/// The model call that judges which gathered passages cover which topics.
+pub(crate) struct EvidenceCoverage;
+
+impl Contract for EvidenceCoverage {
+    const ID: ContractId = ContractId::new("evidence-coverage");
+    type Input = PromptInput;
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl lattice_core::application::services::model_contract::test_support::RenderAnswer
+    for EvidenceCoverage
+{
+    type Answer = Vec<CoverageEntry>;
+
+    fn render(answer: &Vec<CoverageEntry>) -> String {
+        json!({ "topics": answer }).to_string()
+    }
+
+    fn read(text: &str) -> Result<Vec<CoverageEntry>> {
+        read_coverage(text)
+    }
+}
+
+/// A topic as the plan names it, before it is cleaned.
+#[derive(serde::Serialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(Debug, PartialEq))]
+pub(crate) struct PlannedTopic {
+    topic: String,
+    queries: Vec<String>,
+}
+
+/// The topics a plan reply names: an entry without a topic or a list of
+/// searches is left out, and so is a search that is not text.
+fn read_topics(raw: &str) -> Result<Vec<PlannedTopic>> {
+    let answer: Value = parse_json(raw)?;
+    let entries = answer
+        .get("topics")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid("The evidence plan names no topics."))?;
+    Ok(entries
+        .iter()
+        .filter_map(|entry| {
+            Some(PlannedTopic {
+                topic: entry.get("topic")?.as_str()?.to_owned(),
+                queries: entry
+                    .get("queries")?
+                    .as_array()?
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect(),
+            })
+        })
+        .collect())
+}
+
 /// The usable topics of a plan answer: each named, with at least one search,
 /// searches and topics each once. None when no topic is usable.
 fn parse_plan(raw: &str) -> Option<Vec<Topic>> {
-    let answer: Value = parse_json(raw).ok()?;
     let mut names = HashSet::new();
-    let topics: Vec<Topic> = answer
-        .get("topics")?
-        .as_array()?
+    let topics: Vec<Topic> = read_topics(raw)
+        .ok()?
         .iter()
         .filter_map(|entry| {
-            let topic = entry.get("topic")?.as_str()?.trim();
+            let topic = entry.topic.trim();
             let mut queries: Vec<String> = Vec::new();
-            for query in entry
-                .get("queries")?
-                .as_array()?
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::trim)
-            {
+            for query in entry.queries.iter().map(|query| query.trim()) {
                 if !query.is_empty() && !queries.iter().any(|known| known == query) {
                     queries.push(query.to_owned());
                 }
@@ -198,11 +283,7 @@ fn passage_tokens(llm: &dyn LLMPort, references: &ReferenceCollection<'_>) -> us
 /// The index of `passage` in `store`, adding it unless a passage of the same
 /// source already spans any of its bytes.
 fn intern(store: &mut Vec<ReferencePassage>, passage: ReferencePassage) -> usize {
-    if let Some(index) = store.iter().position(|known| {
-        known.source_id == passage.source_id
-            && known.start_byte < passage.end_byte
-            && passage.start_byte < known.end_byte
-    }) {
+    if let Some(index) = store.iter().position(|known| known.overlaps(&passage)) {
         return index;
     }
     store.push(passage);
@@ -492,9 +573,46 @@ fn coverage_groups(
     groups
 }
 
+/// What a coverage reply says of one topic: its id and the ids of the
+/// passages it names as covering it.
+#[derive(serde::Serialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(Debug, PartialEq))]
+pub(crate) struct CoverageEntry {
+    id: String,
+    covering: Vec<String>,
+}
+
+/// The entries of a coverage answer: one without an id is left out, a
+/// missing list of passages is empty, and an id that is not text is left out.
+fn coverage_entries(answer: &Value) -> Vec<CoverageEntry> {
+    answer
+        .get("topics")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            Some(CoverageEntry {
+                id: entry.get("id")?.as_str()?.to_owned(),
+                covering: entry
+                    .get("covering")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect(),
+            })
+        })
+        .collect()
+}
+
+fn read_coverage(raw: &str) -> Result<Vec<CoverageEntry>> {
+    parse_json::<Value>(raw).map(|answer| coverage_entries(&answer))
+}
+
 /// The passages the answer says cover each topic of `call`. Unknown topic or
 /// passage ids are ignored; a topic the answer leaves out covers nothing.
-fn decisions(answer: &Value, call: &CoverageCall) -> Vec<(usize, Vec<usize>)> {
+fn decisions(answer: &[CoverageEntry], call: &CoverageCall) -> Vec<(usize, Vec<usize>)> {
     let local = |id: &str, prefix: char| {
         id.strip_prefix(prefix)?
             .parse::<usize>()
@@ -502,18 +620,8 @@ fn decisions(answer: &Value, call: &CoverageCall) -> Vec<(usize, Vec<usize>)> {
             .checked_sub(1)
     };
     let mut found: Vec<(usize, Vec<usize>)> = Vec::new();
-    for entry in answer
-        .get("topics")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        let Some(topic) = entry
-            .get("id")
-            .and_then(Value::as_str)
-            .and_then(|id| local(id, 't'))
-            .filter(|topic| call.topics.contains(topic))
-        else {
+    for entry in answer {
+        let Some(topic) = local(&entry.id, 't').filter(|topic| call.topics.contains(topic)) else {
             continue;
         };
         // The first decision for a topic counts.
@@ -522,11 +630,8 @@ fn decisions(answer: &Value, call: &CoverageCall) -> Vec<(usize, Vec<usize>)> {
         }
         let mut passages = Vec::new();
         for passage in entry
-            .get("covering")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
+            .covering
+            .iter()
             .filter_map(|id| local(id, 'p'))
             .filter_map(|position| call.passages.get(position).copied())
         {
@@ -581,18 +686,23 @@ async fn judge(
             groups.push(group);
             continue;
         }
-        let key = format!(
-            "{POLICY}:coverage:{}",
+        let key = POLICY.key(format!(
+            "coverage:{}",
             sha256_hex(
                 json!({"model":llm.model_name(),"system":COVERAGE_SYSTEM,"prompt":call.prompt})
                     .to_string()
             )
-        );
+        ));
         let answer = match checkpoint(&key).await? {
-            Some(saved) => saved,
+            Some(saved) => coverage_entries(&saved),
             None => {
+                let contract = ContractCall::of::<EvidenceCoverage>(&PromptInput {
+                    system: COVERAGE_SYSTEM.to_owned(),
+                    prompt: call.prompt.clone(),
+                })?;
                 let raw = complete_reasoned_json(
                     llm,
+                    &contract,
                     COVERAGE_SYSTEM,
                     call.prompt.clone(),
                     call.schema.clone(),
@@ -606,19 +716,21 @@ async fn judge(
                 )
                 .await;
                 let answer = match raw {
-                    Ok(raw) => parse_json::<Value>(&raw).map_err(|error| error.to_string()),
-                    Err(AppError::ModelAnswerUnusable(reason)) => Err(reason),
+                    Ok(raw) => read_coverage(&raw).map_err(|error| error.to_string()),
+                    Err(error) if ErrorClass::of(&error) == ErrorClass::Unusable => {
+                        Err(error.to_string())
+                    }
                     Err(error) => return Err(error),
                 };
                 match answer {
                     Ok(answer) => {
-                        record_checkpoint(&key, answer.clone()).await?;
+                        record_checkpoint(&key, json!({ "topics": answer })).await?;
                         answer
                     }
                     // Unrecorded, so a resumed job asks again.
                     Err(error) => {
                         tracing::warn!(%error, topics = call.topics.len(), "Lesson evidence check answer was unreadable; its topics count as uncovered");
-                        Value::Null
+                        Vec::new()
                     }
                 }
             }
@@ -685,14 +797,17 @@ pub(super) fn pack(
             let Some(passage) = gathered.passages.get(index) else {
                 continue;
             };
-            let mut cost = llm.count_tokens(&json!(passage.text).to_string()) + 2;
+            let mut cost = item_tokens(llm, &json!(passage.text));
             let new_source = !sources.contains(passage.source_id.as_str());
             if new_source {
                 let source = references
                     .sources
                     .iter()
                     .find(|source| source.id == passage.source_id);
-                cost += llm.count_tokens(&json!({"sourceIndex":added.len(),"title":source.map(|s| s.title.as_str()),"url":source.and_then(|s| s.url.as_deref()),"excerpt":""}).to_string()) + 2;
+                cost += item_tokens(
+                    llm,
+                    &json!({"sourceIndex":added.len(),"title":source.map(|s| s.title.as_str()),"url":source.and_then(|s| s.url.as_deref()),"excerpt":""}),
+                );
             }
             if cost > remaining {
                 continue;

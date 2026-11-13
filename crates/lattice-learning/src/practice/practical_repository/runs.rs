@@ -9,7 +9,7 @@ use crate::lab_runtime::{
     self, LearningContainerEngine, LearningLabExecutionResult, LearningLabExecutionSpec,
     LearningLabFile, LearningLabLimits, LearningLabRunStatus,
 };
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use crate::practical_dto::*;
 use crate::practical_runs::CodingRunStart;
 use crate::practice::coding::harness::{harness_for, new_nonce, RunEnd};
@@ -126,7 +126,7 @@ impl LearningPracticalRepository {
             uuid(session_id, "practice session")?;
         }
         let evaluator = coding.map(coding_harness).transpose()?;
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let operation = practical_operation(
             "practical_run",
             &request.operation_id,
@@ -137,7 +137,7 @@ impl LearningPracticalRepository {
             "Operation ID was reused with different run data.",
         );
         if operation.seen(&mut tx).await? {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(None);
         }
         Self::active_program(&mut tx, &request.program_id).await?;
@@ -160,8 +160,7 @@ impl LearningPracticalRepository {
             .bind(&request.program_id)
             .bind(session_id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
             if owned.is_none() {
                 return Err(invalid("Practice session does not belong to this program."));
             }
@@ -275,9 +274,9 @@ impl LearningPracticalRepository {
             .bind(&activity.builtin_runtime_version)
             .bind(coding.map(|coding| coding.exercise_session_id.as_str()))
             .bind(coding.map(|coding| coding.scope.as_str()))
-            .execute(&mut *tx).await.map_err(db)?;
+            .execute(&mut *tx).await?;
         operation.record(&mut tx, &()).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         let dto = self.run(&request.run_id).await?;
         Ok(Some(PreparedRun {
             dto,
@@ -359,12 +358,12 @@ impl LearningPracticalRepository {
             })
             .collect::<Vec<_>>();
         let timestamp = now();
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let updated = sqlx::query("UPDATE learning_practical_runs SET status=?,stdout=?,stderr=?,output_truncated=?,exit_code=?,duration_ms=?,check_results_json=?,completed_at=? WHERE id=? AND status='running'")
             .bind(status_name(&status)).bind(&stdout).bind(&execution.stderr)
             .bind(execution.output_truncated as i64).bind(execution.exit_code.map(i64::from))
             .bind(execution.duration_ms).bind(json(&summary)?).bind(timestamp)
-            .bind(&prepared.dto.id).execute(&mut *tx).await.map_err(db)?;
+            .bind(&prepared.dto.id).execute(&mut *tx).await?;
         if updated.rows_affected() == 1 {
             for (ordinal, check) in checks.iter().enumerate() {
                 let detail_json = check.detail.as_ref().map(json).transpose()?;
@@ -377,8 +376,7 @@ impl LearningPracticalRepository {
                     .bind(check.duration_ms)
                     .bind(detail_json)
                     .execute(&mut *tx)
-                    .await
-                    .map_err(db)?;
+                    .await?;
             }
             if prepared.harness.is_none()
                 && !matches!(
@@ -396,11 +394,11 @@ impl LearningPracticalRepository {
                         .bind(if status==LearningPracticalRunStatus::Passed{1.0}else{0.0})
                         .bind(message).bind(Option::<String>::None)
                         .bind(json(&serde_json::json!({"mode":prepared.practice_mode,"allowedAids":prepared.allowed_aids}))?)
-                        .bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+                        .bind(timestamp).execute(&mut *tx).await?;
                 }
             }
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -412,7 +410,7 @@ impl LearningPracticalRepository {
         uuid(&request.operation_id, "operation")?;
         uuid(&request.program_id, "program")?;
         uuid(&request.run_id, "run")?;
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let operation = practical_operation(
             "practical_run",
             &request.operation_id,
@@ -423,20 +421,19 @@ impl LearningPracticalRepository {
             "Operation ID was reused with different cancellation data.",
         );
         if operation.seen(&mut tx).await? {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return self.run(&request.run_id).await;
         }
         let timestamp = now();
         let changed = sqlx::query("UPDATE learning_practical_runs SET status='cancelled',stderr='Run cancelled by the learner.',completed_at=? WHERE id=? AND program_id=? AND status IN ('pending','running')")
             .bind(timestamp).bind(&request.run_id).bind(&request.program_id)
-            .execute(&mut *tx).await.map_err(db)?;
+            .execute(&mut *tx).await?;
         let exists: Option<i64> =
             sqlx::query_scalar("SELECT 1 FROM learning_practical_runs WHERE id=? AND program_id=?")
                 .bind(&request.run_id)
                 .bind(&request.program_id)
                 .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         if exists.is_none() {
             return Err(AppError::NotFound("Practical run not found".into()));
         }
@@ -444,38 +441,37 @@ impl LearningPracticalRepository {
         let changed = changed.rows_affected() == 1;
         if changed {
             sqlx::query("INSERT OR IGNORE INTO learning_practical_run_checks(run_id,ordinal,name,status,message,duration_ms) VALUES(?,0,'Contained evaluator','not_run','The run was cancelled; its contained evaluator was told to stop.',NULL)")
-                .bind(&request.run_id).execute(&mut *tx).await.map_err(db)?;
+                .bind(&request.run_id).execute(&mut *tx).await?;
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         self.run(&request.run_id).await
     }
 
     pub(crate) async fn run_cleanup(&self, id: &str) -> Result<RunCleanup> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let row = sqlx::query(
             "SELECT id,engine,activity_snapshot_json FROM learning_practical_runs WHERE id=?",
         )
         .bind(id)
         .fetch_one(&mut *read)
-        .await
-        .map_err(db)?;
-        read.commit().await.map_err(db)?;
+        .await?;
+        read.commit().await?;
         cleanup_record(&row)
     }
 
     pub(crate) async fn unfinished_runs(&self) -> Result<Vec<RunCleanup>> {
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let rows = sqlx::query("SELECT id,engine,activity_snapshot_json FROM learning_practical_runs WHERE status IN ('pending','running')")
-            .fetch_all(&mut *read).await.map_err(db)?;
-        read.commit().await.map_err(db)?;
+            .fetch_all(&mut *read).await?;
+        read.commit().await?;
         rows.iter().map(cleanup_record).collect()
     }
 
     pub(crate) async fn mark_runs_interrupted(&self) -> Result<usize> {
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let changed = sqlx::query("UPDATE learning_practical_runs SET status='interrupted',stderr='The desktop process stopped before the run completed.',completed_at=? WHERE status IN ('pending','running')")
-            .bind(now()).execute(&mut *tx).await.map_err(db)?;
-        tx.commit().await.map_err(db)?;
+            .bind(now()).execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(changed.rows_affected() as usize)
     }
 }

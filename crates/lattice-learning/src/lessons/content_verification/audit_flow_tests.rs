@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{ModelOrigin, PinnedModel, ResolvedModel};
 use lattice_core::application::ports::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
-    Checker, ClaimEvent, ClaimState, LessonReviewState, ReopenCause, VerdictKind,
+    Checker, ClaimEvent, ClaimState, LessonReviewState, ReopenCause, StopCode, VerdictKind,
 };
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
 use serde_json::json;
@@ -331,8 +331,8 @@ async fn without_consent_nothing_is_sent_and_resume_needs_no_claim_change() -> R
         .unwrap();
     assert_eq!(review.state, LessonReviewState::NeedsReview);
     assert_eq!(
-        review.stop_reason.map(|stop| stop.code).as_deref(),
-        Some("verifier_consent_missing")
+        review.stop_reason.map(|stop| stop.code),
+        Some(StopCode::VerifierConsentMissing)
     );
 
     // The fix is the course's switch, not a claim: Resume is not refused.

@@ -1,4 +1,3 @@
-use crate::persistence::db;
 use crate::references::trust::overrides::CoveredVersion;
 use lattice_core::domain::provenance::OverrideScope;
 use lattice_core::shared::error::Result;
@@ -25,8 +24,7 @@ pub(in crate::references::trust) async fn source_versions(
     .bind(program_id)
     .bind(source_id)
     .fetch_all(&mut *conn)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(covered_ids(&rows))
 }
 
@@ -39,8 +37,7 @@ pub(in crate::references::trust) async fn site_versions(
     )
     .bind(registrable_domain)
     .fetch_all(&mut *conn)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(covered_ids(&rows))
 }
 
@@ -49,7 +46,7 @@ pub(in crate::references::trust) async fn site_outcome_counts(
     database: &Database,
     sites: &[&str],
 ) -> Result<Vec<(String, i64, i64)>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let counts = sqlx::query_as(
         "SELECT p.site, SUM(o.decision_sufficient=o.decision_right),
                         SUM(o.decision_sufficient<>o.decision_right)
@@ -60,9 +57,8 @@ pub(in crate::references::trust) async fn site_outcome_counts(
     )
     .bind(serde_json::to_string(sites)?)
     .fetch_all(&mut *read)
-    .await
-    .map_err(db)?;
-    read.commit().await.map_err(db)?;
+    .await?;
+    read.commit().await?;
     Ok(counts)
 }
 

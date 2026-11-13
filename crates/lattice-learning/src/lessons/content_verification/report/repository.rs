@@ -4,10 +4,6 @@ use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::WriteTx;
 use sqlx::SqliteConnection;
 
-fn failed(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
-}
-
 /// The text of the source's active version `version_id`, when the source is
 /// not deleted.
 pub(super) async fn active_version_text(
@@ -20,7 +16,7 @@ pub(super) async fn active_version_text(
         .bind(program_id)
         .fetch_optional(&mut *connection)
         .await
-        .map_err(failed)
+        .map_err(AppError::from)
 }
 
 pub(super) struct StoredReport<'a> {
@@ -41,8 +37,7 @@ pub(super) async fn insert_report(tx: &mut WriteTx, report: &StoredReport<'_>) -
         .bind(report.report_json)
         .bind(report.checked_at)
         .execute(&mut **tx)
-        .await
-        .map_err(failed)?;
+        .await?;
     Ok(())
 }
 
@@ -52,7 +47,6 @@ pub(super) async fn mark_review_ready(tx: &mut WriteTx, lesson_id: &str, at: i64
         .bind(at)
         .bind(lesson_id)
         .execute(&mut **tx)
-        .await
-        .map_err(failed)?;
+        .await?;
     Ok(())
 }

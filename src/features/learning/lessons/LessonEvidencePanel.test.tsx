@@ -95,7 +95,7 @@ describe('lesson evidence', () => {
     } });
     show();
     await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
-    expect(await screen.findByText(/12 statements verified against sources · 3 confirmed by you/)).toBeVisible();
+    expect(await screen.findByText(/11 statements verified against sources · 3 confirmed by you/)).toBeVisible();
     const confirmed = screen.getByText('Confirmed by you');
     expect(confirmed.className).not.toMatch(/emerald/);
     expect(screen.getByText(/Rounded for beginners/)).toBeVisible();
@@ -141,6 +141,25 @@ describe('lesson evidence', () => {
       expect(screen.getByText('Standard knowledge of the field.')).toBeVisible();
     });
 
+    it('names the parts of a sourced statement that are the lesson’s own figures, beside the common ones', async () => {
+      const stated = { part: 'Quillet is a lexer', kind: 'stated', sourceVersionId: 'version-5' };
+      const own = { part: '12 of 48 is 25%', kind: 'own', sourceVersionId: null };
+      const common = { part: 'a lexer turns characters into tokens', kind: 'common', sourceVersionId: null };
+      mocks.evidence.mockResolvedValue({ ok: true, data: {
+        ...data,
+        teachingClaims: [
+          claim({ claim: 'Quillet is a lexer, and 12 of 48 is 25%.', passages: [manual], parts: [stated, own] }),
+          claim({ claim: 'Quillet is a lexer that turns characters into tokens, and 12 of 48 is 25%.', passages: [manual], parts: [stated, common, own] }),
+        ],
+      } });
+      show();
+      await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
+
+      expect(await screen.findAllByText(/The lesson's own figures, not in the source/)).toHaveLength(2);
+      expect(screen.getAllByText('12 of 48 is 25%')).toHaveLength(2);
+      expect(screen.getAllByText(/Common knowledge, not in the source/)).toHaveLength(1);
+    });
+
     it('counts them apart beside the section they are in', async () => {
       const report = { data, isFetching: false, isError: false } as unknown as LessonEvidenceQuery;
       render(<LessonSectionEvidence report={report} sectionIndex={0} />);
@@ -156,6 +175,15 @@ describe('lesson evidence', () => {
 
       expect(await screen.findByText(/1 statement verified against sources · 1 consistent with their sources · 1 confirmed by you/)).toBeVisible();
       expect(screen.queryByText(/common knowledge, not checked against a source/)).not.toBeInTheDocument();
+    });
+
+    it('does not count a claim whose source was removed as verified', async () => {
+      const removed = { ...data, claimCount: 2, confirmedCount: 0, teachingClaims: [claim({ claim: 'Kept.' }), claim({ claim: 'Lost its source.', resolution: 'source_removed' })] };
+      mocks.evidence.mockResolvedValue({ ok: true, data: removed });
+      show();
+      await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
+
+      expect(await screen.findByText(/1 statement verified against sources/)).toBeVisible();
     });
   });
 });

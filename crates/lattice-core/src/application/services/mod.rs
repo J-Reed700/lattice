@@ -9,6 +9,7 @@ pub mod evidence_retrieval;
 pub mod grounded_generation;
 pub mod history_share;
 pub mod live_index;
+pub mod model_contract;
 pub mod model_selection;
 pub mod source_trust;
 pub mod sourcing;

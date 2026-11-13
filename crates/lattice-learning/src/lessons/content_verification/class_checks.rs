@@ -4,19 +4,13 @@
 //! statement is asked next is the acceptance policy's; the readings in
 //! `readings` ask these judges along its graphs. Every judgment is saved as a
 //! receipt, so a resumed pass asks nothing twice.
-use super::claim_ledger::{sentences, Place, Rewrites};
-use super::classify::{classify, rule_class, Case, ToSort};
+use super::classify::{classify, ruling, saved_class, Case, ToSort};
 use super::*;
-use crate::lessons::call_plan::{Planned, PlannedAt, SAMPLES};
 use lattice_core::application::services::claim_verification::{
     ClassJudgment, ConsistencyOutcome, KnowledgeOutcome, KnowledgeSample, KnowledgeVerdict,
     CONSISTENCY_POLICY, KNOWLEDGE_POLICY,
 };
-use lattice_core::domain::learning::acceptance::AcceptancePolicy;
-
-/// Tokens a passage costs beside its text in the consistency check: its
-/// label and the blank line after it.
-const LABEL_TOKENS: usize = 12;
+use lattice_core::domain::learning::acceptance::KNOWLEDGE_SAMPLES;
 
 /// The class of each of `claims`, in order: the one `given` holds for it,
 /// which the match of the pass gave (that of the claim it continues, or of the
@@ -26,11 +20,9 @@ const LABEL_TOKENS: usize = 12;
 /// in its lineage, so only a statement new to the ledger is sorted.
 pub(super) async fn sort(
     llm: &dyn LLMPort,
-    policy: &dyn AcceptancePolicy,
     candidate: &Value,
     claims: &[(usize, Claim)],
     given: &[Option<Classed>],
-    rewrites: &Rewrites,
     citations: &Citations,
 ) -> Result<Vec<Classed>> {
     let fields: Vec<String> = claims
@@ -54,18 +46,21 @@ pub(super) async fn sort(
                 class: Class::Sourced,
                 by: ClassifiedBy::Writer,
             }),
-            None => match rule_class(&claim.statement, field, case) {
-                Some(class) => Some(Classed {
-                    class,
-                    by: ClassifiedBy::Rule,
-                }),
-                None => saved_class(llm, &claim.statement)
-                    .await?
-                    .map(|class| Classed {
+            None => {
+                let ruling = ruling(&claim.statement, field, case);
+                match ruling.decided() {
+                    Some(class) => Some(Classed {
                         class,
-                        by: ClassifiedBy::Model,
+                        by: ClassifiedBy::Rule,
                     }),
-            },
+                    None => saved_class(llm, &claim.statement)
+                        .await?
+                        .map(|class| Classed {
+                            class: ruling.settle(class),
+                            by: ClassifiedBy::Model,
+                        }),
+                }
+            }
         });
     }
     {
@@ -87,8 +82,7 @@ pub(super) async fn sort(
                 })
                 .collect();
             let answered = classify(llm, &to_sort).await?;
-            for ((slot, statement, _, _), (class, by)) in open.into_iter().zip(answered) {
-                save_class(llm, statement, class).await?;
+            for ((slot, _, _, _), (class, by)) in open.into_iter().zip(answered) {
                 *slot = Some(Classed { class, by });
             }
         }
@@ -97,53 +91,7 @@ pub(super) async fn sort(
         .into_iter()
         .collect::<Option<Vec<_>>>()
         .ok_or_else(|| AppError::InternalError("A statement was left without a class".into()))?;
-    plan_calls(policy, rewrites, &classes, claims, &fields);
     Ok(classes)
-}
-
-/// The calls the statements' checks can make, now that each has a class: where
-/// each stands in its class's graph, as the ledger has it, and which of them
-/// stand on one sentence. A statement the rule layer leaves out asks nothing
-/// and is not counted (`Classed::checked`).
-fn plan_calls(
-    policy: &dyn AcceptancePolicy,
-    rewrites: &Rewrites,
-    classes: &[Classed],
-    claims: &[(usize, Claim)],
-    fields: &[String],
-) {
-    let counted: Vec<(Class, Place<'_>, &str)> = classes
-        .iter()
-        .zip(claims.iter().zip(fields))
-        .filter(|(classed, _)| classed.checked())
-        .map(|(classed, ((unit, claim), field))| {
-            (
-                classed.class,
-                Place {
-                    unit: *unit,
-                    field: field.as_str(),
-                    quote: claim.quote.as_str(),
-                },
-                claim.statement.as_str(),
-            )
-        })
-        .collect();
-    let places: Vec<Place<'_>> = counted.iter().map(|(_, place, _)| *place).collect();
-    let statements: Vec<Planned> = counted
-        .iter()
-        .zip(sentences(&places))
-        .map(|((class, place, statement), sentence)| Planned {
-            class: *class,
-            at: PlannedAt::of(rewrites.walked(place.unit, statement)),
-            sentence,
-        })
-        .collect();
-    let sections: HashSet<usize> = places.iter().map(|place| place.unit).collect();
-    crate::lesson_progress::calls_planned(
-        policy,
-        &statements,
-        u32::try_from(sections.len()).unwrap_or(u32::MAX),
-    );
 }
 
 /// The finding of a statement a reading decided.
@@ -187,8 +135,9 @@ pub(super) fn unjudged_finding(
     )
 }
 
-/// Why a statement the model called false fails.
-pub(super) fn vetoed(knowledge: &KnowledgeOutcome) -> String {
+/// Why a statement the model called false fails, `with_case` when it was
+/// asked with the case it comes from.
+pub(super) fn vetoed(knowledge: &KnowledgeOutcome, with_case: bool) -> String {
     let says_false = |sample: &&KnowledgeSample| sample.verdict == KnowledgeVerdict::False;
     let reason = knowledge
         .samples
@@ -196,8 +145,13 @@ pub(super) fn vetoed(knowledge: &KnowledgeOutcome) -> String {
         .find(says_false)
         .map(|sample| sample.reason.as_str())
         .unwrap_or_default();
+    let asked = if with_case {
+        "Asked with only the case it comes from"
+    } else {
+        "Asked on its own"
+    };
     format!(
-        "Asked on its own, the model calls this false ({} of {}): {reason}",
+        "{asked}, the model calls this false ({} of {}): {reason}",
         knowledge.samples.iter().filter(says_false).count(),
         knowledge.samples.len()
     )
@@ -213,31 +167,10 @@ pub(super) fn standard(knowledge: &KnowledgeOutcome) -> String {
     format!("Standard knowledge: {reason}")
 }
 
-/// The passages of a section, as many as the consistency check of
-/// `statement` holds beside its answer.
-pub(super) fn fitted(
-    llm: &dyn LLMPort,
-    statement: &str,
-    passages: &[EvidencePassage],
-) -> Vec<EvidencePassage> {
-    let checker = consistency_checker(llm);
-    let room = checker.consistency_evidence_room(statement);
-    let mut used = 0usize;
-    passages
-        .iter()
-        .take_while(|passage| {
-            used = used.saturating_add(llm.count_tokens(&passage.text) + LABEL_TOKENS);
-            used <= room
-        })
-        .cloned()
-        .collect()
-}
-
-fn consistency_checker(llm: &dyn LLMPort) -> ClaimChecker<'_> {
-    ClaimChecker::new(
+pub(super) fn consistency_checker(llm: &dyn LLMPort) -> ClaimChecker<'_> {
+    ClaimChecker::for_policy(
         llm,
         SamplingOverride::deterministic(),
-        CHECKER_OUTPUT_TOKENS,
         CheckPolicy::Consistency,
     )
 }
@@ -308,8 +241,9 @@ pub(super) async fn consistency_of(
     }
 }
 
-/// Where the knowledge judge's three samples on `statement` are saved.
-pub(super) fn knowledge_key(llm: &dyn LLMPort, statement: &str) -> String {
+/// Where the knowledge judge's three samples on `statement`, asked with
+/// `case`, are saved.
+pub(super) fn knowledge_key(llm: &dyn LLMPort, statement: &str, case: Option<&str>) -> String {
     format!(
         "{KNOWLEDGE_POLICY}:{}",
         sha256_hex(
@@ -317,6 +251,7 @@ pub(super) fn knowledge_key(llm: &dyn LLMPort, statement: &str) -> String {
                 "model": llm.model_name(),
                 "context": llm.max_context_tokens(),
                 "statement": statement,
+                "case": case,
             })
             .to_string()
         )
@@ -331,23 +266,25 @@ pub(super) async fn saved_knowledge(key: &str) -> Result<Option<KnowledgeOutcome
         .and_then(|value| serde_json::from_value::<KnowledgeOutcome>(value).ok()))
 }
 
-/// The knowledge judge's three samples on `statement`, asked for and saved
-/// under `key`. `None` when a reply could not be read.
+/// The knowledge judge's three samples on `statement` and its `case`, asked
+/// for and saved under `key`. `None` when a reply could not be read.
 pub(super) async fn knowledge_of(
     llm: &dyn LLMPort,
     key: &str,
     statement: &str,
+    case: Option<&str>,
 ) -> Result<Option<KnowledgeOutcome>> {
-    let checker = ClaimChecker::new(
+    let checker = ClaimChecker::for_policy(
         llm,
         SamplingOverride::deterministic(),
-        CHECKER_OUTPUT_TOKENS,
         CheckPolicy::Knowledge,
     );
     let judged = {
-        let _model_calls =
-            crate::lesson_progress::model_calls(SAMPLES, crate::lesson_progress::Term::Reading);
-        checker.check_knowledge(statement).await
+        let _model_calls = crate::lesson_progress::model_calls(
+            KNOWLEDGE_SAMPLES,
+            crate::lesson_progress::Term::Reading,
+        );
+        checker.check_knowledge(statement, case).await
     };
     match judged {
         ClassJudgment::Judged(outcome) => {
@@ -357,26 +294,4 @@ pub(super) async fn knowledge_of(
         ClassJudgment::Unusable => Ok(None),
         ClassJudgment::Failed(error) => Err(error),
     }
-}
-
-fn class_key(llm: &dyn LLMPort, statement: &str) -> String {
-    format!(
-        "classes-v1:{}",
-        sha256_hex(json!({"model": llm.model_name(), "statement": statement}).to_string())
-    )
-}
-
-/// The class the model gave `statement`, when it was asked before.
-async fn saved_class(llm: &dyn LLMPort, statement: &str) -> Result<Option<Class>> {
-    Ok(crate::lesson_drafts::checkpoint(&class_key(llm, statement))
-        .await?
-        .and_then(|value| serde_json::from_value(value).ok()))
-}
-
-async fn save_class(llm: &dyn LLMPort, statement: &str, class: Class) -> Result<()> {
-    crate::lesson_drafts::record_checkpoint(
-        &class_key(llm, statement),
-        serde_json::to_value(class)?,
-    )
-    .await
 }

@@ -974,7 +974,9 @@ fn changing_only_a_remote_servers_auth_value_drops_only_that_servers_models() {
 fn refusals_say_what_is_wrong_with_the_numbers_and_the_fix() {
     use refusal::{no_tools, not_downloaded, window_too_small, Window};
     let message = |error: AppError| match error {
-        AppError::InvalidConfig(message) | AppError::AiModelsNotInstalled(message) => message,
+        AppError::InvalidConfig(message)
+        | AppError::WindowTooSmall(message)
+        | AppError::AiModelsNotInstalled(message) => message,
         other => panic!("unexpected refusal {other:?}"),
     };
 

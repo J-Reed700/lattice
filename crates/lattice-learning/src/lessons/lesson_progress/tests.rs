@@ -1,7 +1,18 @@
 #![allow(clippy::unwrap_used, clippy::panic)]
 use super::*;
-use crate::lessons::call_plan::PlannedAt;
+use crate::lessons::call_plan::{Joining, PlannedAt};
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::domain::learning::acceptance::StandardPolicy;
+use lattice_core::shared::runtime::jobs::{current_observer, QueueExit};
+
+struct Probe;
+
+impl Contract for Probe {
+    const ID: ContractId = ContractId::new("progress-probe");
+    type Input = PromptInput;
+}
 
 #[tokio::test]
 async fn structured_progress_tracks_repeated_phases_and_concurrent_model_requests() {
@@ -117,7 +128,8 @@ async fn lesson_model_can_run_past_old_deadlines_and_reports_stream_activity() -
     let progress = Progress::default();
     CURRENT.scope(progress.clone(), async {
         stage("Writing lesson");
-        crate::generation::complete_json(&SlowModel, "Teach", "Lesson".into(), serde_json::json!({"type":"object"}), 4000).await?;
+        let call = ContractCall::of::<Probe>(&PromptInput { system: "Teach".into(), prompt: "Lesson".into() })?;
+        crate::generation::complete_json(&SlowModel, &call, "Teach", "Lesson".into(), serde_json::json!({"type":"object"}), 4000).await?;
         assert!(progress.snapshot().2.response_characters > 0);
         assert!(!progress.snapshot().2.model_running);
         use lattice_core::application::services::claim_verification::{CheckPolicy, ClaimChecker, ClaimEvidence, ClaimJudgment, ClaimVerdict};
@@ -195,19 +207,25 @@ async fn calls_are_counted_and_the_ceiling_appears_once_the_statements_are_sorte
             );
 
             let policy = StandardPolicy::new();
-            let alone = |class, at| Planned {
-                class,
-                at,
-                sentence: None,
+            let alone = |class, at| Planned { class, at };
+            let joining = |class| Joining {
+                planned: alone(class, PlannedAt::Entry),
+                beside: Vec::new(),
             };
-            let statements = [
-                alone(Class::Sourced, PlannedAt::Entry),
-                alone(Class::Common, PlannedAt::Entry),
-                alone(Class::Common, PlannedAt::Entry),
-            ];
+            let claims = ["first", "second", "third"].map(|name| ClaimId(name.into()));
             assert_eq!(progress.snapshot().2.statements, None);
-            calls_planned(&policy, &statements, 1);
-            // The plan is what the statements were sorted into.
+            statements_moved(
+                &policy,
+                1,
+                &claims,
+                &[],
+                &[
+                    joining(Class::Sourced),
+                    joining(Class::Common),
+                    joining(Class::Common),
+                ],
+            );
+            // The plan is what the statements are in.
             assert_eq!(
                 progress.snapshot().2.statements,
                 Some(LearningStatementPlan {
@@ -217,22 +235,29 @@ async fn calls_are_counted_and_the_ceiling_appears_once_the_statements_are_sorte
                 })
             );
             // The sorting call made (1), the longest path of each
-            // statement from its entry (16 for the Sourced one, 16 for
+            // statement from its entry (19 for the Sourced one, 19 for
             // each Common one) and the flow repair of the section (1).
-            assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(50));
-            calls_planned(&policy, &[], 0);
-            assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(50));
+            assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(59));
+            // Naming the same statements again, where they were, changes nothing.
+            let entry = [
+                alone(Class::Sourced, PlannedAt::Entry),
+                alone(Class::Common, PlannedAt::Entry),
+                alone(Class::Common, PlannedAt::Entry),
+            ];
+            statements_moved(&policy, 1, &claims, &entry, &[]);
+            assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(59));
 
             // The Sourced statement is resolved: its path is over.
             statements_moved(
                 &policy,
-                &[],
-                &[alone(Class::Sourced, PlannedAt::Ended)],
+                1,
+                &claims,
+                &[alone(Class::Sourced, PlannedAt::Ended(None))],
                 &[],
             );
-            assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(34));
+            assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(40));
             cuts_known(0);
-            assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(33));
+            assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(39));
             checks(async { drop(model_calls(3, Term::Reading)) }).await;
             assert_eq!(progress.snapshot().2.model_calls, 4);
 
@@ -252,11 +277,18 @@ fn a_ceiling_that_goes_up_is_counted_and_one_that_comes_down_is_not() {
     let sourced = |at| Planned {
         class: Class::Sourced,
         at,
-        sentence: None,
     };
+    let mut plan = CallPlan::empty(1);
+    plan.take_in(
+        &policy,
+        &[Joining {
+            planned: sourced(PlannedAt::Entry),
+            beside: Vec::new(),
+        }],
+    );
     // The sort made one call.
     let mut state = State {
-        plan: Some(CallPlan::new(&policy, &[sourced(PlannedAt::Entry)], 1)),
+        plan: Some(plan),
         activity: LearningGenerationActivity {
             model_calls: 1,
             ..Default::default()
@@ -265,12 +297,12 @@ fn a_ceiling_that_goes_up_is_counted_and_one_that_comes_down_is_not() {
     };
     publish_ceiling(&mut state, Change::default());
     let first = state.activity.model_calls_ceiling.unwrap();
-    assert_eq!(first, 1 + 16 + 1);
+    assert_eq!(first, 1 + 19 + 1);
     assert_eq!(state.activity.model_calls_ceiling_rises, 0);
 
     // The plan's own events only lower it.
     if let Some(plan) = state.plan.as_mut() {
-        plan.moved(&policy, &[sourced(PlannedAt::Ended)]);
+        plan.moved(&policy, &[sourced(PlannedAt::Ended(None))]);
     }
     publish_ceiling(&mut state, Change::default());
     assert_eq!(state.activity.model_calls_ceiling, Some(2));
@@ -295,11 +327,21 @@ async fn a_flow_repair_with_its_call_leaves_the_ceiling_where_it_was_and_one_wit
             let statement = |at| Planned {
                 class: Class::Sourced,
                 at,
-                sentence: None,
             };
             let ceiling = || progress.snapshot().2.model_calls_ceiling;
-            calls_planned(&policy, &[statement(PlannedAt::Entry)], 2);
-            statements_moved(&policy, &[], &[statement(PlannedAt::Ended)], &[]);
+            let claim = [ClaimId("only".into())];
+            let joining = Joining {
+                planned: statement(PlannedAt::Entry),
+                beside: Vec::new(),
+            };
+            statements_moved(&policy, 2, &claim, &[], &[joining]);
+            statements_moved(
+                &policy,
+                2,
+                &claim,
+                &[statement(PlannedAt::Ended(None))],
+                &[],
+            );
             cuts_known(2);
             // The sorting call made (1) and the flow repair of each of the
             // two sections that took a cut.
@@ -310,7 +352,13 @@ async fn a_flow_repair_with_its_call_leaves_the_ceiling_where_it_was_and_one_wit
             flow_repaired();
             assert_eq!(ceiling(), Some(3));
             // The pass after the repairs does not raise it.
-            statements_moved(&policy, &[], &[statement(PlannedAt::Ended)], &[]);
+            statements_moved(
+                &policy,
+                2,
+                &claim,
+                &[statement(PlannedAt::Ended(None))],
+                &[],
+            );
             assert_eq!(ceiling(), Some(3));
 
             // The second finds no gap to mend: it makes no call, and the
@@ -329,16 +377,15 @@ async fn a_statement_the_plan_takes_in_is_followed_and_raises_the_ceiling_by_its
     CURRENT
         .scope(progress.clone(), async {
             let policy = StandardPolicy::new();
-            let planned = |class, at| Planned {
-                class,
-                at,
-                sentence: None,
-            };
-            let done = planned(Class::Sourced, PlannedAt::Ended);
-            calls_planned(&policy, &[done], 0);
+            let planned = |class, at| Planned { class, at };
+            let done = planned(Class::Sourced, PlannedAt::Ended(None));
             assert_eq!(plan_claims(), Some(Vec::new()));
             let first = ClaimId("first".into());
-            statements_moved(&policy, std::slice::from_ref(&first), &[done], &[]);
+            let beginning = Joining {
+                planned: done,
+                beside: Vec::new(),
+            };
+            statements_moved(&policy, 0, std::slice::from_ref(&first), &[], &[beginning]);
             assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(0));
 
             // A later sort sorts a statement new to the plan, which joins it.
@@ -350,6 +397,7 @@ async fn a_statement_the_plan_takes_in_is_followed_and_raises_the_ceiling_by_its
             };
             statements_moved(
                 &policy,
+                0,
                 &[first.clone(), joined.clone()],
                 &[done],
                 &[joining],
@@ -358,7 +406,7 @@ async fn a_statement_the_plan_takes_in_is_followed_and_raises_the_ceiling_by_its
             // The sorting call made and the newcomer's longest path from
             // its entry: a rise, counted.
             let activity = progress.snapshot().2;
-            assert_eq!(activity.model_calls_ceiling, Some(1 + 16));
+            assert_eq!(activity.model_calls_ceiling, Some(1 + 19));
             assert_eq!(activity.model_calls_ceiling_rises, 1);
             assert_eq!(plan_claims(), Some(vec![first, joined]));
         })
@@ -427,4 +475,114 @@ fn a_restarted_job_reaches_its_phases_again() {
     let activity = resumed(Some(serde_json::to_value(&saved).unwrap()));
 
     assert_eq!(activity.reached, Phase::References);
+}
+
+fn waiting(progress: &Progress) -> bool {
+    progress.snapshot().2.waiting_for_model
+}
+
+#[tokio::test]
+async fn a_lesson_waits_for_the_model_only_while_none_of_its_requests_holds_a_slot() {
+    let progress = Progress::default();
+    scoped(&progress, async {
+        let observer = current_observer().expect("a lesson job's scope has an observer");
+        observer.queued();
+        assert!(
+            waiting(&progress),
+            "a request is queued and none holds a slot, so the lesson is waiting for the model"
+        );
+        observer.holding();
+        assert!(
+            !waiting(&progress),
+            "a request holds a slot, so the lesson is working and not waiting"
+        );
+        observer.released();
+        assert!(
+            waiting(&progress),
+            "the slot was given back and the queued request remains, so the lesson waits again"
+        );
+        observer.left_queue(QueueExit::Granted);
+        observer.holding();
+        assert!(
+            !waiting(&progress),
+            "the queued request was granted and holds a slot"
+        );
+        observer.released();
+        assert!(
+            !waiting(&progress),
+            "nothing is queued, so a lesson that gave its last slot back is not waiting"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_queued_request_that_is_abandoned_stops_the_lesson_waiting() {
+    let progress = Progress::default();
+    scoped(&progress, async {
+        let observer = current_observer().expect("a lesson job's scope has an observer");
+        observer.queued();
+        assert!(waiting(&progress), "its only request is queued");
+        observer.left_queue(QueueExit::Abandoned);
+        assert!(
+            !waiting(&progress),
+            "a request cancelled while queued is no longer queued"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_lesson_with_nothing_queued_is_not_waiting() {
+    let progress = Progress::default();
+    scoped(&progress, async {
+        let observer = current_observer().expect("a lesson job's scope has an observer");
+        assert!(
+            !waiting(&progress),
+            "a lesson that has made no request is not waiting"
+        );
+        observer.holding();
+        assert!(
+            !waiting(&progress),
+            "a request that holds a slot and nothing queued is not a lesson waiting for the model"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_call_counted_twice_still_shows_the_lesson_waiting() {
+    let progress = Progress::default();
+    scoped(&progress, async {
+        let observer = current_observer().expect("a lesson job's scope has an observer");
+        let _sort = model_call(Term::Sort);
+        let _send = request();
+        observer.queued();
+        assert!(
+            waiting(&progress),
+            "one request registered by two layers and queued at the scheduler holds no slot, so the lesson is waiting"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_request_made_inside_the_lesson_scope_reaches_its_own_progress_and_no_other() {
+    let ours = Progress::default();
+    let other = Progress::default();
+    scoped(&ours, async {
+        current_observer()
+            .expect("the lesson scope has an observer")
+            .queued();
+        assert!(
+            waiting(&ours),
+            "the request reached its own lesson's progress"
+        );
+        assert!(!waiting(&other), "another lesson's progress is untouched");
+    })
+    .await;
+    assert!(
+        current_observer().is_none(),
+        "outside a lesson job's scope there is no observer"
+    );
 }

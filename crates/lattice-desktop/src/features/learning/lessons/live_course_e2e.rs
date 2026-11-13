@@ -78,19 +78,8 @@ async fn live_topic_course_passes_review_and_prepares_its_first_lesson() -> Resu
         .write(true)
         .create_new(true)
         .open(&database)?;
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(&database)
-        .foreign_keys(true);
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    let db = lattice_core::shared::persistence::Database::new(pool);
+    let connection = small::open_app_database(&database, false).await?;
+    let db = connection.database().clone();
     let model = Arc::new(ObservedModel::new(&config, directory.clone(), 0).await?);
     let web_directory = directory.join("web");
     std::fs::create_dir_all(&web_directory)?;
@@ -191,7 +180,7 @@ async fn live_topic_course_passes_review_and_prepares_its_first_lesson() -> Resu
     std::fs::write(directory.join("job-id.txt"), &job.id)?;
     drop(jobs);
     drop(repo);
-    small::run_and_confirm(db, options, model, &job.id, &directory).await?;
+    small::run_and_confirm(connection, &database, model, &job.id, &directory).await?;
     let summary = serde_json::json!({
         "goal": request.goal,
         "generationSeconds": generation_seconds,

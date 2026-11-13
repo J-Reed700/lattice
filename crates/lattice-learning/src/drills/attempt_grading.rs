@@ -11,7 +11,7 @@ use super::material::DrillMaterial;
 use super::proof::Tools;
 use super::repository::StoredDrill;
 use super::schedules;
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{
     lesson_rating, ratings, score, validate, IssueRating, PatternRating,
@@ -164,7 +164,7 @@ async fn save_grade(
     rated: &[IssueRating],
     lesson: Option<PatternRating>,
 ) -> Result<JobOutcome> {
-    let mut transaction = database.begin_write().await.map_err(db)?;
+    let mut transaction = database.begin_write().await?;
     let recorded =
         attempts::repository::record_graded_in(&mut transaction, &attempt.id, graded).await?;
     if recorded {
@@ -180,11 +180,11 @@ async fn save_grade(
     .await?;
     match finished {
         Finish::Commit => {
-            transaction.commit().await.map_err(db)?;
+            transaction.commit().await?;
             Ok(JobOutcome::Committed)
         }
         Finish::Leave(outcome) => {
-            transaction.rollback().await.map_err(db)?;
+            transaction.rollback().await?;
             Ok(outcome)
         }
     }
@@ -204,7 +204,7 @@ pub(crate) async fn give_up(
         return Ok(JobOutcome::Stopped);
     }
     tracing::warn!(attempt = attempt_id, %error, "A drill attempt could not be graded");
-    let mut transaction = database.begin_write().await.map_err(db)?;
+    let mut transaction = database.begin_write().await?;
     let recorded = attempts::repository::record_ungraded_in(
         &mut transaction,
         attempt_id,
@@ -222,11 +222,11 @@ pub(crate) async fn give_up(
     .await?;
     match finished {
         Finish::Commit => {
-            transaction.commit().await.map_err(db)?;
+            transaction.commit().await?;
             Ok(JobOutcome::Committed)
         }
         Finish::Leave(outcome) => {
-            transaction.rollback().await.map_err(db)?;
+            transaction.rollback().await?;
             Ok(outcome)
         }
     }

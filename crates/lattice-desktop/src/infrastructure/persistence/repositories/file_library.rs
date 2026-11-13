@@ -268,11 +268,13 @@ mod tests {
             .await
             .unwrap();
             assert_eq!(count, expected, "prefix range changed counts for {path}");
-            let plan = sqlx::query(&format!("EXPLAIN QUERY PLAN {FOLDER_COUNTS}"))
-                .bind(&scope)
-                .fetch_all(&pool)
-                .await
-                .unwrap();
+            let plan = sqlx::query(sqlx::AssertSqlSafe(format!(
+                "EXPLAIN QUERY PLAN {FOLDER_COUNTS}"
+            )))
+            .bind(&scope)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
             let details: Vec<String> = plan.iter().map(|row| row.get("detail")).collect();
             assert!(
                 details.iter().any(|detail| detail

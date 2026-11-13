@@ -1,15 +1,14 @@
 //! Which claim continues a repaired one (claim sources design §9). A
 //! repaired claim's id continues only in new text over the part of its
 //! field the repair changed, never in a sentence that was there before, and a
-//! narrowed claim's in nothing the narrowing wrote. No claim is born of a
-//! repair: what else it wrote is put back before the pass records anything
-//! (acceptance design §2.6).
+//! narrowed claim's in nothing the narrowing wrote. What else a repair wrote
+//! in that text is born of the repair (acceptance design §2.6).
 
 use super::fields::field_text;
 use super::RepairRecord;
 use crate::reference_collection::shared_terms;
-use lattice_core::domain::learning::acceptance::Walked;
 use lattice_core::domain::learning::claim_review::{ClaimId, ClaimLedgerEntry, ExtractedClaim};
+use lattice_core::shared::text::same_text::{common_prefix, overlaps, stands};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -29,12 +28,7 @@ pub(super) struct Heirs {
 /// common prefix and common suffix, on character boundaries. Empty when the
 /// change only removed text (or nothing changed).
 pub(super) fn changed_region(previous: &str, current: &str) -> (usize, usize) {
-    let prefix: usize = previous
-        .chars()
-        .zip(current.chars())
-        .take_while(|(a, b)| a == b)
-        .map(|(c, _)| c.len_utf8())
-        .sum();
+    let prefix = common_prefix(previous, current);
     let room = previous.len().min(current.len()) - prefix;
     let mut suffix = 0;
     for (a, b) in previous.chars().rev().zip(current.chars().rev()) {
@@ -51,7 +45,7 @@ pub(super) fn changed_region(previous: &str, current: &str) -> (usize, usize) {
 fn sentence_region(current: &str, (start, end): (usize, usize)) -> (usize, usize) {
     sentences(current)
         .into_iter()
-        .filter(|&(from, to)| from < end.max(start + 1) && to > start)
+        .filter(|&(from, to)| overlaps((from, to), (start, end.max(start + 1))))
         .fold((start, end), |(lo, hi), (from, to)| {
             (lo.min(from), hi.max(to))
         })
@@ -69,22 +63,20 @@ fn written(
 ) -> bool {
     claim.location.unit_index == unit
         && claim.location.field == field
-        && !before.contains(&claim.location.quote)
+        && !stands(before, &claim.location.quote)
         && claim
             .location
             .span
-            .is_some_and(|(from, to)| from < end && to > start)
+            .is_some_and(|span| overlaps(span, (start, end)))
 }
 
 /// What the last step leaves for the pass that reads the lesson: whether
 /// that pass comes after another, the lesson as it was before the repairs or
-/// edits, the place in its graph of each statement the ledger holds, by
-/// section and statement, and the claims the ledger holds that are not ended.
+/// edits, and the claims the ledger holds that are not ended.
 #[derive(Default)]
 pub(in crate::lessons::content_verification) struct Rewrites {
     later: bool,
     previous: Option<Value>,
-    walked: HashMap<(usize, String), Walked>,
     held: Vec<ClaimLedgerEntry>,
 }
 
@@ -92,12 +84,10 @@ impl Rewrites {
     pub(in crate::lessons::content_verification) fn new(
         later: bool,
         previous: Option<Value>,
-        walked: HashMap<(usize, String), Walked>,
     ) -> Self {
         Self {
             later,
             previous,
-            walked,
             held: Vec::new(),
         }
     }
@@ -115,16 +105,6 @@ impl Rewrites {
     /// The claims the ledger holds that are not ended.
     pub(in crate::lessons::content_verification) fn held(&self) -> &[ClaimLedgerEntry] {
         &self.held
-    }
-
-    /// Where the ledger has `statement` of section `unit` in its class's
-    /// graph, when it holds it and the claim has a class.
-    pub(in crate::lessons::content_verification) fn walked(
-        &self,
-        unit: usize,
-        statement: &str,
-    ) -> Option<Walked> {
-        self.walked.get(&(unit, statement.to_owned())).copied()
     }
 
     /// Whether this pass is the first to read `claim`: the first pass reads
@@ -211,6 +191,60 @@ pub(super) fn heirs(
         }
     }
     heirs
+}
+
+/// A pending repair's field before and after it, and the sentences of the
+/// field it changed.
+struct Changed<'a> {
+    record: &'a RepairRecord,
+    field: String,
+    before: String,
+    region: (usize, usize),
+}
+
+/// For each extracted claim, the repair it was born of: a claim that is `open`
+/// (no claim owns it once the heirs are assigned, and it is not a code
+/// example's run) and whose quote is new text in the changed region of the
+/// field of a repair that rides on no other and for which `field_of` names a
+/// field. Of several repairs the one whose replaced sentence shares most words
+/// with the statement, then the earlier record.
+pub(super) fn born_of(
+    repairs: &[RepairRecord],
+    (extracted, open): (&[ExtractedClaim], &[bool]),
+    (previous, current): (Option<&Value>, &Value),
+    field_of: impl Fn(&RepairRecord) -> Option<String>,
+    field_text: impl Fn(&Value, usize, &str) -> Option<String>,
+) -> Vec<Option<ClaimId>> {
+    let changed: Vec<Changed<'_>> = repairs
+        .iter()
+        .filter(|record| record.rides_on.is_none())
+        .filter_map(|record| {
+            let field = field_of(record)?;
+            let before = field_text(previous?, record.unit, &field)?;
+            let after = field_text(current, record.unit, &field)?;
+            let region = sentence_region(&after, changed_region(&before, &after));
+            Some(Changed {
+                record,
+                field,
+                before,
+                region,
+            })
+        })
+        .collect();
+    extracted
+        .iter()
+        .zip(open)
+        .map(|(claim, open)| {
+            changed
+                .iter()
+                .filter(|_| *open)
+                .filter(|at| written(claim, at.record.unit, &at.field, &at.before, at.region))
+                .min_by_key(|at| {
+                    std::cmp::Reverse(shared_terms(&claim.statement, &at.record.before))
+                })
+                .map(|at| at.record.claim_id.clone())
+        })
+        .collect()
 }
 
 #[cfg(test)]

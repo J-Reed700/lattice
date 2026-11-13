@@ -135,7 +135,7 @@ impl lattice_core::application::ports::conversation_repository::ConversationRepo
         let sql = format!(
             "UPDATE conversation_messages SET metadata = json_set(COALESCE(NULLIF(metadata, ''), '{{}}'), {pairs}) WHERE id = ?"
         );
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         for (key, value) in &fields {
             query = query.bind(format!("$.{key}")).bind(value.to_string());
         }

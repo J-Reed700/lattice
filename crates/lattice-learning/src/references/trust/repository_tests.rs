@@ -1,8 +1,16 @@
 //! The trust store round-trips every value the port stores, keys judgements
 //! by what they judged, and keeps per-course rows with their course.
 
+use super::judgements::reprofile_claim;
 use super::test_support::{add_page, article, course, course_on, id, page_signals};
+use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::source_trust::{SourceTrustStore, StoredJudgement};
+use lattice_core::application::ports::{ClaimReviewStore, LLMPort};
+use lattice_core::domain::learning::claim_review::{
+    Actor, ClaimEvent, ClaimId, ClaimLocation, EventProvenance, LessonReview, LessonReviewState,
+    UnitKind,
+};
 use lattice_core::domain::provenance::{
     AuthorityAssessment, ClaimKind, ClaimProfile, ClaimSubject, ExtractedFrom, JudgementKey,
     LabelSource, Origin, OriginKey, Outcome, OutcomeRecord, OverrideScope, ProvenanceRecord,
@@ -10,6 +18,7 @@ use lattice_core::domain::provenance::{
     SourceRelation, StandingAssessment, SubjectClass, SubjectKey, SubjectKind, SubjectRelation,
     TemporalScope, TrackRecord, TrustLevel, TrustOverride, SKETCH_VALUES,
 };
+use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
 use serde_json::json;
 
@@ -580,12 +589,119 @@ async fn a_course_takes_its_trust_rows_with_it_and_leaves_shared_judgements() ->
         "source_trust_overrides",
         "source_trust_outcomes",
     ] {
-        let rows: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
-            .fetch_one(&course.pool)
-            .await
-            .unwrap();
+        let rows: i64 =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))
+                .fetch_one(&course.pool)
+                .await
+                .unwrap();
         assert_eq!(rows, 0, "{table}");
     }
     assert_eq!(course.store.standing(&standing.key).await?, Some(standing));
+    Ok(())
+}
+
+/// A model that records what it is asked and answers nothing.
+struct Asked(std::sync::Mutex<Vec<String>>);
+
+#[async_trait::async_trait]
+impl LLMPort for Asked {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        self.0.lock().unwrap().push(format!("{request:?}"));
+        Err(AppError::InvalidState("This model answers nothing.".into()))
+    }
+    fn model_name(&self) -> &str {
+        "asked-fixture"
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    fn max_context_tokens(&self) -> usize {
+        32_768
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn a_question_claim_is_reprofiled_under_its_question() -> Result<()> {
+    let course = course().await?;
+    let lesson_id: String = sqlx::query_scalar(
+        "SELECT id FROM learning_lessons WHERE program_id = ? ORDER BY ordinal LIMIT 1",
+    )
+    .bind(&course.program_id)
+    .fetch_one(&course.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO jobs (id, kind, subject_id, operation_id, payload_hash, status, requested_json, progress_total, progress_message, created_at) VALUES ('job-1', 'lesson_preparation', ?, 'op-1', 'hash', 'pending', '{}', 1, 'Queued', 1000)")
+        .bind(&lesson_id)
+        .execute(&course.pool)
+        .await
+        .unwrap();
+    for ordinal in 0..3 {
+        sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json) VALUES(?,?,'explanation','Title','Body.','[]')")
+            .bind(&lesson_id)
+            .bind(ordinal)
+            .execute(&course.pool)
+            .await
+            .unwrap();
+    }
+    let reviews = ClaimReviewRepository::new(course.database.clone());
+    let revision = reviews
+        .set_lesson_review(
+            &lesson_id,
+            LessonReview {
+                program_id: course.program_id.clone(),
+                job_id: "job-1".into(),
+                state: LessonReviewState::NeedsReview,
+                draft_sha256: "draft".into(),
+                checker_model: "asked-fixture".into(),
+                stop_reason: None,
+            },
+        )
+        .await?;
+    let statement = "A conforming parser rejects a trailing comma.";
+    reviews
+        .append(
+            &lesson_id,
+            &ClaimId("claim-1".into()),
+            EventProvenance {
+                actor: Actor::Machine,
+                at: 1,
+                job_id: None,
+                app_version: "test".into(),
+                checker_model: None,
+            },
+            ClaimEvent::Extracted {
+                location: ClaimLocation::locate(
+                    3,
+                    UnitKind::Question,
+                    "prompt",
+                    statement,
+                    statement,
+                ),
+                statement: statement.into(),
+            },
+            revision,
+        )
+        .await?;
+    let asked = Asked(std::sync::Mutex::new(Vec::new()));
+
+    let _ = reprofile_claim(
+        &course.database,
+        &course.store,
+        &asked,
+        &course.program_id,
+        "claim-1",
+    )
+    .await;
+
+    let requests = asked.0.lock().unwrap();
+    assert!(requests
+        .iter()
+        .any(|request| request.contains("Question 1")));
+    assert!(requests
+        .iter()
+        .all(|request| !request.contains("Section 4")));
     Ok(())
 }

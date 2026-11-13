@@ -7,7 +7,6 @@ import { ResizableColumns } from '@/components/ui/ResizableColumns';
 import { useLearningLessonEvidence } from '@/features/learning/api/evidenceQueries';
 import { OutlineCitation } from '@/features/learning/curriculum/OutlineEvidence';
 import { useCancelLearningGenerationJob, useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
-import { splitCheck } from '@/features/learning/lessons/active/checkReveal';
 import { LessonCheck } from '@/features/learning/lessons/active/LessonCheck';
 import { LessonFromMemory } from '@/features/learning/lessons/active/LessonFromMemory';
 import { LessonWarmUp } from '@/features/learning/lessons/active/LessonWarmUp';
@@ -41,7 +40,7 @@ const blockLabels: Record<LearningBlockKind, string> = {
   guided_practice: 'Try it with guidance', independent_practice: 'Your assignment', reflection: 'From memory', recap: 'Key takeaways',
 };
 
-export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurrent, selected, pending, onPrepare, onComplete, onSelect, onPractice, onReview, quizCallout, number, notebook, contextVisible = true, onSources }: {
+export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurrent, selected, pending, onPrepare, onComplete, onSelect, onPractice, onReview, quizCallout, topics, number, notebook, contextVisible = true, onSources }: {
   lesson: LearningLessonDto;
   number?: string;
   notebook?: ReactNode;
@@ -61,6 +60,8 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
   onReview?: (programId: string, lessonId: string, claimId?: string) => void;
   /** The lesson quiz callout, shown after the last section and before "Mark lesson complete". */
   quizCallout?: ReactNode;
+  /** The lesson's planned topics, shown under the objective until it is prepared. */
+  topics?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(isCurrent && lesson.preparation === 'ready');
   const [editing, setEditing] = useState<number | null>(null);
@@ -167,6 +168,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
           <div className="studio-lesson-objective"><StudyTangentSelection moduleId={moduleId} lessonId={lesson.id} sectionIndex={null} sectionTitle="Lesson Objective"><span>{lesson.objective || (lesson.preparation === 'outline' ? 'A lesson in the program outline. Prepare it when you are ready.' : 'A focused lesson with explanation and worked example.')}</span></StudyTangentSelection></div>
           <p className="studio-lesson-meta"><span><Clock3 size={13} />About {lesson.estimatedMinutes} min</span><span>{lesson.blocks.length} {lesson.blocks.length === 1 ? 'section' : 'sections'}</span><span>{lesson.completed ? 'Self-reported complete' : 'Not marked complete'}</span></p>
           {showCitations && <OutlineCitation citation={objectiveCitation} evidence={outlineEvidence} className="mb-4 mt-0" />}
+          {lesson.preparation === 'outline' && topics}
           {lesson.preparation === 'outline' ? needsReview ? (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-accent/30 bg-accent/5 p-4">
@@ -196,7 +198,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
               <div className="studio-lesson-sections">
                 {lesson.blocks.map((block, index) => {
                   const prose = (content: string) => <StudyTangentSelection moduleId={moduleId} lessonId={lesson.id} sectionIndex={index} sectionTitle={block.title}><MarkdownViewer content={content} /></StudyTangentSelection>;
-                  const check = block.kind === 'check' ? splitCheck(block.body) : null;
+                  const check = block.check ?? null;
                   const heldRecap = block.kind === 'recap' && recallFirst && !compared;
                   return <section id={`lesson-${lesson.id}-section-${index}`} key={`${lesson.id}-${index}`} className="studio-lesson-section">
                   <div className="flex items-center justify-between gap-2">

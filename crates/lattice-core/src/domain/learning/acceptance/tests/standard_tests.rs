@@ -10,9 +10,9 @@ fn the_standard_policy_breaks_no_invariant() {
 }
 
 #[test]
-fn the_standard_policy_is_acceptance_v1() {
-    assert_eq!(StandardPolicy::new().version(), "acceptance-v1");
-    assert_eq!(STANDARD_POLICY, "acceptance-v1");
+fn the_standard_policy_is_acceptance_v3() {
+    assert_eq!(StandardPolicy::new().version(), "acceptance-v3");
+    assert_eq!(STANDARD_POLICY.as_str(), "acceptance-v3");
 }
 
 #[test]
@@ -41,6 +41,7 @@ fn the_standard_policys_nodes_are_the_designs_tables() {
     let veto = Step::Read(Reading::Veto);
     let sourced_rewrite = Step::Rewrite(Goal::WhatThePassageStates);
     let reasoning_rewrite = Step::Rewrite(Goal::AgreeWithThePassages);
+    let correct_rewrite = Step::Rewrite(Goal::CorrectWhatWasFound);
     let field_rewrite = Step::Rewrite(Goal::AsTheFieldHasIt);
     let rows: Vec<(Class, &str, Step, u32)> = vec![
         (Sourced, "s.read", parts, 1),
@@ -57,6 +58,8 @@ fn the_standard_policys_nodes_are_the_designs_tables() {
         (Reasoning, "r.read", consistency, 1),
         (Reasoning, "r.veto", veto, 3),
         (Reasoning, "r.ground", ground, 1),
+        (Reasoning, "r.correct", correct_rewrite, 1),
+        (Reasoning, "r.correct.again", correct_rewrite, 1),
         (Reasoning, "r.rewrite", reasoning_rewrite, 1),
         (Reasoning, "r.rewrite.again", reasoning_rewrite, 1),
         (Reasoning, "r.final", consistency, 1),
@@ -104,7 +107,10 @@ fn the_edges_that_change_a_class_are_first_changes_or_enter_after_a_rewrite() {
     );
     assert_eq!(
         edge(Sourced, "s.citeread", Outcome::AllCommon),
-        Some(Next::first_change(Target::node("s.uncite"), "s.rewrite"))
+        Some(Next::first_change(
+            Target::node("s.uncite"),
+            End::Unverified
+        ))
     );
     assert_eq!(
         edge(Sourced, "s.uncite", Outcome::Done),
@@ -120,11 +126,11 @@ fn the_edges_that_change_a_class_are_first_changes_or_enter_after_a_rewrite() {
     );
     assert_eq!(
         edge(Common, "c.read", Outcome::NeedsSource),
-        Some(Next::first_change(Target::Enter(Sourced), "c.rewrite"))
+        Some(Next::first_change(Target::Enter(Sourced), End::Unverified))
     );
     assert_eq!(
         edge(Reasoning, "r.read", Outcome::NeedsSource),
-        Some(Next::first_change(Target::Enter(Sourced), "r.rewrite"))
+        Some(Next::first_change(Target::Enter(Sourced), End::Unverified))
     );
 }
 
@@ -175,6 +181,10 @@ fn only_a_part_wise_reading_can_say_all_common_and_only_a_page_can_stand_elsewhe
     let read = policy.graph(Sourced).node(NodeId("s.read")).unwrap();
     assert_eq!(read.step, Step::Read(Reading::Parts));
     assert_eq!(read.next(Outcome::StandsElsewhere), None);
+    // A contradiction its own citation names is overruled by nothing later:
+    // it goes to its rewrite, not to research a silent page can answer.
+    assert_eq!(read.next(Outcome::Refuted), Some(Next::to("s.rewrite")));
+    assert_eq!(read.next(Outcome::Unproven), Some(Next::to("s.research")));
     let reread = policy.graph(Sourced).node(NodeId("s.reread")).unwrap();
     assert_eq!(
         reread.next(Outcome::StandsElsewhere),
@@ -186,7 +196,7 @@ fn only_a_part_wise_reading_can_say_all_common_and_only_a_page_can_stand_elsewhe
 fn a_ground_reading_has_two_edges_its_end_and_its_next_node() {
     let policy = StandardPolicy::new();
     for (class, name, end, refuted) in [
-        (Reasoning, "r.ground", End::Consistent, "r.rewrite"),
+        (Reasoning, "r.ground", End::Consistent, "r.correct"),
         (Reasoning, "r.reground", End::Consistent, "r.cut"),
         (Common, "c.ground", End::GeneralKnowledge, "c.rewrite"),
         (Common, "c.reground", End::GeneralKnowledge, "c.cut"),
@@ -206,7 +216,7 @@ fn a_ground_reading_has_two_edges_its_end_and_its_next_node() {
 }
 
 #[test]
-fn a_cut_removes_the_sentence_and_a_sentence_that_cannot_be_cut_takes_its_section() {
+fn a_cut_removes_the_sentence_and_a_sentence_that_cannot_be_cut_stays_unverified() {
     let policy = StandardPolicy::new();
     for (class, name) in [
         (Sourced, "s.cut"),
@@ -223,7 +233,7 @@ fn a_cut_removes_the_sentence_and_a_sentence_that_cannot_be_cut_takes_its_sectio
         );
         assert_eq!(
             node.next(Outcome::CannotCut),
-            Some(Next::End(End::Removed { section_goes: true }))
+            Some(Next::End(End::Unverified))
         );
     }
 }

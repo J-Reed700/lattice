@@ -4,10 +4,12 @@
 //! It records nothing; `ClaimLedger::record_reading` takes each step. It
 //! counts a statement into the pass's progress when no reading of it is left,
 //! as its last reading lands.
+use super::super::claim_ledger::contain;
 use super::*;
 use lattice_core::domain::learning::acceptance::{
     decide, rewrite_ahead, AcceptancePolicy, Position, Step, Taken, Then, Walked,
 };
+use lattice_core::domain::learning::claim_review::FaultStage;
 
 /// One reading and the policy's decision on it.
 #[derive(Debug)]
@@ -27,6 +29,15 @@ pub(in super::super) struct ReadStep {
 pub(in super::super) struct ReadSteps {
     pub(in super::super) steps: Vec<ReadStep>,
     pub(in super::super) walked: Walked,
+    /// The invariant breach that held the statement unjudged, when one did.
+    pub(in super::super) fault: Option<Fault>,
+}
+
+/// An invariant breach met while reading one statement.
+#[derive(Debug)]
+pub(in super::super) struct Fault {
+    pub(in super::super) stage: FaultStage,
+    pub(in super::super) message: String,
 }
 
 /// A statement on its way through its graph.
@@ -36,21 +47,34 @@ struct Course<'s> {
     steps: Vec<ReadStep>,
     /// Where an end or a stop left it; none while it is in its graph.
     ended: Option<Walked>,
+    /// The breach that held it where it is, unjudged.
+    fault: Option<Fault>,
 }
 
 impl Course<'_> {
-    /// The reading it waits for; none at a remedy, an end or a stop.
-    fn wants(&self, policy: &dyn AcceptancePolicy) -> Result<Option<Reading>> {
-        if self.ended.is_some() {
+    /// The reading it waits for; none at a remedy, an end, a stop or a fault.
+    fn wants(&mut self, policy: &dyn AcceptancePolicy) -> Result<Option<Reading>> {
+        if self.ended.is_some() || self.fault.is_some() {
             return Ok(None);
         }
-        reading_at(policy, self.at)
+        match contain(reading_at(policy, self.at))? {
+            Ok(reading) => Ok(reading),
+            Err(message) => {
+                self.hold(FaultStage::Read, message);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Holds the statement where it is, unjudged, for the breach `message`.
+    fn hold(&mut self, stage: FaultStage, message: String) {
+        self.fault = Some(Fault { stage, message });
     }
 
     /// Takes `read`, the `reading` it was made by, to where the policy sends
     /// the statement.
     fn take(&mut self, policy: &dyn AcceptancePolicy, reading: Reading, read: Read) -> Result<()> {
-        let outcome = read.outcome;
+        let outcome = read.outcome();
         let taken = Taken {
             step: Step::Read(reading),
             outcome,
@@ -130,7 +154,12 @@ impl<'p> Counting<'p> {
             reading,
             standing: members
                 .iter()
-                .map(|course| (course.at, course.steps.iter().all(|step| step.read.reused)))
+                .map(|course| {
+                    (
+                        course.at,
+                        course.steps.iter().all(|step| step.read.reused()),
+                    )
+                })
                 .collect(),
             told: std::sync::Mutex::new(vec![false; members.len()]),
         }
@@ -151,7 +180,7 @@ impl<'p> Counting<'p> {
         };
         let taken = Taken {
             step: Step::Read(self.reading),
-            outcome: read.outcome,
+            outcome: read.outcome(),
         };
         let leaves = match decide(self.policy, at, taken) {
             Some((_, None)) => true,
@@ -159,7 +188,7 @@ impl<'p> Counting<'p> {
             None => false,
         };
         if leaves {
-            crate::lesson_progress::checked(reused && read.reused);
+            crate::lesson_progress::checked(reused && read.reused());
         }
     }
 }
@@ -181,7 +210,8 @@ fn place(reading: Reading) -> usize {
 /// node is a remedy or an end: each wave gives every reading the statements
 /// that wait for it in one call, so statements at the same reading are read
 /// together. Gives one `ReadSteps` per statement, in order. A reader's outage
-/// is the `Err`; nothing is recorded here, so nothing is half-recorded. The
+/// is the `Err`; an invariant breach in one statement holds only that
+/// statement, unjudged, with its `fault`. Nothing is recorded here. The
 /// progress counts each statement once, as the reading that leaves it at a
 /// remedy, an end or a stop lands; one handed in at a remedy is counted at
 /// the start, not reused.
@@ -198,9 +228,10 @@ pub(in super::super) async fn read_until_remedy(
             at: position,
             steps: Vec::new(),
             ended: None,
+            fault: None,
         })
         .collect();
-    for course in &courses {
+    for course in courses.iter_mut() {
         if course.wants(policy)?.is_none() {
             crate::lesson_progress::checked(false);
         }
@@ -225,10 +256,20 @@ pub(in super::super) async fn read_until_remedy(
             let counting = Counting::new(policy, reading, &members);
             let tell = |ordinal: usize, read: &Read| counting.tell(ordinal, read);
             let watched = at.observed(&tell);
-            let reads = ask(readers, &watched, reading, &batch).await?;
-            for (ordinal, (course, read)) in members.into_iter().zip(reads).enumerate() {
-                counting.tell(ordinal, &read);
-                course.take(policy, reading, read)?;
+            match contain(ask(readers, &watched, reading, &batch).await)? {
+                Ok(reads) => {
+                    for (ordinal, (course, read)) in members.into_iter().zip(reads).enumerate() {
+                        counting.tell(ordinal, &read);
+                        if let Err(message) = contain(course.take(policy, reading, read))? {
+                            course.hold(FaultStage::Take, message);
+                        }
+                    }
+                }
+                Err(message) => {
+                    for course in members {
+                        course.hold(FaultStage::Ask, message.clone());
+                    }
+                }
             }
         }
     }
@@ -237,6 +278,7 @@ pub(in super::super) async fn read_until_remedy(
         .map(|course| ReadSteps {
             walked: course.ended.unwrap_or(Walked::At(course.at)),
             steps: course.steps,
+            fault: course.fault,
         })
         .collect())
 }
@@ -276,7 +318,7 @@ pub(in super::super) async fn read_page(
     let unread: Vec<usize> = reads
         .iter()
         .enumerate()
-        .filter(|(_, read)| read.outcome == Outcome::Unjudged)
+        .filter(|(_, read)| read.outcome() == Outcome::Unjudged)
         .map(|(index, _)| index)
         .collect();
     if unread.is_empty() {
@@ -326,22 +368,26 @@ async fn weighed(
     let left_out = settled(at, statements)?;
     let (outcomes, findings): (Vec<(Outcome, bool)>, Vec<Finding>) = reads
         .into_iter()
-        .map(|read| ((read.outcome, read.reused), read.finding))
+        .map(|read| {
+            let (outcome, finding, reused) = read.into_parts();
+            ((outcome, reused), finding)
+        })
         .unzip();
     let mut results: Vec<CheckedClaim> = findings
         .into_iter()
         .enumerate()
         .map(|(ordinal, finding)| (ordinal, String::new(), finding, false))
         .collect();
-    crate::lesson_progress::outside_checks(provenance_gate::weigh(at.llm, &mut results, &left_out))
-        .await?;
+    crate::lesson_progress::outside_checks(provenance_gate::weigh(
+        at.llm,
+        at.candidate,
+        &mut results,
+        &left_out,
+    ))
+    .await?;
     Ok(outcomes
         .into_iter()
         .zip(results)
-        .map(|((outcome, reused), (_, _, finding, _))| Read {
-            outcome,
-            finding,
-            reused,
-        })
+        .map(|((outcome, reused), (_, _, finding, _))| Read::new(outcome, finding, reused))
         .collect())
 }

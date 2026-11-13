@@ -3,7 +3,6 @@
 use super::{assessment_operation, candidate_in, invalid, uuid, LearningAssessmentRepository};
 use crate::assessment_engine::{self as engine, LearningItemFormat};
 use crate::dto::*;
-use crate::persistence::db;
 use crate::portability_dto::{
     LearningRecallCardFormat, LearningRecallContentDto, SaveLearningRecallCardRequestDto,
 };
@@ -138,12 +137,12 @@ impl LearningAssessmentRepository {
             hash,
             "Operation ID was reused with different questions.",
         );
-        let mut read = self.db.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         if let Some(done) = operation
             .replay::<LearningQuizMissesToRecallDto>(&mut read)
             .await?
         {
-            read.commit().await.map_err(db)?;
+            read.commit().await?;
             return Ok(done);
         }
         let status: Option<String> = sqlx::query_scalar(
@@ -152,8 +151,7 @@ impl LearningAssessmentRepository {
         .bind(&req.form_id)
         .bind(&req.program_id)
         .fetch_optional(&mut *read)
-        .await
-        .map_err(db)?;
+        .await?;
         if status.as_deref() != Some("submitted") {
             return Err(invalid("Add questions to Recall from a submitted quiz."));
         }
@@ -165,8 +163,7 @@ impl LearningAssessmentRepository {
             .bind(&req.form_id)
             .bind(item_id)
             .fetch_optional(&mut *read)
-            .await
-            .map_err(db)?;
+            .await?;
             if in_form.is_none() {
                 return Err(invalid("That question is not part of this quiz."));
             }
@@ -179,10 +176,9 @@ impl LearningAssessmentRepository {
             sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
                 .bind(&req.program_id)
                 .fetch_optional(&mut *read)
-                .await
-                .map_err(db)?
+                .await?
                 .ok_or_else(|| AppError::NotFound("This course has no recall deck yet.".into()))?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         let recall = LearningRecallRepository::new(self.db.clone());
         let mut created = 0i64;
         for (item_id, sources, (format, content)) in cards {
@@ -205,9 +201,9 @@ impl LearningAssessmentRepository {
             cards_created: created,
             deck_id,
         };
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         operation.record(&mut tx, &done).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(done)
     }
 }

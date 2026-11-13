@@ -151,6 +151,8 @@ pub enum LearningGenerationJobKind {
     QuizBank,
     /// Grades a submitted quiz's written answers and near-miss short answers.
     QuizGrading,
+    /// Plans what each lesson of the outline teaches.
+    CoursePlan,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
@@ -216,6 +218,9 @@ pub struct LearningGenerationActivity {
     pub model_running: bool,
     pub response_characters: u32,
     pub model_attempt: u32,
+    /// Set while the lesson has model requests queued for a slot and none holding one.
+    #[serde(default)]
+    pub waiting_for_model: bool,
     pub verification_pass: u32,
     /// Claims of this pass with a finished first check. Each claim counts once.
     pub checks_completed: u32,
@@ -312,6 +317,9 @@ pub struct LearningGenerationJob {
     /// The lessons the job prepares, in course order.
     #[serde(default)]
     pub lesson_ids: Vec<String>,
+    /// The lessons the job finished by holding them for review.
+    #[serde(default)]
+    pub held_lesson_ids: Vec<String>,
     pub retry_of_job_id: Option<String>,
     pub created_at: i64,
     pub started_at: Option<i64>,

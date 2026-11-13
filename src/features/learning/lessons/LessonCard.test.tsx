@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({ plan: vi.fn(), review: vi.fn(), index: vi.fn() }
 vi.mock('@/lib/api', () => ({ default: {
   getLearningPlan: api.plan, getLearningLessonClaimReview: api.review, getLearningLessonEvidence: async () => ({ ok: true, data: null }),
   courseIndexStatus: api.index,
+  getLearningRecallWorkspace: async () => ({ ok: true, data: { programId: 'program-1', cards: [], duplicates: [], dueCount: 0, schedulerDisclosure: '' } }),
 } }));
 vi.mock('@/features/learning/tangents/StudyTangentSelection', () => ({
   StudyTangentSelection: ({ children }: { children: ReactNode }) => children,
@@ -25,7 +26,7 @@ const program = { summary: { id: 'program-1', revision: 44, status: 'active' }, 
 const held: LearningGenerationJob = {
   id: 'job-1', programId: 'program-1', operationId: 'op', kind: 'lesson_preparation', payloadSha256: 'hash', baseRevisionNumber: 44,
   status: 'completed', progressCompleted: 1, progressTotal: 1, progressMessage: 'Needs your review: 3 statements', activity: null,
-  resultId: 'needs_review:lesson-1', error: null, retryOfJobId: null, createdAt: 1, startedAt: 1, finishedAt: 2,
+  resultId: null, heldLessonIds: ['lesson-1'], error: null, retryOfJobId: null, createdAt: 1, startedAt: 1, finishedAt: 2,
 };
 const noReview = { ok: true, data: null };
 
@@ -80,7 +81,7 @@ describe('Lesson card review state', () => {
   ] as const)('says what a preparation in its %s phase is doing', async (phase, counts, checksCompleted, row) => {
     const claims = { searching: 0, repairing: 0, waiting: 0, resolvedByYou: 0, ...counts };
     const preparing: LearningGenerationJob = {
-      ...held, status: 'running', progressMessage: '', resultId: null, finishedAt: null,
+      ...held, status: 'running', progressMessage: '', resultId: null, heldLessonIds: [], finishedAt: null,
       activity: {
         phase, phaseStartedAt: 1, lastActivityAt: 1, lastCheckpointAt: null, lessonTitle: lesson.title, modelName: null,
         modelRunning: true, responseCharacters: 0, modelAttempt: 1, verificationPass: 1,
@@ -162,5 +163,19 @@ describe('Lesson card review state', () => {
     </MemoryRouter></QueryClientProvider>);
     expect(await screen.findByRole('button', { name: 'Listen to the section “Boiling”' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Listen to the section “Key takeaways”' })).toBeVisible();
+  });
+
+  it('renders a check from the block’s own split, not from its body', async () => {
+    api.plan.mockResolvedValue({ ok: true, data: { jobs: [] } });
+    api.review.mockResolvedValue(noReview);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const blocks = [
+      { kind: 'check', title: 'Check', body: 'A sealed jar is carried up a mountain. It bulges.', sourceIds: [], check: { question: 'A sealed jar is carried up a mountain.', reveal: 'It bulges.' } },
+    ] as unknown as LearningLessonDto['blocks'];
+    render(<QueryClientProvider client={client}><MemoryRouter>
+      <LessonCard lesson={{ ...lesson, preparation: 'ready', blocks }} moduleId="module-1" program={program} isCurrent selected={false} pending={false}
+        onPrepare={vi.fn()} onComplete={vi.fn()} onSelect={vi.fn()} onPractice={vi.fn()} />
+    </MemoryRouter></QueryClientProvider>);
+    expect(await screen.findByRole('button', { name: 'Check my thinking' })).toBeVisible();
   });
 });

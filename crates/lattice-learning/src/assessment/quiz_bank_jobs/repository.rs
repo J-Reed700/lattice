@@ -5,7 +5,6 @@ use super::{QUIZ_BANK, QUIZ_GRADING};
 use crate::assessment_generation::{MaterialPassage, StoredItem};
 use crate::assessment_repository::LearningAssessmentRepository;
 use crate::curriculum_repository::lesson_rank_in;
-use crate::persistence::db;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::{Database, WriteTx};
@@ -28,14 +27,14 @@ pub(super) async fn lesson_inputs(
     program_id: &str,
     lesson_id: &str,
 ) -> Result<LessonInputs> {
-    let mut tx = database.begin_read().await.map_err(db)?;
+    let mut tx = database.begin_read().await?;
     let (title, objective) = lesson_title_objective_in(&mut tx, program_id, lesson_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Lesson not found in this course".into()))?;
     let material = LearningAssessmentRepository::lesson_material_in(&mut tx, lesson_id).await?;
     let seeds =
         LearningAssessmentRepository::lesson_seeds_in(&mut tx, program_id, lesson_id).await?;
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(LessonInputs {
         title,
         objective,
@@ -153,7 +152,7 @@ pub(super) async fn program_revision_in(
         .bind(program_id)
         .fetch_one(&mut *connection)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// Records that a job belongs to the course at `base_revision`.
@@ -170,7 +169,7 @@ pub(super) async fn insert_learning_job_in(
         .execute(&mut **tx)
         .await
         .map(drop)
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// How many items of the form wait for their grade.
@@ -182,7 +181,7 @@ pub(super) async fn pending_item_count_in(
         .bind(form_id)
         .fetch_one(&mut *connection)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// The lesson's title and objective, when it is one of the course's.
@@ -196,5 +195,5 @@ pub(super) async fn lesson_title_objective_in(
         .bind(program_id)
         .fetch_optional(&mut *connection)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }

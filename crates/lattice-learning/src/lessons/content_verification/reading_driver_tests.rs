@@ -6,8 +6,10 @@ use super::super::readings::driver::{read_until_remedy, settled, ReadSteps};
 use super::super::readings::{Read, ReadContext, Reader, ReaderSet, Statement};
 use super::*;
 use lattice_core::domain::learning::acceptance::{
-    walk_from, AcceptancePolicy, End, NodeId, Outcome, Position, Reading, Step, Taken, Then, Walked,
+    start, walk_from, AcceptancePolicy, End, NodeId, Outcome, Position, Reading, Step, Taken, Then,
+    Walked,
 };
+use lattice_core::domain::learning::claim_review::FaultStage;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -73,17 +75,17 @@ impl Reader for Scripted {
                 .iter()
                 .map(|statement| {
                     let outcome = outcomes.pop_front().expect("an outcome for each statement");
-                    Read {
+                    Read::new(
                         outcome,
-                        finding: finding_of(
+                        finding_of(
                             (statement.unit, statement.claim, statement.classed),
                             verdict_of(outcome),
                             format!("{outcome:?}"),
                             &[],
                             None,
                         ),
-                        reused: false,
-                    }
+                        false,
+                    )
                 })
                 .collect()
         };
@@ -204,12 +206,7 @@ fn statement(claim: &Claim, class: Class, by: ClassifiedBy) -> Statement<'_> {
 
 /// Where a statement of `class` begins.
 fn entry(policy: &dyn AcceptancePolicy, class: Class) -> Position {
-    Position {
-        class,
-        changed_class: false,
-        reasked: false,
-        node: policy.graph(class).entry(),
-    }
+    start(policy, class)
 }
 
 /// Where a statement of `class` stands at `node`, having changed class or not.
@@ -219,6 +216,7 @@ fn at(policy: &dyn AcceptancePolicy, class: Class, changed_class: bool, node: &s
         changed_class,
         reasked: false,
         node: policy.graph(class).id_of(node).unwrap(),
+        rewrites_left: 2,
     }
 }
 
@@ -237,7 +235,7 @@ fn replayed(policy: &dyn AcceptancePolicy, start: Position, read: &ReadSteps) ->
         .iter()
         .map(|step| Taken {
             step: Step::Read(step.reading),
-            outcome: step.read.outcome,
+            outcome: step.read.outcome(),
         })
         .collect();
     walk_from(policy, start, &taken)
@@ -303,7 +301,7 @@ async fn a_sourced_statement_its_citation_states_is_resolved_in_one_reading() ->
         panic!("one reading: {:?}", read[0].steps);
     };
     assert_eq!(step.reading, Reading::Parts);
-    assert_eq!(step.read.outcome, Outcome::Stands);
+    assert_eq!(step.read.outcome(), Outcome::Stands);
     assert_eq!(step.then, Then::End(End::Resolved));
     assert!(!step.rewrite_ahead);
     assert_eq!(step.class, None);
@@ -336,7 +334,7 @@ async fn a_reasoning_statement_that_stands_is_put_to_the_veto_in_the_same_call()
         .map(|step| {
             (
                 step.reading,
-                step.read.outcome,
+                step.read.outcome(),
                 step.then.clone(),
                 step.rewrite_ahead,
             )
@@ -462,7 +460,7 @@ async fn an_unreadable_answer_is_read_once_more_at_the_same_node() -> Result<()>
     let steps: Vec<_> = read[0]
         .steps
         .iter()
-        .map(|step| (step.reading, step.read.outcome, step.then.clone()))
+        .map(|step| (step.reading, step.read.outcome(), step.then.clone()))
         .collect();
     assert_eq!(
         steps,
@@ -619,15 +617,13 @@ async fn an_outcome_the_node_does_not_answer_is_a_fault() -> Result<()> {
         at(&policy, Class::Common, false, "c.ground"),
     )];
 
-    let fault = drive(&script, &ClaimChecks::default(), &given)
-        .await
-        .unwrap_err();
+    let read = drive(&script, &ClaimChecks::default(), &given).await?;
 
-    let AppError::InternalError(message) = fault else {
-        panic!("an internal error: {fault:?}");
-    };
-    assert!(message.contains("c.ground"), "{message}");
-    assert!(message.contains("AllCommon"), "{message}");
+    let held = read[0].fault.as_ref().expect("a fault");
+    assert_eq!(held.stage, FaultStage::Take);
+    assert!(held.message.contains("c.ground"), "{}", held.message);
+    assert!(held.message.contains("AllCommon"), "{}", held.message);
+    assert!(read[0].steps.is_empty());
     Ok(())
 }
 
@@ -645,14 +641,11 @@ async fn a_position_the_graph_does_not_have_is_a_fault() -> Result<()> {
         nowhere,
     )];
 
-    let fault = drive(&script, &ClaimChecks::default(), &given)
-        .await
-        .unwrap_err();
+    let read = drive(&script, &ClaimChecks::default(), &given).await?;
 
-    assert!(
-        matches!(&fault, AppError::InternalError(message) if message.contains("s.nowhere")),
-        "{fault:?}"
-    );
+    let held = read[0].fault.as_ref().expect("a fault");
+    assert_eq!(held.stage, FaultStage::Read);
+    assert!(held.message.contains("s.nowhere"), "{}", held.message);
     Ok(())
 }
 
@@ -671,11 +664,11 @@ async fn a_reader_that_answers_for_fewer_statements_than_it_was_given_is_a_fault
     };
     let given = [sourced(&lexer), sourced(&cli)];
 
-    let fault = drive(&script, &ClaimChecks::default(), &given)
-        .await
-        .unwrap_err();
+    let read = drive(&script, &ClaimChecks::default(), &given).await?;
 
-    assert!(matches!(fault, AppError::InternalError(_)), "{fault:?}");
+    assert!(read
+        .iter()
+        .all(|walk| matches!(&walk.fault, Some(held) if held.stage == FaultStage::Ask)));
     Ok(())
 }
 

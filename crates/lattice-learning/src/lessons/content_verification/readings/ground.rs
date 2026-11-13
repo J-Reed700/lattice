@@ -3,7 +3,7 @@
 //! called false. It is the same judge as `Parts` on other passages, read as
 //! another question. Every receipt of its batch is restored before its first
 //! call.
-use super::super::evidence_checks::as_checked;
+use super::super::evidence_checks::{as_checked, attribution_page};
 use super::*;
 
 pub(super) struct Ground;
@@ -21,21 +21,13 @@ impl Reader for Ground {
         for (ordinal, statement) in statements.iter().enumerate() {
             let Statement { unit, claim, .. } = *statement;
             let checked = as_checked(claim, at.citations, at.references);
-            let mut evidence = take_cited(
-                parts_fit(at),
+            let (evidence, _) = attribution_page(
+                at.executions,
+                at.citations,
+                (unit, &claim.statement),
                 &checked.statement,
-                &mut Vec::new(),
-                at.citations.of(unit),
+                parts_fit(at),
             );
-            canonicalize_evidence(&mut evidence);
-            if evidence.is_empty() {
-                made.put(
-                    at,
-                    ordinal,
-                    read_of(statement, no_passages(statement), false),
-                );
-                continue;
-            }
             match restore_parts(at, ordinal, statement, &checked, evidence).await? {
                 Restored::Receipt(finding, reused) => {
                     made.put(at, ordinal, read_of(statement, *finding, reused));
@@ -61,9 +53,5 @@ impl Reader for Ground {
 /// The reading of `statement` that `finding` on the section's passages makes.
 fn read_of(statement: &Statement<'_>, mut finding: Finding, reused: bool) -> Read {
     finding.class = Some(statement.classed);
-    Read {
-        outcome: ground_outcome(&finding),
-        finding,
-        reused,
-    }
+    Read::new(ground_outcome(&finding), finding, reused)
 }

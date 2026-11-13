@@ -6,6 +6,9 @@ use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::SamplingOverride;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::domain::learning::drills::{Assessment, IssueOutcome};
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
@@ -27,6 +30,13 @@ const NO_FINDINGS: &str = "The review made no findings.";
 
 /// What does not fit, when the window cannot hold the drill and the review.
 const DOES_NOT_FIT: &str = "The drill and the review do not fit";
+
+struct GradeReview;
+
+impl Contract for GradeReview {
+    const ID: ContractId = ContractId::new("grade-review");
+    type Input = PromptInput;
+}
 
 /// Grades a review with one model call, whoever made the review.
 pub struct JudgeGrader<'a> {
@@ -61,7 +71,11 @@ impl ReviewGrader for JudgeGrader<'_> {
             subject: "the grade of the review",
             brief: wording.brief,
         };
-        complete_checked_request(self.llm, request, None, Some(reasoning), |raw| {
+        let call = ContractCall::of::<GradeReview>(&PromptInput {
+            system: request.instructions.clone(),
+            prompt: request.task.clone(),
+        })?;
+        complete_checked_request(self.llm, &call, request, None, Some(reasoning), |raw| {
             accept::accept(raw, review)
         })
         .await
@@ -76,13 +90,8 @@ impl ReviewGrader for JudgeGrader<'_> {
 
 /// The whole request for `review`, answered deterministically and with the planner's reservation for the answer.
 fn request(review: &Review<'_>, wording: &JudgeWording) -> GroundedRequest {
-    let mut request = model_call::structured(
-        wording.system,
-        task::task(review, wording),
-        schema(),
-        0,
-        "low",
-    );
+    let mut request =
+        model_call::structured(wording.system, task::task(review, wording), schema(), 0);
     request.call.sampling = Some(SamplingOverride::deterministic());
     request
 }

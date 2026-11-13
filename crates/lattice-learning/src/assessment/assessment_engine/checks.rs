@@ -1,37 +1,49 @@
 //! What a bank item must satisfy before any form may use it (section 5.2).
-use super::answers::whole_words;
+use super::answers::{quoted, whole_words};
 use super::*;
+use std::ops::RangeInclusive;
+use unicode_normalization::UnicodeNormalization;
 
-/// The leak check (section 5.2): the key's own text in the stem. Comparison
-/// stems name several options, so a short key counts only when it is the one
-/// option the stem names; a key of four or more words counts on any shared
-/// run of four words.
-pub fn key_leaks(stem: &str, key_text: &str, other_options: &[String]) -> bool {
-    let stem = normalize_answer(stem);
-    let key = normalize_answer(key_text);
-    if key.chars().count() < 3 {
-        return false;
+/// The words of the answer a learner can copy out of the prompt: the first of
+/// `answers` whose whole text is in it. For a choice question `answers` is the
+/// key and the rule holds only while no other option's whole text is in the
+/// prompt too, since a prompt naming several options is a comparison.
+pub fn answer_in_prompt(prompt: &str, answers: &[&str], others: &[&str]) -> Option<String> {
+    let stem = normalize_answer(prompt);
+    if others
+        .iter()
+        .any(|other| whole_words(&stem, &normalize_answer(other)))
+    {
+        return None;
     }
-    let words: Vec<&str> = key.split_whitespace().collect();
-    if words.len() >= 4 {
-        return words
-            .windows(4)
-            .any(|gram| whole_words(&stem, &gram.join(" ")));
-    }
-    whole_words(&stem, &key)
-        && !other_options
-            .iter()
-            .map(|o| normalize_answer(o))
-            .any(|o| o.chars().count() >= 3 && whole_words(&stem, &o))
+    answers
+        .iter()
+        .find(|answer| whole_words(&stem, &normalize_answer(answer)))
+        .map(|answer| answer.trim().to_owned())
 }
 
-/// Length bias (section 5.2): the key is the unique longest option by more
-/// than 60 % of the median option length.
-pub fn length_biased(options: &[String], key: usize) -> bool {
-    let mut lengths: Vec<usize> = options.iter().map(|o| o.trim().chars().count()).collect();
-    let Some(&key_length) = lengths.get(key) else {
-        return false;
-    };
+/// The sentence saying the prompt holds its answer, `words` being what `answer_in_prompt` found.
+pub fn answer_in_prompt_message(words: &str) -> String {
+    format!("The question contains its answer: {}.", quoted(words))
+}
+
+/// The share of the median option length the key may exceed the longest other option by.
+const LENGTH_SLACK: f64 = 0.6;
+
+/// The most the key may exceed the longest other option by: `LENGTH_SLACK` of
+/// the median option length, whole characters.
+fn length_slack(lengths: &[usize]) -> usize {
+    let mut sorted = lengths.to_vec();
+    sorted.sort_unstable();
+    let median = sorted.get(sorted.len() / 2).copied().unwrap_or(0) as f64;
+    (LENGTH_SLACK * median) as usize
+}
+
+/// The longest the key may be before it stands out: the longest other option
+/// plus the slack. `None` when `key` is no option.
+pub fn longest_allowed_key(options: &[String], key: usize) -> Option<usize> {
+    let lengths: Vec<usize> = options.iter().map(|o| o.trim().chars().count()).collect();
+    lengths.get(key)?;
     let longest_other = lengths
         .iter()
         .enumerate()
@@ -39,24 +51,17 @@ pub fn length_biased(options: &[String], key: usize) -> bool {
         .map(|(_, l)| *l)
         .max()
         .unwrap_or(0);
-    lengths.sort_unstable();
-    let median = lengths.get(lengths.len() / 2).copied().unwrap_or(0) as f64;
-    key_length > longest_other && (key_length - longest_other) as f64 > 0.6 * median
+    Some(longest_other + length_slack(&lengths))
 }
 
-/// Normalised stem similarity at or above which two items of one outcome are
-/// the same question (word-set Jaccard).
-pub fn near_duplicate(a: &str, b: &str) -> bool {
-    let a: HashSet<String> = normalize_answer(a)
-        .split_whitespace()
-        .map(str::to_owned)
-        .collect();
-    let b: HashSet<String> = normalize_answer(b)
-        .split_whitespace()
-        .map(str::to_owned)
-        .collect();
-    let union = a.union(&b).count();
-    union > 0 && a.intersection(&b).count() as f64 / union as f64 >= 0.8
+/// Length bias (section 5.2): the key is the unique longest option by more
+/// than `LENGTH_SLACK` of the median option length.
+pub fn length_biased(options: &[String], key: usize) -> bool {
+    let Some(allowed) = longest_allowed_key(options, key) else {
+        return false;
+    };
+    let key_length = options.get(key).map_or(0, |o| o.trim().chars().count());
+    key_length > allowed
 }
 
 /// The `{{n}}` blanks a cloze prompt holds, in order of appearance.
@@ -74,9 +79,155 @@ pub fn cloze_blanks(prompt: &str) -> Vec<usize> {
     found
 }
 
-fn distinct_options(options: &[String]) -> bool {
-    let normalized: HashSet<String> = options.iter().map(|o| normalize_answer(o)).collect();
-    normalized.len() == options.len() && !normalized.iter().any(String::is_empty)
+fn comparable(option: &str) -> String {
+    let composed: String = option
+        .nfc()
+        .map(|c| match c {
+            '\u{2018}' | '\u{2019}' => '\'',
+            '\u{201C}' | '\u{201D}' => '"',
+            '\u{2010}'..='\u{2015}' | '\u{2212}' => '-',
+            other => other,
+        })
+        .collect();
+    let words = composed.split_whitespace().collect::<Vec<_>>().join(" ");
+    words
+        .strip_suffix('.')
+        .unwrap_or(&words)
+        .trim_end()
+        .to_owned()
+}
+
+/// Two choices are the same only when a reader could not tell them apart:
+/// typography, spacing and a closing full stop do not count; letter case,
+/// accents and path punctuation do.
+pub fn distinct_options(options: &[String]) -> bool {
+    repeated_option(options).is_none() && options.iter().all(|o| !o.trim().is_empty())
+}
+
+/// The first choice that repeats an earlier one, as `distinct_options` reads them.
+pub fn repeated_option(options: &[String]) -> Option<&str> {
+    let mut seen = HashSet::new();
+    options
+        .iter()
+        .find(|option| !seen.insert(comparable(option)))
+        .map(String::as_str)
+}
+
+/// The answer choices every single-choice question is written with.
+pub(crate) const CHOICES_PER_QUESTION: usize = 4;
+
+/// How many options, and how many of them correct, a multi-select item has.
+pub const MULTI_SELECT_OPTIONS: RangeInclusive<usize> = 4..=6;
+pub const MULTI_SELECT_CORRECT: RangeInclusive<usize> = 2..=3;
+
+/// How many pairs a matching item has.
+pub const MATCHING_PAIRS: RangeInclusive<usize> = 3..=5;
+
+/// A count range in words: "4" or "2–4".
+pub fn span(range: &RangeInclusive<usize>) -> String {
+    let (least, most) = (range.start(), range.end());
+    if least == most {
+        least.to_string()
+    } else {
+        format!("{least}–{most}")
+    }
+}
+
+/// What is wrong with a single-choice question's choices, in words its writer is told.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChoiceFault {
+    Count {
+        has: usize,
+        wanted: RangeInclusive<usize>,
+    },
+    Blank,
+    Repeated(String),
+    NoKey,
+    LengthBiased,
+}
+
+impl ChoiceFault {
+    pub fn message(&self) -> String {
+        match self {
+            Self::Count { has, wanted } => {
+                format!("It has {has} answer choices; it needs {}.", span(wanted))
+            }
+            Self::Blank => "A choice is blank.".to_owned(),
+            Self::Repeated(option) => format!("Two choices are the same: {}.", quoted(option)),
+            Self::NoKey => "No choice is marked as the correct one.".to_owned(),
+            Self::LengthBiased => "The correct option stands out as much the longest.".to_owned(),
+        }
+    }
+}
+
+/// Every fault of a single-choice question's choices and key. A key that
+/// stands out is judged only among three or more choices.
+pub fn choice_faults(
+    options: &[String],
+    key: Option<usize>,
+    wanted: RangeInclusive<usize>,
+) -> Vec<ChoiceFault> {
+    let mut faults = Vec::new();
+    if !wanted.contains(&options.len()) {
+        faults.push(ChoiceFault::Count {
+            has: options.len(),
+            wanted,
+        });
+    }
+    if options.iter().any(|option| option.trim().is_empty()) {
+        faults.push(ChoiceFault::Blank);
+    }
+    if let Some(option) = repeated_option(options) {
+        faults.push(ChoiceFault::Repeated(option.to_owned()));
+    }
+    match key.filter(|key| *key < options.len()) {
+        None => faults.push(ChoiceFault::NoKey),
+        Some(key) if options.len() >= 3 && length_biased(options, key) => {
+            faults.push(ChoiceFault::LengthBiased);
+        }
+        Some(_) => {}
+    }
+    faults
+}
+
+/// The writer's statement of `length_biased`.
+pub fn key_length_rule() -> String {
+    format!(
+        "The correct choice may be longer than the longest other choice by at most {} % of the median choice length.",
+        (LENGTH_SLACK * 100.0).round()
+    )
+}
+
+/// Every content fault of a bank item, each in words its writer is told: its
+/// choices and key, its answer being in its prompt, and its key's length.
+pub fn item_faults(candidate: &LearningAssessmentCandidate) -> Vec<String> {
+    let prompt = candidate.prompt.as_str();
+    let found = |answers: &[&str], others: &[&str]| {
+        answer_in_prompt(prompt, answers, others).map(|words| answer_in_prompt_message(&words))
+    };
+    match (&candidate.format, &candidate.key) {
+        (LearningItemFormat::SingleChoice, LearningAssessmentKey::Choice(key)) => {
+            let options = &candidate.options;
+            let mut faults: Vec<String> = choice_faults(options, Some(*key), SINGLE_CHOICE_OPTIONS)
+                .iter()
+                .map(ChoiceFault::message)
+                .collect();
+            let others: Vec<&str> = options
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| index != key)
+                .map(|(_, option)| option.as_str())
+                .collect();
+            let answers: Vec<&str> = options.get(*key).map(String::as_str).into_iter().collect();
+            faults.extend(found(&answers, &others));
+            faults
+        }
+        (LearningItemFormat::ShortAnswer, LearningAssessmentKey::Text(key)) => {
+            let answers: Vec<&str> = key.variants.iter().map(String::as_str).collect();
+            found(&answers, &[]).into_iter().collect()
+        }
+        _ => Vec::new(),
+    }
 }
 
 fn text_key_valid(key: &LearningTextKey) -> bool {
@@ -91,7 +242,7 @@ fn text_key_valid(key: &LearningTextKey) -> bool {
 pub const TRUE_FALSE: [&str; 2] = ["True", "False"];
 
 /// How many options a single-choice item may have.
-pub const SINGLE_CHOICE_OPTIONS: std::ops::RangeInclusive<usize> = 2..=8;
+pub const SINGLE_CHOICE_OPTIONS: RangeInclusive<usize> = 2..=8;
 
 pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()> {
     id(&candidate.id, "assessment item")?;
@@ -121,35 +272,9 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
     }
     let no_left = candidate.left.is_empty();
     match (&candidate.format, &candidate.key) {
-        (LearningItemFormat::SingleChoice, LearningAssessmentKey::Choice(key)) => {
-            if !SINGLE_CHOICE_OPTIONS.contains(&candidate.options.len())
-                || *key >= candidate.options.len()
-            {
-                return Err(invalid(
-                    "Single-choice items need 2–8 options and one valid key.",
-                ));
-            }
-            if !distinct_options(&candidate.options) || !no_left {
-                return Err(invalid("Choice options must be unique and non-empty."));
-            }
-            let others: Vec<String> = candidate
-                .options
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| i != key)
-                .map(|(_, o)| o.clone())
-                .collect();
-            if candidate
-                .options
-                .get(*key)
-                .is_some_and(|k| key_leaks(&candidate.prompt, k, &others))
-            {
-                return Err(invalid("The question's stem gives away its answer."));
-            }
-            if candidate.options.len() >= 3 && length_biased(&candidate.options, *key) {
-                return Err(invalid(
-                    "The correct option stands out as much the longest.",
-                ));
+        (LearningItemFormat::SingleChoice, LearningAssessmentKey::Choice(_)) => {
+            if !no_left {
+                return Err(invalid("Single-choice items take no left-hand entries."));
             }
         }
         (LearningItemFormat::TrueFalse, LearningAssessmentKey::Choice(key)) => {
@@ -160,13 +285,15 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
             }
         }
         (LearningItemFormat::MultiSelect, LearningAssessmentKey::Choices(keys)) => {
-            if !(4..=6).contains(&candidate.options.len())
-                || !(2..=3).contains(&keys.len())
+            if !MULTI_SELECT_OPTIONS.contains(&candidate.options.len())
+                || !MULTI_SELECT_CORRECT.contains(&keys.len())
                 || keys.iter().any(|k| *k >= candidate.options.len())
             {
-                return Err(invalid(
-                    "Multi-select items need 4–6 options with 2–3 correct.",
-                ));
+                return Err(AppError::InvalidInput(format!(
+                    "Multi-select items need {} options with {} correct.",
+                    span(&MULTI_SELECT_OPTIONS),
+                    span(&MULTI_SELECT_CORRECT)
+                )));
             }
             if !distinct_options(&candidate.options) || !no_left {
                 return Err(invalid("Choice options must be unique and non-empty."));
@@ -177,13 +304,6 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
                 return Err(invalid(
                     "Short-answer items need accepted answers and no choices.",
                 ));
-            }
-            if key
-                .variants
-                .iter()
-                .any(|v| key_leaks(&candidate.prompt, v, &[]))
-            {
-                return Err(invalid("The question's stem gives away its answer."));
             }
         }
         (LearningItemFormat::Cloze, LearningAssessmentKey::Cloze(blanks)) => {
@@ -203,7 +323,7 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
         (LearningItemFormat::Matching, LearningAssessmentKey::Matching(pairs)) => {
             let lefts = candidate.left.len();
             let rights = candidate.options.len();
-            if !(3..=5).contains(&lefts)
+            if !MATCHING_PAIRS.contains(&lefts)
                 || !(rights == lefts || rights == lefts + 1)
                 || pairs.len() != lefts
                 || pairs.iter().any(|p| *p >= rights)
@@ -211,9 +331,10 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
                 || !distinct_options(&candidate.left)
                 || !distinct_options(&candidate.options)
             {
-                return Err(invalid(
-                    "Matching items need 3–5 distinct pairs, at most one extra right-hand entry, and no shared right-hand answers.",
-                ));
+                return Err(AppError::InvalidInput(format!(
+                    "Matching items need {} distinct pairs, at most one extra right-hand entry, and no shared right-hand answers.",
+                    span(&MATCHING_PAIRS)
+                )));
             }
         }
         (LearningItemFormat::Ordering, LearningAssessmentKey::Ordering(order)) => {
@@ -255,5 +376,8 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
             ))
         }
     }
-    Ok(())
+    match item_faults(candidate).first() {
+        Some(fault) => Err(invalid(fault)),
+        None => Ok(()),
+    }
 }

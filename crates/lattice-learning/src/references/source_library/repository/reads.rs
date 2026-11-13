@@ -27,8 +27,7 @@ pub(crate) async fn workspace_in(
     let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
         .bind(program_id)
         .fetch_optional(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
     if exists.is_none() {
         return Err(AppError::NotFound("Learning program not found".into()));
     }
@@ -40,14 +39,13 @@ pub(crate) async fn workspace_in(
     let rows = sqlx::query(query)
         .bind(program_id)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
     let mut sources = Vec::with_capacity(rows.len());
     for row in rows {
         let id: String = row.get("id");
         let versions = version_summaries(connection, program_id, &id).await?;
-        let active_id: Option<String> = row.try_get("active_version_id").map_err(db)?;
-        let pending_id: Option<String> = row.try_get("pending_version_id").map_err(db)?;
+        let active_id: Option<String> = row.try_get("active_version_id")?;
+        let pending_id: Option<String> = row.try_get("pending_version_id")?;
         let checks = refresh_checks(connection, program_id, &id).await?;
         sources.push(LearningSourceLibraryItemDto {
             id: id.clone(),
@@ -90,7 +88,7 @@ async fn version_summaries(
     source_id: &str,
 ) -> Result<Vec<LearningSourceVersionSummaryDto>> {
     let rows = sqlx::query("SELECT * FROM learning_source_versions WHERE program_id=? AND source_id=? ORDER BY version_number DESC")
-        .bind(program_id).bind(source_id).fetch_all(&mut *connection).await.map_err(db)?;
+        .bind(program_id).bind(source_id).fetch_all(&mut *connection).await?;
     rows.into_iter().map(|r| Ok(summary(&r))).collect()
 }
 
@@ -100,7 +98,7 @@ async fn refresh_checks(
     source_id: &str,
 ) -> Result<Vec<LearningSourceCheckDto>> {
     let rows = sqlx::query("SELECT * FROM learning_source_refresh_checks WHERE program_id=? AND source_id=? ORDER BY checked_at DESC,rowid DESC LIMIT ?")
-        .bind(program_id).bind(source_id).bind(MAX_CHECKS_IN_WORKSPACE).fetch_all(&mut *connection).await.map_err(db)?;
+        .bind(program_id).bind(source_id).bind(MAX_CHECKS_IN_WORKSPACE).fetch_all(&mut *connection).await?;
     rows.into_iter()
         .map(|r| {
             Ok(LearningSourceCheckDto {
@@ -127,7 +125,7 @@ pub(in super::super) async fn stored_version(
     source_id: &str,
     version_id: &str,
 ) -> Result<Option<StoredVersion>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let row = sqlx::query(
         "SELECT * FROM learning_source_versions WHERE program_id=? AND source_id=? AND id=?",
     )
@@ -135,9 +133,8 @@ pub(in super::super) async fn stored_version(
     .bind(source_id)
     .bind(version_id)
     .fetch_optional(&mut *read)
-    .await
-    .map_err(db)?;
-    read.commit().await.map_err(db)?;
+    .await?;
+    read.commit().await?;
     Ok(row.map(|row| StoredVersion {
         summary: summary(&row),
         full_text: row.get("full_text"),
@@ -149,9 +146,9 @@ pub(in super::super) async fn version_usage(
     program_id: &str,
     version_id: &str,
 ) -> Result<Vec<LearningSourceUsageDto>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let usage = version_usage_on(&mut read, program_id, version_id).await?;
-    read.commit().await.map_err(db)?;
+    read.commit().await?;
     Ok(usage)
 }
 
@@ -162,7 +159,7 @@ async fn version_usage_on(
 ) -> Result<Vec<LearningSourceUsageDto>> {
     let mut out = Vec::new();
     let rows=sqlx::query("SELECT l.id lesson_id,l.title lesson_title,b.title ref_title FROM learning_blocks b JOIN learning_lessons l ON l.id=b.lesson_id WHERE l.program_id=? AND EXISTS(SELECT 1 FROM json_each(b.source_ids_json) WHERE value=?) ORDER BY l.ordinal,b.ordinal")
-        .bind(program_id).bind(version_id).fetch_all(&mut *connection).await.map_err(db)?;
+        .bind(program_id).bind(version_id).fetch_all(&mut *connection).await?;
     for r in rows {
         out.push(LearningSourceUsageDto {
             lesson_id: r.get("lesson_id"),
@@ -172,7 +169,7 @@ async fn version_usage_on(
         });
     }
     let rows=sqlx::query("SELECT l.id lesson_id,l.title lesson_title,c.prompt ref_title FROM learning_assessment_candidates c JOIN learning_lessons l ON l.id=c.lesson_id WHERE c.program_id=? AND c.review_status='agreed' AND EXISTS(SELECT 1 FROM json_each(c.source_version_ids_json) WHERE value=?) ORDER BY l.ordinal,c.rowid")
-        .bind(program_id).bind(version_id).fetch_all(&mut *connection).await.map_err(db)?;
+        .bind(program_id).bind(version_id).fetch_all(&mut *connection).await?;
     for r in rows {
         out.push(LearningSourceUsageDto {
             lesson_id: r.get("lesson_id"),
@@ -182,7 +179,7 @@ async fn version_usage_on(
         });
     }
     let rows=sqlx::query("SELECT l.id lesson_id,l.title lesson_title,d.question ref_title FROM learning_card_drafts d JOIN learning_lessons l ON l.id=d.lesson_id WHERE d.program_id=? AND d.status='pending' AND EXISTS(SELECT 1 FROM json_each(d.source_ids_json) WHERE value=?) ORDER BY l.ordinal,d.created_at")
-        .bind(program_id).bind(version_id).fetch_all(&mut *connection).await.map_err(db)?;
+        .bind(program_id).bind(version_id).fetch_all(&mut *connection).await?;
     for r in rows {
         out.push(LearningSourceUsageDto {
             lesson_id: r.get("lesson_id"),
@@ -192,7 +189,7 @@ async fn version_usage_on(
         });
     }
     let rows=sqlx::query("SELECT l.id lesson_id,l.title lesson_title,c.question ref_title FROM learning_card_origins o JOIN learning_lessons l ON l.id=o.lesson_id JOIN study_cards c ON c.id=o.card_id WHERE o.program_id=? AND EXISTS(SELECT 1 FROM json_each(o.source_ids_json) WHERE value=?) ORDER BY l.ordinal,o.accepted_at")
-        .bind(program_id).bind(version_id).fetch_all(&mut *connection).await.map_err(db)?;
+        .bind(program_id).bind(version_id).fetch_all(&mut *connection).await?;
     for r in rows {
         out.push(LearningSourceUsageDto {
             lesson_id: r.get("lesson_id"),
@@ -221,7 +218,7 @@ pub(in super::super) fn searchable_versions<'a>(
         .bind(program_id)
         .fetch(connection)
         .map(|row| -> Result<SearchedVersion> {
-            let r = row.map_err(db)?;
+            let r = row?;
             Ok(SearchedVersion {
                 source_id: r.get("source_id"),
                 version_id: r.get("id"),
@@ -248,10 +245,10 @@ pub(in super::super) async fn excerpted_sources(
     database: &Database,
     program_id: &str,
 ) -> Result<Vec<LearningSourceDto>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let rows=sqlx::query("SELECT v.id,v.title,v.resolved_url,v.requested_url,v.excerpt,v.acquired_at FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NULL ORDER BY s.created_at,s.id")
-        .bind(program_id).fetch_all(&mut *read).await.map_err(db)?;
-    read.commit().await.map_err(db)?;
+        .bind(program_id).fetch_all(&mut *read).await?;
+    read.commit().await?;
     Ok(rows.iter().map(source_dto).collect())
 }
 
@@ -259,10 +256,10 @@ pub(in super::super) async fn full_text_sources(
     database: &Database,
     program_id: &str,
 ) -> Result<Vec<LearningSourceDto>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let rows=sqlx::query("SELECT v.id,v.title,v.resolved_url,v.requested_url,v.full_text AS excerpt,v.acquired_at FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NULL ORDER BY s.created_at,s.id")
-        .bind(program_id).fetch_all(&mut *read).await.map_err(db)?;
-    read.commit().await.map_err(db)?;
+        .bind(program_id).fetch_all(&mut *read).await?;
+    read.commit().await?;
     Ok(rows.iter().map(source_dto).collect())
 }
 
@@ -270,13 +267,12 @@ pub(in super::super) async fn active_versions(
     database: &Database,
     program_id: &str,
 ) -> Result<Vec<ActiveVersion>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let rows = sqlx::query("SELECT v.id,v.title,v.content_sha256 FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NULL ORDER BY s.created_at,s.id")
         .bind(program_id)
         .fetch_all(&mut *read)
-        .await
-        .map_err(db)?;
-    read.commit().await.map_err(db)?;
+        .await?;
+    read.commit().await?;
     Ok(rows
         .into_iter()
         .map(|row| ActiveVersion {
@@ -292,16 +288,15 @@ pub(in super::super) async fn version_text(
     program_id: &str,
     version_id: &str,
 ) -> Result<Option<String>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let text = sqlx::query_scalar(
         "SELECT full_text FROM learning_source_versions WHERE program_id=? AND id=?",
     )
     .bind(program_id)
     .bind(version_id)
     .fetch_optional(&mut *read)
-    .await
-    .map_err(db)?;
-    read.commit().await.map_err(db)?;
+    .await?;
+    read.commit().await?;
     Ok(text)
 }
 
@@ -309,13 +304,12 @@ pub(in super::super) async fn version_texts(
     database: &Database,
     program_id: &str,
 ) -> Result<HashMap<String, String>> {
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let rows = sqlx::query("SELECT id,full_text FROM learning_source_versions WHERE program_id=?")
         .bind(program_id)
         .fetch_all(&mut *read)
-        .await
-        .map_err(db)?;
-    read.commit().await.map_err(db)?;
+        .await?;
+    read.commit().await?;
     Ok(rows
         .into_iter()
         .map(|r| (r.get("id"), r.get("full_text")))

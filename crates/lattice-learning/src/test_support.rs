@@ -13,8 +13,7 @@ pub async fn pool() -> Result<SqlitePool> {
         .idle_timeout(None)
         .max_lifetime(None)
         .connect(":memory:")
-        .await
-        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+        .await?;
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
         .await

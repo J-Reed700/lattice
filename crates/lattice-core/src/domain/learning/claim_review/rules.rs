@@ -295,23 +295,9 @@ pub fn identities<'a>(
     Identities { assigned, orphaned }
 }
 
-/// The BLOCKED rule (§2.1, §6.1): while any claim is the machine's the lesson
-/// is still verifying; once none is, it is ready only if every claim is
-/// resolved, and otherwise needs the user's review.
+/// The lesson's end state: [`ClaimCounts::end_state`] of its claims.
 pub fn end_state<'a>(claims: impl IntoIterator<Item = &'a ClaimLedgerEntry>) -> LessonReviewState {
-    let mut needs_review = false;
-    for claim in claims {
-        let state = claim.state();
-        if state.is_machine_owned() && !claim.held_for_standing() {
-            return LessonReviewState::Verifying;
-        }
-        needs_review |= !state.is_resolved();
-    }
-    if needs_review {
-        LessonReviewState::NeedsReview
-    } else {
-        LessonReviewState::Ready
-    }
+    ClaimCounts::tally(claims).end_state()
 }
 
 /// Claims per outcome, for the review header and the lesson card (§6.3).
@@ -375,6 +361,24 @@ impl ClaimCounts {
             *slot += 1;
         }
         counts
+    }
+
+    /// Claims waiting for the user or still the machine's.
+    pub fn unresolved(&self) -> usize {
+        self.queued + self.open
+    }
+
+    /// The BLOCKED rule (§2.1, §6.1): while any claim is the machine's the
+    /// lesson is still verifying; once none is, it is ready only if none
+    /// waits for the user.
+    pub fn end_state(&self) -> LessonReviewState {
+        if self.open > 0 {
+            LessonReviewState::Verifying
+        } else if self.queued > 0 {
+            LessonReviewState::NeedsReview
+        } else {
+            LessonReviewState::Ready
+        }
     }
 
     /// The user's own verdicts: confirmed, removed or edited away.

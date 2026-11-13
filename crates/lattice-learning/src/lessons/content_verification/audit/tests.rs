@@ -584,7 +584,7 @@ async fn agreement_records_a_verifier_check_and_the_lesson_may_publish() {
     assert_eq!(checks[0].window_tokens, BIG);
     let run = harness.runs.only();
     assert_eq!(run.state, RunState::Completed);
-    assert_eq!(run.policy, AUDIT_POLICY_ID);
+    assert_eq!(run.policy, AUDIT_POLICY_ID.as_str());
     assert_eq!((run.input_tokens, run.output_tokens), (1_000, 50));
     assert_eq!(
         harness.progress.lock().unwrap().as_slice(),

@@ -14,7 +14,7 @@ use lattice_core::shared::persistence::{Database, WriteTx};
 
 use super::repository::{append_in, bump_revision, check_revision, load_in, reviews};
 use super::trust_changed::machine;
-use crate::persistence::{db, now};
+use crate::persistence::now;
 
 /// Reopens what the versions of the deleted `source_id` closed, in every
 /// lesson review of the program, on `connection`.
@@ -54,21 +54,21 @@ pub(super) async fn reopen_lost(
     else {
         return Ok(false);
     };
-    let mut read = database.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await?;
     let deleted = reviews::deleted_versions_in(&mut read, program_id).await?;
-    read.commit().await.map_err(db)?;
+    read.commit().await?;
     let planned = reopens(&ledger.claims, &deleted);
     if planned.is_empty() {
         return Ok(false);
     }
-    let mut tx = database.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     match check_revision(&mut tx, &ledger.lesson_id, ledger.revision).await {
         Ok(()) => {}
         Err(AppError::InvalidState(_)) => return Ok(true),
         Err(error) => return Err(error),
     }
     write(&mut tx, &ledger.lesson_id, review, &planned).await?;
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(true)
 }
 

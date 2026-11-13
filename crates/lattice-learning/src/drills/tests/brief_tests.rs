@@ -6,7 +6,6 @@ use super::support::{
 };
 use crate::drills::brief::lesson_brief;
 use crate::drills::lesson::LessonContext;
-use crate::persistence::db;
 use crate::tests::pool;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{evidence_units, LessonSentence};
@@ -122,7 +121,7 @@ async fn a_room_of_nothing_and_a_room_that_holds_the_brief_but_not_its_first_uni
             .await
             .unwrap_err();
         assert!(
-            matches!(&error, AppError::InvalidConfig(_)),
+            matches!(&error, AppError::WindowTooSmall(_)),
             "{room}: {error:?}"
         );
     }
@@ -178,8 +177,7 @@ async fn an_outline_lesson_takes_no_more_than_its_planned_minutes_take_to_read_b
     sqlx::query("UPDATE learning_lessons SET estimated_minutes=0 WHERE id=?")
         .bind(&context.lesson_id)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let context = LessonContext::load(&database, &context.program_id, &context.lesson_id).await?;
     assert_eq!(context.estimated_minutes, 0);
     let none_planned = lesson_brief(&none(), &database, &context, usize::MAX).await?;
@@ -198,8 +196,7 @@ async fn an_outline_lesson_the_sources_say_nothing_of_has_no_evidence_and_is_not
     )
     .bind(&context.lesson_id)
     .execute(&pool)
-    .await
-    .map_err(db)?;
+    .await?;
     let context = LessonContext::load(&database, &context.program_id, &context.lesson_id).await?;
     let brief = lesson_brief(&none(), &database, &context, usize::MAX).await?;
     assert!(brief.evidence.is_empty());
@@ -232,7 +229,7 @@ async fn an_outline_lesson_whose_first_passage_does_not_fit_the_room_is_a_window
         .await
         .unwrap_err();
     assert!(
-        matches!(&error, AppError::InvalidConfig(message) if message.contains("first passage")),
+        matches!(&error, AppError::WindowTooSmall(message) if message.contains("first passage")),
         "{error:?}"
     );
     Ok(())

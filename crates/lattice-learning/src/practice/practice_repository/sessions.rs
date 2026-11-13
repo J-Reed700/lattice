@@ -10,7 +10,7 @@ impl LearningPracticeRepository {
     ) -> Result<LearningPracticeWorkspaceDto> {
         Self::validate_ids(&req.program_id, &req.session_id, Some(&req.operation_id))?;
         uuid(&req.lesson_id, "lesson")?;
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         if practice_operation(
             &req.operation_id,
             &req.program_id,
@@ -21,7 +21,7 @@ impl LearningPracticeRepository {
         .seen(&mut tx)
         .await?
         {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return self.workspace(&req.program_id).await;
         }
         Self::verify_active(&mut tx, &req.program_id).await?;
@@ -29,8 +29,7 @@ impl LearningPracticeRepository {
             sqlx::query_scalar("SELECT revision FROM learning_programs WHERE id=?")
                 .bind(&req.program_id)
                 .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         if program_revision != Some(req.expected_program_revision) {
             return Err(conflict("Program changed; reload and retry."));
         }
@@ -40,8 +39,7 @@ impl LearningPracticeRepository {
         .bind(&req.program_id)
         .bind(&req.lesson_id)
         .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?
+        .await?
         .ok_or_else(|| AppError::NotFound("Lesson not found in this program".into()))?;
         if lesson.get::<String, _>("preparation") != "ready" {
             return Err(invalid(
@@ -49,7 +47,7 @@ impl LearningPracticeRepository {
             ));
         }
         let mut source_ids = Vec::<String>::new();
-        for row in sqlx::query("SELECT source_ids_json FROM learning_blocks WHERE lesson_id=? UNION ALL SELECT source_version_ids_json AS source_ids_json FROM learning_assessment_candidates WHERE lesson_id=? AND origin IN ('lesson','migrated') AND review_status<>'dropped'").bind(&req.lesson_id).bind(&req.lesson_id).fetch_all(&mut *tx).await.map_err(db)? {
+        for row in sqlx::query("SELECT source_ids_json FROM learning_blocks WHERE lesson_id=? UNION ALL SELECT source_version_ids_json AS source_ids_json FROM learning_assessment_candidates WHERE lesson_id=? AND origin IN ('lesson','migrated') AND review_status<>'dropped'").bind(&req.lesson_id).bind(&req.lesson_id).fetch_all(&mut *tx).await? {
             let ids:Vec<String>=decode(row.get("source_ids_json"))?; source_ids.extend(ids);
         }
         source_ids.sort();
@@ -61,8 +59,7 @@ impl LearningPracticeRepository {
             .bind(&req.program_id)
             .bind(version_id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
             if owned.is_none() {
                 return Err(invalid(
                     "Lesson source references must resolve to immutable versions owned by this program.",
@@ -81,7 +78,7 @@ impl LearningPracticeRepository {
             LearningPracticeTaskKind::Independent => "independent_practice",
         };
         let block = sqlx::query("SELECT body,rubric_json FROM learning_blocks WHERE lesson_id=? AND kind=? ORDER BY ordinal LIMIT 1")
-            .bind(&req.lesson_id).bind(block_kind).fetch_optional(&mut *tx).await.map_err(db)?;
+            .bind(&req.lesson_id).bind(block_kind).fetch_optional(&mut *tx).await?;
         if req.task_kind == LearningPracticeTaskKind::Guided && block.is_none() {
             return Err(invalid(
                 "This lesson has no guided exercise. Use its independent assignment.",
@@ -109,7 +106,7 @@ impl LearningPracticeRepository {
                 ));
             }
             let parent = sqlx::query("SELECT s.task_prompt,s.task_kind,s.rubric_json,s.source_version_ids_json,sub.artifact_text,sub.criteria_json,sub.assistance_json FROM learning_practice_sessions s JOIN learning_practice_submissions sub ON sub.session_id=s.id WHERE s.id=? AND s.program_id=? AND s.lesson_id=?")
-                .bind(parent_id).bind(&req.program_id).bind(&req.lesson_id).fetch_optional(&mut *tx).await.map_err(db)?
+                .bind(parent_id).bind(&req.program_id).bind(&req.lesson_id).fetch_optional(&mut *tx).await?
                 .ok_or_else(||invalid("Only a submitted attempt from this lesson can be revised."))?;
             if parse_task_kind(parent.get("task_kind"))? != req.task_kind {
                 return Err(invalid("A revision must keep the original exercise."));
@@ -130,8 +127,8 @@ impl LearningPracticeRepository {
         }
         let timestamp = now();
         sqlx::query("INSERT INTO learning_practice_sessions(id,program_id,lesson_id,lesson_title,lesson_objective,task_prompt,status,mode,revision,source_version_ids_json,rubric_json,created_at,updated_at,task_kind,revises_session_id) VALUES(?,?,?,?,?,?,'active',?,0,?,?,?,?,?,?)")
-            .bind(&req.session_id).bind(&req.program_id).bind(&req.lesson_id).bind(&title).bind(&objective).bind(&task_prompt).bind(mode(&req.mode)).bind(json(&source_ids)?).bind(json(&rubric)?).bind(timestamp).bind(timestamp).bind(task_kind(&req.task_kind)).bind(&req.revises_session_id).execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("INSERT INTO learning_practice_artifact_revisions(program_id,session_id,revision,text,sha256,operation_id,created_at) VALUES(?,?,0,?,?,?,?)").bind(&req.program_id).bind(&req.session_id).bind(&initial_text).bind(sha256_hex(&initial_text)).bind(&req.operation_id).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+            .bind(&req.session_id).bind(&req.program_id).bind(&req.lesson_id).bind(&title).bind(&objective).bind(&task_prompt).bind(mode(&req.mode)).bind(json(&source_ids)?).bind(json(&rubric)?).bind(timestamp).bind(timestamp).bind(task_kind(&req.task_kind)).bind(&req.revises_session_id).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO learning_practice_artifact_revisions(program_id,session_id,revision,text,sha256,operation_id,created_at) VALUES(?,?,0,?,?,?,?)").bind(&req.program_id).bind(&req.session_id).bind(&initial_text).bind(sha256_hex(&initial_text)).bind(&req.operation_id).bind(timestamp).execute(&mut *tx).await?;
         if let Some(details) = inherited_assistance {
             Self::insert_assistance(
                 &mut tx,
@@ -155,7 +152,7 @@ impl LearningPracticeRepository {
         )
         .record(&mut tx, &())
         .await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         self.workspace(&req.program_id).await
     }
 
@@ -184,7 +181,7 @@ impl LearningPracticeRepository {
         {
             return self.workspace(&req.program_id).await;
         }
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         if practice_operation(
             &req.operation_id,
             &req.program_id,
@@ -195,7 +192,7 @@ impl LearningPracticeRepository {
         .seen(&mut tx)
         .await?
         {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return self.workspace(&req.program_id).await;
         }
         Self::verify_active(&mut tx, &req.program_id).await?;
@@ -207,11 +204,11 @@ impl LearningPracticeRepository {
         }
         let next = artifact_revision + 1;
         let t = now();
-        let update=sqlx::query("UPDATE learning_practice_sessions SET revision=revision+1,updated_at=? WHERE id=? AND program_id=? AND revision=? AND status='active'").bind(t).bind(&req.session_id).bind(&req.program_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
+        let update=sqlx::query("UPDATE learning_practice_sessions SET revision=revision+1,updated_at=? WHERE id=? AND program_id=? AND revision=? AND status='active'").bind(t).bind(&req.session_id).bind(&req.program_id).bind(req.expected_revision).execute(&mut *tx).await?;
         if update.rows_affected() != 1 {
             return Err(conflict("Practice session changed; reload and retry."));
         }
-        sqlx::query("INSERT INTO learning_practice_artifact_revisions(program_id,session_id,revision,text,sha256,operation_id,created_at) VALUES(?,?,?,?,?,?,?)").bind(&req.program_id).bind(&req.session_id).bind(next).bind(&req.text).bind(sha256_hex(&req.text)).bind(&req.operation_id).bind(t).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_practice_artifact_revisions(program_id,session_id,revision,text,sha256,operation_id,created_at) VALUES(?,?,?,?,?,?,?)").bind(&req.program_id).bind(&req.session_id).bind(next).bind(&req.text).bind(sha256_hex(&req.text)).bind(&req.operation_id).bind(t).execute(&mut *tx).await?;
         practice_operation(
             &req.operation_id,
             &req.program_id,
@@ -221,7 +218,7 @@ impl LearningPracticeRepository {
         )
         .record(&mut tx, &())
         .await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         self.workspace(&req.program_id).await
     }
 
@@ -243,7 +240,7 @@ impl LearningPracticeRepository {
         {
             return self.workspace(&req.program_id).await;
         }
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         if practice_operation(
             &req.operation_id,
             &req.program_id,
@@ -254,7 +251,7 @@ impl LearningPracticeRepository {
         .seen(&mut tx)
         .await?
         {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return self.workspace(&req.program_id).await;
         }
         let (current, artifact_revision) = self
@@ -273,7 +270,7 @@ impl LearningPracticeRepository {
         }
         let old_mode = mode(&current.mode);
         let t = now();
-        let update=sqlx::query("UPDATE learning_practice_sessions SET mode=?,revision=revision+1,updated_at=? WHERE program_id=? AND id=? AND revision=? AND status='active'").bind(mode(&req.mode)).bind(t).bind(&req.program_id).bind(&req.session_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
+        let update=sqlx::query("UPDATE learning_practice_sessions SET mode=?,revision=revision+1,updated_at=? WHERE program_id=? AND id=? AND revision=? AND status='active'").bind(mode(&req.mode)).bind(t).bind(&req.program_id).bind(&req.session_id).bind(req.expected_revision).execute(&mut *tx).await?;
         if update.rows_affected() != 1 {
             return Err(conflict("Practice session changed; reload and retry."));
         }
@@ -298,7 +295,7 @@ impl LearningPracticeRepository {
         )
         .record(&mut tx, &())
         .await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         self.workspace(&req.program_id).await
     }
 }

@@ -224,9 +224,9 @@ async fn test_delete_conversation_cascades_to_every_related_table() {
         "conversation_memory_events",
         "journal_conversation_entries",
     ] {
-        let remaining: i64 = sqlx::query_scalar(&format!(
+        let remaining: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT COUNT(*) FROM {table} WHERE conversation_id = ?"
-        ))
+        )))
         .bind(&conversation_id)
         .fetch_one(&pool)
         .await

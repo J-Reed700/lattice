@@ -8,6 +8,7 @@ use parking_lot::Mutex;
 use sha2::{Digest, Sha384};
 use sqlx::migrate::{Migration, Migrator};
 use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::SqlSafeStr;
 use sqlx::SqlitePool;
 use std::borrow::Cow;
 use std::io::Write;
@@ -82,7 +83,7 @@ async fn set_checksum(pool: &SqlitePool, version: i64, checksum: &[u8]) {
 }
 
 async fn set_other_line_endings(pool: &SqlitePool, migration: &Migration) {
-    let other = checksum_of(&other_line_endings(&migration.sql));
+    let other = checksum_of(&other_line_endings(migration.sql.as_str()));
     assert_ne!(
         other.as_slice(),
         &*migration.checksum,
@@ -239,18 +240,25 @@ async fn a_checksum_that_is_not_the_other_line_endings_of_the_same_sql_is_refuse
     let migrations: Vec<_> = migrator.iter().collect();
     let target = migrations[3];
     let neighbour = migrations[4];
-    let first_line_crlf = target.sql.replace("\r\n", "\n").replacen('\n', "\r\n", 1);
+    let first_line_crlf = target
+        .sql
+        .as_str()
+        .replace("\r\n", "\n")
+        .replacen('\n', "\r\n", 1);
     let cases: Vec<(&str, Vec<u8>)> = vec![
         (
             "a line added",
-            checksum_of(&format!("{}-- edited\n", target.sql)),
+            checksum_of(&format!("{}-- edited\n", target.sql.as_str())),
         ),
-        ("a trailing space", checksum_of(&format!("{} ", target.sql))),
+        (
+            "a trailing space",
+            checksum_of(&format!("{} ", target.sql.as_str())),
+        ),
         ("line endings of two kinds", checksum_of(&first_line_crlf)),
         ("another migration", neighbour.checksum.to_vec()),
         (
             "another migration with the other line endings",
-            checksum_of(&other_line_endings(&neighbour.sql)),
+            checksum_of(&other_line_endings(neighbour.sql.as_str())),
         ),
         ("one byte", vec![1]),
         ("zeros", vec![0; 48]),
@@ -278,7 +286,7 @@ async fn a_refused_start_changes_no_row_not_even_one_that_differs_only_in_line_e
     }
     let migrations: Vec<_> = migrator.iter().collect();
     let changed = migrations[5];
-    let edited = checksum_of(&format!("{}-- edited\n", changed.sql));
+    let edited = checksum_of(&format!("{}-- edited\n", changed.sql.as_str()));
     set_checksum(&pool, changed.version, &edited).await;
     let before = recorded(&pool).await;
 
@@ -366,7 +374,7 @@ async fn a_database_file_recorded_with_the_other_line_endings_opens_on_the_next_
     run_migrations(first_start.database()).await.unwrap();
     let mut tx = first_start.database().begin_write().await.unwrap();
     for migration in migrator.iter() {
-        let other = checksum_of(&other_line_endings(&migration.sql));
+        let other = checksum_of(&other_line_endings(migration.sql.as_str()));
         sqlx::query("UPDATE _sqlx_migrations SET checksum = ?1 WHERE version = ?2")
             .bind(other)
             .bind(migration.version)
@@ -400,13 +408,13 @@ fn with_line_endings(migrator: &Migrator, crlf: bool) -> Migrator {
     let migrations: Vec<Migration> = migrator
         .iter()
         .map(|migration| {
-            let lf = migration.sql.replace("\r\n", "\n");
+            let lf = migration.sql.as_str().replace("\r\n", "\n");
             let sql = if crlf { lf.replace('\n', "\r\n") } else { lf };
             Migration::new(
                 migration.version,
                 migration.description.clone(),
                 migration.migration_type,
-                Cow::Owned(sql),
+                sqlx::AssertSqlSafe(sql).into_sql_str(),
                 migration.no_tx,
             )
         })
@@ -474,7 +482,7 @@ async fn the_rewrites_are_one_transaction_and_are_logged_only_once_committed() {
     }
     let before = recorded(&pool).await;
     let third = migrator.iter().nth(2).unwrap().version;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         r#"
         CREATE TRIGGER refuse_third BEFORE UPDATE ON _sqlx_migrations
         WHEN OLD.version = {third}
@@ -482,7 +490,7 @@ async fn the_rewrites_are_one_transaction_and_are_logged_only_once_committed() {
             SELECT RAISE(ABORT, 'refused');
         END
         "#
-    ))
+    )))
     .execute(&pool)
     .await
     .unwrap();

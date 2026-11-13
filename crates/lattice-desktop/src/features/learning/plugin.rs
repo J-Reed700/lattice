@@ -44,6 +44,8 @@ fn source_deps(container: &Container) -> crate::features::learning::sources::Sou
 
 mod program;
 pub use program::*;
+mod plan_topics;
+pub use plan_topics::*;
 mod memory;
 pub use memory::*;
 mod canvas;
@@ -103,6 +105,19 @@ fn drill_model(container: &Container) -> super::quiz_bank_jobs::ModelLoader {
     std::sync::Arc::new(move || {
         let container = model_container.clone();
         Box::pin(async move { container.learning_llm(model_requirements::drills()).await })
+    })
+}
+
+/// The Learning model, pinned for each run of a course-plan job.
+fn course_plan_model(container: &Container) -> super::quiz_bank_jobs::ModelLoader {
+    let model_container = container.clone();
+    std::sync::Arc::new(move || {
+        let container = model_container.clone();
+        Box::pin(async move {
+            container
+                .learning_llm(model_requirements::course_plan())
+                .await
+        })
     })
 }
 
@@ -167,10 +182,16 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             // then starts delivering saved work. A kind that fails to register
             // is retried in the background and never fails setup.
             let (bank_worker, grading_worker) = quiz_workers(&container);
+            // One lock per course for every planner of it.
+            let course_setups = super::course_setup::CourseSetups::default();
             let mut kinds = vec![
                 JobKindRegistration {
                     kind: super::curriculum_repository::LESSON_PREPARATION.into(),
-                    handler: std::sync::Arc::new(generation_worker(&container, runtimes.clone())),
+                    handler: std::sync::Arc::new(generation_worker(
+                        &container,
+                        runtimes.clone(),
+                        course_setups.clone(),
+                    )),
                     config: super::curriculum_repository::lesson_job_config(),
                 },
                 // Quiz banks and grading resume or settle the same way.
@@ -183,6 +204,16 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                     kind: super::quiz_bank_jobs::QUIZ_GRADING.into(),
                     handler: std::sync::Arc::new(grading_worker),
                     config: super::quiz_bank_jobs::quiz_job_config(),
+                },
+                // A course's topics are planned when its outline is made.
+                JobKindRegistration {
+                    kind: super::course_plan::COURSE_PLAN.into(),
+                    handler: std::sync::Arc::new(super::course_plan::CoursePlanWorker {
+                        database: container.database().clone(),
+                        load_llm: course_plan_model(&container),
+                        course_setups,
+                    }),
+                    config: super::course_plan::course_plan_job_config(),
                 },
                 // Drills are built one ahead per language, and a build resumes from its
                 // checkpoints. A submitted review is graded by a job that a stop leaves
@@ -272,6 +303,12 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             accept_learning_program,
             prepare_learning_lesson,
             prepare_learning_module,
+            get_learning_course_plan,
+            plan_learning_course,
+            edit_learning_course_plan_entry,
+            change_learning_course_plan_entries,
+            undo_learning_course_plan_entry,
+            prepare_learning_ahead,
             complete_learning_lesson,
             delete_learning_program,
             get_learning_memory,

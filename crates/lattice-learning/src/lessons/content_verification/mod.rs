@@ -3,18 +3,21 @@
 use crate::dto::LearningSourceDto;
 use crate::dto::PreparedLearningLesson;
 use crate::embedded_runtime::BuiltinRuntimes;
-use crate::reference_collection::{ReferenceCollection, ReferencePassage};
+use crate::reference_collection::{PassageKind, ReferenceCollection, ReferencePassage};
 use futures::{FutureExt, StreamExt};
 use lattice_core::application::ports::{llm_port::SamplingOverride, LLMPort};
 #[cfg(test)]
 use lattice_core::application::services::claim_verification::ClaimEvidence;
 use lattice_core::application::services::claim_verification::{
-    CheckPolicy, ClaimChecker, ClaimJudgment, ClaimVerdict, JudgeOutcome,
+    CheckPolicy, ClaimChecker, ClaimJudgment, ClaimVerdict, JudgeOutcome, CONSISTENCY_POLICY,
+    KNOWLEDGE_POLICY,
 };
+use lattice_core::domain::learning::acceptance::Reading;
 use lattice_core::domain::learning::claim_review::{ClaimId, Class, ClassifiedBy};
 use lattice_core::domain::provenance::Label;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::shared::protocol::Protocol;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -25,31 +28,28 @@ use apparatus::strip_citation_apparatus;
 pub(crate) use apparatus::strip_draft_apparatus;
 mod citations;
 mod claim_ledger;
+mod claim_sentences;
 pub(crate) use citations::names_a_source;
-use citations::{
-    overlaps, restates, section_citations, source_mentions, take_cited, Citations, CITED,
-};
+use citations::{restates, section_citations, source_mentions, take_cited, Citations};
 #[cfg(test)]
 pub(crate) use claim_ledger::locate;
 pub(crate) use claim_ledger::{
     claim_quote, field_pointer, field_text, held_for_review, held_lessons, located, located_quote,
-    review_outcome, unit_fields, unit_texts, HeldForReview,
+    review_outcome, stands_in_part, unit_fields, unit_texts, HeldForReview,
 };
 mod class_checks;
 mod classify;
-pub(crate) use classify::{figures, needs_citation, Givens, CITED_KINDS};
+pub(crate) use classify::quoted_wording;
 mod coverage;
 #[cfg(any(test, feature = "test-support"))]
 pub use coverage::live_mapping_fixture;
-mod claim_reuse;
 mod evidence_checks;
 #[cfg(any(test, feature = "test-support"))]
 pub use evidence_checks::page_budget;
-use evidence_checks::{
-    same_passage, Reach, SupportedElsewhere, SupportingPassage, TwoPass, CHECKER_OUTPUT_TOKENS,
-};
+pub(crate) use evidence_checks::supporting_passage;
+use evidence_checks::{CheckedPart, Reach, SupportedElsewhere, TwoPass};
 #[cfg(test)]
-use evidence_checks::{CheckedPart, ContraryPassage, Pass};
+use evidence_checks::{ContraryPassage, Pass};
 mod evidence_selection;
 mod execution;
 mod judge;
@@ -106,18 +106,19 @@ mod rounds;
 pub(crate) use rounds::Rounds;
 mod section_checkpoints;
 mod sections;
-mod support_gate;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 #[cfg(test)]
 pub(crate) mod tests;
 use inventory_checkpoint::{complete_inventory, extract_audited_inventory, valid_saved_coverage};
 #[cfg(test)]
+pub(crate) use repair_loop::settle_after_cuts;
+#[cfg(test)]
 pub(crate) use repair_loop::verify_and_repair;
 pub(crate) use repair_loop::verify_and_repair_with_references;
-pub(crate) use repair_request::has_pending_repair;
 #[cfg(test)]
 use repair_request::repair_context;
+pub(crate) use repair_request::restart;
 use repair_request::{repair_fingerprint, PendingRepair};
 #[cfg(test)]
 use report::content_hash;
@@ -125,16 +126,38 @@ pub(crate) use report::{not_verified_line, persist_report, sources_changed};
 /// v21: the evidence challenge is gone; a supported verdict is weighed by
 /// the provenance gate (source provenance §11) and passages carry their
 /// source's title, domain and date.
-const POLICY: &str = "lesson-evidence-v21";
+/// v22: the part-wise judge has a kind for the lesson's own figures.
+const POLICY: Protocol = lattice_core::protocol!("lesson-evidence", 22);
 
-/// The evidence policy checks are judged under: what a labelled checker
-/// example records (§15).
-pub(crate) fn evidence_policy() -> &'static str {
-    POLICY
+/// What a check judged, which names the policy its fingerprint is under.
+#[derive(Clone, Copy)]
+pub(crate) enum Judged {
+    Passages,
+    Consistency,
+    Knowledge,
+}
+
+impl Judged {
+    pub(crate) fn of(reading: Reading) -> Self {
+        match reading {
+            Reading::Parts | Reading::Ground | Reading::Page => Self::Passages,
+            Reading::Consistency => Self::Consistency,
+            Reading::Knowledge | Reading::Veto => Self::Knowledge,
+        }
+    }
+
+    pub(crate) fn policy(self) -> &'static str {
+        match self {
+            Self::Passages => POLICY.as_str(),
+            Self::Consistency => CONSISTENCY_POLICY.as_str(),
+            Self::Knowledge => KNOWLEDGE_POLICY.as_str(),
+        }
+    }
 }
 // Extraction is versioned independently of coverage and factual judgment.
 // Its exact-content checkpoint contains no factual approvals to inherit.
-const INVENTORY_POLICY: &str = "lesson-evidence-v8";
+const INVENTORY_POLICY: Protocol = lattice_core::protocol!("lesson-evidence", 9);
+const CLAIM_KEYS: Protocol = lattice_core::protocol!("claim", 1);
 
 pub(crate) async fn normalize_example_fences(llm: &dyn LLMPort, raw: String) -> Result<String> {
     execution::label_unlabeled(llm, raw).await
@@ -180,11 +203,14 @@ struct InventoryCheckpoint {
     coverage_policy: Option<String>,
 }
 /// An assertion of one original passage that the fidelity audit found
-/// unrepresented, located by its app-owned passage ID.
+/// unrepresented, located by its app-owned passage ID and, once the judge
+/// named it, the ID of the sentence that states it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct MissingAssertion {
     passage_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sentence_id: Option<String>,
     statement: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -259,8 +285,7 @@ struct ClaimChecks {
     /// Claims the ledger holds as resolved by evidence the user brought, by
     /// unit and statement: that check is their receipt (`claim_ledger`).
     settled: HashMap<(usize, String), Finding>,
-    /// What the ledger keeps for the next pass: where the lesson's statements
-    /// stand in their graphs, and the lesson before the repairs
+    /// What the ledger keeps for the next pass: the lesson before the repairs
     /// (`claim_ledger`).
     rewrites: claim_ledger::Rewrites,
     /// The finding of each statement's latest reading, by claim: what the
@@ -303,60 +328,72 @@ struct ClaimReceipt {
     verdict: ClaimVerdict,
     reason: String,
     supporting_quote: Option<String>,
-    #[serde(default)]
-    interpretation_policy: Option<String>,
     /// The positions of the page's passages the judge was shown when the
     /// whole page did not fit its window; `None` when it saw them all. The
     /// finding names only those: a passage cut for size was never compared
     /// with the claim.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     shown: Option<Vec<usize>>,
+    /// The parts the part-wise judge read the claim as.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    parts: Vec<CheckedPart>,
 }
 
 fn claim_receipt_key(llm: &dyn LLMPort, comparison: &str) -> String {
-    format!(
-        "claim-v1:{}",
-        sha256_hex(
-            json!({
-                "policy": POLICY, "model": llm.model_name(),
-                "context": llm.max_context_tokens(), "comparison": comparison,
-                "trust": lattice_core::domain::provenance::TRUST_POLICY_VERSION,
-            })
-            .to_string()
-        )
-    )
+    CLAIM_KEYS.key(sha256_hex(
+        json!({
+            "policy": POLICY, "model": llm.model_name(),
+            "context": llm.max_context_tokens(), "comparison": comparison,
+            "trust": lattice_core::domain::provenance::TRUST_POLICY_VERSION,
+        })
+        .to_string(),
+    ))
 }
 
 impl ClaimReceipt {
-    fn finding(self, unit: usize, claim: &Claim, evidence: &[EvidencePassage]) -> Option<Finding> {
-        let evidence = match &self.shown {
-            Some(shown) => shown_of(evidence, shown),
-            None => evidence.to_vec(),
+    /// The finding of this saved receipt against `page`, narrowed to the
+    /// passages its judge was shown when it records them.
+    fn restored(self, unit: usize, claim: &Claim, page: &[EvidencePassage]) -> Option<Finding> {
+        let shown = match &self.shown {
+            Some(shown) => shown_of(page, shown),
+            None => page.to_vec(),
         };
-        let evidence = evidence.as_slice();
-        if self.verdict == ClaimVerdict::Unverified
-            || (self.verdict != ClaimVerdict::Supported
-                && self.interpretation_policy.as_deref() != Some(
-                    lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY,
-                ))
-            || (self.verdict == ClaimVerdict::Supported
-                && self.supporting_quote.as_ref().is_none_or(|q| {
-                    q.trim().is_empty() || !evidence.iter().any(|p| p.text.contains(q))
-                }))
-        {
-            return None;
-        }
+        self.finding(unit, claim, shown)
+    }
+
+    /// The finding this receipt makes of `claim` of section `unit` against
+    /// `evidence`, the passages its judge was shown; `None` when it makes none:
+    /// an unverified answer, or support whose quotation no passage holds. A
+    /// support keeps the passage's own words.
+    fn finding(
+        self,
+        unit: usize,
+        claim: &Claim,
+        evidence: Vec<EvidencePassage>,
+    ) -> Option<Finding> {
+        let supporting_quote = match self.verdict {
+            ClaimVerdict::Unverified => return None,
+            ClaimVerdict::Supported => Some(
+                supporting_passage(self.supporting_quote.as_deref()?, &evidence, None)?
+                    .1
+                    .to_owned(),
+            ),
+            ClaimVerdict::Contradicted | ClaimVerdict::Unsupported => self.supporting_quote,
+        };
         Some(Finding {
             unit,
             quote: claim.quote.clone(),
             statement: claim.statement.clone(),
             verdict: self.verdict,
             reason: self.reason,
-            evidence: evidence.to_vec(),
-            supporting_quote: self.supporting_quote,
+            evidence,
+            supporting_quote,
             resolution: None,
             claim_id: None,
-            two_pass: Default::default(),
+            two_pass: TwoPass {
+                parts: self.parts,
+                ..TwoPass::default()
+            },
             label: None,
             class: None,
             trust: None,
@@ -422,18 +459,6 @@ fn units(candidate: &Value) -> Result<Vec<Value>> {
             unit
         })).collect())
 }
-fn contains_text(value: &Value, quote: &str) -> bool {
-    match value {
-        Value::String(text) => text.contains(quote),
-        Value::Array(items) => items.iter().any(|v| contains_text(v, quote)),
-        Value::Object(items) => items.values().any(|v| contains_text(v, quote)),
-        _ => false,
-    }
-}
-
-/// The longest quote an inventory keeps, in characters.
-const MAX_CLAIM_QUOTE_CHARS: usize = 1_600;
-
 fn validate_inventory(inventory: &Inventory, content: &[Value]) -> Result<()> {
     let mut seen = HashSet::new();
     let count: usize = inventory.units.iter().map(|u| u.claims.len()).sum();
@@ -450,8 +475,7 @@ fn validate_inventory(inventory: &Inventory, content: &[Value]) -> Result<()> {
             || (unit.claims.is_empty() && unit.non_factual_reason.trim().is_empty())
             || unit.claims.iter().any(|c| {
                 c.quote.trim().is_empty()
-                    || c.quote.chars().count() > MAX_CLAIM_QUOTE_CHARS
-                    || !contains_text(value, &c.quote)
+                    || !stands_in_part(value, &c.quote)
                     || c.statement.trim().is_empty()
             })
         {
@@ -468,23 +492,6 @@ pub(crate) fn bank_tokens(llm: &dyn LLMPort, text: &str) -> usize {
     llm.count_tokens(&json!({"id":"passage-000","text":text}).to_string()) + 5
 }
 
-/// The evidence tokens one claim may carry when `sharing` claims share a
-/// strict batch call: an equal share of the room the call leaves after its
-/// instructions, the claims and their answers. A claim checked alone is
-/// checked by the single-claim judge, so it gets that judge's whole room.
-pub(crate) fn claim_share(llm: &dyn LLMPort, claim: &str, sharing: usize) -> usize {
-    let checker = ClaimChecker::new(
-        llm,
-        SamplingOverride::deterministic(),
-        CHECKER_OUTPUT_TOKENS,
-        CheckPolicy::Strict,
-    );
-    if sharing <= 1 {
-        return checker.located_evidence_room(claim);
-    }
-    checker.batch_evidence_room(&vec![claim.to_owned(); sharing]) / sharing
-}
-
 /// A claim the checker could not judge, with why, as a judgment: the cause
 /// travels in its reason, and an unverified verdict is never a receipt.
 pub(crate) fn unchecked(cause: impl Into<String>) -> ClaimJudgment {
@@ -495,18 +502,6 @@ pub(crate) fn unchecked(cause: impl Into<String>) -> ClaimJudgment {
         confidence: None,
         uncertain: false,
     })
-}
-
-/// Whether `passages` fit within `share` tokens of a passage bank.
-pub(crate) fn within_share<'p>(
-    llm: &dyn LLMPort,
-    share: usize,
-    passages: impl Iterator<Item = &'p EvidencePassage>,
-) -> bool {
-    passages
-        .map(|passage| bank_tokens(llm, &passage.text))
-        .sum::<usize>()
-        <= share
 }
 
 /// Whether `claim` checked alone against `passages` fits the judge's window
@@ -521,13 +516,8 @@ pub(crate) fn fits_window<'p>(
         .into_iter()
         .map(|passage| passage.text.clone())
         .collect();
-    ClaimChecker::new(
-        llm,
-        SamplingOverride::deterministic(),
-        CHECKER_OUTPUT_TOKENS,
-        CheckPolicy::Strict,
-    )
-    .located_fits(claim, &texts)
+    ClaimChecker::for_policy(llm, SamplingOverride::deterministic(), CheckPolicy::Strict)
+        .located_fits(claim, &texts)
 }
 
 /// The passed example runs of section `unit`, as evidence: the section's
@@ -536,14 +526,7 @@ fn example_runs(observations: &[execution::Observation], unit: usize) -> Vec<Evi
     observations
         .iter()
         .filter(|o| o.passed() && o.unit == Some(unit))
-        .map(|observation| EvidencePassage {
-            source_id: observation.id.clone(),
-            text: observation.evidence(),
-            start_byte: 0,
-            end_byte: 0,
-            retrieval_kind: "execution".into(),
-            score: 0.0,
-        })
+        .map(execution::Observation::passage)
         .collect()
 }
 
@@ -590,9 +573,9 @@ fn canonicalize_evidence(evidence: &mut [EvidencePassage]) {
     // Corpus-dependent ranking changes must not repeat an identical comparison.
     // What research found for the claim comes first, then the section's own
     // cited passages.
-    let lead = |passage: &EvidencePassage| match passage.retrieval_kind.as_str() {
-        evidence_selection::RESEARCHED => 0,
-        CITED => 1,
+    let lead = |passage: &EvidencePassage| match passage.kind() {
+        PassageKind::Researched => 0,
+        PassageKind::Cited => 1,
         _ => 2,
     };
     evidence.sort_by(|a, b| {
@@ -623,12 +606,8 @@ pub async fn judge_batch_for_publication(
     llm: &dyn LLMPort,
     claims: &[lattice_core::application::services::claim_verification::LocatedClaim],
 ) -> Result<lattice_core::application::services::claim_verification::Answered<Vec<ClaimJudgment>>> {
-    let checker = ClaimChecker::new(
-        llm,
-        SamplingOverride::deterministic(),
-        CHECKER_OUTPUT_TOKENS,
-        CheckPolicy::Strict,
-    );
+    let checker =
+        ClaimChecker::for_policy(llm, SamplingOverride::deterministic(), CheckPolicy::Strict);
     checker
         .check_batch_without_deadline(
             claims,

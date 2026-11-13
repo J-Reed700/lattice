@@ -17,23 +17,19 @@ mod requests;
 mod walk;
 
 pub(super) use bridge::{applies, bridge_checker, part_wise};
-pub(super) use claims::{attribution_page, compare, Comparison, NO_PASSAGES};
+#[cfg(test)]
+pub(super) use claims::NO_PASSAGES;
+pub(super) use claims::{attribution_page, compare, Comparison};
 #[cfg(test)]
 pub(crate) use outcome::ContraryPassage;
 pub(super) use outcome::{alone, page_finding};
-pub(crate) use outcome::{
-    same_passage, CheckedPart, Pass, SupportedElsewhere, SupportingPassage, TwoPass,
-};
+pub(crate) use outcome::{holders, supporting_passage};
+pub(crate) use outcome::{CheckedPart, Pass, SupportedElsewhere, TwoPass};
 pub use page_budget::page_budget;
 pub(crate) use page_budget::AnswerSize;
-use requests::finish;
 pub(super) use requests::{group, labelled_passages, pack};
 pub(crate) use walk::Reach;
 pub(super) use walk::{page_of, page_one, within_page, PageBudget};
-
-/// The most output a claim check may write, which the checker is built
-/// with: the largest an answer can be.
-pub(crate) const CHECKER_OUTPUT_TOKENS: u32 = 512;
 
 /// The page budget a page of the course is sized by after what the job's
 /// checks have cost so far, as the verification report says it: its tokens, or

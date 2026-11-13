@@ -471,7 +471,7 @@ fn stored_forms_round_trip_and_tag_the_events_kind_column() {
         }),
         ClaimEvent::Stopped {
             reason: StopReason {
-                code: "model_rejected".into(),
+                code: StopCode::Retired("model_rejected".into()),
                 message: "llama.cpp rejected this request twice".into(),
                 fix: "Lower the context window in Settings.".into(),
                 at: 9,
@@ -634,5 +634,20 @@ fn the_tally_counts_only_the_users_actions_as_resolved_by_you() {
             successor: None,
             by: Actor::Machine,
         }
+    );
+}
+
+#[test]
+fn a_stop_code_reads_and_writes_the_string_it_was_saved_as() {
+    for code in StopCode::KNOWN {
+        let stored = serde_json::to_value(&code).unwrap();
+        assert_eq!(stored, json!(code.as_str()));
+        assert_eq!(serde_json::from_value::<StopCode>(stored).unwrap(), code);
+    }
+    let retired: StopCode = serde_json::from_value(json!("model_rejected")).unwrap();
+    assert_eq!(retired, StopCode::Retired("model_rejected".into()));
+    assert_eq!(
+        serde_json::to_value(&retired).unwrap(),
+        json!("model_rejected")
     );
 }

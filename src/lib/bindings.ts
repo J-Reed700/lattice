@@ -456,6 +456,54 @@ async prepareLearningModule(request: PrepareLearningModuleRequestDto) : Promise<
     else return { status: "error", error: e  as any };
 }
 },
+async getLearningCoursePlan(programId: string) : Promise<Result<CoursePlanViewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_course_plan", { programId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async planLearningCourse(request: PlanLearningCourseRequestDto) : Promise<Result<CoursePlanViewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|plan_learning_course", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async editLearningCoursePlanEntry(request: EditCoursePlanEntryRequestDto) : Promise<Result<CoursePlanViewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|edit_learning_course_plan_entry", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeLearningCoursePlanEntries(request: ChangeCoursePlanEntriesRequestDto) : Promise<Result<CoursePlanViewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|change_learning_course_plan_entries", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async undoLearningCoursePlanEntry(request: UndoCoursePlanEntryRequestDto) : Promise<Result<CoursePlanViewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|undo_learning_course_plan_entry", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async prepareLearningAhead(request: PrepareLearningAheadRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|prepare_learning_ahead", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async completeLearningLesson(request: CompleteLearningLessonRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|complete_learning_lesson", { request }) };
@@ -4486,9 +4534,26 @@ export type AppError =
  */
 { Database: string } |
 /**
+ * Another connection kept the work out of the database; a later attempt
+ * gets the lock.
+ */
+{ DatabaseBusy: string } |
+/**
  * Configuration file errors
  */
 { InvalidConfig: string } |
+/**
+ * The configured context window cannot hold what the work needs.
+ */
+{ WindowTooSmall: string } |
+/**
+ * The work was stopped on request.
+ */
+{ Cancelled: string } |
+/**
+ * A lesson was held back for review; the text says why.
+ */
+{ LessonHeld: string } |
 /**
  * No Learning model is set; the text says where to choose one
  */
@@ -4540,10 +4605,6 @@ export type AppError =
  * Embedding generation failed
  */
 { EmbeddingFailed: { reason: string } } |
-/**
- * Queue is full
- */
-"QueueFull" |
 /**
  * Unsupported file type
  */
@@ -4597,6 +4658,11 @@ export type AppError =
  * checks. The text says what was wrong with the answer.
  */
 { ModelAnswerUnusable: string } |
+/**
+ * A model's answer ended before it was complete and was not asked for again;
+ * the same work may succeed in smaller parts.
+ */
+{ AnswerCutOff: string } |
 /**
  * A request whose prompt alone fills the configured context window, so
  * it leaves no room for an answer and was never sent. The numbers let a
@@ -4701,10 +4767,6 @@ export type ApplicationError =
  * Required service is not available.
  */
 { ServiceNotAvailable: { service: string; reason: string } } |
-/**
- * Processing queue is full (backpressure).
- */
-{ QueueFull: { queue_name: string } } |
 /**
  * Serialization failed.
  */
@@ -5107,6 +5169,7 @@ export type CaseVisibility =
  * Run on submit; a setting decides how much of a failure the learner sees.
  */
 "hidden"
+export type ChangeCoursePlanEntriesRequestDto = { programId: string; outlineRevision: number; lessons: CoursePlanEntryRefDto[]; instruction: string }
 export type ChangeLearningPracticeModeRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; mode: LearningPracticeMode }
 /**
  * What the window needs to show a stored picture. Travels in the stream
@@ -6142,6 +6205,10 @@ export type CourseIndexStatusDto =
  * course is searched by its words meanwhile.
  */
 { state: "unavailable"; reason: string }
+export type CoursePlanEntryDto = { topics: PlannedLesson; entryRevision: number; editable: boolean; previous: PlannedLesson | null }
+export type CoursePlanEntryRefDto = { lessonId: string; expectedEntryRevision: number }
+export type CoursePlanStateDto = "none" | "planning" | "planned" | "failed"
+export type CoursePlanViewDto = { programId: string; outlineRevision: number; state: CoursePlanStateDto; error: string | null; entries: CoursePlanEntryDto[] }
 export type CreateBackupRequestDto = { backupPath: string | null }
 export type CreateBackupResultDto = { backupPath: string; size: number; createdAt: string }
 export type CreateConversationJournalRequestDto = { name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null }
@@ -6518,6 +6585,7 @@ export type DueItemDto = { kind: DueKind;
  */
 label: string; count: number; dueAt: number; lessonId: string | null; material: string | null }
 export type DueKind = "coding_patterns" | "drill_lesson" | "drill_patterns"
+export type EditCoursePlanEntryRequestDto = { programId: string; outlineRevision: number; expectedEntryRevision: number; topics: PlannedLesson }
 /**
  * A published lesson's question as the user rewrote it, with the question
  * they opened.
@@ -6640,6 +6708,14 @@ export type ErrorCode =
  */
 "CONSTRAINT_VIOLATION" |
 /**
+ * The work was stopped on request
+ */
+"CANCELLED" |
+/**
+ * A lesson was held back for review
+ */
+"LESSON_HELD" |
+/**
  * File not found
  */
 "FILE_NOT_FOUND" |
@@ -6716,9 +6792,25 @@ export type ErrorCode =
  */
 "PROMPT_EXCEEDS_WINDOW" |
 /**
+ * The configured context window cannot hold what the work needs
+ */
+"WINDOW_TOO_SMALL" |
+/**
  * No Learning model is set
  */
 "LEARNING_MODEL_NOT_SET" |
+/**
+ * The model server turned the request down
+ */
+"MODEL_REJECTED" |
+/**
+ * A model answered, but the answer could not be used
+ */
+"MODEL_ANSWER_UNUSABLE" |
+/**
+ * A model's answer ended before it was complete
+ */
+"ANSWER_CUT_OFF" |
 /**
  * Data processing failed
  */
@@ -6755,10 +6847,6 @@ export type ErrorCode =
  * Conflict detected (e.g. revision mismatch)
  */
 "CONFLICT" |
-/**
- * Processing queue is full
- */
-"QUEUE_FULL" |
 /**
  * Backup creation failed
  */
@@ -7959,7 +8047,7 @@ movesBar: boolean;
  * Who gave the verdict (`user_confirm`, `verifier_agree`, …).
  */
 labelSource: string; lessonId: string; claimId: string; reason: LearningTrustReasonDto }
-export type LearningBlockDto = { kind: LearningBlockKind; title: string; body: string; sourceIds: string[]; rubric?: LearningPracticeCriterionDto[] }
+export type LearningBlockDto = { kind: LearningBlockKind; title: string; body: string; sourceIds: string[]; rubric?: LearningPracticeCriterionDto[]; check?: LearningCheckDto | null }
 export type LearningBlockKind =
 /**
  * One core idea's mental model, in plain language.
@@ -7992,6 +8080,11 @@ export type LearningCardDraftActionRequestDto = { programId: string; draftId: st
 export type LearningCardDraftDto = { id: string; lessonId: string; question: string; answer: string; explanation: string; sourceIds: string[]; origin: LearningCardDraftOrigin; createdAt: number }
 export type LearningCardDraftOrigin = "generated" | "manual"
 export type LearningCardOriginDto = { cardId: string; lessonId: string; origin: LearningCardDraftOrigin; sourceIds: string[]; acceptedAt: number }
+/**
+ * A check section's two halves: the case the learner reasons through, and
+ * what is revealed once they commit an answer.
+ */
+export type LearningCheckDto = { question: string; reveal: string }
 export type LearningClaimEvidenceDto = { sectionIndex: number;
 /**
  * Exact lesson text selected by the claim inventory. This anchors the
@@ -8051,6 +8144,10 @@ export type LearningClaimPartKindDto =
  * No passage states it, and it is standard knowledge of the field.
  */
 "common" |
+/**
+ * No passage states it and none needs to: one of the lesson's own figures.
+ */
+"own" |
 /**
  * No passage gives a specific it states.
  */
@@ -8201,7 +8298,11 @@ export type LearningGenerationActivity = { phase: LearningGenerationPhase;
  * The furthest phase this lesson's preparation has reached. A repaired
  * draft goes back through earlier phases; its progress stays here.
  */
-reached?: LearningGenerationPhase; phaseStartedAt: number; lastActivityAt: number; lastCheckpointAt: number | null; lessonTitle: string | null; modelName: string | null; modelRunning: boolean; responseCharacters: number; modelAttempt: number; verificationPass: number;
+reached?: LearningGenerationPhase; phaseStartedAt: number; lastActivityAt: number; lastCheckpointAt: number | null; lessonTitle: string | null; modelName: string | null; modelRunning: boolean; responseCharacters: number; modelAttempt: number;
+/**
+ * Set while the lesson has model requests queued for a slot and none holding one.
+ */
+waitingForModel?: boolean; verificationPass: number;
 /**
  * Claims of this pass with a finished first check. Each claim counts once.
  */
@@ -8251,7 +8352,11 @@ endedByUpdate?: boolean;
 /**
  * The lessons the job prepares, in course order.
  */
-lessonIds?: string[]; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
+lessonIds?: string[];
+/**
+ * The lessons the job finished by holding them for review.
+ */
+heldLessonIds?: string[]; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
 export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity" |
 /**
@@ -8261,7 +8366,11 @@ export type LearningGenerationJobKind = "program_outline" | "lesson_preparation"
 /**
  * Grades a submitted quiz's written answers and near-miss short answers.
  */
-"quiz_grading"
+"quiz_grading" |
+/**
+ * Plans what each lesson of the outline teaches.
+ */
+"course_plan"
 export type LearningGenerationJobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted"
 export type LearningGenerationPhase = "references" | "writing" | "review" | "inventory" | "coverage" | "examples" | "evidence" | "research" | "repair" | "questions" | "publishing"
 export type LearningGenerationStep = { phase: LearningGenerationPhase; startedAt: number }
@@ -9765,6 +9874,11 @@ export type PerformanceTierDto =
  * One state of the work: a draft, a reference, a misreading. The engine stores it and never reads inside it.
  */
 export type Piece = JsonValue
+export type PlanLearningCourseRequestDto = { programId: string }
+/**
+ * What one lesson teaches, as topics.
+ */
+export type PlannedLesson = { lessonId: string; ideas: string[]; terms: string[]; actions: string[]; contrast: string }
 /**
  * One check as every kind has it. What it found is in the kind's `work`, under the same id.
  */
@@ -9825,6 +9939,7 @@ export type PracticeSessionSummaryDto = { sessionId: string; activityId: string;
  * Cases passed on the last submit.
  */
 passed: number | null; total: number | null; createdAt: number; finishedAt: number | null }
+export type PrepareLearningAheadRequestDto = { programId: string; lessonId: string }
 export type PrepareLearningLessonRequestDto = { programId: string; lessonId: string; expectedRevision: number }
 export type PrepareLearningModuleRequestDto = { programId: string; moduleId: string; expectedRevision: number }
 export type PrepareLearningQuizBankRequestDto = { operationId: string; programId: string; scope: LearningQuizScopeDto;
@@ -11198,7 +11313,11 @@ export type StickyItemDto = { id: string; text: string; color: string; createdAt
 /**
  * Why a lesson's preparation stopped, verbatim for "Copy details" (§8.4).
  */
-export type StopReasonDto = { code: string; message: string; fix: string; at: number; request: RequestFactsDto | null }
+export type StopReasonDto = { code: string;
+/**
+ * A stop of the Verifier audit, which holds a lesson its checks passed.
+ */
+audit: boolean; message: string; fix: string; at: number; request: RequestFactsDto | null }
 export type StrongAnswerDto = { approach: string; complexity: string; reference: string }
 export type StructureMode = "sections" | "pages"
 export type StudyCardDto = { id: string; format?: StudyCardFormat; deckId: string; question: string; answer: string; options: string[]; correctIndex: number; explanation: string; source: StudySourceDto;
@@ -11365,7 +11484,7 @@ findingKey: string; kind: TeachingFindingKindDto; site: TeachingFindingSiteDto;
  */
 unitIndex: number | null;
 /**
- * "Section 3: Loops", "Question 2" or "Whole lesson".
+ * "Section 3 · Loops", "Question 2" or "The whole lesson".
  */
 unitTitle: string;
 /**
@@ -11810,6 +11929,7 @@ resultsPerPage: number;
  */
 enableAnimations: boolean }
 export type UnbookmarkConversationMessageRequestDto = { conversationId: string; messageId: string }
+export type UndoCoursePlanEntryRequestDto = { programId: string; outlineRevision: number; lessonId: string; expectedEntryRevision: number }
 export type UnitKindDto = "block" | "question" | "answer_key"
 export type UnverifiedReasonDto = "unchecked" | "unsupported" | "contradicted"
 export type UpdateConversationJournalRequestDto = { journalId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
@@ -12251,6 +12371,7 @@ export type CommandArgs = {
 	capture_learning_source_snapshot: { request: CaptureLearningSourceSnapshotRequestDto };
 	capture_reference: { request: CaptureReferenceRequestDto };
 	capture_web_page_snapshot: { conversationId: string; url: string };
+	change_learning_course_plan_entries: { request: ChangeCoursePlanEntriesRequestDto };
 	change_learning_practice_mode: { request: ChangeLearningPracticeModeRequestDto };
 	chat_with_conversation: { conversationId?: string | null; message: string; toolPreferences?: ToolPreferences | null; cancelOnly?: boolean | null; requestId?: string | null; attachmentNames?: string[] | null; attachmentDocumentIds?: string[] | null; attachmentImageIds?: string[] | null };
 	check_coding_example: { request: CheckCodingExampleRequestDto };
@@ -12316,6 +12437,7 @@ export type CommandArgs = {
 	download_default_embedding_model: void;
 	download_model: { modelId: string };
 	download_reranker: void;
+	edit_learning_course_plan_entry: { request: EditCoursePlanEntryRequestDto };
 	edit_learning_lesson_question: { request: EditLearningLessonQuestionRequestDto };
 	edit_learning_lesson_section: { request: EditLearningLessonSectionRequestDto };
 	ensure_learning_lesson_note: { request: EnsureLearningLessonNoteRequestDto };
@@ -12395,6 +12517,7 @@ export type CommandArgs = {
 	get_learning_assessment_form: { id: string };
 	get_learning_canvas_workspace: { id: string };
 	get_learning_checker_accuracy: void;
+	get_learning_course_plan: { programId: string };
 	get_learning_generation_job: { id: string };
 	get_learning_lesson_audit: { programId: string; lessonId: string };
 	get_learning_lesson_claim_review: { programId: string; lessonId: string };
@@ -12503,6 +12626,7 @@ export type CommandArgs = {
 	parse_wikilinks: { text: string; sourcePath?: string | null };
 	pause_download: { id: string };
 	pause_indexing: void;
+	plan_learning_course: { request: PlanLearningCourseRequestDto };
 	plugin_begin_archive_setup: void;
 	plugin_choose_archive_destination: void;
 	plugin_confirm_archive_setup: { request: ConfirmArchiveSetupRequestDto };
@@ -12519,6 +12643,7 @@ export type CommandArgs = {
 	plugin_set_archive_keep_count: { request: SetArchiveKeepCountRequestDto };
 	plugin_set_archive_passphrase: { request: SetArchivePassphraseRequestDto };
 	practice_due: { request: PracticeDueRequestDto };
+	prepare_learning_ahead: { request: PrepareLearningAheadRequestDto };
 	prepare_learning_lesson: { request: PrepareLearningLessonRequestDto };
 	prepare_learning_module: { request: PrepareLearningModuleRequestDto };
 	prepare_learning_quiz_bank: { request: PrepareLearningQuizBankRequestDto };
@@ -12653,6 +12778,7 @@ export type CommandArgs = {
 	transcribe_speech: { pcm: string };
 	truncate_conversation_after: { request: TruncateConversationAfterRequestDto };
 	unbookmark_conversation_message: { request: UnbookmarkConversationMessageRequestDto };
+	undo_learning_course_plan_entry: { request: UndoCoursePlanEntryRequestDto };
 	update_conversation_space: { request: UpdateConversationSpaceRequestDto };
 	update_daily_note_content: { request: UpdateDailyNoteContentRequestDto };
 	update_journal: { request: UpdateConversationJournalRequestDto };
@@ -12711,6 +12837,7 @@ export type CommandResults = {
 	capture_learning_source_snapshot: SnapshotNoteDto;
 	capture_reference: CaptureReferenceResultDto;
 	capture_web_page_snapshot: WebPageSnapshotDto;
+	change_learning_course_plan_entries: CoursePlanViewDto;
 	change_learning_practice_mode: LearningPracticeWorkspaceDto;
 	chat_with_conversation: ChatResponse;
 	check_coding_example: PracticeSessionDto;
@@ -12776,6 +12903,7 @@ export type CommandResults = {
 	download_default_embedding_model: string;
 	download_model: DownloadModelResponse;
 	download_reranker: RerankerStatusDto;
+	edit_learning_course_plan_entry: CoursePlanViewDto;
 	edit_learning_lesson_question: LessonQuestionEditDto;
 	edit_learning_lesson_section: LessonSectionEditDto;
 	ensure_learning_lesson_note: LearningMemoryDto;
@@ -12855,6 +12983,7 @@ export type CommandResults = {
 	get_learning_assessment_form: LearningAssessmentFormDto;
 	get_learning_canvas_workspace: LearningCanvasWorkspaceDto;
 	get_learning_checker_accuracy: CheckerAccuracyDto[];
+	get_learning_course_plan: CoursePlanViewDto;
 	get_learning_generation_job: LearningGenerationJob;
 	get_learning_lesson_audit: LearningLessonAuditDto | null;
 	get_learning_lesson_claim_review: LessonClaimReviewDto | null;
@@ -12963,6 +13092,7 @@ export type CommandResults = {
 	parse_wikilinks: ParsedLinksResponse;
 	pause_download: null;
 	pause_indexing: null;
+	plan_learning_course: CoursePlanViewDto;
 	plugin_begin_archive_setup: ArchiveSetupDto;
 	plugin_choose_archive_destination: ArchiveStatusDto;
 	plugin_confirm_archive_setup: ArchiveStatusDto;
@@ -12979,6 +13109,7 @@ export type CommandResults = {
 	plugin_set_archive_keep_count: ArchiveStatusDto;
 	plugin_set_archive_passphrase: ArchiveStatusDto;
 	practice_due: PracticeDueDto;
+	prepare_learning_ahead: LearningProgramDto;
 	prepare_learning_lesson: LearningProgramDto;
 	prepare_learning_module: LearningProgramDto;
 	prepare_learning_quiz_bank: LearningGenerationJob;
@@ -13113,6 +13244,7 @@ export type CommandResults = {
 	transcribe_speech: TranscribedSpeechDto;
 	truncate_conversation_after: TruncateConversationAfterResponseDto;
 	unbookmark_conversation_message: RenameConversationResponseDto;
+	undo_learning_course_plan_entry: CoursePlanViewDto;
 	update_conversation_space: ConversationSpaceDto;
 	update_daily_note_content: null;
 	update_journal: ConversationJournalDto;

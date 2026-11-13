@@ -1,6 +1,7 @@
 //! The review protocol: a verdict per open finding, new findings only where
 //! allowed, stable ids, dedupe, the skip rule, and the kind backstops.
 use super::outline_reference_tests::*;
+use crate::lessons::content_verification::tests::fixture_task;
 use crate::{
     dto::*,
     lessons::course_generation_tests::{repair_answer, request},
@@ -71,7 +72,10 @@ async fn an_open_finding_without_a_verdict_stays_open_and_is_asked_about_again()
     let prompts = llm.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 6);
     // The third review still asked about finding-1.
-    assert_eq!(payload(&prompts[5])["openFindings"][0]["id"], "finding-1");
+    assert_eq!(
+        fixture_task(&prompts[5]).unwrap()["openFindings"][0]["id"],
+        "finding-1"
+    );
     Ok(())
 }
 
@@ -112,7 +116,7 @@ async fn new_findings_outside_the_reviewed_modules_are_dropped() -> Result<()> {
     let schema_paths = |prompt: &str| -> Vec<String> {
         // The reviewer's allowed paths are the enum in the response schema; the
         // fixture records only the prompt, so check the scope instead.
-        payload(prompt)["reviewScope"]["moduleIndices"]
+        fixture_task(prompt).unwrap()["reviewScope"]["moduleIndices"]
             .as_array()
             .unwrap()
             .iter()
@@ -150,14 +154,14 @@ async fn verdicts_close_or_refresh_findings_and_the_reviewer_sees_current_text()
     assert_eq!(prompts.len(), 6);
     // The first review's claim is the item text; the unresolved verdict
     // refreshed it to the rewritten text and replaced the reason.
-    let opened = payload(&prompts[1]);
+    let opened = fixture_task(&prompts[1]).unwrap();
     assert_eq!(opened["openFindings"], json!([]));
     assert!(opened.get("verifiedAssertions").is_none());
     // Open findings are refreshed to the current text before the reviewer
     // sees them, so a verdict is never asked about stale wording.
-    let second_review = payload(&prompts[3]);
+    let second_review = fixture_task(&prompts[3]).unwrap();
     assert_eq!(second_review["openFindings"][0]["claim"], first);
-    let third_review = payload(&prompts[5]);
+    let third_review = fixture_task(&prompts[5]).unwrap();
     assert_eq!(third_review["openFindings"][0]["id"], "finding-1");
     assert_eq!(third_review["openFindings"][0]["claim"], second);
     assert_eq!(
@@ -359,7 +363,7 @@ async fn a_verified_assertion_is_listed_to_the_reviewer_and_a_repeat_is_dropped_
     // The strict judgment is the only check: no challenge call follows it.
     assert_eq!(prompts.len(), 5);
     assert!(prompts[3].starts_with("Repair a saved curriculum module"));
-    let recheck = payload(&prompts[4]);
+    let recheck = fixture_task(&prompts[4]).unwrap();
     assert_eq!(recheck["verifiedAssertions"], json!([ADDITIONAL]));
     assert_eq!(recheck["openFindings"].as_array().unwrap().len(), 1);
     assert_eq!(recheck["openFindings"][0]["id"], "finding-2");

@@ -17,6 +17,7 @@ pub mod markdown_media;
 pub mod path_safety;
 pub mod persistence;
 pub mod process;
+pub mod protocol;
 pub mod resilience;
 pub mod runtime;
 #[cfg(any(test, feature = "test-support"))]

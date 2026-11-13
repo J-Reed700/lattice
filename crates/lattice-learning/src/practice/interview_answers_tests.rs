@@ -871,7 +871,6 @@ async fn researched_answers_are_captured_hidden_and_frozen_with_each_attempt() -
             LearningPracticeMode,
         },
         interview_research::research_interview_answers,
-        persistence::db,
         practical_dto::*,
         practical_generation::{generate_activity_with_plan, PracticalFileRole},
         practical_repository::LearningPracticalRepository,
@@ -1064,8 +1063,7 @@ async fn researched_answers_are_captured_hidden_and_frozen_with_each_attempt() -
         .bind(&request.activity_id)
         .bind(INTERVIEW_ANSWERS_FILE_PATH)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let (frozen, frozen_sources) = repository
         .simulation_session_generation_context(program_id, &start.session_id)
         .await?;

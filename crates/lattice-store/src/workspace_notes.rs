@@ -71,7 +71,7 @@ impl DailyNotesRepository {
     pub async fn get(&self, note_id: &str) -> Result<WorkspaceNoteRecord> {
         let query = format!("SELECT {NOTE_COLUMNS} FROM daily_notes_workspace WHERE id = ?");
         let mut read = self.db.begin_read().await?;
-        let note = sqlx::query(&query)
+        let note = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(note_id)
             .try_map(note_from_row)
             .fetch_optional(&mut *read)
@@ -117,7 +117,7 @@ impl DailyNotesRepository {
         let query =
             format!("SELECT {NOTE_COLUMNS} FROM daily_notes_workspace ORDER BY updated_at DESC");
         let mut read = self.db.begin_read().await?;
-        let notes = sqlx::query(&query)
+        let notes = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .try_map(note_from_row)
             .fetch_all(&mut *read)
             .await
@@ -137,7 +137,7 @@ impl DailyNotesRepository {
              WHERE journal_id = ? ORDER BY updated_at DESC"
         );
         let mut read = self.db.begin_read().await?;
-        let notes = sqlx::query(&query)
+        let notes = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(journal_id)
             .try_map(note_from_row)
             .fetch_all(&mut *read)
@@ -166,7 +166,7 @@ impl DailyNotesRepository {
              WHERE title = ? AND journal_id IS ? ORDER BY updated_at DESC LIMIT 1"
         );
         let mut read = self.db.begin_read().await?;
-        let note = sqlx::query(&query)
+        let note = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(title)
             .bind(journal_id)
             .try_map(note_from_row)
@@ -208,7 +208,7 @@ impl DailyNotesRepository {
             "SELECT {NOTE_COLUMNS} FROM daily_notes_workspace ORDER BY updated_at DESC LIMIT 1"
         );
         let mut read = self.db.begin_read().await?;
-        let note = sqlx::query(&query)
+        let note = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .try_map(note_from_row)
             .fetch_optional(&mut *read)
             .await
@@ -230,7 +230,7 @@ impl DailyNotesRepository {
              ORDER BY updated_at DESC"
         );
         let mut read = self.db.begin_read().await?;
-        let notes = sqlx::query(&query)
+        let notes = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(start_date)
             .bind(end_date)
             .try_map(note_from_row)
@@ -265,7 +265,7 @@ impl DailyNotesRepository {
              ORDER BY updated_at {direction} LIMIT 1"
         );
         let mut read = self.db.begin_read().await?;
-        let note = sqlx::query(&query)
+        let note = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(date)
             .try_map(note_from_row)
             .fetch_optional(&mut *read)
@@ -339,7 +339,7 @@ impl DailyNotesRepository {
         let mut tx = self.db.begin_write().await?;
         Self::update_in_transaction(&mut tx, note).await?;
         let query = format!("SELECT {NOTE_COLUMNS} FROM daily_notes_workspace WHERE id = ?");
-        let saved = sqlx::query(&query)
+        let saved = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(&note.id)
             .try_map(note_from_row)
             .fetch_one(&mut *tx)

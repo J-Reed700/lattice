@@ -1,6 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-use super::classes_tests::{checker, messages, Reply, Scripted};
+use super::bridge::ClaimParts;
+use super::classes_tests::{checker, conversation, messages, Reply, Scripted};
 use super::*;
+use crate::application::services::model_contract::test_support::assert_round_trip;
+use crate::application::services::model_contract::CORRECTION_LEAD;
 use crate::domain::learning::claim_review::text_sha256;
 use serde_json::{json, Value};
 
@@ -65,7 +68,7 @@ fn the_prompt_is_the_prompt_of_record_by_its_text_and_by_its_digest() {
     assert_eq!(BRIDGE_SYSTEM, recorded_prompt());
     assert_eq!(
         text_sha256(BRIDGE_SYSTEM),
-        "8fc4942348f7f4d6cbb2512dc340350c6940da0def823cda48d9aa564fb0f386"
+        "c8b758da6f11a83720add10eb0b4641855139bb84f2cee840103b676e6ce31fa"
     );
 }
 
@@ -101,28 +104,34 @@ async fn a_part_wise_check_sends_the_prompt_of_record_and_the_passages_under_the
     let schema = sent[0].json_schema.as_ref().unwrap();
     assert_eq!(
         schema["properties"]["parts"]["items"]["properties"]["kind"]["enum"],
-        json!(["stated", "common", "specific_missing", "contradicted"])
+        json!([
+            "stated",
+            "common",
+            "own",
+            "specific_missing",
+            "contradicted"
+        ])
     );
 }
 
 #[test]
 fn the_parts_decide_a_statement() {
-    use BridgeDecision::{Contradicted, Supported, Unsupported};
+    use Outcome::{AllCommon, Refuted, Stands, Unproven};
     use PartKind::{Common, SpecificMissing, Stated};
     let decision = |kinds: &[PartKind]| {
-        outcome(kinds.iter().map(|kind| part("A part.", *kind)).collect()).decision()
+        outcome(kinds.iter().map(|kind| part("A part.", *kind)).collect()).outcome()
     };
-    assert_eq!(decision(&[Stated, Stated]), Supported);
-    assert_eq!(decision(&[Stated, Common]), Supported);
-    assert_eq!(decision(&[Common, Stated, Common]), Supported);
-    assert_eq!(decision(&[Stated, SpecificMissing]), Unsupported);
-    assert_eq!(decision(&[Stated, Common, SpecificMissing]), Unsupported);
+    assert_eq!(decision(&[Stated, Stated]), Stands);
+    assert_eq!(decision(&[Stated, Common]), Stands);
+    assert_eq!(decision(&[Common, Stated, Common]), Stands);
+    assert_eq!(decision(&[Stated, SpecificMissing]), Unproven);
+    assert_eq!(decision(&[Stated, Common, SpecificMissing]), Unproven);
     // Nothing is stated: common knowledge alone is no source.
-    assert_eq!(decision(&[Common, Common]), Unsupported);
-    assert_eq!(decision(&[Stated, PartKind::Contradicted]), Contradicted);
+    assert_eq!(decision(&[Common, Common]), AllCommon);
+    assert_eq!(decision(&[Stated, PartKind::Contradicted]), Refuted);
     assert_eq!(
         decision(&[SpecificMissing, PartKind::Contradicted]),
-        Contradicted
+        Refuted
     );
 }
 
@@ -137,20 +146,20 @@ fn a_part_called_common_that_names_a_specific_counts_as_one_no_passage_gives() {
     assert_eq!(changed, vec!["It shipped in 1999.".to_owned()]);
     assert_eq!(guarded.parts[1].kind, PartKind::SpecificMissing);
     assert_eq!(guarded.parts[2].kind, PartKind::Common);
-    assert_eq!(guarded.decision(), BridgeDecision::Unsupported);
+    assert_eq!(guarded.outcome(), Outcome::Unproven);
 
     // A stated part is the passage's own word and is left alone.
     let (stated, changed) =
         outcome(vec![part("It shipped in 1999.", PartKind::Stated)]).guarded(names_a_figure);
     assert!(changed.is_empty());
-    assert_eq!(stated.decision(), BridgeDecision::Supported);
+    assert_eq!(stated.outcome(), Outcome::Stands);
 }
 
 /// The five planted rows of design 4.5, as the model answered them, through
 /// the reading, the guard and the decision.
 #[tokio::test]
 async fn the_planted_rows_come_out_as_the_design_measured_them() {
-    use BridgeDecision::{Contradicted, Supported, Unsupported};
+    use Outcome::{Refuted as Contradicted, Stands as Supported, Unproven as Unsupported};
     let rows = [
         (
             "The study found that OCR-based RAG improved retrieval recall by 23% over the vision-based pipeline on degraded documents.",
@@ -197,7 +206,7 @@ async fn the_planted_rows_come_out_as_the_design_measured_them() {
                 .await,
         );
         let (guarded, _) = read.guarded(names_a_figure);
-        assert_eq!(guarded.decision(), expected, "{statement}");
+        assert_eq!(guarded.outcome(), expected, "{statement}");
     }
 }
 
@@ -215,7 +224,7 @@ async fn the_verdict_the_model_writes_beside_the_parts_is_not_read() {
             .check_bridge("Quillet is a lexer written in 2004.", &passages())
             .await,
     );
-    assert_eq!(read.decision(), BridgeDecision::Unsupported);
+    assert_eq!(read.outcome(), Outcome::Unproven);
 }
 
 #[tokio::test]
@@ -257,9 +266,9 @@ async fn a_reply_that_cannot_be_read_is_asked_for_once_more_and_then_left_unjudg
     assert!(matches!(answered.judgments, ClassJudgment::Judged(_)));
     let sent = llm.sent();
     assert_eq!(sent.len(), 2);
-    let (_, again) = messages(&sent[1]);
+    let again = conversation(&sent[1]);
     assert!(
-        again.contains("could not be read")
+        again.contains(CORRECTION_LEAD)
             && again.contains("not json")
             && again.contains("the claim's parts"),
         "{again}"
@@ -372,7 +381,6 @@ fn a_cited_statement_whose_parts_are_all_common_is_all_common_whatever_the_old_r
     .guarded(names_a_figure);
     assert!(changed.is_empty());
     assert_eq!(guarded.outcome(), Outcome::AllCommon);
-    assert_eq!(guarded.decision(), BridgeDecision::Unsupported);
 }
 
 #[test]
@@ -392,11 +400,12 @@ fn a_common_part_that_names_a_specific_is_unproven_once_guarded() {
 }
 
 #[test]
-fn the_passages_ground_a_statement_when_one_part_is_stated_and_none_fails() {
-    use PartKind::{Common, Contradicted, SpecificMissing, Stated};
+fn only_what_the_passages_state_grounds_a_vetoed_statement() {
+    use PartKind::{Common, Contradicted, Own, SpecificMissing, Stated};
     let rows: &[(&[PartKind], Outcome)] = &[
-        (&[Stated, Common], Outcome::Stands),
         (&[Stated], Outcome::Stands),
+        (&[Stated, Own], Outcome::Stands),
+        (&[Stated, Common], Outcome::Refuted),
         (&[Common], Outcome::Refuted),
         (&[Stated, SpecificMissing], Outcome::Refuted),
         (&[Stated, Contradicted], Outcome::Refuted),
@@ -408,15 +417,74 @@ fn the_passages_ground_a_statement_when_one_part_is_stated_and_none_fails() {
     }
 }
 
+const OWN_FIGURES: &str = "The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them.";
+
 #[test]
-fn a_common_part_that_names_a_specific_does_not_ground_a_statement_once_guarded() {
-    let parts = vec![
-        part("Quillet is a lexer.", PartKind::Stated),
-        part("It shipped in 1999.", PartKind::Common),
-    ];
-    assert_eq!(outcome(parts.clone()).ground_outcome(), Outcome::Stands);
-    let (guarded, _) = outcome(parts).guarded(names_a_figure);
-    assert_eq!(guarded.ground_outcome(), Outcome::Refuted);
+fn the_part_wise_judge_is_told_what_the_lesson_s_own_figures_are() {
+    assert!(BRIDGE_SYSTEM.contains(OWN_FIGURES), "{BRIDGE_SYSTEM}");
+}
+
+/// The judgment a scripted model's reply with `parts` comes to, however
+/// many times it is asked.
+async fn judgment_of(parts: Value) -> Answered<ClassJudgment<BridgeOutcome>> {
+    let llm = Scripted::new(vec![
+        reply(parts.clone(), "supported_with_common"),
+        reply(parts, "supported_with_common"),
+    ]);
+    checker(&llm, CheckPolicy::Bridge)
+        .check_bridge("A rule set of 48 checks has 12 that fail.", &passages())
+        .await
+}
+
+#[tokio::test]
+async fn a_part_that_is_the_lesson_s_own_figure_stands_beside_a_stated_one() {
+    let answered = judgment_of(json!([
+        stated("Quillet is a lexer."),
+        unplaced("12 of 48 is 25%", "own")
+    ]))
+    .await;
+    assert!(
+        matches!(answered.judgments, ClassJudgment::Judged(_)),
+        "{:?}",
+        answered.judgments
+    );
+    let read = judged(answered);
+    let (guarded, changed) = read.guarded(names_a_figure);
+    assert!(changed.is_empty());
+    assert_eq!(guarded.outcome(), Outcome::Stands);
+}
+
+#[tokio::test]
+async fn parts_that_are_all_common_or_the_lesson_s_own_are_all_common() {
+    let answered = judgment_of(json!([
+        unplaced("A lexer turns characters into tokens.", "common"),
+        unplaced("12 of 48 is 25%", "own")
+    ]))
+    .await;
+    assert!(
+        matches!(answered.judgments, ClassJudgment::Judged(_)),
+        "{:?}",
+        answered.judgments
+    );
+    let (guarded, changed) = judged(answered).guarded(names_a_figure);
+    assert!(changed.is_empty());
+    assert_eq!(guarded.outcome(), Outcome::AllCommon);
+}
+
+#[tokio::test]
+async fn the_passages_ground_a_statement_with_a_part_of_the_lesson_s_own() {
+    let answered = judgment_of(json!([
+        stated("Quillet is a lexer."),
+        unplaced("12 of 48 is 25%", "own")
+    ]))
+    .await;
+    assert!(
+        matches!(answered.judgments, ClassJudgment::Judged(_)),
+        "{:?}",
+        answered.judgments
+    );
+    let (guarded, _) = judged(answered).guarded(names_a_figure);
+    assert_eq!(guarded.ground_outcome(), Outcome::Stands);
 }
 
 /// The page of `words` words, as one passage.
@@ -494,4 +562,23 @@ async fn a_reason_past_600_characters_is_kept_whole() {
             .await,
     );
     assert_eq!(outcome.reason, reason);
+}
+
+#[test]
+fn the_part_wise_contract_reads_what_it_renders() {
+    assert_round_trip::<ClaimParts>(&outcome(vec![
+        BridgePart {
+            part: "Quillet is a lexer".into(),
+            kind: PartKind::Stated,
+            passage: Some(0),
+        },
+        part("It tokenizes.", PartKind::Common),
+        part("It ships with the toolchain.", PartKind::Own),
+        part("It lexes 4 languages.", PartKind::SpecificMissing),
+        BridgePart {
+            part: "It is a parser".into(),
+            kind: PartKind::Contradicted,
+            passage: Some(1),
+        },
+    ]));
 }

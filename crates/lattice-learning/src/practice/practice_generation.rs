@@ -1,8 +1,11 @@
 //! Bounded strict-JSON prompts for the grounded practice tutor and grader.
 use crate::dto::*;
-use crate::model_call;
+use crate::lessons::structured_call::{complete_checked, complete_json};
 use lattice_core::{
-    application::ports::LLMPort,
+    application::{
+        ports::LLMPort,
+        services::model_contract::{Contract, ContractCall, ContractId, PromptInput},
+    },
     shared::error::{AppError, Result},
 };
 use serde::Deserialize;
@@ -23,46 +26,26 @@ pub fn fallback_task_prompt(objective: &str, details: Option<&str>) -> String {
 fn invalid(message: &str) -> AppError {
     AppError::InvalidInput(message.into())
 }
-fn complete_reason(reason: &str) -> Result<()> {
-    if [
-        "length",
-        "max_tokens",
-        "max_output_tokens",
-        "incomplete",
-        "content_filter",
-    ]
-    .iter()
-    .any(|x| reason.to_ascii_lowercase().contains(x))
-    {
-        return Err(invalid("The model response was incomplete. Try again."));
-    }
-    Ok(())
+
+struct TutorReply;
+
+impl Contract for TutorReply {
+    const ID: ContractId = ContractId::new("practice-tutor-reply");
+    type Input = PromptInput;
 }
-async fn complete_json(
-    llm: &dyn LLMPort,
-    system: &str,
-    prompt: String,
-    schema: serde_json::Value,
-    max_tokens: usize,
-) -> Result<String> {
-    let request = |output_tokens: usize| {
-        let mut request =
-            model_call::structured(system, prompt.clone(), schema.clone(), max_tokens, "low");
-        request.output_tokens = output_tokens;
-        request
-    };
-    let too_large = "Practice request exceeds this model's context window.";
-    let first = model_call::send(llm, request(max_tokens), None, too_large).await?;
-    let response = crate::lessons::structured_call::complete_cut_off(
-        llm,
-        first,
-        request,
-        max_tokens,
-        |larger| model_call::send(llm, larger, None, too_large),
-    )
-    .await?;
-    complete_reason(&response.finish_reason)?;
-    Ok(response.text)
+
+struct ReferenceSolution;
+
+impl Contract for ReferenceSolution {
+    const ID: ContractId = ContractId::new("practice-reference-solution");
+    type Input = PromptInput;
+}
+
+struct PracticeGrade;
+
+impl Contract for PracticeGrade {
+    const ID: ContractId = ContractId::new("practice-grade");
+    type Input = PromptInput;
 }
 
 #[derive(Debug, Deserialize)]
@@ -212,7 +195,11 @@ pub async fn tutor(
     let query = format!("{} {}", session.task_prompt, request.prompt);
     let prompt = with_recent_turns(llm, prompt, &session.tutor_turns);
     let prompt = with_snapshots(llm, TUTOR_SYSTEM, prompt, sources, &query, 1400).await?;
-    let raw = complete_json(llm, TUTOR_SYSTEM, prompt, tutor_schema(), 1400).await?;
+    let call = ContractCall::of::<TutorReply>(&PromptInput {
+        system: TUTOR_SYSTEM.to_owned(),
+        prompt: prompt.clone(),
+    })?;
+    let raw = complete_json(llm, &call, TUTOR_SYSTEM, prompt, tutor_schema(), 1400).await?;
     let parsed: TutorJson = serde_json::from_str(&raw)
         .map_err(|_| invalid("The tutor returned malformed structured feedback."))?;
     if parsed.response.trim().is_empty() {
@@ -241,7 +228,11 @@ pub async fn solution(
     let prompt = serde_json::json!({"taskPrompt":session.task_prompt,"objective":session.lesson_objective,"sourceSnapshots":[]});
     let query = format!("{} {}", session.task_prompt, session.lesson_objective);
     let prompt = with_snapshots(llm, SOLUTION_SYSTEM, prompt, sources, &query, 1400).await?;
-    let raw = complete_json(llm, SOLUTION_SYSTEM, prompt, solution_schema(), 1400).await?;
+    let call = ContractCall::of::<ReferenceSolution>(&PromptInput {
+        system: SOLUTION_SYSTEM.to_owned(),
+        prompt: prompt.clone(),
+    })?;
+    let raw = complete_json(llm, &call, SOLUTION_SYSTEM, prompt, solution_schema(), 1400).await?;
     let parsed: SolutionJson = serde_json::from_str(&raw)
         .map_err(|_| invalid("The model returned a malformed reference solution."))?;
     if parsed.solution.trim().is_empty() {
@@ -317,25 +308,24 @@ pub async fn grade(
     let task = serde_json::json!({"taskPrompt":session.task_prompt,"artifact":session.artifact.text,"rubric":rubric});
     let schema = grade_schema(&session.rubric);
     let system = "Evaluate the learner artifact against each visible criterion. Scores are limited, provisional evidence, not mastery claims. For each criterion, identify what the learner did, the specific gap if any, and one actionable next revision. Each evidence_quote must be one continuous exact substring of the submitted artifact, preserving spaces and line breaks; never use ellipses, join separate excerpts, or reformat code. Choose a shorter exact quote if needed. Do not reward length or confident wording. A correct answer with flawed reasoning must lose reasoning credit. Give an observation tied to artifact text. Use null, never zero, when there is no assessable work for a criterion. Zero means an observed incorrect attempt. Use uncertain status when the artifact lacks enough evidence to judge; all scores must then be null.";
-    let mut prompt = task.to_string();
+    let prompt = task.to_string();
     let budget = session.rubric.len().saturating_mul(500).saturating_add(800);
-    for attempt in 0..2 {
-        let raw = complete_json(llm, system, prompt, schema.clone(), budget).await?;
-        match validate_grade(&raw, session) {
-            Ok(result) => return Ok(result),
-            Err(error) if attempt == 0 => {
-                prompt = serde_json::json!({"task":task,"rejectedFeedback":raw,"validationIssue":error.to_string(),"instruction":"Correct the rejected feedback against the original artifact and rubric. Copy each evidence_quote as one exact contiguous substring, with no ellipses or reformatted whitespace. Keep valid judgments and correct every criterion. No feedback has been saved yet."}).to_string();
-            }
-            Err(error) => {
-                return Err(AppError::ModelAnswerUnusable(format!(
-                    "The grader could not produce validated feedback: {error}"
-                )))
-            }
-        }
-    }
-    Err(AppError::ModelAnswerUnusable(
-        "The grader could not produce validated feedback.".into(),
-    ))
+    let call = ContractCall::of::<PracticeGrade>(&PromptInput {
+        system: system.to_owned(),
+        prompt: prompt.clone(),
+    })?;
+    complete_checked(
+        llm,
+        &call,
+        system,
+        prompt,
+        schema,
+        budget,
+        None,
+        None,
+        |raw| validate_grade(raw, session),
+    )
+    .await
 }
 
 fn validate_grade(
@@ -454,8 +444,14 @@ mod window_tests {
     #[tokio::test]
     async fn a_cut_off_practice_answer_is_asked_again_with_twice_the_room() {
         let llm = CutOnce(std::sync::Mutex::new(Vec::new()));
+        let call = ContractCall::of::<TutorReply>(&PromptInput {
+            system: "system".to_owned(),
+            prompt: "prompt".to_owned(),
+        })
+        .expect("the call is built");
         let raw = complete_json(
             &llm,
+            &call,
             "system",
             "prompt".into(),
             serde_json::json!({"type":"object"}),

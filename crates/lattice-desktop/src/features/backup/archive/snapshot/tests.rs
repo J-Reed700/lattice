@@ -42,7 +42,10 @@ async fn read_only_pool(db_path: &Path) -> SqlitePool {
 }
 
 async fn count(pool: &SqlitePool, sql: &str) -> i64 {
-    sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .fetch_one(pool)
+        .await
+        .unwrap()
 }
 
 fn write_file(path: &Path, contents: &[u8]) {

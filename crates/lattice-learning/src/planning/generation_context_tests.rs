@@ -15,13 +15,13 @@ use sqlx::SqlitePool;
 
 fn prepared(lesson: &str) -> PreparedLearningLesson {
     let mut result = PreparedLearningLesson {
-        blocks: vec![LearningBlockDto {
-            kind: LearningBlockKind::Recap,
-            title: "Earlier teaching".into(),
-            body: "A saved teaching fixture, independent of learner progress.".into(),
-            source_ids: vec![],
-            rubric: vec![],
-        }],
+        blocks: vec![LearningBlockDto::new(
+            LearningBlockKind::Recap,
+            "Earlier teaching".into(),
+            "A saved teaching fixture, independent of learner progress.".into(),
+            vec![],
+            vec![],
+        )],
         questions: vec![],
         keys: vec![],
         verification: None,
@@ -315,31 +315,26 @@ impl Course {
     }
 
     async fn run(&self, sql: &str, id: &str) -> Result<()> {
-        sqlx::query(sql)
+        sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(id)
             .execute(&self.pool)
-            .await
-            .map_err(db)?;
+            .await?;
         Ok(())
     }
 
     async fn publish_one_and_hold_one(&self) -> Result<LearningGenerationJob> {
         let (first, second) = (self.lessons[0].as_str(), self.lessons[1].as_str());
-        let job = self.started(&[first, second]).await?;
+        let published = self.started(&[first]).await?;
+        self.publish(&published, first).await?;
+        let job = self.started(&[second]).await?;
         let held = crate::content_verification::HeldForReview {
             lesson_id: second.to_string(),
             claims: 1,
-            stopped: false,
-            unsupported: None,
+            stop: None,
         };
-        self.jobs
-            .publish_prepared(
-                &job.id,
-                self.revision().await?,
-                &[(first.to_string(), prepared(first))],
-                &[held],
-                None,
-            )
+        let (result_ref, message) = crate::content_verification::review_outcome(&[held]);
+        JobStore::new(self.db.clone())
+            .complete(&job.id, &result_ref, &message)
             .await?;
         Ok(job)
     }
@@ -500,8 +495,7 @@ async fn a_lesson_whose_own_row_stopped_being_an_outline_lesson_is_refused() -> 
             .bind(completed)
             .bind(&target)
             .execute(&course.pool)
-            .await
-            .map_err(db)?;
+            .await?;
         assert!(
             course.publish(&job, &target).await.is_err(),
             "{state} with completed={completed} was published"
@@ -510,8 +504,7 @@ async fn a_lesson_whose_own_row_stopped_being_an_outline_lesson_is_refused() -> 
             sqlx::query_scalar("SELECT preparation FROM learning_lessons WHERE id=?")
                 .bind(&target)
                 .fetch_one(&course.pool)
-                .await
-                .map_err(db)?;
+                .await?;
         assert_eq!(preparation, "outline");
     }
     Ok(())

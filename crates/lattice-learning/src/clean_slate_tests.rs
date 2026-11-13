@@ -33,7 +33,7 @@ async fn memory_pool() -> SqlitePool {
 
 async fn exec(pool: &SqlitePool, statements: &[&str]) {
     for statement in statements {
-        sqlx::query(statement)
+        sqlx::query(sqlx::AssertSqlSafe(*statement))
             .execute(pool)
             .await
             .unwrap_or_else(|e| panic!("{statement}: {e}"));
@@ -41,7 +41,7 @@ async fn exec(pool: &SqlitePool, statements: &[&str]) {
 }
 
 async fn scalar(pool: &SqlitePool, sql: &str) -> String {
-    sqlx::query_scalar::<_, Option<String>>(sql)
+    sqlx::query_scalar::<_, Option<String>>(sqlx::AssertSqlSafe(sql))
         .fetch_one(pool)
         .await
         .unwrap_or_else(|e| panic!("{sql}: {e}"))
@@ -49,7 +49,7 @@ async fn scalar(pool: &SqlitePool, sql: &str) -> String {
 }
 
 async fn count(pool: &SqlitePool, from: &str) -> i64 {
-    sqlx::query_scalar(&format!("SELECT count(*) FROM {from}"))
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {from}")))
         .fetch_one(pool)
         .await
         .unwrap()
@@ -114,13 +114,13 @@ const JOBS: &[&str] = &[
     "INSERT INTO learning_jobs (job_id, program_id) VALUES ('j-running', 'p1')",
     "INSERT INTO job_events (job_id, ordinal, status, progress_current, message, created_at) VALUES ('j-running', 0, 'pending', 0, 'Queued', 1000)",
     // Lesson checkpoints are saved as `<lesson>/<key>`.
-    "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-running', 'l-out/prepared-v1', '{}', 1)",
+    "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-running', 'l-out/prepared-v2', '{}', 1)",
     "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-running', 'l-ready/claim-v1:abc', '{}', 1)",
     "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-running', 'numbered-sources', '[]', 1)",
     "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-pending', 'l-out/inventory-section-v1:x', '{}', 1)",
     "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-done', 'l-held/claim-walk-v1:y', '{}', 1)",
-    "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-done', 'l-ready/prepared-v1', '{}', 1)",
-    "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-failed', 'l-out/prepared-v1', '{}', 1)",
+    "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-done', 'l-ready/prepared-v2', '{}', 1)",
+    "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-failed', 'l-out/prepared-v2', '{}', 1)",
     "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-other', 'index/progress', '{}', 1)",
 ];
 
@@ -164,12 +164,14 @@ async fn the_clean_slate_ends_unfinished_preparation_and_drops_the_old_pipelines
     assert!(migrator.iter().any(|m| m.version == CLEAN_SLATE));
     {
         let mut conn = pool.acquire().await.unwrap();
-        conn.ensure_migrations_table().await.unwrap();
+        conn.ensure_migrations_table("_sqlx_migrations")
+            .await
+            .unwrap();
         for migration in migrator
             .iter()
             .filter(|m| m.version < CLEAN_SLATE && !m.migration_type.is_down_migration())
         {
-            conn.apply(migration).await.unwrap();
+            conn.apply("_sqlx_migrations", migration).await.unwrap();
         }
     }
     exec(&pool, COURSE).await;
@@ -233,7 +235,7 @@ async fn the_clean_slate_ends_unfinished_preparation_and_drops_the_old_pipelines
             "SELECT group_concat(job_id || ':' || key, ';') FROM (SELECT * FROM job_checkpoints WHERE job_id <> 'j-other' ORDER BY job_id, key)"
         )
         .await,
-        "j-done:l-ready/prepared-v1"
+        "j-done:l-ready/prepared-v2"
     );
     assert_eq!(
         scalar(
@@ -297,12 +299,14 @@ async fn preparation_that_ended_under_the_old_pipeline_ends_as_history_and_later
     let pool = memory_pool().await;
     let migrator = migrator();
     let mut conn = pool.acquire().await.unwrap();
-    conn.ensure_migrations_table().await.unwrap();
+    conn.ensure_migrations_table("_sqlx_migrations")
+        .await
+        .unwrap();
     for migration in migrator
         .iter()
         .filter(|m| m.version < CLEAN_SLATE && !m.migration_type.is_down_migration())
     {
-        conn.apply(migration).await.unwrap();
+        conn.apply("_sqlx_migrations", migration).await.unwrap();
     }
     drop(conn);
     exec(&pool, COURSE).await;
@@ -383,7 +387,7 @@ async fn preparation_that_ended_under_the_old_pipeline_ends_as_history_and_later
             && m.version < ENDED_BY_UPDATE_MIGRATION
             && !m.migration_type.is_down_migration()
     }) {
-        conn.apply(migration).await.unwrap();
+        conn.apply("_sqlx_migrations", migration).await.unwrap();
     }
     drop(conn);
     exec(

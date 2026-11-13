@@ -6,7 +6,8 @@ use super::{
     JobRecord, JobStatus, JobStore, NewJob, RecoveryPolicy,
 };
 use crate::shared::{
-    error::{AppError, Result},
+    error::{AppError, ErrorClass, Result},
+    ipc::ErrorCode,
     persistence::Database,
     runtime::background::BackgroundTasks,
 };
@@ -48,14 +49,6 @@ type Subjects = Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>;
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-/// The wire code of `error`, through the one mapping the renderer's errors use.
-fn cause_code(error: &AppError) -> Option<String> {
-    let code = crate::shared::ipc::ApiError::from(error.clone()).code;
-    serde_json::to_value(code)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
 }
 
 async fn until_cancelled<T>(
@@ -252,7 +245,7 @@ impl Drop for SubjectLease {
 struct LastFailure {
     /// The error's code: its kind, never its text, which may carry a request
     /// id or a slot number that changes on every attempt.
-    failure: &'static str,
+    failure: ErrorCode,
     saved_work: String,
 }
 
@@ -620,7 +613,7 @@ impl JobRuntime {
         let mut retries = 0;
         loop {
             match write().await {
-                Err(error) if JobFailure::is_transient(&error) => {
+                Err(error) if ErrorClass::of(&error).is_temporary() => {
                     tracing::warn!(job_id = id, retries, %error, "Could not record the end of a job; retrying");
                     let wait = tokio::time::sleep(backoff.delay(retries));
                     if until_cancelled(&shutdown, wait).await.is_none() {
@@ -652,7 +645,7 @@ impl JobRuntime {
         let backoff = kind.config.backoff;
         let job = self.settle(id, backoff, || self.store().get(id)).await?;
         let failure = kind.handler.failure(&job, error);
-        let cause = cause_code(error);
+        let cause = ErrorCode::from(error).to_string();
         let repeated = matches!(failure, JobFailure::Defer(_))
             && self.repeats_without_progress(&job, error, backoff).await?;
         match failure {
@@ -661,7 +654,7 @@ impl JobRuntime {
                 tracing::warn!(job_id = id, %error, "Job failed; saved work requires attention");
                 self.settle(id, backoff, || {
                     self.store()
-                        .fail_because(id, &code, &message, cause.as_deref())
+                        .fail_because(id, &code, &message, Some(cause.as_str()))
                 })
                 .await
             }
@@ -679,7 +672,7 @@ impl JobRuntime {
                 );
                 self.settle(id, backoff, || {
                     self.store()
-                        .fail_because(id, REPEATED_FAILURE, &message, cause.as_deref())
+                        .fail_because(id, REPEATED_FAILURE, &message, Some(cause.as_str()))
                 })
                 .await
             }
@@ -695,7 +688,7 @@ impl JobRuntime {
                 };
                 self.settle(id, backoff, || {
                     self.store()
-                        .defer_because(id, &deferral, backoff, cause.as_deref())
+                        .defer_because(id, &deferral, backoff, Some(cause.as_str()))
                 })
                 .await
             }
@@ -712,11 +705,11 @@ impl JobRuntime {
         error: &AppError,
         backoff: Backoff,
     ) -> Result<bool> {
-        if JobFailure::is_outage(error) {
+        if ErrorClass::of(error) == ErrorClass::Outage {
             return Ok(false);
         }
         let latest = LastFailure {
-            failure: error.error_code(),
+            failure: ErrorCode::from(error),
             saved_work: self
                 .settle(&job.id, backoff, || self.saved_work(job))
                 .await?,

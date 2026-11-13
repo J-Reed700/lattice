@@ -9,6 +9,9 @@
 //! plumbing around that: what the model is shown, how a rejection is reported
 //! back to it, and the hard limit on bounded repair attempts.
 
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use tracing::{debug, warn};
 
 use lattice_core::application::ports::LLMPort;
@@ -20,7 +23,9 @@ use super::prompts::{
     patch_schema, render_extractor_prompt, render_repair_prompt, ContextPassage, EXTRACTOR_SYSTEM,
 };
 use super::segment::SourceSegment;
-use super::{complete_json, CompactionError, Deadline, MAX_EXTRACTION_ATTEMPTS};
+use super::{
+    complete_json, CompactionError, Deadline, EXTRACTOR_OUTPUT_TOKENS, MAX_EXTRACTION_ATTEMPTS,
+};
 
 /// One accepted patch, with what it cost to get it.
 #[derive(Debug, Clone)]
@@ -30,6 +35,12 @@ pub struct ExtractionOutcome {
     pub attempts: usize,
     /// True when the first response was rejected and the repair was accepted.
     pub repaired: bool,
+}
+
+struct MemoryExtraction;
+impl Contract for MemoryExtraction {
+    const ID: ContractId = ContractId::new("memory-extraction");
+    type Input = PromptInput;
 }
 
 /// Extract memory from one batch of segments.
@@ -63,12 +74,18 @@ pub async fn extract_segments(
 
     loop {
         attempts += 1;
+        let call = ContractCall::of::<MemoryExtraction>(&PromptInput {
+            system: EXTRACTOR_SYSTEM.to_owned(),
+            prompt: request.clone(),
+        })?;
         let raw = complete_json(
             llm,
+            &call,
             deadline,
             EXTRACTOR_SYSTEM,
             request,
             Some(patch_schema()),
+            EXTRACTOR_OUTPUT_TOKENS,
         )
         .await?;
 

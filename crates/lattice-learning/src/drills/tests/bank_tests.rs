@@ -10,7 +10,7 @@ use crate::drills::build::Evidence;
 use crate::drills::jobs::{spec_of, DRILL_BUILD};
 use crate::drills::repository::{self, DrillStatus, NewDrill};
 use crate::drills::spec::{check_request, DrillSpec};
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use crate::tests::pool;
 use lattice_core::domain::learning::drills::{targets, Drill, Material, PatternDue};
 use lattice_core::shared::error::{AppError, Result};
@@ -91,8 +91,7 @@ impl<'a> Ready<'a> {
             .bind(self.at)
             .bind(self.id)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -128,7 +127,7 @@ async fn builds(pool: &SqlitePool) -> Result<i64> {
         .bind(DRILL_BUILD)
         .fetch_one(pool)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// The build queued when `taken` was taken.
@@ -145,7 +144,7 @@ async fn end(pool: &SqlitePool, job: &str, status: &str) -> Result<()> {
         .execute(pool)
         .await
         .map(drop)
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 async fn status_of(pool: &SqlitePool, id: &str) -> Result<String> {
@@ -153,7 +152,7 @@ async fn status_of(pool: &SqlitePool, id: &str) -> Result<String> {
         .bind(id)
         .fetch_one(pool)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 fn pattern_ids(material: &Material, states: &[PatternDue], now: i64, count: usize) -> Vec<String> {
@@ -239,8 +238,7 @@ async fn the_oldest_ready_drill_of_the_shelf_built_from_a_lesson_is_taken_and_ma
     let taken_at: Option<i64> =
         sqlx::query_scalar("SELECT taken_at FROM learning_drills WHERE id='older'")
             .fetch_one(&pool)
-            .await
-            .map_err(db)?;
+            .await?;
     assert_eq!(taken_at, one.drill.taken_at);
 
     let two = take(&database, shelf, None)
