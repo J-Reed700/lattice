@@ -20,6 +20,7 @@ use crate::features::llm::engine::sidecar_manager::{
 use crate::features::llm::engine::system::backend_devices::parse_list_devices;
 use crate::features::search::engine::llama_reranker::{RerankLaunch, RerankServerStarter};
 use crate::infrastructure::llama_server::RunningLlamaServer;
+use lattice_core::shared::error::WithCauses;
 
 /// How often a starting server's `/health` is asked while it loads.
 const HEALTH_POLL: std::time::Duration = std::time::Duration::from_millis(250);
@@ -106,7 +107,9 @@ impl StandaloneServers {
         let endpoint = format!("http://127.0.0.1:{port}");
         let http = lattice_core::shared::http::loopback_client_builder()
             .build()
-            .map_err(|e| AppError::ModelLoadFailed(format!("No HTTP client: {e}")))?;
+            .map_err(|e| {
+                AppError::ModelLoadFailed(format!("No HTTP client: {}", WithCauses(&e)))
+            })?;
         loop {
             if let Ok(Some(status)) = child.lock().try_wait() {
                 return Err(AppError::ModelLoadFailed(format!(

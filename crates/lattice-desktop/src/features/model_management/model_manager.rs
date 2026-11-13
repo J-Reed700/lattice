@@ -5,6 +5,7 @@ use crate::infrastructure::file_system::compute_file_sha256_async;
 use crate::infrastructure::services::traits::ModelManagerTrait;
 use async_trait::async_trait;
 use lattice_core::domain::models::curated::CURATED_RERANKER;
+use lattice_core::shared::error::WithCauses;
 use lattice_core::shared::error::{AppError, Result, ResultExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -70,7 +71,9 @@ impl ModelManager {
         let client = lattice_core::shared::http::reqwest_client_builder()
             .timeout(timeout)
             .build()
-            .map_err(|e| AppError::Network(format!("Failed to create HTTP client: {e}")))?;
+            .map_err(|e| {
+                AppError::Network(format!("Failed to create HTTP client: {}", WithCauses(&e)))
+            })?;
 
         Ok(Self {
             model_dir,
@@ -233,7 +236,7 @@ impl ModelManager {
         let response = request
             .send()
             .await
-            .map_err(|e| AppError::Network(format!("Network error: Failed to connect to download server for {}. Please check your internet connection. Error: {}", filename, e)))?;
+            .map_err(|e| AppError::Network(format!("Network error: Failed to connect to download server for {}. Please check your internet connection. Error: {}", filename, WithCauses(&e))))?;
 
         let status = response.status();
         if !status.is_success() && status.as_u16() != 206 {
@@ -303,7 +306,8 @@ impl ModelManager {
             let chunk = chunk.map_err(|e| {
                 AppError::Network(format!(
                     "Network error while downloading {}: Connection interrupted. Error: {}",
-                    filename, e
+                    filename,
+                    WithCauses(&e)
                 ))
             })?;
             file.write_all(&chunk).await.context(format!(

@@ -29,6 +29,7 @@ use crate::features::web::services::web::{fetchable_url, validate_url_resolved};
 use crate::features::web::traits::page_snapshot::{
     CaptureProgress, DataUri, DroppedResource, ProgressSink, ResourceReport,
 };
+use lattice_core::shared::error::WithCauses;
 
 /// The MIME type stylesheets carry inside [`ResolvedResource::Inlined`]; the
 /// bytes are UTF-8 text for a `<style>`, never a `data:` URL.
@@ -227,7 +228,7 @@ pub(super) async fn read_capped(
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|e| ReadError::Network(e.to_string()))?
+        .map_err(|e| ReadError::Network(WithCauses(&e).to_string()))?
     {
         if body.len().saturating_add(chunk.len()) > cap {
             return Err(ReadError::TooLarge);

@@ -21,6 +21,7 @@ use lattice_core::shared::error::{AppError, Result};
 use super::reranker::{RerankResult, Reranker};
 use crate::infrastructure::llama_server::RunningLlamaServer;
 use client::Failure;
+use lattice_core::shared::error::WithCauses;
 
 pub use launch::{RerankLaunch, RerankServerStarter, RERANK_SLOTS, RERANK_WINDOW_TOKENS};
 
@@ -71,7 +72,9 @@ impl LlamaReranker {
     pub fn new(gguf: impl Into<PathBuf>, starter: Arc<dyn RerankServerStarter>) -> Result<Self> {
         let http = lattice_core::shared::http::loopback_client_builder()
             .build()
-            .map_err(|e| AppError::ModelLoadFailed(format!("No HTTP client: {e}")))?;
+            .map_err(|e| {
+                AppError::ModelLoadFailed(format!("No HTTP client: {}", WithCauses(&e)))
+            })?;
         Ok(Self {
             serving: parking_lot::RwLock::new(Serving {
                 gguf: gguf.into(),
@@ -170,8 +173,9 @@ impl LlamaReranker {
 
 fn transport_error(server: &RunningLlamaServer, error: &reqwest::Error) -> AppError {
     AppError::Other(format!(
-        "The reranking server at {} did not answer: {error}",
-        server.endpoint()
+        "The reranking server at {} did not answer: {}",
+        server.endpoint(),
+        WithCauses(error)
     ))
 }
 
@@ -228,7 +232,7 @@ impl Reranker for LlamaReranker {
         }
         tracing::warn!(
             endpoint = server.endpoint(),
-            %error,
+            error = %WithCauses(&error),
             "reranking.server.died; starting it again"
         );
         let server = self.server().await?;

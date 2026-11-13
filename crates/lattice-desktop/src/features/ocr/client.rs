@@ -10,6 +10,7 @@ use tracing::warn;
 use super::render::PageImage;
 use super::server::ServerAddress;
 use lattice_core::application::ports::OcrError;
+use lattice_core::shared::error::WithCauses;
 
 /// Most tokens one page may produce. The context holds the image (about 1,250
 /// tokens) plus the answer; a dense page of prose reads back in about 900, so
@@ -26,7 +27,7 @@ impl OcrClient {
         let http = lattice_core::shared::http::loopback_client_builder()
             .build()
             .map_err(|error| OcrError::Unavailable {
-                reason: format!("no HTTP client: {error}"),
+                reason: format!("no HTTP client: {}", WithCauses(&error)),
             })?;
         Ok(Self { http })
     }
@@ -53,14 +54,14 @@ impl OcrClient {
                 if error.is_timeout() {
                     fail(format!("no answer within {} s", timeout.as_secs()))
                 } else {
-                    fail(error.to_string())
+                    fail(WithCauses(&error).to_string())
                 }
             })?;
         let status = response.status();
         let body = response
             .text()
             .await
-            .map_err(|error| fail(error.to_string()))?;
+            .map_err(|error| fail(WithCauses(&error).to_string()))?;
         if !status.is_success() {
             let excerpt: String = body.chars().take(300).collect();
             return Err(fail(format!("the OCR server answered {status}: {excerpt}")));

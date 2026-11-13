@@ -9,7 +9,17 @@ pub struct WithCauses<'a>(pub &'a (dyn Error + 'static));
 
 impl Display for WithCauses<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        Display::fmt(self.0, f)
+        let mut shown = self.0.to_string();
+        let mut cause = self.0.source();
+        while let Some(error) = cause {
+            let message = error.to_string();
+            if !message.is_empty() && !shown.contains(&message) {
+                shown.push_str(": ");
+                shown.push_str(&message);
+            }
+            cause = error.source();
+        }
+        f.write_str(&shown)
     }
 }
 

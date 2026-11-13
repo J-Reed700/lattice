@@ -13,6 +13,7 @@
 
 use crate::Res;
 use futures::StreamExt;
+use lattice_core::shared::error::WithCauses;
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::{json, Map, Value};
@@ -157,7 +158,7 @@ pub async fn start(
                 )
                 .await
                 {
-                    eprintln!("proxy: {error}");
+                    eprintln!("proxy: {}", WithCauses(error.as_ref()));
                 }
                 recorder.touch();
                 recorder.in_flight.fetch_sub(1, Ordering::SeqCst);
@@ -309,7 +310,7 @@ async fn serve(
                 let chunk = match chunk {
                     Ok(chunk) => chunk,
                     Err(error) => {
-                        record.error = Some(error.to_string());
+                        record.error = Some(WithCauses(&error).to_string());
                         break;
                     }
                 };
@@ -341,7 +342,7 @@ async fn serve(
             }
         }
         Err(error) => {
-            record.error = Some(error.to_string());
+            record.error = Some(WithCauses(&error).to_string());
             let reply =
                 "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
             client_stream.write_all(reply.as_bytes()).await?;

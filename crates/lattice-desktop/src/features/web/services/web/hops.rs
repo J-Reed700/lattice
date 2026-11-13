@@ -21,6 +21,7 @@ use super::page::parse_fetchable_url;
 use super::SitePacer;
 use crate::features::web::services::identity;
 use crate::features::web::services::sourcing::HopReader;
+use lattice_core::shared::error::WithCauses;
 
 /// Reads redirects over the public, non-following client.
 pub(crate) struct HttpHops {
@@ -55,7 +56,7 @@ impl HopReader for HttpHops {
                     .headers(identity::browser_headers(identity::random_profile(), None))
                     .send()
                     .await
-                    .map_err(|error| error.to_string())?
+                    .map_err(|error| WithCauses(&error).to_string())?
             };
             let status = response.status();
             if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {

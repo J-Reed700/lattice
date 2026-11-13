@@ -1,5 +1,6 @@
 //! The Hub HTTP client that implements `ModelCatalogPort`.
 use super::*;
+use lattice_core::shared::error::WithCauses;
 
 /// The user agent every Hub request carries.
 pub const HUB_USER_AGENT: &str = "RecallDesktop/1.0";
@@ -20,7 +21,9 @@ impl HuggingFaceAdapter {
         let client = reqwest_client_builder()
             .timeout(Duration::from_secs(10))
             .build()
-            .map_err(|e| AppError::Network(format!("Failed to create HTTP client: {e}")))?;
+            .map_err(|e| {
+                AppError::Network(format!("Failed to create HTTP client: {}", WithCauses(&e)))
+            })?;
 
         Ok(Self { client })
     }
@@ -64,7 +67,12 @@ impl HuggingFaceAdapter {
             .header("User-Agent", HUB_USER_AGENT)
             .send()
             .await
-            .map_err(|e| AppError::Network(format!("Hugging Face API request failed: {}", e)))?;
+            .map_err(|e| {
+                AppError::Network(format!(
+                    "Hugging Face API request failed: {}",
+                    WithCauses(&e)
+                ))
+            })?;
 
         if !response.status().is_success() {
             return Err(AppError::Network(format!(
@@ -74,7 +82,10 @@ impl HuggingFaceAdapter {
         }
 
         let models: Vec<HuggingFaceModel> = response.json().await.map_err(|e| {
-            AppError::Network(format!("Failed to parse Hugging Face response: {}", e))
+            AppError::Network(format!(
+                "Failed to parse Hugging Face response: {}",
+                WithCauses(&e)
+            ))
         })?;
 
         Ok(models)
@@ -98,7 +109,12 @@ impl HuggingFaceAdapter {
             .header("User-Agent", HUB_USER_AGENT)
             .send()
             .await
-            .map_err(|e| AppError::Network(format!("Hugging Face API request failed: {}", e)))?;
+            .map_err(|e| {
+                AppError::Network(format!(
+                    "Hugging Face API request failed: {}",
+                    WithCauses(&e)
+                ))
+            })?;
 
         if response.status().as_u16() == 404 {
             return Err(AppError::NotFound(format!("Model not found: {}", model_id)));
@@ -112,7 +128,10 @@ impl HuggingFaceAdapter {
         }
 
         let model: HuggingFaceModel = response.json().await.map_err(|e| {
-            AppError::Network(format!("Failed to parse Hugging Face response: {}", e))
+            AppError::Network(format!(
+                "Failed to parse Hugging Face response: {}",
+                WithCauses(&e)
+            ))
         })?;
 
         Ok(model)

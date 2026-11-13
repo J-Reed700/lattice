@@ -11,6 +11,7 @@ use crate::features::web::WebCaptureServiceTrait;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use lattice_core::application::contracts::web::UrlPreview;
+use lattice_core::shared::error::WithCauses;
 use lattice_core::shared::error::{AppError, Result};
 use reqwest::Client;
 use scraper::{Html, Selector};
@@ -325,7 +326,7 @@ impl WebCaptureServiceTrait for WebCaptureService {
             .headers(headers)
             .send()
             .await
-            .map_err(|e| AppError::Network(format!("Failed to fetch URL: {}", e)))?;
+            .map_err(|e| AppError::Network(format!("Failed to fetch URL: {}", WithCauses(&e))))?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -339,10 +340,9 @@ impl WebCaptureServiceTrait for WebCaptureService {
             debug!("URL redirected to: {}", final_url);
         }
 
-        let html = response
-            .text()
-            .await
-            .map_err(|e| AppError::Network(format!("Failed to read response body: {}", e)))?;
+        let html = response.text().await.map_err(|e| {
+            AppError::Network(format!("Failed to read response body: {}", WithCauses(&e)))
+        })?;
 
         let preview = self.extract_metadata(&html, &final_url);
 

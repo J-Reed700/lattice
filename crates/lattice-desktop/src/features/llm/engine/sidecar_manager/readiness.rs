@@ -1,5 +1,6 @@
 use super::config::BESIDE_GPU_THREADS;
 use super::*;
+use lattice_core::shared::error::WithCauses;
 
 /// Ports handed out and not yet released: binding `127.0.0.1:0` gives the
 /// port back at once, so two racing spawns could be handed the same number.
@@ -400,7 +401,7 @@ pub(super) async fn await_ready(
         Err(err) => {
             tracing::warn!(
                 endpoint = %endpoint,
-                error = %err,
+                error = %WithCauses(&err),
                 "No HTTP client for readiness polling; falling back to the log line alone"
             );
             None
