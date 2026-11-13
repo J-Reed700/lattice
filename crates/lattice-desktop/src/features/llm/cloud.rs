@@ -3,7 +3,7 @@
 use crate::features::llm::backend::{ignore_text, ModelBackend, Progress, TextSink};
 use crate::features::llm::engine::vision::not_set_up_to_see;
 use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
-use crate::features::llm::scheduler::{BackendCapacity, InferenceScheduler};
+use crate::features::llm::scheduler::{InferenceScheduler, SchedulerRegistry};
 use async_trait::async_trait;
 use lattice_core::application::{
     contracts::settings::LLMSettingsDto,
@@ -97,10 +97,7 @@ impl CloudLlm {
             model_ceiling,
             context_window: settings.context_window as usize,
             vision: None,
-            scheduler: Arc::new(InferenceScheduler::new(
-                protocol.name(),
-                BackendCapacity::adaptive(),
-            )),
+            scheduler: SchedulerRegistry::default().cloud(protocol.name()),
         })
     }
 
