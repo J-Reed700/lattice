@@ -441,6 +441,30 @@ async fn a_common_statement_that_needs_a_source_is_read_as_sourced_by_evidence_i
 }
 
 #[tokio::test]
+async fn a_statement_from_reasoning_still_unproven_on_its_page_goes_to_uncite() -> Result<()> {
+    let policy = StandardPolicy::new();
+    let script = Script::new().says(Reading::Page, &[Outcome::Unproven]);
+    let reasoned = claim("Quillet's commands change nothing.");
+    let given = [(
+        statement(&reasoned, Class::Reasoning, ClassifiedBy::Model),
+        at(&policy, Class::Sourced, true, "s.reread"),
+    )];
+
+    let read = drive(&script, &ClaimChecks::default(), &given).await?;
+
+    let [step] = read[0].steps.as_slice() else {
+        panic!("one reading: {:?}", read[0].steps);
+    };
+    assert_eq!(step.reading, Reading::Page);
+    assert_eq!(step.then, node("s.uncite", Step::Uncite));
+    assert_eq!(
+        read[0].walked,
+        Walked::At(at(&policy, Class::Sourced, true, "s.uncite"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn an_unreadable_answer_is_read_once_more_at_the_same_node() -> Result<()> {
     let policy = StandardPolicy::new();
     let script = Script::new().says(Reading::Parts, &[Outcome::Unjudged, Outcome::Stands]);

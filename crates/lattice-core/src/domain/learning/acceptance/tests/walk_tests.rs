@@ -386,10 +386,6 @@ fn a_statement_that_changed_class_by_evidence_is_never_sent_back() {
         walked(Common, &then(&needs_a_source, &[parts(AllCommon)])),
         placed(Sourced, true, false, "s.research", 2)
     );
-    assert_eq!(
-        walked(Reasoning, &[consistency(NeedsSource), parts(AllCommon)]),
-        placed(Sourced, true, false, "s.research", 2)
-    );
 }
 
 #[test]
@@ -942,20 +938,45 @@ fn a_recited_statement_nothing_states_loses_its_citation_instead_of_being_rewrit
 }
 
 #[test]
-fn a_statement_that_changed_class_and_is_still_unproven_ends_unverified() {
+fn a_reasoning_statement_no_page_establishes_is_uncited_into_commons_knowledge_read() {
+    let unproven = [
+        consistency(NeedsSource),
+        parts(Unproven),
+        research(Saved),
+        page(Unproven),
+    ];
+    assert_eq!(
+        walked(Reasoning, &unproven),
+        placed(Sourced, true, false, "s.uncite", 2)
+    );
+    let uncited = then(&unproven, &[uncite()]);
+    assert_eq!(
+        walked(Reasoning, &uncited),
+        placed(Common, true, false, "c.read", 2)
+    );
+    assert_eq!(
+        walked(Reasoning, &then(&uncited, &[knowledge(Stands)])),
+        Walked::Ended(End::GeneralKnowledge)
+    );
+    assert_eq!(
+        walked(Reasoning, &then(&uncited, &[knowledge(NeedsSource)])),
+        UNVERIFIED
+    );
+}
+
+#[test]
+fn a_reasoning_statement_whose_parts_read_all_common_is_uncited_into_common() {
+    assert_eq!(
+        walked(Reasoning, &[consistency(NeedsSource), parts(AllCommon)]),
+        placed(Sourced, true, false, "s.uncite", 2)
+    );
+}
+
+#[test]
+fn a_statement_that_came_from_common_and_is_still_unproven_ends_unverified() {
     let unproven = [parts(Unproven), research(FoundNothing), page(Unproven)];
     assert_eq!(
         walked(Common, &then(&[knowledge(NeedsSource)], &unproven)),
-        UNVERIFIED
-    );
-    assert_eq!(
-        walked(
-            Reasoning,
-            &then(
-                &[consistency(NeedsSource)],
-                &[parts(Unproven), research(Saved), page(Unproven)]
-            )
-        ),
         UNVERIFIED
     );
 }
