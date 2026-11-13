@@ -56,7 +56,7 @@ pub(crate) use fields::{
     field_pointer, field_text, locate, stands, stands_in_part, unit_fields, unit_texts,
 };
 pub(crate) use held::{held_for_review, held_lessons, needs_review, review_outcome, HeldForReview};
-pub(crate) use located::{claim_quote, located, located_quote, narrow};
+pub(crate) use located::{located, located_quote, narrow};
 
 /// The rule the ledger's checkpoints are kept under.
 pub(super) const LEDGER_KEYS: Protocol = lattice_core::protocol!("claim-ledger", 1);

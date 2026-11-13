@@ -136,6 +136,8 @@ jobs:
         shell: bash
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}\target\desktop-e2e
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
           FEATURES: ${{ matrix.features }}
         run: |
           features=()

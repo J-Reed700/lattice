@@ -4,13 +4,13 @@
 //! §2.3, §2.6).
 
 use super::fields::field_text;
-use super::located::located_quote;
+use super::located::{located, located_quote};
 use super::{is_example, stand_together, ClaimLedger, Place};
 use lattice_core::domain::learning::acceptance::Goal;
 use lattice_core::domain::learning::claim_review::{
     span_of, ClaimEvent, ClaimId, ClaimLedgerEntry, RepairOutcome,
 };
-use lattice_core::shared::text::claim_sentence;
+use lattice_core::shared::text::sentences;
 use serde_json::Value;
 
 /// What the cut of a statement takes out of its field. `ClaimLedger::cut_of`
@@ -99,9 +99,9 @@ impl ClaimLedger {
     }
 
     /// What the cut of the statement `claim_id` takes out of `text`, the text
-    /// of its field (acceptance design §2.3, §2.6): the sentence that states
-    /// it, which `claim_sentence` names in the quote's place in the field,
-    /// when no other live statement stands on it. Otherwise, while its
+    /// of its field (acceptance design §2.3, §2.6): the sentence it stands
+    /// on, which `located` gives, when that is one sentence of the field that
+    /// no other live statement stands on. Otherwise, while its
     /// narrowing is unspent, one narrowing rewrite; and once a narrowing was
     /// asked and not applied, no cut at all. The one decision
     /// the repair's records and request and the last attempt all read.
@@ -114,11 +114,15 @@ impl ClaimLedger {
             return CutOf::Refused;
         };
         let place = entry.location();
-        let alone = span_of(text, &place.quote)
-            .or(place.span)
-            .and_then(|within| claim_sentence(text, within, entry.statement()))
+        let (sentence, span) = located(place, entry.statement(), text);
+        let alone = Some(sentence.as_str())
+            .filter(|sentence| sentences(sentence).len() == 1)
+            .and_then(|sentence| {
+                span_of(text, sentence)
+                    .or(span.filter(|&(start, end)| text.get(start..end) == Some(sentence)))
+            })
             .and_then(|(start, end)| text.get(start..end))
-            .filter(|sentence| !self.shares_sentence(claim_id, text, sentence));
+            .filter(|cut| !self.shares_sentence(claim_id, text, cut));
         match alone {
             Some(sentence) => CutOf::Sentence(sentence),
             None if narrowing_spent(entry) => CutOf::Refused,
@@ -140,17 +144,17 @@ impl ClaimLedger {
             .is_some_and(|text| matches!(self.cut_of(claim_id, &text), CutOf::Narrow))
     }
 
-    /// The statements of the claims still standing, each with its section,
-    /// but `claims`: what the lesson keeps of its sentences when these claims
-    /// lose theirs.
-    pub(in crate::lessons::content_verification) fn live_statements_but(
+    /// The sentences of the claims still standing, each with its section, but
+    /// `claims`: what the lesson keeps of its sentences when these claims lose
+    /// theirs.
+    pub(in crate::lessons::content_verification) fn live_sentences_but(
         &self,
         claims: &[ClaimId],
     ) -> Vec<(usize, String)> {
         self.entries
             .iter()
             .filter(|entry| !entry.state().is_gone() && !claims.contains(entry.claim_id()))
-            .map(|entry| (entry.location().unit_index, entry.statement().to_owned()))
+            .map(|entry| (entry.location().unit_index, entry.location().quote.clone()))
             .collect()
     }
 

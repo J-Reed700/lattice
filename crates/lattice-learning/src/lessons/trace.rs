@@ -311,9 +311,23 @@ fn variant_of(event: &ClaimEvent) -> String {
         .to_owned()
 }
 
+fn claim_subject(claim: &ClaimId, statement: &str) -> String {
+    format!("claim {}: {statement}", claim.0)
+}
+
+/// A claim's citation was left where it was, for `why`.
+pub(crate) fn citation_kept(claim: &ClaimId, statement: &str, why: &str) {
+    decided(
+        Stage::ClaimRepair,
+        &claim_subject(claim, statement),
+        "citation not moved",
+        why,
+    );
+}
+
 /// A claim's event was recorded in the ledger: always a decision.
 pub(crate) fn claim_event(claim: &ClaimId, statement: &str, event: &ClaimEvent) {
-    let subject = format!("claim {}: {statement}", claim.0);
+    let subject = claim_subject(claim, statement);
     match event {
         ClaimEvent::Extracted { location, .. } => decided(
             Stage::ClaimIdentification,
@@ -433,11 +447,17 @@ pub(crate) fn claim_event(claim: &ClaimId, statement: &str, event: &ClaimEvent) 
                 "from {cited:?} to {source_version_id} (new to the lesson: {added_source}): \"{quote}\""
             ),
         ),
+        ClaimEvent::CitationDropped { cited } if cited.is_empty() => decided(
+            Stage::ClaimRepair,
+            &subject,
+            "no citation of its own to drop",
+            "its section's citation stays",
+        ),
         ClaimEvent::CitationDropped { cited } => decided(
             Stage::ClaimRepair,
             &subject,
             "citation dropped",
-            &format!("every part is common knowledge; it cited {cited:?}"),
+            &format!("it cited {cited:?}"),
         ),
         ClaimEvent::SentenceCut { cut } => decided(
             Stage::ClaimRepair,

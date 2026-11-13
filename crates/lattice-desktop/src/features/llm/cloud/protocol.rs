@@ -57,6 +57,9 @@ pub(super) trait EventDecoder: Send {
     /// Whether a tool call has started streaming its arguments, which counts
     /// as the answer having started, as text does.
     fn has_tool_output(&self) -> bool;
+    /// Whether the model has begun its answer: an output of any kind has
+    /// started, shown or not (thinking it does not stream, text, a tool call).
+    fn answer_begun(&self) -> bool;
     /// The completed response in the provider's own shape, once the stream
     /// has ended.
     fn finish(self: Box<Self>) -> Result<Option<Value>>;
@@ -74,6 +77,12 @@ pub(super) trait ProviderApi: Send + Sync {
     /// Whether a refusal with `status` and body `reply` (Null when the body
     /// was not read or not JSON) says the account has no credit or quota left.
     fn out_of_credit(&self, status: StatusCode, reply: &Value) -> bool;
+    /// Whether a refusal with `status` and body `reply` says the account
+    /// reached a spend limit it set, which no wait lifts before it resets.
+    /// A provider with no such limit answers false.
+    fn spend_limit_reached(&self, _status: StatusCode, _reply: &Value) -> bool {
+        false
+    }
     /// The provider's name in logs.
     fn name(&self) -> &'static str {
         cloud_provider_id(self.provider())

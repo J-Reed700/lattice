@@ -1129,19 +1129,157 @@ async fn a_second_claim_on_a_sentence_at_recite_waits_a_round_then_is_done_on_th
     Ok(())
 }
 
+#[tokio::test]
+async fn a_claim_naming_context_its_sentence_leaves_implicit_is_cited_at_the_passage_found_and_read_there_next(
+) -> Result<()> {
+    use super::recite_tests::{IMPLICIT_SENTENCE, IMPLICIT_STATEMENT};
+    const OLD: &str = "Missing values in nonblank rows default to None.";
+    let policy = StandardPolicy::new();
+    let sources = [source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let at = sources[0].excerpt.find(GOOD).unwrap();
+    let mut ledger = open().await?;
+    let id = claim(
+        &mut ledger,
+        "implicit",
+        (IMPLICIT_SENTENCE, IMPLICIT_STATEMENT),
+        IMPLICIT_SENTENCE,
+        SOURCED,
+    )
+    .await?;
+    walk(&mut ledger, &id, Class::Sourced, &RECITING).await?;
+    let mut lesson = json!({"blocks":[{"kind":"explanation","title":"Rows","body":IMPLICIT_SENTENCE,
+        "rubric":[],"sourceIndex":0,"quote":OLD}],"questions":[]});
+    identified(
+        &mut ledger,
+        &Model::new(),
+        &lesson,
+        &[(IMPLICIT_SENTENCE, IMPLICIT_STATEMENT)],
+        &sources,
+    )
+    .await?;
+    assert_eq!(ledger.at(&policy, StepKind::Recite).len(), 1);
+    let report = pass_report(vec![elsewhere(
+        IMPLICIT_STATEMENT,
+        &sources[0].id,
+        at..at + GOOD.len(),
+    )]);
+
+    let moved = super::super::repair_loop::recite(
+        &mut ledger,
+        &policy,
+        (&mut lesson, &report),
+        (&mut vec![sources[0].clone()], &mut HashSet::new()),
+        &references,
+    )
+    .await?;
+
+    assert!(moved);
+    assert_eq!(node_of(&ledger, &id), Some("s.citeread"));
+    assert!(events_of(ledger.entry(&id).unwrap())
+        .iter()
+        .any(|event| matches!(event, ClaimEvent::CitationRepaired { .. })));
+    assert_eq!(
+        lesson["blocks"][0]["citations"],
+        json!([{"sentence":IMPLICIT_SENTENCE,"sourceIndex":0,"quote":GOOD}])
+    );
+    // The next reading takes the passage the sentence now cites.
+    let next = section_citations(&lesson, &references)?;
+    assert!(next.is_cited(0, IMPLICIT_SENTENCE));
+    let read = next.of_claim(0, IMPLICIT_SENTENCE);
+    assert!(!read.is_empty() && read.iter().all(|passage| passage.text.contains(GOOD)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_cut_of_a_statement_naming_context_its_sentence_leaves_implicit_takes_out_its_sentence(
+) -> Result<()> {
+    use super::recite_tests::{IMPLICIT_SENTENCE, IMPLICIT_STATEMENT};
+    const NEXT: &str = "Keep the card away from heat.";
+    assert!(lattice_core::shared::text::claim_sentence(
+        IMPLICIT_SENTENCE,
+        (0, IMPLICIT_SENTENCE.len()),
+        IMPLICIT_STATEMENT
+    )
+    .is_none());
+    let text = format!("{IMPLICIT_SENTENCE} {NEXT}");
+    let mut ledger = open().await?;
+    let id = claim(
+        &mut ledger,
+        "implicit",
+        (IMPLICIT_SENTENCE, IMPLICIT_STATEMENT),
+        &text,
+        SOURCED,
+    )
+    .await?;
+
+    assert_eq!(
+        ledger.cut_of(&id, &text),
+        claim_ledger::CutOf::Sentence(IMPLICIT_SENTENCE)
+    );
+    Ok(())
+}
+
+#[test]
+fn uncite_drops_the_entry_holding_the_claims_sentence_and_no_other() -> Result<()> {
+    const NONE: &str = "Missing values in nonblank rows default to None.";
+    const WORDS_OF_GOOD: &str = "DictReader preserves whitespace by default.";
+    let sources = [source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let first = json!({"sentence":GOOD,"sourceIndex":0,"quote":GOOD});
+    let second = json!({"sentence":NONE,"sourceIndex":0,"quote":NONE});
+    let two = || {
+        let mut lesson = cited_lesson(json!([first, second]));
+        lesson["blocks"][0]["body"] = json!(format!("{GOOD} {NONE}"));
+        lesson
+    };
+
+    let mut lesson = two();
+    let dropped = repair::uncite(&mut lesson, &[(0, NONE.to_owned())], &[], &references)?;
+    assert_eq!(dropped, vec![vec![sources[0].id.clone()]]);
+    assert_eq!(lesson["blocks"][0]["citations"], json!([first]));
+
+    // A sentence that only shares words with a cited one has no entry.
+    let mut lesson = two();
+    let dropped = repair::uncite(
+        &mut lesson,
+        &[(0, WORDS_OF_GOOD.to_owned())],
+        &[],
+        &references,
+    )?;
+    assert_eq!(dropped, vec![Vec::<String>::new()]);
+    assert_eq!(lesson["blocks"][0]["citations"], json!([first, second]));
+
+    // An entry of two sentences stays while a claim on the other one lives.
+    let both = json!({"sentence":format!("{GOOD} {NONE}"),"sourceIndex":0,"quote":GOOD});
+    let mut lesson = cited_lesson(json!([both]));
+    let dropped = repair::uncite(
+        &mut lesson,
+        &[(0, GOOD.to_owned())],
+        &[(0, NONE.to_owned())],
+        &references,
+    )?;
+    assert_eq!(dropped, vec![Vec::<String>::new()]);
+    assert_eq!(lesson["blocks"][0]["citations"], json!([both]));
+    let dropped = repair::uncite(&mut lesson, &[(0, GOOD.to_owned())], &[], &references)?;
+    assert_eq!(dropped, vec![vec![sources[0].id.clone()]]);
+    assert_eq!(lesson["blocks"][0]["citations"], json!([]));
+    Ok(())
+}
+
 fn cited_lesson(entries: Value) -> Value {
     json!({"blocks":[{"kind":"explanation","title":"Rows","body":GOOD,"rubric":[],
         "sourceIndex":0,"quote":GOOD,"citations":entries}],"questions":[]})
 }
 
 #[test]
-fn uncite_keeps_an_entry_another_statement_on_the_sentence_stands_on() -> Result<()> {
+fn uncite_keeps_an_entry_another_claim_on_the_sentence_stands_on() -> Result<()> {
     let sources = [source()];
     let references = ReferenceCollection::lexical(&sources)?;
     let entry = json!([{"sentence":GOOD,"sourceIndex":0,"quote":GOOD}]);
     let statements = [(0, GOOD.to_owned())];
 
-    // Another live statement restates the sentence: the entry is its citation.
+    // Another live claim stands on the sentence: the entry is its citation.
     let mut lesson = cited_lesson(entry.clone());
     let kept = [(0, GOOD.to_owned())];
     let dropped = repair::uncite(&mut lesson, &statements, &kept, &references)?;
