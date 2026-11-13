@@ -224,8 +224,7 @@ impl ConversationRepository {
         &self,
         query: ListMessageBookmarksQueryDto,
     ) -> Result<ListMessageBookmarksResponseDto, AppError> {
-        let limit = query.limit.unwrap_or(100).clamp(1, 200);
-        let offset = query.offset.unwrap_or(0).max(0);
+        let page = Page::new(query.limit, query.offset)?;
         let search_query = query
             .query
             .as_ref()
@@ -270,9 +269,9 @@ impl ConversationRepository {
         }
 
         qb.push(" LIMIT ")
-            .push_bind(limit)
+            .push_bind(page.sql_limit())
             .push(" OFFSET ")
-            .push_bind(offset);
+            .push_bind(page.offset());
 
         let rows = qb
             .build_query_as::<MessageBookmarkRow>()

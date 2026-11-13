@@ -279,6 +279,63 @@ async fn an_item_whose_reply_is_cut_off_alone_stays_pending_and_the_rest_are_gra
     assert_eq!(ids, ["a", "c"], "[b] stays pending");
 }
 
+/// Declines every request that holds the item `b`; grades any other.
+struct Decliner(Mutex<Vec<usize>>);
+
+#[async_trait::async_trait]
+impl LLMPort for Decliner {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let (_, user) = crate::lessons::structured_call::task_messages(request);
+        let prompt: Value = serde_json::from_str(user)?;
+        let ids: Vec<String> = prompt["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item["itemId"].as_str().map(str::to_owned))
+            .collect();
+        self.0.lock().unwrap().push(ids.len());
+        if ids.iter().any(|id| id == "b") {
+            return Ok(CompletionResponse {
+                finish_reason: "refusal".into(),
+                ..CompletionResponse::from_text("")
+            });
+        }
+        let items: Vec<Value> = ids
+            .iter()
+            .map(
+                |id| serde_json::json!({"itemId": id, "verdict": "equivalent", "summary": "Same."}),
+            )
+            .collect();
+        Ok(CompletionResponse::from_text(
+            serde_json::json!({ "items": items }).to_string(),
+        ))
+    }
+    fn model_name(&self) -> &str {
+        "decliner"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn an_item_the_model_declines_stays_pending_and_the_rest_are_graded() {
+    let llm = Decliner(Mutex::new(Vec::new()));
+    let answers: Vec<ShortAnswer> = ["a", "b", "c"].map(short).to_vec();
+    let graded = judge_short_answers(&llm, &answers).await.unwrap();
+    let mut ids: Vec<_> = graded.iter().map(|grade| grade.item_id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["a", "c"], "[b] stays pending");
+    assert_eq!(
+        llm.0.lock().unwrap().clone(),
+        [3, 1, 1, 1],
+        "the batch is declined and split; a and c are graded; b is declined alone"
+    );
+}
+
 /// Every reply cut off at the output limit.
 struct CutOff;
 
@@ -315,6 +372,83 @@ async fn a_batch_cut_off_asks_for_fewer_and_a_single_item_cut_off_is_refused() -
     assert!(batch(2).author(&CutOff, &collection).await?.is_none());
     let single = batch(1).author(&CutOff, &collection).await;
     assert!(matches!(single, Err(AppError::AnswerCutOff(_))));
+    Ok(())
+}
+
+/// Cuts its first answer off at the output limit and completes the second;
+/// records each request's output reservation.
+struct CutOnce(Mutex<Vec<Option<u32>>>);
+
+#[async_trait::async_trait]
+impl LLMPort for CutOnce {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let (_, user) = crate::lessons::structured_call::task_messages(request);
+        let prompt: Value = serde_json::from_str(user).unwrap_or(Value::Null);
+        let mut budgets = self.0.lock().unwrap();
+        budgets.push(request.max_output_tokens);
+        if budgets.len() == 1 {
+            return Ok(CompletionResponse {
+                finish_reason: "length".into(),
+                ..CompletionResponse::from_text("{\"items\":[{\"itemId\":")
+            });
+        }
+        let items: Vec<Value> = prompt["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item["itemId"].as_str())
+            .map(
+                |id| serde_json::json!({"itemId": id, "verdict": "equivalent", "summary": "Same."}),
+            )
+            .collect();
+        Ok(CompletionResponse::from_text(
+            serde_json::json!({ "items": items }).to_string(),
+        ))
+    }
+    fn model_name(&self) -> &str {
+        "cut-once"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+fn doubled(budgets: &Mutex<Vec<Option<u32>>>) -> bool {
+    let budgets = budgets.lock().unwrap().clone();
+    let first = budgets.first().copied().flatten();
+    first.is_some() && budgets.get(1).copied().flatten() == first.map(|b| b * 2)
+}
+
+#[tokio::test]
+async fn a_single_grading_reply_cut_off_is_asked_again_with_twice_the_room() {
+    let grader = CutOnce(Mutex::new(Vec::new()));
+    let graded = judge_short_answers(&grader, &[short("a")]).await.unwrap();
+    assert_eq!(
+        graded.len(),
+        1,
+        "the learner's answer is graded, not left pending"
+    );
+    assert!(doubled(&grader.0));
+}
+
+#[tokio::test]
+async fn a_single_item_cut_off_is_asked_again_with_twice_the_room() -> Result<()> {
+    let need = need("Explain iron oxide reduction.".into(), 1);
+    let documents = documents(&need);
+    let collection = ReferenceCollection::lexical(&documents)?;
+    let batch = Batch {
+        need: &need,
+        count: 1,
+        notes: vec![],
+        repair: None,
+    };
+    let llm = CutOnce(Mutex::new(Vec::new()));
+    let single = batch.author(&llm, &collection).await?;
+    assert!(single.is_some(), "the answer given twice the room is read");
+    assert!(doubled(&llm.0));
     Ok(())
 }
 

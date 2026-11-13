@@ -978,16 +978,6 @@ async fn nothing_above_the_floor_does_not_page_through_the_conversation() {
         ) -> lattice_core::shared::error::Result<SourcePage> {
             Ok(SourcePage::default())
         }
-        async fn search_memory_labels(
-            &self,
-            _: &str,
-            _: &str,
-            _: usize,
-        ) -> lattice_core::shared::error::Result<
-            Vec<lattice_core::domain::conversation::memory::MemoryId>,
-        > {
-            Ok(Vec::new())
-        }
     }
     let port = Common {
         searches: AtomicUsize::new(0),
@@ -1173,6 +1163,38 @@ async fn automatic_retrieval_separates_a_miss_from_an_unavailable_index() {
 // ---------------------------------------------------------------------------
 // Budget and repetition
 // ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn ids_past_the_per_read_ceiling_are_named_as_not_read() {
+    let pool = migrated_pool().await;
+    seed_conversation(&pool, "conv-mine", "Work").await;
+    let mut ids = Vec::new();
+    for index in 0..66 {
+        let id = format!("m{index}");
+        seed_message(&pool, "conv-mine", &id, "user", "a short note", "completed").await;
+        ids.push(id);
+    }
+    let port = port(&Database::new(pool.clone()));
+    let scope = scope("conv-mine");
+    let mut memo = HistoryToolMemo::default();
+
+    let read = execute(
+        &port,
+        &scope,
+        &mut memo,
+        read_call(serde_json::json!({"message_ids": ids})),
+    )
+    .await
+    .unwrap();
+
+    let unread = data(&read)["not_readable_message_ids"]
+        .as_array()
+        .expect("the ids that were not read");
+    assert!(
+        unread.iter().any(|id| id == "m65"),
+        "an id the read dropped without a word: {unread:?}"
+    );
+}
 
 #[tokio::test]
 async fn a_repeated_read_of_an_exhausted_range_returns_a_reference_not_the_text() {

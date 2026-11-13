@@ -5,7 +5,7 @@
 
 use lattice_core::application::contracts::references::PassageReferenceRecord;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Database;
+use lattice_core::shared::persistence::{Database, Page};
 use sqlx::sqlite::SqliteRow;
 use sqlx::Row;
 
@@ -85,15 +85,16 @@ impl PassageReferenceRepository {
         row.ok_or_else(|| AppError::NotFound(format!("Passage reference not found: {id}")))
     }
 
-    /// Newest first. `limit` is clamped by the caller.
-    pub async fn list(&self, limit: i64) -> Result<Vec<PassageReferenceRecord>> {
+    /// Newest first, one page of them.
+    pub async fn list(&self, page: Page) -> Result<Vec<PassageReferenceRecord>> {
         let query = format!(
             "SELECT {REFERENCE_COLUMNS} FROM passage_references \
-             ORDER BY created_at DESC LIMIT ?"
+             ORDER BY created_at DESC LIMIT ? OFFSET ?"
         );
         let mut read = self.db.begin_read().await?;
         let rows = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
-            .bind(limit)
+            .bind(page.sql_limit())
+            .bind(page.offset())
             .try_map(reference_from_row)
             .fetch_all(&mut *read)
             .await

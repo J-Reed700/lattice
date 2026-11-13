@@ -307,7 +307,7 @@ pub(crate) fn deck(material: &InterviewMaterial, now: i64) -> StudyDeckDto {
     };
     StudyDeckDto {
         id,
-        title: title.chars().take(120).collect(),
+        title,
         focus: round_label(plan.round_kind).into(),
         study_goal: "Answer each question aloud from memory, then check it against the guide"
             .into(),

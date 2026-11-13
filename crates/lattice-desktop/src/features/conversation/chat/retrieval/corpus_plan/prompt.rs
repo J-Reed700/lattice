@@ -18,7 +18,7 @@ use lattice_core::shared::error::{AppError, Result};
 use super::{CorrectionRequest, CORRECTION_INSTRUCTION, PLANNER_SYSTEM, SUMMARY_CATALOG_CHARS};
 
 /// What the planner may write back, enforced on the request and reserved out
-/// of the window. A full plan (three 24-word queries, four handles, the JSON
+/// of the window. A full plan (three short queries, four handles, the JSON
 /// around them) is under 200 tokens even pretty-printed.
 pub(super) const PLANNER_OUTPUT_TOKENS: u32 = 384;
 

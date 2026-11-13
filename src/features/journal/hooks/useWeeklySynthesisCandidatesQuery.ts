@@ -9,17 +9,6 @@ export const weeklySynthesisCandidatesKey = ['synthesis', 'weekly-candidates'] a
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const WEEK_PAGE_TITLE_PREFIX = 'Week of ';
 
-/**
- * What a week run actually reads, from
- * `features/conversation/plugin_impl.rs::select_week_entries`
- * (WEEK_SYNTHESIS_MAX_CONVERSATIONS / _REFERENCES / _NOTES). Counting past the
- * caps would let Home promise twenty conversations before a twelve-conversation
- * synthesis.
- */
-const MAX_CONVERSATIONS = 12;
-const MAX_REFERENCES = 20;
-const MAX_NOTES = 8;
-
 export interface WeeklySynthesisCandidates {
   conversations: number;
   references: number;
@@ -40,8 +29,8 @@ function isWithinWeek(value: string | null | undefined, cutoff: number): boolean
  * no stat that is always zero.
  *
  * A failing sub-call contributes 0 rather than throwing: the affordance simply
- * does not appear, which is the correct degraded state. Each count is capped at
- * what the backend run will actually read, so the promise matches the delivery.
+ * does not appear, which is the correct degraded state. Each count is everything
+ * in the week, which is what the backend run reads whole.
  */
 export function useWeeklySynthesisCandidatesQuery() {
   const api = useApi();
@@ -51,40 +40,31 @@ export function useWeeklySynthesisCandidatesQuery() {
       const cutoff = Date.now() - WEEK_MS;
       const [conversationsResult, referencesResult, notesResult] = await Promise.all([
         api.listConversations(),
-        api.listPassageReferences(200),
+        api.listPassageReferences(),
         api.listWorkspaceNotes(),
       ]);
 
-      const conversations = Math.min(
-        conversationsResult.ok
-          ? conversationsResult.data.conversations.filter(
-              (conversation) =>
-                !conversation.isArchived && isWithinWeek(conversation.updatedAt, cutoff),
-            ).length
-          : 0,
-        MAX_CONVERSATIONS,
-      );
+      const conversations = conversationsResult.ok
+        ? conversationsResult.data.conversations.filter(
+            (conversation) =>
+              !conversation.isArchived && isWithinWeek(conversation.updatedAt, cutoff),
+          ).length
+        : 0;
 
-      const references = Math.min(
-        referencesResult.ok
-          ? referencesResult.data.filter((reference) =>
-              isWithinWeek(reference.createdAt, cutoff),
-            ).length
-          : 0,
-        MAX_REFERENCES,
-      );
+      const references = referencesResult.ok
+        ? referencesResult.data.filter((reference) =>
+            isWithinWeek(reference.createdAt, cutoff),
+          ).length
+        : 0;
 
-      const notes = Math.min(
-        notesResult.ok
-          ? notesResult.data.notes.filter(
-              (note) =>
-                isWithinWeek(note.updatedAt, cutoff) &&
-                note.content.trim() !== '' &&
-                !note.title.startsWith(WEEK_PAGE_TITLE_PREFIX),
-            ).length
-          : 0,
-        MAX_NOTES,
-      );
+      const notes = notesResult.ok
+        ? notesResult.data.notes.filter(
+            (note) =>
+              isWithinWeek(note.updatedAt, cutoff) &&
+              note.content.trim() !== '' &&
+              !note.title.startsWith(WEEK_PAGE_TITLE_PREFIX),
+          ).length
+        : 0;
 
       return {
         conversations,

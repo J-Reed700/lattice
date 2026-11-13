@@ -1,3 +1,4 @@
+import { learningProgramKey } from '@/features/learning/api/learningQueryKeys';
 import type { CommandArgs, CommandResults } from '@/lib/bindings';
 import { apiCall, type CommandArgList, type CommandName } from '@/shared/ipc/transport';
 import type { ApiResult } from '@/types';
@@ -145,7 +146,7 @@ export function beginStudyActivity(domain: string, command: string, args?: Activ
     : describe(command);
   const programId = requestProgramId ?? argsProgramId
     ?? (/^(get_learning_(program|plan|memory|.*workspace)|delete_learning_program)$/.test(command) ? argsId : undefined);
-  const course = programId ? queryClient.getQueryData<{ summary: { title: string } }>(['learning-program', programId]) : undefined;
+  const course = programId ? queryClient.getQueryData<{ summary: { title: string } }>(learningProgramKey(programId)) : undefined;
   const activity: StudyActivity = {
     ...description, id: crypto.randomUUID(), command,
     destination: {

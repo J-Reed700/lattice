@@ -7,7 +7,6 @@
 use super::fields::field_text;
 use super::RepairRecord;
 use crate::reference_collection::shared_terms;
-use lattice_core::domain::learning::acceptance::Walked;
 use lattice_core::domain::learning::claim_review::{ClaimId, ClaimLedgerEntry, ExtractedClaim};
 use lattice_core::shared::text::same_text::{common_prefix, overlaps, stands};
 use lattice_core::shared::text::sentences;
@@ -73,13 +72,11 @@ fn written(
 
 /// What the last step leaves for the pass that reads the lesson: whether
 /// that pass comes after another, the lesson as it was before the repairs or
-/// edits, the place in its graph of each statement the ledger holds, by
-/// section and statement, and the claims the ledger holds that are not ended.
+/// edits, and the claims the ledger holds that are not ended.
 #[derive(Default)]
 pub(in crate::lessons::content_verification) struct Rewrites {
     later: bool,
     previous: Option<Value>,
-    walked: HashMap<(usize, String), Walked>,
     held: Vec<ClaimLedgerEntry>,
 }
 
@@ -87,12 +84,10 @@ impl Rewrites {
     pub(in crate::lessons::content_verification) fn new(
         later: bool,
         previous: Option<Value>,
-        walked: HashMap<(usize, String), Walked>,
     ) -> Self {
         Self {
             later,
             previous,
-            walked,
             held: Vec::new(),
         }
     }
@@ -110,16 +105,6 @@ impl Rewrites {
     /// The claims the ledger holds that are not ended.
     pub(in crate::lessons::content_verification) fn held(&self) -> &[ClaimLedgerEntry] {
         &self.held
-    }
-
-    /// Where the ledger has `statement` of section `unit` in its class's
-    /// graph, when it holds it and the claim has a class.
-    pub(in crate::lessons::content_verification) fn walked(
-        &self,
-        unit: usize,
-        statement: &str,
-    ) -> Option<Walked> {
-        self.walked.get(&(unit, statement.to_owned())).copied()
     }
 
     /// Whether this pass is the first to read `claim`: the first pass reads

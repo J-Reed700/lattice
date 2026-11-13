@@ -16,9 +16,9 @@ import type { CustomCollection, DocumentMetadata } from '@/types/fileBrowser';
 export const LIBRARY_DOCUMENTS_QUERY_KEY = ['library-documents'] as const;
 const EMPTY_CUSTOM_COLLECTIONS: CustomCollection[] = [];
 
-/** Every document in the library, up to 10,000. */
+/** Every document in the library. */
 export async function fetchLibraryDocuments(api: ApiClient = VaultAPI): Promise<DocumentMetadata[]> {
-  const result = await api.listAllDocuments(10_000);
+  const result = await api.listAllDocuments();
   if (!result.ok) {
     throw new Error(result.error);
   }

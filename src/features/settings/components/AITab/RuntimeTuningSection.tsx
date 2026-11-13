@@ -5,11 +5,6 @@ import type { LLMSettings as ApiLLMSettings } from '@/types/api/settings';
 
 import { SWITCH_CLASS, NUMBER_FIELD_CLASS, toFinite, clamp } from './shared';
 
-
-/** Mirrors MIN/MAX_LLM_STALL_TIMEOUT_SECONDS in the settings repository. */
-const STALL_TIMEOUT_MIN = 15;
-const STALL_TIMEOUT_MAX = 180;
-
 /** The model-runtime values a field may hold while it is being edited. */
 export type RuntimeDraft = {
   temperature: number;
@@ -81,7 +76,6 @@ export function RuntimeTuningSection({
           id="tuning-top-k"
           type="number"
           min={0}
-          max={500}
           step={1}
           value={runtimeDraft.topK}
           onChange={(event) =>
@@ -90,9 +84,7 @@ export function RuntimeTuningSection({
               topK: Math.round(toFinite(event.target.value, previous.topK)),
             }))
           }
-          onBlur={() =>
-            void saveLlmUpdates({ topK: Math.round(clamp(runtimeDraft.topK, 0, 500)) })
-          }
+          onBlur={() => void saveLlmUpdates({ topK: Math.round(Math.max(0, runtimeDraft.topK)) })}
           className={NUMBER_FIELD_CLASS}
         />
       </SettingsRow>
@@ -101,8 +93,7 @@ export function RuntimeTuningSection({
         <input
           id="tuning-repeat-penalty"
           type="number"
-          min={0.5}
-          max={2}
+          min={0.05}
           step={0.05}
           value={runtimeDraft.repeatPenalty}
           onChange={(event) =>
@@ -112,7 +103,7 @@ export function RuntimeTuningSection({
             }))
           }
           onBlur={() =>
-            void saveLlmUpdates({ repeatPenalty: clamp(runtimeDraft.repeatPenalty, 0.5, 2) })
+            void saveLlmUpdates({ repeatPenalty: Math.max(0.05, runtimeDraft.repeatPenalty) })
           }
           className={NUMBER_FIELD_CLASS}
         />
@@ -151,7 +142,7 @@ export function RuntimeTuningSection({
         <input
           id="tuning-max-tokens"
           type="number"
-          min={128}
+          min={1}
           max={runtimeDraft.contextWindow}
           step={1}
           value={runtimeDraft.maxTokens}
@@ -164,7 +155,7 @@ export function RuntimeTuningSection({
           onBlur={() =>
             void saveLlmUpdates({
               maxTokens: Math.round(
-                clamp(runtimeDraft.maxTokens, 128, runtimeDraft.contextWindow)
+                clamp(runtimeDraft.maxTokens, 1, runtimeDraft.contextWindow)
               ),
             })
           }
@@ -180,8 +171,7 @@ export function RuntimeTuningSection({
         <input
           id="tuning-timeout"
           type="number"
-          min={STALL_TIMEOUT_MIN}
-          max={STALL_TIMEOUT_MAX}
+          min={1}
           step={1}
           value={runtimeDraft.timeoutSeconds}
           onChange={(event) =>
@@ -192,9 +182,7 @@ export function RuntimeTuningSection({
           }
           onBlur={() =>
             void saveLlmUpdates({
-              timeoutSeconds: Math.round(
-                clamp(runtimeDraft.timeoutSeconds, STALL_TIMEOUT_MIN, STALL_TIMEOUT_MAX)
-              ),
+              timeoutSeconds: Math.round(Math.max(1, runtimeDraft.timeoutSeconds)),
             })
           }
           className={NUMBER_FIELD_CLASS}

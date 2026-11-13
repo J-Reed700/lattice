@@ -140,10 +140,7 @@ fn the_schema_names_the_labels_and_bounds_the_counts() {
             "could_not_verify"
         ])
     );
-    assert_eq!(
-        verdict["passagesUsed"]["maxItems"],
-        json!(QUOTES_PER_VERDICT)
-    );
+    assert!(verdict["passagesUsed"].get("maxItems").is_none());
 
     let with_web = schema(&rendered, true);
     assert!(
@@ -420,7 +417,7 @@ fn consent_names_a_cloud_provider_and_nothing_else_needs_it() {
 fn the_answer_reservation_is_measured_from_the_planned_room() {
     let llm = ScriptedVerifier::answering(200_000, |_, _| json!({}));
     let reserve = verdict_reserve(&llm);
-    let planned_text = REASON_ROOM_CHARS + QUOTE_ROOM_CHARS * QUOTES_PER_VERDICT;
+    let planned_text = REASON_ROOM_CHARS + QUOTE_ROOM_CHARS * QUOTES_PLANNED_PER_VERDICT;
     assert!(
         reserve >= planned_text / 4,
         "{reserve} tokens cannot hold {planned_text} characters"

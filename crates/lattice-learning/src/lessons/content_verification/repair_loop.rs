@@ -237,7 +237,7 @@ impl Review for PreparationReview<'_, '_> {
         self.ledger.sync().await?;
         let active = self.expanded.as_ref().unwrap_or(self.references);
         self.checks.settled = self.ledger.user_evidence(active);
-        self.checks.rewrites = self.ledger.rewrites(policy);
+        self.checks.rewrites = self.ledger.rewrites();
         self.checks.removed = self.ledger.cuts.units();
         if review_pass::apply_user_changes(&mut self.ledger, &mut self.candidate).await? {
             self.raw = self.candidate.to_string();
@@ -847,20 +847,23 @@ async fn uncite(
 
 /// Tells the call plan where the ledger has its statements now in
 /// `candidate`, and takes into it the claims of the latest pass that continue
-/// none of its own. Its own are the claims of the pass it was made for, in its
-/// order, and those it took in, each followed to the claim that carries its
-/// sentence on.
+/// none of its own; a job with no plan makes it from them. Its own are the
+/// claims it took in, in its order, each followed to the claim that carries
+/// its sentence on.
 pub(super) fn plan_moved(policy: &dyn AcceptancePolicy, ledger: &ClaimLedger, candidate: &Value) {
     let Some(mut claims) = crate::lesson_progress::plan_claims() else {
         return;
     };
-    if claims.is_empty() {
-        claims.extend_from_slice(ledger.finding_claims());
-    }
     let held = claims.len();
     let joining = ledger.unplanned(policy, candidate, &mut claims);
     let moved = ledger.planned(policy, candidate, claims.get(..held).unwrap_or_default());
-    crate::lesson_progress::statements_moved(policy, &claims, &moved, &joining);
+    crate::lesson_progress::statements_moved(
+        policy,
+        ledger.finding_sections(),
+        &claims,
+        &moved,
+        &joining,
+    );
 }
 
 /// The lesson waits for the user's review (§6.1): the draft is saved, the

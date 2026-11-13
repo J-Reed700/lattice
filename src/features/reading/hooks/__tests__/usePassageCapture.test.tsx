@@ -23,14 +23,15 @@ function setup(options: { source?: SourceWithMetadata; initialLocator?: { chunkI
   const invalidate = vi.spyOn(client, 'invalidateQueries');
   const onClose = vi.fn();
   let location = '';
-  const Probe = () => { const here = useLocation(); location = here.pathname + here.search; return null; };
+  let locationState: unknown = null;
+  const Probe = () => { const here = useLocation(); location = here.pathname + here.search; locationState = here.state; return null; };
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}><MemoryRouter initialEntries={['/reader']}>{children}<Probe /></MemoryRouter></QueryClientProvider>
   );
   const hook = renderHook(() => usePassageCapture({
     source: options.source ?? source(), initialLocator: (options.initialLocator ?? null) as never, resolvedLabel: options.resolvedLabel, onClose,
   }), { wrapper });
-  return { ...hook, onClose, invalidate, location: () => location };
+  return { ...hook, onClose, invalidate, location: () => location, locationState: () => locationState };
 }
 
 beforeEach(() => {
@@ -52,10 +53,10 @@ describe('usePassageCapture', () => {
     expect(toast.success).toHaveBeenCalledWith('Saved to references', { message: 'Lattice will use this in future answers.' });
   });
 
-  it('falls back to the source chunk and its own location, and caps the text', async () => {
+  it('falls back to the source chunk and its own location, and keeps the whole text', async () => {
     const { result } = setup({ source: source({ pageNumber: 4 }) });
     await act(() => result.current.handleReference('x'.repeat(4100)));
-    expect(api.createPassageReference).toHaveBeenCalledWith(expect.objectContaining({ chunkId: 'doc-1#3', locator: 'PDF p. 4', text: 'x'.repeat(4000) }));
+    expect(api.createPassageReference).toHaveBeenCalledWith(expect.objectContaining({ chunkId: 'doc-1#3', locator: 'PDF p. 4', text: 'x'.repeat(4100) }));
   });
 
   it('sends no locator when the passage has no known location', async () => {
@@ -97,9 +98,10 @@ describe('usePassageCapture', () => {
   });
 
   it('closes the reader and asks about the passage in a new chat', () => {
-    const { result, onClose, location } = setup();
+    const { result, onClose, location, locationState } = setup();
     act(() => result.current.handleAskAbout(' Why did trade decline? '));
     expect(onClose).toHaveBeenCalled();
-    expect(location()).toBe('/chat?new=1&documentId=doc%201&quote=Why%20did%20trade%20decline%3F');
+    expect(location()).toBe('/chat?new=1&documentId=doc%201');
+    expect(locationState()).toEqual({ quote: 'Why did trade decline?' });
   });
 });

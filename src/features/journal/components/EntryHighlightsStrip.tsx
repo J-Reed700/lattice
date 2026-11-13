@@ -22,8 +22,6 @@ interface EntryHighlightsStripProps {
   embedded?: boolean;
 }
 
-export const HIGHLIGHT_CHAR_LIMIT = 8000;
-
 function formatWhen(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
@@ -113,7 +111,7 @@ export function EntryHighlightsStrip({
 
   const handleAdd = () => {
     if (!toolbarState) return;
-    onAddHighlight(toolbarState.text.slice(0, HIGHLIGHT_CHAR_LIMIT));
+    onAddHighlight(toolbarState.text);
     setToolbarState(null);
     window.getSelection()?.removeAllRanges();
   };

@@ -43,6 +43,8 @@ mod tests {
             total: 12,
             by_type: vec![("PDF".to_string(), 12)],
             grown_last_7_days: 3,
+            grown_today: 1,
+            last_indexed_at: Some("2026-05-15T09:00:00+00:00".to_string()),
         };
         let use_case = GetCorpusShapeUseCase::new(Arc::new(StubRepo(expected.clone())));
         assert_eq!(use_case.execute().await.unwrap(), expected);

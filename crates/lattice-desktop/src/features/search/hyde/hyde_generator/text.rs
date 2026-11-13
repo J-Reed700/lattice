@@ -85,7 +85,6 @@ pub(super) fn build_retrieval_fallback(query: &str) -> String {
         .into_iter()
         .filter(|token| is_informative_term(token))
         .filter(|token| seen.insert(token.clone()))
-        .take(8)
         .collect();
 
     if keywords.is_empty() {

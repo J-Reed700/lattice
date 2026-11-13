@@ -19,7 +19,6 @@ vi.mock('@/features/journal/components/EntryHeader', () => ({ EntryHeader: () =>
 vi.mock('@/features/journal/components/EntryFromConversation', () => ({ EntryFromConversation: () => <div>Conversation panel</div> }));
 vi.mock('@/features/journal/components/EntryHighlightsStrip', () => ({
   EntryHighlightsStrip: () => <div>Highlights panel</div>,
-  HIGHLIGHT_CHAR_LIMIT: 500,
 }));
 vi.mock('@/features/journal/components/EntryActionRail', () => ({ EntryActionRail: () => <div>Actions</div> }));
 vi.mock('@/features/reading/components/FilePreviewModal', () => ({

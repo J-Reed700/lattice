@@ -50,15 +50,15 @@ describe('IndexingTab controls', () => {
     expect(h.toast.error).toHaveBeenCalledWith("Couldn't save auto-index setting", { message: 'read-only settings' });
   });
 
-  it('saves a batch size on Enter or blur, within bounds, and rolls back a failure', () => {
+  it('saves a batch size on Enter or blur, at least one, and rolls back a failure', () => {
     render(<IndexingTab />);
     const field = screen.getByLabelText('Batch size');
     fireEvent.change(field, { target: { value: '500' } });
-    expect(field).toHaveValue(128);
+    expect(field).toHaveValue(500);
     fireEvent.change(field, { target: { value: 'abc' } });
-    expect(field).toHaveValue(128);
+    expect(field).toHaveValue(500);
     fireEvent.keyDown(field, { key: 'Enter' });
-    expect(h.mutation.mutate.mock.calls[0][0]).toEqual({ category: 'indexing', updates: { batchSize: 128 } });
+    expect(h.mutation.mutate.mock.calls[0][0]).toEqual({ category: 'indexing', updates: { batchSize: 500 } });
     act(() => lastCallbacks().onError?.(new Error('too large')));
     expect(field).toHaveValue(16);
     expect(h.toast.error).toHaveBeenCalledWith("Couldn't save batch size", { message: 'too large' });

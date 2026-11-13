@@ -1479,3 +1479,70 @@ Steam forces through the spout."
     assert_eq!(other.check, None);
     assert!(serde_json::to_value(&check).unwrap()["check"]["reveal"].is_string());
 }
+
+async fn library_with_pasted_sources(
+    count: usize,
+) -> Result<(
+    super::source_library::LearningSourceLibraryRepository,
+    String,
+)> {
+    let pool = pool().await?;
+    let db = Database::new(pool);
+    let repo = LearningRepository::new(db.clone());
+    let program = ready_program(&repo).await?;
+    let library = super::source_library::LearningSourceLibraryRepository::new(db);
+    for n in 0..count {
+        library
+            .add(
+                crate::source_library::NewLearningSource {
+                    operation_id: &id(),
+                    source_id: &id(),
+                    version_id: &id(),
+                    program_id: &program.summary.id,
+                    kind: LearningSourceKind::Pasted,
+                    operation_kind: "add_text",
+                    origin: "Reference",
+                    requested_url: None,
+                    freshness: LearningSourcePolicy::Fixed,
+                },
+                source_capture(
+                    "Reference",
+                    &format!("The shared keyword appears in source {n}."),
+                ),
+                format!("hash-{n}"),
+            )
+            .await?;
+    }
+    Ok((library, program.summary.id))
+}
+
+#[tokio::test]
+async fn a_source_search_limit_above_fifty_is_honoured() -> Result<()> {
+    let (library, program_id) = library_with_pasted_sources(60).await?;
+    let found = library
+        .search(&SearchLearningSourcesRequestDto {
+            program_id,
+            query: "shared keyword".into(),
+            limit: 60,
+        })
+        .await?;
+    assert_eq!(found.len(), 60);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_source_search_limit_of_zero_is_refused() -> Result<()> {
+    let (library, program_id) = library_with_pasted_sources(1).await?;
+    let refused = library
+        .search(&SearchLearningSourcesRequestDto {
+            program_id,
+            query: "shared keyword".into(),
+            limit: 0,
+        })
+        .await;
+    assert!(matches!(
+        refused,
+        Err(lattice_core::shared::error::AppError::InvalidInput(_))
+    ));
+    Ok(())
+}

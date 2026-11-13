@@ -687,16 +687,8 @@ async fn live_course_eval() -> Result<()> {
     merge(&mut manifest["server"], &weights);
     write_json(&dir.join("run.json"), &manifest)?;
 
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(&database)
-        .foreign_keys(true)
-        .create_if_missing(true);
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(options.clone())
-        .await?;
-    let database = lattice_core::shared::persistence::Database::new(pool);
-    crate::infrastructure::persistence::database::run_migrations(&database).await?;
+    let connection = small::open_app_database(&database, false).await?;
+    let handle = connection.database().clone();
     let mut run = Run {
         metrics: read_json(&dir.join("metrics.json"))?.unwrap_or_else(|| json!({})),
         dir,
@@ -704,8 +696,7 @@ async fn live_course_eval() -> Result<()> {
         web,
         embedder,
     };
-    let (outline, lessons) =
-        run_stages(&mut run, &database, &options, &request, &selectors).await?;
+    let (outline, lessons) = run_stages(&mut run, &handle, &database, &request, &selectors).await?;
     let finished = chrono::Utc::now().to_rfc3339();
     write_json(
         &run.dir.join("done.json"),
@@ -717,6 +708,6 @@ async fn live_course_eval() -> Result<()> {
     manifest["web"]["entries_at_end"] = json!(run.web.report().entries_at_end);
     write_json(&run.dir.join("run.json"), &manifest)?;
     println!("COURSE EVAL DONE: outline {outline}, lessons {lessons}");
-    database.close().await;
+    connection.close().await?;
     Ok(())
 }

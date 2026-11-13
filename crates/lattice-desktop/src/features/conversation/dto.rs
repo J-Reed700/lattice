@@ -145,10 +145,10 @@ pub struct CreateConversationResponseDto {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ListConversationsQuery {
-    /// Maximum number of conversations to return
+    /// At most this many conversations; none means every conversation
     pub limit: Option<i64>,
 
-    /// Offset for pagination
+    /// Rows to skip
     pub offset: Option<i64>,
 }
 

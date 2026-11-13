@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft } from 'lucide-react';
@@ -217,9 +217,14 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
     void client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY });
     void client.invalidateQueries({ queryKey: learningProgramKey(programId) });
   };
-  const create = (request: Parameters<typeof generate.mutate>[0]) => generate.mutate(request, {
-    onSuccess: (program) => { clearProgramBuilderDraft(); setSelectedId(program.summary.id); setScreen('programs'); },
-  });
+  const create = (request: Parameters<typeof generate.mutate>[0]) => generate.mutate(request);
+  const { finishedProgramId, reset: resetGenerate } = generate;
+  useLayoutEffect(() => {
+    if (!finishedProgramId) return;
+    clearProgramBuilderDraft();
+    resetGenerate();
+    if (screen === 'builder') { setSelectedId(finishedProgramId); setScreen('programs'); }
+  }, [finishedProgramId, resetGenerate, screen]);
 
   const handleSelectDestination = (next: StudyDestination) => {
     if (onOpenDestination) {

@@ -12,6 +12,8 @@ pub mod images;
 mod messages;
 mod rename;
 mod space;
+#[cfg(test)]
+mod tests;
 
 pub use delete::{delete_conversation, delete_conversation_impl};
 pub use messages::{get_conversation_messages, get_conversation_messages_impl};
@@ -56,20 +58,17 @@ pub async fn create_conversation(
 }
 
 /// Lists conversations, most recently updated first, without their messages.
-/// `limit` defaults to, and is capped at, 100.
+/// Without a `limit`, every conversation.
 ///
 /// # Errors
 ///
+/// * `AppError::InvalidInput` - `limit` below 1 or `offset` below 0
 /// * `AppError::Other` - Database query failed
 pub async fn list_conversations_impl(
     runtime: &dyn ChatRuntime,
     limit: Option<i64>,
     offset: Option<i64>,
 ) -> Result<Vec<Conversation>> {
-    // 1. Validate and cap limit
-    let limit = limit.map(|l| l.min(100)); // Cap at 100
-
-    // 2. Delegate to service
     let service = runtime.conversation_service();
     service.list_conversations(limit, offset).await
 }

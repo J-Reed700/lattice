@@ -327,7 +327,10 @@ mod tests {
         async fn count_chunks(&self) -> Result<i64, AppError> {
             unimplemented!()
         }
-        async fn find_all_paginated(&self, _limit: usize) -> Result<Vec<Document>, AppError> {
+        async fn find_all_paginated(
+            &self,
+            _page: lattice_core::shared::persistence::Page,
+        ) -> Result<Vec<Document>, AppError> {
             unimplemented!()
         }
     }

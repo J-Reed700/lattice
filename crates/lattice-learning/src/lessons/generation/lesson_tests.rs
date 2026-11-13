@@ -285,7 +285,7 @@ fn a_quotation_with_a_different_word_is_still_a_finding_beside_a_marked_source()
 #[test]
 fn the_schema_asks_for_a_citation_list_per_part_and_none_without_sources() {
     let pointer = "/properties/blocks/items/properties/citations/maxItems";
-    assert_eq!(lesson_schema(2).pointer(pointer), Some(&json!(24)));
+    assert_eq!(lesson_schema(2).pointer(pointer), None);
     assert_eq!(lesson_schema(0).pointer(pointer), Some(&json!(0)));
     for part in ["blocks", "questions"] {
         let required = lesson_schema(2)
@@ -968,11 +968,8 @@ fn a_lesson_whose_findings_wait_is_still_saved_and_passes_the_save_gate() {
             Rule::PracticeRubric,
         ),
         (
-            "a rubric with five criteria",
-            |l| {
-                let criteria: Vec<Value> = (0..5).map(|n| json!({"title":format!("Criterion {n}"),"description":"Says which step comes next.","dimension":"recall"})).collect();
-                l["blocks"][7]["rubric"] = json!(criteria);
-            },
+            "a rubric with no criteria",
+            |l| l["blocks"][7]["rubric"] = json!([]),
             Rule::PracticeRubric,
         ),
     ];
@@ -1126,17 +1123,34 @@ fn a_candidate_with_no_sections_does_not_read_as_a_lesson() {
 }
 
 #[test]
-fn a_practice_section_with_one_criterion_is_published_without_it() {
+fn a_practice_section_with_repeated_criteria_is_published_without_them() {
     let mut lesson = sweep_baseline(false);
-    lesson["blocks"][7]["rubric"] = json!([
-        {"title":"Names the step","description":"Says which step comes next.","dimension":"recall"}
-    ]);
+    let criterion = json!({"title":"Names the step","description":"Says which step comes next.","dimension":"recall"});
+    lesson["blocks"][7]["rubric"] = json!([criterion.clone(), criterion]);
     assert!(kept_rules(&lesson).contains(&Rule::PracticeRubric));
 
     let (prepared, _) = assemble(&lesson, &[]).unwrap();
 
     assert!(
         prepared.blocks[7].rubric.is_empty(),
+        "{:?}",
+        prepared.blocks[7].rubric
+    );
+}
+
+#[test]
+fn a_practice_section_with_one_criterion_keeps_it() {
+    let mut lesson = sweep_baseline(false);
+    lesson["blocks"][7]["rubric"] = json!([
+        {"title":"Names the step","description":"Says which step comes next.","dimension":"recall"}
+    ]);
+    assert!(!kept_rules(&lesson).contains(&Rule::PracticeRubric));
+
+    let (prepared, _) = assemble(&lesson, &[]).unwrap();
+
+    assert_eq!(
+        prepared.blocks[7].rubric.len(),
+        1,
         "{:?}",
         prepared.blocks[7].rubric
     );

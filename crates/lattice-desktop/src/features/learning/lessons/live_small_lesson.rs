@@ -232,15 +232,8 @@ async fn live_small_lesson_reaches_ready() -> Result<()> {
         .write(true)
         .create_new(true)
         .open(&database)?;
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(&database)
-        .foreign_keys(true);
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(options.clone())
-        .await?;
-    let db = Database::new(pool);
-    crate::infrastructure::persistence::database::run_migrations(&db).await?;
+    let connection = open_app_database(&database, false).await?;
+    let db = connection.database().clone();
     let model = Arc::new(ObservedModel::new(&config, directory.clone(), 0).await?);
     let fixture: serde_json::Value = serde_json::from_slice(&std::fs::read(
         std::env::var("LATTICE_LESSON_FIXTURE").unwrap(),
@@ -324,16 +317,45 @@ async fn live_small_lesson_reaches_ready() -> Result<()> {
     std::fs::write(directory.join("job-id.txt"), &job.id)?;
     drop(repo);
     drop(programs);
-    run_and_confirm(db, options, model, &job.id, &directory).await
+    run_and_confirm(connection, &database, model, &job.id, &directory).await
+}
+
+/// Opens and initializes the database as the app does at startup. An eval never
+/// starts over silently: a missing file (when `must_exist`) or a corrupt one
+/// moved aside is an error.
+pub(super) async fn open_app_database(
+    path: &std::path::Path,
+    must_exist: bool,
+) -> Result<crate::infrastructure::persistence::database::DatabaseConnection> {
+    if must_exist && !path.exists() {
+        return Err(lattice_core::shared::error::AppError::Database(format!(
+            "the database {} does not exist",
+            path.display()
+        )));
+    }
+    let connection =
+        crate::infrastructure::persistence::database::DatabaseConnection::new(path.to_path_buf())
+            .await?;
+    if let Some(moved) = connection.recovered_from() {
+        return Err(lattice_core::shared::error::AppError::Database(format!(
+            "the database {} was corrupt and was moved to {}",
+            path.display(),
+            moved.display()
+        )));
+    }
+    crate::infrastructure::persistence::database::initialize_database(connection.database())
+        .await?;
+    Ok(connection)
 }
 
 pub(super) async fn run_and_confirm(
-    db: Database,
-    options: sqlx::sqlite::SqliteConnectOptions,
+    connection: crate::infrastructure::persistence::database::DatabaseConnection,
+    database_path: &std::path::Path,
     model: Arc<ObservedModel>,
     job_id: &str,
     directory: &std::path::Path,
 ) -> Result<()> {
+    let db = connection.database().clone();
     let web_dir = tempfile::tempdir()?;
     let web: Arc<dyn lattice_core::application::ports::WebServiceTrait> = Arc::new(
         crate::features::web::services::web::WebService::new(web_dir.path())?,
@@ -347,14 +369,10 @@ pub(super) async fn run_and_confirm(
         LearningGenerationJobStatus::Completed,
         "Production worker did not publish; see result.json"
     );
-    db.close().await;
+    connection.close().await?;
     // Read readiness from a new connection after closing the worker's pool.
-    let reopened = Database::new(
-        sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(options)
-            .await?,
-    );
+    let reopened_connection = open_app_database(database_path, true).await?;
+    let reopened = reopened_connection.database().clone();
     let published = LearningRepository::new(reopened.clone())
         .get(&job.program_id)
         .await?;
@@ -389,7 +407,7 @@ pub(super) async fn run_and_confirm(
         serde_json::to_vec_pretty(&summary)?,
     )?;
     println!("LIVE PUBLICATION CONFIRMED: {summary}");
-    reopened.close().await;
+    reopened_connection.close().await?;
     Ok(())
 }
 
@@ -468,15 +486,9 @@ async fn live_small_lesson_resumes_to_ready() -> Result<()> {
         .try_init();
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     let mut job_id = std::fs::read_to_string(directory.join("job-id.txt"))?;
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(directory.join("lesson.sqlite"))
-        .foreign_keys(true)
-        .create_if_missing(false);
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(options.clone())
-        .await?;
-    let db = Database::new(pool);
+    let database = directory.join("lesson.sqlite");
+    let connection = open_app_database(&database, true).await?;
+    let db = connection.database().clone();
     let repo = LearningCurriculumRepository::new(db.clone());
     let job = repo.job(&job_id).await?;
     assert!(
@@ -541,5 +553,5 @@ async fn live_small_lesson_resumes_to_ready() -> Result<()> {
         LearningGenerationJobStatus::Pending
     );
     drop(repo);
-    run_and_confirm(db, options, model, &job_id, &directory).await
+    run_and_confirm(connection, &database, model, &job_id, &directory).await
 }

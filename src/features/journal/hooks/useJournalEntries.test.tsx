@@ -64,7 +64,7 @@ it('loads newest entries first, selects one and requests its messages once', asy
   await waitFor(() => expect(result.current.selectedId).toBe('b'));
   await waitFor(() => expect(result.current.selectedMessagesLoading).toBe(false));
   expect(result.current.selectedMessages).toEqual([]);
-  expect(VaultAPI.listJournalConversations).toHaveBeenCalledWith({ journalSpaceId: 'journal-a', query: null, includeArchived: true, limit: 100, offset: 0 });
+  expect(VaultAPI.listJournalConversations).toHaveBeenCalledWith({ journalSpaceId: 'journal-a', query: null, includeArchived: true, limit: null, offset: null });
   rerender({ ...initial });
   expect(VaultAPI.getConversationMessages).toHaveBeenCalledExactlyOnceWith('b');
 });
@@ -237,4 +237,11 @@ it('reads the selected entry\'s messages again when a conversation changes elsew
   vi.mocked(VaultAPI.getConversationMessages).mockResolvedValue({ ok: true, data: { total: 1, messages: [fresh] } } as unknown as MessagesResult);
   await act(async () => { await client.invalidateQueries({ queryKey: conversationKeys.all }); });
   await waitFor(() => expect(result.current.selectedMessages).toEqual([fresh]));
+});
+
+it('asks for every entry of the journal, with no limit or offset', async () => {
+  const { result } = renderHook(useJournalEntries, { initialProps: initial });
+  await waitFor(() => expect(result.current.entries).toHaveLength(2));
+  const request = vi.mocked(VaultAPI.listJournalConversations).mock.calls[0]?.[0];
+  expect(request).toEqual({ journalSpaceId: 'journal-a', query: null, includeArchived: true, limit: null, offset: null });
 });

@@ -19,11 +19,6 @@ export const QUANTIZATIONS: { value: Quantization; label: string }[] = [
   { value: 'i8', label: '8-bit integer' },
 ];
 
-/// Matches the backend's accepted range; the index clamps again against the
-/// active model's real dimension, which the UI cannot know here.
-export const MIN_COMPRESSION_DIMS = 32;
-export const MAX_COMPRESSION_DIMS = 4096;
-
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }

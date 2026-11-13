@@ -141,6 +141,7 @@ pub struct ListJournalConversationsQueryDto {
     pub journal_space_id: String,
     pub query: Option<String>,
     pub include_archived: Option<bool>,
+    /// At most this many conversations; none means every matching one.
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -196,6 +197,7 @@ pub struct ListConversationsExplorerQueryDto {
     pub pinned_only: Option<bool>,
     pub has_message_bookmarks: Option<bool>,
     pub include_archived: Option<bool>,
+    /// At most this many conversations; none means every matching one.
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }

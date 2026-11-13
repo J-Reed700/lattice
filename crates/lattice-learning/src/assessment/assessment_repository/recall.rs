@@ -126,8 +126,8 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        if req.item_ids.is_empty() || req.item_ids.len() > 200 {
-            return Err(invalid("Choose between one and 200 questions."));
+        if req.item_ids.is_empty() {
+            return Err(invalid("Choose at least one question."));
         }
         let operation = assessment_operation(
             &req.operation_id,

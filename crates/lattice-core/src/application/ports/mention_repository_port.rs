@@ -1,4 +1,5 @@
 use crate::shared::error::AppError;
+use crate::shared::persistence::Page;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
@@ -36,7 +37,8 @@ pub trait MentionRepositoryPort: Send + Sync {
 
     async fn find_mention_by_name(&self, name: &str) -> Result<Option<MentionData>, AppError>;
 
-    async fn search_mentions(&self, query: &str, limit: i64) -> Result<Vec<MentionData>, AppError>;
+    /// Mentions whose name contains `query`, by name. An unlimited `page` returns every match.
+    async fn search_mentions(&self, query: &str, page: Page) -> Result<Vec<MentionData>, AppError>;
 
     async fn get_mentions_by_type(&self, mention_type: &str) -> Result<Vec<MentionData>, AppError>;
 

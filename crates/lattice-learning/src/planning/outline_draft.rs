@@ -413,14 +413,6 @@ pub(crate) fn location(path: &str) -> String {
     format!("Module {}{item}", module + 1)
 }
 
-fn short(text: &str) -> String {
-    let text = text.trim();
-    if text.chars().count() <= 160 {
-        return text.into();
-    }
-    format!("{}…", text.chars().take(159).collect::<String>().trim_end())
-}
-
 /// The note shown when findings remain after the allowed attempts: each one
 /// in plain language, with what was searched for a factual finding.
 fn remaining_note(draft: &OutlineDraft) -> String {
@@ -432,19 +424,19 @@ fn remaining_note(draft: &OutlineDraft) -> String {
             match issue.kind {
                 LearningOutlineIssueKind::Factual if issue.source_id.is_some() => format!(
                     "{location}: the statement \"{}\" is contradicted by a saved reference. {}",
-                    short(&issue.claim),
+                    issue.claim.trim(),
                     issue.message
                 ),
                 LearningOutlineIssueKind::Factual if !issue.searched.is_empty() => format!(
                     "{location}: the statement \"{}\" was not supported by any saved reference after {} {} (queries: {}).",
-                    short(&issue.claim),
+                    issue.claim.trim(),
                     issue.searched.len(),
                     if issue.searched.len() == 1 { "search" } else { "searches" },
                     issue.searched.join("; ")
                 ),
                 LearningOutlineIssueKind::Factual => format!(
                     "{location}: the statement \"{}\" was not supported by the saved references.",
-                    short(&issue.claim)
+                    issue.claim.trim()
                 ),
                 _ => format!("{location}: {}", issue.message),
             }

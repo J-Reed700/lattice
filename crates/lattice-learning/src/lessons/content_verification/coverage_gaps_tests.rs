@@ -370,11 +370,11 @@ fn a_later_pass_adopts_only_a_gap_in_a_sentence_written_since_the_last() {
     // The first pass reads the whole lesson.
     assert_eq!(adopt(&claim_ledger::Rewrites::default()), (1, 1, true));
     // A later pass over text that did not change adopts nothing.
-    let unchanged = claim_ledger::Rewrites::new(true, Some(candidate.clone()), Default::default());
+    let unchanged = claim_ledger::Rewrites::new(true, Some(candidate.clone()));
     assert_eq!(adopt(&unchanged), (0, 0, false));
     // The sentence is new to a later pass when something wrote it since.
     let before = lesson("Exercise: write code that reads a file one row at a time.");
-    let rewritten = claim_ledger::Rewrites::new(true, Some(before), Default::default());
+    let rewritten = claim_ledger::Rewrites::new(true, Some(before));
     assert_eq!(adopt(&rewritten), (1, 1, true));
 }
 
@@ -435,11 +435,10 @@ fn a_gap_the_rule_layer_leaves_unsorted_is_adopted() {
 /// has rewritten is not adopted after the first pass.
 #[test]
 fn an_unsorted_gap_in_text_no_pass_rewrote_is_not_adopted_again() {
-    let unchanged =
-        claim_ledger::Rewrites::new(true, Some(lesson(FIGURE_PREMISE)), Default::default());
+    let unchanged = claim_ledger::Rewrites::new(true, Some(lesson(FIGURE_PREMISE)));
     assert_eq!(adopt_one(UNSOURCED, &unchanged), (0, 0, false));
     let before = lesson("Exercise: write code that reads a file one row at a time.");
-    let rewritten = claim_ledger::Rewrites::new(true, Some(before), Default::default());
+    let rewritten = claim_ledger::Rewrites::new(true, Some(before));
     assert_eq!(adopt_one(UNSOURCED, &rewritten), (1, 1, true));
 }
 

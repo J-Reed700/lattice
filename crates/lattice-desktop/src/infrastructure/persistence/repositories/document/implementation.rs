@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use lattice_core::application::ports::{DocumentRepositoryPort, RepositoryPort};
 use lattice_core::domain::entities::Document as DocumentEntity;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Database;
+use lattice_core::shared::persistence::{Database, Page};
 
 use super::ops;
 
@@ -275,9 +275,9 @@ impl DocumentRepositoryPort for SqliteDocumentRepository {
         Ok(result)
     }
 
-    async fn find_all_paginated(&self, limit: usize) -> Result<Vec<DocumentEntity>> {
+    async fn find_all_paginated(&self, page: Page) -> Result<Vec<DocumentEntity>> {
         let mut read = self.db.begin_read().await?;
-        let result = ops::find_all_paginated(&mut read, limit).await?;
+        let result = ops::find_all_paginated(&mut read, page).await?;
         read.commit().await?;
         Ok(result)
     }

@@ -3,7 +3,7 @@ use lattice_core::shared::error::AppError;
 
 use lattice_core::application::ports::DocumentRepositoryPort;
 use lattice_core::application::ports::RepositoryPort;
-use lattice_core::shared::persistence::Database;
+use lattice_core::shared::persistence::{Database, Page};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::SqlitePool;
 use std::time::Duration;
@@ -71,6 +71,40 @@ async fn find_metadata_by_ids_reads_only_the_asked_rows() {
 
     assert_eq!(found, vec!["doc-1", "doc-3"]);
     assert!(repo.find_metadata_by_ids(&[]).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn the_library_listing_without_a_limit_returns_every_row_but_a_chats_attachments() {
+    let (repo, pool) = repository().await;
+    for n in 0..5 {
+        insert(
+            &pool,
+            &format!("doc-{n}"),
+            &format!("/lib/{n}.txt"),
+            &n.to_string().repeat(64),
+        )
+        .await;
+    }
+    insert(&pool, "attached", "/chat/a.txt", &"f".repeat(64)).await;
+    sqlx::query("UPDATE documents SET owner_conversation_id = 'chat-1' WHERE id = 'attached'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let every = repo.find_all_paginated(Page::default()).await.unwrap();
+    let first_two = repo
+        .find_all_paginated(Page::new(Some(2), None).unwrap())
+        .await
+        .unwrap();
+    let last_one = repo
+        .find_all_paginated(Page::new(Some(2), Some(4)).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(every.len(), 5);
+    assert!(every.iter().all(|doc| doc.id().as_str() != "attached"));
+    assert_eq!(first_two.len(), 2);
+    assert_eq!(last_one.len(), 1);
 }
 
 #[tokio::test]

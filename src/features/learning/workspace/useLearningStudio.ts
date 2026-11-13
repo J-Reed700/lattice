@@ -1,7 +1,7 @@
 import { skipToken, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
-import { LEARNING_PROGRAMS_KEY, learningCoursePlanKey, learningPlanKey, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
+import { LEARNING_PROGRAM_ROOT, LEARNING_PROGRAMS_KEY, learningCoursePlanKey, learningPlanKey, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
 import type VaultAPI from '@/lib/api';
 import type {
   LearningProgramDto,
@@ -37,9 +37,8 @@ export function useLearningPrograms() {
 export function useLearningProgram(id: string | null) {
   const api = useApi();
   return useQuery<LearningProgramDto>({
-    queryKey: id ? learningProgramKey(id) : ['learning-program', 'none'],
-    enabled: Boolean(id),
-    queryFn: async () => unwrap(await api.getLearningProgram(id!)),
+    queryKey: learningProgramKey(id ?? ''),
+    queryFn: id ? async () => unwrap(await api.getLearningProgram(id)) : skipToken,
   });
 }
 
@@ -73,8 +72,9 @@ type OutlineOperationState = {
   cancelling: boolean;
   cancelError?: string;
   error: Error | null;
+  finishedProgramId: string | null;
 };
-const idleOutlineOperation: OutlineOperationState = { requestId: null, isPending: false, progress: null, cancelling: false, error: null };
+const idleOutlineOperation: OutlineOperationState = { requestId: null, isPending: false, progress: null, cancelling: false, error: null, finishedProgramId: null };
 
 function useOutlineOperation<T>(key: readonly string[], run: (request: T, options: { requestId: string; onProgress: (update: LearningOutlineProgressDto) => void }) => ReturnType<typeof VaultAPI.getLearningProgram>) {
   const api = useApi();
@@ -103,7 +103,7 @@ function useOutlineOperation<T>(key: readonly string[], run: (request: T, option
       let lastRefresh = 0;
       client.setQueryData<OutlineOperationState>(key, { ...idleOutlineOperation, requestId, isPending: true });
       try {
-        return unwrap(await run(request, { requestId, onProgress: (update) => {
+        const program = unwrap(await run(request, { requestId, onProgress: (update) => {
           if (client.getQueryData<OutlineOperationState>(key)?.requestId !== requestId) return;
           updateOperation(requestId, { progress: update });
           if (update.programId && Date.now() - lastRefresh > 5000) {
@@ -111,21 +111,18 @@ function useOutlineOperation<T>(key: readonly string[], run: (request: T, option
             void client.invalidateQueries({ queryKey: learningProgramKey(update.programId) });
           }
         } }));
+        client.setQueryData(learningProgramKey(program.summary.id), program);
+        updateOperation(requestId, { requestId: null, isPending: false, cancelling: false, finishedProgramId: program.summary.id });
+        return program;
       } catch (error) {
-        updateOperation(requestId, { error: error instanceof Error ? error : new Error(String(error)) });
+        updateOperation(requestId, { requestId: null, isPending: false, cancelling: false, error: error instanceof Error ? error : new Error(String(error)) });
         throw error;
-      } finally {
-        updateOperation(requestId, { requestId: null, isPending: false, cancelling: false });
       }
     },
-    onSuccess: async (program) => {
-      client.setQueryData(learningProgramKey(program.summary.id), program);
-      void planTopics(program.summary.id);
-      await client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY });
-    },
+    onSuccess: (program) => { void planTopics(program.summary.id); },
     onSettled: async () => {
       await client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY });
-      await client.invalidateQueries({ queryKey: ['learning-program'] });
+      await client.invalidateQueries({ queryKey: LEARNING_PROGRAM_ROOT });
     },
   });
   const cancel = async () => {

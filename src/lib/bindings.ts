@@ -2671,7 +2671,7 @@ async listIndexedFiles(limit: number | null) : Promise<Result<string[], ApiError
     else return { status: "error", error: e  as any };
 }
 },
-async listAllDocuments(limit: number) : Promise<Result<DocumentMetadataDto[], ApiError>> {
+async listAllDocuments(limit: number | null) : Promise<Result<DocumentMetadataDto[], ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:file|list_all_documents", { limit }) };
 } catch (e) {
@@ -2824,8 +2824,8 @@ async initializeDatabase() : Promise<Result<string, ApiError>> {
 }
 },
 /**
- * The newest lines of the backend's log file, oldest first. `limit` defaults
- * to 300 and is capped at 1000; no log file yet gives an empty list.
+ * The newest lines of the backend's log file, oldest first. No `limit`
+ * returns every line the log files hold; no log file yet gives an empty list.
  */
 async getBackendLogs(limit: number | null) : Promise<Result<BackendLogEntry[], ApiError>> {
     try {
@@ -6126,9 +6126,9 @@ export type ConversationTangentDto = { conversationId: string; parentConversatio
 contextMessageCount: number }
 export type ConversationWebSourceDto = { id: string; url: string; normalizedUrl: string; title: string | null; excerpt: string | null; relevanceScore: number | null; addedAt: string }
 /**
- * Vault-wide type mix and recent growth.
+ * Library-wide type mix, recent growth and the newest indexing time.
  */
-export type CorpusShapeDto = { total: number; byType: CorpusTypeCountDto[]; grownLast7Days: number }
+export type CorpusShapeDto = { total: number; byType: CorpusTypeCountDto[]; grownLast7Days: number; grownToday: number; lastIndexedAt: string | null }
 /**
  * One row of the vault's type mix.
  */
@@ -9315,7 +9315,7 @@ export type ListBackupsResultDto = { backups: BackupInfoDto[] }
  */
 export type ListBatchJobsRequestDto = {
 /**
- * Maximum number of jobs to return (default: 50, max: 100)
+ * Maximum number of jobs to return; omitted returns every job
  */
 limit?: number | null;
 /**
@@ -9334,17 +9334,21 @@ export type ListConversationsExplorerQueryDto = { spaceId: string | null;
 /**
  * Only the tutor chats of this course.
  */
-programId?: string | null; query: string | null; savedOnly: boolean | null; bookmarkedOnly: boolean | null; pinnedOnly: boolean | null; hasMessageBookmarks: boolean | null; includeArchived: boolean | null; limit: number | null; offset: number | null }
+programId?: string | null; query: string | null; savedOnly: boolean | null; bookmarkedOnly: boolean | null; pinnedOnly: boolean | null; hasMessageBookmarks: boolean | null; includeArchived: boolean | null;
+/**
+ * At most this many conversations; none means every matching one.
+ */
+limit: number | null; offset: number | null }
 /**
  * Query parameters for listing conversations.
  */
 export type ListConversationsQuery = {
 /**
- * Maximum number of conversations to return
+ * At most this many conversations; none means every conversation
  */
 limit: number | null;
 /**
- * Offset for pagination
+ * Rows to skip
  */
 offset: number | null }
 /**
@@ -9355,9 +9359,17 @@ export type ListConversationsResponseDto = {
  * List of conversations
  */
 conversations: ConversationDto[] }
-export type ListJournalConversationsQueryDto = { journalSpaceId: string; query: string | null; includeArchived: boolean | null; limit: number | null; offset: number | null }
+export type ListJournalConversationsQueryDto = { journalSpaceId: string; query: string | null; includeArchived: boolean | null;
+/**
+ * At most this many conversations; none means every matching one.
+ */
+limit: number | null; offset: number | null }
 export type ListLearningTangentsRequestDto = { programId?: string | null }
-export type ListMessageBookmarksQueryDto = { conversationId: string | null; query: string | null; limit: number | null; offset: number | null }
+export type ListMessageBookmarksQueryDto = { conversationId: string | null; query: string | null;
+/**
+ * At most this many bookmarks; none means every matching bookmark.
+ */
+limit: number | null; offset: number | null }
 export type ListMessageBookmarksResponseDto = { bookmarks: ConversationMessageBookmarkDto[] }
 export type ListPracticeSessionsRequestDto = { programId: string }
 export type ListWorkspaceNotesRequestDto = {
@@ -12565,7 +12577,7 @@ export type CommandArgs = {
 	is_favorite: { documentId: string };
 	is_model_already_downloaded: { modelId: string };
 	last_learning_window_shortfall: void;
-	list_all_documents: { limit: number };
+	list_all_documents: void | { limit?: number | null };
 	list_available_functions: void;
 	list_cloud_models: { provider: CloudProvider };
 	list_clusters: void;

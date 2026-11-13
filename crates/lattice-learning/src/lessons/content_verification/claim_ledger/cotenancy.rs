@@ -45,35 +45,6 @@ fn narrowing_spent(entry: &ClaimLedgerEntry) -> bool {
     })
 }
 
-/// The group each of `places` stands in with the others on its sentence: an
-/// id the statements of one group share, none for one alone. Two stand
-/// together directly or through a third.
-pub(in crate::lessons::content_verification) fn sentences(
-    places: &[Place<'_>],
-) -> Vec<Option<u32>> {
-    let mut group: Vec<usize> = (0..places.len()).collect();
-    for (at, here) in places.iter().enumerate() {
-        for (other, there) in places.iter().enumerate().skip(at + 1) {
-            if !stand_together(here, there) {
-                continue;
-            }
-            if let (Some(&to), Some(&from)) = (group.get(at), group.get(other)) {
-                group
-                    .iter_mut()
-                    .filter(|label| **label == from)
-                    .for_each(|label| *label = to);
-            }
-        }
-    }
-    group
-        .iter()
-        .map(|&label| {
-            let shared = group.iter().filter(|&&other| other == label).count() > 1;
-            u32::try_from(label).ok().filter(|_| shared)
-        })
-        .collect()
-}
-
 impl ClaimLedger {
     /// The live claims standing on the same sentence as `claim_id`: those in
     /// its unit and field whose quote holds its quote or is held by it. A

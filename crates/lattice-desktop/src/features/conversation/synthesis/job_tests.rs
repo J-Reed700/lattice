@@ -238,6 +238,23 @@ async fn a_synthesis_finished_while_closed_waits_staged_and_is_saved_once() {
 }
 
 #[tokio::test]
+async fn every_open_synthesis_is_listed_however_many_there_are() {
+    let db = Database::new(pool().await);
+    let jobs = runtime_with(&db, FakeWork::answering(0)).await;
+    for n in 0..51 {
+        let mut start = request();
+        start.destination = SynthesisDestinationDto::Note {
+            note_id: format!("note-{n}"),
+        };
+        synthesize_journal_entries_impl(start, &jobs).await.unwrap();
+    }
+
+    assert_eq!(list_journal_syntheses_impl(&jobs).await.unwrap().len(), 51);
+    jobs.close();
+    jobs.drain().await;
+}
+
+#[tokio::test]
 async fn a_synthesis_still_running_cannot_be_marked_applied() {
     let db = Database::new(pool().await);
     let work = FakeWork::answering(0);

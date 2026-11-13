@@ -1,6 +1,5 @@
 //! Instructional review and task-specific teaching contracts.
 use super::copied_wording::{self, Wording};
-use crate::assessment::assessment_engine::RUBRIC_CRITERIA;
 use crate::dto::{
     LearningBlockKind, LearningPracticeCriterionDto, LearningPracticeEvidenceDimension,
 };
@@ -34,8 +33,7 @@ pub(crate) use waiting::question_texts;
 pub(crate) use waiting::record as record_waiting;
 
 pub fn project_schema() -> Value {
-    let list =
-        json!({"type":"array","minItems":2,"maxItems":5,"items":{"type":"string","minLength":1}});
+    let list = json!({"type":"array","minItems":1,"items":{"type":"string","minLength":1}});
     json!({"type":"object","additionalProperties":false,"required":["title","brief","deliverables","successCriteria"],"properties":{"title":{"type":"string","minLength":1},"brief":{"type":"string","minLength":1},"deliverables":list,"successCriteria":list}})
 }
 
@@ -44,7 +42,7 @@ pub fn validate_project(project: &crate::dto::LearningProjectMilestoneDto) -> Re
         || project.brief.trim().is_empty()
         || [&project.deliverables, &project.success_criteria]
             .iter()
-            .any(|list| !(2..=5).contains(&list.len()) || list.iter().any(|s| s.trim().is_empty()))
+            .any(|list| list.is_empty() || list.iter().any(|s| s.trim().is_empty()))
     {
         return Err(AppError::InvalidInput("Each project milestone needs a concrete brief, deliverables and observable success criteria.".into()));
     }
@@ -64,21 +62,17 @@ pub struct GeneratedCriterion {
 }
 
 pub fn rubric_schema() -> Value {
-    json!({"type":"array","maxItems":RUBRIC_CRITERIA.end(),"items":{"type":"object","additionalProperties":false,"required":["title","description","dimension"],"properties":{"title":{"type":"string","minLength":1},"description":{"type":"string","minLength":1},"dimension":{"enum":["recall","explanation","application","transfer"]}}}})
+    json!({"type":"array","items":{"type":"object","additionalProperties":false,"required":["title","description","dimension"],"properties":{"title":{"type":"string","minLength":1},"description":{"type":"string","minLength":1},"dimension":{"enum":["recall","explanation","application","transfer"]}}}})
 }
 
 pub fn rubric(
     criteria: Vec<GeneratedCriterion>,
     needed: bool,
 ) -> Result<Vec<LearningPracticeCriterionDto>> {
-    if criteria.len() > *RUBRIC_CRITERIA.end()
-        || (needed && criteria.len() < *RUBRIC_CRITERIA.start())
-    {
-        return Err(AppError::InvalidInput(format!(
-            "Practice needs {} to {} task-specific criteria.",
-            RUBRIC_CRITERIA.start(),
-            RUBRIC_CRITERIA.end()
-        )));
+    if needed && criteria.is_empty() {
+        return Err(AppError::InvalidInput(
+            "Practice needs task-specific criteria.".into(),
+        ));
     }
     let mut titles = std::collections::HashSet::new();
     criteria
@@ -115,15 +109,13 @@ fn rubric_is_kept(written: &Value) -> bool {
 
 pub fn validate_saved_rubric(criteria: &[LearningPracticeCriterionDto]) -> Result<()> {
     let mut ids = std::collections::HashSet::new();
-    if criteria.len() > *RUBRIC_CRITERIA.end()
-        || criteria.iter().any(|c| {
-            uuid::Uuid::parse_str(&c.id).is_err()
-                || !ids.insert(&c.id)
-                || c.title.trim().is_empty()
-                || c.description.trim().is_empty()
-                || !(1..=100).contains(&c.max_points)
-        })
-    {
+    if criteria.iter().any(|c| {
+        uuid::Uuid::parse_str(&c.id).is_err()
+            || !ids.insert(&c.id)
+            || c.title.trim().is_empty()
+            || c.description.trim().is_empty()
+            || c.max_points < 1
+    }) {
         return Err(AppError::InvalidInput(
             "Saved teaching criteria are invalid or outside their bounds.".into(),
         ));
@@ -200,8 +192,19 @@ pub(crate) fn structural_findings(
                 && !rubric_is_kept(&block["rubric"])
             {
                 issues.push(
-                    ReviewFinding::rule(Rule::PracticeRubric, FindingKind::Structure, site, format!("{} needs {} to {} observable, task-specific rubric criteria.", site.note_label(), RUBRIC_CRITERIA.start(), RUBRIC_CRITERIA.end()))
-                        .with_summary(format!("{} is a practice section and needs {} to {} clear criteria for judging an answer.", site.label(), RUBRIC_CRITERIA.start(), RUBRIC_CRITERIA.end())),
+                    ReviewFinding::rule(
+                        Rule::PracticeRubric,
+                        FindingKind::Structure,
+                        site,
+                        format!(
+                            "{} needs observable, task-specific rubric criteria.",
+                            site.note_label()
+                        ),
+                    )
+                    .with_summary(format!(
+                        "{} is a practice section and needs clear criteria for judging an answer.",
+                        site.label()
+                    )),
                 );
             }
         }

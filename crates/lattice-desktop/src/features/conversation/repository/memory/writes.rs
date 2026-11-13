@@ -13,10 +13,6 @@ use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::WriteTx;
 use std::str::FromStr;
 
-fn db(error: impl std::fmt::Display) -> MemoryCommitError {
-    MemoryCommitError::Database(error.to_string())
-}
-
 impl ConversationRepository {
     /// Record a failed attempt without touching items, summary or watermark.
     ///
@@ -107,7 +103,11 @@ impl ConversationRepository {
         let conversation_id = preconditions.conversation_id.as_str();
         let now = Utc::now().to_rfc3339();
 
-        let mut tx = self.db.begin_write().await.map_err(db)?;
+        let mut tx = self
+            .db
+            .begin_write()
+            .await
+            .map_err(MemoryCommitError::database)?;
 
         // --- idempotency -------------------------------------------------
         // Checked first: a crash between commit and response leaves the caller
@@ -124,11 +124,11 @@ impl ConversationRepository {
         .bind(&preconditions.operation_id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(db)?
+        .map_err(MemoryCommitError::database)?
         {
             let counts = Self::count_active(&mut tx, conversation_id).await?;
             let state = Self::state_revisions(&mut tx, conversation_id).await?;
-            tx.commit().await.map_err(db)?;
+            tx.commit().await.map_err(MemoryCommitError::database)?;
             return Ok(CommittedMemorySnapshot {
                 memory_revision: existing.memory_revision,
                 transcript_revision: state.1,
@@ -162,7 +162,7 @@ impl ConversationRepository {
         .bind(MEMORY_SCHEMA_VERSION)
         .fetch_one(&mut *tx)
         .await
-        .map_err(db)?;
+        .map_err(MemoryCommitError::database)?;
         if schema_version != MEMORY_SCHEMA_VERSION {
             return Err(MemoryCommitError::UnsupportedSchema(schema_version));
         }
@@ -198,7 +198,7 @@ impl ConversationRepository {
                 .bind(conversation_id)
                 .fetch_optional(&mut *tx)
                 .await
-                .map_err(db)?
+                .map_err(MemoryCommitError::database)?
                 .ok_or_else(|| MemoryCommitError::UnresolvableEvidence(item.id.to_string()))?;
                 // Ownership is enforced by the `WHERE` above: a span naming
                 // another conversation's message resolves to no row at all.
@@ -217,12 +217,12 @@ impl ConversationRepository {
         for item in &candidate.commit.inserts {
             Self::insert_memory_item(&mut tx, item, next_revision, &now)
                 .await
-                .map_err(db)?;
+                .map_err(MemoryCommitError::database)?;
         }
         for item in &updates {
             Self::update_memory_item(&mut tx, item, next_revision, &now)
                 .await
-                .map_err(db)?;
+                .map_err(MemoryCommitError::database)?;
         }
         // Superseded-by links are set in a second pass: a replacement inserted
         // in this same patch does not exist when the item it retires is written,
@@ -230,7 +230,7 @@ impl ConversationRepository {
         for item in &shared {
             Self::retire_shared_item(&mut tx, item, &now)
                 .await
-                .map_err(db)?;
+                .map_err(MemoryCommitError::database)?;
         }
         for item in &updates {
             if let Some(replacement) = &item.superseded_by {
@@ -243,7 +243,7 @@ impl ConversationRepository {
                 .bind(conversation_id)
                 .execute(&mut *tx)
                 .await
-                .map_err(db)?;
+                .map_err(MemoryCommitError::database)?;
             }
         }
 
@@ -281,7 +281,7 @@ impl ConversationRepository {
             .bind(next_revision)
             .execute(&mut *tx)
             .await
-            .map_err(db)?;
+            .map_err(MemoryCommitError::database)?;
         } else {
             // Extraction moved on without refolding the summary. It still
             // describes the same messages, so it is carried into the new
@@ -293,7 +293,7 @@ impl ConversationRepository {
             .bind(conversation_id)
             .execute(&mut *tx)
             .await
-            .map_err(db)?;
+            .map_err(MemoryCommitError::database)?;
         }
 
         sqlx::query(
@@ -324,7 +324,7 @@ impl ConversationRepository {
         .bind(&now)
         .execute(&mut *tx)
         .await
-        .map_err(db)?;
+        .map_err(MemoryCommitError::database)?;
 
         let touched: Vec<&str> = candidate
             .commit
@@ -351,7 +351,7 @@ impl ConversationRepository {
         .bind(&now)
         .execute(&mut *tx)
         .await
-        .map_err(db)?;
+        .map_err(MemoryCommitError::database)?;
 
         // Bounded event retention. Deleting an event never touches item
         // evidence: they are separate tables with no cascade between them.
@@ -365,10 +365,10 @@ impl ConversationRepository {
         .bind(conversation_id)
         .execute(&mut *tx)
         .await
-        .map_err(db)?;
+        .map_err(MemoryCommitError::database)?;
 
         let (mandatory, optional) = Self::count_active(&mut tx, conversation_id).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await.map_err(MemoryCommitError::database)?;
 
         Ok(CommittedMemorySnapshot {
             memory_revision: next_revision,
@@ -390,7 +390,7 @@ impl ConversationRepository {
                 .bind(conversation_id)
                 .fetch_optional(&mut *tx)
                 .await
-                .map_err(db)?;
+                .map_err(MemoryCommitError::database)?;
         let transcript_revision = transcript_revision
             .ok_or_else(|| MemoryCommitError::NotFound(conversation_id.to_string()))?;
 
@@ -406,7 +406,7 @@ impl ConversationRepository {
         .bind(conversation_id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(db)?;
+        .map_err(MemoryCommitError::database)?;
 
         Ok(match row {
             Some(row) => (
@@ -435,7 +435,7 @@ impl ConversationRepository {
         .bind(conversation_id)
         .fetch_all(&mut *tx)
         .await
-        .map_err(db)?;
+        .map_err(MemoryCommitError::database)?;
 
         let mut mandatory = 0usize;
         let mut optional = 0usize;

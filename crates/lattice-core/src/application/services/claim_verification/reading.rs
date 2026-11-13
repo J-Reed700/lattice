@@ -1,7 +1,4 @@
-use super::{
-    quote_in, unreadable, CheckReply, ClaimEvidence, ClaimVerdict, JudgeOutcome, Result,
-    MAX_QUOTE_CHARS,
-};
+use super::{quote_in, unreadable, CheckReply, ClaimEvidence, ClaimVerdict, JudgeOutcome, Result};
 
 /// The labels of the fields a judge writes.
 const FIELD_LABELS: [&str; 8] = [
@@ -240,8 +237,7 @@ pub fn parse_judge_explanation(
     let quote = labeled_value(text, &["Source quote", "Quote", "Evidence"])
         .map(|quote| strip_wrapping_quotes(&quote))
         .filter(|quote| !is_empty_quote(quote))
-        .and_then(|quote| quote_in(&evidence.text, &quote).map(str::to_owned))
-        .map(|quote| truncate_chars(&quote, MAX_QUOTE_CHARS));
+        .and_then(|quote| quote_in(&evidence.text, &quote).map(str::to_owned));
 
     let reason = reason.or_else(|| match verdict {
         ClaimVerdict::Unsupported => {
@@ -328,13 +324,4 @@ pub fn parse_verdict_word(text: &str) -> Option<ClaimVerdict> {
     } else {
         None
     }
-}
-
-pub(super) fn truncate_chars(text: &str, limit: usize) -> String {
-    if text.chars().count() <= limit {
-        return text.to_string();
-    }
-    let mut out: String = text.chars().take(limit).collect();
-    out.push('…');
-    out
 }

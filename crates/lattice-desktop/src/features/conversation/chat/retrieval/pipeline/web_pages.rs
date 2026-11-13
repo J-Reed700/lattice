@@ -295,12 +295,12 @@ impl ExternalLookup<'_> {
 
         let deep_research_enabled = self.search_flags.deep_research_mode;
         let web_depth = if deep_research_enabled {
-            tuning.deep_research_depth.clamp(1, 4)
+            tuning.deep_research_depth.max(1)
         } else {
             1
         };
         let web_branch_queries = if deep_research_enabled {
-            tuning.deep_research_branch_queries.clamp(1, 4)
+            tuning.deep_research_branch_queries.max(1)
         } else {
             1
         };

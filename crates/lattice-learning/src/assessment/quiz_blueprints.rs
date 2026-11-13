@@ -378,7 +378,7 @@ pub fn blueprint_for(
         expected_minutes,
         passing_score: (passing * 10_000.0).round() / 10_000.0,
         slots,
-        source_version_ids: sources.into_iter().take(32).collect(),
+        source_version_ids: sources.into_iter().collect(),
         coverage: (scope.kind != LearningQuizScopeKind::Lesson).then_some((scoped.len(), total)),
     })
 }

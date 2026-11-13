@@ -156,24 +156,14 @@ async fn a_floor_failure_with_an_unsettled_question_going_puts_it_back() -> Resu
 }
 
 #[test]
-fn both_waiting_questions_of_one_kind_are_chosen_while_another_question_stays() {
-    let lesson = shaped_lesson();
-    let waiting = waiting_on(&lesson, &[0, 1]);
-    assert_eq!(
-        chosen(&lesson, &waiting, &Cuts::default()),
-        [(11, "P1?".to_owned()), (12, "P2?".to_owned())]
-    );
-}
-
-#[test]
-fn the_last_question_of_the_lesson_is_never_chosen() {
+fn with_every_question_waiting_one_question_of_each_kind_stays() {
     let lesson = shaped_lesson();
     let waiting = waiting_on(&lesson, &[0, 1, 2, 3, 4, 5]);
     let units: Vec<usize> = chosen(&lesson, &waiting, &Cuts::default())
         .into_iter()
         .map(|(unit, _)| unit)
         .collect();
-    assert_eq!(units, [11, 12, 13, 14, 15]);
+    assert_eq!(units, [11, 13, 15]);
 }
 
 #[tokio::test]

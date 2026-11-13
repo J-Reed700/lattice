@@ -42,8 +42,6 @@ use super::lexical::{best_sentence, best_windows, passage_text, LexicalClaim, Sc
 /// the provider's output budget even though they are not shown in the verdict.
 const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 4096;
 
-const MAX_QUOTE_CHARS: usize = 400;
-
 /// Between two windows of one page: the text in between was left out.
 const WINDOW_SEPARATOR: &str = "\n[…]\n";
 
@@ -385,8 +383,7 @@ pub(super) fn evidence_for(claim: &LexicalClaim, sources: &[SourceDto], room: us
             .iter()
             .filter_map(|(_, body)| best_windows(&claim.claim_text, body, 1).into_iter().next())
             .max_by_key(|window| window.score)
-            .and_then(|window| best_sentence(&claim.claim_text, &window.text))
-            .map(|sentence| truncate_chars(&sentence, MAX_QUOTE_CHARS));
+            .and_then(|window| best_sentence(&claim.claim_text, &window.text));
         return Evidence::Found(vec![ClaimEvidence {
             text: blocks.join(BLOCK_SEPARATOR),
             quote,
@@ -507,21 +504,11 @@ fn render_part(
         .iter()
         .flatten()
         .max_by_key(|window| window.score)
-        .and_then(|window| best_sentence(claim, &window.text))
-        .map(|sentence| truncate_chars(&sentence, MAX_QUOTE_CHARS));
+        .and_then(|window| best_sentence(claim, &window.text));
     ClaimEvidence {
         text: blocks.join(BLOCK_SEPARATOR),
         quote,
     }
-}
-
-fn truncate_chars(text: &str, limit: usize) -> String {
-    if text.chars().count() <= limit {
-        return text.to_string();
-    }
-    let mut out: String = text.chars().take(limit).collect();
-    out.push('…');
-    out
 }
 
 #[cfg(test)]

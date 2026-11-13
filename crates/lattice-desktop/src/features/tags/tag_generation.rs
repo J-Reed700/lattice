@@ -38,10 +38,8 @@ impl TagGenerationService {
 
     /// Suggest up to `max_tags` tags for one document.
     pub async fn generate_tags(&self, document_id: &str, max_tags: usize) -> Result<Vec<String>> {
-        if max_tags == 0 || max_tags > 20 {
-            return Err(AppError::InvalidInput(
-                "Max tags must be between 1 and 20".into(),
-            ));
+        if max_tags == 0 {
+            return Err(AppError::InvalidInput("Max tags must be at least 1".into()));
         }
 
         let document_repo = DocumentRepositoryImpl::new(self.database.clone());
@@ -223,16 +221,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn asking_for_no_tags_or_too_many_is_refused() {
-        let service = service().await;
+    async fn asking_for_no_tags_is_refused() {
+        let refused = service().await.generate_tags("doc-1", 0).await;
 
-        for max_tags in [0, 21] {
-            let refused = service.generate_tags("doc-1", max_tags).await;
-            assert!(
-                matches!(refused, Err(AppError::InvalidInput(_))),
-                "{max_tags}"
-            );
-        }
+        assert!(matches!(refused, Err(AppError::InvalidInput(_))));
     }
 
     #[tokio::test]

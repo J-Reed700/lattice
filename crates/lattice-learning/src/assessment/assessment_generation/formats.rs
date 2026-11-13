@@ -2,15 +2,12 @@
 //! item (section 5.2).
 use super::*;
 use crate::assessment_engine::checks::{
-    CHOICES_PER_QUESTION, MATCHING_PAIRS, MAX_SOURCE_VERSIONS, MULTI_SELECT_CORRECT,
-    MULTI_SELECT_OPTIONS,
+    CHOICES_PER_QUESTION, MATCHING_PAIRS, MULTI_SELECT_CORRECT, MULTI_SELECT_OPTIONS,
 };
 use crate::generation::{validate_excerpt_quote, MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use std::ops::RangeInclusive;
 
-/// How many accepted spellings, cloze blanks and ordered values a writer is asked for.
-pub(super) const SHORT_ANSWERS_ASKED: RangeInclusive<usize> = 3..=12;
-pub(super) const CLOZE_BLANKS_ASKED: RangeInclusive<usize> = 1..=4;
+/// How many ordered values a writer is asked for.
 pub(super) const ORDERING_ASKED: RangeInclusive<usize> = 3..=8;
 
 #[derive(Deserialize, Default)]
@@ -63,6 +60,10 @@ pub(crate) struct RawItem {
     difficulty: u8,
 }
 
+fn strings_from(min: usize) -> Value {
+    json!({"type":"array","minItems":min,"items":{"type":"string","minLength":1}})
+}
+
 fn strings(count: &RangeInclusive<usize>) -> Value {
     json!({"type":"array","minItems":count.start(),"maxItems":count.end(),"items":{"type":"string","minLength":1}})
 }
@@ -98,18 +99,15 @@ pub(super) fn item_schema(
             );
         }
         LearningItemFormat::ShortAnswer => {
-            put("acceptedAnswers", strings(&SHORT_ANSWERS_ASKED));
+            put("acceptedAnswers", strings_from(1));
             put("isNumeric", json!({"type":"boolean"}));
             put("numericValue", json!({"type":"number"}));
             put("tolerance", json!({"type":"number","minimum":0}));
-            put(
-                "units",
-                json!({"type":"array","maxItems":8,"items":{"type":"string"}}),
-            );
+            put("units", json!({"type":"array","items":{"type":"string"}}));
         }
         LearningItemFormat::Cloze => put(
             "blanks",
-            json!({"type":"array","minItems":CLOZE_BLANKS_ASKED.start(),"maxItems":CLOZE_BLANKS_ASKED.end(),"items":{"type":"object","additionalProperties":false,"required":["acceptedAnswers"],"properties":{"acceptedAnswers":strings(&(1..=8))}}}),
+            json!({"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["acceptedAnswers"],"properties":{"acceptedAnswers":strings_from(1)}}}),
         ),
         LearningItemFormat::Matching => {
             put(
@@ -288,7 +286,6 @@ fn candidate_of(
             .source_version_ids
             .iter()
             .filter(|id| uuid::Uuid::parse_str(id).is_ok())
-            .take(MAX_SOURCE_VERSIONS)
             .cloned()
             .collect(),
         rubric,
