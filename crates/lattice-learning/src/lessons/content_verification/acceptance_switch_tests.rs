@@ -32,6 +32,8 @@ use std::collections::VecDeque;
 const SENTENCE: &str = "The reader hands over one row at a time.";
 const REWRITTEN: &str = "The reader hands over a single row at a time.";
 const HEADER: &str = "A header row names the columns of the file.";
+const HEADER_REWORDED: &str = "The first row of the file gives the column names.";
+const HEADER_REWORDED_AGAIN: &str = "Column names come from the file's header row.";
 const REWORDED: &str = "Each time it is asked, the reader gives one row.";
 
 const PARTS: Step = Step::Read(Reading::Parts);
@@ -2779,6 +2781,126 @@ async fn a_narrowing_whose_new_sentence_still_states_the_target_is_not_applied_e
             .iter()
             .all(|event| !matches!(event, ClaimEvent::Stepped { .. })),
         "no step is taken for it: {events:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_narrowing_whose_sentence_keeps_the_mate_in_other_words_ends_the_target_removed_and_the_mate_continues(
+) -> Result<()> {
+    let (mut ledger, target, mate) = cut_beside_a_mate().await?;
+
+    // The narrowing kept the mate's statement, worded differently.
+    let pass = identified(
+        &mut ledger,
+        &Model::new(),
+        &lesson_of(REWRITTEN),
+        &[(REWRITTEN, HEADER_REWORDED)],
+        &[],
+    )
+    .await?;
+
+    let entry = ledger.entry(&target).unwrap();
+    assert_eq!(
+        entry.decided(),
+        Some(&Then::End(End::Removed {
+            section_goes: false
+        }))
+    );
+    assert!(
+        matches!(
+            entry.state(),
+            ClaimState::Removed {
+                by: Actor::Machine,
+                ..
+            }
+        ),
+        "{:?}",
+        entry.state()
+    );
+    assert!(matches!(
+        events_of(entry).last(),
+        Some(ClaimEvent::Stepped {
+            step: Step::Cut,
+            outcome: Outcome::Cut,
+            ..
+        })
+    ));
+    let successor = pass.statements[0].id.clone();
+    assert_ne!(successor, mate);
+    assert!(matches!(
+        ledger.entry(&mate).unwrap().state(),
+        ClaimState::Edited {
+            successor: Some(next),
+            by: Actor::Machine,
+            ..
+        } if *next == successor
+    ));
+    assert_eq!(node_of(&ledger, &successor), Some("r.final"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_narrowing_whose_sentence_states_the_mate_twice_in_other_words_ends_the_target_removed(
+) -> Result<()> {
+    let (mut ledger, target, mate) = cut_beside_a_mate().await?;
+
+    let pass = identified(
+        &mut ledger,
+        &Model::new(),
+        &lesson_of(REWRITTEN),
+        &[
+            (REWRITTEN, HEADER_REWORDED),
+            (REWRITTEN, HEADER_REWORDED_AGAIN),
+        ],
+        &[],
+    )
+    .await?;
+
+    let entry = ledger.entry(&target).unwrap();
+    assert_eq!(
+        entry.decided(),
+        Some(&Then::End(End::Removed {
+            section_goes: false
+        }))
+    );
+    assert!(
+        matches!(
+            entry.state(),
+            ClaimState::Removed {
+                by: Actor::Machine,
+                ..
+            }
+        ),
+        "{:?}",
+        entry.state()
+    );
+    assert!(matches!(
+        events_of(entry).last(),
+        Some(ClaimEvent::Stepped {
+            step: Step::Cut,
+            outcome: Outcome::Cut,
+            ..
+        })
+    ));
+    let successor = pass.statements[0].id.clone();
+    assert_ne!(successor, mate);
+    assert!(matches!(
+        ledger.entry(&mate).unwrap().state(),
+        ClaimState::Edited {
+            successor: Some(next),
+            by: Actor::Machine,
+            ..
+        } if *next == successor
+    ));
+    let second = ledger.entry(&pass.statements[1].id).unwrap();
+    assert!(
+        events_of(second).iter().any(|event| matches!(
+            event,
+            ClaimEvent::BornOfRepair { parent, .. } if *parent == target
+        )),
+        "{:?}",
+        events_of(second)
     );
     Ok(())
 }
