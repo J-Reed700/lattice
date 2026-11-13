@@ -211,7 +211,7 @@ struct PreparationReview<'a, 'r> {
     checks: ClaimChecks,
     verified: Option<String>,
     /// Citations this job repaired to where a claim's support was found.
-    cited_where_supported: HashSet<(usize, String)>,
+    cited_where_supported: HashSet<(usize, String, String)>,
     /// The draft as this round parsed it, and what its extraction,
     /// identification and readings left.
     candidate: Value,
@@ -820,7 +820,10 @@ pub(super) async fn recite(
     ledger: &mut ClaimLedger,
     policy: &dyn AcceptancePolicy,
     (candidate, report): (&mut Value, &LessonVerificationReport),
-    (numbered, tried): (&mut Vec<LearningSourceDto>, &mut HashSet<(usize, String)>),
+    (numbered, tried): (
+        &mut Vec<LearningSourceDto>,
+        &mut HashSet<(usize, String, String)>,
+    ),
     references: &ReferenceCollection<'_>,
 ) -> Result<bool> {
     let waiting = ledger.at(policy, StepKind::Recite);
@@ -854,16 +857,18 @@ pub(super) async fn recite(
         })
         .collect();
     let reciting: Vec<ClaimId> = findings.iter().map(|(id, _)| id.clone()).collect();
-    let kept = ledger.live_statements_but(&reciting);
+    let kept = ledger.live_sentences_but(&reciting);
     let cited = repair::cite_where_supported(candidate, &sent, &kept, numbered, references, tried)?;
     let mut moved = false;
-    for ((id, _), cited) in findings.iter().zip(cited) {
+    for ((id, finding), cited) in findings.iter().zip(cited) {
         match cited {
             Cited::Recited(event) => {
                 ledger.append(id, *event).await?;
                 moved |= !waiting.contains(id);
             }
-            Cited::Cannot => {}
+            Cited::Cannot(unwritten) => {
+                trace::citation_kept(id, &finding.statement, unwritten.why());
+            }
             Cited::Deferred => continue,
         }
         if waiting.contains(id) {
@@ -894,17 +899,17 @@ async fn uncite(
     if waiting.is_empty() {
         return Ok(false);
     }
-    let statements: Vec<(usize, String)> = waiting
+    let sentences: Vec<(usize, String)> = waiting
         .iter()
         .filter_map(|id| ledger.entry(id))
-        .map(|entry| (entry.location().unit_index, entry.statement().to_owned()))
+        .map(|entry| (entry.location().unit_index, entry.location().quote.clone()))
         .collect();
-    let kept = ledger.live_statements_but(&waiting);
+    let kept = ledger.live_sentences_but(&waiting);
     crate::lesson_progress::phase(
         crate::lesson_progress::Phase::Repair,
         "Dropping the citation of statements whose every part is common knowledge",
     );
-    let dropped = repair::uncite(candidate, &statements, &kept, references)?;
+    let dropped = repair::uncite(candidate, &sentences, &kept, references)?;
     let mut moved = false;
     for (id, cited) in waiting.iter().zip(dropped) {
         ledger

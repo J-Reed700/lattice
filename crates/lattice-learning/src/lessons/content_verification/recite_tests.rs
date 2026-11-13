@@ -7,14 +7,14 @@ use super::*;
 use lattice_core::domain::learning::acceptance::Reading;
 
 /// The citation events `cite_where_supported` made, one for each finding it
-/// cited, with `kept` the live statements that are not being cited.
+/// cited, with `kept` the live claims' sentences that are not being cited.
 fn recited(
     candidate: &mut Value,
     findings: &[Finding],
     kept: &[(usize, String)],
     numbered: &mut Vec<LearningSourceDto>,
     references: &ReferenceCollection<'_>,
-    tried: &mut HashSet<(usize, String)>,
+    tried: &mut HashSet<(usize, String, String)>,
 ) -> Result<Vec<lattice_core::domain::learning::claim_review::ClaimEvent>> {
     let cited =
         repair::cite_where_supported(candidate, findings, kept, numbered, references, tried)?;
@@ -406,8 +406,8 @@ fn an_entry_a_live_statement_shares_stays_and_a_second_entry_for_the_sentence_is
         lesson["blocks"][0]["citations"] = json!([shared]);
         lesson
     };
-    // Another live statement of the sentence reads against that entry too.
-    let kept = [(0, "DictReader preserves field-name whitespace.".to_owned())];
+    // Another live claim stands on the sentence, so it reads against that entry too.
+    let kept = [(0, GOOD.to_owned())];
 
     let mut candidate = lesson.clone();
     let cited = recited(
@@ -519,7 +519,7 @@ fn a_second_claim_on_a_sentence_cited_in_the_call_is_deferred() -> Result<()> {
 fn a_claim_that_draws_on_several_sentences_of_its_quote_cannot_be_cited() -> Result<()> {
     let sources = [source()];
     let references = ReferenceCollection::lexical(&sources)?;
-    // No sentence holds the greater part of this statement's words.
+    // The claim's quote holds four sentences, so none of them is its own.
     let passage = "The Peace of Westphalia was signed in 1648 in the cities of Osnabrück and Münster. It ended the Thirty Years' War in the Holy Roman Empire. It also closed the Eighty Years' War between Spain and the Dutch Republic. Historians often date the modern order of sovereign states from these treaties.";
     let statement = "Signed in 1648, the Peace of Westphalia ended the Thirty Years' War and is often seen by historians as the start of the order of sovereign states.";
     let finding = found_in(&sources[0], GOOD, (passage, statement));
@@ -535,7 +535,10 @@ fn a_claim_that_draws_on_several_sentences_of_its_quote_cannot_be_cited() -> Res
         &mut HashSet::new(),
     )?;
 
-    assert!(matches!(cited.as_slice(), [repair::Cited::Cannot]));
+    assert!(matches!(
+        cited.as_slice(),
+        [repair::Cited::Cannot(repair::Unwritten::SeveralSentences)]
+    ));
     assert_eq!(candidate, before);
     Ok(())
 }

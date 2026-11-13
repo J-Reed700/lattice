@@ -18,7 +18,7 @@ use super::published_restore::undoable_in_published;
 use super::teaching_findings::{
     TeachingFindingDto, TeachingFindingSiteDto, TeachingFindingStateDto, TeachingResolutionDto,
 };
-use crate::content_verification::claim_quote;
+use crate::content_verification::narrow;
 use lattice_core::shared::text::same_text::whole_sentences;
 
 /// Where the sentence of a waiting section note is in `body` when "Remove this
@@ -82,6 +82,10 @@ pub(super) fn name_claims(
         if body.contains(sentence) {
             continue;
         }
+        let narrowed = |entry: &ClaimLedgerEntry| {
+            let quote = &entry.location().quote;
+            narrow(quote, None, entry.statement(), quote).0
+        };
         let removals: Vec<(String, i64, bool)> = ledger
             .claims
             .iter()
@@ -90,13 +94,11 @@ pub(super) fn name_claims(
                 ClaimState::Removed {
                     at,
                     by: Actor::User,
-                } if claim_quote(&entry.location().quote, entry.statement()).trim() == sentence => {
-                    Some((
-                        entry.claim_id().0.clone(),
-                        *at,
-                        undoable_in_published(entry),
-                    ))
-                }
+                } if narrowed(entry).trim() == sentence => Some((
+                    entry.claim_id().0.clone(),
+                    *at,
+                    undoable_in_published(entry),
+                )),
                 _ => None,
             })
             .collect();
