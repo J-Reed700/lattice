@@ -10,7 +10,7 @@ const EVIDENCE_KEYS: Protocol = lattice_core::protocol!("claim-evidence", 2);
 /// How the first page of the course is ranked: one hybrid list over the
 /// course, without what the claim's citation shows, sliced by the page budget.
 /// A selection saved under another ranking is retrieved anew, once.
-const RANKING: Protocol = lattice_core::protocol!("two-pass-hybrid", 2);
+const RANKING: Protocol = lattice_core::protocol!("two-pass-hybrid", 3);
 
 /// Automatic research is requested for specific failed comparisons. Bind the
 /// resulting source snapshot to those claims so adding a broadly relevant page

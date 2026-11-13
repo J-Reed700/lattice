@@ -56,7 +56,7 @@ fn verification_windows_restore_conditions_without_changing_source_bytes() -> Re
 }
 
 #[test]
-fn merging_context_keeps_both_partly_overlapping_hits() -> Result<()> {
+fn partly_overlapping_hits_each_keep_the_bytes_the_other_lacks() -> Result<()> {
     let text = format!(
         "{}first matching fact. {}second matching caveat. {}",
         "préfixe ".repeat(400),
@@ -83,13 +83,21 @@ fn merging_context_keeps_both_partly_overlapping_hits() -> Result<()> {
         }
     });
     let expanded = collection.verification_context(passages.into())?;
-    assert_eq!(expanded.len(), 1);
+    assert_eq!(expanded.len(), 2);
     assert!(expanded[0].text.contains("first matching fact"));
-    assert!(expanded[0].text.contains("second matching caveat"));
+    assert!(expanded[1].text.contains("second matching caveat"));
     assert_eq!(
-        &text[expanded[0].start_byte..expanded[0].end_byte],
-        expanded[0].text
+        expanded
+            .iter()
+            .filter(|passage| passage.text.contains("second matching caveat"))
+            .count(),
+        1,
+        "the caveat is shown once, in the second passage"
     );
+    assert!(expanded[0].end_byte <= expanded[1].start_byte);
+    for passage in &expanded {
+        assert_eq!(&text[passage.start_byte..passage.end_byte], passage.text);
+    }
     Ok(())
 }
 
