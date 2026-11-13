@@ -1,8 +1,5 @@
 //! The audit rows and the course switch against a migrated database.
 
-use std::str::FromStr;
-
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
 
 use super::*;
@@ -10,20 +7,7 @@ use crate::curriculum_repository::ProgramVerifierAudit;
 use lattice_core::domain::models::model_ref::CloudProvider;
 
 async fn database() -> SqlitePool {
-    let options = SqliteConnectOptions::from_str("sqlite::memory:")
-        .unwrap()
-        .foreign_keys(true);
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .idle_timeout(None)
-        .max_lifetime(None)
-        .connect_with(options)
-        .await
-        .unwrap();
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .unwrap();
+    let pool = crate::tests::pool().await.unwrap();
     for statement in [
         "INSERT INTO learning_programs (id, title, goal, status, revision, prior_knowledge, minutes_per_session, model_name, created_at) \
          VALUES ('p1', 'Thermodynamics', 'Understand phase changes', 'active', 1, 'none', 30, 'qwen3.5-27b', 1000)",

@@ -7,17 +7,10 @@ use lattice_core::domain::entities::chunk::Chunk;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::types::DocumentId;
-use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 
 async fn pool() -> SqlitePool {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(":memory:")
-        .await
-        .expect("in-memory pool");
-    sqlx::migrate!("./migrations")
-        .run(&pool)
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .expect("migrations");
     sqlx::query("PRAGMA foreign_keys=ON")

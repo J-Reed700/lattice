@@ -89,12 +89,9 @@ impl DownloadManager for Recorder {
 
 /// A migrated in-memory repository holding one local model at `path`.
 async fn repository_with(path: PathBuf) -> SqliteModels {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     let repository = SqliteModels::new(Database::new(pool));
     let row = DownloadedModel::new(
         "row-1".into(),

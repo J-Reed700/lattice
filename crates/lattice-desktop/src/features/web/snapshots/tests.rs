@@ -54,14 +54,9 @@ async fn fixture() -> Fixture {
 
 /// The snapshot kind's handler is registered unless the test does it itself.
 async fn fixture_with(register: bool) -> Fixture {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .idle_timeout(None)
-        .max_lifetime(None)
-        .connect(":memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     sqlx::query(
         "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \
          VALUES (?, 'Snap', 'space_general', '2026-10-13T00:00:00Z', '2026-10-13T00:00:00Z')",

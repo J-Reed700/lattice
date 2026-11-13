@@ -198,12 +198,9 @@ mod tests {
     /// garbage.
     #[tokio::test]
     async fn completed_downloads_keep_their_files_when_no_model_row_names_them() {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         let dir = tempfile::tempdir().unwrap();
         let repository = Arc::new(MockDownloadRepository::new());
         let mut files = Vec::new();

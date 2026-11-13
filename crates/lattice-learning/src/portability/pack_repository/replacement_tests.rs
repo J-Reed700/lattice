@@ -18,15 +18,13 @@ async fn setup() -> Result<(
     String,
 )> {
     let directory = tempfile::tempdir()?;
-    let options = crate::test_support::file_options(directory.path().join("replacement.sqlite"));
+    let path = directory.path().join("replacement.sqlite");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
+    let options = crate::test_support::file_options(path);
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
         .await?;
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
     let database = Database::new(pool.clone());
     let program = fixture();
     LearningRepository::new(database.clone())

@@ -338,13 +338,10 @@ pub async fn store_document_with_context_and_file_tx(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::sqlite::SqlitePoolOptions;
     use sqlx::SqlitePool;
 
     async fn setup_pool() -> SqlitePool {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .expect("open in-memory db");
 
@@ -354,11 +351,6 @@ mod tests {
             .execute(&pool)
             .await
             .expect("enable foreign keys");
-
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await
-            .expect("run migrations");
 
         pool
     }

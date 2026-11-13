@@ -1,20 +1,16 @@
 use super::chunks::store_document;
 use crate::features::indexing::engine::chunker::TextChunk;
 use lattice_core::shared::persistence::Database;
-use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 
 async fn setup_pool() -> SqlitePool {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(":memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
     sqlx::query("PRAGMA foreign_keys = ON")
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     pool
 }
 

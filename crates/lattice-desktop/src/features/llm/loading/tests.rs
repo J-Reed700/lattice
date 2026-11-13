@@ -49,12 +49,9 @@ fn a_file_that_failed_to_start_is_retried_only_after_it_changes() {
 
 /// A loader over a migrated in-memory database holding `rows`.
 async fn loader_with(rows: &[lattice_core::domain::DownloadedModel]) -> ModelLoader {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     let models = Arc::new(DownloadedModelRepository::new(Database::new(pool)));
     for row in rows {
         models.save(row).await.unwrap();

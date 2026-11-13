@@ -13,14 +13,15 @@ use super::service::ChatImageService;
 
 async fn fixture() -> (SqlitePool, Arc<ChatImageService>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(crate::tests::sqlite::file_options(
-            dir.path().join("images.db"),
-        ))
+    let path = dir.path().join("images.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path)
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(lattice_core::shared::testing::sqlite::file_options(&path))
+        .await
+        .unwrap();
     sqlx::query(
         "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \
          VALUES ('conv-sweep', 'Pictures', 'space_general', '2026-10-17T00:00:00Z', '2026-10-17T00:00:00Z')",

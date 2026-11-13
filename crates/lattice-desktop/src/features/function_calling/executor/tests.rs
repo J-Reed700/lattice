@@ -393,8 +393,9 @@ async fn list_documents_uses_migrated_schema_for_inventory_favorites_and_recent(
     use crate::infrastructure::persistence::repositories::DocumentRepository as SqliteDocuments;
     use serde_json::json;
 
-    let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap();
     let db = Database::new(pool);
     let documents = Arc::new(SqliteDocuments::new(db.clone()));
     for name in ["mpep-0100.pdf", "mpep-0200.pdf"] {
@@ -566,8 +567,9 @@ async fn hybrid_semantic_search_runs_the_library_orchestrator_and_names_hits_by_
     use crate::infrastructure::vector_index::USearchVectorIndex;
     use lattice_core::application::contracts::tools::SemanticSearchOutput;
 
-    let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap();
     let db = Database::new(pool.clone());
     let documents = Arc::new(SqliteDocuments::new(db.clone()));
     let document = Document::new(

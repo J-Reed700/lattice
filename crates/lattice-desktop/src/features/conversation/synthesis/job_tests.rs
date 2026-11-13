@@ -10,15 +10,9 @@ use tokio::sync::Notify;
 const WAIT: Duration = Duration::from_secs(10);
 
 pub(super) async fn pool() -> sqlx::SqlitePool {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .idle_timeout(None)
-        .max_lifetime(None)
-        .connect(":memory:")
+    lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
-        .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    pool
+        .unwrap()
 }
 
 fn request() -> StartJournalSynthesisRequestDto {

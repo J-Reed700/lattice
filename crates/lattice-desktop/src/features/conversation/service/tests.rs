@@ -70,8 +70,9 @@ async fn missing_conversation_stops_pruning_before_write() {
 /// A test database pool from the real migration, not a hand-maintained subset
 /// of the schema.
 async fn create_test_pool() -> SqlitePool {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap();
     // Several of these tests assert cascade behaviour, which SQLite only
     // enforces with this on.
     sqlx::query("PRAGMA foreign_keys = ON")

@@ -216,12 +216,13 @@ fn source_with_sections(sections: usize) -> SummarySource {
 }
 
 async fn pool_with_document() -> Database {
-    let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap();
     sqlx::query("PRAGMA foreign_keys = ON")
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     for (id, name) in [("doc-1", "manual.pdf"), ("doc-2", "primer.pdf")] {
         sqlx::query("INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, checksum) VALUES (?, ?, ?, 1, '2026-09-16', ?)")
             .bind(id)

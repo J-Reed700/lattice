@@ -146,8 +146,9 @@ mod tests {
     use sqlx::SqlitePool;
 
     async fn database() -> (SqlitePool, Database) {
-        let pool = SqlitePool::connect(":memory:").await.unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+            .await
+            .unwrap();
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&pool)
             .await

@@ -29,7 +29,8 @@ export default defineConfig({
       // whole-renderer floors are the coverage last measured on the full
       // suite, rounded down, so coverage can rise but not quietly fall.
       // Raise them to the new measurement whenever coverage grows.
-      thresholds: {
+      // CI shards each see part of the suite; the floors are enforced once, on the merged coverage.
+      thresholds: process.env.VITEST_SHARD_RUN === 'true' ? undefined : {
         lines: 92.3,
         functions: 87.1,
         branches: 81.9,

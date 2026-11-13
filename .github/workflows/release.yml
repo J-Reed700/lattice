@@ -26,7 +26,9 @@ jobs:
           - { name: Ubuntu-24.04-x64, os: ubuntu-24.04, bundles: deb, pattern: '*.deb' }
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.100.0
       - uses: actions/setup-node@v4
         with:
           node-version: '24'

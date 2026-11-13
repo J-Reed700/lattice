@@ -15,18 +15,9 @@ const INTERNAL_ERROR: &str = "Lattice hit an internal error while working on thi
 const STOPPED_THE_APP: &str = "Lattice closed unexpectedly twice while this was running, so it was not resumed. Retry it to try again.";
 
 async fn pool() -> sqlx::SqlitePool {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .idle_timeout(None)
-        .max_lifetime(None)
-        .connect(":memory:")
+    crate::shared::testing::sqlite::migrated_in_memory()
         .await
-        .unwrap();
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .unwrap();
-    pool
+        .unwrap()
 }
 
 async fn database() -> Database {

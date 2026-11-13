@@ -28,7 +28,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.100.0
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: API advisories
@@ -52,8 +54,9 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.100.0
           components: clippy, rustfmt
       - uses: actions/cache@v4
         with:
@@ -77,7 +80,7 @@ jobs:
         run: cargo test --test sync_persistence -- --ignored
       - name: cargo clippy
         working-directory: crates/lattice-sync
-        run: cargo clippy --all-targets
+        run: cargo clippy --keep-going --all-targets
       - name: cargo fmt --check
         working-directory: crates/lattice-sync
         run: cargo fmt --all -- --check

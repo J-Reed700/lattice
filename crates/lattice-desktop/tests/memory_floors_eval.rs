@@ -69,7 +69,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 
 use lattice::features::conversation::chat::history_tools::{
@@ -488,17 +487,9 @@ struct Scorer {
 
 impl Scorer {
     async fn open(service: Arc<LlamaEmbeddingService>) -> Self {
-        let pool = SqlitePoolOptions::new()
-            .min_connections(1)
-            .idle_timeout(None)
-            .max_lifetime(None)
-            .connect(":memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
-            .expect("an in-memory database");
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await
-            .expect("the shipped migrations");
+            .expect("a migrated in-memory database");
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&pool)
             .await

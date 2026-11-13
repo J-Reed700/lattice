@@ -125,8 +125,9 @@ mod tests {
     use lattice_core::shared::testing::paths::abs_str;
 
     async fn fixture() -> (SqlitePool, SqliteFileLibrary) {
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+            .await
+            .unwrap();
         sqlx::query(
             "INSERT INTO watch_folders (id, path, recursive, enabled, last_scan, created_at)
                 VALUES ('watch', ?1, 1, 1, NULL, '2026-01-01')",
