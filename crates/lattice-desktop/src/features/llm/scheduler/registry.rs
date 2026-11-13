@@ -18,11 +18,6 @@ use tokio::sync::watch;
 
 use super::{BackendCapacity, InferenceScheduler};
 
-/// Requests in flight to one cloud provider. Their capacity is not ours to
-/// measure; this keeps a burst of background work from tripping rate limits
-/// while still letting a turn and its judge run side by side.
-const CLOUD_CONCURRENCY: usize = 8;
-
 /// `/props` answers instantly on a healthy server.
 const PROPS_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -99,10 +94,11 @@ impl SchedulerRegistry {
         })
     }
 
-    /// The scheduler for one cloud provider.
+    /// The scheduler for one cloud provider. Its capacity is whatever the
+    /// provider's answers allow; see [`BackendCapacity::adaptive`].
     pub(crate) fn cloud(&self, provider: &str) -> Arc<InferenceScheduler> {
         self.shared(BackendKey::Cloud(provider.to_owned()), || {
-            self.scheduler(provider, BackendCapacity::concurrent(CLOUD_CONCURRENCY))
+            self.scheduler(provider, BackendCapacity::adaptive())
         })
     }
 
@@ -130,6 +126,7 @@ impl SchedulerRegistry {
                 slots: 1,
                 shared_window: Some(configured_window.max(1)),
                 pins_slots: false,
+                adaptive: false,
             },
         };
         tracing::info!(

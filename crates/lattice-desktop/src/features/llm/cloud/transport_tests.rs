@@ -194,7 +194,7 @@ async fn refusals_are_typed_by_what_waiting_can_change() {
     ] {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(status).insert_header("retry-after", "0"))
+            .respond_with(ResponseTemplate::new(status))
             .mount(&server)
             .await;
         let error = client(&server)
@@ -324,7 +324,6 @@ async fn a_persistent_rate_limit_reaches_the_caller_as_a_rate_limit() {
     Mock::given(method("POST"))
         .respond_with(
             ResponseTemplate::new(429)
-                .insert_header("retry-after", "0")
                 .set_body_json(json!({"error":{"type":"requests","code":"rate_limit_exceeded"}})),
         )
         .mount(&server)
@@ -524,6 +523,42 @@ async fn dropping_a_completion_cancels_the_request_without_a_retry() {
     assert!(abandoned.is_err());
     // No detached generation or retry task survives a dropped completion.
     server.verify().await;
+}
+
+/// The provider's answer is what its window learns from: a request that
+/// completes while others are held back by the window opens it wider.
+#[tokio::test]
+async fn a_completed_request_tells_the_providers_scheduler_it_was_accepted() {
+    use crate::features::llm::scheduler::AdmissionRequest;
+    use lattice_core::application::ports::llm_port::InferencePriority;
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]
+        })))
+        .mount(&server)
+        .await;
+    let client = client(&server).await;
+    let _in_flight = client
+        .scheduler
+        .admit(
+            AdmissionRequest {
+                priority: InferencePriority::Interactive,
+                tokens: 1,
+                cache_key: None,
+                rank: None,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(client.scheduler.load().slots, 1);
+    client
+        .complete(&CompletionRequest::default())
+        .await
+        .unwrap();
+    assert_eq!(client.scheduler.load().slots, 2);
 }
 
 /// What the response replays, as the provider's own JSON.

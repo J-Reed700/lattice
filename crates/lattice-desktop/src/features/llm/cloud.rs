@@ -3,6 +3,7 @@
 use crate::features::llm::backend::{ignore_text, ModelBackend, Progress, TextSink};
 use crate::features::llm::engine::vision::not_set_up_to_see;
 use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
+use crate::features::llm::scheduler::{BackendCapacity, InferenceScheduler};
 use async_trait::async_trait;
 use lattice_core::application::{
     contracts::settings::LLMSettingsDto,
@@ -12,6 +13,7 @@ use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
 use protocol::{cloud_provider, protocols, CompletionProtocol, ProviderApi};
 use serde_json::Value;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub mod catalog;
@@ -36,16 +38,20 @@ pub struct CloudLlm {
     /// The geometry the model was declared to see with; `None` refuses
     /// pictures.
     vision: Option<VisionGeometry>,
+    /// Where the provider's answers go: it decides when the next request may
+    /// be sent. A client that has not been scheduled has one of its own.
+    scheduler: Arc<InferenceScheduler>,
 }
 
 impl CloudLlm {
     /// Behind the provider's shared scheduler, so every role on one provider
     /// queues in one place.
     pub(crate) fn schedule(
-        self,
+        mut self,
         schedulers: &crate::features::llm::scheduler::SchedulerRegistry,
     ) -> std::sync::Arc<dyn LLMPort> {
         let scheduler = schedulers.cloud(self.protocol.name());
+        self.scheduler = Arc::clone(&scheduler);
         std::sync::Arc::new(crate::features::llm::scheduler::ScheduledLlm::new(
             std::sync::Arc::new(self),
             scheduler,
@@ -91,6 +97,10 @@ impl CloudLlm {
             model_ceiling,
             context_window: settings.context_window as usize,
             vision: None,
+            scheduler: Arc::new(InferenceScheduler::new(
+                protocol.name(),
+                BackendCapacity::adaptive(),
+            )),
         })
     }
 
@@ -114,8 +124,10 @@ impl CloudLlm {
         self.protocol.body(&self.model, fitted, stream)
     }
 
-    /// All three attempts and their backoffs share one `deadline`, so a retry
-    /// never multiplies the caller's time budget. `bound_body` applies what is
+    /// Every attempt and its wait share one `deadline`, so a retry never
+    /// multiplies the caller's time budget. A refusal for load is resent when
+    /// the provider's scheduler reopens admission: as often as a `retry-after`
+    /// asks, otherwise three attempts in all. `bound_body` applies what is
     /// left of it to the whole exchange; without it only the wait for response
     /// headers is bounded and the streamed body is left to stall detection.
     async fn post(
@@ -125,7 +137,8 @@ impl CloudLlm {
         bound_body: bool,
     ) -> Result<reqwest::Response> {
         let mut last_error = None;
-        for attempt in 0..3u32 {
+        let mut attempt = 0u32;
+        loop {
             let remaining =
                 deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
             if remaining.is_some_and(|remaining| remaining.is_zero()) {
@@ -154,6 +167,7 @@ impl CloudLlm {
             })?;
             let status = response.status();
             if status.is_success() {
+                self.scheduler.accepted();
                 return Ok(response);
             }
             // Avoid echoing provider bodies which can contain submitted user text.
@@ -176,12 +190,22 @@ impl CloudLlm {
                 .and_then(|h| h.to_str().ok())
                 .and_then(|v| v.parse::<u64>().ok());
             let error = refusal(self.protocol, response).await;
-            let resend =
-                matches!(error, AppError::RateLimitExceeded(_)) || status.is_server_error();
-            if attempt == 2 || !resend {
+            let rate_limited = matches!(error, AppError::RateLimitExceeded(_));
+            let overloaded = status.as_u16() == 529;
+            let throttled = rate_limited || overloaded;
+            if !(throttled || status.is_server_error()) {
                 return Err(error);
             }
-            let delay = Duration::from_secs(retry_after.unwrap_or(1 << attempt).min(30));
+            let asked_to_wait = rate_limited && retry_after.is_some();
+            if attempt >= 2 && !asked_to_wait {
+                return Err(error);
+            }
+            let delay = if throttled {
+                self.scheduler
+                    .throttled(retry_after.map(Duration::from_secs))
+            } else {
+                Duration::from_secs(1 << attempt)
+            };
             // Sleeping past the deadline would report a budget expiry instead of
             // the provider's own reason for refusing.
             if deadline
@@ -190,9 +214,13 @@ impl CloudLlm {
                 return Err(error);
             }
             last_error = Some(error);
-            tokio::time::sleep(delay).await;
+            if throttled {
+                self.scheduler.until_open().await;
+            } else {
+                tokio::time::sleep(delay).await;
+            }
+            attempt = attempt.saturating_add(1);
         }
-        Err(AppError::Network("Cloud request retries exhausted".into()))
     }
 
     /// Exhausting the budget is not a stall, and must not be reported as one.
@@ -383,6 +411,11 @@ fn status_error(api: &dyn ProviderApi, status: reqwest::StatusCode, reply: &Valu
         429 if api.out_of_credit(status, reply) => AppError::InvalidConfig(format!(
             "{shown} says the account has no credit or quota left (HTTP 429): add credit to the \
              account, or choose another model in Settings → AI"
+        )),
+        429 if api.spend_limit_reached(status, reply) => AppError::InvalidConfig(format!(
+            "{shown} refused the request because the provider account reached its monthly spend \
+             limit (HTTP 429): raise the limit on the provider's account page, or choose another \
+             model in Settings → AI"
         )),
         429 => AppError::RateLimitExceeded(format!("{name} API returned HTTP {status}")),
         408 => AppError::Network(format!("{name} API returned HTTP {status}")),
