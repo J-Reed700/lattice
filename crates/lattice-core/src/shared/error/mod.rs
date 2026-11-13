@@ -14,9 +14,11 @@
 //! ```
 
 mod application;
+mod causes;
 mod class;
 mod domain;
 pub use application::ApplicationError;
+pub use causes::WithCauses;
 pub use class::{smaller_parts_may_succeed, ErrorClass};
 pub use domain::DomainError;
 
