@@ -10,18 +10,9 @@ const ONCE: &str = "test.once";
 const WAIT: Duration = Duration::from_secs(5);
 
 async fn pool() -> sqlx::SqlitePool {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .idle_timeout(None)
-        .max_lifetime(None)
-        .connect(":memory:")
+    crate::shared::testing::sqlite::migrated_in_memory()
         .await
-        .unwrap();
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .unwrap();
-    pool
+        .unwrap()
 }
 
 async fn database() -> Database {
@@ -727,13 +718,13 @@ async fn a_job_that_ends_while_the_database_is_busy_is_still_recorded() -> Resul
     // pool of its own on the same file, so on a loaded machine only that
     // write meets the busy store.
     let directory = tempfile::tempdir().unwrap();
-    let options = crate::shared::testing::sqlite::file_options(directory.path().join("jobs.db"));
-    let setup = sqlx::sqlite::SqlitePoolOptions::new()
-        .connect_with(options.clone())
+    let path = directory.path().join("jobs.db");
+    crate::shared::testing::sqlite::write_migrated(&path)
         .await
         .unwrap();
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&setup)
+    let options = crate::shared::testing::sqlite::file_options(&path);
+    let setup = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(options.clone())
         .await
         .unwrap();
     let busy = sqlx::sqlite::SqlitePoolOptions::new()
@@ -1183,16 +1174,14 @@ async fn observers_see_each_transition_of_a_job() -> Result<()> {
 #[tokio::test]
 async fn startup_recovery_waits_for_a_concurrent_writer() -> Result<()> {
     let directory = tempfile::tempdir().unwrap();
-    let options = crate::shared::testing::sqlite::file_options(
-        directory.path().join("startup-recovery.sqlite"),
-    );
+    let path = directory.path().join("startup-recovery.sqlite");
+    crate::shared::testing::sqlite::write_migrated(&path)
+        .await
+        .unwrap();
+    let options = crate::shared::testing::sqlite::file_options(&path);
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
-        .await
-        .unwrap();
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
         .await
         .unwrap();
     let db = Database::new(pool.clone());
@@ -1390,13 +1379,13 @@ async fn deleting_a_finished_job_takes_its_earlier_attempts_and_refuses_live_one
 #[tokio::test]
 async fn a_locked_sqlite_database_defers_the_job() {
     let directory = tempfile::tempdir().unwrap();
-    let options = crate::shared::testing::sqlite::file_options(directory.path().join("jobs.db"));
-    let setup = sqlx::sqlite::SqlitePoolOptions::new()
-        .connect_with(options.clone())
+    let path = directory.path().join("jobs.db");
+    crate::shared::testing::sqlite::write_migrated(&path)
         .await
         .unwrap();
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&setup)
+    let options = crate::shared::testing::sqlite::file_options(&path);
+    let setup = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(options.clone())
         .await
         .unwrap();
     let mut holder = setup.acquire().await.unwrap();
@@ -1656,17 +1645,14 @@ async fn a_jobs_rank_is_saved_and_a_retry_keeps_it() -> Result<()> {
 async fn a_heartbeat_recorded_behind_a_long_write_waits_its_turn_and_lands() -> Result<()> {
     let busy_timeout = Duration::from_millis(100);
     let directory = tempfile::tempdir().unwrap();
-    let options = crate::shared::testing::sqlite::file_options(
-        directory.path().join("heartbeat-behind-writer.sqlite"),
-    )
-    .busy_timeout(busy_timeout);
+    let path = directory.path().join("heartbeat-behind-writer.sqlite");
+    crate::shared::testing::sqlite::write_migrated(&path)
+        .await
+        .unwrap();
+    let options = crate::shared::testing::sqlite::file_options(&path).busy_timeout(busy_timeout);
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
-        .await
-        .unwrap();
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
         .await
         .unwrap();
     let db = Database::new(pool.clone());
