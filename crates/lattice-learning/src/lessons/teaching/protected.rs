@@ -240,16 +240,18 @@ fn targets_of(
     targets
 }
 
-/// The repaired lesson with every change outside what its findings may
-/// change put back. `touched` gives, for each part (`/blocks/N`,
-/// `/questions/N`), the findings whose changes touched it.
+/// `repaired` when no change of it falls outside what its findings may
+/// change, else one reason for each change that does. `touched` gives, for
+/// each part (`/blocks/N`, `/questions/N`), the findings whose changes touched
+/// it.
 pub(super) fn confine_review(
     previous: &Value,
     repaired: &Value,
     touched: &BTreeMap<String, Vec<&ReviewFinding>>,
     protected: &[Protected],
-) -> Result<Value> {
+) -> Result<std::result::Result<Value, Vec<String>>> {
     let mut lesson = repaired.clone();
+    let mut reasons: Vec<String> = Vec::new();
     let blocks = blocks_in(previous);
     for unit in 0..units_in(previous) {
         let Some(pointer) = FindingSite::of_unit(unit, blocks).pointer() else {
@@ -281,9 +283,19 @@ pub(super) fn confine_review(
             .filter(|item| !named(item))
             .cloned()
             .collect();
-        *after = confine(before, after, &targets, &kept)?.section;
+        let confined = confine(before, after, &targets, &kept)?;
+        for reason in confined.reasons() {
+            if !reasons.contains(&reason) {
+                reasons.push(reason);
+            }
+        }
+        *after = confined.section;
     }
-    Ok(lesson)
+    Ok(if reasons.is_empty() {
+        Ok(lesson)
+    } else {
+        Err(reasons)
+    })
 }
 
 #[cfg(test)]
