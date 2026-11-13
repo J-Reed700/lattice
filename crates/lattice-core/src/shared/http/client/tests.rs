@@ -4,7 +4,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use http::{Response, StatusCode};
 
-use super::reqwest_client_builder;
+use super::loopback_client_builder;
 
 const FRAMES: usize = 2_000;
 const FRAME: &[u8] = b"data: {}\n\n";
@@ -12,8 +12,7 @@ const FRAME: &[u8] = b"data: {}\n\n";
 async fn serve_event_stream(listener: tokio::net::TcpListener) {
     let (socket, _) = listener.accept().await.unwrap();
     let mut connection = h2::server::handshake(socket).await.unwrap();
-    while let Some(request) = connection.accept().await {
-        let (_request, mut respond) = request.unwrap();
+    while let Some(Ok((_request, mut respond))) = connection.accept().await {
         tokio::spawn(async move {
             let response = Response::builder()
                 .status(StatusCode::OK)
@@ -45,7 +44,7 @@ async fn a_reader_that_falls_behind_keeps_the_connection() {
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(serve_event_stream(listener));
 
-    let client = reqwest_client_builder()
+    let client = loopback_client_builder()
         .http2_prior_knowledge()
         .build()
         .unwrap();
