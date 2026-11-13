@@ -1220,19 +1220,66 @@ async fn the_cut_of_a_statement_naming_context_its_sentence_leaves_implicit_take
     Ok(())
 }
 
+#[test]
+fn uncite_drops_the_entry_holding_the_claims_sentence_and_no_other() -> Result<()> {
+    const NONE: &str = "Missing values in nonblank rows default to None.";
+    const WORDS_OF_GOOD: &str = "DictReader preserves whitespace by default.";
+    let sources = [source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let first = json!({"sentence":GOOD,"sourceIndex":0,"quote":GOOD});
+    let second = json!({"sentence":NONE,"sourceIndex":0,"quote":NONE});
+    let two = || {
+        let mut lesson = cited_lesson(json!([first, second]));
+        lesson["blocks"][0]["body"] = json!(format!("{GOOD} {NONE}"));
+        lesson
+    };
+
+    let mut lesson = two();
+    let dropped = repair::uncite(&mut lesson, &[(0, NONE.to_owned())], &[], &references)?;
+    assert_eq!(dropped, vec![vec![sources[0].id.clone()]]);
+    assert_eq!(lesson["blocks"][0]["citations"], json!([first]));
+
+    // A sentence that only shares words with a cited one has no entry.
+    let mut lesson = two();
+    let dropped = repair::uncite(
+        &mut lesson,
+        &[(0, WORDS_OF_GOOD.to_owned())],
+        &[],
+        &references,
+    )?;
+    assert_eq!(dropped, vec![Vec::<String>::new()]);
+    assert_eq!(lesson["blocks"][0]["citations"], json!([first, second]));
+
+    // An entry of two sentences stays while a claim on the other one lives.
+    let both = json!({"sentence":format!("{GOOD} {NONE}"),"sourceIndex":0,"quote":GOOD});
+    let mut lesson = cited_lesson(json!([both]));
+    let dropped = repair::uncite(
+        &mut lesson,
+        &[(0, GOOD.to_owned())],
+        &[(0, NONE.to_owned())],
+        &references,
+    )?;
+    assert_eq!(dropped, vec![Vec::<String>::new()]);
+    assert_eq!(lesson["blocks"][0]["citations"], json!([both]));
+    let dropped = repair::uncite(&mut lesson, &[(0, GOOD.to_owned())], &[], &references)?;
+    assert_eq!(dropped, vec![vec![sources[0].id.clone()]]);
+    assert_eq!(lesson["blocks"][0]["citations"], json!([]));
+    Ok(())
+}
+
 fn cited_lesson(entries: Value) -> Value {
     json!({"blocks":[{"kind":"explanation","title":"Rows","body":GOOD,"rubric":[],
         "sourceIndex":0,"quote":GOOD,"citations":entries}],"questions":[]})
 }
 
 #[test]
-fn uncite_keeps_an_entry_another_statement_on_the_sentence_stands_on() -> Result<()> {
+fn uncite_keeps_an_entry_another_claim_on_the_sentence_stands_on() -> Result<()> {
     let sources = [source()];
     let references = ReferenceCollection::lexical(&sources)?;
     let entry = json!([{"sentence":GOOD,"sourceIndex":0,"quote":GOOD}]);
     let statements = [(0, GOOD.to_owned())];
 
-    // Another live statement restates the sentence: the entry is its citation.
+    // Another live claim stands on the sentence: the entry is its citation.
     let mut lesson = cited_lesson(entry.clone());
     let kept = [(0, GOOD.to_owned())];
     let dropped = repair::uncite(&mut lesson, &statements, &kept, &references)?;

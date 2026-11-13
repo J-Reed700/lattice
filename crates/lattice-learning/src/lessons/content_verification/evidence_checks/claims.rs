@@ -10,15 +10,15 @@ pub(in crate::lessons::content_verification) enum Comparison {
     Pending(PendingClaim),
 }
 
-/// The page a statement's own citation gives for the claim `statement` of
-/// section `unit`: its section's passed example runs and the passages the
-/// claim's sentence cites (the section's when the writer cited none), while a
-/// check of `checked` against them `fits` the judge that reads them, in
-/// canonical order. Also the source passages among them.
+/// The page a statement's own citation gives for the claim standing on
+/// `sentence`, its quote, of section `unit`: its section's passed example runs
+/// and the passages the claim's sentence cites (the section's when the writer
+/// cited none), while a check of `checked` against them `fits` the judge that
+/// reads them, in canonical order. Also the source passages among them.
 pub(in crate::lessons::content_verification) fn attribution_page(
     executions: &[execution::Observation],
     citations: &Citations,
-    (unit, statement): (usize, &str),
+    (unit, sentence): (usize, &str),
     checked: &str,
     fits: impl Fn(&str, &[EvidencePassage]) -> bool,
 ) -> (Vec<EvidencePassage>, Vec<EvidencePassage>) {
@@ -27,7 +27,7 @@ pub(in crate::lessons::content_verification) fn attribution_page(
         fits,
         checked,
         &mut page,
-        &citations.of_claim(unit, statement),
+        &citations.of_claim(unit, sentence),
     );
     canonicalize_evidence(&mut page);
     (page, cited)

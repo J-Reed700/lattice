@@ -190,7 +190,7 @@ async fn open(
     let (_, shown) = attribution_page(
         at.executions,
         at.citations,
-        (unit, &claim.statement),
+        (unit, &claim.quote),
         &checked.statement,
         parts_fit(at),
     );
@@ -206,7 +206,7 @@ async fn open(
     .await?;
     let mut cited: Vec<String> = at
         .citations
-        .of_claim(unit, &claim.statement)
+        .of_claim(unit, &claim.quote)
         .iter()
         .map(|passage| passage.source_id.clone())
         .collect();

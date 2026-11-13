@@ -24,9 +24,9 @@ use std::collections::{BTreeSet, VecDeque};
 mod citation;
 mod confine;
 mod cut;
-#[cfg(test)]
-pub(super) use citation::quotation;
 pub(super) use citation::{cite_where_supported, number_evidence, uncite, Cited};
+#[cfg(test)]
+pub(super) use citation::{quotation, Unwritten};
 use confine::PutBack;
 pub(crate) use confine::{confine, Protected};
 #[cfg(test)]
