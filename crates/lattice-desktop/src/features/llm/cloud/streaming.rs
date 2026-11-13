@@ -27,7 +27,7 @@ pub(super) async fn drain<S, B, E>(
 where
     S: Stream<Item = std::result::Result<B, E>> + Unpin,
     B: AsRef<[u8]>,
-    E: std::fmt::Display,
+    E: std::error::Error + 'static,
 {
     let clock = StreamClock::started(sent);
     let generating = AtomicBool::new(false);
