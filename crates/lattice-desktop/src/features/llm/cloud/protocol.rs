@@ -57,6 +57,9 @@ pub(super) trait EventDecoder: Send {
     /// Whether a tool call has started streaming its arguments, which counts
     /// as the answer having started, as text does.
     fn has_tool_output(&self) -> bool;
+    /// Whether the model has begun its answer: an output of any kind has
+    /// started, shown or not (thinking it does not stream, text, a tool call).
+    fn answer_begun(&self) -> bool;
     /// The completed response in the provider's own shape, once the stream
     /// has ended.
     fn finish(self: Box<Self>) -> Result<Option<Value>>;

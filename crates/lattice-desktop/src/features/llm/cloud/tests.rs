@@ -823,10 +823,11 @@ fn stream_of(events: &[Value]) -> Vec<u8> {
 }
 
 /// A streamed answer is timed by the app's own clock on its own request:
-/// until the first delta the backend was reading, after it writing. The
-/// prompt tokens it read leave out those its usage says were cached.
+/// until the model began its answer the backend was reading, after it
+/// writing. The prompt tokens it read leave out those its usage says were
+/// cached.
 #[tokio::test]
-async fn a_streamed_answer_is_timed_from_its_first_delta() {
+async fn a_streamed_answer_is_timed_from_its_first_output() {
     let bytes = stream_of(&[
         json!({"type":"response.output_text.delta","delta":"Hello"}),
         json!({"type":"response.completed","response":{"status":"completed",

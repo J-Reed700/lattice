@@ -127,12 +127,13 @@ impl CloudLlm {
     /// asks, otherwise three attempts in all. `bound_body` applies what is
     /// left of it to the whole exchange; without it only the wait for response
     /// headers is bounded and the streamed body is left to stall detection.
+    /// Returns the response with the instant its attempt went out.
     async fn post(
         &self,
         body: &Value,
         deadline: Option<Instant>,
         bound_body: bool,
-    ) -> Result<reqwest::Response> {
+    ) -> Result<(reqwest::Response, Instant)> {
         let mut last_error = None;
         let mut attempt = 0u32;
         loop {
@@ -147,6 +148,7 @@ impl CloudLlm {
                 None => request,
             };
             let request = self.protocol.sign(request, &self.key);
+            let sent = Instant::now();
             let send = request.send();
             let response = if let Some(remaining) = remaining.filter(|_| !bound_body) {
                 tokio::time::timeout(remaining, send)
@@ -165,7 +167,7 @@ impl CloudLlm {
             let status = response.status();
             if status.is_success() {
                 self.scheduler.accepted();
-                return Ok(response);
+                return Ok((response, sent));
             }
             // Avoid echoing provider bodies which can contain submitted user text.
             if status == reqwest::StatusCode::BAD_REQUEST {
@@ -235,7 +237,7 @@ impl CloudLlm {
         body: Value,
         deadline: Option<Instant>,
         bound_body: bool,
-    ) -> Result<reqwest::Response> {
+    ) -> Result<(reqwest::Response, Instant)> {
         match self.post(&body, deadline, bound_body).await {
             Err(error) => match self.protocol.resend_after(&error, &body) {
                 Some(rewritten) => self.post(&rewritten, deadline, bound_body).await,
@@ -253,7 +255,7 @@ impl CloudLlm {
             .request()
             .wall_clock_budget()
             .map(|budget| Instant::now() + budget);
-        let response = self
+        let (response, _) = self
             .send_with_fallback(self.body(fitted, false)?, deadline, true)
             .await?;
         let value: Value = response
@@ -278,8 +280,7 @@ impl CloudLlm {
             .map(|budget| Instant::now() + budget);
         request
             .within_time_budget(async {
-                let sent = Instant::now();
-                let response = self
+                let (response, sent) = self
                     .send_with_fallback(self.body(fitted, true)?, deadline, false)
                     .await?;
                 streaming::drain(
