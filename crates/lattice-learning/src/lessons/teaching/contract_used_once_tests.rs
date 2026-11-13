@@ -400,13 +400,33 @@ async fn a_use_in_a_task_block_no_teaching_block_precedes_keeps_todays_note() {
 }
 
 #[tokio::test]
-async fn a_guarded_use_in_a_task_block_takes_the_teaching_in_the_earlier_part() {
+async fn a_use_after_a_contrast_is_taught_in_the_section_before_the_contrast() {
     let inner = scripted(vec![]);
     let model = model_answering(&inner, never_taught(&[HANG]));
     let candidate = of_kinds(
         &[
             ("explanation", "A kettle keeps water hot."),
             ("contrast", "A rope is not a string."),
+            ("guided_practice", "Hang the kettle on the hook."),
+        ],
+        json!([]),
+    );
+    let findings = found(&model, &candidate, &[]).await;
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    let note = &findings[0].note;
+    assert_eq!(findings[0].also, Some(FindingSite::Section(0)));
+    assert!(note.contains("Teach it in Section 1"), "{note}");
+    assert!(!note.contains("Section 2"), "{note}");
+}
+
+#[tokio::test]
+async fn a_guarded_use_in_a_task_block_takes_the_teaching_in_the_earlier_part() {
+    let inner = scripted(vec![]);
+    let model = model_answering(&inner, never_taught(&[HANG]));
+    let candidate = of_kinds(
+        &[
+            ("explanation", "A kettle keeps water hot."),
+            ("worked_example", "A rope is not a string."),
             ("guided_practice", "Hang the kettle on the hook."),
         ],
         json!([]),

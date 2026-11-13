@@ -25,6 +25,7 @@ struct Routed<'a> {
     drafting: Mutex<Vec<String>>,
     confirming: Mutex<Vec<(String, String)>>,
     confirmed: Mutex<Vec<String>>,
+    confirmed_schemas: Mutex<Vec<Value>>,
 }
 
 /// A confirming read nobody scripted: not taught, and an item belongs in
@@ -48,6 +49,7 @@ impl<'a> Routed<'a> {
             drafting: Mutex::new(Vec::new()),
             confirming: Mutex::new(Vec::new()),
             confirmed: Mutex::new(Vec::new()),
+            confirmed_schemas: Mutex::new(Vec::new()),
         }
     }
 
@@ -62,6 +64,10 @@ impl<'a> Routed<'a> {
 
     fn confirmed(&self) -> Vec<String> {
         self.confirmed.lock().unwrap().clone()
+    }
+
+    fn confirmed_schemas(&self) -> Vec<Value> {
+        self.confirmed_schemas.lock().unwrap().clone()
     }
 
     fn drafting(&self) -> Vec<String> {
@@ -81,6 +87,9 @@ impl LLMPort for Routed<'_> {
             && !crate::lessons::structured_call::is_draft_request(request)
         {
             self.confirmed.lock().unwrap().push(user.to_owned());
+            if let Some(schema) = &request.json_schema {
+                self.confirmed_schemas.lock().unwrap().push(schema.clone());
+            }
             let reply = self
                 .confirming
                 .lock()
@@ -164,6 +173,10 @@ fn context_planning(ideas: &[&str], terms: &[&str], actions: &[&str], contrast: 
 
 fn block(title: &str, body: &str) -> Value {
     json!({"kind":"explanation","title":title,"body":body,"rubric":[],"sourceIndex":0,"quote":EXCERPT})
+}
+
+fn block_of(kind: &str, title: &str, body: &str) -> Value {
+    json!({"kind":kind,"title":title,"body":body,"rubric":[],"sourceIndex":0,"quote":EXCERPT})
 }
 
 fn lesson(bodies: [&str; 3]) -> Value {
@@ -1586,6 +1599,60 @@ async fn a_planned_item_the_confirming_read_does_not_find_is_a_finding_where_it_
     let ctx = context(&["Typing commands"], &[]);
     let result = run(&model, &candidate, &ctx, &[]).await?;
     assert_eq!(waiting(&result), [("teaching:section-2".to_owned(), None)]);
+    Ok(())
+}
+
+async fn waiting_after_planned_contrast(
+    reply: Value,
+) -> Result<(Vec<(String, Option<String>)>, Vec<Value>)> {
+    let scripted = scripted(vec![
+        reviewed(3),
+        retitle_at(1),
+        reviewed_of(&[1], &[]),
+        retitle_again_at(1),
+        reviewed_of(&[1], &[]),
+    ]);
+    let missing = answer(
+        json!([not_taught("contrast")]),
+        json!([]),
+        json!([]),
+        json!([]),
+    );
+    let model = Routed::new(&scripted, vec![missing.clone(), missing.clone(), missing])
+        .confirming("A planned confusion", reply);
+    let candidate = json!({"blocks":[
+        block_of("explanation", "Opening", TYPED),
+        block_of("contrast", "Contrast", "The list shows names."),
+        block_of("explanation", "Reading", "Read the names.")
+    ],"questions":[]});
+    let ctx = context_planning(&[], &[], &[], "A planned confusion");
+    let result = run(&model, &candidate, &ctx, &[]).await?;
+    Ok((waiting(&result), model.confirmed_schemas()))
+}
+
+#[tokio::test]
+async fn a_planned_contrast_is_placed_only_in_a_contrast_section() -> Result<()> {
+    let (found, schemas) =
+        waiting_after_planned_contrast(json!({"taught":false,"quote":"","belongs":"section-1"}))
+            .await?;
+    assert_eq!(found, [("teaching:section-1".to_owned(), None)]);
+    assert!(!schemas.is_empty());
+    for schema in &schemas {
+        assert_eq!(
+            schema["properties"]["belongs"]["enum"],
+            json!(["section-1"])
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_planned_contrast_the_confirming_read_puts_in_an_explanation_is_not_placed_there(
+) -> Result<()> {
+    let (found, _) =
+        waiting_after_planned_contrast(json!({"taught":false,"quote":"","belongs":"section-0"}))
+            .await?;
+    assert_eq!(found, [("teaching:lesson".to_owned(), None)]);
     Ok(())
 }
 
