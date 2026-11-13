@@ -130,16 +130,14 @@ impl LLMPort for BatchModel {
 #[tokio::test]
 async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let options = crate::test_support::file_options(directory.path().join("adaptive-batches.db"));
+    let path = directory.path().join("adaptive-batches.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
+    let options = crate::test_support::file_options(path);
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options.clone())
         .await?;
     let db = Database::new(pool.clone());
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
     let (repo, job, lesson) = setup(&db).await?;
     let sources = vec![source()];
     let references = ReferenceCollection::lexical(&sources)?;
@@ -359,17 +357,14 @@ async fn batched_checks_reuse_individual_receipts_and_recheck_changed_evidence()
 async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_missing_work(
 ) -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let options =
-        crate::test_support::file_options(directory.path().join("restore-before-model.sqlite"));
+    let path = directory.path().join("restore-before-model.sqlite");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
+    let options = crate::test_support::file_options(path);
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options.clone())
         .await?;
     let db = Database::new(pool.clone());
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
     let (repo, job, lesson) = setup(&db).await?;
     let sources = vec![source()];
     let references = ReferenceCollection::lexical(&sources)?;
@@ -457,16 +452,14 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
 #[tokio::test]
 async fn completed_batch_siblings_survive_interruption_during_individual_fallback() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let options = crate::test_support::file_options(dir.path().join("batch.sqlite"));
+    let path = dir.path().join("batch.sqlite");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
+    let options = crate::test_support::file_options(path);
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
         .await?;
     let db = Database::new(pool.clone());
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
     let (repo, job, lesson) = setup(&db).await?;
     let sources = vec![source()];
     let references = ReferenceCollection::lexical(&sources)?;

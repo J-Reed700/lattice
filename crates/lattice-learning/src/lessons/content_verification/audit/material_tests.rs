@@ -8,10 +8,6 @@ use lattice_core::shared::persistence::Database;
 async fn the_published_lessons_units_keep_each_questions_place() -> Result<()> {
     let pool = crate::tests::pool().await?;
     let db = Database::new(pool.clone());
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
     let program = crate::tests::fixture();
     let programs = LearningRepository::new(db.clone());
     programs.create(&program).await?;

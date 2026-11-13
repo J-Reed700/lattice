@@ -140,15 +140,13 @@ async fn a_website_status_defers_only_when_a_retry_can_change_it() {
 #[tokio::test]
 async fn outage_schedule_and_checkpoints_survive_reopen_and_cancellation_wins() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let options = crate::test_support::file_options(directory.path().join("reconnect.sqlite"));
+    let path = directory.path().join("reconnect.sqlite");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
+    let options = crate::test_support::file_options(path);
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
         .await?;
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
     let db = Database::new(pool.clone());
     let (repo, job) = repository_tests::queued_job(&db).await;
     let program = LearningRepository::new(db.clone())
@@ -308,16 +306,13 @@ async fn fidelity_propagates_connection_loss_without_creating_a_factual_finding(
 async fn source_limit_failure_retries_after_restart_without_losing_saved_checks() -> Result<()> {
     use crate::{dto::*, source_library::*};
     let directory = tempfile::tempdir()?;
-    let options =
-        crate::test_support::file_options(directory.path().join("source-recovery.sqlite"));
+    let path = directory.path().join("source-recovery.sqlite");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
+    let options = crate::test_support::file_options(path);
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
         .await?;
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
     let db = Database::new(pool.clone());
     let (repo, job) = repository_tests::queued_job(&db).await;
     let program = LearningRepository::new(db.clone())

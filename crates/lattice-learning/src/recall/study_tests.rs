@@ -11,15 +11,12 @@ use serde_json::json;
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
 async fn open(path: std::path::PathBuf) -> lattice_core::shared::error::Result<SqlitePool> {
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
     let options = crate::test_support::file_options(path);
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
         .connect_with(options)
         .await?;
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     Ok(pool)
 }
 
