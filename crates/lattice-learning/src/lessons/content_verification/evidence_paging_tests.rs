@@ -304,6 +304,47 @@ fn a_page_never_exceeds_its_budget_while_it_fits_the_window() {
     assert_eq!(alone.len(), 1);
 }
 
+#[test]
+fn adjacent_hits_of_one_source_do_not_take_a_page_from_another_source() -> Result<()> {
+    let filler = "Background sentence here. ".repeat(58);
+    let long: String = [
+        "first matching fact.",
+        "second matching fact.",
+        "third matching fact.",
+    ]
+    .iter()
+    .map(|fact| format!("{filler}{fact} "))
+    .collect::<String>()
+        + &filler;
+    let other = format!("{filler}other matching fact. {filler}");
+    let references = ReferenceCollection::lexical(&[
+        reference("long".into(), long.clone()),
+        reference("other".into(), other.clone()),
+    ])?;
+    let list = references.cited_passages(&[
+        "first matching fact.",
+        "other matching fact.",
+        "second matching fact.",
+        "third matching fact.",
+    ])?;
+    let model = PagingModel::new(100_000);
+    let window_of = |text: &str, fact: &str| {
+        let start = text.find(fact).unwrap();
+        let span =
+            crate::reference_collection::verification_window(text, start..start + fact.len());
+        text[span].to_owned()
+    };
+    let budget = bank_tokens(&model, &window_of(&long, "first matching fact."))
+        + bank_tokens(&model, &window_of(&other, "other matching fact."))
+        + 10;
+    let (page, _) = evidence_checks::page_of(&model, CLAIM, &list, &[], Some(budget));
+    assert!(
+        page.iter().any(|passage| passage.source_id == "other"),
+        "the other source's passage is on the first page"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_term_in_no_passage_neither_counts_nor_lowers_the_bar() {
     let one = |id: &str, text: &str| reference(id.into(), text.into());

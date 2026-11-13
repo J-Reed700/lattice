@@ -93,6 +93,116 @@ fn merging_context_keeps_both_partly_overlapping_hits() -> Result<()> {
     Ok(())
 }
 
+fn source_of(id: &str, markers: &[&str]) -> LearningSourceDto {
+    let filler = "Background sentence here. ".repeat(58);
+    let mut excerpt = filler.clone();
+    for marker in markers {
+        excerpt.push_str(&format!("{marker} {filler}"));
+    }
+    LearningSourceDto {
+        id: id.into(),
+        title: format!("Reference {id}"),
+        url: None,
+        excerpt,
+        acquired_at: 1,
+    }
+}
+
+fn hit_on(source: &LearningSourceDto, target: &str) -> ReferencePassage {
+    let start = source.excerpt.find(target).unwrap();
+    ReferencePassage {
+        source_id: source.id.clone(),
+        text: target.into(),
+        start_byte: start,
+        end_byte: start + target.len(),
+        retrieval_kind: "lexical_fallback".into(),
+        score: 1.0,
+    }
+}
+
+fn window_of(source: &LearningSourceDto, hit: &ReferencePassage) -> std::ops::Range<usize> {
+    verification_window(&source.excerpt, hit.start_byte..hit.end_byte)
+}
+
+#[test]
+fn adjacent_hits_of_one_source_keep_to_their_own_windows() -> Result<()> {
+    let targets = [
+        "alpha marker fact.",
+        "beta marker fact.",
+        "gamma marker fact.",
+        "delta marker fact.",
+        "epsilon marker fact.",
+    ];
+    let source = source_of("long", &targets);
+    let collection = ReferenceCollection::lexical(std::slice::from_ref(&source))?;
+    let hits: Vec<_> = targets.iter().map(|t| hit_on(&source, t)).collect();
+    let windows: Vec<_> = hits.iter().map(|hit| window_of(&source, hit)).collect();
+    assert!(windows.windows(2).all(|w| w[1].start < w[0].end));
+    let passages = collection.verification_context(hits)?;
+    assert_eq!(passages.len(), targets.len());
+    for (passage, window) in passages.iter().zip(&windows) {
+        assert!(passage.start_byte >= window.start && passage.end_byte <= window.end);
+        assert_eq!(
+            &source.excerpt[passage.start_byte..passage.end_byte],
+            passage.text
+        );
+    }
+    for (i, one) in passages.iter().enumerate() {
+        for other in &passages[i + 1..] {
+            assert!(!one.overlaps(other));
+        }
+    }
+    let covered = |spans: &mut dyn Iterator<Item = (usize, usize)>| {
+        spans
+            .flat_map(|(start, end)| start..end)
+            .collect::<HashSet<_>>()
+    };
+    assert_eq!(
+        covered(&mut passages.iter().map(|p| (p.start_byte, p.end_byte))),
+        covered(&mut windows.iter().map(|w| (w.start, w.end)))
+    );
+    Ok(())
+}
+
+#[test]
+fn a_second_sources_hit_keeps_its_place_between_a_first_sources_hits() -> Result<()> {
+    let first = source_of(
+        "a",
+        &[
+            "alpha marker fact.",
+            "beta marker fact.",
+            "gamma marker fact.",
+        ],
+    );
+    let second = source_of("b", &["other marker fact."]);
+    let collection = ReferenceCollection::lexical(&[first.clone(), second.clone()])?;
+    let a1 = hit_on(&first, "alpha marker fact.");
+    let b1 = hit_on(&second, "other marker fact.");
+    let a2 = hit_on(&first, "beta marker fact.");
+    let a3 = hit_on(&first, "gamma marker fact.");
+    let (w1, w2, w3) = (
+        window_of(&first, &a1),
+        window_of(&first, &a2),
+        window_of(&first, &a3),
+    );
+    assert!(w2.start < w1.end && w3.start < w2.end);
+    let passages = collection.verification_context(vec![a1, b1.clone(), a2, a3])?;
+    let spans: Vec<_> = passages
+        .iter()
+        .map(|p| (p.source_id.as_str(), p.start_byte..p.end_byte))
+        .collect();
+    assert_eq!(
+        spans,
+        vec![
+            ("a", w1.clone()),
+            ("b", window_of(&second, &b1)),
+            ("a", w1.end..w2.end),
+            ("a", w2.end..w3.end),
+        ]
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn without_a_course_index_every_snapshot_is_ranked_by_its_words() -> Result<()> {
     let db = Database::new(tests::pool().await?);
