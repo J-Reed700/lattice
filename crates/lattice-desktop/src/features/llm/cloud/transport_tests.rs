@@ -197,11 +197,12 @@ async fn refusals_are_typed_by_what_waiting_can_change() {
             .respond_with(ResponseTemplate::new(status))
             .mount(&server)
             .await;
-        let error = client(&server)
-            .await
-            .complete(&CompletionRequest::default())
-            .await
-            .unwrap_err();
+        // Shorter than the first backoff: the provider's own refusal comes back.
+        let request = CompletionRequest {
+            time_budget: Some(Duration::from_millis(900)),
+            ..Default::default()
+        };
+        let error = client(&server).await.complete(&request).await.unwrap_err();
         assert_eq!(
             ErrorClass::of(&error).is_temporary(),
             transient,
@@ -328,12 +329,14 @@ async fn a_persistent_rate_limit_reaches_the_caller_as_a_rate_limit() {
         )
         .mount(&server)
         .await;
-    let error = client(&server)
-        .await
-        .complete(&CompletionRequest::default())
-        .await
-        .unwrap_err();
+    // Room for one resend after the first backoff, not for the second.
+    let request = CompletionRequest {
+        time_budget: Some(Duration::from_millis(2_500)),
+        ..Default::default()
+    };
+    let error = client(&server).await.complete(&request).await.unwrap_err();
     assert!(matches!(error, AppError::RateLimitExceeded(_)), "{error:?}");
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
 }
 
 async fn anthropic_client(server: &MockServer) -> CloudLlm {
@@ -575,27 +578,6 @@ fn replayed(response: &CompletionResponse) -> Value {
     )
 }
 
-/// Let the client and the mock server run until `count` requests have
-/// arrived, without a timer that a paused clock could advance.
-async fn wait_for_requests(server: &MockServer, count: usize) {
-    for _ in 0..5_000 {
-        if server.received_requests().await.unwrap().len() >= count {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(2));
-        tokio::task::yield_now().await;
-    }
-    panic!("the server did not receive {count} requests");
-}
-
-/// Let the client act on what it has been given, with the clock paused.
-async fn let_the_client_run() {
-    for _ in 0..100 {
-        std::thread::sleep(Duration::from_millis(2));
-        tokio::task::yield_now().await;
-    }
-}
-
 /// The provider's `retry-after` is its own statement of when to come back:
 /// resending sooner is refused again, so it is honoured as given.
 #[tokio::test]
@@ -617,23 +599,30 @@ async fn a_rate_limit_is_resent_only_after_the_wait_the_provider_asked_for() {
         .mount(&server)
         .await;
     let client = client(&server).await;
+    let scheduler = Arc::clone(&client.scheduler);
     let call = tokio::spawn(async move { client.complete(&CompletionRequest::default()).await });
 
-    wait_for_requests(&server, 1).await;
-    tokio::time::pause();
-    let_the_client_run().await;
-    tokio::time::advance(Duration::from_secs(30)).await;
-    let_the_client_run().await;
-    assert_eq!(
-        server.received_requests().await.unwrap().len(),
-        1,
-        "resent before the 45 s the provider asked for"
+    let closed_for = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Some(wait) = scheduler.reopens_in() {
+                break wait;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the refusal never closed admission");
+    assert!(
+        closed_for > Duration::from_secs(30) && closed_for <= Duration::from_secs(45),
+        "closed for {closed_for:?}, not the 45 s the provider asked for"
     );
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
 
-    tokio::time::advance(Duration::from_secs(16)).await;
-    wait_for_requests(&server, 2).await;
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(45)).await;
     tokio::time::resume();
     assert_eq!(call.await.unwrap().unwrap().text, "ok");
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
 }
 
 /// A monthly spend limit is refused with a 429 that no waiting changes until

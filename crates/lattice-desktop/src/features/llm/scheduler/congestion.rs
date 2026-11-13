@@ -61,9 +61,12 @@ impl CongestionWindow {
     }
 
     /// The provider refused a request for load. Returns when admission
-    /// reopens. Throttles that arrive while admission is closed answer
-    /// requests that were already in flight together, so they halve the
-    /// window once and only move the reopening later.
+    /// reopens: after the provider's `retry_after`, but never sooner than the
+    /// backoff that consecutive refusals have earned (1, 2, 4 s, ...), so a
+    /// provider that keeps answering `retry-after: 0` is not resent in a loop.
+    /// Throttles that arrive while admission is closed answer requests that
+    /// were already in flight together, so they halve the window once and
+    /// only move the reopening later.
     pub(crate) fn throttled(&mut self, now: Instant, retry_after: Option<Duration>) -> Instant {
         if let Some(open_at) = self.open_at.filter(|open_at| now < *open_at) {
             let later = retry_after
@@ -75,14 +78,16 @@ impl CongestionWindow {
         self.window = (self.window / 2).max(1);
         self.threshold = Some(self.window);
         self.accepted_since_growth = 0;
-        let wait = retry_after.unwrap_or_else(|| {
-            let seconds = 1u64
-                .checked_shl(self.consecutive_throttles)
-                .unwrap_or(u64::MAX);
-            Duration::from_secs(seconds)
-        });
+        let backoff = Duration::from_secs(
+            1u64.checked_shl(self.consecutive_throttles)
+                .unwrap_or(u64::MAX),
+        );
+        let wait = retry_after.map_or(backoff, |asked| asked.max(backoff));
         self.consecutive_throttles = self.consecutive_throttles.saturating_add(1);
-        let reopen = now.checked_add(wait).unwrap_or(now);
+        let reopen = now
+            .checked_add(wait)
+            .or_else(|| now.checked_add(backoff))
+            .unwrap_or(now);
         self.open_at = Some(reopen);
         reopen
     }

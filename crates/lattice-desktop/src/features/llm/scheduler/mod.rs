@@ -569,8 +569,9 @@ impl InferenceScheduler {
     }
 
     /// The provider refused a request for load. Admission closes for the
-    /// provider's `retry_after`, or for a backoff of ours when it gave none,
-    /// and the window shrinks. Returns how long until admission reopens.
+    /// provider's `retry_after`, never less than the backoff consecutive
+    /// refusals have earned, and the window shrinks. Returns how long until
+    /// admission reopens.
     pub fn throttled(self: &Arc<Self>, retry_after: Option<Duration>) -> Duration {
         let now = Instant::now();
         let mut state = self.state.lock();
@@ -670,6 +671,14 @@ impl InferenceScheduler {
     #[cfg(test)]
     fn queued(&self) -> usize {
         self.state.lock().queue.len()
+    }
+
+    /// How long until admission reopens, while a throttle keeps it closed.
+    #[cfg(test)]
+    pub(crate) fn reopens_in(&self) -> Option<Duration> {
+        let open_at = self.state.lock().congestion.as_ref()?.open_at()?;
+        let wait = open_at.saturating_duration_since(Instant::now());
+        (!wait.is_zero()).then_some(wait)
     }
 }
 

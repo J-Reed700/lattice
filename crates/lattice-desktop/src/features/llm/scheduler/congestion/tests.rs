@@ -182,6 +182,25 @@ fn throttles_while_closed_do_not_lengthen_the_backoff() {
 }
 
 #[test]
+fn a_zero_retry_after_still_waits_the_backoff_refusals_have_earned() {
+    let mut window = CongestionWindow::new();
+    let now = Instant::now();
+    let first = window.throttled(now, Some(Duration::ZERO));
+    assert_eq!(first, now + secs(1));
+    assert_eq!(
+        window.throttled(first, Some(Duration::ZERO)),
+        first + secs(2)
+    );
+}
+
+#[test]
+fn a_retry_after_beyond_the_clock_waits_the_backoff_instead_of_none() {
+    let mut window = CongestionWindow::new();
+    let now = Instant::now();
+    assert_eq!(window.throttled(now, Some(Duration::MAX)), now + secs(1));
+}
+
+#[test]
 fn a_throttle_after_reopening_halves_again() {
     let mut window = grown_to(8);
     let now = Instant::now();
