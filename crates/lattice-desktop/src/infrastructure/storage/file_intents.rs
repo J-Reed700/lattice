@@ -216,13 +216,9 @@ mod tests {
     use sqlx::SqlitePool;
 
     async fn migrated_pool() -> SqlitePool {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
+        lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
-            .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        pool
+            .unwrap()
     }
 
     #[tokio::test]
@@ -273,6 +269,9 @@ mod tests {
     async fn a_database_file_loses_its_records_and_one_without_the_table_is_left_as_it_is() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("restored.db");
+        lattice_core::shared::testing::sqlite::write_migrated(&path)
+            .await
+            .unwrap();
         let options = SqliteConnectOptions::new()
             .filename(&path)
             .create_if_missing(true);
@@ -280,7 +279,6 @@ mod tests {
             .connect_with(options)
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         FileIntents::new(Database::new(pool.clone()))
             .record(FileStore::ChatImage, IntentKind::Release, "x.png")
             .await
@@ -320,12 +318,15 @@ mod tests {
     #[tokio::test]
     async fn forgetting_all_waits_for_a_writer_that_drops_the_table() {
         let dir = tempfile::tempdir().unwrap();
-        let pool = SqlitePoolOptions::new()
-            .max_connections(5)
-            .connect_with(crate::tests::sqlite::file_options(dir.path().join("t.db")))
+        let path = dir.path().join("t.db");
+        lattice_core::shared::testing::sqlite::write_migrated(&path)
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(5)
+            .connect_with(lattice_core::shared::testing::sqlite::file_options(&path))
+            .await
+            .unwrap();
 
         let db = Database::new(pool.clone());
         let mut writer = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();

@@ -8,11 +8,11 @@ use crate::features::explorer::{folders, repository};
 use lattice_core::domain::conversation::MessageRole;
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::AppError;
-use sqlx::sqlite::SqlitePoolOptions;
 
 async fn database() -> Database {
-    let pool = SqlitePoolOptions::new().connect(":memory:").await.unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap();
     Database::new(pool)
 }
 

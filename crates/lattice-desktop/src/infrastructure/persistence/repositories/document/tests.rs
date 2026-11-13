@@ -9,12 +9,9 @@ use sqlx::SqlitePool;
 use std::time::Duration;
 
 async fn repository() -> (DocumentRepository, SqlitePool) {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     let db = Database::new(pool.clone());
     (DocumentRepository::new(db), pool)
 }
@@ -519,18 +516,21 @@ async fn access_metadata_participates_in_the_callers_transaction() {
 async fn a_delete_waiting_behind_a_held_write_lock_outlasts_the_busy_timeout() {
     const BUSY_TIMEOUT: Duration = Duration::from_millis(100);
     let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("documents.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path)
+        .await
+        .unwrap();
     let pool = SqlitePoolOptions::new()
         .max_connections(3)
         .connect_with(
             SqliteConnectOptions::new()
-                .filename(dir.path().join("documents.db"))
+                .filename(&path)
                 .create_if_missing(true)
                 .journal_mode(SqliteJournalMode::Wal)
                 .busy_timeout(BUSY_TIMEOUT),
         )
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     let db = Database::new(pool.clone());
     let repo = DocumentRepository::new(db.clone());
     insert(&pool, "doc-1", "/lib/one.txt", &"a".repeat(64)).await;

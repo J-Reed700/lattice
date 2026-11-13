@@ -26,9 +26,14 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
 
-        let pool = SqlitePool::connect_with(crate::tests::sqlite::file_options(&db_path))
+        lattice_core::shared::testing::sqlite::write_migrated(&db_path)
             .await
             .unwrap();
+        let pool = SqlitePool::connect_with(lattice_core::shared::testing::sqlite::file_options(
+            &db_path,
+        ))
+        .await
+        .unwrap();
 
         // Production enables foreign keys (database/connection.rs); without
         // it these tests would not observe cascade or constraint behaviour.
@@ -36,8 +41,6 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
 
         (pool, temp_dir)
     }

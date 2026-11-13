@@ -13,12 +13,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 /// Role models over a migrated in-memory database and `settings`, with the
 /// row `utility` active for the utility role when given.
 async fn role_models(settings: LLMSettingsDto, utility: Option<DownloadedModel>) -> RoleModels {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     let models = Arc::new(DownloadedModelRepository::new(Database::new(pool)));
     if let Some(row) = utility {
         models.save(&row).await.unwrap();

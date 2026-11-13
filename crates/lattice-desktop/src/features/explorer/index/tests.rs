@@ -27,7 +27,6 @@ use lattice_core::shared::runtime::jobs::{JobRecord, JobRuntime, JobStatus};
 use lattice_core::shared::Result;
 use parking_lot::Mutex;
 use serde_json::json;
-use sqlx::sqlite::SqlitePoolOptions;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -168,14 +167,9 @@ impl Rig {
 
 /// The app database's job tables, in memory and kept for the test's length.
 async fn jobs_database() -> Database {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .idle_timeout(None)
-        .max_lifetime(None)
-        .connect(":memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     Database::new(pool)
 }
 

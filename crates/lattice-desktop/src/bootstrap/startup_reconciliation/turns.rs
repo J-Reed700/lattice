@@ -45,12 +45,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_check_the_last_run_never_finished_is_marked_not_checked() {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         let db = Database::new(pool.clone());
         sqlx::query("INSERT INTO conversations (id, title) VALUES ('c', 'c')")
             .execute(&pool)
@@ -102,12 +99,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_turn_the_last_run_never_finished_is_marked_failed() {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         let db = Database::new(pool.clone());
         sqlx::query("INSERT INTO conversations (id, title) VALUES ('c', 'c')")
             .execute(&pool)
@@ -153,15 +147,9 @@ mod tests {
     }
 
     async fn migrated_pool() -> sqlx::SqlitePool {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .idle_timeout(None)
-            .max_lifetime(None)
-            .connect(":memory:")
+        lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
-            .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        pool
+            .unwrap()
     }
 
     /// The pass startup makes over the turns the last run left.

@@ -161,12 +161,9 @@ mod tests {
 
     #[tokio::test]
     async fn auto_tagging_applies_tags_only_when_the_document_lock_is_free() {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         let metadata = Document::new(
             lattice_core::shared::types::ValidatedFilePath::new(std::path::PathBuf::from(
                 "/notes.txt",

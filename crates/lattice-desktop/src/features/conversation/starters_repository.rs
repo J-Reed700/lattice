@@ -254,8 +254,9 @@ mod tests {
     use sqlx::SqlitePool;
 
     async fn fresh_repository() -> (ChatStarterCacheRepository, SqlitePool) {
-        let pool = SqlitePool::connect(":memory:").await.unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+            .await
+            .unwrap();
         let repo = ChatStarterCacheRepository::new(Database::new(pool.clone()));
         (repo, pool)
     }

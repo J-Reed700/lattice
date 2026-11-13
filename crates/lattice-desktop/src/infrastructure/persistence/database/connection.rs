@@ -428,12 +428,9 @@ mod tests {
 
     #[tokio::test]
     async fn memory_attributes_are_found_by_scope_through_an_index() {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
 
         let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
             "EXPLAIN QUERY PLAN SELECT item_id FROM conversation_memory_attributes WHERE scope_kind = 'space' AND scope_key = ?",

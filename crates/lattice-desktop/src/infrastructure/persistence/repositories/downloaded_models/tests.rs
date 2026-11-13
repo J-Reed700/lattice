@@ -3,7 +3,6 @@
 use super::rows::{directory_has_loadable_weights, parse_optional_db_timestamp};
 use super::*;
 use lattice_core::domain::value_objects::ArtifactIdentity;
-use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 
 #[test]
@@ -26,13 +25,7 @@ fn parse_optional_timestamp_treats_invalid_as_none() {
 }
 
 async fn setup_repo() -> (DownloadedModelRepository, SqlitePool) {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(":memory:")
-        .await
-        .expect("create in-memory pool");
-    sqlx::migrate!("./migrations")
-        .run(&pool)
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .expect("run migrations");
     let db = Database::new(pool.clone());

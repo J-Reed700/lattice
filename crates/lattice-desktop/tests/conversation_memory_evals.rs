@@ -1737,11 +1737,10 @@ impl Harness {
     async fn open() -> Self {
         let dir = tempfile::tempdir().expect("temp dir");
         let db_path = dir.path().join("evals.db");
-        let pool = Self::connect(&db_path).await;
-        sqlx::migrate!("./migrations")
-            .run(&pool)
+        lattice_core::shared::testing::sqlite::write_migrated(&db_path)
             .await
-            .expect("migrations");
+            .expect("migrated database");
+        let pool = Self::connect(&db_path).await;
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&pool)
             .await

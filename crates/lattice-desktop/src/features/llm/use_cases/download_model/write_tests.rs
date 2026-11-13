@@ -104,12 +104,9 @@ impl CredentialsPort for EmptyKeychain {
 }
 
 async fn use_case() -> (DownloadModelUseCase, SqlitePool) {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     let db = Database::new(pool.clone());
     let use_case = DownloadModelUseCase::new(
         Arc::new(HardcodedModelCatalog::new()),

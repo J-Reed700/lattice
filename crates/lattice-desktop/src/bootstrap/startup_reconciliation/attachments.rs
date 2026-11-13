@@ -60,13 +60,9 @@ mod tests {
     use sqlx::SqlitePool;
 
     async fn migrated_pool() -> SqlitePool {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
+        lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
-            .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        pool
+            .unwrap()
     }
 
     async fn conversation(pool: &SqlitePool, id: &str) {

@@ -62,9 +62,9 @@ mod tests {
     use lattice_core::shared::persistence::Database;
 
     async fn empty_pool() -> sqlx::SqlitePool {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        pool
+        lattice_core::shared::testing::sqlite::migrated_in_memory()
+            .await
+            .unwrap()
     }
 
     #[tokio::test]

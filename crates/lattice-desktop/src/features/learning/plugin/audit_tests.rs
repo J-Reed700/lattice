@@ -57,14 +57,15 @@ async fn ready_review(pool: &SqlitePool, db: &Database) -> String {
 #[tokio::test]
 async fn a_new_draft_written_while_the_hold_waits_for_the_write_lock_is_kept() {
     let dir = tempfile::tempdir().unwrap();
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(crate::tests::sqlite::file_options(
-            dir.path().join("audit.db"),
-        ))
+    let path = dir.path().join("audit.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path)
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(lattice_core::shared::testing::sqlite::file_options(&path))
+        .await
+        .unwrap();
     let db = Database::new(pool.clone());
     let lesson_id = ready_review(&pool, &db).await;
     let store = ClaimReviewRepository::new(db.clone());

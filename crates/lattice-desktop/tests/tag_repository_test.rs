@@ -13,14 +13,9 @@ mod tag_repository_tests {
     use lattice_core::shared::persistence::Database;
     use sqlx::SqlitePool;
     async fn setup_test_db() -> (SqlitePool, Database) {
-        let pool = SqlitePool::connect(":memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
-            .expect("Failed to create in-memory SQLite pool");
-
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await
-            .expect("Failed to apply production migrations");
+            .expect("Failed to create migrated in-memory SQLite pool");
 
         let db = Database::new(pool.clone());
         (pool, db)

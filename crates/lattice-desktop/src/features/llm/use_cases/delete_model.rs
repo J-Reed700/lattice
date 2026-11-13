@@ -231,17 +231,10 @@ mod tests {
     };
     use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
     use lattice_core::shared::persistence::Database;
-    use sqlx::sqlite::SqlitePoolOptions;
     use std::path::PathBuf;
 
     async fn setup_repo() -> ConcreteRepo {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
-            .await
-            .expect("create in-memory pool");
-        sqlx::migrate!("./migrations")
-            .run(&pool)
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .expect("run migrations");
         ConcreteRepo::new(Database::new(pool))
