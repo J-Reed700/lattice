@@ -55,11 +55,8 @@ impl Model {
             if context["candidate"].get("blocks").is_none() {
                 return Ok(json!({"issues":[]}).to_string());
             }
-            let checks: Vec<_> = context["candidate"]["blocks"].as_array().into_iter().flatten().enumerate().map(|(index, block)|json!({"index":index,"passageId":block["bodyPassages"][0]["id"],"finding":"The comparison and measurement task is consistent with the randomized experiment objective.","hasDefect":false})).collect();
-            return Ok(
-                json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)})
-                    .to_string(),
-            );
+            let checks: Vec<_> = context["candidate"]["blocks"].as_array().into_iter().flatten().enumerate().map(|(index, block)|json!({"passageId":block["bodyPassages"][0]["id"],"finding":"The comparison and measurement task is consistent with the randomized experiment objective.","hasDefect":false})).collect();
+            return Ok(json!({"issues":[],"blockChecks":checks}).to_string());
         }
         Ok(self.0.clone())
     }
@@ -426,7 +423,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
             if prompt.starts_with("Review instructional quality.")
                 && self.fail_review.load(Ordering::Relaxed)
             {
-                return Ok(json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![])}).to_string());
+                return Ok(json!({"issues":[],"blockChecks":[]}).to_string());
             }
             self.inner.respond(prompt).await
         }
@@ -503,7 +500,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
     )
     .await;
     let error = first.expect_err("missing section reviews must fail");
-    assert!(error.to_string().contains("still needs a valid check"));
+    assert!(error.to_string().contains("still needs a check"));
     assert_eq!(llm.authored.load(Ordering::Relaxed), 1);
     JobStore::new(db.clone())
         .fail(&job.id, "generation_failed", &error.to_string())
@@ -612,7 +609,7 @@ pub(crate) fn clean_review(sections: &[usize], verdicts: &[serde_json::Value]) -
 /// lesson concern it fails. A clean check names none, as every review's does.
 pub(crate) fn section_check(index: usize, defect: Option<&str>) -> serde_json::Value {
     let finding = defect.unwrap_or("No defect was found in this section.");
-    let mut check = json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":finding,"hasDefect":defect.is_some()});
+    let mut check = json!({"passageId":format!("section-{index}-passage-0"),"finding":finding,"hasDefect":defect.is_some()});
     if defect.is_some() {
         check["concerns"] = json!(["promise"]);
     }
@@ -627,8 +624,7 @@ pub(crate) fn review_reply(
     checks: Vec<serde_json::Value>,
     verdicts: &[serde_json::Value],
 ) -> String {
-    let mut reply =
-        json!({"issues":issues,"blockChecks":crate::teaching_review::fixture_checks(checks)});
+    let mut reply = json!({"issues":issues,"blockChecks":checks});
     if !verdicts.is_empty() {
         reply["openFindings"] = json!(verdicts);
     }
@@ -929,7 +925,7 @@ async fn lesson_review_requires_evidence_for_every_section_and_repairs_reported_
         review_reply(
             &[],
             vec![
-                json!({"index":0,"passageId":"section-0-passage-0","finding":"The example contradicts its return value; correct the returned total to match the accumulation.","hasDefect":has_defect}),
+                json!({"passageId":"section-0-passage-0","finding":"The example contradicts its return value; correct the returned total to match the accumulation.","hasDefect":has_defect}),
             ],
             verdicts,
         )
@@ -957,8 +953,8 @@ async fn lesson_review_requires_evidence_for_every_section_and_repairs_reported_
         assert!(prompts[1].contains("Section 1 (candidate blocks-0): The example contradicts"));
     }
     for review in [
-        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![])}),
-        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![json!({"index":0,"passageId":"section-0-invented-passage","finding":"This unsupported review cannot establish that the passage was inspected.","hasDefect":false})])}),
+        json!({"issues":[],"blockChecks":[]}),
+        json!({"issues":[],"blockChecks":vec![json!({"passageId":"section-0-invented-passage","finding":"This unsupported review cannot establish that the passage was inspected.","hasDefect":false})]}),
     ] {
         let model = ScriptedModel {
             outputs: std::sync::Mutex::new(vec![review.to_string()].into()),

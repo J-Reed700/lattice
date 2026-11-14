@@ -992,11 +992,10 @@ async fn an_outline_review_never_checks_against_a_course_plan() -> Result<()> {
 }
 
 fn defect_in_first_section() -> String {
-    let checks = (0..3)
-        .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The first section promises that the tutor certifies the learner's work as expert reviewed.","hasDefect":index == 0,"concerns":if index == 0 {vec!["promise"]} else {vec![]}}))
+    let checks: Vec<serde_json::Value> = (0..3)
+        .map(|index| json!({"passageId":format!("section-{index}-passage-0"),"finding":"The first section promises that the tutor certifies the learner's work as expert reviewed.","hasDefect":index == 0,"concerns":if index == 0 {vec!["promise"]} else {vec![]}}))
         .collect();
-    json!({"issues":[],"blockChecks":crate::lessons::teaching_review::fixture_checks(checks)})
-        .to_string()
+    json!({"issues":[],"blockChecks":checks}).to_string()
 }
 
 fn actionable() -> String {

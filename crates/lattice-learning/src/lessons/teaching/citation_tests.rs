@@ -22,7 +22,7 @@ fn context() -> Value {
 }
 
 fn approval() -> Value {
-    json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![json!({"index":0,"passageId":"section-0-passage-0","finding":"The complete explanation was reviewed and no teaching defect was found.","hasDefect":false})])})
+    json!({"issues":[],"blockChecks":vec![json!({"passageId":"section-0-passage-0","finding":"The complete explanation was reviewed and no teaching defect was found.","hasDefect":false})]})
 }
 
 #[tokio::test]
@@ -350,8 +350,8 @@ async fn a_repair_that_goes_wrong_in_one_block_still_applies_the_edits_of_the_ot
     original["blocks"][2]["citations"] =
         json!([{"sentence":"The tool behaves as described.","sourceIndex":0,"quote":EXCERPT}]);
     let approved = || {
-        let check = |index: usize| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The complete explanation was reviewed and no teaching defect was found.","hasDefect":false});
-        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks((0..3).map(check).collect())}).to_string()
+        let check = |index: usize| json!({"passageId":format!("section-{index}-passage-0"),"finding":"The complete explanation was reviewed and no teaching defect was found.","hasDefect":false});
+        json!({"issues":[],"blockChecks":(0..3).map(check).collect::<Vec<_>>()}).to_string()
     };
     let chained = "This saved reference describes how the example tool behaves.";
     let patch = json!({"edits":[

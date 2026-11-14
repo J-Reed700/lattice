@@ -689,9 +689,8 @@ impl Model {
         if prompt.starts_with("Review instructional quality.") {
             let data = fixture_task(prompt).unwrap();
             let asked = data["sectionIndicesToReview"].as_array().cloned();
-            let checks = data["candidate"]["blocks"].as_array().unwrap().iter().enumerate().filter(|(index,_)|asked.as_ref().is_none_or(|asked|asked.contains(&json!(index)))).map(|(index,block)|json!({"index":index,"passageId":block["bodyPassages"][0]["id"],"finding":"The corrected field-name statement agrees with the concrete example.","hasDefect":false})).collect::<Vec<_>>();
-            let mut answer =
-                json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)});
+            let checks = data["candidate"]["blocks"].as_array().unwrap().iter().enumerate().filter(|(index,_)|asked.as_ref().is_none_or(|asked|asked.contains(&json!(index)))).map(|(index,block)|json!({"passageId":block["bodyPassages"][0]["id"],"finding":"The corrected field-name statement agrees with the concrete example.","hasDefect":false})).collect::<Vec<_>>();
+            let mut answer = json!({"issues":[],"blockChecks":checks});
             if let Some(open) = data["openFindings"].as_array() {
                 answer["openFindings"] = open
                     .iter()

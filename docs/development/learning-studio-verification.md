@@ -1360,7 +1360,7 @@ Teaching approvals bind this decision protocol's version, so an approval from
 the former branch-coupled schema cannot skip the corrected validator. This
 invalidation preserves the draft, inventory and separate factual receipts.
 Section reviews likewise answer with a `blockChecks` array whose entries name
-their section with an application-assigned `section-N` `sectionId` enum, and
+their section by the application-assigned `passageId` they check, and
 the same applies to review-finding decisions (`decisions` entries named by
 `issueId`) and coverage mapping (`passages` entries named by `passageId`);
 a schema with one property per runtime item can exceed Claude's grammar limit.

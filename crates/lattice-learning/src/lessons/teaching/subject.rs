@@ -21,7 +21,7 @@ use std::borrow::Cow;
 /// How the sections are numbered and named, in every review of sections.
 macro_rules! block_numbering {
     () => {
-        "Each candidate block has an explicit zero-based index and bodyPassages whose text concatenates to its complete original body. Give blockChecks one entry for each section listed in sectionIndicesToReview, in the order listed, with that section's section-N ID as its sectionId. The application owns these section IDs; never renumber sections or put question checks in blockChecks. In every issue and finding, name a section or question by its label (the candidate's label field, as in 'Section 3') or its title, never by its section-N ID or its index."
+        "Each candidate block has an explicit zero-based index and bodyPassages whose text concatenates to its complete original body. Give blockChecks one entry for each section listed in sectionIndicesToReview, in the order listed; an entry is for the section its passageId comes from. Never put question checks in blockChecks. In every issue and finding, name a section or question by its label (the candidate's label field, as in 'Section 3') or its title, never by its section-N ID or its index."
     };
 }
 /// How a section's check chooses its passage.

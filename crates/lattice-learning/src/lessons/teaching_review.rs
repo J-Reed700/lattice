@@ -59,32 +59,9 @@ const REVIEW_DRAFT_BRIEF: &str = "Go through the candidate part by part: for a l
 /// The sentence the prose step is given when open findings are asked about.
 const OPEN_FINDINGS_BRIEF: &str = " For each entry of openFindings, read the part it names as the candidate now has it, whether or not sectionIndicesToReview lists that part. Quote the exact words of that part that still show the defect, or, for something left out, the words it should follow. When no words of the part show it any more, leave the quote empty and answer resolved. An open finding's id is never used for a different defect: report that as a new issue.";
 
-#[cfg(test)]
-pub(super) fn fixture_checks(checks: Vec<Value>) -> Value {
-    Value::Array(
-        checks
-            .into_iter()
-            .map(|mut check| {
-                if let Some(fields) = check.as_object_mut() {
-                    let index = fields
-                        .remove("index")
-                        .and_then(|index| index.as_u64())
-                        .and_then(|index| usize::try_from(index).ok());
-                    fields.insert(
-                        "sectionId".into(),
-                        json!(index.map(|index| FindingSite::Section(index).id_text())),
-                    );
-                }
-                check
-            })
-            .collect(),
-    )
-}
-
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct BlockCheck {
-    index: usize,
     passage_id: String,
     finding: String,
     has_defect: bool,
@@ -321,29 +298,23 @@ fn schema(
     properties.insert("issues".into(), json!({"type":"array","items":issue}));
     if !passages.is_empty() {
         required.push("blockChecks");
-        // Each check names an app-owned section ID and one of those
-        // sections' passages; the review holds the passage to its section.
-        let sections: Vec<String> = indices
-            .iter()
-            .map(|index| FindingSite::Section(*index).id_text())
-            .collect();
+        // A check names one passage; the passage's section is the check's.
         let cited: Vec<&str> = indices
             .iter()
             .filter_map(|index| passages.get(*index))
             .flatten()
             .map(String::as_str)
             .collect();
-        let section_id = json!({"type":"string","enum":sections});
         let passage_id = if cited.is_empty() {
             json!({"type":"string"})
         } else {
             json!({"type":"string","enum":cited})
         };
-        let checks = if sections.is_empty() {
+        let checks = if indices.is_empty() {
             json!({"type":"array","maxItems":0,"items":{"type":"string"}})
         } else {
-            let mut required = vec!["sectionId", "passageId", "finding", "hasDefect"];
-            let mut fields = json!({"sectionId":section_id,"passageId":passage_id,"finding":{"type":"string","minLength":1},"hasDefect":{"type":"boolean"}});
+            let mut required = vec!["passageId", "finding", "hasDefect"];
+            let mut fields = json!({"passageId":passage_id,"finding":{"type":"string","minLength":1},"hasDefect":{"type":"boolean"}});
             if let (true, Some(fields)) = (remit == Remit::Lesson, fields.as_object_mut()) {
                 required.push("concerns");
                 fields.insert("concerns".into(), json!({"type":"array","items":{"type":"string","enum":LessonConcern::ids_where(LessonConcern::in_checks)}}));
@@ -600,7 +571,7 @@ fn raises(
     index: usize,
     reading: &Reading<'_>,
 ) -> std::result::Result<bool, String> {
-    let site = FindingSite::Section(index).id_text();
+    let site = FindingSite::Section(index).label();
     let kind = section_kind(reading.candidate, index);
     let takes: Vec<LessonConcern> = LessonConcern::ALL
         .into_iter()
@@ -651,21 +622,12 @@ fn raises(
 
 /// The defect a valid check of section `index` reports, if any.
 fn read_check(
-    mut value: Value,
+    value: Value,
     index: usize,
     continues: Option<FindingId>,
     reading: &Reading<'_>,
 ) -> std::result::Result<Option<Reported>, String> {
     let site = FindingSite::Section(index);
-    let Some(fields) = value.as_object_mut() else {
-        return Err(format!("{} needs an object check.", site.id_text()));
-    };
-    if fields.insert("index".into(), json!(index)).is_some() {
-        return Err(format!(
-            "{}: the sectionId names the section; do not supply an index field.",
-            site.id_text()
-        ));
-    }
     let check: BlockCheck = serde_json::from_value(value).map_err(|_| {
         "A block check has missing, unexpected or incorrectly typed fields.".to_owned()
     })?;
@@ -674,21 +636,11 @@ fn read_check(
             "A block check has missing, unexpected or incorrectly typed fields.".to_owned(),
         );
     }
-    if reading
-        .passages
-        .get(index)
-        .is_none_or(|ids| !ids.contains(&check.passage_id))
-    {
-        return Err(format!(
-            "{}: passageId must be one of that section's bodyPassages IDs.",
-            site.id_text()
-        ));
-    }
     if check.finding.trim().is_empty() {
         return if reading.settle {
             Ok(None)
         } else {
-            Err(format!("{}: finding must not be blank.", site.id_text()))
+            Err(format!("{}: finding must not be blank.", site.label()))
         };
     }
     if reading.remit == Remit::Lesson && check.has_defect {
@@ -707,6 +659,16 @@ fn read_check(
     }))
 }
 
+/// The reviewed section whose passages include `passage_id`.
+fn section_of(reading: &Reading<'_>, passage_id: &str) -> Option<usize> {
+    reading.sections.iter().copied().find(|index| {
+        reading
+            .passages
+            .get(*index)
+            .is_some_and(|ids| ids.iter().any(|id| id == passage_id))
+    })
+}
+
 fn read_checks(
     checks: Vec<Value>,
     reading: &Reading<'_>,
@@ -719,39 +681,38 @@ fn read_checks(
             .as_object_mut()
             .and_then(|fields| fields.remove("continues"))
             .and_then(|id| id.as_str().and_then(|id| continuing(reading, id)));
-        let section = value
-            .as_object_mut()
-            .and_then(|fields| fields.remove("sectionId"))
-            .and_then(|id| id.as_str().map(str::to_owned));
-        match section {
-            Some(section) => named.push((section, value, continued)),
+        match value.get("passageId").and_then(Value::as_str) {
             None => note(
                 problems,
-                "A block check needs the sectionId of the section it checks.".into(),
+                "A block check needs a passageId from the bodyPassages of the section it checks."
+                    .into(),
             ),
+            Some(passage_id) => match section_of(reading, passage_id) {
+                Some(index) => named.push((index, value, continued)),
+                None => note(
+                    problems,
+                    format!(
+                        "passageId {passage_id} is not in the bodyPassages of a section under review."
+                    ),
+                ),
+            },
         }
     }
     let mut seen = HashSet::new();
-    let repeated: HashSet<String> = named
+    let repeated: HashSet<usize> = named
         .iter()
-        .filter(|(section, _, _)| !seen.insert(section.clone()))
-        .map(|(section, _, _)| section.clone())
+        .filter(|(index, _, _)| !seen.insert(*index))
+        .map(|(index, _, _)| *index)
         .collect();
     let mut checked = BTreeSet::new();
-    for (section, value, continued) in named {
-        let Some(index) = reading
-            .sections
-            .iter()
-            .copied()
-            .find(|index| section == FindingSite::Section(*index).id_text())
-        else {
-            note(problems, format!("Section ID {section} was not requested."));
-            continue;
-        };
-        if repeated.contains(&section) {
+    for (index, value, continued) in named {
+        if repeated.contains(&index) {
             note(
                 problems,
-                format!("{section} was checked more than once; give each section one check."),
+                format!(
+                    "{} was checked more than once; give each section one check.",
+                    FindingSite::Section(index).label()
+                ),
             );
             continue;
         }
@@ -772,8 +733,8 @@ fn read_checks(
             note(
                 problems,
                 format!(
-                    "{} still needs a valid check.",
-                    FindingSite::Section(*index).id_text()
+                    "{} still needs a check: one blockChecks entry whose passageId is from its bodyPassages.",
+                    FindingSite::Section(*index).label()
                 ),
             );
         }

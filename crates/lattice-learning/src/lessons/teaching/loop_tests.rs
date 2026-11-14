@@ -65,7 +65,7 @@ fn judged_open(defect: Option<&str>, verdicts: &[Value]) -> String {
 fn section_check(defect: Option<&str>) -> Value {
     let finding =
         defect.unwrap_or("The complete explanation was reviewed and no teaching defect was found.");
-    json!({"index":0,"passageId":"section-0-passage-0","finding":finding,"hasDefect":defect.is_some()})
+    json!({"passageId":"section-0-passage-0","finding":finding,"hasDefect":defect.is_some()})
 }
 
 fn actionable() -> String {
@@ -673,7 +673,7 @@ async fn a_finding_on_a_sentence_no_claim_stands_on_is_repaired_inside_a_paragra
     );
     let candidate = json!({"blocks":[{"kind":"explanation","title":"Example","body":body,"rubric":[],"sourceIndex":0,"quote":EXCERPT}],"questions":[]});
     let defect = || {
-        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![json!({"index":0,"passageId":"section-0-passage-1","finding":"This passage promises that the tutor will certify the learner's mitochondria count as expert reviewed.","hasDefect":true,"concerns":["promise"]})])}).to_string()
+        json!({"issues":[],"blockChecks":vec![json!({"passageId":"section-0-passage-1","finding":"This passage promises that the tutor will certify the learner's mitochondria count as expert reviewed.","hasDefect":true,"concerns":["promise"]})]}).to_string()
     };
     let fix = json!({"edits":[{"path":"/blocks/0/body","before":"grows fewer mitochondria","after":"grows more mitochondria"}]}).to_string();
     let sentence = |quote: &str| Protected {
@@ -1731,7 +1731,6 @@ fn parts_checked(asked: &[usize], defective: &[(usize, usize)], verdicts: &[Valu
         .map(|index| {
             let found = defective.iter().find(|(part, _)| part == index);
             json!({
-                "index": index,
                 "passageId": format!("section-{index}-passage-{}", found.map_or(0, |(_, paragraph)| *paragraph)),
                 "finding": if found.is_some() {
                     FIRST_IDEA_PROMISE
@@ -2209,10 +2208,10 @@ fn shaped_judgement(candidate: &Value, fault: Option<(usize, &str)>) -> String {
 
 fn shaped_review(candidate: &Value) -> String {
     let count = candidate["blocks"].as_array().unwrap().len();
-    let checks = (0..count)
-        .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"Reviewed; no teaching defect was found.","hasDefect":false}))
+    let checks: Vec<Value> = (0..count)
+        .map(|index| json!({"passageId":format!("section-{index}-passage-0"),"finding":"Reviewed; no teaching defect was found.","hasDefect":false}))
         .collect();
-    json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)}).to_string()
+    json!({"issues":[],"blockChecks":checks}).to_string()
 }
 
 async fn waiting_after_review(candidate: &Value, protected: bool) -> Result<Vec<String>> {
@@ -2921,12 +2920,9 @@ impl ByRequest {
         let listed =
             |key: &str| -> Vec<Value> { sent[key].as_array().cloned().unwrap_or_default() };
         let open = listed("openFindings");
-        let sections: Vec<usize> = schema
-            .pointer("/properties/blockChecks/items/properties/sectionId/enum")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|id| id.as_str()?.strip_prefix("section-")?.parse().ok())
+        let sections: Vec<usize> = listed("sectionIndicesToReview")
+            .iter()
+            .filter_map(|index| usize::try_from(index.as_u64()?).ok())
             .collect();
         let passages_of = |index: usize| -> Vec<(String, String)> {
             candidate["blocks"][index]["bodyPassages"]
@@ -2956,7 +2952,6 @@ impl ByRequest {
                 .unwrap_or_default();
             let has_defect = found.is_some_and(|(id, _)| self.restates || !covered(*index, id));
             let mut check = json!({
-                "sectionId": format!("section-{index}"),
                 "passageId": id,
                 "finding": if has_defect { FIRST_IDEA_PROMISE } else { "Nothing is wrong here." },
                 "hasDefect": has_defect,
@@ -3517,12 +3512,12 @@ async fn a_draft_the_reviewer_saw_under_one_authoring_context_is_reviewed_again_
 
 #[tokio::test]
 async fn a_contradiction_between_two_parts_is_kept_with_both_and_repaired() -> Result<()> {
-    let none_wrong = |index: usize| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"Nothing is wrong here.","hasDefect":false});
+    let none_wrong = |index: usize| json!({"passageId":format!("section-{index}-passage-0"),"finding":"Nothing is wrong here.","hasDefect":false});
     let recheck = |id: &str, issues: Vec<&str>, section: usize| {
         json!({
             "openFindings": [{"id": id, "quote": "", "verdict": "resolved"}],
             "issues": issues.iter().map(|note| json!({"note": note, "concern": "promise"})).collect::<Vec<_>>(),
-            "blockChecks": crate::teaching_review::fixture_checks(vec![none_wrong(section)]),
+            "blockChecks": vec![none_wrong(section)],
         })
         .to_string()
     };
@@ -3738,7 +3733,7 @@ async fn the_reference_check_is_asked_only_about_the_reviewers_findings() {
     const NOTE: &str = "The first section promises that the tutor certifies the learner's work as expert reviewed.";
     let candidate = shaped_lesson();
     let checks = (0..candidate["blocks"].as_array().unwrap().len())
-        .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":if index == 0 {NOTE} else {"Reviewed; no teaching defect was found."},"hasDefect":index == 0,"concerns":if index == 0 {vec!["promise"]} else {vec![]}}))
+        .map(|index| json!({"passageId":format!("section-{index}-passage-0"),"finding":if index == 0 {NOTE} else {"Reviewed; no teaching defect was found."},"hasDefect":index == 0,"concerns":if index == 0 {vec!["promise"]} else {vec![]}}))
         .collect();
     let model = model(vec![
         shaped_solutions(&candidate),
@@ -4134,7 +4129,7 @@ fn judged_issues(issues: &[&str]) -> String {
     review_reply(
         issues,
         vec![
-            json!({"index":0,"passageId":"section-0-passage-0","finding":"The complete explanation was reviewed and no teaching defect was found.","hasDefect":false}),
+            json!({"passageId":"section-0-passage-0","finding":"The complete explanation was reviewed and no teaching defect was found.","hasDefect":false}),
         ],
         &[],
     )

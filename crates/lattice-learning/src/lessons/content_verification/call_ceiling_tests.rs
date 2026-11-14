@@ -104,13 +104,13 @@ fn fault(prompt: &str, section: usize, sentence: &str) -> String {
                             .is_some_and(|text| text.contains(sentence))
                     })
                     .unwrap();
-                json!({"index":index,"passageId":passage["id"],"finding":"This step promises that the tutor runs the learner's code and reports whether the tests pass.","hasDefect":true,"concerns":["promise"]})
+                json!({"passageId":passage["id"],"finding":"This step promises that the tutor runs the learner's code and reports whether the tests pass.","hasDefect":true,"concerns":["promise"]})
             } else {
-                json!({"index":index,"passageId":passages[0]["id"],"finding":"The section explains its point and asks nothing it has not set up.","hasDefect":false})
+                json!({"passageId":passages[0]["id"],"finding":"The section explains its point and asks nothing it has not set up.","hasDefect":false})
             }
         })
         .collect();
-    json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)}).to_string()
+    json!({"issues":[],"blockChecks":checks}).to_string()
 }
 
 #[async_trait::async_trait]

@@ -959,27 +959,24 @@ async fn settle_does_not_rerun_teaching_review_on_cut_lesson_when_surviving_sect
 
     let defect_review = json!({
         "issues": [],
-        "blockChecks": crate::teaching_review::fixture_checks(vec![
+        "blockChecks": vec![
             json!({
-                "index": 0,
                 "passageId": "section-0-passage-0",
                 "finding": "Section 0 promises expert certification of the learner's work.",
                 "hasDefect": true,
                 "concerns": ["promise"],
             }),
             json!({
-                "index": 1,
                 "passageId": "section-1-passage-0",
                 "finding": "Section 1 is good.",
                 "hasDefect": false,
             }),
             json!({
-                "index": 2,
                 "passageId": "section-2-passage-0",
                 "finding": "Section 2 is good.",
                 "hasDefect": false,
             }),
-        ])
+        ]
     })
     .to_string();
 
@@ -1128,10 +1125,10 @@ async fn the_review_after_cuts_with_no_claim_left_asks_for_no_count_the_cuts_spe
     let questions = without["questions"].as_array().unwrap().len();
     let solved = json!({"answers":(0..questions).map(|index| json!({"index":index,"reason":"The fixture's key.","correctIndices":[0],"answer":"","blankAnswers":[],"matches":[],"orderedValues":[]})).collect::<Vec<_>>()});
     let judged = json!({"checks":(0..questions).map(|index| json!({"id":format!("new-{index}"),"finding":"","hasDefect":false,"repeats":[]})).collect::<Vec<_>>()});
-    let checks = (0..without["blocks"].as_array().unwrap().len())
-        .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"Reviewed; no teaching defect was found.","hasDefect":false}))
+    let checks: Vec<serde_json::Value> = (0..without["blocks"].as_array().unwrap().len())
+        .map(|index| json!({"passageId":format!("section-{index}-passage-0"),"finding":"Reviewed; no teaching defect was found.","hasDefect":false}))
         .collect();
-    let review = json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)});
+    let review = json!({"issues":[],"blockChecks":checks});
     let llm = model(&[solved, judged, review]);
     let sources = sources();
     let references = ReferenceCollection::lexical(&sources).unwrap();

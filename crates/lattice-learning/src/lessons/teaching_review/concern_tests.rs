@@ -39,7 +39,7 @@ fn read_lesson(candidate: &Value, reply: &Value, settle: bool) -> Result<Judged>
 }
 
 fn check(section: usize, has_defect: bool, concerns: &[&str]) -> Value {
-    json!({"sectionId":format!("section-{section}"),"passageId":format!("section-{section}-passage-0"),"finding":"The section was checked.","hasDefect":has_defect,"concerns":concerns})
+    json!({"passageId":format!("section-{section}-passage-0"),"finding":"The section was checked.","hasDefect":has_defect,"concerns":concerns})
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn a_lesson_review_asks_only_for_its_own_concerns() {
         .unwrap();
     assert_eq!(
         required,
-        &json!(["sectionId", "passageId", "finding", "hasDefect", "concerns"])
+        &json!(["passageId", "finding", "hasDefect", "concerns"])
     );
     assert_eq!(
         lesson.pointer("/properties/issues/items"),
@@ -80,7 +80,7 @@ fn a_lesson_review_asks_only_for_its_own_concerns() {
         .keys()
         .collect();
     keys.sort();
-    assert_eq!(keys, ["finding", "hasDefect", "passageId", "sectionId"]);
+    assert_eq!(keys, ["finding", "hasDefect", "passageId"]);
 }
 
 #[test]
