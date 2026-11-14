@@ -49,7 +49,7 @@ async fn lesson_review_only_rewrites_established_findings() -> Result<()> {
         let decision = json!({"decisions":[{"issueId":"issue-0","verdict":if actionable {"actionable"} else {"not_established"},"basis":"external_fact","evidenceIds":["reference-0"],"partId":"lesson","requirementId":null,"reason":"The source comparison determines whether this proposed correction is justified."}]});
         let mut outputs = vec![review.to_string(), decision.to_string()];
         if actionable {
-            outputs.extend([json!({"edits":[{"path":"/blocks/0/title","before":"Example","after":"Corrected example"}]}).to_string(), clean_review(&[0], &[verdict("reviewer/1", "resolved")])]);
+            outputs.extend([json!({"edits":[{"path":"/blocks/0/title","before":"Example","after":"Corrected example"}]}).to_string(), clean_review(&[verdict("reviewer/1", "resolved")])]);
         }
         let model = ScriptedModel {
             outputs: Mutex::new(outputs.into()),
