@@ -88,29 +88,18 @@ impl Rounds {
 /// holding `sentence`, and none elsewhere.
 fn fault(prompt: &str, section: usize, sentence: &str) -> String {
     let data = fixture_task(prompt).unwrap();
-    let checks: Vec<Value> = data["candidate"]["blocks"]
+    let passage = data["candidate"]["blocks"][section]["bodyPassages"]
         .as_array()
         .unwrap()
         .iter()
-        .enumerate()
-        .map(|(index, block)| {
-            let passages = block["bodyPassages"].as_array().unwrap();
-            if index == section {
-                let passage = passages
-                    .iter()
-                    .find(|passage| {
-                        passage["text"]
-                            .as_str()
-                            .is_some_and(|text| text.contains(sentence))
-                    })
-                    .unwrap();
-                json!({"passageId":passage["id"],"finding":"This step promises that the tutor runs the learner's code and reports whether the tests pass.","hasDefect":true,"concerns":["promise"]})
-            } else {
-                json!({"passageId":passages[0]["id"],"finding":"The section explains its point and asks nothing it has not set up.","hasDefect":false})
-            }
+        .find(|passage| {
+            passage["text"]
+                .as_str()
+                .is_some_and(|text| text.contains(sentence))
         })
-        .collect();
-    json!({"issues":[],"blockChecks":checks}).to_string()
+        .unwrap();
+    let defect = json!({"passageId":passage["id"],"finding":"This step promises that the tutor runs the learner's code and reports whether the tests pass.","concerns":["promise"]});
+    json!({"issues":[],"sectionDefects":[defect]}).to_string()
 }
 
 #[async_trait::async_trait]

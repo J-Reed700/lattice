@@ -15,15 +15,14 @@ use lattice_core::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{BTreeSet, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub(crate) use concerns::LessonConcern;
 
-pub(super) const POLICY: Protocol = protocol!("section-review", 6);
+pub(super) const POLICY: Protocol = protocol!("section-review", 7);
 
 /// The saved answers of the section review, by what it was given.
-const FINDINGS_KEYS: Protocol = protocol!("teaching-review-findings", 6);
+const FINDINGS_KEYS: Protocol = protocol!("teaching-review-findings", 7);
 
 /// The call that reviews a lesson's sections or an outline.
 pub(crate) struct TeachingReview;
@@ -54,17 +53,16 @@ const REVIEW_ANSWER_TOKENS: usize = 6000;
 /// What the reviewer works through in prose before its findings are written
 /// to the response schema, where each section's verdict would otherwise be
 /// chosen as it is written.
-const REVIEW_DRAFT_BRIEF: &str = "Go through the candidate part by part: for a lesson, every section listed in sectionIndicesToReview and every question; for an outline, every module. Solve each exercise and question yourself and check each worked example against its stated premises and result. For each part say what you checked, what you found and whether it has a material defect.";
+const REVIEW_DRAFT_BRIEF: &str = "Go through the candidate part by part: for a lesson, every section whose inReview is true and every question; for an outline, every module. Solve each exercise and question yourself and check each worked example against its stated premises and result. For each part say what you checked, what you found and whether it has a material defect.";
 
 /// The sentence the prose step is given when open findings are asked about.
-const OPEN_FINDINGS_BRIEF: &str = " For each entry of openFindings, read the part it names as the candidate now has it, whether or not sectionIndicesToReview lists that part. Quote the exact words of that part that still show the defect, or, for something left out, the words it should follow. When no words of the part show it any more, leave the quote empty and answer resolved. An open finding's id is never used for a different defect: report that as a new issue.";
+const OPEN_FINDINGS_BRIEF: &str = " For each entry of openFindings, read the part it names as the candidate now has it, whether or not that part is in review. Quote the exact words of that part that still show the defect, or, for something left out, the words it should follow. When no words of the part show it any more, leave the quote empty and answer resolved. An open finding's id is never used for a different defect: report that as a new issue.";
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct BlockCheck {
+struct SectionDefect {
     passage_id: String,
     finding: String,
-    has_defect: bool,
     #[serde(default)]
     concerns: Option<Vec<LessonConcern>>,
 }
@@ -77,8 +75,8 @@ struct BlockCheck {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Review {
     issues: Vec<Issue>,
-    #[serde(default, rename = "blockChecks")]
-    block_checks: Vec<Value>,
+    #[serde(default, rename = "sectionDefects")]
+    section_defects: Vec<Value>,
     #[serde(default, rename = "openFindings")]
     open_findings: Vec<Value>,
 }
@@ -161,7 +159,7 @@ pub struct Reported {
     pub note: String,
     pub summary: String,
     pub passage: Option<String>,
-    /// The app-owned id of the passage a section check chose.
+    /// The app-owned id of the passage a section defect names.
     pub passage_id: Option<String>,
     /// The open finding the reviewer says this defect is.
     #[serde(default)]
@@ -212,7 +210,7 @@ pub(crate) fn passages_of(candidate: &Value) -> Vec<Vec<(String, String)>> {
 
 // Preserve every byte, including code indentation, newlines and Unicode. IDs
 // belong only to this candidate; nothing is normalized or fuzzy-matched.
-fn review_candidate(candidate: &Value) -> (Value, Vec<Vec<String>>) {
+fn review_candidate(candidate: &Value, sections: &[usize]) -> (Value, Vec<Vec<String>>) {
     let all = passages_of(candidate);
     let mut candidate = candidate.clone();
     if let Some(blocks) = candidate.get_mut("blocks").and_then(Value::as_array_mut) {
@@ -225,7 +223,7 @@ fn review_candidate(candidate: &Value) -> (Value, Vec<Vec<String>>) {
                 .collect();
             if let Some(block) = block.as_object_mut() {
                 block.remove("body");
-                block.insert("index".into(), json!(index));
+                block.insert("inReview".into(), json!(sections.contains(&index)));
                 block.insert("label".into(), json!(FindingSite::Section(index).label()));
                 block.insert("bodyPassages".into(), json!(passages));
             }
@@ -297,8 +295,7 @@ fn schema(
     };
     properties.insert("issues".into(), json!({"type":"array","items":issue}));
     if !passages.is_empty() {
-        required.push("blockChecks");
-        // A check names one passage; the passage's section is the check's.
+        required.push("sectionDefects");
         let cited: Vec<&str> = indices
             .iter()
             .filter_map(|index| passages.get(*index))
@@ -310,11 +307,12 @@ fn schema(
         } else {
             json!({"type":"string","enum":cited})
         };
-        let checks = if indices.is_empty() {
+        let defects = if indices.is_empty() {
             json!({"type":"array","maxItems":0,"items":{"type":"string"}})
         } else {
-            let mut required = vec!["passageId", "finding", "hasDefect"];
-            let mut fields = json!({"passageId":passage_id,"finding":{"type":"string","minLength":1},"hasDefect":{"type":"boolean"}});
+            let mut required = vec!["passageId", "finding"];
+            let mut fields =
+                json!({"passageId":passage_id,"finding":{"type":"string","minLength":1}});
             if let (true, Some(fields)) = (remit == Remit::Lesson, fields.as_object_mut()) {
                 required.push("concerns");
                 fields.insert("concerns".into(), json!({"type":"array","items":{"type":"string","enum":LessonConcern::ids_where(LessonConcern::in_checks)}}));
@@ -325,7 +323,7 @@ fn schema(
             }
             json!({"type":"array","items":{"type":"object","additionalProperties":false,"required":required,"properties":fields}})
         };
-        properties.insert("blockChecks".into(), checks);
+        properties.insert("sectionDefects".into(), defects);
     }
     json!({"type":"object","additionalProperties":false,"required":required,"properties":properties})
 }
@@ -421,7 +419,7 @@ fn issue_concern_allowed(
     match concern {
         Some(concern) if concern.in_issues() => true,
         Some(concern) => {
-            let message = format!("An issue's concern must be one of {allowed}; report {} in the check of the section that holds it.", concern.id());
+            let message = format!("An issue's concern must be one of {allowed}; report {} in the sectionDefects entry of the section that holds it.", concern.id());
             refuse(reading, problems, "an issue", message);
             false
         }
@@ -563,7 +561,7 @@ fn section_kind(candidate: &Value, index: usize) -> Option<LearningBlockKind> {
         .and_then(LearningBlockKind::parse)
 }
 
-/// Whether a lesson's check of section `index` that found a defect names a
+/// Whether a lesson's defect in section `index` names a
 /// concern its kind takes. A reply that is not settled is refused instead if
 /// it names none, or one the kind does not take.
 fn raises(
@@ -578,8 +576,8 @@ fn raises(
         .filter(|concern| concern.takes(kind.as_ref()))
         .collect();
     let what = match &kind {
-        Some(kind) => format!("a {} section", kind.as_str()),
-        None => "a section of unknown kind".to_owned(),
+        Some(kind) => format!("of kind {}", kind.as_str()),
+        None => "of unknown kind".to_owned(),
     };
     let mut once: Vec<LessonConcern> = Vec::new();
     for concern in named {
@@ -589,7 +587,10 @@ fn raises(
     }
     let mut messages = Vec::new();
     if once.is_empty() {
-        messages.push(format!("{site}: hasDefect needs the concerns the section fails, from those its kind takes: {}.", LessonConcern::list(takes.iter().copied())));
+        messages.push(format!(
+            "{site}: a defect needs the concerns the section fails, from those its kind takes: {}.",
+            LessonConcern::list(takes.iter().copied())
+        ));
     }
     let mut kept = 0;
     for concern in once {
@@ -607,7 +608,7 @@ fn raises(
         for message in &messages {
             trace::refused(
                 Stage::TeachingReview,
-                &format!("{site} check"),
+                &format!("{site} defect"),
                 message,
                 None,
             );
@@ -620,45 +621,6 @@ fn raises(
     }
 }
 
-/// The defect a valid check of section `index` reports, if any.
-fn read_check(
-    value: Value,
-    index: usize,
-    continues: Option<FindingId>,
-    reading: &Reading<'_>,
-) -> std::result::Result<Option<Reported>, String> {
-    let site = FindingSite::Section(index);
-    let check: BlockCheck = serde_json::from_value(value).map_err(|_| {
-        "A block check has missing, unexpected or incorrectly typed fields.".to_owned()
-    })?;
-    if reading.remit == Remit::Open && check.concerns.is_some() {
-        return Err(
-            "A block check has missing, unexpected or incorrectly typed fields.".to_owned(),
-        );
-    }
-    if check.finding.trim().is_empty() {
-        return if reading.settle {
-            Ok(None)
-        } else {
-            Err(format!("{}: finding must not be blank.", site.label()))
-        };
-    }
-    if reading.remit == Remit::Lesson && check.has_defect {
-        let named = check.concerns.clone().unwrap_or_default();
-        if !raises(&named, index, reading)? {
-            return Ok(None);
-        }
-    }
-    Ok(check.has_defect.then(|| Reported {
-        site: Some(site),
-        note: format!("{}: {}", site.note_label(), check.finding),
-        summary: check.finding.trim().to_owned(),
-        passage: passage_text(reading.shown, index, &check.passage_id),
-        passage_id: Some(check.passage_id.clone()),
-        continues,
-    }))
-}
-
 /// The reviewed section whose passages include `passage_id`.
 fn section_of(reading: &Reading<'_>, passage_id: &str) -> Option<usize> {
     reading.sections.iter().copied().find(|index| {
@@ -669,74 +631,88 @@ fn section_of(reading: &Reading<'_>, passage_id: &str) -> Option<usize> {
     })
 }
 
-fn read_checks(
-    checks: Vec<Value>,
+const WRONG_DEFECT_FIELDS: &str =
+    "A section defect has missing, unexpected or incorrectly typed fields.";
+
+/// The defect a section-defect entry reports, if it is usable.
+fn read_defect(
+    mut value: Value,
+    reading: &Reading<'_>,
+    problems: &mut Vec<String>,
+) -> Option<Reported> {
+    let continues = value
+        .as_object_mut()
+        .and_then(|fields| fields.remove("continues"))
+        .and_then(|id| id.as_str().and_then(|id| continuing(reading, id)));
+    let Ok(defect) = serde_json::from_value::<SectionDefect>(value) else {
+        refuse(
+            reading,
+            problems,
+            "a section defect",
+            WRONG_DEFECT_FIELDS.into(),
+        );
+        return None;
+    };
+    if reading.remit == Remit::Open && defect.concerns.is_some() {
+        refuse(
+            reading,
+            problems,
+            "a section defect",
+            WRONG_DEFECT_FIELDS.into(),
+        );
+        return None;
+    }
+    let Some(index) = section_of(reading, &defect.passage_id) else {
+        let message = format!(
+            "passageId {} is not a passage of a section in review.",
+            defect.passage_id
+        );
+        refuse(reading, problems, "a section defect", message);
+        return None;
+    };
+    let site = FindingSite::Section(index);
+    if defect.finding.trim().is_empty() {
+        let message = format!("{}: finding must not be blank.", site.label());
+        refuse(
+            reading,
+            problems,
+            &format!("{} defect", site.label()),
+            message,
+        );
+        return None;
+    }
+    if reading.remit == Remit::Lesson {
+        let named = defect.concerns.clone().unwrap_or_default();
+        match raises(&named, index, reading) {
+            Ok(true) => {}
+            Ok(false) => return None,
+            Err(message) => {
+                note(problems, message);
+                return None;
+            }
+        }
+    }
+    Some(Reported {
+        site: Some(site),
+        note: format!("{}: {}", site.note_label(), defect.finding),
+        summary: defect.finding.trim().to_owned(),
+        passage: passage_text(reading.shown, index, &defect.passage_id),
+        passage_id: Some(defect.passage_id.clone()),
+        continues,
+    })
+}
+
+fn read_defects(
+    defects: Vec<Value>,
     reading: &Reading<'_>,
     reported: &mut Vec<Reported>,
     problems: &mut Vec<String>,
 ) {
-    let mut named = Vec::new();
-    for mut value in checks {
-        let continued = value
-            .as_object_mut()
-            .and_then(|fields| fields.remove("continues"))
-            .and_then(|id| id.as_str().and_then(|id| continuing(reading, id)));
-        match value.get("passageId").and_then(Value::as_str) {
-            None => note(
-                problems,
-                "A block check needs a passageId from the bodyPassages of the section it checks."
-                    .into(),
-            ),
-            Some(passage_id) => match section_of(reading, passage_id) {
-                Some(index) => named.push((index, value, continued)),
-                None => note(
-                    problems,
-                    format!(
-                        "passageId {passage_id} is not in the bodyPassages of a section under review."
-                    ),
-                ),
-            },
-        }
-    }
-    let mut seen = HashSet::new();
-    let repeated: HashSet<usize> = named
-        .iter()
-        .filter(|(index, _, _)| !seen.insert(*index))
-        .map(|(index, _, _)| *index)
-        .collect();
-    let mut checked = BTreeSet::new();
-    for (index, value, continued) in named {
-        if repeated.contains(&index) {
-            note(
-                problems,
-                format!(
-                    "{} was checked more than once; give each section one check.",
-                    FindingSite::Section(index).label()
-                ),
-            );
-            continue;
-        }
-        match read_check(value, index, continued, reading) {
-            Ok(report) => {
-                checked.insert(index);
-                if let Some(report) = report {
-                    if !reported.iter().any(|known| known.note == report.note) {
-                        reported.push(report);
-                    }
-                }
+    for value in defects {
+        if let Some(report) = read_defect(value, reading, problems) {
+            if !reported.iter().any(|known| known.note == report.note) {
+                reported.push(report);
             }
-            Err(problem) => note(problems, problem),
-        }
-    }
-    for index in reading.sections {
-        if !checked.contains(index) {
-            note(
-                problems,
-                format!(
-                    "{} still needs a check: one blockChecks entry whose passageId is from its bodyPassages.",
-                    FindingSite::Section(*index).label()
-                ),
-            );
         }
     }
 }
@@ -745,7 +721,7 @@ fn read_checks(
 fn read_review(raw: &str) -> Result<Review> {
     generation::parse_json(raw).map_err(|_| {
         AppError::InvalidInput(
-            "The review was incomplete. Give the issues and a check for every requested section."
+            "The review could not be read. Give issues and sectionDefects as the schema has them."
                 .into(),
         )
     })
@@ -758,7 +734,12 @@ fn read(raw: &str, reading: &Reading<'_>) -> Result<Judged> {
     let mut reported = Vec::new();
     read_issues(review.issues, reading, &mut reported, &mut problems);
     let verdicts = read_verdicts(review.open_findings, reading, &mut problems);
-    read_checks(review.block_checks, reading, &mut reported, &mut problems);
+    read_defects(
+        review.section_defects,
+        reading,
+        &mut reported,
+        &mut problems,
+    );
     if problems.is_empty() {
         Ok(Judged { verdicts, reported })
     } else {
@@ -767,8 +748,8 @@ fn read(raw: &str, reading: &Reading<'_>) -> Result<Judged> {
 }
 
 /// What the reviewer found: its verdict on each finding in `scope.asked`,
-/// and the defects it reports beyond those. A defect of a section's check is
-/// placed in that section; a reviewer's issue is placed later, by the
+/// and the defects it reports beyond those. A section defect is placed in the
+/// section its passage is in, and a section with no entry has none; a reviewer's issue is placed later, by the
 /// evidence check. A reply that cannot be read is corrected once. In the
 /// second, a verdict that cannot be used leaves its finding as it stood, as
 /// an unjudged statement is left (claim classes design §3.2); anything else
@@ -802,21 +783,25 @@ pub async fn review(
         inputs.insert(name.into(), value);
     }
     let key = FINDINGS_KEYS.key(sha256_hex(Value::Object(inputs).to_string()));
-    let (reviewed, passages) = review_candidate(candidate);
-    prompt.insert("candidate".into(), reviewed.clone());
-    let excerpts = prompt
-        .get_mut("authoringContext")
-        .and_then(|context| WriterExcerpts::take(llm, context, candidate));
+    let count = candidate
+        .get("blocks")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
     let sections: Vec<usize> = scope.sections.map_or_else(
-        || (0..passages.len()).collect(),
+        || (0..count).collect(),
         |sections| {
             sections
                 .iter()
                 .copied()
-                .filter(|index| *index < passages.len())
+                .filter(|index| *index < count)
                 .collect()
         },
     );
+    let (reviewed, passages) = review_candidate(candidate, &sections);
+    prompt.insert("candidate".into(), reviewed.clone());
+    let excerpts = prompt
+        .get_mut("authoringContext")
+        .and_then(|context| WriterExcerpts::take(llm, context, candidate));
     let asked: Vec<&Asked> = scope.asked.into_iter().flatten().collect();
     let reading = |settle: bool| Reading {
         candidate,
@@ -836,7 +821,6 @@ pub async fn review(
         );
         return Ok(saved);
     }
-    prompt.insert("sectionIndicesToReview".into(), json!(sections));
     let brief = if asked.is_empty() {
         REVIEW_DRAFT_BRIEF.to_owned()
     } else {

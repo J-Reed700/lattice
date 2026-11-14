@@ -22,7 +22,7 @@ fn context() -> Value {
 }
 
 fn approval() -> Value {
-    json!({"issues":[],"blockChecks":vec![json!({"passageId":"section-0-passage-0","finding":"The complete explanation was reviewed and no teaching defect was found.","hasDefect":false})]})
+    json!({"issues":[],"sectionDefects":[]})
 }
 
 #[tokio::test]
@@ -349,10 +349,7 @@ async fn a_repair_that_goes_wrong_in_one_block_still_applies_the_edits_of_the_ot
     original["blocks"][1]["title"] = json!("Example");
     original["blocks"][2]["citations"] =
         json!([{"sentence":"The tool behaves as described.","sourceIndex":0,"quote":EXCERPT}]);
-    let approved = || {
-        let check = |index: usize| json!({"passageId":format!("section-{index}-passage-0"),"finding":"The complete explanation was reviewed and no teaching defect was found.","hasDefect":false});
-        json!({"issues":[],"blockChecks":(0..3).map(check).collect::<Vec<_>>()}).to_string()
-    };
+    let approved = || json!({"issues":[],"sectionDefects":[]}).to_string();
     let chained = "This saved reference describes how the example tool behaves.";
     let patch = json!({"edits":[
         {"path":"/blocks/0/quote","before":invented,"after":EXCERPT},
@@ -363,7 +360,7 @@ async fn a_repair_that_goes_wrong_in_one_block_still_applies_the_edits_of_the_ot
         {"path":"/blocks/2/citations/0/quote","before":chained,"after":EXCERPT}
     ]});
     let model = ScriptedModel {
-        outputs: Mutex::new(vec![approved(), patch.to_string(), clean_review(&[0], &[])].into()),
+        outputs: Mutex::new(vec![approved(), patch.to_string(), clean_review(&[])].into()),
         prompts: Mutex::new(Vec::new()),
     };
 

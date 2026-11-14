@@ -4,18 +4,10 @@ use super::*;
 use crate::content_verification::tests::fixture_task;
 use crate::lessons::course_generation_tests::{property_count, ScriptedModel};
 
-fn check(index: usize) -> Value {
-    json!({"passageId":format!("section-{index}-passage-0"),"finding":"The explanation correctly distinguishes the stated inputs and resulting behavior.","hasDefect":false})
-}
-
 fn passages(sections: usize) -> Vec<Vec<String>> {
     (0..sections)
         .map(|i| vec![format!("section-{i}-passage-0")])
         .collect()
-}
-
-fn reply(checks: Vec<Value>) -> Value {
-    json!({"issues":[],"blockChecks":checks})
 }
 
 fn model(replies: Vec<Value>) -> ScriptedModel {
@@ -51,142 +43,39 @@ fn the_schema_is_as_large_for_sixteen_sections_as_for_one() {
         schema(&indices, &passages(sections), &[], Remit::Open)
     };
     assert_eq!(property_count(&size(1)), property_count(&size(16)));
-    let listed = &size(16)["properties"]["blockChecks"]["items"]["properties"]["passageId"]["enum"];
+    let listed =
+        &size(16)["properties"]["sectionDefects"]["items"]["properties"]["passageId"]["enum"];
     assert_eq!(listed.as_array().map(Vec::len), Some(16));
 }
 
 #[test]
-fn the_schema_accepts_one_check_per_section_and_only_known_ids() {
+fn the_schema_accepts_entries_with_only_known_passages_and_no_section_field() {
     let validator =
         jsonschema::JSONSchema::compile(&schema(&[0, 1, 2], &passages(3), &[], Remit::Open))
             .unwrap();
-    let mut response = reply(vec![check(0), check(1), check(2)]);
+    let mut response = defects_reply(vec![defect(0, "A claim contradicts its premise.")]);
     assert!(validator.is_valid(&response));
-    response["blockChecks"][0]["passageId"] = json!("invented");
+    assert!(validator.is_valid(&defects_reply(vec![])));
+    response["sectionDefects"][0]["passageId"] = json!("invented");
     assert!(!validator.is_valid(&response));
-    response["blockChecks"][0]["passageId"] = json!("section-0-passage-0");
-    response["blockChecks"][0]["sectionId"] = json!("section-0");
-    assert!(!validator.is_valid(&response));
-    response["blockChecks"][0]
-        .as_object_mut()
-        .unwrap()
-        .remove("sectionId");
-    response["blockChecks"][0]["index"] = json!(1);
+    response["sectionDefects"][0]["passageId"] = json!("section-0-passage-0");
+    response["sectionDefects"][0]["sectionId"] = json!("section-0");
     assert!(!validator.is_valid(&response));
 }
 
 #[tokio::test]
-async fn a_check_without_its_passage_is_asked_for_again() {
-    let mut nameless = reply(vec![check(0), check(1), check(2)]);
-    let third = nameless["blockChecks"][2].as_object_mut().unwrap();
-    third.remove("passageId");
-    let (result, prompts) =
-        reviewed(vec![nameless, reply(vec![check(0), check(1), check(2)])]).await;
-    assert!(result.unwrap().is_empty());
+async fn a_defect_without_its_passage_is_asked_for_again() {
+    let mut nameless = defect(2, "A claim contradicts its premise.");
+    nameless.as_object_mut().unwrap().remove("passageId");
+    let (result, prompts) = reviewed(vec![
+        defects_reply(vec![nameless]),
+        defects_reply(vec![defect(2, "A claim contradicts its premise.")]),
+    ])
+    .await;
+    assert_eq!(result.unwrap().len(), 1);
     assert_eq!(prompts.len(), 2);
-    assert!(prompts[1].contains("needs a passageId"));
-    assert!(prompts[1].contains("Section 3 still needs a check"));
-}
-
-/// A check as the reviewer now writes it: its passage alone names its section.
-fn passage_check(section: usize, has_defect: bool) -> Value {
-    json!({"passageId":format!("section-{section}-passage-0"),"finding":"The explanation correctly distinguishes the stated inputs and resulting behavior.","hasDefect":has_defect})
-}
-
-fn passage_reply(checks: Vec<Value>) -> Value {
-    json!({"issues":[],"blockChecks":checks})
-}
-
-#[tokio::test]
-async fn a_check_is_placed_in_the_section_its_passage_is_in() {
-    let model = model(vec![passage_reply(vec![
-        passage_check(0, false),
-        passage_check(2, true),
-    ])]);
-    let judged = review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        Scope {
-            sections: Some(&[0, 2]),
-            asked: None,
-        },
-        Remit::Open,
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(judged.reported.len(), 1);
-    assert_eq!(judged.reported[0].site, Some(FindingSite::Section(2)));
-    assert_eq!(
-        judged.reported[0].passage_id.as_deref(),
-        Some("section-2-passage-0")
-    );
-}
-
-#[test]
-fn a_check_in_the_schema_names_its_passage_and_no_section() {
-    let item =
-        &schema(&[0, 1, 2], &passages(3), &[], Remit::Open)["properties"]["blockChecks"]["items"];
-    assert!(item["properties"].get("sectionId").is_none());
-    assert!(item["required"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("passageId")));
-}
-
-#[tokio::test]
-async fn a_check_that_names_a_section_besides_its_passage_is_refused() {
-    let mut named = passage_check(1, false);
-    named["sectionId"] = json!("section-1");
-    let first = passage_reply(vec![
-        passage_check(0, false),
-        named,
-        passage_check(2, false),
-    ]);
-    let second = passage_reply(vec![
-        passage_check(0, false),
-        passage_check(1, false),
-        passage_check(2, false),
-    ]);
-    let (result, prompts) = reviewed(vec![first, second]).await;
-    assert!(result.unwrap().is_empty());
-    assert_eq!(prompts.len(), 2);
-    assert!(prompts[1].contains("missing, unexpected or incorrectly typed fields"));
-}
-
-#[tokio::test]
-async fn a_section_with_no_check_is_named_by_its_label() {
-    let first = passage_reply(vec![passage_check(0, false), passage_check(2, false)]);
-    let second = passage_reply(vec![
-        passage_check(0, false),
-        passage_check(1, false),
-        passage_check(2, false),
-    ]);
-    let (result, prompts) = reviewed(vec![first, second]).await;
-    assert!(result.unwrap().is_empty());
-    assert_eq!(prompts.len(), 2);
-    assert!(prompts[1].contains("Section 2 still needs a check"));
-}
-
-#[tokio::test]
-async fn a_section_checked_twice_is_named_by_its_label() {
-    let first = passage_reply(vec![
-        passage_check(0, false),
-        passage_check(1, false),
-        passage_check(1, false),
-        passage_check(2, false),
-    ]);
-    let second = passage_reply(vec![
-        passage_check(0, false),
-        passage_check(1, false),
-        passage_check(2, false),
-    ]);
-    let (result, prompts) = reviewed(vec![first, second]).await;
-    assert!(result.unwrap().is_empty());
-    assert_eq!(prompts.len(), 2);
-    assert!(prompts[1].contains("Section 2 was checked more than once"));
+    assert!(prompts[1]
+        .contains("A section defect has missing, unexpected or incorrectly typed fields."));
 }
 
 fn defect(section: usize, finding: &str) -> Value {
@@ -281,7 +170,9 @@ async fn a_defect_outside_the_sections_in_review_is_corrected_then_dropped() {
     assert!(judged.reported.is_empty());
     let prompts = model.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 2);
-    assert!(prompts[1].contains("section-1-passage-0"));
+    assert!(prompts[1]
+        .contains("passageId section-1-passage-0 is not a passage of a section in review."));
+    assert!(!prompts[0].contains("is not a passage of a section in review"));
 }
 
 #[tokio::test]
