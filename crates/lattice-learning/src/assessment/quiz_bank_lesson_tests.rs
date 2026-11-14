@@ -513,3 +513,48 @@ async fn a_quiz_job_whose_first_form_cannot_be_filled_says_so() -> Result<()> {
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn a_quiz_job_over_a_bank_short_of_a_format_but_full_of_the_outcome_can_start() -> Result<()>
+{
+    let pool = crate::tests::pool().await?;
+    let db = Database::new(pool);
+    let (published, job_id) = published(&db).await?;
+    let scope = lesson_scope(&published.lesson_id);
+    let needs =
+        LearningAssessmentRepository::bank_needs(&db, &published.program_id, &scope, false).await?;
+    assert!(!needs.is_empty(), "the lesson's own questions meet no need");
+    // Every missing question is written as single choice, so no other format has an item.
+    let items: Vec<BankItem> = needs
+        .iter()
+        .flat_map(|need| {
+            (0..need.count).map(|_| BankItem {
+                item: stored(
+                    &uuid::Uuid::new_v4().to_string(),
+                    &need.requirement.outcome_id,
+                    LearningItemFormat::SingleChoice,
+                    need.requirement.difficulty_min,
+                ),
+                source_quote: String::new(),
+                lesson_id: Some(published.lesson_id.clone()),
+                origin: "lesson",
+                review_status: "agreed",
+            })
+        })
+        .collect();
+    let mut tx = db.begin_write().await.unwrap();
+    insert_bank_items_in(&mut tx, &published.program_id, &items, None).await?;
+    tx.commit().await.unwrap();
+
+    let context = claimed(&db, &job_id).await?;
+    let outcome = worker(&db, Recorder::new()).run(&context).await?;
+
+    let JobOutcome::Completed { message, .. } = outcome else {
+        panic!("{outcome:?}");
+    };
+    assert!(
+        !message.contains("cannot start"),
+        "the job said the quiz cannot start: {message}"
+    );
+    Ok(())
+}

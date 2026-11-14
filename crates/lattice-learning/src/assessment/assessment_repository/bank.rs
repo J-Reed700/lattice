@@ -519,4 +519,37 @@ mod tests {
         );
         assert!(!state.ready, "{state:?}");
     }
+
+    #[test]
+    fn a_bank_short_of_one_format_is_ready_when_the_outcome_has_items_enough() {
+        let mut asked = requirement(2, 1);
+        asked.format = LearningItemFormat::TrueFalse;
+        let requirements = vec![requirement(2, 2), asked];
+        let bank = vec![stored(10), stored(11), stored(12)];
+        let blueprint = LearningAssessmentBlueprint {
+            id: uuid::Uuid::from_u128(1).to_string(),
+            purpose: LearningAssessmentPurpose::Checkpoint,
+            title: "Parcels".into(),
+            instructions: "Answer each question.".into(),
+            expected_minutes: 5,
+            allowed_aids: vec![],
+            feedback_timing: LearningFeedbackTiming::AfterSubmission,
+            requirements: requirements.clone(),
+        };
+        let candidates: Vec<LearningAssessmentCandidate> =
+            bank.iter().map(|c| c.candidate.clone()).collect();
+
+        let state = bank_state(&requirements, &bank, &HashSet::new());
+        let form = build_assessment_form(
+            &blueprint,
+            &candidates,
+            &HashSet::new(),
+            uuid::Uuid::new_v4().to_string(),
+            0,
+        );
+
+        assert!(state.ready, "{state:?}");
+        assert_eq!(state.shortfall, None);
+        assert_eq!(form.unwrap().items.len(), 3);
+    }
 }
