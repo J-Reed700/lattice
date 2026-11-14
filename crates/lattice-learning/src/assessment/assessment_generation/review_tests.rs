@@ -146,6 +146,15 @@ impl Script {
 }
 
 fn need(format: LearningItemFormat, count: usize, existing: &[&str]) -> AuthoringNeed {
+    need_for(format, count, existing, BankPass::Retakes)
+}
+
+fn need_for(
+    format: LearningItemFormat,
+    count: usize,
+    existing: &[&str],
+    pass: BankPass,
+) -> AuthoringNeed {
     AuthoringNeed {
         requirement: LearningBlueprintRequirement {
             outcome_id: uuid::Uuid::new_v4().to_string(),
@@ -158,6 +167,7 @@ fn need(format: LearningItemFormat, count: usize, existing: &[&str]) -> Authorin
         outcome_description: "Say where a stamp goes by its colour and condition.".into(),
         lesson_id: Some("lesson".into()),
         count,
+        pass,
         material: vec![MaterialPassage {
             lesson_title: "Stamps".into(),
             title: "The boxes".into(),
@@ -627,11 +637,78 @@ async fn an_item_dropped_as_a_repeat_is_not_written_again() -> Result<()> {
         }),
     );
 
-    let result = author_items(&llm, &need(LearningItemFormat::SingleChoice, 2, &[HAD])).await;
+    let result = author_items(
+        &llm,
+        &need_for(
+            LearningItemFormat::SingleChoice,
+            2,
+            &[HAD],
+            BankPass::Retakes,
+        ),
+    )
+    .await;
 
     llm.no_lesson_review();
     assert_eq!(writes(&llm), 2, "{:?}", llm.kinds());
     assert_eq!(prompts(&result?), [FIRST]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_first_form_item_dropped_as_a_repeat_is_written_again() -> Result<()> {
+    let llm = Script::new(
+        vec![
+            written(&[FIRST, SECOND]),
+            written(&[SECOND_FIXED]),
+            written(&[THIRD]),
+        ],
+        agrees(),
+        finds(|item| match item["prompt"].as_str() {
+            Some(SECOND | SECOND_FIXED) => (String::new(), vec!["have-0".into()]),
+            _ => (String::new(), vec![]),
+        }),
+    );
+
+    let result = author_items(
+        &llm,
+        &need_for(
+            LearningItemFormat::SingleChoice,
+            2,
+            &[HAD],
+            BankPass::FirstForm,
+        ),
+    )
+    .await;
+
+    llm.no_lesson_review();
+    assert_eq!(writes(&llm), 3, "{:?}", llm.kinds());
+    assert_eq!(prompts(&result?), [FIRST, THIRD]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_round_after_a_drop_tells_the_writer_why_the_item_was_dropped() -> Result<()> {
+    let llm = Script::new(
+        vec![
+            written(&[FIRST, SECOND]),
+            written(&[SECOND_FIXED]),
+            written(&[THIRD]),
+        ],
+        agrees(),
+        finds(|item| match item["prompt"].as_str() {
+            Some(SECOND | SECOND_FIXED) => ("The question needs a value.".into(), vec![]),
+            _ => (String::new(), vec![]),
+        }),
+    );
+
+    author_items(&llm, &need(LearningItemFormat::SingleChoice, 2, &[])).await?;
+
+    assert_eq!(writes(&llm), 3, "{:?}", llm.kinds());
+    let avoid = llm.request("write", 2)["problemsToAvoid"].to_string();
+    assert!(
+        avoid.contains("The question needs a value."),
+        "the round's writer was not told why: {avoid}"
+    );
     Ok(())
 }
 

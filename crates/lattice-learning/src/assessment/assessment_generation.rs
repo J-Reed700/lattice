@@ -130,6 +130,15 @@ pub struct MaterialPassage {
     pub source_version_ids: Vec<String>,
 }
 
+/// What a need's items are for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum BankPass {
+    /// The quiz's first form: without these items the quiz cannot start, so a repeat of a question the bank holds does not fill the need.
+    FirstForm,
+    /// Items for retakes: a repeat fills the need, since the material holds no other question of its kind.
+    Retakes,
+}
+
 /// Items to write for one blueprint requirement.
 #[derive(Debug, Clone)]
 pub struct AuthoringNeed {
@@ -139,6 +148,8 @@ pub struct AuthoringNeed {
     /// The lesson the items belong to; None for module and course items.
     pub lesson_id: Option<String>,
     pub count: usize,
+    /// What the items are for.
+    pub pass: BankPass,
     pub material: Vec<MaterialPassage>,
     /// Prompts already in the bank for this outcome, not to be repeated.
     pub existing_prompts: Vec<String>,

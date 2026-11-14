@@ -31,6 +31,7 @@ pub mod tutor;
 pub use assessment::assessment_engine;
 pub use assessment::assessment_generation;
 pub use assessment::assessment_repository;
+pub(crate) use assessment::bank_writing;
 pub use assessment::grade_rationale;
 pub(crate) use assessment::key_review;
 pub(crate) use assessment::question_review;

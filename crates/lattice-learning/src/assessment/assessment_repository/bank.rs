@@ -4,8 +4,8 @@ use super::{
     candidate_from_row, candidate_outcomes_in, decode, format_name, json,
     LearningAssessmentRepository, StoredCandidate, CANDIDATE_COLUMNS,
 };
-use crate::assessment_engine::{self as engine, LearningBlueprintRequirement};
-use crate::assessment_generation::{AuthoringNeed, MaterialPassage, StoredItem};
+use crate::assessment_engine::{self as engine, LearningBlueprintRequirement, Shortfall};
+use crate::assessment_generation::{AuthoringNeed, BankPass, MaterialPassage, StoredItem};
 use crate::dto::{LearningQuizScopeDto, LearningQuizScopeKind};
 use crate::lessons::claim_reviews::repository::waiting_questions_in;
 use crate::persistence::now;
@@ -137,6 +137,8 @@ pub(crate) struct BankState {
     pub target: usize,
     /// Per requirement: items that can fill it, and how many of those are unseen.
     pub per_requirement: Vec<(usize, usize)>,
+    /// The first requirement a form cannot fill; None when a form can be built or there are no requirements.
+    pub shortfall: Option<Shortfall>,
 }
 
 pub(crate) fn bank_state(
@@ -166,8 +168,15 @@ pub(crate) fn bank_state(
         }
         per_requirement.push((eligible.len(), unseen));
     }
+    let shortfall = engine::form_items(
+        requirements,
+        &bank.iter().map(|c| &c.candidate).collect::<Vec<_>>(),
+        exposed,
+    )
+    .err();
     BankState {
         ready,
+        shortfall,
         size: all.len(),
         fresh: fresh.len(),
         target: requirements.iter().map(|r| r.bank_target()).sum(),
@@ -277,6 +286,27 @@ impl LearningAssessmentRepository {
         Ok(needs)
     }
 
+    /// The first requirement a quiz's first form cannot fill from the bank, with the items that could fill it;
+    /// None when a form can be built or the quiz has no requirements yet.
+    pub async fn first_form_shortfall(
+        database: &Database,
+        program_id: &str,
+        scope: &LearningQuizScopeDto,
+    ) -> Result<Option<Shortfall>> {
+        let mut tx = database.begin_write().await?;
+        Self::ensure_outcomes(&mut tx, program_id).await?;
+        let Some((blueprint, _)) =
+            quiz_blueprints::ensure_blueprint_in(&mut tx, program_id, scope).await?
+        else {
+            tx.commit().await?;
+            return Ok(None);
+        };
+        let requirements = quiz_blueprints::requirements_in(&mut tx, &blueprint).await?;
+        let bank = Self::bank_in(&mut tx, program_id).await?;
+        tx.commit().await?;
+        Ok(bank_state(&requirements, &bank, &HashSet::new()).shortfall)
+    }
+
     /// [`insert_bank_items_in`] as a unit of work of its own.
     pub(crate) async fn insert_bank_items(
         database: &Database,
@@ -357,6 +387,7 @@ impl LearningAssessmentRepository {
                 outcome_description: outcome.get("description"),
                 lesson_id,
                 count,
+                pass: BankPass::Retakes,
                 material,
                 existing_prompts,
             });
@@ -367,5 +398,84 @@ impl LearningAssessmentRepository {
             needs.sort_by_key(|n| n.lesson_id.is_none());
         }
         Ok(needs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use super::*;
+    use crate::assessment_engine::{
+        build_assessment_form, LearningAssessmentBlueprint, LearningAssessmentCandidate,
+        LearningAssessmentKey, LearningAssessmentPurpose, LearningFeedbackTiming,
+        LearningItemFormat,
+    };
+    use lattice_core::shared::error::AppError;
+
+    fn requirement(outcome: u128, count: usize) -> LearningBlueprintRequirement {
+        LearningBlueprintRequirement {
+            outcome_id: uuid::Uuid::from_u128(outcome).to_string(),
+            format: LearningItemFormat::SingleChoice,
+            count,
+            difficulty_min: 2,
+            difficulty_max: 4,
+        }
+    }
+
+    fn stored(seed: u128) -> StoredCandidate {
+        StoredCandidate {
+            candidate: LearningAssessmentCandidate {
+                id: uuid::Uuid::from_u128(seed).to_string(),
+                outcome_ids: vec![
+                    uuid::Uuid::from_u128(2).to_string(),
+                    uuid::Uuid::from_u128(3).to_string(),
+                ],
+                format: LearningItemFormat::SingleChoice,
+                difficulty: 3,
+                prompt: format!("Which shelf takes parcel {seed}?"),
+                options: vec!["Left".into(), "Middle".into(), "Right".into()],
+                left: vec![],
+                source_version_ids: vec![],
+                rubric: vec![],
+                key: LearningAssessmentKey::Choice(1),
+                explanation: "The middle shelf.".into(),
+                distractor_rationales: vec![],
+            },
+            artifact_kind: None,
+            source_quote: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_bank_is_ready_only_when_a_form_can_be_built_from_it() {
+        let requirements = vec![requirement(2, 2), requirement(3, 1)];
+        let bank = vec![stored(10), stored(11)];
+        let blueprint = LearningAssessmentBlueprint {
+            id: uuid::Uuid::from_u128(1).to_string(),
+            purpose: LearningAssessmentPurpose::Checkpoint,
+            title: "Parcels".into(),
+            instructions: "Answer each question.".into(),
+            expected_minutes: 5,
+            allowed_aids: vec![],
+            feedback_timing: LearningFeedbackTiming::AfterSubmission,
+            requirements: requirements.clone(),
+        };
+        let candidates: Vec<LearningAssessmentCandidate> =
+            bank.iter().map(|c| c.candidate.clone()).collect();
+
+        let state = bank_state(&requirements, &bank, &HashSet::new());
+        let form = build_assessment_form(
+            &blueprint,
+            &candidates,
+            &HashSet::new(),
+            uuid::Uuid::new_v4().to_string(),
+            0,
+        );
+
+        assert!(
+            matches!(form, Err(AppError::InvalidState(_))),
+            "the form was built or refused for another reason: {form:?}"
+        );
+        assert!(!state.ready, "{state:?}");
     }
 }

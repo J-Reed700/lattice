@@ -1209,7 +1209,7 @@ async fn a_lesson_that_cannot_be_saved_is_refused_before_persistence() -> Result
 #[tokio::test]
 async fn a_written_quiz_item_is_authored_from_lesson_text_without_sources() -> Result<()> {
     use crate::assessment_engine::{LearningBlueprintRequirement, LearningItemFormat};
-    use crate::assessment_generation::{author_items, AuthoringNeed, MaterialPassage};
+    use crate::assessment_generation::{author_items, AuthoringNeed, BankPass, MaterialPassage};
     let passage = "A randomized comparison assigns units to conditions by chance, so differences in outcome can be attributed to the condition.";
     let model = Model(json!({"items":[{"prompt":"Explain how you would design a randomized comparison and identify its limitations.","rubric":task_rubric(),"explanation":"The answer should define the comparison, the measurement, the assumptions and the limits.","blockIndex":0,"quote":"assigns units to conditions by chance","difficulty":3}]}).to_string());
     let need = AuthoringNeed {
@@ -1224,6 +1224,7 @@ async fn a_written_quiz_item_is_authored_from_lesson_text_without_sources() -> R
         outcome_description: "Explain how randomization supports a causal comparison.".into(),
         lesson_id: None,
         count: 1,
+        pass: BankPass::Retakes,
         material: vec![MaterialPassage {
             lesson_title: "Experiments".into(),
             title: "Randomization".into(),

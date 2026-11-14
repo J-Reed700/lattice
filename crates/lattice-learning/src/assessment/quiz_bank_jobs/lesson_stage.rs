@@ -165,6 +165,7 @@ pub(crate) async fn lesson_bank_stage(
             outcome_description: objective.into(),
             lesson_id: Some(lesson_id.into()),
             count,
+            pass: generation::BankPass::Retakes,
             material: material.clone(),
             existing_prompts: seeds
                 .iter()

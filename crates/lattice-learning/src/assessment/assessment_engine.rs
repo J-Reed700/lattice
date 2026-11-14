@@ -63,10 +63,13 @@ pub struct LearningBlueprintRequirement {
     pub difficulty_max: u8,
 }
 
+/// Forms' worth of items a quiz's bank holds for each requirement, so a retake draws items the learner has not seen.
+pub const BANK_FORMS: usize = 3;
+
 impl LearningBlueprintRequirement {
     /// What the bank holds for this requirement: three forms' worth, so a retake draws items the learner has not seen.
     pub fn bank_target(&self) -> usize {
-        3 * self.count
+        BANK_FORMS * self.count
     }
 }
 
@@ -375,52 +378,35 @@ pub fn build_assessment_form(
             return Err(invalid("Assessment item-bank IDs must be unique."));
         }
     }
-    let mut selected = Vec::new();
-    let mut used = HashSet::new();
-    for requirement in &blueprint.requirements {
-        let center =
-            (u16::from(requirement.difficulty_min) + u16::from(requirement.difficulty_max)) / 2;
-        let mut eligible = candidates
-            .iter()
-            .filter(|candidate| {
-                eligible_for(candidate, requirement) && !used.contains(candidate.id.as_str())
-            })
-            .collect::<Vec<_>>();
-        eligible.sort_by_key(|candidate| {
-            (
-                exposed_item_ids.contains(&candidate.id),
-                (i32::from(candidate.difficulty) - i32::from(center)).unsigned_abs(),
-                candidate.id.as_str(),
-            )
-        });
-        if eligible.len() < requirement.count {
-            return Err(AppError::InvalidState(
+    let candidate_refs: Vec<&LearningAssessmentCandidate> = candidates.iter().collect();
+    let chosen =
+        form_items(&blueprint.requirements, &candidate_refs, exposed_item_ids).map_err(|_| {
+            AppError::InvalidState(
                 "This quiz's question bank is not ready yet. Prepare its questions first.".into(),
-            ));
-        }
-        for candidate in eligible.into_iter().take(requirement.count) {
-            used.insert(candidate.id.as_str());
-            let order = option_order(
-                candidate.format,
-                candidate.options.len(),
-                &format!("{form_id}:{}", candidate.id),
-            );
-            selected.push(LearningAssessmentFormItem {
-                id: candidate.id.clone(),
-                outcome_ids: candidate.outcome_ids.clone(),
-                format: candidate.format,
-                prompt: candidate.prompt.clone(),
-                options: order
-                    .iter()
-                    .filter_map(|i| candidate.options.get(*i).cloned())
-                    .collect(),
-                left: candidate.left.clone(),
-                option_order: order,
-                source_version_ids: candidate.source_version_ids.clone(),
-                rubric: candidate.rubric.clone(),
-                previously_exposed: exposed_item_ids.contains(&candidate.id),
-            });
-        }
+            )
+        })?;
+    let mut selected = Vec::new();
+    for candidate in chosen {
+        let order = option_order(
+            candidate.format,
+            candidate.options.len(),
+            &format!("{form_id}:{}", candidate.id),
+        );
+        selected.push(LearningAssessmentFormItem {
+            id: candidate.id.clone(),
+            outcome_ids: candidate.outcome_ids.clone(),
+            format: candidate.format,
+            prompt: candidate.prompt.clone(),
+            options: order
+                .iter()
+                .filter_map(|i| candidate.options.get(*i).cloned())
+                .collect(),
+            left: candidate.left.clone(),
+            option_order: order,
+            source_version_ids: candidate.source_version_ids.clone(),
+            rubric: candidate.rubric.clone(),
+            previously_exposed: exposed_item_ids.contains(&candidate.id),
+        });
     }
     Ok(LearningAssessmentForm {
         id: form_id,
@@ -434,6 +420,53 @@ pub fn build_assessment_form(
         items: selected,
         created_at,
     })
+}
+
+/// The first requirement a form cannot fill, and how many items could fill it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Shortfall {
+    pub requirement: LearningBlueprintRequirement,
+    pub eligible: usize,
+}
+
+/// The items a form takes, requirement by requirement: for each, the candidates eligible for it that an
+/// earlier requirement did not take, unseen first, then nearest the requirement's middle difficulty, then by ID.
+pub fn form_items<'a>(
+    requirements: &[LearningBlueprintRequirement],
+    candidates: &[&'a LearningAssessmentCandidate],
+    exposed: &HashSet<String>,
+) -> std::result::Result<Vec<&'a LearningAssessmentCandidate>, Shortfall> {
+    let mut selected = Vec::new();
+    let mut used = HashSet::new();
+    for requirement in requirements {
+        let center =
+            (u16::from(requirement.difficulty_min) + u16::from(requirement.difficulty_max)) / 2;
+        let mut eligible = candidates
+            .iter()
+            .copied()
+            .filter(|candidate| {
+                eligible_for(candidate, requirement) && !used.contains(candidate.id.as_str())
+            })
+            .collect::<Vec<_>>();
+        eligible.sort_by_key(|candidate| {
+            (
+                exposed.contains(&candidate.id),
+                (i32::from(candidate.difficulty) - i32::from(center)).unsigned_abs(),
+                candidate.id.as_str(),
+            )
+        });
+        if eligible.len() < requirement.count {
+            return Err(Shortfall {
+                requirement: requirement.clone(),
+                eligible: eligible.len(),
+            });
+        }
+        for candidate in eligible.into_iter().take(requirement.count) {
+            used.insert(candidate.id.as_str());
+            selected.push(candidate);
+        }
+    }
+    Ok(selected)
 }
 
 /// Whether a bank item can fill a blueprint requirement.

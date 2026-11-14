@@ -96,6 +96,7 @@ fn need(description: String, blocks: usize) -> AuthoringNeed {
         outcome_description: description,
         lesson_id: Some("lesson".into()),
         count: 1,
+        pass: BankPass::Retakes,
         material: (0..blocks)
             .map(|i| MaterialPassage {
                 lesson_title: "Reduction".into(),
@@ -846,6 +847,7 @@ fn stamp_need() -> AuthoringNeed {
         outcome_description: "Say where a stamp goes by its colour and condition.".into(),
         lesson_id: Some("lesson".into()),
         count: 1,
+        pass: BankPass::Retakes,
         material: vec![MaterialPassage {
             lesson_title: "Stamps".into(),
             title: "The boxes".into(),
