@@ -909,7 +909,9 @@ async fn lesson_review_repairs_reported_defects() -> Result<()> {
     let candidate = json!({"blocks":[{"kind":"explanation","body":body}]});
     let check = |has_defect: bool, verdicts: &[serde_json::Value]| {
         let defects = if has_defect {
-            vec![section_defect(0, "The example contradicts its return value; correct the returned total to match the accumulation.")]
+            vec![
+                json!({"passageId":"section-0-passage-0","finding":"The example contradicts its return value; correct the returned total to match the accumulation."}),
+            ]
         } else {
             vec![]
         };
