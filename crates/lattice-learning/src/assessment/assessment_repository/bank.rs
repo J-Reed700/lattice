@@ -139,7 +139,7 @@ pub(crate) struct BankState {
     pub target: usize,
     /// Per requirement: items that can fill it, and how many of those are unseen.
     pub per_requirement: Vec<(usize, usize)>,
-    /// The first requirement a form cannot fill; None when a form can be built or there are no requirements.
+    /// The first requirement a form cannot fill from its outcome's items; None when a form can be built or there are no requirements.
     pub shortfall: Option<Shortfall>,
 }
 
