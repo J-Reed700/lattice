@@ -194,14 +194,15 @@ async fn refusals_are_typed_by_what_waiting_can_change() {
     ] {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(status).insert_header("retry-after", "0"))
+            .respond_with(ResponseTemplate::new(status))
             .mount(&server)
             .await;
-        let error = client(&server)
-            .await
-            .complete(&CompletionRequest::default())
-            .await
-            .unwrap_err();
+        // Shorter than the first backoff: the provider's own refusal comes back.
+        let request = CompletionRequest {
+            time_budget: Some(Duration::from_millis(900)),
+            ..Default::default()
+        };
+        let error = client(&server).await.complete(&request).await.unwrap_err();
         assert_eq!(
             ErrorClass::of(&error).is_temporary(),
             transient,
@@ -324,17 +325,18 @@ async fn a_persistent_rate_limit_reaches_the_caller_as_a_rate_limit() {
     Mock::given(method("POST"))
         .respond_with(
             ResponseTemplate::new(429)
-                .insert_header("retry-after", "0")
                 .set_body_json(json!({"error":{"type":"requests","code":"rate_limit_exceeded"}})),
         )
         .mount(&server)
         .await;
-    let error = client(&server)
-        .await
-        .complete(&CompletionRequest::default())
-        .await
-        .unwrap_err();
+    // Room for one resend after the first backoff, not for the second.
+    let request = CompletionRequest {
+        time_budget: Some(Duration::from_millis(2_500)),
+        ..Default::default()
+    };
+    let error = client(&server).await.complete(&request).await.unwrap_err();
     assert!(matches!(error, AppError::RateLimitExceeded(_)), "{error:?}");
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
 }
 
 async fn anthropic_client(server: &MockServer) -> CloudLlm {
@@ -390,33 +392,12 @@ async fn a_schema_claude_refuses_is_asked_for_in_words() {
     assert_eq!(response.text, "{\"ok\":true}");
 }
 
-#[derive(Clone, Default)]
-struct Captured(std::sync::Arc<parking_lot::Mutex<Vec<u8>>>);
-
-impl std::io::Write for Captured {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
 /// The reason Claude gives for refusing a schema is what tells a schema that
 /// is too large from one it cannot read, so the fallback logs it with the
 /// fields of the schema it refused.
 #[tokio::test]
 async fn a_schema_claude_refuses_is_logged_with_the_apis_reason() {
-    let captured = Captured::default();
-    let writer = captured.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::WARN)
-        .with_ansi(false)
-        .with_writer(move || writer.clone())
-        .finish();
-    let _logs = tracing::subscriber::set_default(subscriber);
-    tracing::callsite::rebuild_interest_cache();
+    let logs = lattice_core::shared::testing::logs::capture_logs(tracing::Level::WARN);
 
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -443,7 +424,7 @@ async fn a_schema_claude_refuses_is_logged_with_the_apis_reason() {
         .await
         .unwrap();
 
-    let logs = String::from_utf8(captured.0.lock().clone()).unwrap();
+    let logs = logs.text();
     assert!(logs.contains("compiled grammar is too large"), "{logs}");
     assert!(logs.contains("schema_fields=ok"), "{logs}");
 }
@@ -526,6 +507,42 @@ async fn dropping_a_completion_cancels_the_request_without_a_retry() {
     server.verify().await;
 }
 
+/// The provider's answer is what its window learns from: a request that
+/// completes while others are held back by the window opens it wider.
+#[tokio::test]
+async fn a_completed_request_tells_the_providers_scheduler_it_was_accepted() {
+    use crate::features::llm::scheduler::AdmissionRequest;
+    use lattice_core::application::ports::llm_port::InferencePriority;
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]
+        })))
+        .mount(&server)
+        .await;
+    let client = client(&server).await;
+    let _in_flight = client
+        .scheduler
+        .admit(
+            AdmissionRequest {
+                priority: InferencePriority::Interactive,
+                tokens: 1,
+                cache_key: None,
+                rank: None,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(client.scheduler.load().slots, 1);
+    client
+        .complete(&CompletionRequest::default())
+        .await
+        .unwrap();
+    assert_eq!(client.scheduler.load().slots, 2);
+}
+
 /// What the response replays, as the provider's own JSON.
 fn replayed(response: &CompletionResponse) -> Value {
     Value::Array(
@@ -538,4 +555,137 @@ fn replayed(response: &CompletionResponse) -> Value {
             })
             .collect(),
     )
+}
+
+/// The provider's `retry-after` is its own statement of when to come back:
+/// resending sooner is refused again, so it is honoured as given.
+#[tokio::test]
+async fn a_rate_limit_is_resent_only_after_the_wait_the_provider_asked_for() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("retry-after", "45")
+                .set_body_json(json!({"error":{"type":"requests","code":"rate_limit_exceeded"}})),
+        )
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]
+        })))
+        .mount(&server)
+        .await;
+    let client = client(&server).await;
+    let scheduler = Arc::clone(&client.scheduler);
+    let call = tokio::spawn(async move { client.complete(&CompletionRequest::default()).await });
+
+    let closed_for = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Some(wait) = scheduler.reopens_in() {
+                break wait;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the refusal never closed admission");
+    assert!(
+        closed_for > Duration::from_secs(30) && closed_for <= Duration::from_secs(45),
+        "closed for {closed_for:?}, not the 45 s the provider asked for"
+    );
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(45)).await;
+    tokio::time::resume();
+    assert_eq!(call.await.unwrap().unwrap().text, "ok");
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+}
+
+/// A monthly spend limit is refused with a 429 that no waiting changes until
+/// the next month, so it is told once, as a setting, and never resent.
+#[tokio::test]
+async fn a_spend_limit_refusal_is_sent_once_and_names_the_spend_limit() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(429).set_body_json(json!({"type":"error","error":{
+                "type":"rate_limit_error",
+                "message":"sensitive-provider-reason",
+                "details":{"error_code":"enforced_spend_limit_reached"}
+            }})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let error = anthropic_client(&server)
+        .await
+        .complete(&CompletionRequest::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AppError::InvalidConfig(_)), "{error:?}");
+    assert!(!ErrorClass::of(&error).is_temporary());
+    assert!(error.to_string().contains("monthly spend limit"), "{error}");
+    assert!(!error.to_string().contains("sensitive-provider-reason"));
+}
+
+/// A request with less time left than the provider asked it to wait gives the
+/// provider's refusal back, and is never resent before the time asked for.
+#[tokio::test]
+async fn a_retry_after_beyond_the_time_left_gives_the_refusal_without_resending_early() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("retry-after", "45")
+                .set_body_json(json!({"error":{"type":"requests","code":"rate_limit_exceeded"}})),
+        )
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]
+        })))
+        .mount(&server)
+        .await;
+    let request = CompletionRequest {
+        time_budget: Some(Duration::from_secs(35)),
+        ..Default::default()
+    };
+    let error = client(&server).await.complete(&request).await.unwrap_err();
+    assert!(matches!(error, AppError::RateLimitExceeded(_)), "{error:?}");
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+/// The wait before a resend is the backoff of a refused attempt, not the
+/// model reading the prompt: a streamed answer is timed from the attempt that
+/// was answered.
+#[tokio::test]
+async fn a_streamed_answer_resent_after_a_server_error_is_timed_from_the_resend() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(500))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    let completed = json!({"type":"response.completed","response":{"status":"completed",
+        "usage":{"input_tokens":2000,"output_tokens":300},
+        "output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]}});
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+            "data: {{\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}}\n\ndata: {completed}\n\n"
+        )))
+        .mount(&server)
+        .await;
+    let response = client(&server)
+        .await
+        .complete_with_progress(&CompletionRequest::default(), &|_| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+    let timing = response.timing.unwrap();
+    assert!(timing.prompt_seconds < 0.5, "{timing:?}");
 }
