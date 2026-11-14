@@ -748,12 +748,13 @@ fn read(raw: &str, reading: &Reading<'_>) -> Result<Judged> {
 }
 
 /// What the reviewer found: its verdict on each finding in `scope.asked`,
-/// and the defects it reports beyond those. A section defect is placed in the
-/// section its passage is in, and a section with no entry has none; a reviewer's issue is placed later, by the
-/// evidence check. A reply that cannot be read is corrected once. In the
-/// second, a verdict that cannot be used leaves its finding as it stood, as
-/// an unjudged statement is left (claim classes design §3.2); anything else
-/// that cannot be read fails the review.
+/// and the defects it reports beyond those. A section defect is placed in
+/// the section its passage is in, and a section with no entry has none; a
+/// reviewer's issue is placed later, by the evidence check. A reply with a
+/// problem is corrected once. In the second, an entry that cannot be used
+/// is dropped and traced, and a verdict that cannot be used leaves its
+/// finding as it stood, as an unjudged statement is left (claim classes
+/// design §3.2); a reply that cannot be read at all fails the review.
 pub async fn review(
     llm: &dyn LLMPort,
     system: &str,

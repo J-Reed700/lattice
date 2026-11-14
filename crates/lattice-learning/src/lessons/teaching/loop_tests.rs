@@ -2216,7 +2216,7 @@ fn shaped_judgement(candidate: &Value, fault: Option<(usize, &str)>) -> String {
     json!({"checks":checks.collect::<Vec<_>>()}).to_string()
 }
 
-fn shaped_review(_candidate: &Value) -> String {
+fn clean_review() -> String {
     json!({"issues":[],"sectionDefects":[]}).to_string()
 }
 
@@ -2224,7 +2224,7 @@ async fn waiting_after_review(candidate: &Value, protected: bool) -> Result<Vec<
     let model = model(vec![
         shaped_solutions(candidate),
         shaped_judgement(candidate, None),
-        shaped_review(candidate),
+        clean_review(),
     ]);
     let sources = references();
     let references = ReferenceCollection::lexical(&sources)?;
@@ -3691,7 +3691,7 @@ async fn a_lesson_question_the_judge_faults_reaches_the_repair_as_a_finding_at_t
     let model = model(vec![
         shaped_solutions(&candidate),
         shaped_judgement(&candidate, Some((2, FAULT))),
-        shaped_review(&candidate),
+        clean_review(),
     ]);
 
     let _ = review_shaped(&model, &candidate, &[]).await;
@@ -3713,7 +3713,7 @@ async fn a_question_finding_is_repaired_without_the_reference_check() {
     let model = model(vec![
         shaped_solutions(&candidate),
         shaped_judgement(&candidate, Some((2, FAULT))),
-        shaped_review(&candidate),
+        clean_review(),
         retitle("Unused"),
     ]);
 
@@ -3767,7 +3767,7 @@ async fn a_copied_sentence_is_repaired_by_one_patch_after_the_content_was_review
     let model = model(vec![
         shaped_solutions(&candidate),
         shaped_judgement(&candidate, None),
-        shaped_review(&candidate),
+        clean_review(),
         say_it_yourself(&copied_id()),
         shaped_solutions(&candidate),
         shaped_judgement(&candidate, None),
@@ -3818,7 +3818,7 @@ async fn a_whole_repair_is_sent_only_what_needs_the_whole_lesson_and_the_copied_
         full.to_string(),
         shaped_solutions(&full),
         shaped_judgement(&full, None),
-        shaped_review(&full),
+        clean_review(),
         say_it_yourself(&copied_id()),
         shaped_solutions(&full),
         shaped_judgement(&full, None),
@@ -3862,7 +3862,7 @@ async fn a_copied_sentence_no_claim_stands_on_is_repaired_by_edits_while_claims_
     let model = model(vec![
         shaped_solutions(&candidate),
         shaped_judgement(&candidate, None),
-        shaped_review(&candidate),
+        clean_review(),
         say_it_yourself(&copied_id()),
         shaped_solutions(&candidate),
         shaped_judgement(&candidate, None),
@@ -4007,7 +4007,7 @@ async fn a_whole_repair_is_neither_sent_nor_charged_a_failing_quotation() -> Res
         full.to_string(),
         shaped_solutions(&full),
         shaped_judgement(&full, None),
-        shaped_review(&full),
+        clean_review(),
         fix,
         shaped_solutions(&full),
         shaped_judgement(&full, None),
