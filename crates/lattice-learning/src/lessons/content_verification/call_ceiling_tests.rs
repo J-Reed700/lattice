@@ -59,7 +59,7 @@ impl Rounds {
                 return Ok(fault(prompt, section, sentence));
             }
             if prompt.starts_with("Check whether proposed lesson-review findings are justified") {
-                return Ok(json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":[format!("blocks-{section}")],"partId":format!("blocks-{section}"),"requirementId":null,"reason":"The step asks for something the explanation beside it never set up."}]}).to_string());
+                return Ok(json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":[format!("blocks-{section}")],"partId":format!("blocks-{section}"),"requirementId":null,"reason":"The step promises that the tutor runs the learner's code and reports whether the tests pass."}]}).to_string());
             }
             if prompt.starts_with("You are editing a rejected draft.") {
                 return Ok(json!({"edits":[{"path":format!("/blocks/{section}/body"),"before":sentence,"after":written}]}).to_string());
@@ -104,7 +104,7 @@ fn fault(prompt: &str, section: usize, sentence: &str) -> String {
                             .is_some_and(|text| text.contains(sentence))
                     })
                     .unwrap();
-                json!({"index":index,"passageId":passage["id"],"finding":"This step asks the learner for something the explanation beside it never set up.","hasDefect":true})
+                json!({"index":index,"passageId":passage["id"],"finding":"This step promises that the tutor runs the learner's code and reports whether the tests pass.","hasDefect":true,"concerns":["promise"]})
             } else {
                 json!({"index":index,"passageId":passages[0]["id"],"finding":"The section explains its point and asks nothing it has not set up.","hasDefect":false})
             }

@@ -2,7 +2,7 @@
 
 use lattice_core::shared::error::Result;
 use lattice_learning::lessons::teaching_review::test_support::candidate;
-use lattice_learning::lessons::teaching_review::{review, Scope};
+use lattice_learning::lessons::teaching_review::{review, Remit, Scope};
 use serde_json::json;
 
 /// Opt-in provider acceptance check. No application data is written and
@@ -25,6 +25,7 @@ async fn live_review_passage_protocol() -> Result<()> {
         json!({}),
         &content,
         Scope::default(),
+        Remit::Open,
         Some(&run.progress),
     )
     .await?
@@ -37,6 +38,7 @@ async fn live_review_passage_protocol() -> Result<()> {
         json!({}),
         &content,
         Scope::default(),
+        Remit::Open,
         Some(&run.progress),
     )
     .await?

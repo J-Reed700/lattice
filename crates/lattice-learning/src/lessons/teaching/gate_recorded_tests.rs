@@ -14,7 +14,8 @@ const EXCERPT: &str = "This saved reference describes the exact behavior of the 
 const UNSAVED: &str = "The kettle sings a note that no saved reference holds.";
 const FIRST: &str = "The function returns the number 4 for the sum of two and two. ";
 const SECOND: &str = "The kettle then rests on the stand once the water is hot. ";
-const REVIEWER_ONLY: &str = "The explanation leans on an unstated premise about the sum.";
+const REVIEWER_ONLY: &str =
+    "The explanation promises that the tutor will certify the learner's sum as expert reviewed.";
 
 /// The scripted model, with the lesson's check against its plan answered
 /// from `plan` and the evidence gate's requests kept.

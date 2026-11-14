@@ -146,7 +146,7 @@ fn anthropic_counts_the_cached_prompt_as_prompt() {
 #[tokio::test]
 async fn reasoning_is_delivered_before_the_completion_arrives() {
     let (sender, receiver) =
-        tokio::sync::mpsc::unbounded_channel::<std::result::Result<Vec<u8>, String>>();
+        tokio::sync::mpsc::unbounded_channel::<std::result::Result<Vec<u8>, std::io::Error>>();
     let (shown, observed) = tokio::sync::oneshot::channel();
     let shown = Mutex::new(Some(shown));
     let on_reasoning = |delta: String| {
@@ -197,7 +197,7 @@ async fn stalled_streams_and_oversized_events_fail() {
     // The answer started, then went silent.
     let started = frames(&[json!({"type":"response.output_text.delta","delta":"Hel"})]);
     let pending =
-        futures::stream::iter([Ok::<_, String>(started)]).chain(futures::stream::pending());
+        futures::stream::iter([Ok::<_, std::io::Error>(started)]).chain(futures::stream::pending());
     let error = drain(
         protocols(CloudProvider::Openai).completion,
         pending,
@@ -279,7 +279,7 @@ fn google_stream_keeps_each_calls_thought_signature_for_the_replay() {
 #[tokio::test(start_paused = true)]
 async fn silence_before_the_first_delta_is_not_a_stall() {
     let (sender, receiver) =
-        tokio::sync::mpsc::unbounded_channel::<std::result::Result<Vec<u8>, String>>();
+        tokio::sync::mpsc::unbounded_channel::<std::result::Result<Vec<u8>, std::io::Error>>();
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(600)).await;
         sender

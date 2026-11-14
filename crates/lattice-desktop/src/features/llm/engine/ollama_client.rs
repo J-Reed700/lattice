@@ -38,6 +38,7 @@ use lattice_core::application::ports::llm_port::{
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::models::vision::VisionGeometry;
+use lattice_core::shared::error::WithCauses;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::http::{auth_header_map, reqwest_client_builder};
 
@@ -138,9 +139,9 @@ impl OllamaClient {
             builder = builder.default_headers(auth_header_map(&name, &value)?);
         }
 
-        let client = builder
-            .build()
-            .map_err(|e| AppError::Network(format!("Failed to create HTTP client: {}", e)))?;
+        let client = builder.build().map_err(|e| {
+            AppError::Network(format!("Failed to create HTTP client: {}", WithCauses(&e)))
+        })?;
 
         let model_name = model_name.into();
         if model_name.trim().is_empty() {
@@ -247,7 +248,7 @@ impl OllamaClient {
             .send()
             .await
             .map_err(|error| {
-                warn!(error = %error, "Ollama health check failed");
+                warn!(error = %WithCauses(&error), "Ollama health check failed");
                 network_error(error)
             })?;
         let status = response.status();

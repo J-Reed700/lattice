@@ -17,6 +17,7 @@ use crate::generation::{parse_json, split_check, teaching_sentences};
 use crate::lessons::copied_wording::Wording;
 use crate::lessons::shape::{LessonShape, ShapePolicy};
 use crate::lessons::text_edits;
+use crate::lessons::trace::{self, Cause, Stage};
 use crate::review_findings::{site_sha256, FindingSite};
 use lattice_core::application::services::model_contract::{
     Contract, ContractCall, ContractId, PromptInput,
@@ -354,9 +355,10 @@ pub(super) fn unpublishable(
     shape.floor(lesson, cuts.units().units())
 }
 
-/// The questions of `lesson` that go because a finding on them waits for the
-/// user and the lesson's shape can spare them, each with its unit and label.
-pub(super) fn unsettled_questions(
+/// The parts of `lesson` that go because a finding on them waits for the
+/// user and the lesson's shape can spare them, each with its unit and label;
+/// a check goes with the worked example it follows.
+pub(super) fn unsettled_units(
     lesson: &Value,
     waiting: &BTreeSet<String>,
     cuts: &Cuts,
@@ -371,41 +373,45 @@ pub(super) fn unsettled_questions(
     let blocks = count("blocks");
     let mut going = cuts.units().units().clone();
     let mut chosen = Vec::new();
-    for index in 0..count("questions") {
-        let unit = blocks + index;
+    for unit in 0..blocks + count("questions") {
         if going.contains(&unit)
-            || !waiting.contains(&site_sha256(lesson, FindingSite::Question(index)))
+            || !waiting.contains(&site_sha256(lesson, FindingSite::of_unit(unit, blocks)))
         {
             continue;
         }
         let mut with = going.clone();
         with.insert(unit);
+        with.extend(shape.dependants(lesson, &with));
         if shape.floor(lesson, &with).is_some() {
             continue;
         }
-        let Some(label) = unit_label(lesson, unit) else {
+        let labelled: Option<Vec<(usize, String)>> = with
+            .difference(&going)
+            .map(|out| unit_label(lesson, *out).map(|label| (*out, label)))
+            .collect();
+        let Some(labelled) = labelled else {
             continue;
         };
         going = with;
-        chosen.push((unit, label));
+        chosen.extend(labelled);
     }
     chosen
 }
 
-/// Sends out the questions whose findings wait for the user and that the
+/// Sends out the parts whose findings wait for the user and that the
 /// lesson's shape can spare; whether any went.
 pub(super) async fn send_out_unsettled(
     lesson: &Value,
     cuts: &mut Cuts,
     shape: &dyn ShapePolicy,
 ) -> Result<bool> {
-    let waiting = crate::teaching::question_texts().await?;
-    let chosen = unsettled_questions(lesson, &waiting, cuts, shape);
+    let waiting = crate::teaching::waiting_part_texts().await?;
+    let chosen = unsettled_units(lesson, &waiting, cuts, shape);
     let sent = !chosen.is_empty();
     for (unit, label) in chosen {
         tracing::info!(
             unit,
-            "A question whose finding the review could not settle goes"
+            "A part whose finding the review could not settle goes"
         );
         cuts.go_unsettled(unit, label);
     }
@@ -593,6 +599,12 @@ async fn mend_section(
         tracing::info!(
             "claim.state: a flow repair left the section no lesson; it keeps the text as cut"
         );
+        trace::refused(
+            Stage::FlowRepair,
+            &format!("the flow repair of section {unit}"),
+            "it left the section no lesson, so the section keeps the text as cut",
+            Some((&before.to_string(), &confined.to_string())),
+        );
         return Ok(None);
     }
     Ok((confined != before).then(|| confined.clone()))
@@ -692,12 +704,24 @@ pub(super) async fn settle(
             Ok(outcome) => outcome,
             Err(error) if unmade(&error) => {
                 tracing::info!(unit, %error, "claim.state: a flow repair could not be used; the section keeps the text as cut");
+                trace::refused(
+                    Stage::FlowRepair,
+                    &format!("the flow repair of section {unit}"),
+                    &error.to_string(),
+                    None,
+                );
                 None
             }
             Err(error) => return Err(error),
         };
         let unchanged = outcome.is_none();
         if let Some(repaired) = outcome {
+            trace::changed(
+                Stage::FlowRepair,
+                &Cause::none(),
+                &section.to_string(),
+                &repaired.to_string(),
+            );
             set_unit(&mut edited, unit, repaired);
             crate::lesson_drafts::save(&edited.to_string()).await?;
         }
@@ -825,5 +849,5 @@ pub(super) async fn excise(
 #[path = "sections_tests.rs"]
 mod tests;
 #[cfg(test)]
-#[path = "unsettled_question_tests.rs"]
-mod unsettled_question_tests;
+#[path = "unsettled_unit_tests.rs"]
+mod unsettled_unit_tests;

@@ -890,6 +890,9 @@ mod teaching_release_tests;
 #[path = "evidence_paging_tests.rs"]
 mod evidence_paging_tests;
 
+#[path = "research_provenance_tests.rs"]
+mod research_provenance_tests;
+
 #[path = "recite_tests.rs"]
 mod recite_tests;
 
@@ -931,6 +934,9 @@ mod born_of_repair_tests;
 
 #[path = "apparatus_tests.rs"]
 mod apparatus_tests;
+
+#[path = "right_choice_tests.rs"]
+mod right_choice_tests;
 
 #[path = "sentence_naming_tests.rs"]
 mod sentence_naming_tests;

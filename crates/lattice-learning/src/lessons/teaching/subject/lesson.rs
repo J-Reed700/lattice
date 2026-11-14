@@ -15,7 +15,7 @@ use super::{
 use crate::dto::LearningSourceDto;
 use crate::lessons::content_verification::Protected;
 use crate::lessons::copied_wording::Wording;
-use crate::lessons::text_edits::{self, Named};
+use crate::lessons::text_edits::{self, AppliedFor, Named, Patch};
 use crate::model_call::ErrorClass;
 use crate::outline_progress::OutlineProgress;
 use crate::reference_collection::ReferenceCollection;
@@ -181,7 +181,7 @@ impl Subject for LessonSubject<'_> {
         let inputs = json!({"authoringContext":authoring,"correctnessPriority":LESSON_PRIORITY});
         self.standing.under(&crate::teaching_review::basis(
             llm,
-            &ReviewTexts::LESSON.joined(),
+            &ReviewTexts::lesson().joined(),
             LESSON_REVIEW_EVIDENCE_SCOPE,
             &inputs,
         ));
@@ -245,7 +245,7 @@ impl Subject for LessonSubject<'_> {
             let (judged, plan_findings) = match &round {
                 Some(round) => {
                     let instructions = review_instructions(
-                        &ReviewTexts::LESSON,
+                        &ReviewTexts::lesson(),
                         round,
                         true,
                         LESSON_REVIEW_EVIDENCE_SCOPE,
@@ -256,6 +256,7 @@ impl Subject for LessonSubject<'_> {
                         review_prompt,
                         pass.value,
                         round.scope(),
+                        crate::teaching_review::Remit::Lesson,
                         None,
                     );
                     let (judged, plan) = futures::try_join!(review, against_plan)?;
@@ -479,31 +480,31 @@ impl LessonSubject<'_> {
         patch: &str,
         plans: &BTreeMap<String, String>,
     ) -> Result<Made> {
-        let applied = text_edits::apply_for(
-            previous,
-            patch,
-            &Value::Null,
-            &self.wording,
-            &repair::reach(send),
-        )
-        .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))?;
-        // After a claim repair or a user edit, the repair changes only the
-        // sentences its findings name.
-        let value = if self.protected.is_empty() {
-            applied.value.clone()
-        } else {
-            super::super::protected::confine_review(
+        let patch = text_edits::read_patch(patch)
+            .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))?;
+        // After a claim repair or a user edit, a finding's correction applies
+        // whole or not at all: it may change only the sentences it names.
+        let (applied, refused) = if self.protected.is_empty() {
+            let applied = text_edits::apply_patch_for(
                 previous,
-                &applied.value,
-                &touched_by_edits(send, &applied.named),
-                self.protected,
+                patch,
+                &Value::Null,
+                &self.wording,
+                &repair::reach(send),
             )
-            .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))?
+            .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))?;
+            (applied, BTreeMap::new())
+        } else {
+            apply_protected(previous, send, patch, &self.wording, self.protected)?
         };
+        let value = applied.value.clone();
         reads_as_lesson_or_unusable(&value)?;
         let outcomes: Vec<Outcome> = send
             .iter()
-            .map(|finding| outcome_of(finding, &applied.named, plans, previous, &value))
+            .map(|finding| match refused.get(finding.id().as_str()) {
+                Some(reasons) => refusal(reasons),
+                None => outcome_of(finding, &applied.named, plans, previous, &value),
+            })
             .collect();
         for (finding, outcome) in send.iter().zip(&outcomes) {
             self.passes.charge(finding, outcome.clone());
@@ -562,13 +563,22 @@ impl LessonSubject<'_> {
         let (value, kept) = if self.protected.is_empty() {
             (repaired, text.to_owned())
         } else {
-            let value = super::super::protected::confine_review(
+            let value = match super::super::protected::confine_review(
                 previous,
                 &repaired,
                 &touched_by_sites(previous, send),
                 self.protected,
             )
-            .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))?;
+            .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))?
+            {
+                Ok(value) => value,
+                Err(reasons) => {
+                    for finding in send {
+                        self.passes.charge(finding, refusal(&reasons));
+                    }
+                    return Ok(Made::Nothing);
+                }
+            };
             let kept = value.to_string();
             (value, kept)
         };
@@ -659,6 +669,123 @@ fn outcome_of(
     } else {
         Outcome::Applied
     }
+}
+
+/// A finding whose correction was refused whole, charged with why.
+fn refusal(reasons: &[String]) -> Outcome {
+    Outcome::Refused(reasons.iter().map(|reason| format!("{reason}.")).collect())
+}
+
+/// `previous` as a repair that changed nothing leaves it.
+fn unchanged(previous: &Value) -> AppliedFor {
+    AppliedFor {
+        value: previous.clone(),
+        named: BTreeMap::new(),
+        written: Vec::new(),
+    }
+}
+
+/// Applies `patch` while sentences are protected: each finding's correction is
+/// judged alone and refused whole if it leaves what it may change, the rest
+/// apply together, and that result is confined once more, since what the
+/// corrections do together is not seen alone. Gives the application and the
+/// reasons for each refused finding.
+fn apply_protected(
+    previous: &Value,
+    send: &[ReviewFinding],
+    patch: Patch,
+    wording: &Wording,
+    protected: &[Protected],
+) -> Result<(AppliedFor, BTreeMap<String, Vec<String>>)> {
+    let apply = |patch: Patch| {
+        text_edits::apply_patch_for(previous, patch, &Value::Null, wording, &repair::reach(send))
+            .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))
+    };
+    let mut judged = judge_each(previous, send, &patch, wording, protected)?;
+    let applied = if judged.refused.is_empty() {
+        apply(patch)?
+    } else if judged.accepted.is_empty() {
+        unchanged(previous)
+    } else {
+        apply(patch.only(&judged.accepted))?
+    };
+    let together = super::super::protected::confine_review(
+        previous,
+        &applied.value,
+        &touched_by_edits(send, &applied.named),
+        protected,
+    )
+    .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))?;
+    let Err(reasons) = together else {
+        return Ok((applied, judged.refused));
+    };
+    for finding in send {
+        let id = finding.id();
+        let wrote = applied
+            .named
+            .get(id.as_str())
+            .is_some_and(|named| !named.applied.is_empty());
+        if wrote {
+            judged
+                .refused
+                .entry(id.as_str().to_owned())
+                .or_insert_with(|| reasons.clone());
+        }
+    }
+    Ok((unchanged(previous), judged.refused))
+}
+
+/// What each named finding's correction comes to when it is judged on its own.
+struct Judged {
+    /// The findings whose corrections stay inside what they may change.
+    accepted: Vec<String>,
+    /// The findings whose corrections do not, with why.
+    refused: BTreeMap<String, Vec<String>>,
+}
+
+/// Applies each named finding's changes alone to `previous` and confines the
+/// result to what that finding may change; a finding whose result is not
+/// wholly inside it is refused with its reasons.
+fn judge_each(
+    previous: &Value,
+    send: &[ReviewFinding],
+    patch: &Patch,
+    wording: &Wording,
+    protected: &[Protected],
+) -> Result<Judged> {
+    let reach = repair::reach(send);
+    let mut judged = Judged {
+        accepted: Vec::new(),
+        refused: BTreeMap::new(),
+    };
+    for id in patch.findings() {
+        let Some(finding) = send.iter().find(|finding| finding.id().as_str() == id) else {
+            continue;
+        };
+        let alone = patch.only(std::slice::from_ref(&id));
+        // A correction none of whose changes can be applied is for the
+        // final application to report.
+        let Ok(applied) =
+            text_edits::apply_patch_for(previous, alone, &Value::Null, wording, &reach)
+        else {
+            judged.accepted.push(id);
+            continue;
+        };
+        let confined = super::super::protected::confine_review(
+            previous,
+            &applied.value,
+            &touched_by_edits(std::slice::from_ref(finding), &applied.named),
+            protected,
+        )
+        .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))?;
+        match confined {
+            Ok(_) => judged.accepted.push(id),
+            Err(reasons) => {
+                judged.refused.insert(id, reasons);
+            }
+        }
+    }
+    Ok(judged)
 }
 
 /// For each part (`/blocks/N`, `/questions/N`), the findings whose applied

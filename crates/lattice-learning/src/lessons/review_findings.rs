@@ -318,6 +318,15 @@ pub enum PlanCheck {
     Unseen,
 }
 
+impl PlanCheck {
+    const ALL: [Self; 4] = [Self::Planned, Self::Used, Self::Contradiction, Self::Unseen];
+
+    /// Whether the check finds something the lesson lacks.
+    pub fn lacks(self) -> bool {
+        matches!(self, Self::Used | Self::Planned)
+    }
+}
+
 /// What raised a finding, and what it is about.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "by")]
@@ -365,6 +374,25 @@ impl FindingId {
     /// The number of a reviewer's finding's id.
     pub(crate) fn reviewer_number(&self) -> Option<u32> {
         self.0.strip_prefix("reviewer/")?.parse().ok()
+    }
+
+    /// The plan check of a plan finding's id.
+    fn plan_check(&self) -> Option<PlanCheck> {
+        PlanCheck::ALL.into_iter().find(|check| {
+            let kind = Origin::Plan {
+                check: *check,
+                subject: String::new(),
+            }
+            .kind();
+            self.0
+                .strip_prefix(&kind)
+                .is_some_and(|rest| rest.starts_with('/'))
+        })
+    }
+
+    /// Whether taking the part at `site` out of the lesson settles the finding: it is about that part's own text, not the whole lesson or something the lesson lacks.
+    pub(crate) fn ends_with_its_part(&self, site: FindingSite) -> bool {
+        site != FindingSite::Lesson && !self.plan_check().is_some_and(PlanCheck::lacks)
     }
 }
 
@@ -562,13 +590,7 @@ impl ReviewFinding {
 
     /// Whether the lesson lacks teaching, which its correction adds without changing any existing sentence.
     pub fn adds(&self) -> bool {
-        matches!(
-            self.origin,
-            Origin::Plan {
-                check: PlanCheck::Used | PlanCheck::Planned,
-                ..
-            }
-        )
+        matches!(self.origin, Origin::Plan { check, .. } if check.lacks())
     }
 
     /// This finding's identity: the same across passes while the same defect

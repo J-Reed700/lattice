@@ -16,6 +16,7 @@ use lattice_core::{
 use reqwest::Url;
 
 use super::protocol::{protocols, LimitsProtocol};
+use lattice_core::shared::error::WithCauses;
 
 /// A model with no report still runs, so a chat waits only this long for one.
 const REPORT_TIMEOUT: Duration = Duration::from_secs(8);
@@ -77,7 +78,7 @@ async fn report_from(
         .redirect(reqwest::redirect::Policy::none())
         .timeout(REPORT_TIMEOUT)
         .build()
-        .map_err(|e| AppError::Network(e.to_string()))?;
+        .map_err(|e| AppError::Network(WithCauses(&e).to_string()))?;
     let url = model_url(base, api.version, model).ok_or_else(failed)?;
     let response = protocol
         .sign_management(client.get(url), key)

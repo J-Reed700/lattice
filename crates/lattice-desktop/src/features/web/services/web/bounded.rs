@@ -9,6 +9,7 @@ use std::time::Instant;
 use reqwest::header::HeaderMap;
 
 use super::{validate_url_resolved, WebService};
+use lattice_core::shared::error::WithCauses;
 
 /// One body read by [`WebService::fetch_bytes_bounded`].
 /// The `Content-Type` header is deliberately not carried: callers that care
@@ -72,7 +73,7 @@ impl WebService {
             let mut response = request
                 .send()
                 .await
-                .map_err(|error| BoundedFetchError::Network(error.to_string()))?;
+                .map_err(|error| BoundedFetchError::Network(WithCauses(&error).to_string()))?;
             if !response.status().is_success() {
                 return Err(BoundedFetchError::Status(response.status().as_u16()));
             }
@@ -89,7 +90,7 @@ impl WebService {
             while let Some(chunk) = response
                 .chunk()
                 .await
-                .map_err(|error| BoundedFetchError::Network(error.to_string()))?
+                .map_err(|error| BoundedFetchError::Network(WithCauses(&error).to_string()))?
             {
                 if bytes.len().saturating_add(chunk.len()) > max_bytes {
                     return Err(BoundedFetchError::TooLarge);

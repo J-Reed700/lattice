@@ -12,11 +12,17 @@ async fn review(
     candidate: &Value,
     progress: Option<&OutlineProgress>,
 ) -> Result<Vec<Reported>> {
-    Ok(
-        super::review(llm, system, prompt, candidate, Scope::default(), progress)
-            .await?
-            .reported,
+    Ok(super::review(
+        llm,
+        system,
+        prompt,
+        candidate,
+        Scope::default(),
+        Remit::Open,
+        progress,
     )
+    .await?
+    .reported)
 }
 
 fn check(index: usize) -> Value {
@@ -38,7 +44,7 @@ async fn retains_more_than_six_findings_without_rejecting_a_complete_review() ->
         json!({"issues":findings,"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])});
     let (_, passages) = review_candidate(&candidate());
     assert!(
-        jsonschema::JSONSchema::compile(&schema(&[0, 1, 2], &passages, &[]))
+        jsonschema::JSONSchema::compile(&schema(&[0, 1, 2], &passages, &[], Remit::Open))
             .unwrap()
             .is_valid(&response)
     );
@@ -68,7 +74,8 @@ async fn retains_more_than_six_findings_without_rejecting_a_complete_review() ->
 #[test]
 fn response_slots_cannot_renumber_sections_or_cite_unknown_passages() {
     let (_, passages) = review_candidate(&candidate());
-    let compiled = jsonschema::JSONSchema::compile(&schema(&[0, 1, 2], &passages, &[])).unwrap();
+    let compiled =
+        jsonschema::JSONSchema::compile(&schema(&[0, 1, 2], &passages, &[], Remit::Open)).unwrap();
     let mut response =
         json!({"issues":[],"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])});
     assert!(compiled.is_valid(&response));
@@ -118,7 +125,7 @@ fn passages_preserve_every_byte_and_ids_are_scoped_to_the_section() {
     assert_eq!(original["blocks"][0]["body"], body);
     assert_eq!(reviewed["blocks"][0]["title"], "Unicode and code");
     for indices in [vec![0], vec![]] {
-        jsonschema::JSONSchema::compile(&schema(&indices, &ids, &[])).unwrap();
+        jsonschema::JSONSchema::compile(&schema(&indices, &ids, &[], Remit::Open)).unwrap();
     }
 }
 
@@ -395,8 +402,12 @@ async fn a_review_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_f
 #[test]
 fn the_review_schema_bounds_no_text_but_a_blank() {
     let (_, passages) = review_candidate(&candidate());
-    let bounds =
-        crate::lessons::course_generation_tests::length_bounds(&schema(&[0, 1, 2], &passages, &[]));
+    let bounds = crate::lessons::course_generation_tests::length_bounds(&schema(
+        &[0, 1, 2],
+        &passages,
+        &[],
+        Remit::Open,
+    ));
     assert!(bounds.is_empty(), "{bounds:?}");
 }
 
@@ -421,7 +432,7 @@ fn sent(model: &ScriptedModel, call: usize) -> Value {
 #[test]
 fn the_schema_asks_for_a_verdict_on_exactly_the_asked_ids_and_not_at_all_when_none_were_asked() {
     let (_, passages) = review_candidate(&candidate());
-    let with = schema(&[0], &passages, &["reviewer/1", "reviewer/2"]);
+    let with = schema(&[0], &passages, &["reviewer/1", "reviewer/2"], Remit::Open);
     assert_eq!(
         with.pointer("/properties/openFindings/items/properties/id/enum"),
         Some(&json!(["reviewer/1", "reviewer/2"]))
@@ -435,7 +446,7 @@ fn the_schema_asks_for_a_verdict_on_exactly_the_asked_ids_and_not_at_all_when_no
         Some(&json!(2))
     );
     assert_eq!(with["required"][0], "openFindings");
-    let without = schema(&[0], &passages, &[]);
+    let without = schema(&[0], &passages, &[], Remit::Open);
     assert!(without.pointer("/properties/openFindings").is_none());
     assert!(!without["required"]
         .as_array()
@@ -459,6 +470,7 @@ async fn an_answer_that_leaves_an_id_out_is_corrected_by_a_complete_one() -> Res
             sections: Some(&[0]),
             asked: Some(&asked),
         },
+        Remit::Open,
         None,
     )
     .await?;
@@ -488,6 +500,7 @@ async fn a_second_verdict_for_one_id_is_refused_then_leaves_its_finding_as_it_st
             sections: Some(&[0]),
             asked: Some(&asked),
         },
+        Remit::Open,
         None,
     )
     .await?;
@@ -512,6 +525,7 @@ async fn a_verdict_on_an_id_nobody_asked_about_is_refused_then_dropped() -> Resu
             sections: Some(&[0]),
             asked: Some(&asked),
         },
+        Remit::Open,
         None,
     )
     .await?;
@@ -538,6 +552,7 @@ async fn the_scope_limits_the_sections_that_need_a_check() -> Result<()> {
             sections: Some(&[1]),
             ..Scope::default()
         },
+        Remit::Open,
         None,
     )
     .await?;
@@ -581,6 +596,7 @@ async fn a_correction_asks_for_every_verdict_again() -> Result<()> {
             sections: Some(&[0]),
             asked: Some(&asked),
         },
+        Remit::Open,
         None,
     )
     .await?;
@@ -617,6 +633,7 @@ async fn a_defect_named_with_a_wrong_passage(passage: &str) -> (Judged, Scripted
         json!({}),
         &candidate(),
         Scope::default(),
+        Remit::Open,
         None,
     )
     .await
@@ -647,7 +664,7 @@ async fn a_report_takes_its_passage_from_the_check_that_was_accepted() {
 #[test]
 fn a_schema_that_asks_about_open_findings_has_each_report_say_which_it_continues() {
     let (_, passages) = review_candidate(&candidate());
-    let with = schema(&[0], &passages, &["reviewer/1", "reviewer/2"]);
+    let with = schema(&[0], &passages, &["reviewer/1", "reviewer/2"], Remit::Open);
     let choices = json!(["reviewer/1", "reviewer/2", "none"]);
     assert_eq!(
         with.pointer("/properties/blockChecks/items/properties/continues/enum"),
@@ -677,13 +694,13 @@ fn a_schema_that_asks_about_nothing_is_the_one_it_was_before_reports_could_conti
             "passageId":{"type":"string","enum":passages[0]},
             "finding":{"type":"string","minLength":1},
             "hasDefect":{"type":"boolean"}}}}}});
-    assert_eq!(schema(&[0], &passages, &[]), expected);
+    assert_eq!(schema(&[0], &passages, &[], Remit::Open), expected);
 }
 
 /// The schema of a review that was asked about `asked`.
 fn issue_schema(asked: &[&str]) -> Value {
     let (_, passages) = review_candidate(&candidate());
-    schema(&[0], &passages, asked)
+    schema(&[0], &passages, asked, Remit::Open)
 }
 
 #[test]
@@ -743,6 +760,7 @@ async fn a_report_carries_the_open_finding_it_continues_and_none_for_an_id_nobod
             sections: Some(&[0]),
             asked: Some(&asked),
         },
+        Remit::Open,
         None,
     )
     .await?;
@@ -793,6 +811,7 @@ async fn judge(asked: &[Asked], replies: Vec<Value>) -> (Vec<Verdict>, ScriptedM
             sections: Some(&[0]),
             asked: Some(asked),
         },
+        Remit::Open,
         None,
     )
     .await
@@ -910,7 +929,7 @@ async fn a_resolved_verdict_with_a_quote_is_just_resolved() {
 #[test]
 fn a_verdict_is_an_id_a_quote_and_a_judgement_in_that_order_with_no_note() {
     let (_, passages) = review_candidate(&candidate());
-    let with = schema(&[0], &passages, &["reviewer/1"]);
+    let with = schema(&[0], &passages, &["reviewer/1"], Remit::Open);
     assert_eq!(
         with.pointer("/properties/openFindings/items/required"),
         Some(&json!(["id", "quote", "verdict"]))
@@ -947,6 +966,7 @@ async fn a_verdict_quote_is_stored_as_the_lesson_bytes() {
             sections: Some(&[0]),
             asked: Some(&asked),
         },
+        Remit::Open,
         None,
     )
     .await
@@ -1006,10 +1026,12 @@ fn the_review_contract_reads_what_it_renders() {
             Issue::Continuing {
                 note: "Still missing.".into(),
                 continues: Some("finding-1".into()),
+                concern: None,
             },
             Issue::Continuing {
                 note: "A new gap.".into(),
                 continues: None,
+                concern: None,
             },
         ],
         block_checks: vec![json!({"sectionId":"section-1","hasDefect":false})],

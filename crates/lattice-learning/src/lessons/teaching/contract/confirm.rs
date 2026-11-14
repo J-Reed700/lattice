@@ -69,6 +69,7 @@ const USE_BRIEF: &str = concat!("Read the part's words first and note whether th
 struct Belongs {
     taught: bool,
     quote: String,
+    #[serde(default)]
     belongs: String,
 }
 
@@ -237,15 +238,28 @@ async fn read_planned<'a>(
     parts: &'a [Part],
 ) -> Result<Verdict<'a>> {
     let (sections, questions) = shown_parts(parts.iter());
-    let ids: Vec<&str> = parts.iter().map(|part| part.id.as_str()).collect();
+    let places: Vec<&Part> = parts.iter().filter(|part| item.belongs_in(part)).collect();
+    let ids: Vec<&str> = places.iter().map(|part| part.id.as_str()).collect();
+    let question = if places.is_empty() {
+        format!(
+            "Does this lesson teach the {} '{}'? If it does, copy exactly the words that teach it.",
+            item.kind, item.text
+        )
+    } else {
+        format!("Does this lesson teach the {} '{}'? If it does, copy exactly the words that teach it. If it does not, name the part where it belongs.", item.kind, item.text)
+    };
     let prompt = json!({
         "task":PLANNED_TASK,
-        "question":format!("Does this lesson teach the {} '{}'? If it does, copy exactly the words that teach it. If it does not, name the part where it belongs.", item.kind, item.text),
+        "question":question,
         "item":{"id":item.id,"kind":item.kind,"text":item.text},
         "sections":sections,
         "questions":questions,
     });
-    let schema = json!({"type":"object","additionalProperties":false,"required":["taught","quote","belongs"],"properties":{"taught":{"type":"boolean"},"quote":{"type":"string"},"belongs":{"type":"string","enum":ids}}});
+    let schema = if places.is_empty() {
+        json!({"type":"object","additionalProperties":false,"required":["taught","quote"],"properties":{"taught":{"type":"boolean"},"quote":{"type":"string"}}})
+    } else {
+        json!({"type":"object","additionalProperties":false,"required":["taught","quote","belongs"],"properties":{"taught":{"type":"boolean"},"quote":{"type":"string"},"belongs":{"type":"string","enum":ids}}})
+    };
     let answer: Belongs = ask(
         llm,
         "the confirming read of a planned item",
@@ -261,7 +275,7 @@ async fn read_planned<'a>(
     };
     Ok(match hit {
         Some(hit) => Verdict::Taught(hit),
-        None => Verdict::Belongs(parts.iter().find(|part| part.id == answer.belongs)),
+        None => Verdict::Belongs(places.into_iter().find(|part| part.id == answer.belongs)),
     })
 }
 

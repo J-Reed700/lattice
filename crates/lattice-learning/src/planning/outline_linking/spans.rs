@@ -91,7 +91,8 @@ fn terms(text: &str) -> HashSet<String> {
 /// The span of a retrieved passage that becomes the quote: the contiguous run
 /// of prose lines that shares the most terms with the item, as whole sentences
 /// within the quote length limit. A passage cut mid-sentence loses the partial
-/// sentence. Returns nothing when no prose span satisfies the quote rules.
+/// sentence. Returns nothing when no prose span satisfies the quote rules. The
+/// quote is cut from the excerpt, so it is not searched for.
 pub(super) fn citable_span(
     passage: &ReferencePassage,
     excerpt: &str,
@@ -150,7 +151,5 @@ pub(super) fn citable_span(
         let cut = last_sentence_end(head).or_else(|| head.rfind(char::is_whitespace))?;
         text = text[..cut].trim_end();
     }
-    generation::validate_excerpt_quote(text, excerpt)
-        .ok()
-        .map(|_| text.to_owned())
+    generation::long_enough_quote(text).then(|| text.to_owned())
 }

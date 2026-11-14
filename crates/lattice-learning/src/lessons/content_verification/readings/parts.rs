@@ -90,7 +90,7 @@ async fn restore(at: &ReadContext<'_>, ordinal: usize, statement: &Statement<'_>
     let (evidence, _) = attribution_page(
         at.executions,
         at.citations,
-        (unit, &claim.statement),
+        (unit, &claim.quote),
         &checked.statement,
         parts_fit(at),
     );

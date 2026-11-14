@@ -16,6 +16,7 @@ use crate::embedded_runtime::BuiltinRuntimes;
 use crate::lessons::course_plan::CoursePlan;
 use crate::lessons::shape::{self, LessonShape, ShapePolicy};
 use crate::lessons::structured_call::{complete_checked, CallKind, ReasonFirst};
+use crate::lessons::trace;
 use crate::model_call;
 use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::ReviewFinding;
@@ -516,6 +517,16 @@ pub async fn prepare_lesson_with_references<'a>(
             room,
             "Packed the lesson's evidence"
         );
+        trace::decided(
+            trace::Stage::ReferenceGathering,
+            "evidence pack",
+            "packed",
+            &format!(
+                "{passages} passages from {} sources for {} topics, room {room} tokens",
+                sources.len(),
+                topics.len()
+            ),
+        );
         crate::lesson_drafts::authoring(crate::lesson_drafts::AuthoringContext {
             scope_hash,
             prompt: prompt.clone(),
@@ -542,6 +553,12 @@ pub async fn prepare_lesson_with_references<'a>(
         crate::lesson_progress::phase(
             crate::lesson_progress::Phase::Writing,
             "Reusing the saved lesson draft; continuing verification",
+        );
+        trace::decided(
+            trace::Stage::Drafting,
+            "lesson draft",
+            "reused a saved draft",
+            "the saved draft was written from the same inputs",
         );
         draft
     } else {
@@ -582,10 +599,33 @@ pub async fn prepare_lesson_with_references<'a>(
         )
         .await?;
         crate::lesson_drafts::save(&raw).await?;
+        trace::changed(trace::Stage::Drafting, &trace::Cause::none(), "", &raw);
         raw
     };
+    let drafted = raw.clone();
     let raw = crate::content_verification::normalize_example_fences(llm, raw).await?;
+    trace::changed(
+        trace::Stage::Drafting,
+        &trace::Cause::none(),
+        &drafted,
+        &raw,
+    );
+    let normalized = raw.clone();
     let raw = crate::content_verification::strip_draft_apparatus(raw);
+    trace::changed(
+        trace::Stage::Drafting,
+        &trace::Cause::none(),
+        &normalized,
+        &raw,
+    );
+    let stripped = raw.clone();
+    let raw = crate::content_verification::clear_right_choice_reasons(raw);
+    trace::changed(
+        trace::Stage::Drafting,
+        &trace::Cause::none(),
+        &stripped,
+        &raw,
+    );
     // The draft review holds the lesson to what the writer was asked for;
     // verification, which cuts, holds it to what the lesson is kept with.
     // Finish an interrupted section repair before reviewing the assembled
@@ -598,6 +638,12 @@ pub async fn prepare_lesson_with_references<'a>(
         crate::content_verification::restart(llm, &prompt, policy, &raw, references, &mut numbered)
             .await?;
     let raw = if restart.saved.is_some() {
+        trace::decided(
+            trace::Stage::TeachingReview,
+            "lesson draft",
+            "teaching review skipped",
+            "an interrupted section repair is finished first; its own review follows",
+        );
         raw
     } else {
         crate::teaching::review_lesson(

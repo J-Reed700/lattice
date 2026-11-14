@@ -12,6 +12,7 @@ use lattice_core::application::ports::llm_port::{InvalidationCause, RemoteHeader
 use lattice_core::application::services::credentials::remote_auth;
 use lattice_core::domain::models::model_ref::CloudProvider;
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::error::WithCauses;
 use lattice_core::shared::http::{auth_header_map, reqwest_client_builder};
 use lattice_core::shared::ipc::ApiError;
 use reqwest::Client;
@@ -126,16 +127,14 @@ fn build_http_client(header: Option<&RemoteHeader>) -> Result<Client, AppError> 
 
     builder
         .build()
-        .map_err(|e| AppError::Network(format!("Failed to build HTTP client: {}", e)))
+        .map_err(|e| AppError::Network(format!("Failed to build HTTP client: {}", WithCauses(&e))))
 }
 
 async fn fetch_models_from_tags(client: &Client, base_url: &str) -> Result<Vec<String>, AppError> {
     let endpoint = format!("{}/api/tags", base_url);
-    let response = client
-        .get(&endpoint)
-        .send()
-        .await
-        .map_err(|e| AppError::Network(format!("Failed to reach {}: {}", endpoint, e)))?;
+    let response = client.get(&endpoint).send().await.map_err(|e| {
+        AppError::Network(format!("Failed to reach {}: {}", endpoint, WithCauses(&e)))
+    })?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -147,7 +146,11 @@ async fn fetch_models_from_tags(client: &Client, base_url: &str) -> Result<Vec<S
     }
 
     let body: serde_json::Value = response.json().await.map_err(|e| {
-        AppError::Deserialization(format!("Invalid response from {}: {}", endpoint, e))
+        AppError::Deserialization(format!(
+            "Invalid response from {}: {}",
+            endpoint,
+            WithCauses(&e)
+        ))
     })?;
 
     let mut models = Vec::new();
@@ -275,14 +278,14 @@ pub async fn test_custom_tool(
         .map_err(|error| {
             ApiError::from(AppError::Network(format!(
                 "Failed to build HTTP client: {}",
-                error
+                WithCauses(&error)
             )))
         })?;
 
     let response = client.get(url.clone()).send().await.map_err(|error| {
         ApiError::from(AppError::Network(format!(
             "Failed to call custom tool endpoint: {}",
-            error
+            WithCauses(&error)
         )))
     })?;
 

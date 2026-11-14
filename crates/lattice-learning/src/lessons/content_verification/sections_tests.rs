@@ -963,8 +963,9 @@ async fn settle_does_not_rerun_teaching_review_on_cut_lesson_when_surviving_sect
             json!({
                 "index": 0,
                 "passageId": "section-0-passage-0",
-                "finding": "Section 0 needs wording edit.",
+                "finding": "Section 0 promises expert certification of the learner's work.",
                 "hasDefect": true,
+                "concerns": ["promise"],
             }),
             json!({
                 "index": 1,

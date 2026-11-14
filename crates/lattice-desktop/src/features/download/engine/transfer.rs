@@ -1,6 +1,7 @@
 //! The HTTP transfer: ranged requests, retries, resume, and the checksum check.
 use super::{DownloadResult, HttpDownloadEngine, ProgressCallback};
 use lattice_core::domain::download::DownloadError;
+use lattice_core::shared::error::WithCauses;
 use reqwest::{header, Response, StatusCode};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -177,7 +178,7 @@ impl HttpDownloadEngine {
         request
             .send()
             .await
-            .map_err(|e| DownloadError::NetworkError(format!("Request failed: {}", e)))
+            .map_err(|e| DownloadError::NetworkError(format!("Request failed: {}", WithCauses(&e))))
     }
 
     pub(super) async fn download_impl(
@@ -279,8 +280,9 @@ impl HttpDownloadEngine {
         use futures::StreamExt;
 
         while let Some(chunk_result) = stream.next().await {
-            let chunk = chunk_result
-                .map_err(|e| DownloadError::NetworkError(format!("Stream error: {}", e)))?;
+            let chunk = chunk_result.map_err(|e| {
+                DownloadError::NetworkError(format!("Stream error: {}", WithCauses(&e)))
+            })?;
 
             file.write_all(&chunk)
                 .await

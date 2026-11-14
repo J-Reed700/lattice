@@ -4,8 +4,9 @@ use super::{
     candidate_from_row, candidate_outcomes_in, decode, format_name, json,
     LearningAssessmentRepository, StoredCandidate, CANDIDATE_COLUMNS,
 };
-use crate::assessment_engine::{self as engine, LearningBlueprintRequirement};
-use crate::assessment_generation::{AuthoringNeed, MaterialPassage, StoredItem};
+use crate::assessment_engine::{self as engine, LearningBlueprintRequirement, Shortfall};
+use crate::assessment_generation::{AuthoringNeed, BankPass, MaterialPassage, StoredItem};
+use crate::bank_writing::bank_steps;
 use crate::dto::{LearningQuizScopeDto, LearningQuizScopeKind};
 use crate::lessons::claim_reviews::repository::waiting_questions_in;
 use crate::persistence::now;
@@ -15,6 +16,7 @@ use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::{Database, WriteTx};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection};
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
 /// An item on its way into the bank.
@@ -129,7 +131,7 @@ pub(crate) async fn insert_bank_items_in(
 /// How a quiz's requirements stand in the bank.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct BankState {
-    /// Every requirement can be filled: a form can be built.
+    /// A form can be built from the bank.
     pub ready: bool,
     pub size: usize,
     pub fresh: usize,
@@ -137,6 +139,8 @@ pub(crate) struct BankState {
     pub target: usize,
     /// Per requirement: items that can fill it, and how many of those are unseen.
     pub per_requirement: Vec<(usize, usize)>,
+    /// The first requirement a form cannot fill from its outcome's items; None when a form can be built or there are no requirements.
+    pub shortfall: Option<Shortfall>,
 }
 
 pub(crate) fn bank_state(
@@ -147,7 +151,6 @@ pub(crate) fn bank_state(
     let mut all = HashSet::new();
     let mut fresh = HashSet::new();
     let mut per_requirement = Vec::new();
-    let mut ready = !requirements.is_empty();
     for requirement in requirements {
         let eligible: Vec<&StoredCandidate> = bank
             .iter()
@@ -157,7 +160,6 @@ pub(crate) fn bank_state(
             .iter()
             .filter(|c| !exposed.contains(&c.candidate.id))
             .count();
-        ready &= eligible.len() >= requirement.count;
         for c in &eligible {
             all.insert(c.candidate.id.clone());
             if !exposed.contains(&c.candidate.id) {
@@ -166,11 +168,18 @@ pub(crate) fn bank_state(
         }
         per_requirement.push((eligible.len(), unseen));
     }
+    let shortfall = engine::form_items(
+        requirements,
+        &bank.iter().map(|c| &c.candidate).collect::<Vec<_>>(),
+        exposed,
+    )
+    .err();
     BankState {
-        ready,
+        ready: !requirements.is_empty() && shortfall.is_none(),
+        shortfall,
         size: all.len(),
         fresh: fresh.len(),
-        target: requirements.iter().map(|r| 3 * r.count).sum(),
+        target: requirements.iter().map(|r| r.bank_target()).sum(),
         per_requirement,
     }
 }
@@ -277,6 +286,27 @@ impl LearningAssessmentRepository {
         Ok(needs)
     }
 
+    /// The first requirement a quiz's first form cannot fill from the bank, with the items that could fill it;
+    /// None when a form can be built or the quiz has no requirements yet.
+    pub async fn first_form_shortfall(
+        database: &Database,
+        program_id: &str,
+        scope: &LearningQuizScopeDto,
+    ) -> Result<Option<Shortfall>> {
+        let mut tx = database.begin_write().await?;
+        Self::ensure_outcomes(&mut tx, program_id).await?;
+        let Some((blueprint, _)) =
+            quiz_blueprints::ensure_blueprint_in(&mut tx, program_id, scope).await?
+        else {
+            tx.commit().await?;
+            return Ok(None);
+        };
+        let requirements = quiz_blueprints::requirements_in(&mut tx, &blueprint).await?;
+        let bank = Self::bank_in(&mut tx, program_id).await?;
+        tx.commit().await?;
+        Ok(bank_state(&requirements, &bank, &HashSet::new()).shortfall)
+    }
+
     /// [`insert_bank_items_in`] as a unit of work of its own.
     pub(crate) async fn insert_bank_items(
         database: &Database,
@@ -290,10 +320,10 @@ impl LearningAssessmentRepository {
         Ok(stored)
     }
 
-    /// What a quiz still needs written: per requirement, up to three forms'
-    /// worth, or with `top_up` one more form's worth wherever fewer unseen
-    /// items remain than a form asks. Empty when the quiz has nothing to ask
-    /// yet or its bank is full.
+    /// What a quiz still needs written. Not a top-up: per requirement, up to three forms' worth, planned by
+    /// [`bank_steps`] as the first form's worth of every requirement and then the rest, the lesson's own needs first
+    /// within each pass. With `top_up`, one more form's worth wherever fewer unseen items remain than a form asks.
+    /// Empty when the quiz has nothing to ask yet or its bank is full.
     pub(crate) async fn bank_needs_in(
         tx: &mut WriteTx,
         program_id: &str,
@@ -310,62 +340,216 @@ impl LearningAssessmentRepository {
         let bank = Self::bank_in(tx, program_id).await?;
         let exposed = Self::exposed_in(tx, program_id).await?;
         let state = bank_state(&requirements, &bank, &exposed);
-        let mut needs = Vec::new();
-        for (requirement, (eligible, unseen)) in requirements.iter().zip(state.per_requirement) {
-            let count = if top_up {
-                if unseen < requirement.count {
-                    requirement.count
-                } else {
-                    0
-                }
-            } else {
-                (3 * requirement.count).saturating_sub(eligible)
-            };
-            if count == 0 {
-                continue;
-            }
-            let outcome = sqlx::query("SELECT title,description,module_id,lesson_id FROM learning_outcome_definitions WHERE id=? AND program_id=?")
-                .bind(&requirement.outcome_id)
-                .bind(program_id)
-                .fetch_one(&mut **tx)
-                .await?;
-            let lesson_id: Option<String> = outcome.get("lesson_id");
-            let lessons: Vec<String> = match (&lesson_id, outcome.get::<Option<String>, _>("module_id")) {
-                (Some(lesson), _) => vec![lesson.clone()],
-                (None, Some(module)) => sqlx::query_scalar("SELECT id FROM learning_lessons WHERE program_id=? AND module_id=? AND preparation='ready' ORDER BY ordinal")
-                    .bind(program_id)
-                    .bind(module)
-                    .fetch_all(&mut **tx)
-                    .await?,
-                (None, None) => vec![],
-            };
-            let mut material = Vec::new();
-            for lesson in &lessons {
-                material.extend(Self::lesson_material_in(tx, lesson).await?);
-            }
-            if material.is_empty() {
-                continue;
-            }
-            let existing_prompts = bank
+        let steps: Vec<(usize, usize, BankPass)> = if top_up {
+            requirements
                 .iter()
-                .filter(|c| c.candidate.outcome_ids.contains(&requirement.outcome_id))
-                .map(|c| c.candidate.prompt.clone())
+                .zip(&state.per_requirement)
+                .enumerate()
+                .filter(|(_, (requirement, (_, unseen)))| *unseen < requirement.count)
+                .map(|(index, (requirement, _))| (index, requirement.count, BankPass::Retakes))
+                .collect()
+        } else {
+            let held: Vec<usize> = state
+                .per_requirement
+                .iter()
+                .map(|(held, _)| *held)
                 .collect();
+            bank_steps(&requirements, &held)
+        };
+        let mut writable: HashMap<usize, NeedSource> = HashMap::new();
+        let mut needs = Vec::new();
+        for (index, count, pass) in steps {
+            let Some(requirement) = requirements.get(index) else {
+                continue;
+            };
+            let source = match writable.entry(index) {
+                Entry::Occupied(known) => known.into_mut(),
+                Entry::Vacant(unknown) => {
+                    let Some(source) = Self::need_source_in(tx, program_id, requirement).await?
+                    else {
+                        continue;
+                    };
+                    unknown.insert(source)
+                }
+            };
             needs.push(AuthoringNeed {
                 requirement: requirement.clone(),
-                outcome_title: outcome.get("title"),
-                outcome_description: outcome.get("description"),
-                lesson_id,
+                outcome_title: source.title.clone(),
+                outcome_description: source.description.clone(),
+                lesson_id: source.lesson_id.clone(),
                 count,
-                material,
-                existing_prompts,
+                pass,
+                material: source.material.clone(),
+                existing_prompts: bank
+                    .iter()
+                    .filter(|c| c.candidate.outcome_ids.contains(&requirement.outcome_id))
+                    .map(|c| c.candidate.prompt.clone())
+                    .collect(),
             });
         }
         // Module and course banks reuse lesson items; only what is missing is
-        // written, and the lesson scope's own needs come first.
+        // written, the first forms come first, and within each pass the lesson
+        // scope's own needs come first.
         if scope.kind != LearningQuizScopeKind::Lesson {
-            needs.sort_by_key(|n| n.lesson_id.is_none());
+            needs.sort_by_key(|n| (n.pass, n.lesson_id.is_none()));
         }
         Ok(needs)
+    }
+
+    /// What a requirement's items are written from: its outcome and the lesson text under it; None when no
+    /// prepared lesson text exists yet.
+    async fn need_source_in(
+        tx: &mut WriteTx,
+        program_id: &str,
+        requirement: &LearningBlueprintRequirement,
+    ) -> Result<Option<NeedSource>> {
+        let outcome = sqlx::query("SELECT title,description,module_id,lesson_id FROM learning_outcome_definitions WHERE id=? AND program_id=?")
+            .bind(&requirement.outcome_id)
+            .bind(program_id)
+            .fetch_one(&mut **tx)
+            .await?;
+        let lesson_id: Option<String> = outcome.get("lesson_id");
+        let lessons: Vec<String> = match (&lesson_id, outcome.get::<Option<String>, _>("module_id")) {
+            (Some(lesson), _) => vec![lesson.clone()],
+            (None, Some(module)) => sqlx::query_scalar("SELECT id FROM learning_lessons WHERE program_id=? AND module_id=? AND preparation='ready' ORDER BY ordinal")
+                .bind(program_id)
+                .bind(module)
+                .fetch_all(&mut **tx)
+                .await?,
+            (None, None) => vec![],
+        };
+        let mut material = Vec::new();
+        for lesson in &lessons {
+            material.extend(Self::lesson_material_in(tx, lesson).await?);
+        }
+        if material.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(NeedSource {
+            title: outcome.get("title"),
+            description: outcome.get("description"),
+            lesson_id,
+            material,
+        }))
+    }
+}
+
+/// What one requirement's needs are written from.
+struct NeedSource {
+    title: String,
+    description: String,
+    lesson_id: Option<String>,
+    material: Vec<MaterialPassage>,
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use super::*;
+    use crate::assessment_engine::{
+        build_assessment_form, LearningAssessmentBlueprint, LearningAssessmentCandidate,
+        LearningAssessmentKey, LearningAssessmentPurpose, LearningFeedbackTiming,
+        LearningItemFormat,
+    };
+    use lattice_core::shared::error::AppError;
+
+    fn requirement(outcome: u128, count: usize) -> LearningBlueprintRequirement {
+        LearningBlueprintRequirement {
+            outcome_id: uuid::Uuid::from_u128(outcome).to_string(),
+            format: LearningItemFormat::SingleChoice,
+            count,
+            difficulty_min: 2,
+            difficulty_max: 4,
+        }
+    }
+
+    fn stored(seed: u128) -> StoredCandidate {
+        StoredCandidate {
+            candidate: LearningAssessmentCandidate {
+                id: uuid::Uuid::from_u128(seed).to_string(),
+                outcome_ids: vec![
+                    uuid::Uuid::from_u128(2).to_string(),
+                    uuid::Uuid::from_u128(3).to_string(),
+                ],
+                format: LearningItemFormat::SingleChoice,
+                difficulty: 3,
+                prompt: format!("Which shelf takes parcel {seed}?"),
+                options: vec!["Left".into(), "Middle".into(), "Right".into()],
+                left: vec![],
+                source_version_ids: vec![],
+                rubric: vec![],
+                key: LearningAssessmentKey::Choice(1),
+                explanation: "The middle shelf.".into(),
+                distractor_rationales: vec![],
+            },
+            artifact_kind: None,
+            source_quote: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_bank_is_ready_only_when_a_form_can_be_built_from_it() {
+        let requirements = vec![requirement(2, 2), requirement(3, 1)];
+        let bank = vec![stored(10), stored(11)];
+        let blueprint = LearningAssessmentBlueprint {
+            id: uuid::Uuid::from_u128(1).to_string(),
+            purpose: LearningAssessmentPurpose::Checkpoint,
+            title: "Parcels".into(),
+            instructions: "Answer each question.".into(),
+            expected_minutes: 5,
+            allowed_aids: vec![],
+            feedback_timing: LearningFeedbackTiming::AfterSubmission,
+            requirements: requirements.clone(),
+        };
+        let candidates: Vec<LearningAssessmentCandidate> =
+            bank.iter().map(|c| c.candidate.clone()).collect();
+
+        let state = bank_state(&requirements, &bank, &HashSet::new());
+        let form = build_assessment_form(
+            &blueprint,
+            &candidates,
+            &HashSet::new(),
+            uuid::Uuid::new_v4().to_string(),
+            0,
+        );
+
+        assert!(
+            matches!(form, Err(AppError::InvalidState(_))),
+            "the form was built or refused for another reason: {form:?}"
+        );
+        assert!(!state.ready, "{state:?}");
+    }
+
+    #[test]
+    fn a_bank_short_of_one_format_is_ready_when_the_outcome_has_items_enough() {
+        let mut asked = requirement(2, 1);
+        asked.format = LearningItemFormat::TrueFalse;
+        let requirements = vec![requirement(2, 2), asked];
+        let bank = vec![stored(10), stored(11), stored(12)];
+        let blueprint = LearningAssessmentBlueprint {
+            id: uuid::Uuid::from_u128(1).to_string(),
+            purpose: LearningAssessmentPurpose::Checkpoint,
+            title: "Parcels".into(),
+            instructions: "Answer each question.".into(),
+            expected_minutes: 5,
+            allowed_aids: vec![],
+            feedback_timing: LearningFeedbackTiming::AfterSubmission,
+            requirements: requirements.clone(),
+        };
+        let candidates: Vec<LearningAssessmentCandidate> =
+            bank.iter().map(|c| c.candidate.clone()).collect();
+
+        let state = bank_state(&requirements, &bank, &HashSet::new());
+        let form = build_assessment_form(
+            &blueprint,
+            &candidates,
+            &HashSet::new(),
+            uuid::Uuid::new_v4().to_string(),
+            0,
+        );
+
+        assert!(state.ready, "{state:?}");
+        assert_eq!(state.shortfall, None);
+        assert_eq!(form.unwrap().items.len(), 3);
     }
 }

@@ -5,6 +5,7 @@ use super::protocol::{CompletionProtocol, EventDecoder};
 use super::timing::StreamClock;
 use super::{field, CompletionResponse};
 use futures::{Stream, StreamExt};
+use lattice_core::shared::error::WithCauses;
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,7 +27,7 @@ pub(super) async fn drain<S, B, E>(
 where
     S: Stream<Item = std::result::Result<B, E>> + Unpin,
     B: AsRef<[u8]>,
-    E: std::fmt::Display,
+    E: std::error::Error + 'static,
 {
     let clock = StreamClock::started(sent);
     let generating = AtomicBool::new(false);
@@ -63,8 +64,9 @@ where
             bytes.next().await
         };
         let Some(chunk) = next else { break };
-        let chunk = chunk
-            .map_err(|error| AppError::Network(format!("Cloud stream interrupted: {error}")))?;
+        let chunk = chunk.map_err(|error| {
+            AppError::Network(format!("Cloud stream interrupted: {}", WithCauses(&error)))
+        })?;
         decoder.push(chunk.as_ref(), on_text, on_reasoning)?;
         if decoder.events.is_complete() {
             break;

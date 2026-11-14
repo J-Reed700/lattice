@@ -288,7 +288,7 @@ impl LLMPort for PerRequirement {
 #[tokio::test]
 async fn quiz_items_are_authored_per_requirement_from_retrieved_passages() -> Result<()> {
     use crate::assessment_engine::{LearningBlueprintRequirement, LearningItemFormat};
-    use crate::assessment_generation::{author_items, AuthoringNeed, MaterialPassage};
+    use crate::assessment_generation::{author_items, AuthoringNeed, BankPass, MaterialPassage};
     let needle = "Partition pruning skips partitions that cannot match the predicate.";
     let need = |title: &str| AuthoringNeed {
         requirement: LearningBlueprintRequirement {
@@ -302,6 +302,7 @@ async fn quiz_items_are_authored_per_requirement_from_retrieved_passages() -> Re
         outcome_description: "Explain partition pruning against a predicate.".into(),
         lesson_id: None,
         count: 1,
+        pass: BankPass::Retakes,
         material: vec![MaterialPassage {
             lesson_title: "Query plans".into(),
             title: "Pruning".into(),
