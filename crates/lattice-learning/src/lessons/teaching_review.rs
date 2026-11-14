@@ -16,6 +16,8 @@ use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+pub(crate) use concerns::LessonConcern;
+
 pub(super) const POLICY: Protocol = protocol!("section-review", 6);
 
 /// The saved answers of the section review, by what it was given.
@@ -84,6 +86,8 @@ struct BlockCheck {
     passage_id: String,
     finding: String,
     has_defect: bool,
+    #[serde(default)]
+    concerns: Option<Vec<LessonConcern>>,
 }
 
 #[derive(Deserialize)]
@@ -114,6 +118,8 @@ enum Issue {
         note: String,
         #[serde(default)]
         continues: Option<String>,
+        #[serde(default)]
+        concern: Option<LessonConcern>,
     },
 }
 
@@ -140,6 +146,15 @@ pub struct Asked {
     /// The passage it is about now, when one still holds its words.
     pub passage_id: Option<String>,
     pub note: String,
+}
+
+/// Which defects a review reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Remit {
+    /// Any material defect.
+    Open,
+    /// Only the concerns a lesson's reviewer owns, each in a section whose kind takes it.
+    Lesson,
 }
 
 /// What one review covers. The default is a first review of everything.
@@ -263,7 +278,12 @@ fn passage_text(reviewed: &Value, index: usize, id: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn schema(indices: &[usize], passages: &[Vec<String>], verdict_ids: &[&str]) -> Value {
+fn schema(
+    indices: &[usize],
+    passages: &[Vec<String>],
+    verdict_ids: &[&str],
+    _remit: Remit,
+) -> Value {
     let mut required = Vec::new();
     let mut properties = serde_json::Map::new();
     if !verdict_ids.is_empty() {
@@ -374,6 +394,7 @@ struct Reading<'a> {
     passages: &'a [Vec<String>],
     sections: &'a [usize],
     asked: &'a [&'a Asked],
+    remit: Remit,
     /// The reply after a correction: a blank issue or finding is dropped and
     /// an open finding with no usable verdict stays as it stood, not refused.
     settle: bool,
@@ -403,7 +424,9 @@ fn read_issues(
     for issue in issues {
         let (issue, continued) = match issue {
             Issue::Plain(note) => (note, None),
-            Issue::Continuing { note, continues } => (note, continues),
+            Issue::Continuing {
+                note, continues, ..
+            } => (note, continues),
         };
         if issue.trim().is_empty() {
             if !reading.settle {
@@ -643,6 +666,7 @@ pub async fn review(
     prompt: Value,
     candidate: &Value,
     scope: Scope<'_>,
+    remit: Remit,
     progress: Option<&OutlineProgress>,
 ) -> Result<Judged> {
     let Value::Object(mut prompt) = prompt else {
@@ -687,6 +711,7 @@ pub async fn review(
         passages: &passages,
         sections: &sections,
         asked: &asked,
+        remit,
         settle,
     };
     if let Some(saved) = crate::lesson_drafts::saved::<String>(&key)
@@ -716,6 +741,7 @@ pub async fn review(
                 .iter()
                 .map(|finding| finding.id.as_str())
                 .collect::<Vec<_>>(),
+            remit,
         ),
         output_tokens: REVIEW_ANSWER_TOKENS,
     };
@@ -748,6 +774,9 @@ pub async fn review(
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
+#[cfg(test)]
+mod concern_tests;
+mod concerns;
 #[cfg(test)]
 mod passage_tests;
 mod passages;

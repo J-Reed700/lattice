@@ -608,10 +608,15 @@ pub(crate) fn clean_review(sections: &[usize], verdicts: &[serde_json::Value]) -
     )
 }
 
-/// The check of section `index`: a defect when `defect` is given.
+/// The check of section `index`: a defect when `defect` is given, naming the
+/// lesson concern it fails. A clean check names none, as every review's does.
 pub(crate) fn section_check(index: usize, defect: Option<&str>) -> serde_json::Value {
     let finding = defect.unwrap_or("No defect was found in this section.");
-    json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":finding,"hasDefect":defect.is_some()})
+    let mut check = json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":finding,"hasDefect":defect.is_some()});
+    if defect.is_some() {
+        check["concerns"] = json!(["promise"]);
+    }
+    check
 }
 
 /// A teaching-review reply as it is written: `checks` are for exactly the

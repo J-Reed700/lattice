@@ -258,12 +258,14 @@ impl ReviewTexts {
         changed: CHANGED_CHECKS,
     };
     /// A lesson.
-    pub const LESSON: Self = Self {
-        first: LESSON_REVIEW_SYSTEM,
-        recheck: LESSON_RECHECK_SYSTEM,
-        whole: LESSON_SHARED_CHECKS,
-        changed: LESSON_CHANGED_CHECKS,
-    };
+    pub fn lesson() -> Self {
+        Self {
+            first: LESSON_REVIEW_SYSTEM,
+            recheck: LESSON_RECHECK_SYSTEM,
+            whole: LESSON_SHARED_CHECKS,
+            changed: LESSON_CHANGED_CHECKS,
+        }
+    }
 
     /// Everything the reviewer may be told, as one text.
     pub fn joined(&self) -> String {

@@ -993,14 +993,14 @@ async fn an_outline_review_never_checks_against_a_course_plan() -> Result<()> {
 
 fn defect_in_first_section() -> String {
     let checks = (0..3)
-        .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The first section states a wrong result.","hasDefect":index == 0}))
+        .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The first section promises that the tutor certifies the learner's work as expert reviewed.","hasDefect":index == 0,"concerns":if index == 0 {vec!["promise"]} else {vec![]}}))
         .collect();
     json!({"issues":[],"blockChecks":crate::lessons::teaching_review::fixture_checks(checks)})
         .to_string()
 }
 
 fn actionable() -> String {
-    json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"reason":"The section states a wrong result."}]}).to_string()
+    json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"reason":"The section promises expert certification."}]}).to_string()
 }
 
 const LEARNER_SEES_ONLY_THE_LESSON: &str = "never mentions the course plan";

@@ -113,6 +113,7 @@ async fn closed_find(
                 review_prompt(pass, lens.priority, Vec::new()),
                 pass.value,
                 round.scope(),
+                crate::teaching_review::Remit::Open,
                 lens.progress,
             )
             .await?;

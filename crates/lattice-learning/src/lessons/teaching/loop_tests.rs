@@ -18,6 +18,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 const NUMBER_FOUR: &str = "The function returns the number 4 for the sum of two and two.";
+/// A defect of the lesson's explanation section that the lesson's reviewer owns.
+const PROMISED: &str = "The section promises that the tutor runs the learner's code and reports whether the tests pass.";
+const STILL_PROMISED: &str =
+    "Section 1 still promises that the tutor runs the learner's code and reports the result.";
+const STILL_PROMISED_TWICE: &str =
+    "Section 1 still promises that the tutor runs the learner's code after two repairs.";
+const FIRST_IDEA_PROMISE: &str =
+    "The first idea promises the learner an expert certification of their work.";
 pub(super) const EXCERPT: &str =
     "This saved reference describes the exact behavior of the example tool.";
 
@@ -34,17 +42,30 @@ fn review(defect: Option<&str>) -> String {
 }
 
 /// A review of the lesson's one section, with `verdicts` on the findings it
-/// was asked about.
+/// was asked about; a defect names the lesson concern it fails.
 fn judged(defect: Option<&str>, verdicts: &[Value]) -> String {
+    let mut check = section_check(defect);
+    if defect.is_some() {
+        check["concerns"] = json!(["promise"]);
+    }
+    review_reply(&[], vec![check], verdicts)
+}
+
+/// [`review`] of material the general entry point reviews: its checks name no concerns.
+fn review_open(defect: Option<&str>) -> String {
+    judged_open(defect, &[])
+}
+
+/// [`judged`] of material the general entry point reviews: its checks name no concerns.
+fn judged_open(defect: Option<&str>, verdicts: &[Value]) -> String {
+    review_reply(&[], vec![section_check(defect)], verdicts)
+}
+
+/// The check of the lesson's one section: a defect when `defect` is given.
+fn section_check(defect: Option<&str>) -> Value {
     let finding =
         defect.unwrap_or("The complete explanation was reviewed and no teaching defect was found.");
-    review_reply(
-        &[],
-        vec![
-            json!({"index":0,"passageId":"section-0-passage-0","finding":finding,"hasDefect":defect.is_some()}),
-        ],
-        verdicts,
-    )
+    json!({"index":0,"passageId":"section-0-passage-0","finding":finding,"hasDefect":defect.is_some()})
 }
 
 fn actionable() -> String {
@@ -128,7 +149,7 @@ async fn a_defect_no_repair_fixes_waits_after_its_second_repair() -> Result<()> 
     assert!(waiting
         .finding
         .note
-        .contains("although the code returns the number 4"));
+        .contains("reports whether the tests pass"));
     assert!(!waiting.finding.note.contains("after two repairs"));
     assert!(waiting.finding.passage.is_some());
     assert_eq!(model.prompts.lock().unwrap().len(), 6);
@@ -155,9 +176,7 @@ async fn the_reviewer_is_told_to_name_a_part_by_its_label_or_title() -> Result<(
 #[tokio::test]
 async fn a_pass_that_fixes_the_defect_publishes_with_nothing_waiting() -> Result<()> {
     let model = model(vec![
-        review(Some(
-            "The example shows \"result\": \"4\" although the code returns the number 4.",
-        )),
+        review(Some(PROMISED)),
         actionable(),
         retitle("Corrected example"),
         judged(None, &[verdict("reviewer/1", "resolved")]),
@@ -170,9 +189,7 @@ async fn a_pass_that_fixes_the_defect_publishes_with_nothing_waiting() -> Result
 #[tokio::test]
 async fn a_lessons_own_repair_stays_in_the_review_phase() -> Result<()> {
     let model = model(vec![
-        review(Some(
-            "The example shows \"result\": \"4\" although the code returns the number 4.",
-        )),
+        review(Some(PROMISED)),
         actionable(),
         retitle("Corrected example"),
         judged(None, &[verdict("reviewer/1", "resolved")]),
@@ -267,9 +284,7 @@ async fn a_finding_whose_repairs_cannot_be_used_waits_after_its_second() -> Resu
         json!({"edits":[{"path":"/blocks/0/title","before":"Missing text","after":"X"}]})
             .to_string();
     let model = model(vec![
-        review(Some(
-            "The example shows \"result\": \"4\" although the code returns the number 4.",
-        )),
+        review(Some(PROMISED)),
         actionable(),
         unusable.clone(),
         unusable.clone(),
@@ -348,12 +363,7 @@ impl lattice_core::application::ports::llm_port::LLMPort for RepairTooLong {
 /// that had already written and checked the lesson.
 #[tokio::test]
 async fn a_repair_too_long_for_the_window_leaves_the_lesson_waiting() -> Result<()> {
-    let model = RepairTooLong(model(vec![
-        review(Some(
-            "The example shows \"result\": \"4\" although the code returns the number 4.",
-        )),
-        actionable(),
-    ]));
+    let model = RepairTooLong(model(vec![review(Some(PROMISED)), actionable()]));
     let original = lesson(EXCERPT);
     let sources = references();
     let references = ReferenceCollection::lexical(&sources)?;
@@ -390,9 +400,7 @@ async fn a_repair_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_f
     let mut candidate = lesson("x x x x x x x x x x x x x x");
     candidate["blocks"][0]["sourceIndex"] = json!(4);
     let scripted = model(vec![
-        review(Some(
-            "The example shows \"result\": \"4\" although the code returns the number 4.",
-        )),
+        review(Some(PROMISED)),
         actionable(),
         retitle("Corrected example"),
         judged(None, &[verdict("reviewer/1", "resolved")]),
@@ -442,12 +450,7 @@ async fn a_repair_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_f
 
 #[tokio::test]
 async fn a_finding_the_user_already_holds_is_not_repaired_again() -> Result<()> {
-    let model = model(vec![
-        review(Some(
-            "The example shows \"result\": \"4\" although the code returns the number 4.",
-        )),
-        actionable(),
-    ]);
+    let model = model(vec![review(Some(PROMISED)), actionable()]);
     let sources = references();
     let references = ReferenceCollection::lexical(&sources)?;
     let reviewed = review_material(
@@ -480,13 +483,13 @@ async fn a_finding_the_user_already_holds_is_not_repaired_again() -> Result<()> 
 #[tokio::test]
 async fn outlines_and_assessments_still_fail_closed_once_their_repairs_are_spent() {
     let still = || {
-        judged(
+        judged_open(
             Some("Section 1 still prints the result as the string \"4\" instead of the number."),
             &[present("reviewer/1", NUMBER_FOUR)],
         )
     };
     let model = model(vec![
-        review(Some(
+        review_open(Some(
             "The example shows \"result\": \"4\" although the code returns the number 4.",
         )),
         retitle("Corrected example"),
@@ -515,7 +518,7 @@ async fn outlines_and_assessments_still_fail_closed_once_their_repairs_are_spent
 #[tokio::test]
 async fn the_subject_comes_from_the_entry_point_not_the_schema() {
     let scripted = model(vec![
-        review(Some(
+        review_open(Some(
             "The example shows \"result\": \"4\" although the code returns the number 4.",
         )),
         retitle("Corrected example"),
@@ -550,12 +553,7 @@ async fn a_teaching_finding_on_a_protected_sentence_waits_for_the_user_and_the_r
 ) -> Result<()> {
     // After a claim repair, the sentence a verified claim stands on is
     // protected: the reviewer's finding about it is held, not repaired.
-    let model = model(vec![
-        review(Some(
-            "The example shows \"result\": \"4\" although the code returns the number 4.",
-        )),
-        actionable(),
-    ]);
+    let model = model(vec![review(Some(PROMISED)), actionable()]);
     let sources = references();
     let references = ReferenceCollection::lexical(&sources)?;
     let candidate = lesson(EXCERPT);
@@ -597,11 +595,7 @@ async fn a_teaching_finding_on_the_sentence_of_a_machine_claim_with_attempts_lef
         "{V1} Their inner membrane folds into cristae that enlarge its surface. They carry their own circular DNA, passed down from the mother, and divide on their own whenever the cell needs more energy."
     );
     let candidate = json!({"blocks":[{"kind":"explanation","title":"Example","body":body,"rubric":[],"sourceIndex":0,"quote":EXCERPT}],"questions":[]});
-    let finding = || {
-        review(Some(
-            "The first sentence says mitochondria produce most of the ATP, which the section's own example contradicts.",
-        ))
-    };
+    let finding = || review(Some(PROMISED));
     let fix = json!({"edits":[{"path":"/blocks/0/body","before":"produce most of","after":"produce some of"}]}).to_string();
     let sentence = |released: bool| Protected {
         unit: 0,
@@ -679,7 +673,7 @@ async fn a_finding_on_a_sentence_no_claim_stands_on_is_repaired_inside_a_paragra
     );
     let candidate = json!({"blocks":[{"kind":"explanation","title":"Example","body":body,"rubric":[],"sourceIndex":0,"quote":EXCERPT}],"questions":[]});
     let defect = || {
-        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![json!({"index":0,"passageId":"section-0-passage-1","finding":"The example says a harder-working muscle cell grows fewer mitochondria, which contradicts the section's point that cells divide them when they need more energy.","hasDefect":true})])}).to_string()
+        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![json!({"index":0,"passageId":"section-0-passage-1","finding":"This passage promises that the tutor will certify the learner's mitochondria count as expert reviewed.","hasDefect":true,"concerns":["promise"]})])}).to_string()
     };
     let fix = json!({"edits":[{"path":"/blocks/0/body","before":"grows fewer mitochondria","after":"grows more mitochondria"}]}).to_string();
     let sentence = |quote: &str| Protected {
@@ -816,7 +810,7 @@ async fn a_crisp_block_is_reviewed_not_sent_to_repair_for_its_length() -> Result
 #[tokio::test]
 async fn a_short_review_issue_is_checked_and_repaired_not_dropped() -> Result<()> {
     let mut brief: Value = serde_json::from_str(&review(None))?;
-    brief["issues"] = json!(["Wrong."]);
+    brief["issues"] = json!([{"note":"Promises certification.","concern":"promise"}]);
     let model = model(vec![
         brief.to_string(),
         actionable(),
@@ -832,7 +826,7 @@ async fn a_short_review_issue_is_checked_and_repaired_not_dropped() -> Result<()
     assert_eq!(asked.len(), 1);
     let entries = asked[0]["issuesToFix"].as_array().unwrap();
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0]["note"], "Wrong.");
+    assert_eq!(entries[0]["note"], "Promises certification.");
     Ok(())
 }
 
@@ -909,13 +903,14 @@ async fn an_outline_review_sends_every_issue_it_reports_to_the_repair() -> Resul
 }
 
 #[tokio::test]
-async fn the_lesson_review_asks_for_every_defect_with_no_count_cap() -> Result<()> {
+async fn the_lesson_review_asks_for_every_concern_it_owns_with_no_count_cap() -> Result<()> {
     let model = model(vec![review(None)]);
     run(&model, lesson(EXCERPT)).await?;
     let prompts = model.prompts.lock().unwrap();
     assert!(!prompts[0].contains("at most six"), "{}", prompts[0]);
-    assert!(prompts[0].contains("every material defect"));
-    assert!(prompts[0].contains("names every material defect the block has"));
+    assert!(!prompts[0].contains("every material defect"));
+    assert!(prompts[0].contains("name each such concern in concerns"));
+    assert!(prompts[0].contains("so one repair can fix them all"));
     Ok(())
 }
 
@@ -1259,9 +1254,7 @@ async fn an_edit_that_unmakes_the_lesson_is_charged_and_the_repair_asked_again(
 ) -> Result<()> {
     let model = Answering::new(
         vec![
-            review(Some(
-                "The example shows \"result\": \"4\" although the code returns the number 4.",
-            )),
+            review(Some(PROMISED)),
             actionable(),
             judged(None, &[verdict("reviewer/1", "resolved")]),
         ],
@@ -1357,18 +1350,10 @@ async fn a_rewrite_with_no_sections_is_an_unusable_repair() -> Result<()> {
 #[tokio::test]
 async fn the_same_unusable_repair_twice_leaves_the_finding_waiting_and_the_lesson_whole(
 ) -> Result<()> {
-    let model = Answering::new(
-        vec![
-            review(Some(
-                "The example shows \"result\": \"4\" although the code returns the number 4.",
-            )),
-            actionable(),
-        ],
-        |sent| {
-            let finding = ids_of(sent).remove(0);
-            Ok(json!({"edits":[{"finding":finding,"path":"/blocks/0/sourceIndex","before":0,"after":-1}]}).to_string())
-        },
-    );
+    let model = Answering::new(vec![review(Some(PROMISED)), actionable()], |sent| {
+        let finding = ids_of(sent).remove(0);
+        Ok(json!({"edits":[{"finding":finding,"path":"/blocks/0/sourceIndex","before":0,"after":-1}]}).to_string())
+    });
     let original = lesson(EXCERPT);
     let reviewed = run(&model, original.clone()).await?;
     assert_eq!(reviewed.set_aside.len(), 1);
@@ -1427,18 +1412,13 @@ fn retitle_again(after: &str) -> String {
 /// again.
 fn defect_no_repair_fixes() -> Vec<String> {
     vec![
-        review(Some(
-            "The example shows \"result\": \"4\" although the code returns the number 4.",
-        )),
+        review(Some(PROMISED)),
         actionable(),
         retitle("Corrected example"),
-        judged(
-            Some("Section 1 still prints the result as the string \"4\" instead of the number."),
-            &[present("reviewer/1", NUMBER_FOUR)],
-        ),
+        judged(Some(STILL_PROMISED), &[present("reviewer/1", NUMBER_FOUR)]),
         retitle_again("Corrected twice"),
         judged(
-            Some("Section 1 still prints the result as the string \"4\" after two repairs."),
+            Some(STILL_PROMISED_TWICE),
             &[present("reviewer/1", NUMBER_FOUR)],
         ),
     ]
@@ -1754,11 +1734,12 @@ fn parts_checked(asked: &[usize], defective: &[(usize, usize)], verdicts: &[Valu
                 "index": index,
                 "passageId": format!("section-{index}-passage-{}", found.map_or(0, |(_, paragraph)| *paragraph)),
                 "finding": if found.is_some() {
-                    "The first idea is wrong."
+                    FIRST_IDEA_PROMISE
                 } else {
                     "Nothing is wrong here."
                 },
                 "hasDefect": found.is_some(),
+                "concerns": if found.is_some() { vec!["promise"] } else { vec![] },
             })
         })
         .collect();
@@ -1784,7 +1765,7 @@ fn parts_evidence(defective: &[usize]) -> String {
                 "evidenceIds": [format!("blocks-{index}")],
                 "partId": format!("blocks-{index}"),
                 "requirementId": null,
-                "reason": "The first idea is wrong."
+                "reason": FIRST_IDEA_PROMISE
             })
         })
         .collect();
@@ -1798,7 +1779,7 @@ fn edits_answer(edits: Vec<Value>) -> String {
 #[tokio::test]
 async fn the_repair_is_told_each_finding_s_id_part_and_passage() -> Result<()> {
     let model = model(vec![
-        review(Some("The example shows the wrong result.")),
+        review(Some("The section promises expert certification.")),
         actionable(),
         retitle("Corrected example"),
         judged(None, &[verdict("reviewer/1", "resolved")]),
@@ -1815,7 +1796,10 @@ async fn the_repair_is_told_each_finding_s_id_part_and_passage() -> Result<()> {
     assert!(entry["passage"]
         .as_str()
         .is_some_and(|passage| body.contains(passage)));
-    assert!(entry["note"].as_str().unwrap().contains("the wrong result"));
+    assert!(entry["note"]
+        .as_str()
+        .unwrap()
+        .contains("promises expert certification"));
     assert!(entry["lastAttempt"].is_null());
     Ok(())
 }
@@ -1823,7 +1807,7 @@ async fn the_repair_is_told_each_finding_s_id_part_and_passage() -> Result<()> {
 #[tokio::test]
 async fn the_repair_is_asked_for_one_answer_for_each_finding_sent() -> Result<()> {
     let scripted = model(vec![
-        review(Some("The example shows the wrong result.")),
+        review(Some("The section promises expert certification.")),
         actionable(),
         retitle("Corrected example"),
         judged(None, &[verdict("reviewer/1", "resolved")]),
@@ -2461,9 +2445,7 @@ async fn a_repair_edit_that_drops_a_sentences_markers_is_asked_again_with_the_ex
         json!({"edits":[{"path":"/blocks/0/body","before":before,"after":"The function returns the number 4 for the sum of two and two, as the code shows."}]}).to_string()
     };
     let scripted = model(vec![
-        review(Some(
-            "The example shows \"result\": \"4\" although the code returns the number 4.",
-        )),
+        review(Some(PROMISED)),
         actionable(),
         edit("The function returns the number 4 for the sum of two and two."),
         edit(MARKED),
@@ -2541,9 +2523,7 @@ async fn a_refused_repair_answer_is_kept_with_its_reason() -> Result<()> {
         json!({"edits":[{"path":"/blocks/0/title","before":"Missing text","after":"X"}]})
             .to_string();
     let model = model(vec![
-        review(Some(
-            "The example shows \"result\": \"4\" although the code returns the number 4.",
-        )),
+        review(Some(PROMISED)),
         actionable(),
         unusable.clone(),
         unusable.clone(),
@@ -2766,9 +2746,7 @@ async fn a_review_after_a_cut_and_its_repair_are_told_the_shape_the_lesson_is_ke
 ) -> Result<()> {
     use crate::lessons::shape::{FixedSchema, Phase, ShapePolicy};
     let model = model(vec![
-        review(Some(
-            "The example shows \"result\": \"4\" although the code returns the number 4.",
-        )),
+        review(Some(PROMISED)),
         actionable(),
         retitle("Corrected example"),
         judged(None, &[verdict("reviewer/1", "resolved")]),
@@ -2826,9 +2804,7 @@ async fn a_review_after_a_cut_and_its_repair_are_told_the_shape_the_lesson_is_ke
 async fn a_draft_review_is_told_what_the_writer_was() -> Result<()> {
     use crate::lessons::shape::{self, FixedSchema, Phase, ShapePolicy};
     let model = model(vec![
-        review(Some(
-            "The example shows \"result\": \"4\" although the code returns the number 4.",
-        )),
+        review(Some(PROMISED)),
         actionable(),
         retitle("Corrected example"),
         judged(None, &[verdict("reviewer/1", "resolved")]),
@@ -2892,6 +2868,7 @@ pub(super) struct ByRequest {
     repair: fn(&Value, usize) -> Vec<Value>,
     seen_reviews: Mutex<Vec<Value>>,
     seen_repairs: Mutex<Vec<Value>>,
+    seen_schemas: Mutex<Vec<Value>>,
 }
 
 fn no_whole_defects(_: &Value, _: usize) -> Vec<&'static str> {
@@ -2910,6 +2887,7 @@ impl ByRequest {
             repair,
             seen_reviews: Mutex::new(Vec::new()),
             seen_repairs: Mutex::new(Vec::new()),
+            seen_schemas: Mutex::new(Vec::new()),
         }
     }
 
@@ -2926,6 +2904,11 @@ impl ByRequest {
     /// The review requests, as the JSON each carries.
     pub(super) fn reviews(&self) -> Vec<Value> {
         self.seen_reviews.lock().unwrap().clone()
+    }
+
+    /// The response schema each review was sent with.
+    pub(super) fn schemas(&self) -> Vec<Value> {
+        self.seen_schemas.lock().unwrap().clone()
     }
 
     /// The repair requests, as the JSON each carries.
@@ -2972,12 +2955,19 @@ impl ByRequest {
                 .map(|(id, _)| id.clone())
                 .unwrap_or_default();
             let has_defect = found.is_some_and(|(id, _)| self.restates || !covered(*index, id));
-            checks.push(json!({
+            let mut check = json!({
                 "sectionId": format!("section-{index}"),
                 "passageId": id,
-                "finding": if has_defect { "The first idea is wrong." } else { "Nothing is wrong here." },
+                "finding": if has_defect { FIRST_IDEA_PROMISE } else { "Nothing is wrong here." },
                 "hasDefect": has_defect,
-            }));
+            });
+            if schema
+                .pointer("/properties/blockChecks/items/properties/concerns")
+                .is_some()
+            {
+                check["concerns"] = json!(if has_defect { vec!["promise"] } else { vec![] });
+            }
+            checks.push(check);
         }
         let wanted = (self.whole)(candidate, number);
         let issues: Vec<String> = wanted
@@ -2988,6 +2978,24 @@ impl ByRequest {
                     .any(|entry| entry["note"].as_str() == Some(**note))
             })
             .map(|note| (*note).to_owned())
+            .collect();
+        let concerned = schema
+            .pointer("/properties/issues/items/properties/concern")
+            .is_some();
+        let issues: Vec<Value> = issues
+            .into_iter()
+            .map(|note| {
+                if concerned {
+                    let concern = if note.contains("later lesson") {
+                        "later_lesson"
+                    } else {
+                        "promise"
+                    };
+                    json!({"note": note, "concern": concern})
+                } else {
+                    json!(note)
+                }
+            })
             .collect();
         let mut answer = json!({"issues": issues});
         if schema.pointer("/properties/blockChecks").is_some() {
@@ -3099,6 +3107,7 @@ impl LLMPort for ByRequest {
             evidence_answer(&sent, &schema)
         } else if schema.pointer("/properties/issues").is_some() {
             let number = {
+                self.seen_schemas.lock().unwrap().push(schema.clone());
                 let mut seen = self.seen_reviews.lock().unwrap();
                 seen.push(sent.clone());
                 seen.len()
@@ -3315,8 +3324,8 @@ async fn a_new_reviewer_defect_gets_its_own_number_and_budget() -> Result<()> {
     Ok(())
 }
 
-const WHEN_TO_USE: &str = "The lesson never says when the tool should be used.";
-const WHAT_IT_CANNOT_DO: &str = "The lesson does not say what the tool cannot do.";
+const WHEN_TO_USE: &str = "The lesson says a later lesson teaches when to use the tool, which no later lesson in the plan teaches.";
+const WHAT_IT_CANNOT_DO: &str = "The lesson says a later lesson teaches what the tool cannot do, which no later lesson in the plan teaches.";
 
 #[tokio::test]
 async fn a_new_whole_lesson_issue_continues_the_count_of_the_one_before() -> Result<()> {
@@ -3512,7 +3521,7 @@ async fn a_contradiction_between_two_parts_is_kept_with_both_and_repaired() -> R
     let recheck = |id: &str, issues: Vec<&str>, section: usize| {
         json!({
             "openFindings": [{"id": id, "quote": "", "verdict": "resolved"}],
-            "issues": issues,
+            "issues": issues.iter().map(|note| json!({"note": note, "concern": "promise"})).collect::<Vec<_>>(),
             "blockChecks": crate::teaching_review::fixture_checks(vec![none_wrong(section)]),
         })
         .to_string()
@@ -3531,7 +3540,7 @@ async fn a_contradiction_between_two_parts_is_kept_with_both_and_repaired() -> R
         parts_review(2, &[0]),
         parts_evidence(&[0]),
         edits_answer(vec![better_idea(0, "reviewer/1")]),
-        recheck("reviewer/1", vec!["Part A now contradicts Part B."], 0),
+        recheck("reviewer/1", vec!["Part A now promises that the tutor runs the learner's code, which Part B says it never does."], 0),
         clash,
         edits_answer(vec![better_idea(1, "reviewer/2")]),
         recheck("reviewer/2", Vec::new(), 1),
@@ -3726,10 +3735,10 @@ async fn a_question_finding_is_repaired_without_the_reference_check() {
 #[tokio::test]
 async fn the_reference_check_is_asked_only_about_the_reviewers_findings() {
     const FAULT: &str = "One option stands apart from the others in length.";
-    const NOTE: &str = "The first section leaves out a step.";
+    const NOTE: &str = "The first section promises that the tutor certifies the learner's work as expert reviewed.";
     let candidate = shaped_lesson();
     let checks = (0..candidate["blocks"].as_array().unwrap().len())
-        .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":if index == 0 {NOTE} else {"Reviewed; no teaching defect was found."},"hasDefect":index == 0}))
+        .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":if index == 0 {NOTE} else {"Reviewed; no teaching defect was found."},"hasDefect":index == 0,"concerns":if index == 0 {vec!["promise"]} else {vec![]}}))
         .collect();
     let model = model(vec![
         shaped_solutions(&candidate),
@@ -4025,7 +4034,7 @@ async fn a_whole_repair_is_neither_sent_nor_charged_a_failing_quotation() -> Res
     Ok(())
 }
 
-async fn repaired_outline(model: &ScriptedModel, outline: Value) -> Result<String> {
+async fn repaired_outline(model: &dyn LLMPort, outline: Value) -> Result<String> {
     let progress = crate::outline_progress::OutlineProgress::default();
     let sources = references();
     review_and_repair_with_progress(
@@ -4279,6 +4288,34 @@ fn a_whole_rewrite_that_changes_a_protected_sentence_changes_nothing_and_charges
     assert_eq!(changed, None);
     for told in told {
         assert_eq!(told.as_deref(), Some(REFUSED_FOR_GAMMA));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_lesson_asks_its_reviewer_for_concerns_and_an_outline_does_not() -> Result<()> {
+    let lesson_model = ByRequest::new(|_| false, |_, _| Vec::new());
+    run(&lesson_model, parts_lesson(1)).await?;
+    let asked = lesson_model.schemas();
+    assert!(!asked.is_empty());
+    for schema in &asked {
+        assert!(schema
+            .pointer("/properties/blockChecks/items/properties/concerns")
+            .is_some());
+        assert!(schema
+            .pointer("/properties/issues/items/properties/concern")
+            .is_some());
+    }
+    let outline_model = ByRequest::new(|_| false, |_, _| Vec::new());
+    repaired_outline(&outline_model, json!({"modules":[]})).await?;
+    let asked = outline_model.schemas();
+    assert!(!asked.is_empty());
+    for schema in &asked {
+        assert_eq!(
+            schema.pointer("/properties/issues/items"),
+            Some(&json!({"type":"string","minLength":1}))
+        );
+        assert!(schema.pointer("/properties/blockChecks").is_none());
     }
     Ok(())
 }

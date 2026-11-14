@@ -181,7 +181,7 @@ impl Subject for LessonSubject<'_> {
         let inputs = json!({"authoringContext":authoring,"correctnessPriority":LESSON_PRIORITY});
         self.standing.under(&crate::teaching_review::basis(
             llm,
-            &ReviewTexts::LESSON.joined(),
+            &ReviewTexts::lesson().joined(),
             LESSON_REVIEW_EVIDENCE_SCOPE,
             &inputs,
         ));
@@ -245,7 +245,7 @@ impl Subject for LessonSubject<'_> {
             let (judged, plan_findings) = match &round {
                 Some(round) => {
                     let instructions = review_instructions(
-                        &ReviewTexts::LESSON,
+                        &ReviewTexts::lesson(),
                         round,
                         true,
                         LESSON_REVIEW_EVIDENCE_SCOPE,
@@ -256,6 +256,7 @@ impl Subject for LessonSubject<'_> {
                         review_prompt,
                         pass.value,
                         round.scope(),
+                        crate::teaching_review::Remit::Lesson,
                         None,
                     );
                     let (judged, plan) = futures::try_join!(review, against_plan)?;
