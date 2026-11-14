@@ -2882,6 +2882,15 @@ fn bare(index: usize, sentence: &str) -> Value {
     json!({"kind":"explanation","title":format!("Section {index}"),"body":sentence,"rubric":[]})
 }
 
+/// `block` citing the source's own sentence, so the review finds nothing in
+/// its citation. The course's library numbers the source it holds second, after
+/// the one its setup adds.
+fn cited(mut block: Value) -> Value {
+    block["sourceIndex"] = json!(1);
+    block["quote"] = json!(GOOD);
+    block
+}
+
 /// A lesson of two cited sections that state what the sources do, and
 /// `questions`.
 fn with_questions(questions: Vec<Value>) -> Value {
@@ -2897,9 +2906,9 @@ async fn statements_alone_in_their_sections_are_published_not_verified_instead_o
     let course = Course::new().await?;
     let (first, second) = (figure(5), figure(6));
     let draft = json!({"blocks":[
-        {"kind":"explanation","title":"Section 0","body":section(GOOD),"rubric":[]},
-        bare(1, &first),
-        bare(2, &second)
+        cited(json!({"kind":"explanation","title":"Section 0","body":section(GOOD),"rubric":[]})),
+        cited(bare(1, &first)),
+        cited(bare(2, &second))
     ],"questions":[]});
     let prepared = course
         .prepare(&Figures::contradicting(), &draft)
