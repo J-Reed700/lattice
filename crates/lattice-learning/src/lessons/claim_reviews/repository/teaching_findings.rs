@@ -86,20 +86,36 @@ pub(in crate::lessons::claim_reviews) async fn held_rows(
     Ok(rows.iter().map(held_row).collect())
 }
 
-/// The text hashes of the lesson's question findings that wait for the user.
-pub(in crate::lessons::claim_reviews) async fn waiting_question_hashes(
+/// A finding that waits for the user, with the part it is on.
+pub(in crate::lessons::claim_reviews) struct WaitingPart {
+    pub(in crate::lessons::claim_reviews) finding_key: String,
+    pub(in crate::lessons::claim_reviews) site: String,
+    pub(in crate::lessons::claim_reviews) unit_index: Option<i64>,
+    pub(in crate::lessons::claim_reviews) unit_sha256: String,
+}
+
+/// The lesson's findings that wait for the user, each with its part.
+pub(in crate::lessons::claim_reviews) async fn waiting_parts(
     database: &Database,
     lesson_id: &str,
-) -> Result<Vec<String>> {
+) -> Result<Vec<WaitingPart>> {
     let mut read = database.begin_read().await?;
-    let hashes = sqlx::query_scalar(
-        "SELECT unit_sha256 FROM learning_lesson_teaching_findings WHERE lesson_id=? AND site='question' AND state='waiting'",
+    let rows = sqlx::query(
+        "SELECT finding_key, site, unit_index, unit_sha256 FROM learning_lesson_teaching_findings WHERE lesson_id=? AND state='waiting'",
     )
     .bind(lesson_id)
     .fetch_all(&mut *read)
     .await?;
     read.commit().await?;
-    Ok(hashes)
+    Ok(rows
+        .iter()
+        .map(|row| WaitingPart {
+            finding_key: row.get("finding_key"),
+            site: row.get("site"),
+            unit_index: row.get("unit_index"),
+            unit_sha256: row.get("unit_sha256"),
+        })
+        .collect())
 }
 
 /// The lesson's rows recorded before finding ids, read on `connection`.

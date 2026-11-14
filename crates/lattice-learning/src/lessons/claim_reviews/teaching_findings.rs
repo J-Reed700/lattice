@@ -209,12 +209,18 @@ impl TeachingFindingsRepository {
         Ok(held)
     }
 
-    /// The text hashes of the lesson's questions whose findings wait for the
-    /// user, not those kept as written.
+    /// The text hashes of the lesson's parts whose findings wait for the user
+    /// and end with their part, not those kept as written.
     pub(crate) async fn waiting_part_texts(&self, lesson_id: &str) -> Result<BTreeSet<String>> {
-        Ok(table::waiting_question_hashes(&self.database, lesson_id)
+        Ok(table::waiting_parts(&self.database, lesson_id)
             .await?
             .into_iter()
+            .filter(|row| {
+                site_of(&row.site, row.unit_index).is_some_and(|site| {
+                    FindingId::stored(row.finding_key.clone()).ends_with_its_part(site)
+                })
+            })
+            .map(|row| row.unit_sha256)
             .collect())
     }
 

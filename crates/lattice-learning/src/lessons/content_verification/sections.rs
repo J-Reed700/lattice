@@ -355,8 +355,9 @@ pub(super) fn unpublishable(
     shape.floor(lesson, cuts.units().units())
 }
 
-/// The questions of `lesson` that go because a finding on them waits for the
-/// user and the lesson's shape can spare them, each with its unit and label.
+/// The parts of `lesson` that go because a finding on them waits for the
+/// user and the lesson's shape can spare them, each with its unit and label;
+/// a check goes with the worked example it follows.
 pub(super) fn unsettled_units(
     lesson: &Value,
     waiting: &BTreeSet<String>,
@@ -372,28 +373,32 @@ pub(super) fn unsettled_units(
     let blocks = count("blocks");
     let mut going = cuts.units().units().clone();
     let mut chosen = Vec::new();
-    for index in 0..count("questions") {
-        let unit = blocks + index;
+    for unit in 0..blocks + count("questions") {
         if going.contains(&unit)
-            || !waiting.contains(&site_sha256(lesson, FindingSite::Question(index)))
+            || !waiting.contains(&site_sha256(lesson, FindingSite::of_unit(unit, blocks)))
         {
             continue;
         }
         let mut with = going.clone();
         with.insert(unit);
+        with.extend(shape.dependants(lesson, &with));
         if shape.floor(lesson, &with).is_some() {
             continue;
         }
-        let Some(label) = unit_label(lesson, unit) else {
+        let labelled: Option<Vec<(usize, String)>> = with
+            .difference(&going)
+            .map(|out| unit_label(lesson, *out).map(|label| (*out, label)))
+            .collect();
+        let Some(labelled) = labelled else {
             continue;
         };
         going = with;
-        chosen.push((unit, label));
+        chosen.extend(labelled);
     }
     chosen
 }
 
-/// Sends out the questions whose findings wait for the user and that the
+/// Sends out the parts whose findings wait for the user and that the
 /// lesson's shape can spare; whether any went.
 pub(super) async fn send_out_unsettled(
     lesson: &Value,
@@ -406,7 +411,7 @@ pub(super) async fn send_out_unsettled(
     for (unit, label) in chosen {
         tracing::info!(
             unit,
-            "A question whose finding the review could not settle goes"
+            "A part whose finding the review could not settle goes"
         );
         cuts.go_unsettled(unit, label);
     }

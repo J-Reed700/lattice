@@ -27,7 +27,7 @@ pub(crate) async fn held(candidate: &Value) -> Result<Held> {
     }
 }
 
-/// The text hashes of the questions whose findings wait for the user.
+/// The text hashes of the parts whose findings wait for the user and end with their part.
 pub(crate) async fn waiting_part_texts() -> Result<BTreeSet<String>> {
     match repository() {
         Some((store, lesson_id, _)) => store.waiting_part_texts(&lesson_id).await,
