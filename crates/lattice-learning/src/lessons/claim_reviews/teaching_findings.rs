@@ -211,7 +211,7 @@ impl TeachingFindingsRepository {
 
     /// The text hashes of the lesson's questions whose findings wait for the
     /// user, not those kept as written.
-    pub(crate) async fn waiting_question_texts(&self, lesson_id: &str) -> Result<BTreeSet<String>> {
+    pub(crate) async fn waiting_part_texts(&self, lesson_id: &str) -> Result<BTreeSet<String>> {
         Ok(table::waiting_question_hashes(&self.database, lesson_id)
             .await?
             .into_iter()

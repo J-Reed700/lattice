@@ -16,7 +16,7 @@ fn waiting_on(lesson: &Value, questions: &[usize]) -> BTreeSet<String> {
 }
 
 fn chosen(lesson: &Value, waiting: &BTreeSet<String>, cuts: &Cuts) -> Vec<(usize, String)> {
-    unsettled_questions(lesson, waiting, cuts, shape::policy())
+    unsettled_units(lesson, waiting, cuts, shape::policy())
 }
 
 #[test]

@@ -357,7 +357,7 @@ pub(super) fn unpublishable(
 
 /// The questions of `lesson` that go because a finding on them waits for the
 /// user and the lesson's shape can spare them, each with its unit and label.
-pub(super) fn unsettled_questions(
+pub(super) fn unsettled_units(
     lesson: &Value,
     waiting: &BTreeSet<String>,
     cuts: &Cuts,
@@ -400,8 +400,8 @@ pub(super) async fn send_out_unsettled(
     cuts: &mut Cuts,
     shape: &dyn ShapePolicy,
 ) -> Result<bool> {
-    let waiting = crate::teaching::question_texts().await?;
-    let chosen = unsettled_questions(lesson, &waiting, cuts, shape);
+    let waiting = crate::teaching::waiting_part_texts().await?;
+    let chosen = unsettled_units(lesson, &waiting, cuts, shape);
     let sent = !chosen.is_empty();
     for (unit, label) in chosen {
         tracing::info!(
@@ -844,5 +844,5 @@ pub(super) async fn excise(
 #[path = "sections_tests.rs"]
 mod tests;
 #[cfg(test)]
-#[path = "unsettled_question_tests.rs"]
-mod unsettled_question_tests;
+#[path = "unsettled_unit_tests.rs"]
+mod unsettled_unit_tests;
