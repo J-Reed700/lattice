@@ -357,3 +357,25 @@ fn the_lesson_review_system_does_not_ask_for_a_section_id_in_a_check() {
     assert!(!lesson_block_checks().contains("sectionId"));
     assert!(!SHARED_CHECKS.contains("sectionId"));
 }
+
+#[test]
+fn the_review_systems_ask_for_section_defects_only() {
+    for text in [
+        lesson_review_system(),
+        lesson_recheck_system(),
+        lesson_block_checks(),
+        SHARED_CHECKS.to_owned(),
+        CHANGED_CHECKS.to_owned(),
+        RECHECK_SYSTEM.to_owned(),
+    ] {
+        assert!(text.contains("sectionDefects"), "{text}");
+        for gone in [
+            "blockChecks",
+            "hasDefect",
+            "sectionIndicesToReview",
+            "zero-based",
+        ] {
+            assert!(!text.contains(gone), "{gone} in {text}");
+        }
+    }
+}
