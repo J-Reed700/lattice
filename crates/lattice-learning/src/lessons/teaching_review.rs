@@ -1,5 +1,7 @@
 //! Bind review findings to app-owned passages, not model-transcribed quotations.
+use crate::dto::LearningBlockKind;
 use crate::lessons::structured_call::{CallKind, ReasonFirst};
+use crate::lessons::trace::{self, Stage};
 use crate::lessons::writer_excerpts::{self, WriterExcerpts};
 use crate::review_findings::{part_quote, FindingId, FindingSite, ReviewFinding};
 use crate::{generation, outline_progress::OutlineProgress};
@@ -282,7 +284,7 @@ fn schema(
     indices: &[usize],
     passages: &[Vec<String>],
     verdict_ids: &[&str],
-    _remit: Remit,
+    remit: Remit,
 ) -> Value {
     let mut required = Vec::new();
     let mut properties = serde_json::Map::new();
@@ -300,11 +302,21 @@ fn schema(
             .collect();
         json!({"type":"string","enum":choices})
     });
-    let issue = match &continues {
-        Some(continues) => {
-            json!({"type":"object","additionalProperties":false,"required":["note","continues"],"properties":{"note":{"type":"string","minLength":1},"continues":continues}})
+    let issue = if remit == Remit::Lesson {
+        let mut required = vec!["note", "concern"];
+        let mut fields = json!({"note":{"type":"string","minLength":1},"concern":{"type":"string","enum":LessonConcern::ids_where(LessonConcern::in_issues)}});
+        if let (Some(continues), Some(fields)) = (&continues, fields.as_object_mut()) {
+            required.push("continues");
+            fields.insert("continues".into(), continues.clone());
         }
-        None => json!({"type":"string","minLength":1}),
+        json!({"type":"object","additionalProperties":false,"required":required,"properties":fields})
+    } else {
+        match &continues {
+            Some(continues) => {
+                json!({"type":"object","additionalProperties":false,"required":["note","continues"],"properties":{"note":{"type":"string","minLength":1},"continues":continues}})
+            }
+            None => json!({"type":"string","minLength":1}),
+        }
     };
     properties.insert("issues".into(), json!({"type":"array","items":issue}));
     if !passages.is_empty() {
@@ -332,6 +344,10 @@ fn schema(
         } else {
             let mut required = vec!["sectionId", "passageId", "finding", "hasDefect"];
             let mut fields = json!({"sectionId":section_id,"passageId":passage_id,"finding":{"type":"string","minLength":1},"hasDefect":{"type":"boolean"}});
+            if let (true, Some(fields)) = (remit == Remit::Lesson, fields.as_object_mut()) {
+                required.push("concerns");
+                fields.insert("concerns".into(), json!({"type":"array","items":{"type":"string","enum":LessonConcern::ids_where(LessonConcern::in_checks)}}));
+            }
             if let (Some(continues), Some(fields)) = (&continues, fields.as_object_mut()) {
                 required.push("continues");
                 fields.insert("continues".into(), continues.clone());
@@ -415,6 +431,37 @@ fn continuing(reading: &Reading<'_>, id: &str) -> Option<FindingId> {
         .map(|asked| asked.id.clone())
 }
 
+/// Refuses `message`: on the settled reply what it is about is dropped and traced.
+fn refuse(reading: &Reading<'_>, problems: &mut Vec<String>, subject: &str, message: String) {
+    if reading.settle {
+        trace::refused(Stage::TeachingReview, subject, &message, None);
+    } else {
+        note(problems, message);
+    }
+}
+
+/// Whether a lesson's issue may be raised: it holds a concern no section holds.
+fn issue_concern_allowed(
+    concern: Option<LessonConcern>,
+    reading: &Reading<'_>,
+    problems: &mut Vec<String>,
+) -> bool {
+    let allowed = LessonConcern::ids_where(LessonConcern::in_issues).join(", ");
+    match concern {
+        Some(concern) if concern.in_issues() => true,
+        Some(concern) => {
+            let message = format!("An issue's concern must be one of {allowed}; report {} in the check of the section that holds it.", concern.id());
+            refuse(reading, problems, "an issue", message);
+            false
+        }
+        None => {
+            let message = format!("An issue needs a concern, one of {allowed}.");
+            refuse(reading, problems, "an issue", message);
+            false
+        }
+    }
+}
+
 fn read_issues(
     issues: Vec<Issue>,
     reading: &Reading<'_>,
@@ -422,11 +469,38 @@ fn read_issues(
     problems: &mut Vec<String>,
 ) {
     for issue in issues {
-        let (issue, continued) = match issue {
-            Issue::Plain(note) => (note, None),
-            Issue::Continuing {
-                note, continues, ..
-            } => (note, continues),
+        let (issue, continued) = match (issue, reading.remit) {
+            (Issue::Plain(_), Remit::Lesson) => {
+                let message = "An issue is incorrectly typed: give it as an object with a note and a concern.".to_owned();
+                refuse(reading, problems, "an issue", message);
+                continue;
+            }
+            (Issue::Plain(note), Remit::Open) => (note, None),
+            (
+                Issue::Continuing {
+                    concern: Some(_), ..
+                },
+                Remit::Open,
+            ) => {
+                note(
+                    problems,
+                    "An issue has missing, unexpected or incorrectly typed fields.".into(),
+                );
+                continue;
+            }
+            (
+                Issue::Continuing {
+                    note,
+                    continues,
+                    concern,
+                },
+                remit,
+            ) => {
+                if remit == Remit::Lesson && !issue_concern_allowed(concern, reading, problems) {
+                    continue;
+                }
+                (note, continues)
+            }
         };
         if issue.trim().is_empty() {
             if !reading.settle {
@@ -508,6 +582,73 @@ fn read_verdicts(
     verdicts
 }
 
+/// The kind of section `index` of the candidate, when it can be read.
+fn section_kind(candidate: &Value, index: usize) -> Option<LearningBlockKind> {
+    candidate
+        .get("blocks")?
+        .get(index)?
+        .get("kind")?
+        .as_str()
+        .and_then(LearningBlockKind::parse)
+}
+
+/// Whether a lesson's check of section `index` that found a defect names a
+/// concern its kind takes. A reply that is not settled is refused instead if
+/// it names none, or one the kind does not take.
+fn raises(
+    named: &[LessonConcern],
+    index: usize,
+    reading: &Reading<'_>,
+) -> std::result::Result<bool, String> {
+    let site = FindingSite::Section(index).id_text();
+    let kind = section_kind(reading.candidate, index);
+    let takes: Vec<LessonConcern> = LessonConcern::ALL
+        .into_iter()
+        .filter(|concern| concern.takes(kind.as_ref()))
+        .collect();
+    let what = match &kind {
+        Some(kind) => format!("a {} section", kind.as_str()),
+        None => "a section of unknown kind".to_owned(),
+    };
+    let mut once: Vec<LessonConcern> = Vec::new();
+    for concern in named {
+        if !once.contains(concern) {
+            once.push(*concern);
+        }
+    }
+    let mut messages = Vec::new();
+    if once.is_empty() {
+        messages.push(format!("{site}: hasDefect needs the concerns the section fails, from those its kind takes: {}.", LessonConcern::list(takes.iter().copied())));
+    }
+    let mut kept = 0;
+    for concern in once {
+        if takes.contains(&concern) {
+            kept += 1;
+        } else {
+            messages.push(format!(
+                "{site} is {what}, which takes only {}; {} does not apply to it.",
+                LessonConcern::list(takes.iter().copied()),
+                concern.id()
+            ));
+        }
+    }
+    if reading.settle {
+        for message in &messages {
+            trace::refused(
+                Stage::TeachingReview,
+                &format!("{site} check"),
+                message,
+                None,
+            );
+        }
+        Ok(kept > 0)
+    } else if messages.is_empty() {
+        Ok(true)
+    } else {
+        Err(messages.join(" "))
+    }
+}
+
 /// The defect a valid check of section `index` reports, if any.
 fn read_check(
     mut value: Value,
@@ -528,6 +669,11 @@ fn read_check(
     let check: BlockCheck = serde_json::from_value(value).map_err(|_| {
         "A block check has missing, unexpected or incorrectly typed fields.".to_owned()
     })?;
+    if reading.remit == Remit::Open && check.concerns.is_some() {
+        return Err(
+            "A block check has missing, unexpected or incorrectly typed fields.".to_owned(),
+        );
+    }
     if reading
         .passages
         .get(index)
@@ -544,6 +690,12 @@ fn read_check(
         } else {
             Err(format!("{}: finding must not be blank.", site.id_text()))
         };
+    }
+    if reading.remit == Remit::Lesson && check.has_defect {
+        let named = check.concerns.clone().unwrap_or_default();
+        if !raises(&named, index, reading)? {
+            return Ok(None);
+        }
     }
     Ok(check.has_defect.then(|| Reported {
         site: Some(site),

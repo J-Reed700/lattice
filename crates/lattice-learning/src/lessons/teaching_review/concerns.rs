@@ -29,6 +29,24 @@ impl LessonConcern {
         Self::Workload,
     ];
 
+    /// The ids of `concerns`, comma-separated.
+    pub(crate) fn list(concerns: impl IntoIterator<Item = Self>) -> String {
+        concerns
+            .into_iter()
+            .map(Self::id)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// The ids of the concerns `keep` accepts, in the order of `ALL`.
+    pub(crate) fn ids_where(keep: fn(Self) -> bool) -> Vec<&'static str> {
+        Self::ALL
+            .into_iter()
+            .filter(|concern| keep(*concern))
+            .map(Self::id)
+            .collect()
+    }
+
     /// The concern's serialized name.
     pub(crate) fn id(self) -> &'static str {
         match self {
@@ -92,13 +110,4 @@ impl LessonConcern {
             Self::Workload => "A specific objective cannot be scoped to the stated session, with every preceding lesson taken as known; a topic title alone is not a workload defect.",
         }
     }
-}
-
-/// The ids of `concerns`, comma-separated.
-pub(crate) fn ids(concerns: impl IntoIterator<Item = LessonConcern>) -> String {
-    concerns
-        .into_iter()
-        .map(LessonConcern::id)
-        .collect::<Vec<_>>()
-        .join(", ")
 }
