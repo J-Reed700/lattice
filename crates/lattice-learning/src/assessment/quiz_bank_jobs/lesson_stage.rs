@@ -1,6 +1,7 @@
 //! A published lesson's quiz bank stage (section 5.4), run by its quiz job,
 //! and the lesson's own reviewed questions as bank items.
 use super::*;
+use crate::bank_writing::bank_steps;
 
 fn seed_difficulty(kind: &LessonQuestionKind) -> u8 {
     match kind {
@@ -145,35 +146,43 @@ pub(crate) async fn lesson_bank_stage(
             ..LessonBank::default()
         });
     };
+    let requirements: Vec<engine::LearningBlueprintRequirement> = blueprint
+        .slots
+        .iter()
+        .map(|slot| slot.requirement.clone())
+        .collect();
+    let seed_items: Vec<engine::LearningAssessmentCandidate> =
+        seeds.iter().cloned().map(Into::into).collect();
+    let held: Vec<usize> = requirements
+        .iter()
+        .map(|requirement| {
+            seed_items
+                .iter()
+                .filter(|seed| engine::eligible_for(seed, requirement))
+                .count()
+        })
+        .collect();
+    let needs: Vec<AuthoringNeed> = bank_steps(&requirements, &held)
+        .into_iter()
+        .filter_map(|(index, count, pass)| {
+            Some(AuthoringNeed {
+                requirement: requirements.get(index)?.clone(),
+                outcome_title: title.into(),
+                outcome_description: objective.into(),
+                lesson_id: Some(lesson_id.into()),
+                count,
+                pass,
+                material: material.clone(),
+                existing_prompts: seeds.iter().map(|s| s.prompt.clone()).collect(),
+            })
+        })
+        .collect();
     let mut written: Vec<AuthoredItem> = Vec::new();
     let mut dropped: Vec<String> = Vec::new();
-    for slot in &blueprint.slots {
-        let requirement = &slot.requirement;
-        let have = seeds
-            .iter()
-            .map(|s| engine::LearningAssessmentCandidate::from(s.clone()))
-            .chain(written.iter().map(|w| w.candidate.clone().into()))
-            .filter(|c| engine::eligible_for(c, requirement))
-            .count();
-        let count = requirement.bank_target().saturating_sub(have);
-        if count == 0 {
-            continue;
-        }
-        let need = AuthoringNeed {
-            requirement: requirement.clone(),
-            outcome_title: title.into(),
-            outcome_description: objective.into(),
-            lesson_id: Some(lesson_id.into()),
-            count,
-            pass: generation::BankPass::Retakes,
-            material: material.clone(),
-            existing_prompts: seeds
-                .iter()
-                .map(|s| s.prompt.clone())
-                .chain(written.iter().map(|w| w.candidate.prompt.clone()))
-                .collect(),
-        };
+    let mut writing = BankWriting::new(needs);
+    while let Some(need) = writing.next() {
         let authored = generation::author_items(llm, &need).await?;
+        writing.wrote(&need, &authored);
         written.extend(authored.items);
         dropped.extend(authored.dropped);
     }

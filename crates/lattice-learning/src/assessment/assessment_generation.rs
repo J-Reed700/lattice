@@ -463,8 +463,11 @@ impl Dropped {
 /// judge read of every item, with one repair for each that has findings and a
 /// second review of the repairs. An item that is still flawed is dropped and
 /// the next round writes in its place; one that is still only a repeat of a
-/// question the bank holds is dropped and not written again. A model that cannot
-/// produce a sound item leaves a smaller bank, never a flawed item.
+/// question the bank holds is dropped, and for `Retakes` it is not written again
+/// (it counts toward the need), while for `FirstForm` it is written again, since
+/// the quiz cannot start without the item. Each round's writer is told why the
+/// items before it were dropped. A model that cannot produce a sound item leaves
+/// a smaller bank, never a flawed item.
 pub async fn author_items(llm: &dyn LLMPort, need: &AuthoringNeed) -> Result<Authored> {
     if need.count == 0 {
         return Ok(Authored::default());
@@ -488,7 +491,11 @@ pub async fn author_items(llm: &dyn LLMPort, need: &AuthoringNeed) -> Result<Aut
     let mut repeats = 0;
     // The first request plus two for any shortfall.
     for _round in 0..3 {
-        let remaining = need.count.saturating_sub(out.items.len() + repeats);
+        let filled = match need.pass {
+            BankPass::Retakes => out.items.len() + repeats,
+            BankPass::FirstForm => out.items.len(),
+        };
+        let remaining = need.count.saturating_sub(filled);
         if remaining == 0 {
             break;
         }
@@ -528,6 +535,12 @@ pub async fn author_items(llm: &dyn LLMPort, need: &AuthoringNeed) -> Result<Aut
             out.items.push(item);
         }
         repeats += dropped.iter().filter(|d| d.repeat).count();
+        notes.extend(
+            dropped
+                .iter()
+                .map(|d| d.reason.clone())
+                .filter(|r| !r.is_empty()),
+        );
         out.dropped.extend(dropped.into_iter().map(|d| d.reason));
         notes.sort();
         notes.dedup();
@@ -535,6 +548,7 @@ pub async fn author_items(llm: &dyn LLMPort, need: &AuthoringNeed) -> Result<Aut
     out.items.truncate(need.count);
     tracing::info!(
         format = ?need.requirement.format,
+        pass = ?need.pass,
         kept = out.items.len(),
         dropped = out.dropped.len(),
         repeats,

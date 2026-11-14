@@ -1,5 +1,4 @@
 //! The order a quiz's bank is written in: a plan of steps, and a runner that hands the steps out one at a time.
-#![cfg_attr(not(test), allow(dead_code))]
 use crate::assessment_engine::LearningBlueprintRequirement;
 use crate::assessment_generation::{Authored, AuthoringNeed, BankPass};
 use std::collections::VecDeque;
@@ -11,13 +10,28 @@ pub(crate) fn bank_steps(
     requirements: &[LearningBlueprintRequirement],
     held: &[usize],
 ) -> Vec<(usize, usize, BankPass)> {
+    let mut steps = pass_steps(requirements, held, BankPass::FirstForm);
+    steps.extend(pass_steps(requirements, held, BankPass::Retakes));
+    steps
+}
+
+fn pass_steps(
+    requirements: &[LearningBlueprintRequirement],
+    held: &[usize],
+    pass: BankPass,
+) -> Vec<(usize, usize, BankPass)> {
     requirements
         .iter()
         .zip(held)
         .enumerate()
         .filter_map(|(index, (requirement, held))| {
-            let count = requirement.bank_target().saturating_sub(*held);
-            (count > 0).then_some((index, count, BankPass::Retakes))
+            let count = match pass {
+                BankPass::FirstForm => requirement.count.saturating_sub(*held),
+                BankPass::Retakes => requirement
+                    .bank_target()
+                    .saturating_sub((*held).max(requirement.count)),
+            };
+            (count > 0).then_some((index, count, pass))
         })
         .collect()
 }
@@ -25,12 +39,18 @@ pub(crate) fn bank_steps(
 /// A bank written need by need, in order.
 pub(crate) struct BankWriting {
     queue: VecDeque<AuthoringNeed>,
+    /// Every question written so far, with the outcomes it counts for.
+    written: Vec<(Vec<String>, String)>,
+    /// Requirements whose first form came back short.
+    short: Vec<LearningBlueprintRequirement>,
 }
 
 impl BankWriting {
     pub(crate) fn new(needs: Vec<AuthoringNeed>) -> Self {
         Self {
             queue: needs.into(),
+            written: Vec::new(),
+            short: Vec::new(),
         }
     }
 
@@ -38,12 +58,31 @@ impl BankWriting {
     /// (an item counts for each outcome in its candidate's outcome_ids). A `Retakes` need is skipped when the
     /// `FirstForm` need of the same requirement came back short.
     pub(crate) fn next(&mut self) -> Option<AuthoringNeed> {
-        self.queue.pop_front()
+        loop {
+            let mut need = self.queue.pop_front()?;
+            if need.pass == BankPass::Retakes && self.short.contains(&need.requirement) {
+                continue;
+            }
+            for (outcomes, prompt) in &self.written {
+                if outcomes.contains(&need.requirement.outcome_id) {
+                    need.existing_prompts.push(prompt.clone());
+                }
+            }
+            return Some(need);
+        }
     }
 
     /// Record what writing `need` produced. A `FirstForm` need comes back short when it kept fewer items than its count.
     pub(crate) fn wrote(&mut self, need: &AuthoringNeed, authored: &Authored) {
-        let _ = (need, authored);
+        if need.pass == BankPass::FirstForm && authored.items.len() < need.count {
+            self.short.push(need.requirement.clone());
+        }
+        self.written.extend(authored.items.iter().map(|item| {
+            (
+                item.candidate.outcome_ids.clone(),
+                item.candidate.prompt.clone(),
+            )
+        }));
     }
 }
 
