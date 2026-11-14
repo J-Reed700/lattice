@@ -350,3 +350,10 @@ fn the_lesson_review_texts_are_built_from_its_concerns() {
         }
     }
 }
+
+#[test]
+fn the_lesson_review_system_does_not_ask_for_a_section_id_in_a_check() {
+    assert!(!lesson_review_system().contains("sectionId"));
+    assert!(!lesson_block_checks().contains("sectionId"));
+    assert!(!SHARED_CHECKS.contains("sectionId"));
+}
