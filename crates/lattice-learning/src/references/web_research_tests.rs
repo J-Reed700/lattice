@@ -16,7 +16,7 @@ use serde_json::json;
 
 use super::web_research::{
     capture, need_schema, plan_needs, search_need, with_breadth, Candidate, GapNeed, NeedSearch,
-    PlannedNeed, Room,
+    Outside, PlannedNeed, Room,
 };
 use crate::lessons::course_generation_tests::ScriptedModel;
 use lattice_core::application::ports::MockWebService;
@@ -35,7 +35,7 @@ trait One {
 
 impl One for PlannedNeed {
     fn one(self) -> Option<PlannedNeed> {
-        self.searches().map(|searches| {
+        self.searches().ok().map(|searches| {
             assert_eq!(searches.len(), 1, "one search: {searches:?}");
             searches.into_iter().next().unwrap()
         })
@@ -72,6 +72,7 @@ fn a_need_is_checked_against_what_a_search_allows() {
         ecosystem: Some("cpan".into()),
         ..need("Moose", NeedKind::Package)
     };
+    assert_eq!(unknown_registry.clone().searches(), Err(Outside::Registry));
     assert_eq!(unknown_registry.one(), None);
 }
 
@@ -236,10 +237,10 @@ fn a_site_the_planner_set_is_the_scope_and_is_written_as_an_address() {
         site: Some("the official docs".into()),
         ..need("Span<T> async", NeedKind::OfficialDocs)
     };
-    assert_eq!(not_an_address.searches(), None);
+    assert_eq!(not_an_address.searches(), Err(Outside::Site));
     assert_eq!(
         need("site:react.dev", NeedKind::Web).searches(),
-        None,
+        Err(Outside::Query),
         "no terms are left to search once the site is lifted out"
     );
 }
