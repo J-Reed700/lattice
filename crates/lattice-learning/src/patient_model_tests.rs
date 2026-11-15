@@ -195,7 +195,7 @@ async fn a_non_transient_error_still_fails_at_once() {
     assert!(recorder.waits.lock().unwrap().is_empty());
 }
 
-/// A model that reports a measured pace.
+/// A model that reports a measured pace and holds an answer to its schema.
 struct Paced;
 
 #[async_trait::async_trait]
@@ -215,6 +215,12 @@ impl LLMPort for Paced {
             output_tokens_per_second: 11.3,
         })
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        true
+    }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
@@ -224,6 +230,13 @@ impl LLMPort for Paced {
 fn waiting_out_outages_keeps_the_pace_of_the_model_it_waits_on() {
     let recorder = Recorder::default();
     assert_eq!(PatientModel::new(&Paced, &recorder).pace(), Paced.pace());
+}
+
+#[test]
+fn waiting_out_outages_keeps_what_the_model_it_waits_on_enforces() {
+    let recorder = Recorder::default();
+    let schema = legacy::schema(serde_json::json!({"type": "object"}));
+    assert!(PatientModel::new(&Paced, &recorder).enforces(&schema));
 }
 
 const SERVER_FAULT: &str = "llama-server.exe was not found";

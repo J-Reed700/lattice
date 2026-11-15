@@ -409,6 +409,46 @@ fn anthropic_asks_for_an_oversized_schema_in_words() {
     assert!(system.contains("field29"), "{system}");
 }
 
+/// Claude refuses a grammar that writes a large part out in every place it
+/// occurs, so a part that repeats is defined once and referred to.
+#[test]
+fn anthropic_defines_a_repeated_part_of_a_schema_once() {
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Anthropic,
+        ..Default::default()
+    };
+    let anthropic = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
+    let handles = json!({"type":"array","items":{"type":"string","enum":["q1","q2","q3"]}});
+    let part = json!({"type":"object","required":["text","citations"],"additionalProperties":false,
+    "properties":{
+        "text":{"type":"string"},
+        "citations":{"type":"array","items":{"type":"object","required":["sentence","cites"],
+            "additionalProperties":false,
+            "properties":{"sentence":{"type":"string"},"cites":handles}}}
+    }});
+    let body = anthropic
+        .uncut_body(
+            &legacy::completion(legacy::Completion {
+                json_schema: Some(
+                    json!({"type":"object","required":["recap","reflection","cites"],
+                    "additionalProperties":false,
+                    "properties":{"recap":part,"reflection":part,"cites":handles}}),
+                ),
+                ..Default::default()
+            }),
+            false,
+        )
+        .unwrap();
+    let schema = &body["output_config"]["format"]["schema"];
+    let sent = schema.to_string();
+    for once in [r#""enum":"#, r#""sentence":{"#, r#""citations":{"#] {
+        assert_eq!(sent.matches(once).count(), 1, "{once} in {schema}");
+    }
+    let recap = &schema["properties"]["recap"];
+    assert!(recap.get("$ref").is_some(), "{schema}");
+    assert_eq!(recap, &schema["properties"]["reflection"]);
+}
+
 /// Claude shows no thinking unless asked, so a caller that displays reasoning
 /// asks for summaries.
 #[test]
