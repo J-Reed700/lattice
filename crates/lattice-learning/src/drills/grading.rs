@@ -5,7 +5,7 @@
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::SamplingOverride;
 use lattice_core::application::ports::LLMPort;
-use lattice_core::application::services::model_contract::ask::{ask_each, Settled};
+use lattice_core::application::services::model_contract::ask::{ask_each, failed, Settled};
 use lattice_core::application::services::model_contract::shown::{Scope, Told};
 use lattice_core::domain::learning::drills::{Assessment, IssueOutcome};
 use lattice_core::shared::error::{AppError, ErrorClass, Result};
@@ -89,7 +89,7 @@ impl ReviewGrader for JudgeGrader<'_> {
         for (issue, settled) in issues.iter().zip(settled) {
             match settled {
                 Settled::Answered(judgement) => judged.push((issue.at, judgement)),
-                Settled::Unanswered(_) => return Err(derive::unusable("an issue is unanswered")),
+                Settled::Unanswered(why) => return Err(failed(&why)),
             }
         }
         let credits = derive::credits(review.drill.key.len(), findings.len(), &judged)?;
@@ -130,7 +130,7 @@ impl ReviewGrader for JudgeGrader<'_> {
         for (finding, settled) in asked.iter().zip(settled) {
             match settled {
                 Settled::Answered(verdict) => verdicts.push((finding.at, verdict)),
-                Settled::Unanswered(_) => return Err(derive::unusable("a finding is unanswered")),
+                Settled::Unanswered(why) => return Err(failed(&why)),
             }
         }
         credits.assessment(&verdicts)

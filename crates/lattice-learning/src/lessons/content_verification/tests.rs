@@ -206,7 +206,7 @@ fn first_task(request: &CompletionRequest) -> Option<&str> {
 /// first user message and the last when that is a message of its own, or the
 /// task and the sentence a restated task adds to it.
 fn asked_again_with(request: &CompletionRequest) -> Option<(&str, &str)> {
-    let (_, last) = crate::lessons::structured_call::task_messages(request);
+    let last = crate::lessons::structured_call::latest_ask(request);
     let first = first_task(request)?;
     if last != first && !last.is_empty() {
         return Some((first, last));

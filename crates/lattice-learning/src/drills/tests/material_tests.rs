@@ -133,9 +133,29 @@ async fn the_clean_review_request_is_what_it_was() -> Result<()> {
     assert!(reviewed.repairs.is_empty());
     let request = model.requests().remove(0);
     assert_eq!(system(&request), golden(REVIEW_SYSTEM));
+    let mut named = 0;
+    let shown: Vec<String> = code
+        .files
+        .iter()
+        .map(|file| {
+            let lines: Vec<String> = file
+                .text
+                .lines()
+                .map(|line| {
+                    named += 1;
+                    format!("[u{named}] {line}")
+                })
+                .collect();
+            format!(
+                "<file path=\"{}\">\n{}\n</file>",
+                file.path,
+                lines.join("\n")
+            )
+        })
+        .collect();
     assert_eq!(
         last(&request),
-        format!("Language: python\n\n{}", render_files(&code.files))
+        format!("Language: python\n\n{}", shown.join("\n\n"))
     );
     Ok(())
 }

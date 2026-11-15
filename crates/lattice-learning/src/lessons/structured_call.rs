@@ -757,6 +757,17 @@ pub(crate) fn task_messages(
     (system, user.unwrap_or(""))
 }
 
+/// The latest thing `request` asks: its task, or what a request asking again says after it.
+#[cfg(test)]
+pub(crate) fn latest_ask(
+    request: &lattice_core::application::ports::llm_port::CompletionRequest,
+) -> &str {
+    let answer_step = answer_step_task();
+    messages(request, "user")
+        .find(|content| *content != answer_step && !content.starts_with(CORRECTION_LEAD))
+        .unwrap_or("")
+}
+
 /// Contents of `role`'s messages, last first.
 #[cfg(any(test, feature = "test-support"))]
 fn messages<'a>(

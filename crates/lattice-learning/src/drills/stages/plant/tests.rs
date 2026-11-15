@@ -37,6 +37,10 @@ fn input(marks: &mut Marks) -> Input {
         &brief.objective,
         &brief.evidence,
     ));
+    let lines = [
+        marks.told("depth = chart[mark]".to_owned()),
+        marks.told("berth = depth + 1".to_owned()),
+    ];
     Input {
         instructions: marks
             .told("Plant a defect for each pattern as a hurried pilot might.".to_owned()),
@@ -51,7 +55,7 @@ fn input(marks: &mut Marks) -> Input {
         brief: Some(Told(brief)),
         files: vec![CodeFile {
             path: marks.told("tide/harbour.py".to_owned()),
-            text: marks.told("depth = chart[mark]\nberth = depth + 1\n".to_owned()),
+            text: Told(format!("{}\n{}\n", lines[0].0, lines[1].0)),
         }],
         targets: vec![Target {
             id: marks.internal("pilotage.tide_table".to_owned()),
