@@ -35,6 +35,16 @@ export const ANSWER_CHUNKS: ReplyPieceDto[][] = [
 const REPLY = ANSWER_CHUNKS.flat();
 const ANSWER = REPLY.map(piece => (piece.type === 'text' ? piece.text : piece.reference.written)).join('');
 
+/** Delivers streamed pieces of the answer as the backend's llm-stream events do: each a text delta or one reference. */
+export async function streamAnswer(page: Page, requestId: string, pieces: ReplyPieceDto[]) {
+  await page.evaluate(({ conversationId, requestId, pieces }) => {
+    for (const piece of pieces) {
+      const part = piece.type === 'text' ? { content: piece.text } : { reference: piece.reference };
+      window.__LATTICE_IPC__.emit('llm-stream', { conversationId, requestId, done: false, ...part });
+    }
+  }, { conversationId: CONVERSATION.id!, requestId, pieces });
+}
+
 const sources = PASSAGES.map(passage => ({
   documentId: passage.documentId, chunkId: passage.chunkId, citationId: passage.citationId,
   fileName: 'Volcanoes and magma.md', filePath: VOLCANO_FILE, mimeType: 'text/markdown', category: 'Document',
