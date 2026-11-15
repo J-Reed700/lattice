@@ -6,15 +6,34 @@
 
 use std::collections::HashSet;
 
+use lattice_core::application::services::model_contract::shown::Kind;
+
 use crate::features::conversation::chat::reply_text::ReplyText;
+use crate::features::explorer::file_refs::FolderFile;
 
 const OPEN: char = '\u{e000}';
 const CLOSE: char = '\u{e001}';
+const FILE: char = '\u{e002}';
 
 /// `reply`'s text with each source reference as its number, any other
 /// reference taken out, and any private-use character of the model's own
 /// dropped so it cannot pass for one the app wrote.
 pub(super) fn marked(reply: &ReplyText) -> String {
+    written(reply, false)
+}
+
+/// [`marked`], with each reference to a file of a folder left as one private-use
+/// character where it stood, for the claim check to see which sentences point at a file.
+pub(super) fn marked_with_files(reply: &ReplyText) -> String {
+    written(reply, true)
+}
+
+/// Whether `text` holds a reference to a file written by [`marked_with_files`].
+pub(super) fn points_at_file(text: &str) -> bool {
+    text.contains(FILE)
+}
+
+fn written(reply: &ReplyText, files: bool) -> String {
     let mut out = String::with_capacity(reply.text.len());
     let mut at = 0;
     for placed in &reply.references {
@@ -27,6 +46,9 @@ pub(super) fn marked(reply: &ReplyText) -> String {
             out.push_str(&number.to_string());
             out.push(CLOSE);
         }
+        if files && placed.reference.prefix == FolderFile::PREFIX {
+            out.push(FILE);
+        }
         at = placed.range.end.max(at);
     }
     push_plain(&mut out, reply.text.get(at..).unwrap_or_default());
@@ -34,7 +56,10 @@ pub(super) fn marked(reply: &ReplyText) -> String {
 }
 
 fn push_plain(out: &mut String, text: &str) {
-    out.extend(text.chars().filter(|ch| *ch != OPEN && *ch != CLOSE));
+    out.extend(
+        text.chars()
+            .filter(|ch| *ch != OPEN && *ch != CLOSE && *ch != FILE),
+    );
 }
 
 /// The numbers `text` cites, each once, in order.
@@ -56,6 +81,7 @@ pub(super) fn without(text: &str) -> String {
         match ch {
             OPEN => inside = true,
             CLOSE => inside = false,
+            FILE => {}
             _ if !inside => out.push(ch),
             _ => {}
         }

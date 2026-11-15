@@ -219,7 +219,7 @@ fn rank_sources(
             .filter_map(|value| serde_json::from_value(value.clone()).ok())
             .collect();
         let reply = ReplyText::stored(&message.content, &metadata)
-            .unwrap_or_else(|| ReplyText::legacy(names, &message.content, &sources));
+            .unwrap_or_else(|| ReplyText::legacy(names, None, &message.content, &sources));
         let cited = reply.cited();
         if cited.is_empty() {
             continue;

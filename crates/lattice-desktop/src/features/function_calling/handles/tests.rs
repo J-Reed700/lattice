@@ -204,3 +204,64 @@ fn the_handle_parameters_are_plain_strings_in_a_static_schema() {
     assert_eq!(definition.name, READ_MORE);
     assert_eq!(definition.input_schema["required"], json!(["handle"]));
 }
+
+mod pictures {
+    use super::*;
+    use lattice_core::application::services::model_contract::kept::TurnNames;
+    use lattice_core::application::services::model_contract::reply::{
+        split, Markers, Piece, Place,
+    };
+    use std::sync::Arc;
+
+    const LINE: &str = "![A kiln](img-1)";
+
+    fn references(names: &TurnNames, reply: &str) -> Vec<Reference> {
+        let markers = Markers::new().of::<Picture>(Place::OwnLine);
+        names
+            .with(|scope| split(scope, markers, reply))
+            .into_iter()
+            .filter_map(|piece| match piece {
+                Piece::Reference(reference) => Some(reference),
+                Piece::Text(_) => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_picture_is_named_only_within_a_request() {
+        assert_eq!(ToolHandles::new().picture(LINE), None);
+        let handles = ToolHandles::new().in_request("request-1");
+        assert_eq!(handles.picture(LINE).as_deref(), Some("[i1]"));
+        assert_eq!(handles.picture(LINE).as_deref(), Some("[i1]"));
+        assert_eq!(
+            handles.picture("![A lamp](img-2)").as_deref(),
+            Some("[i2]")
+        );
+    }
+
+    #[test]
+    fn a_picture_name_stands_for_the_line_of_its_own_request() {
+        let names = Arc::new(TurnNames::unstored());
+        let first = ToolHandles::in_turn(Arc::clone(&names)).in_request("request-1");
+        assert_eq!(first.picture(LINE).as_deref(), Some("[i1]"));
+        let found = references(&names, "Before.\n\n[i1]\n");
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            found.first().and_then(|r| picture_line(r, "request-1")),
+            Some(LINE.to_owned())
+        );
+        assert_eq!(
+            found.first().and_then(|r| picture_line(r, "request-2")),
+            None
+        );
+    }
+
+    #[test]
+    fn the_same_markdown_in_another_request_is_another_picture() {
+        let names = Arc::new(TurnNames::unstored());
+        let first = ToolHandles::in_turn(Arc::clone(&names)).in_request("request-1");
+        let second = ToolHandles::in_turn(Arc::clone(&names)).in_request("request-2");
+        assert_eq!(first.picture(LINE).as_deref(), Some("[i1]"));
+        assert_eq!(second.picture(LINE).as_deref(), Some("[i2]"));
+    }
+}

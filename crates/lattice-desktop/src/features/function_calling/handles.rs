@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use lattice_core::application::contracts::tools::ToolDefinition;
 use lattice_core::application::services::model_contract::kept::TurnNames;
+use lattice_core::application::services::model_contract::reply::Reference;
 use lattice_core::application::services::model_contract::shown::{Drawn, Kind};
 use lattice_core::application::services::model_contract::tools::{ArgumentError, Parameters};
 use lattice_core::shared::error::Result;
@@ -50,6 +51,37 @@ impl Kind for Message {
     fn reference(&self) -> String {
         self.0.clone()
     }
+}
+
+/// What a picture's reference holds: the request that found it and the app's image line.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PictureRef {
+    pub request: String,
+    pub markdown: String,
+}
+
+/// A picture `find_image` stored for a request.
+pub struct Picture(pub PictureRef);
+
+impl Kind for Picture {
+    const PREFIX: &'static str = "i";
+    const DRAWN: Drawn = Drawn::Itself;
+    type Ref = PictureRef;
+
+    fn reference(&self) -> PictureRef {
+        self.0.clone()
+    }
+}
+
+/// The image line a picture reference stands for, when the picture was found in `request_id`.
+pub fn picture_line(reference: &Reference, request_id: &str) -> Option<String> {
+    if reference.prefix != Picture::PREFIX {
+        return None;
+    }
+    serde_json::from_value::<PictureRef>(reference.reference.clone())
+        .ok()
+        .filter(|picture| picture.request == request_id)
+        .map(|picture| picture.markdown)
 }
 
 /// The call that carries on from where a result stopped.
@@ -139,6 +171,7 @@ pub struct Called {
 pub struct ToolHandles {
     names: Arc<TurnNames>,
     conversation: Option<String>,
+    request: Option<String>,
 }
 
 impl Default for ToolHandles {
@@ -157,12 +190,19 @@ impl ToolHandles {
         Self {
             names,
             conversation: None,
+            request: None,
         }
     }
 
     /// The names of a turn of this conversation.
     pub fn in_conversation(mut self, conversation_id: &str) -> Self {
         self.conversation = Some(conversation_id.to_owned());
+        self
+    }
+
+    /// The names of a turn answering this request.
+    pub fn in_request(mut self, request_id: &str) -> Self {
+        self.request = Some(request_id.to_owned());
         self
     }
 
@@ -187,6 +227,15 @@ impl ToolHandles {
     /// The bracketed name a message is shown under.
     pub fn message(&self, id: &str) -> Option<String> {
         self.name(Message(id.to_owned()))
+    }
+
+    /// The bracketed name a picture of this request is shown under; `None` without a request.
+    pub fn picture(&self, markdown: &str) -> Option<String> {
+        let request = self.request.clone()?;
+        self.name(Picture(PictureRef {
+            request,
+            markdown: markdown.to_owned(),
+        }))
     }
 
     /// The bracketed name of the point a call's result stopped at.

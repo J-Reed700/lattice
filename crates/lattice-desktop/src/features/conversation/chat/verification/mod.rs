@@ -519,7 +519,7 @@ pub(super) mod test_support {
             source.citation_id = None;
         }
         name_sources(&names, &mut named);
-        ReplyText::read(&names, markers(false), text)
+        ReplyText::read(&names, markers(None), text)
     }
 
     pub(in crate::features::conversation::chat::verification) fn source(

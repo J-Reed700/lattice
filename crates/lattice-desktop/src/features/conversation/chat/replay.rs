@@ -10,12 +10,14 @@ use lattice_core::domain::conversation::MessageRole;
 use lattice_core::shared::error::Result;
 
 use super::reply_text::ReplyText;
+use super::TurnSource;
 use crate::features::conversation::ConversationServiceTrait;
 
 /// What turns an answer saved before references into the text a prompt replays.
 pub struct Replay<'a> {
     pub conv_service: &'a Arc<dyn ConversationServiceTrait>,
     pub names: &'a TurnNames,
+    pub source: Option<&'a TurnSource>,
 }
 
 impl Replay<'_> {
@@ -50,7 +52,7 @@ impl Replay<'_> {
                 .get("sources")
                 .and_then(|sources| serde_json::from_value(sources.clone()).ok())
                 .unwrap_or_default();
-            let reply = ReplyText::legacy(self.names, &saved.content, &sources);
+            let reply = ReplyText::legacy(self.names, self.source, &saved.content, &sources);
             replayed.insert(saved.id.clone(), reply.text);
         }
         for message in recent

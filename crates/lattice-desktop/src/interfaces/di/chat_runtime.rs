@@ -129,6 +129,7 @@ impl ChatStorage for Container {
             self.folder_index().map(Arc::as_ref),
             conversation_id,
             focus,
+            Arc::clone(&names),
         )
         .await;
         if let Some(folder) = folder {

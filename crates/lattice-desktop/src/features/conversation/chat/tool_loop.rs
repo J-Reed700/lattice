@@ -23,7 +23,9 @@ use lattice_core::application::contracts::settings::ToolOutputSettingsDto;
 use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::application::ports::llm_port::{CompletionInput, ThinkingMode};
 use lattice_core::application::ports::ToolDefinition;
+use lattice_core::application::services::model_contract::kept::TurnNames;
 use lattice_core::application::services::model_contract::legacy;
+use lattice_core::application::services::model_contract::reply::{self, Markers, Piece, Place};
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -31,6 +33,7 @@ use std::time::Instant;
 use tracing::{info, warn};
 
 use super::fetch_memory::FetchMemory;
+use crate::features::function_calling::handles::{picture_line, Picture};
 use super::turn::{ResearchRound, Rounds};
 use super::turn_record::TurnStepKind;
 use super::{ChatEventSink, ChatStreamEventDto, ChatTurn};
@@ -175,7 +178,7 @@ pub(super) async fn run_agentic_tool_loop(
         conv_id,
         request_id,
         std::sync::Arc::clone(names),
-        super::reply_text::markers(source.is_some()),
+        super::reply_text::markers(source).of::<Picture>(Place::OwnLine),
     );
 
     // The stop button as a token: every round's request carries it, so Stop
@@ -347,6 +350,7 @@ pub(super) async fn run_agentic_tool_loop(
                 recorder,
                 &turn_cancel,
                 &clock,
+                calls.labels(),
             )
             .await
             {
@@ -358,6 +362,7 @@ pub(super) async fn run_agentic_tool_loop(
                         "Condensed earlier tool results to keep researching"
                     );
                     calls.results_condensed(&notes.result_ids);
+                    calls.keep_notes(notes.notes);
                 }
                 Ok(None) => {}
                 Err(error) if limits::ran_out(&clock, &turn_cancel) => {
@@ -630,7 +635,7 @@ pub(super) async fn run_agentic_tool_loop(
                 let coverage_start = Instant::now();
                 let answered = super::reply_text::ReplyText::read(
                     names,
-                    super::reply_text::markers(source.is_some()),
+                    super::reply_text::markers(source),
                     &response_text,
                 );
                 reading::add_what_was_left_out(
@@ -665,7 +670,7 @@ pub(super) async fn run_agentic_tool_loop(
             );
             timings.total_ms = elapsed_ms(tool_loop_start);
             return Ok(ToolLoopOutcome {
-                response: response_text,
+                response: with_pictures(names, request_id, &response_text),
                 timings,
                 input_tokens,
                 output_tokens,
@@ -809,6 +814,20 @@ fn round_result_line(response_text: &str, tool_calls: usize) -> String {
         (words, 1) => format!("{words} words and 1 tool call"),
         (words, calls) => format!("{words} words and {calls} tool calls"),
     }
+}
+
+/// The reply with each picture of this request written as the app's image line.
+fn with_pictures(names: &TurnNames, request_id: &str, text: &str) -> String {
+    let markers = Markers::new().of::<Picture>(Place::OwnLine);
+    names
+        .with(|scope| reply::split(scope, markers, text))
+        .into_iter()
+        .map(|piece| match piece {
+            Piece::Text(text) => text,
+            Piece::Reference(reference) => picture_line(&reference, request_id)
+                .unwrap_or_else(|| reply::written(&[Piece::Reference(reference)])),
+        })
+        .collect()
 }
 
 fn emit_cancelled_stream(sink: &ChatEventSink, conversation_id: &str, request_id: &str) {

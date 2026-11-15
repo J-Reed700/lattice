@@ -10236,7 +10236,7 @@ export type ReplyReferenceDto = {
  */
 written: string;
 /**
- * `source`, `file` or `picture`.
+ * `source` or `file`.
  */
 kind: string;
 /**

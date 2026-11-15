@@ -211,3 +211,60 @@ async fn names_out_of_order_are_refused() {
         .unwrap();
     assert!(kept(&store).open("chat").await.is_err());
 }
+
+#[test]
+fn held_lists_a_kind_in_the_order_it_was_named() {
+    let names = TurnNames::unstored();
+    note(&names, "one");
+    passage(&names, "alpha");
+    note(&names, "two");
+    note(&names, "one");
+    let held: Vec<(String, String)> = names.with(|scope| {
+        scope
+            .held::<Note>()
+            .into_iter()
+            .map(|(handle, reference)| (handle.bracketed(), reference))
+            .collect()
+    });
+    assert_eq!(
+        held,
+        vec![
+            ("[n1]".to_owned(), "one".to_owned()),
+            ("[n2]".to_owned(), "two".to_owned())
+        ]
+    );
+}
+
+#[test]
+fn held_is_empty_for_a_kind_nothing_named() {
+    let names = TurnNames::unstored();
+    passage(&names, "alpha");
+    assert!(names.with(|scope| scope.held::<Note>()).is_empty());
+}
+
+#[tokio::test]
+async fn held_returns_the_names_a_stored_scope_restored() {
+    let store = store();
+    let kept = kept(&store);
+    let first = kept.open("chat").await.unwrap();
+    note(&first, "one");
+    note(&first, "two");
+    first.save().await.unwrap();
+    drop(first);
+
+    let next = kept.open("chat").await.unwrap();
+    let held: Vec<(String, String)> = next.with(|scope| {
+        scope
+            .held::<Note>()
+            .into_iter()
+            .map(|(handle, reference)| (handle.written(), reference))
+            .collect()
+    });
+    assert_eq!(
+        held,
+        vec![
+            ("n1".to_owned(), "one".to_owned()),
+            ("n2".to_owned(), "two".to_owned())
+        ]
+    );
+}

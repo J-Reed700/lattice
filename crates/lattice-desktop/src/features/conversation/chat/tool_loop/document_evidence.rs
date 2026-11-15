@@ -6,6 +6,7 @@
 //! the active request. Eviction or compaction therefore restores the text on
 //! the next read instead of referring to evidence the model no longer has.
 
+use crate::features::conversation::chat::retrieval::Rendered;
 use lattice_core::application::contracts::tools::FunctionResult;
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
@@ -24,10 +25,10 @@ impl DocumentEvidence {
         &mut self,
         tool: &str,
         result: &FunctionResult,
-        output: String,
+        output: Rendered,
         visible: impl FnOnce(&str) -> bool,
-    ) -> String {
-        if tool != "get_document" || !result.success || output.len() <= REUSE_NOTICE.len() {
+    ) -> Rendered {
+        if tool != "get_document" || !result.success || output.text.len() <= REUSE_NOTICE.len() {
             return output;
         }
         let Some(data) = &result.data else {
@@ -38,7 +39,7 @@ impl DocumentEvidence {
         };
         let fingerprint = (
             Sha256::digest(bytes).into(),
-            Sha256::digest(output.as_bytes()).into(),
+            Sha256::digest(output.text.as_bytes()).into(),
         );
         let remembered = self.recent.contains(&fingerprint);
         self.recent.retain(|entry| entry != &fingerprint);
@@ -46,8 +47,8 @@ impl DocumentEvidence {
         while self.recent.len() > MAX_ENTRIES {
             self.recent.pop_front();
         }
-        if remembered && visible(&output) {
-            REUSE_NOTICE.to_string()
+        if remembered && visible(&output.text) {
+            Rendered::from(REUSE_NOTICE.to_string())
         } else {
             output
         }
@@ -59,6 +60,16 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn render(
+        memo: &mut DocumentEvidence,
+        tool: &str,
+        result: &FunctionResult,
+        text: String,
+        visible: impl FnOnce(&str) -> bool,
+    ) -> String {
+        memo.render(tool, result, text.into(), visible).text
+    }
+
     fn result(page: usize, text: &str) -> FunctionResult {
         FunctionResult::success(json!({"document_id":"doc", "page":page, "content":text}))
     }
@@ -69,15 +80,15 @@ mod tests {
         let excerpt = "Exact document excerpt. ".repeat(30);
         let source = result(1, &excerpt);
         assert_eq!(
-            memo.render("get_document", &source, excerpt.clone(), |_| false),
+            render(&mut memo, "get_document", &source, excerpt.clone(), |_| false),
             excerpt
         );
         assert_eq!(
-            memo.render("get_document", &source, excerpt.clone(), |s| s == excerpt),
+            render(&mut memo, "get_document", &source, excerpt.clone(), |s| s == excerpt),
             REUSE_NOTICE
         );
         assert_eq!(
-            memo.render("get_document", &source, excerpt.clone(), |_| false),
+            render(&mut memo, "get_document", &source, excerpt.clone(), |_| false),
             excerpt
         );
     }
@@ -86,7 +97,8 @@ mod tests {
     fn changed_source_pages_and_failures_never_reuse_stale_evidence() {
         let mut memo = DocumentEvidence::default();
         let excerpt = "Visible prefix. ".repeat(40);
-        memo.render(
+        render(
+            &mut memo,
             "get_document",
             &result(1, "version one"),
             excerpt.clone(),
@@ -98,12 +110,13 @@ mod tests {
             FunctionResult::error("denied", "scope changed"),
         ] {
             assert_eq!(
-                memo.render("get_document", &source, excerpt.clone(), |_| true),
+                render(&mut memo, "get_document", &source, excerpt.clone(), |_| true),
                 excerpt
             );
         }
         assert_eq!(
-            memo.render(
+            render(
+                &mut memo,
                 "semantic_search",
                 &result(1, "version one"),
                 excerpt.clone(),
@@ -118,7 +131,8 @@ mod tests {
         let mut memo = DocumentEvidence::default();
         let excerpt = "Exact document excerpt. ".repeat(30);
         for page in 0..100 {
-            memo.render(
+            render(
+                &mut memo,
                 "get_document",
                 &result(page, "text"),
                 excerpt.clone(),
@@ -127,13 +141,13 @@ mod tests {
             assert!(memo.recent.len() <= MAX_ENTRIES);
         }
         assert_eq!(
-            memo.render("get_document", &result(0, "text"), excerpt.clone(), |_| {
+            render(&mut memo, "get_document", &result(0, "text"), excerpt.clone(), |_| {
                 true
             }),
             excerpt
         );
         assert_eq!(
-            memo.render("get_document", &result(99, "text"), excerpt.clone(), |_| {
+            render(&mut memo, "get_document", &result(99, "text"), excerpt.clone(), |_| {
                 true
             }),
             REUSE_NOTICE

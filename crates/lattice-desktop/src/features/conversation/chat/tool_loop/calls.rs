@@ -11,6 +11,7 @@ use super::clock::TurnClock;
 use super::document_evidence::DocumentEvidence;
 use super::document_progress::DocumentProgress;
 use super::images::{self, FIND_IMAGE};
+use super::research_notes::Labels;
 use super::tool_sources::{render_with_citations, result_sources};
 use super::{
     chars_in_flight, elapsed_ms, emit_cancelled_stream, scoped_document_tools,
@@ -27,7 +28,7 @@ use crate::features::conversation::chat::ports::{
 use crate::features::conversation::chat::retrieval::source_names::name_sources;
 use crate::features::conversation::chat::retrieval::{
     citation_ids_by_chunk, deduplicate_sources, document_page_room, fetched_page_text_room,
-    format_tool_result, merge_tool_sources, record_tool_document_references,
+    format_tool_result, merge_tool_sources, record_tool_document_references, Rendered,
 };
 use crate::features::conversation::chat::turn_record::{StepGuard, TurnRecorder, TurnStepKind};
 use crate::features::conversation::chat::{
@@ -144,6 +145,8 @@ pub(super) struct ToolCalls<'a> {
     pages_in_results: Vec<(String, String)>,
     /// Pages whose results were condensed into notes.
     condensed_pages: HashSet<String>,
+    /// Where each result's labelled sources' own text stands, for the notes.
+    labels: Labels,
 }
 
 /// A call, decided before anything runs.
@@ -233,7 +236,9 @@ impl<'a> ToolCalls<'a> {
         fetched: Vec<String>,
         sources: &[SourceDto],
     ) -> Self {
-        let handles = ToolHandles::in_turn(Arc::clone(scope.names)).in_conversation(scope.conv_id);
+        let handles = ToolHandles::in_turn(Arc::clone(scope.names))
+            .in_conversation(scope.conv_id)
+            .in_request(scope.request_id);
         Self {
             scope,
             handles,
@@ -245,6 +250,7 @@ impl<'a> ToolCalls<'a> {
             document_progress: DocumentProgress::new(sources),
             pages_in_results: Vec::new(),
             condensed_pages: HashSet::new(),
+            labels: Labels::default(),
         }
     }
 
@@ -287,6 +293,7 @@ impl<'a> ToolCalls<'a> {
     /// they carried are no longer in the context: a repeat request for one is
     /// read again rather than told the text is above.
     pub(super) fn results_condensed(&mut self, result_ids: &HashSet<String>) {
+        self.labels.forget(result_ids);
         let condensed = &mut self.condensed_pages;
         self.pages_in_results.retain(|(page, result_id)| {
             let gone = result_ids.contains(result_id);
@@ -295,6 +302,16 @@ impl<'a> ToolCalls<'a> {
             }
             !gone
         });
+    }
+
+    /// What the app wrote as a label in the results it has put in the transcript.
+    pub(super) fn labels(&self) -> &Labels {
+        &self.labels
+    }
+
+    /// The notes that replaced results now stand in the transcript, with their labels.
+    pub(super) fn keep_notes(&mut self, notes: Rendered) {
+        self.labels.keep_notes(notes);
     }
 
     fn prepare(
@@ -711,7 +728,7 @@ impl<'a> ToolCalls<'a> {
             .collect();
         let citations = citation_ids_by_chunk(sources);
         let call_view = CallView::new(tool, &arguments, &self.handles);
-        let result_text = render_with_citations(&citable, allowance, &self.handles, |room| {
+        let rendered = render_with_citations(&citable, allowance, &self.handles, |room| {
             format_tool_result(
                 tool,
                 &result,
@@ -723,16 +740,17 @@ impl<'a> ToolCalls<'a> {
                 &call_view,
             )
         });
-        let result_text = self
+        let rendered = self
             .document_evidence
-            .render(tool, &result, result_text, |excerpt| {
+            .render(tool, &result, rendered, |excerpt| {
                 input.iter().any(|item| {
                     matches!(item, CompletionInput::ToolResult { output, .. } if output == excerpt)
                 })
             });
+        self.labels.keep(&id, rendered.passages, rendered.legend);
         input.push(CompletionInput::ToolResult {
             id: id.clone(),
-            output: result_text,
+            output: rendered.text,
         });
         if let Err(error) = record_tool_document_references(
             self.scope.conv_service,

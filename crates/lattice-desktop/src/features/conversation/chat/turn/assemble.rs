@@ -476,6 +476,7 @@ pub(super) async fn plan_request(
                     replay: Some(super::super::replay::Replay {
                         conv_service: &turn.conv_service,
                         names: &turn.names,
+                        source: turn.source.as_ref(),
                     }),
                 },
                 turn.settings.llm.bounded_conversation_memory,
@@ -603,8 +604,8 @@ pub(super) fn grounded_tool_tokens(
 /// no other: the same text each time, so it never moves the cached prefix of
 /// a web turn.
 const PICTURE_GUIDANCE: &str = "\nA picture helps when the reader would otherwise have to imagine a \
-    concrete thing. Get one only with find_image and paste its `markdown` line as its own paragraph, \
-    unchanged; never write an image address of your own, and do not add a citation to the picture line.";
+    concrete thing. Get one only with find_image and place it by writing its bracketed name alone \
+    on its own line; never write an image address of your own, and do not add a citation to the picture line.";
 
 /// When to search memory, sent on every turn that can. What memory holds for
 /// the turn is already in the prompt, and a tool call is a whole extra round.

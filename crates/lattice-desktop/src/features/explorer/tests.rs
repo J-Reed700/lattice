@@ -402,11 +402,18 @@ fn find_files_matches_substrings_and_globs_and_skips_ignored() {
 
 mod model_tools {
     use super::*;
+    use crate::features::explorer::file_refs::FileNames;
+    use lattice_core::application::services::model_contract::kept::TurnNames;
+    use std::sync::Arc;
     use crate::features::explorer::{prompt, tools};
     use lattice_core::application::contracts::explorer::{ExplorerFocusDto, ExplorerLineRangeDto};
     use lattice_core::application::contracts::tools::explorer as explorer_tools;
     use lattice_core::application::contracts::tools::FunctionCall;
     use serde_json::json;
+
+    fn names() -> FileNames {
+        FileNames::new(Arc::new(TurnNames::unstored()))
+    }
 
     fn numbered_file(scope: &Scope, relative: &str, lines: u32) {
         let text: String = (1..=lines).map(|n| format!("line {n}\n")).collect();
@@ -419,6 +426,7 @@ mod model_tools {
         numbered_file(&scope, "src/long.txt", 1000);
         let first = tools::run(
             &scope,
+            &names(),
             "read_file",
             &json!({"path": "src/long.txt"}),
             1_000_000,
@@ -436,6 +444,7 @@ mod model_tools {
         // Numbers as strings, as small local models often write them.
         let tail = tools::run(
             &scope,
+            &names(),
             "read_file",
             &json!({"path": "src/long.txt", "start_line": "995", "end_line": 2000}),
             1_000_000,
@@ -455,6 +464,7 @@ mod model_tools {
         write(scope.root(), "huge.log", text.as_bytes());
         let window = tools::run(
             &scope,
+            &names(),
             "read_file",
             &json!({"path": "huge.log", "start_line": lines - 1}),
             10_000,
@@ -474,7 +484,14 @@ mod model_tools {
     fn read_file_cuts_at_a_line_when_the_allowance_is_small() {
         let (_dir, scope) = fixture();
         numbered_file(&scope, "notes.txt", 300);
-        let cut = tools::run(&scope, "read_file", &json!({"path": "notes.txt"}), 900).unwrap();
+        let cut = tools::run(
+            &scope,
+            &names(),
+            "read_file",
+            &json!({"path": "notes.txt"}),
+            900,
+        )
+        .unwrap();
         assert!(cut.chars().count() <= 900, "{}", cut.chars().count());
         let shown = cut.lines().filter(|line| line.contains('│')).count() as u32;
         assert!(shown > 0 && shown < 300);
@@ -496,7 +513,7 @@ mod model_tools {
             "read_file",
             json!({"path": "notes.txt", "end_line": 250}),
         );
-        let result = tools::execute(&scope, call, 900).await.unwrap();
+        let result = tools::execute(&scope, &names(), call, 900).await.unwrap();
         let data = result.data.unwrap();
         let text = data["text"].as_str().unwrap();
         let shown = text.lines().filter(|line| line.contains('│')).count() as u64;
@@ -508,7 +525,9 @@ mod model_tools {
         assert!(!text.contains("start_line"), "{text}");
 
         let whole = FunctionCall::new("c2".to_string(), "read_file", json!({"path": "notes.txt"}));
-        let rest = tools::execute(&scope, whole, 1_000_000).await.unwrap();
+        let rest = tools::execute(&scope, &names(), whole, 1_000_000)
+            .await
+            .unwrap();
         assert!(rest.data.unwrap().is_string());
     }
 
@@ -517,15 +536,29 @@ mod model_tools {
         let (_dir, scope) = fixture();
         assert!(tools::run(
             &scope,
+            &names(),
             "read_file",
             &json!({"path": "../etc/passwd"}),
             10_000
         )
         .is_err());
-        assert!(tools::run(&scope, "read_file", &json!({"path": "/etc/passwd"}), 10_000).is_err());
+        assert!(tools::run(
+            &scope,
+            &names(),
+            "read_file",
+            &json!({"path": "/etc/passwd"}),
+            10_000
+        )
+        .is_err());
         assert!(
-            tools::run(&scope, "read_file", &json!({"path": "logo.png"}), 10_000)
-                .unwrap_err()
+            tools::run(
+                &scope,
+                &names(),
+                "read_file",
+                &json!({"path": "logo.png"}),
+                10_000
+            )
+            .unwrap_err()
                 .to_string()
                 .contains("binary")
         );
@@ -534,7 +567,14 @@ mod model_tools {
     #[test]
     fn list_directory_leaves_ignored_entries_out_and_reads_slash_as_the_root() {
         let (_dir, scope) = fixture();
-        let listing = tools::run(&scope, "list_directory", &json!({"path": "/"}), 10_000).unwrap();
+        let listing = tools::run(
+            &scope,
+            &names(),
+            "list_directory",
+            &json!({"path": "/"}),
+            10_000,
+        )
+        .unwrap();
         assert!(listing.contains("src/\n"), "{listing}");
         assert!(listing.contains("README.md  ("));
         assert!(!listing.contains("target"));
@@ -545,16 +585,79 @@ mod model_tools {
     #[test]
     fn search_and_find_name_paths_and_lines() {
         let (_dir, scope) = fixture();
-        let found =
-            tools::run(&scope, "search_files", &json!({"query": "println"}), 10_000).unwrap();
+        let names = names();
+        let found = tools::run(
+            &scope,
+            &names,
+            "search_files",
+            &json!({"query": "println"}),
+            10_000,
+        )
+        .unwrap();
         assert!(
-            found.contains("src/main.rs:2: println!(\"hello\");"),
+            found.contains("[f1] src/main.rs:2: println!(\"hello\");"),
             "{found}"
         );
-        let files = tools::run(&scope, "find_files", &json!({"pattern": "*.rs"}), 10_000).unwrap();
+        let files = tools::run(
+            &scope,
+            &names,
+            "find_files",
+            &json!({"pattern": "*.rs"}),
+            10_000,
+        )
+        .unwrap();
         assert!(
-            files.contains("src/main.rs") && files.contains("src/lib/util.rs"),
+            files.contains("[f1] src/main.rs") && files.contains("src/lib/util.rs"),
             "{files}"
+        );
+    }
+
+    #[test]
+    fn each_tool_result_names_its_file_and_the_same_file_keeps_its_name() {
+        let (_dir, scope) = fixture();
+        let names = names();
+        let run = |tool: &str, arguments: serde_json::Value| {
+            tools::run(&scope, &names, tool, &arguments, 10_000).unwrap()
+        };
+        let found = run("find_files", json!({"pattern": "util"}));
+        assert!(found.contains("[f1] src/lib/util.rs"), "{found}");
+        let read = run("read_file", json!({"path": "src/main.rs"}));
+        assert!(read.starts_with("[f2] src/main.rs · lines 1–"), "{read}");
+        let again = run("read_file", json!({"path": "src/lib/util.rs"}));
+        assert!(again.starts_with("[f1] src/lib/util.rs · lines"), "{again}");
+        let searched = run("search_files", json!({"query": "println"}));
+        assert!(searched.contains("[f2] src/main.rs:2:"), "{searched}");
+        let listing = run("list_directory", json!({"path": "/"}));
+        assert!(!listing.contains("[f"), "{listing}");
+    }
+
+    #[test]
+    fn a_name_given_in_one_turn_is_in_the_next_turns_legend() {
+        let (_dir, scope) = fixture();
+        let names = Arc::new(TurnNames::unstored());
+        let first = FileNames::new(Arc::clone(&names));
+        tools::run(
+            &scope,
+            &first,
+            "read_file",
+            &json!({"path": "src/main.rs"}),
+            10_000,
+        )
+        .unwrap();
+        let next = FileNames::new(names);
+        let block = prompt::render_context(
+            &scope,
+            &next,
+            None,
+            20_000,
+            true,
+            false,
+            &prompt::FolderPassages::default(),
+        )
+        .unwrap();
+        assert!(
+            block.contains("Files named so far in this conversation:\n[f1] src/main.rs\n"),
+            "{block}"
         );
     }
 
@@ -594,12 +697,13 @@ mod model_tools {
         };
         let block = prompt::render_context(
             &scope,
+            &names(),
             Some(&focus),
             20_000,
             true,
             false,
             &prompt::FolderPassages::default(),
-        );
+        ).unwrap();
         assert!(
             block.contains("Top level: src/, .gitignore, logo.png, README.md"),
             "{block}"
@@ -610,7 +714,15 @@ mod model_tools {
             "{block}"
         );
         assert!(!block.contains("line 13"));
-        assert!(block.contains("`src/main.rs:10-24`"));
+        assert!(block.contains("[f2:10-24]"));
+        assert!(
+            block.contains("Open file: [f1] src/long.txt (50 lines). The user selected lines"),
+            "{block}"
+        );
+        assert!(
+            block.contains("Files named so far in this conversation:\n[f1] src/long.txt\n"),
+            "{block}"
+        );
         assert!(block.contains("read_file"));
     }
 
@@ -624,12 +736,13 @@ mod model_tools {
             };
             let block = prompt::render_context(
                 &scope,
+                &names(),
                 Some(&focus),
                 20_000,
                 false,
                 false,
                 &prompt::FolderPassages::default(),
-            );
+            ).unwrap();
             assert!(!block.contains("Open file"), "{open_path}: {block}");
             assert!(block.contains("You cannot open other files this turn"));
         }
@@ -645,12 +758,13 @@ mod model_tools {
         };
         let block = prompt::render_context(
             &scope,
+            &names(),
             Some(&focus),
             3_000,
             true,
             false,
             &prompt::FolderPassages::default(),
-        );
+        ).unwrap();
         assert!(block.len() <= 3_000, "{}", block.len());
         assert!(
             block.contains("not shown for length. read_file reads on from line"),
