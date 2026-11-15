@@ -23,7 +23,7 @@ fn task_in(request: &CompletionRequest) -> Option<Value> {
         .iter()
         .filter(|(role, _)| *role == "user")
         .filter_map(|(_, text)| repair_script::task_of(text))
-        .last()
+        .next_back()
 }
 
 /// A scripted answer in the form the request asks for: flat edits become entries.
@@ -55,7 +55,7 @@ impl LLMPort for Recording {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         self.sent.lock().unwrap().push(request.clone());
         let answer = self.answers.lock().unwrap().pop_front().unwrap_or_default();
-        Ok(CompletionResponse::from_text(&scripted(request, answer)))
+        Ok(CompletionResponse::from_text(scripted(request, answer)))
     }
     fn model_name(&self) -> &str {
         "recording"
@@ -977,7 +977,6 @@ const STEADY: &str = "A steady ramp avoids cracks.";
 const PASSED: &str = "The second stage burns off the binder.";
 const THIRD_OLD: &str = "The third stage vitrifies the body.";
 const THIRD_NEW: &str = "The third stage turns the body to glass.";
-const MERGED: &str = "The second and third stages burn off the binder and vitrify the body.";
 const CLOSING: &str = "Cooling ends the cycle.";
 
 /// The node of the statement `id` in its class's graph.
