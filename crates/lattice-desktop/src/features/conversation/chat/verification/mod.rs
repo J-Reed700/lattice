@@ -153,14 +153,14 @@ impl GroundingReport {
             match claim.verdict {
                 ClaimVerdict::Supported => {
                     report.supported_claims += 1;
-                    report.supported_claim_notes.push(claim.claim_text.clone());
+                    report.supported_claim_notes.push(claim.sentence.clone());
                 }
                 ClaimVerdict::Contradicted => {
-                    report.contradicted_claims.push(claim.claim_text.clone());
-                    report.unsupported_claims.push(claim.claim_text.clone());
+                    report.contradicted_claims.push(claim.sentence.clone());
+                    report.unsupported_claims.push(claim.sentence.clone());
                 }
                 ClaimVerdict::Unsupported => {
-                    report.unsupported_claims.push(claim.claim_text.clone());
+                    report.unsupported_claims.push(claim.sentence.clone());
                 }
                 ClaimVerdict::Unverified => report.unverified_claims += 1,
             }
@@ -230,7 +230,7 @@ impl GroundingReport {
                     .filter(|id| *id >= 1)
                     .collect();
                 serde_json::json!({
-                    "sentence": claim.claim_text,
+                    "sentence": claim.sentence,
                     "citationIds": citation_ids,
                     "verdict": claim.verdict.as_str(),
                     "evidenceQuote": claim.evidence_quote.as_deref(),

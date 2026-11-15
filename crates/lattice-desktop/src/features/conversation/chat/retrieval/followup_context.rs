@@ -377,7 +377,9 @@ fn build_followup_sources(
 
 #[cfg(test)]
 mod followup_label_tests {
+    use super::super::source_names::name_sources;
     use super::*;
+    use lattice_core::application::services::model_contract::kept::TurnNames;
 
     fn source(document_id: &str) -> SourceDto {
         SourceDto {
@@ -429,9 +431,7 @@ mod followup_label_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::super::source_names::name_sources;
     use super::*;
-    use lattice_core::application::services::model_contract::kept::TurnNames;
 
     fn anchors(text: &str) -> HashSet<String> {
         super::super::tokenize_overlap_terms(text)

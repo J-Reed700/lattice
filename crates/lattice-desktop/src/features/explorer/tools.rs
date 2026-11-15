@@ -137,12 +137,10 @@ pub fn definitions() -> Vec<ToolDefinition> {
 /// only when the folder's index has something in it.
 pub fn add_to_turn(tools: &mut Vec<ToolDefinition>, folder_index: bool) {
     let index_tool = folder_index.then(folder_index_tool::definition);
-    let read_more = crate::features::function_calling::handles::read_more_definition().ok();
-    for definition in definitions()
-        .into_iter()
-        .chain(index_tool)
-        .chain(read_more)
-    {
+    let read_more = crate::features::function_calling::handles::read_more_definition()
+        .ok()
+        .map(ToolDefinition::from);
+    for definition in definitions().into_iter().chain(index_tool).chain(read_more) {
         if !tools.iter().any(|tool| tool.name == definition.name) {
             tools.push(definition);
         }

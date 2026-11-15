@@ -541,6 +541,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
     use super::*;
+    use lattice_core::domain::conversation::memory::compute_digest;
 
     fn passage(id: &str, label: &str, text: &str) -> EvidencePassage {
         EvidencePassage {
@@ -625,10 +626,8 @@ mod tests {
             }],
             labels: vec!["The pass is open".into()],
         };
-        let redacted = transcript_passages(&forgotten.redact(vec![message(
-            content,
-            Some(saved.to_string()),
-        )]));
+        let redacted =
+            transcript_passages(&forgotten.redact(vec![message(content, Some(saved.to_string()))]));
         assert_eq!(redacted[0].text, "The pass is [forgotten] in May.");
     }
 

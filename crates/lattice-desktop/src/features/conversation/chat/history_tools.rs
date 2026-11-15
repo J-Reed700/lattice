@@ -170,7 +170,9 @@ pub fn tools_for_turn(
         external_tools.to_vec()
     };
     if history_available {
-        let more = crate::features::function_calling::handles::read_more_definition().ok();
+        let more = crate::features::function_calling::handles::read_more_definition()
+            .ok()
+            .map(ToolDefinition::from);
         for definition in history_tool_definitions().into_iter().chain(more) {
             if !selected.iter().any(|tool| tool.name == definition.name) {
                 selected.push(definition);

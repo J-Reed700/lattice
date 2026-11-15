@@ -69,7 +69,14 @@ pub(super) fn plan_journal_map_chunks(
                 })
                 .cloned()
                 .collect();
-            parts.push(EntryPart::of(index, entry, at + 1, total, piece, &own));
+            parts.push(EntryPart::of(
+                index,
+                entry,
+                at + 1,
+                total,
+                piece.to_string(),
+                &own,
+            ));
         }
     }
 
@@ -357,12 +364,7 @@ mod tests {
     fn a_piece_carries_the_sources_it_cites() {
         let mut long = entry("Long", "");
         long.transcript = (0..400)
-            .map(|index| {
-                format!(
-                    "USER: line {index} [{}]\n",
-                    if index < 200 { 1 } else { 2 }
-                )
-            })
+            .map(|index| format!("USER: line {index} [{}]\n", if index < 200 { 1 } else { 2 }))
             .collect();
         long.sources = vec![
             source("doc-a", "chunk-a", "Tide table", 1),

@@ -103,8 +103,14 @@ mod tests {
 
     #[test]
     fn a_message_saved_before_references_has_no_places() {
-        assert_eq!(reference_ranges("Plain [1].", None), Vec::new());
-        assert_eq!(reference_ranges("Plain [1].", Some("{}")), Vec::new());
+        assert_eq!(
+            reference_ranges("Plain [1].", None),
+            Vec::<Range<usize>>::new()
+        );
+        assert_eq!(
+            reference_ranges("Plain [1].", Some("{}")),
+            Vec::<Range<usize>>::new()
+        );
         assert!(stored_places("Plain", &json!({})).is_none());
     }
 

@@ -57,7 +57,7 @@ async fn a_retry_after_a_held_partial_call_marker_does_not_prepend_it_to_the_ret
         markers(false),
     );
     let recorder = TurnRecorder::silent("conversation", "request");
-    let mut request = CompletionRequest::default();
+    let mut request = CompletionRequest::probe();
     generate(
         &RetriesOnce,
         &mut request,
