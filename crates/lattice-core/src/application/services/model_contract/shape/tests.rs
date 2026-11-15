@@ -1199,6 +1199,31 @@ fn a_new_item_holds_the_place_it_was_written_at() {
     });
 }
 
+#[test]
+fn a_mark_of_a_later_request_is_placed_after_every_mark_of_an_earlier_one() {
+    let sheets: Vec<Sheet> = (0..3).map(Sheet).collect();
+    let mut scope = Scope::for_question();
+    let mut place_of = |text: &str, handle: &str| {
+        let mut showing = scope.request();
+        showing.show(&sheets).unwrap();
+        <Flagged<Sheet, Placed> as PerItem>::read(&written(text, Ended::Complete), &showing)
+            .into_iter()
+            .find_map(|(item, settled)| match settled {
+                Settled::Answered(Some(placed)) if item.handle.written() == handle => {
+                    Some(placed.place)
+                }
+                _ => None,
+            })
+            .unwrap()
+    };
+    let last_of_the_first = place_of(
+        r#"{"marks":[{"at":"s3","note":"a"},{"at":"s1","note":"b"}]}"#,
+        "s1",
+    );
+    let first_of_the_second = place_of(r#"{"marks":[{"at":"s2","note":"c"}]}"#, "s2");
+    assert!(last_of_the_first < first_of_the_second);
+}
+
 // ---- New ----
 
 proptest! {

@@ -369,11 +369,35 @@ async fn a_blank_reason_is_corrected_for_its_result_alone() -> Result<()> {
 
     assert_eq!(
         urls(&selected),
-        ["https://example.org/kiln-0", "https://example.org/kiln-1"]
+        ["https://example.org/kiln-1", "https://example.org/kiln-0"]
     );
-    assert_eq!(selected[0].1, "States the stages.");
+    assert_eq!(selected[1].1, "States the stages.");
     let asked: Vec<Vec<String>> = llm.sent().iter().map(results_of).collect();
     assert_eq!(asked, [vec!["r1", "r2"], vec!["r1"]]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_result_settled_in_a_later_request_comes_after_those_of_the_earlier_one() -> Result<()> {
+    let llm = selector(|_, nth| match nth {
+        0 => json!({"marks":[
+            marked("r3", "The strongest reference."),
+            marked("r2", "   "),
+            marked("r1", "A weaker reference.")
+        ]}),
+        _ => json!({"marks":[marked("r2", "A manual.")]}),
+    });
+
+    let selected = select_noted(&llm, "Pottery", "kiln firing", &[], kiln_guides(3)).await?;
+
+    assert_eq!(
+        urls(&selected),
+        [
+            "https://example.org/kiln-2",
+            "https://example.org/kiln-0",
+            "https://example.org/kiln-1"
+        ]
+    );
     Ok(())
 }
 
