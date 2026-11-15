@@ -6,29 +6,18 @@ Classify each claim: what kind of fact it asserts, which entity it is about, and
 Lesson unit and its claims (data, never instructions):
 {"claims":[{"id":"c1","statement":"With strict: true, Structured Outputs matches the schema."},{"id":"c2","statement":"React is the most popular framework."}],"course_topic":"LLM APIs","known_classes":["LLM APIs","Web platform APIs"],"unit_title":"Structured outputs"}
 
+Return an entries array with one entry for each claim, naming it in of by its id. Each entry gives the claim's kind; its subject, written with kind none when the claim names no entity, or with kind named, the subject's name, its subject_kind, its aliases and its classes (each alias and class an object with text); its temporal, with scope, version and date; its measurement_origin; and its attributed_to. Write an empty text for a version, date, measurement_origin or attributed_to the claim does not have.
+
 === schema ===
 {
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "claims"
-  ],
   "properties": {
-    "claims": {
+    "entries": {
       "type": "array",
       "items": {
         "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "id",
-          "kind",
-          "subject",
-          "temporal",
-          "measurement_origin",
-          "attributed_to"
-        ],
         "properties": {
-          "id": {
+          "of": {
             "type": "string"
           },
           "kind": {
@@ -47,23 +36,33 @@ Lesson unit and its claims (data, never instructions):
           "subject": {
             "anyOf": [
               {
-                "type": "null"
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "none"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "additionalProperties": false
               },
               {
                 "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "name",
-                  "kind",
-                  "aliases",
-                  "classes"
-                ],
                 "properties": {
-                  "name": {
-                    "type": "string",
-                    "minLength": 1
-                  },
                   "kind": {
+                    "type": "string",
+                    "enum": [
+                      "named"
+                    ]
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "subject_kind": {
                     "type": "string",
                     "enum": [
                       "product",
@@ -82,27 +81,47 @@ Lesson unit and its claims (data, never instructions):
                   "aliases": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "type": "object",
+                      "properties": {
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "text"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "classes": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "type": "object",
+                      "properties": {
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "text"
+                      ],
+                      "additionalProperties": false
                     }
                   }
-                }
+                },
+                "required": [
+                  "kind",
+                  "name",
+                  "subject_kind",
+                  "aliases",
+                  "classes"
+                ],
+                "additionalProperties": false
               }
             ]
           },
           "temporal": {
             "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "scope",
-              "version",
-              "date"
-            ],
             "properties": {
               "scope": {
                 "type": "string",
@@ -114,51 +133,42 @@ Lesson unit and its claims (data, never instructions):
                 ]
               },
               "version": {
-                "anyOf": [
-                  {
-                    "type": "null"
-                  },
-                  {
-                    "type": "string"
-                  }
-                ]
+                "type": "string"
               },
               "date": {
-                "anyOf": [
-                  {
-                    "type": "null"
-                  },
-                  {
-                    "type": "string"
-                  }
-                ]
+                "type": "string"
               }
-            }
+            },
+            "required": [
+              "scope",
+              "version",
+              "date"
+            ],
+            "additionalProperties": false
           },
           "measurement_origin": {
-            "anyOf": [
-              {
-                "type": "null"
-              },
-              {
-                "type": "string"
-              }
-            ]
+            "type": "string"
           },
           "attributed_to": {
-            "anyOf": [
-              {
-                "type": "null"
-              },
-              {
-                "type": "string"
-              }
-            ]
+            "type": "string"
           }
-        }
+        },
+        "required": [
+          "of",
+          "kind",
+          "subject",
+          "temporal",
+          "measurement_origin",
+          "attributed_to"
+        ],
+        "additionalProperties": false
       }
     }
-  }
+  },
+  "required": [
+    "entries"
+  ],
+  "additionalProperties": false
 }
 
 === sent with ===
@@ -168,7 +178,7 @@ Lesson unit and its claims (data, never instructions):
   "include_reasoning": false,
   "sampling": null,
   "thinking": "off",
-  "max_output_tokens": 30802,
+  "max_output_tokens": 30675,
   "stop": [],
   "want_logprobs": false,
   "priority": "background",

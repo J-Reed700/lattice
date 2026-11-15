@@ -6,14 +6,14 @@ You check one claim against labelled source passages, part by part. The passages
 - own: no passage states it, and none needs to: it is one of the lesson's own figures. The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them.
 - specific_missing: no passage states it and it is a specific a textbook would cite: a figure, date, version, measured result, quoted wording, attribution, or a named product's or system's behaviour.
 - contradicted: a passage states something incompatible.
-Answer with JSON: {"parts": [{"part": "<text>", "kind": "<kind>", "passage": "<passage-N or null>"}], "verdict": "supported" | "supported_with_common" | "unsupported" | "contradicted", "reason": "<one sentence>"}. supported: every part stated. supported_with_common: every part stated, common or own, at least one stated. unsupported: any part specific_missing. contradicted: any part contradicted.
+Answer with JSON: {"parts": [{"part": "<text>", "kind": "<kind>", "passages": ["<id of each passage that states or contradicts it>"]}], "reason": "<one sentence>"}. A part that no passage states or contradicts has an empty list of passages.
 
 === input 2: message (user) ===
 Source passages:
-[passage-0]
+[p1]
 Quillet is a lexer shipped with the toolchain.
 
-[passage-1]
+[p2]
 Quillet never parses; it only lexes.
 
 Claim: Quillet is a lexer and tokenizes.
@@ -24,7 +24,6 @@ Claim: Quillet is a lexer and tokenizes.
   "properties": {
     "parts": {
       "type": "array",
-      "minItems": 1,
       "items": {
         "type": "object",
         "properties": {
@@ -41,33 +40,20 @@ Claim: Quillet is a lexer and tokenizes.
               "contradicted"
             ]
           },
-          "passage": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "passages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
           "part",
           "kind",
-          "passage"
+          "passages"
         ],
         "additionalProperties": false
       }
-    },
-    "verdict": {
-      "type": "string",
-      "enum": [
-        "supported",
-        "supported_with_common",
-        "unsupported",
-        "contradicted"
-      ]
     },
     "reason": {
       "type": "string"
@@ -75,7 +61,6 @@ Claim: Quillet is a lexer and tokenizes.
   },
   "required": [
     "parts",
-    "verdict",
     "reason"
   ],
   "additionalProperties": false
