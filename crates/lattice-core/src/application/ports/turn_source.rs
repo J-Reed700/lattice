@@ -9,6 +9,7 @@ use serde_json::Value;
 use crate::application::contracts::sources::SourceDto;
 use crate::application::contracts::tools::{FunctionCall, FunctionResult};
 use crate::application::ports::llm_port::ToolDefinition;
+use crate::application::services::model_contract::reply::Markers;
 use crate::shared::error::Result;
 
 /// How a turn with this source treats the library, its intent, its rounds and
@@ -90,6 +91,16 @@ pub trait TurnSourcePort: Send + Sync + std::fmt::Debug {
     /// cites by its own means, as a folder cites lines, has none.
     async fn passages(&self, _question: &str, _max_chars: usize) -> Vec<SourcePassage> {
         Vec::new()
+    }
+
+    /// What a reply of this source's turn may point at, beyond `markers`.
+    fn reply_markers(&self, markers: Markers) -> Markers {
+        markers
+    }
+
+    /// A reply saved before references, with what it pointed at in this source written as names.
+    fn old_references(&self, reply: String) -> String {
+        reply
     }
 
     /// Runs one of the source's tool calls, its result cut to `max_chars`.

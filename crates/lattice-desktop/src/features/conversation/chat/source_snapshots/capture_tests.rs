@@ -104,7 +104,7 @@ async fn save_answer_citing_an_unread_page(
     super::super::retrieval::source_names::name_sources(&names, std::slice::from_mut(&mut source));
     let reply = crate::features::conversation::chat::reply_text::ReplyText::read(
         &names,
-        crate::features::conversation::chat::reply_text::markers(false),
+        crate::features::conversation::chat::reply_text::markers(None),
         "The page says so [s1].",
     );
     let llm: Arc<dyn LLMPort> = Arc::new(crate::features::llm::engine::factory::MockLLMPort::new());

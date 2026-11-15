@@ -1,6 +1,7 @@
 use super::*;
-use crate::features::conversation::chat::reply_text::{markers, ReplyText};
-use crate::features::conversation::chat::retrieval::source_names::Source;
+use crate::features::conversation::chat::reply_text::{markers, wire, ReplyText};
+use lattice_core::application::services::model_contract::reply::Place;
+use lattice_core::application::services::tool_handles::{Picture, Source, ToolHandles};
 
 fn names_with_sources(count: u32) -> Arc<TurnNames> {
     let names = Arc::new(TurnNames::unstored());
@@ -18,6 +19,14 @@ fn names_with_sources(count: u32) -> Arc<TurnNames> {
 
 /// The events of an emitter that is fed `rounds` (each a list of chunks) and flushed after each.
 fn stream(names: Arc<TurnNames>, rounds: &[&[&str]]) -> Vec<ChatStreamEventDto> {
+    stream_with(names, markers(None), rounds)
+}
+
+fn stream_with(
+    names: Arc<TurnNames>,
+    markers: Markers,
+    rounds: &[&[&str]],
+) -> Vec<ChatStreamEventDto> {
     let events = Arc::new(Mutex::new(Vec::new()));
     let captured = Arc::clone(&events);
     let sink: ChatEventSink = Arc::new(move |event| {
@@ -25,7 +34,7 @@ fn stream(names: Arc<TurnNames>, rounds: &[&[&str]]) -> Vec<ChatStreamEventDto> 
         Ok(())
     });
     {
-        let emitter = StreamEmitter::new(&sink, "conversation", "request", names, markers(false));
+        let emitter = StreamEmitter::new(&sink, "conversation", "request", names, markers);
         for round in rounds {
             for chunk in *round {
                 emitter.content(chunk).unwrap();
@@ -102,12 +111,45 @@ fn the_references_a_reply_is_saved_with_are_the_ones_its_last_round_streamed() {
     let names = names_with_sources(3);
     let chunks: &[&str] = &["One [s", "1], two [s3] and `[s", "2]`, then [s2]."];
     let events = stream(Arc::clone(&names), &[chunks]);
-    let saved = ReplyText::read(&names, markers(false), &chunks.concat());
+    let saved = ReplyText::read(&names, markers(None), &chunks.concat());
     let kept: Vec<String> = saved
         .references
         .iter()
-        .map(|placed| ReplyReferenceDto::from(&placed.reference).written)
+        .map(|placed| wire(&placed.reference).written)
         .collect();
     assert_eq!(references(&events), kept);
     assert_eq!(kept, vec!["[s1]", "[s3]", "[s2]"]);
+}
+
+fn names_with_picture(request_id: &str) -> Arc<TurnNames> {
+    let names = Arc::new(TurnNames::unstored());
+    let handles = ToolHandles::in_turn(Arc::clone(&names)).in_request(request_id);
+    assert_eq!(handles.picture("![A kiln](img-1)").as_deref(), Some("[i1]"));
+    names
+}
+
+fn picture_markers() -> Markers {
+    markers(None).of::<Picture>(Place::OwnLine)
+}
+
+#[test]
+fn a_picture_name_of_this_request_streams_as_its_image_line() {
+    let events = stream_with(
+        names_with_picture("request"),
+        picture_markers(),
+        &[&["Fired.\n\n[i", "1]\n\nDone."]],
+    );
+    assert!(references(&events).is_empty());
+    assert_eq!(text(&events), "Fired.\n\n![A kiln](img-1)\n\nDone.");
+}
+
+#[test]
+fn a_picture_name_of_another_request_streams_as_written() {
+    let events = stream_with(
+        names_with_picture("earlier"),
+        picture_markers(),
+        &[&["Fired.\n\n[i1]\n\nDone."]],
+    );
+    assert!(references(&events).is_empty());
+    assert_eq!(text(&events), "Fired.\n\n[i1]\n\nDone.");
 }

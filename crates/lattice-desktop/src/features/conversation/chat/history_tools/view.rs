@@ -5,7 +5,7 @@
 use serde_json::Value;
 
 use crate::features::conversation::knowledge_dto::KnowledgeItemDto;
-use crate::features::function_calling::handles::CallView;
+use lattice_core::application::services::tool_handles::CallView;
 
 use super::{
     TOOL_READ_CONVERSATION_HISTORY, TOOL_SEARCH_CONVERSATION_HISTORY, TOOL_SEARCH_SAVED_KNOWLEDGE,

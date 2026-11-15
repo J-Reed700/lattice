@@ -2,8 +2,8 @@
 //! reader judges by, and a handle for each thing a later call may name. No id
 //! or offset is shown.
 
-use super::handles::CallView;
 use lattice_core::application::contracts::tools::{ListAttachmentsOutput, ListDocumentsOutput};
+use lattice_core::application::services::tool_handles::CallView;
 use serde_json::{json, Value};
 
 #[cfg(test)]
@@ -55,7 +55,10 @@ fn list_documents(output: &ListDocumentsOutput, call: &CallView<'_>) -> String {
     }
     if output.has_more {
         let next = call.read_on(&[("offset", json!(output.offset + output.documents.len()))]);
-        lines.push(format!("[More documents match. {}]", call.read_on_line(&next)));
+        lines.push(format!(
+            "[More documents match. {}]",
+            call.read_on_line(&next)
+        ));
     }
     lines.join("\n")
 }

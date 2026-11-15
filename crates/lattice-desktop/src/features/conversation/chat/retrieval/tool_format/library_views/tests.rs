@@ -1,5 +1,5 @@
 use super::*;
-use crate::features::function_calling::handles::ToolHandles;
+use lattice_core::application::services::tool_handles::ToolHandles;
 use serde_json::json;
 
 fn rendered(tool: &str, data: Value) -> (String, ToolHandles) {
@@ -27,7 +27,12 @@ fn a_listing_names_each_document_and_shows_no_id_or_path() {
             "total": 2, "limit": 50, "offset": 0, "has_more": false
         }),
     );
-    assert!(text.contains("[d1] tides.txt (text/plain; 120 bytes; modified 2026-03-04; tags: tides; a favorite)"), "{text}");
+    assert!(
+        text.contains(
+            "[d1] tides.txt (text/plain; 120 bytes; modified 2026-03-04; tags: tides; a favorite)"
+        ),
+        "{text}"
+    );
     assert!(text.contains("[d2] kiln.txt"), "{text}");
     assert!(!text.contains("doc-a"), "{text}");
     assert!(!text.contains("/harbour"), "{text}");
@@ -51,7 +56,10 @@ fn a_listing_with_more_names_the_point_to_read_on_from() {
         &CallView::new("list_documents", &arguments, &handles),
     )
     .unwrap();
-    assert!(text.contains("To read on, call read_more with [m1]."), "{text}");
+    assert!(
+        text.contains("To read on, call read_more with [m1]."),
+        "{text}"
+    );
     assert!(!text.contains("offset"), "{text}");
     let resumed = handles
         .read_call("read_more", &json!({"handle": "m1"}))
@@ -75,6 +83,9 @@ fn an_attachment_is_named_for_get_document_and_shows_no_id() {
             "total": 1
         }),
     );
-    assert!(text.contains("[d1] survey.pdf (900 bytes, 150 words, attached 2026-03-05)"), "{text}");
+    assert!(
+        text.contains("[d1] survey.pdf (900 bytes, 150 words, attached 2026-03-05)"),
+        "{text}"
+    );
     assert!(!text.contains("doc-att"), "{text}");
 }

@@ -8,7 +8,7 @@ use crate::features::conversation::chat::retrieval::source_names::marker;
 use crate::features::conversation::chat::retrieval::{
     build_document_part_citation, build_library_source_citations, build_web_source_citations,
 };
-use crate::features::function_calling::handles::{Resume, ToolHandles, READ_MORE};
+use crate::features::conversation::chat::retrieval::{Legend, Passage, Rendered};
 use lattice_core::application::contracts::images::FindImageOutput;
 use lattice_core::application::contracts::tools::{
     FunctionResult, GetDocumentOutput, SemanticSearchOutput, WikiSearchOutput, WikiSummaryOutput,
@@ -17,6 +17,7 @@ use lattice_core::application::contracts::web::{
     FetchUrlContentOutput, WebSearchOutput, WebSearchResult,
 };
 use lattice_core::application::ports::turn_source::SourcePassages;
+use lattice_core::application::services::tool_handles::{Resume, ToolHandles, READ_MORE};
 use lattice_core::shared::text::build_excerpt;
 
 /// Preview length for a page the model fetched itself, matching the preview a
@@ -26,15 +27,16 @@ const FETCHED_PAGE_EXCERPT_CHARS: usize = 480;
 /// The lines that give a result's new sources their citation numbers, and what
 /// is left of `allowance` for the result itself. A source the result already
 /// shows is named by number, title and address; any other carries its text,
-/// each an equal share of half the allowance, cut and marked when longer.
+/// each an equal share of half the allowance, cut and marked when longer. The
+/// lines say where each passage's text and each legend line stand.
 pub(super) fn citable_passages(
     citable: &[(u32, &SourceDto)],
     shown: &str,
     allowance: usize,
     handles: &ToolHandles,
-) -> (String, usize) {
+) -> (Rendered, usize) {
     if citable.is_empty() {
-        return (String::new(), allowance);
+        return (Rendered::default(), allowance);
     }
     let unshown = citable
         .iter()
@@ -42,24 +44,30 @@ pub(super) fn citable_passages(
         .count();
     let share = (allowance / 2) / unshown.max(1);
     let mut text = String::new();
+    let mut passages = Vec::new();
+    let mut legend = Vec::new();
     for (number, source) in citable {
         let content = source.content.trim();
         if is_shown(shown, content) {
-            text.push_str(&format!(
-                "\n\nCitable passage {} — {} ({}): its text is in this result above.",
+            let line = format!(
+                "Citable passage {} — {} ({}): its text is in this result above.",
                 marker(*number),
                 source.file_name,
                 source.file_path
-            ));
+            );
+            text.push_str("\n\n");
+            let at = text.len()..text.len() + line.len();
+            text.push_str(&line);
+            legend.push(Legend { line, at });
             continue;
         }
-        let header = format!(
-            "\n\nCitable passage {} — {}\n",
-            marker(*number),
-            source.file_name
-        );
-        let room = share.saturating_sub(header.chars().count());
-        text.push_str(&header);
+        let heading = format!("Citable passage {} — {}", marker(*number), source.file_name);
+        let room = share.saturating_sub(heading.chars().count() + 3);
+        text.push_str("\n\n");
+        let line = text.len()..text.len() + heading.len();
+        text.push_str(&heading);
+        text.push('\n');
+        let body_start = text.len();
         let total = content.chars().count();
         if total <= room {
             text.push_str(content);
@@ -78,9 +86,19 @@ pub(super) fn citable_passages(
             let name = handles.more(read_on(source, at)).unwrap_or_default();
             text.push_str(&continues_note(at, total, &name));
         }
+        passages.push(Passage {
+            heading,
+            line,
+            body: body_start..text.len(),
+        });
     }
     let used = text.chars().count();
-    (text, allowance.saturating_sub(used))
+    let rendered = Rendered {
+        text,
+        passages,
+        legend,
+    };
+    (rendered, allowance.saturating_sub(used))
 }
 
 /// A bracketed name as long as the longest one the note may carry, for sizing the note before its name exists.
@@ -115,14 +133,15 @@ pub(super) fn render_with_citations(
     citable: &[(u32, &SourceDto)],
     allowance: usize,
     handles: &ToolHandles,
-    render: impl Fn(usize) -> String,
-) -> String {
+    render: impl Fn(usize) -> Rendered,
+) -> Rendered {
     let mut room = allowance;
     loop {
-        let rendered = render(room);
-        let (citations, left) = citable_passages(citable, &rendered, allowance, handles);
+        let mut rendered = render(room);
+        let (citations, left) = citable_passages(citable, &rendered.text, allowance, handles);
         if room <= left || room == 0 {
-            return rendered + &citations;
+            rendered.append(citations);
+            return rendered;
         }
         room = left;
     }
@@ -425,8 +444,9 @@ mod citable_tests {
         assert_eq!(left, 10_000 - text.chars().count());
 
         let unshown = source(&page);
-        let (text, left) =
+        let (rendered, left) =
             citable_passages(&[(1, &unshown)], "something else", 600, &ToolHandles::new());
+        let text = rendered.text;
         assert!(text.contains("Citable passage [s1] — Page A\n"));
         assert!(
             text.contains("fetch_url_content with url \"https://example.com/a\" and offset "),
@@ -484,7 +504,8 @@ mod citable_tests {
         let handles = ToolHandles::new();
         let page = "word ".repeat(400);
         let cut = source(&page);
-        let (text, _) = citable_passages(&[(1, &cut)], "something else", 600, &handles);
+        let (rendered, _) = citable_passages(&[(1, &cut)], "something else", 600, &handles);
+        let text = rendered.text;
         let shown = text
             .split("Citable passage [s1] — Page A\n")
             .nth(1)
@@ -513,17 +534,106 @@ mod citable_tests {
         let page = format!("{} and then much more of the page.", "ab ".repeat(24));
         let cited = source(&page);
         let header = "A forty-character header for the result\n";
-        let render =
-            |room: usize| -> String { format!("{header}{page}").chars().take(room).collect() };
+        let render = |room: usize| -> Rendered {
+            format!("{header}{page}")
+                .chars()
+                .take(room)
+                .collect::<String>()
+                .into()
+        };
         assert!(
-            is_shown(&render(150), &page),
+            is_shown(&render(150).text, &page),
             "the whole allowance shows it"
         );
 
-        let text = render_with_citations(&[(1, &cited)], 150, &ToolHandles::new(), render);
+        let text = render_with_citations(&[(1, &cited)], 150, &ToolHandles::new(), render).text;
         assert!(text.chars().count() <= 150, "{}", text.chars().count());
         assert!(!text.contains("its text is in this result above"), "{text}");
         assert!(text.contains("Citable passage [s1] — Page A\n"), "{text}");
+    }
+
+    fn body_of<'a>(rendered: &'a Rendered, at: usize) -> &'a str {
+        rendered
+            .passages
+            .get(at)
+            .and_then(|passage| rendered.text.get(passage.body.clone()))
+            .unwrap_or_default()
+    }
+
+    /// The ranges cut the passage's own text, its note included, and the
+    /// heading line on its own.
+    #[test]
+    fn a_passage_s_range_is_its_text_and_the_note_that_ends_it() {
+        let handles = ToolHandles::new();
+        let page = "word ".repeat(400);
+        let cut = source(&page);
+        let (rendered, _) = citable_passages(&[(1, &cut)], "something else", 600, &handles);
+        let passage = &rendered.passages[0];
+        assert_eq!(passage.heading, "Citable passage [s1] — Page A");
+        assert_eq!(
+            rendered.text.get(passage.line.clone()),
+            Some("Citable passage [s1] — Page A")
+        );
+        let body = body_of(&rendered, 0);
+        assert!(body.starts_with("word word"), "{body}");
+        assert!(body.ends_with("to read on]"), "{body}");
+        assert_eq!(passage.body.end, rendered.text.len());
+        assert!(rendered.legend.is_empty());
+    }
+
+    #[test]
+    fn a_source_shown_above_is_a_legend_line_and_no_passage() {
+        let page = "The station opened in 1932 and was rebuilt after the fire. ".repeat(20);
+        let shown = source(&page);
+        let (rendered, _) = citable_passages(
+            &[(1, &shown)],
+            &format!("Page A\n{page}"),
+            10_000,
+            &ToolHandles::new(),
+        );
+        assert!(rendered.passages.is_empty());
+        let legend = &rendered.legend[0];
+        assert_eq!(
+            legend.line,
+            "Citable passage [s1] — Page A (https://example.com/a): its text is in this result above."
+        );
+        assert_eq!(
+            rendered.text.get(legend.at.clone()),
+            Some(legend.line.as_str())
+        );
+    }
+
+    #[test]
+    fn the_ranges_follow_the_result_the_passages_are_appended_to() {
+        let page = "The station opened in 1932. ".repeat(60);
+        let other = "Kilns fire at night. ".repeat(60);
+        let (first, second) = (source(&page), source(&other));
+        let render = |room: usize| -> Rendered {
+            let mut result = Rendered::from(format!("Heading\n{}", "x".repeat(room.min(20))));
+            result.passages.push(Passage {
+                heading: "Heading".to_owned(),
+                line: 0..7,
+                body: 8..result.text.len(),
+            });
+            result
+        };
+        let rendered = render_with_citations(
+            &[(1, &first), (2, &second)],
+            1_000,
+            &ToolHandles::new(),
+            render,
+        );
+        assert_eq!(rendered.passages.len(), 3);
+        assert_eq!(body_of(&rendered, 0), "x".repeat(20));
+        assert!(body_of(&rendered, 1).starts_with("The station"));
+        assert!(body_of(&rendered, 2).starts_with("Kilns fire"));
+        for at in 1..3 {
+            let passage = &rendered.passages[at];
+            assert_eq!(
+                rendered.text.get(passage.line.clone()),
+                Some(passage.heading.as_str())
+            );
+        }
     }
 
     /// Each picture's page becomes one web source, so its caption can cite it;

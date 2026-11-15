@@ -306,6 +306,26 @@ impl Scope {
         &self.fresh
     }
 
+    /// Every top-level thing of kind `K` the scope holds, in the order it was named.
+    pub fn held<K: Kind>(&self) -> Vec<(Handle<K>, K::Ref)> {
+        let Some(minted) = self.top.get(K::PREFIX) else {
+            return Vec::new();
+        };
+        minted
+            .references
+            .iter()
+            .zip(1u32..)
+            .filter_map(|(reference, ordinal)| {
+                let name = Name {
+                    prefix: K::PREFIX.to_owned(),
+                    ordinal,
+                };
+                let reference = serde_json::from_value(reference.clone()).ok()?;
+                Some((Handle::new(name, None), reference))
+            })
+            .collect()
+    }
+
     /// Starts a request. What the request shows is what its answer may point at.
     pub fn request(&mut self) -> Showing<'_> {
         Showing {

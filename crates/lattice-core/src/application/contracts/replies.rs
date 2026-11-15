@@ -2,9 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::application::services::model_contract::reply::{self, Lines, Piece, Reference};
-use crate::application::services::model_contract::shown::Drawn;
-
 /// A line range a reference names inside what it points at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -19,7 +16,7 @@ pub struct LinesDto {
 pub struct ReplyReferenceDto {
     /// The handle as written, `[s12]` or `[f2:10-20]`.
     pub written: String,
-    /// `source`, `file` or `picture`.
+    /// `source` or `file`.
     pub kind: String,
     /// The handle's own number.
     pub number: u32,
@@ -36,27 +33,4 @@ pub struct ReplyReferenceDto {
 pub enum ReplyPieceDto {
     Text { text: String },
     Reference { reference: ReplyReferenceDto },
-}
-
-impl From<&Reference> for ReplyReferenceDto {
-    fn from(reference: &Reference) -> Self {
-        let kind = match reference.drawn {
-            Drawn::Number => "source",
-            Drawn::Name => "file",
-            Drawn::Itself => "picture",
-        };
-        let name = match reference.drawn {
-            Drawn::Name => reference.reference.as_str().map(str::to_owned),
-            Drawn::Number | Drawn::Itself => None,
-        };
-        Self {
-            written: reply::written(&[Piece::Reference(reference.clone())]),
-            kind: kind.to_owned(),
-            number: reference.number,
-            lines: reference
-                .lines
-                .map(|Lines { first, last }| LinesDto { first, last }),
-            name,
-        }
-    }
 }

@@ -1,5 +1,5 @@
 use super::*;
-use lattice_core::application::services::model_contract::reply::{split, Piece};
+use lattice_core::application::services::model_contract::reply::{split, Markers, Piece, Place};
 use lattice_core::application::services::model_contract::shown::Scope as Shown;
 
 fn folder() -> (tempfile::TempDir, Scope) {
@@ -12,6 +12,10 @@ fn folder() -> (tempfile::TempDir, Scope) {
     .unwrap();
     let scope = Scope::open(dir.path().to_str().unwrap()).unwrap();
     (dir, scope)
+}
+
+fn markers() -> Markers {
+    Markers::new().of_lines::<FolderFile>(Place::Inline)
 }
 
 fn shown() -> Shown {
@@ -72,4 +76,56 @@ fn a_path_written_in_code_is_no_marker() {
 #[test]
 fn a_file_that_was_not_shown_does_not_resolve() {
     assert!(references("See [f2:1-2].").is_empty());
+}
+
+fn names() -> FileNames {
+    FileNames::new(Arc::new(TurnNames::unstored()))
+}
+
+#[test]
+fn a_file_has_one_name_and_names_with_lines_are_written_as_a_reply_writes_them() {
+    let names = names();
+    assert_eq!(names.name("src/a.rs").unwrap(), "[f1]");
+    assert_eq!(names.name("src/b.rs").unwrap(), "[f2]");
+    assert_eq!(names.name("src/a.rs").unwrap(), "[f1]");
+    assert_eq!(names.name_lines("src/b.rs", 10, 24).unwrap(), "[f2:10-24]");
+    assert_eq!(names.name_lines("src/b.rs", 12, 12).unwrap(), "[f2:12]");
+}
+
+#[test]
+fn held_lists_the_named_files_newest_first() {
+    let names = names();
+    names.name("src/a.rs").unwrap();
+    names.name("src/b.rs").unwrap();
+    assert_eq!(
+        names.held(),
+        vec![
+            ("[f2]".to_string(), "src/b.rs".to_string()),
+            ("[f1]".to_string(), "src/a.rs".to_string())
+        ]
+    );
+}
+
+#[test]
+fn an_old_line_reference_in_code_becomes_the_name_with_lines() {
+    let names = names();
+    let old = "See `src/a.rs:3-5` and `src/a.rs:7`, also `kiln/b.txt:2–4`.";
+    assert_eq!(
+        rewrite_old_references(old, &names),
+        "See [f1:3-5] and [f1:7], also [f2:2-4]."
+    );
+}
+
+#[test]
+fn other_text_is_left_byte_for_byte() {
+    let names = names();
+    let text = "Run `cargo build` first.
+```
+`src/a.rs:3`
+src/a.rs:3
+```
+Plain src/a.rs:3 and `Option:2` and `src/a.rs:5-`.
+";
+    assert_eq!(rewrite_old_references(text, &names), text);
+    assert!(names.held().is_empty());
 }

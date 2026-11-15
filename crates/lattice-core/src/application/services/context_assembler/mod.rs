@@ -579,7 +579,9 @@ impl ContextAssembler {
         let mut unresolvable = 0usize;
         for item in snapshot.mandatory_items() {
             match render::render_memory_item(item, |message_id| {
-                by_id.get(message_id).map(|message| message.content.as_str())
+                by_id
+                    .get(message_id)
+                    .map(|message| message.content.as_str())
             }) {
                 Some(block) => {
                     blocks.push(block);

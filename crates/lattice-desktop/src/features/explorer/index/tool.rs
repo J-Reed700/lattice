@@ -1,12 +1,13 @@
 //! `search_folder`: the model's search of the open folder by meaning.
 //!
 //! Offered beside the other folder tools when the folder's index holds at
-//! least one passage. A result is passages, each headed by its line reference
-//! and shown as numbered lines, so the model can cite exactly what it read.
+//! least one passage. A result is passages, each headed by its file's name with
+//! its lines and shown as numbered lines, so the model can point at exactly what it read.
 
 use super::dto::FolderIndexState;
 use super::manager::group_digits;
 use super::search::{FolderHit, FolderSearch};
+use crate::features::explorer::file_refs::FileNames;
 use crate::features::explorer::tools::{number_line, number_width};
 use crate::infrastructure::passage_index::chunking::lines as chunker;
 use lattice_core::application::contracts::tools::explorer::{
@@ -32,8 +33,8 @@ pub fn definition() -> ToolDefinition {
         name: TOOL_SEARCH_FOLDER.to_string(),
         description: "Find code or text in the folder by meaning. Use it for where/how questions \
              when you don't know the exact words; use search_files for exact text. Returns as \
-             many passages as this turn has room for, best first, each headed by its line \
-             reference, e.g. `src/main.rs:10-24`."
+             many passages as this turn has room for, best first, each headed by its file's \
+             bracketed name with its lines, e.g. [f2:10-24]."
             .to_string(),
         parameters: serde_json::json!({
             "type": "object",
@@ -69,15 +70,19 @@ pub fn progress_note(search: &FolderSearch) -> Option<String> {
     })
 }
 
-/// Passages as `` `path:a-b` `` headings over numbered lines, cut at a line
+/// Passages as `[f2:a-b] path` headings over numbered lines, cut at a line
 /// to fit `budget` characters. A cut passage says so; passages that did not
 /// fit at all are counted.
-pub fn render_passages(hits: &[FolderHit], budget: usize) -> String {
+pub fn render_passages(hits: &[FolderHit], budget: usize, names: &FileNames) -> Result<String> {
     let budget = budget.saturating_sub(NOTE_CHARS);
     let mut out = String::new();
     let mut shown = 0usize;
     for hit in hits {
-        let heading = format!("`{}:{}-{}`\n", hit.path, hit.start_line, hit.end_line);
+        let heading = format!(
+            "{} {}\n",
+            names.name_lines(&hit.path, hit.start_line, hit.end_line)?,
+            hit.path
+        );
         if out.len() + heading.len() > budget {
             break;
         }
@@ -107,11 +112,16 @@ pub fn render_passages(hits: &[FolderHit], budget: usize) -> String {
             if hits.len() - shown == 1 { "" } else { "s" }
         ));
     }
-    out
+    Ok(out)
 }
 
 /// The text one call returns.
-pub async fn run(search: &FolderSearch, arguments: &Value, max_chars: usize) -> Result<String> {
+pub async fn run(
+    search: &FolderSearch,
+    names: &FileNames,
+    arguments: &Value,
+    max_chars: usize,
+) -> Result<String> {
     let query = arg_str(arguments, "query")
         .ok_or_else(|| AppError::InvalidInput("search_folder needs a query.".to_string()))?;
     let path = arg_str(arguments, "path");
@@ -137,7 +147,7 @@ pub async fn run(search: &FolderSearch, arguments: &Value, max_chars: usize) -> 
         .max(FRAMING_CHARS * 2)
         .saturating_sub(FRAMING_CHARS);
     let room = budget.saturating_sub(out.len());
-    out.push_str(&render_passages(&hits, room));
+    out.push_str(&render_passages(&hits, room, names)?);
     if let Some(note) = note {
         out.push_str(&note);
         out.push('\n');

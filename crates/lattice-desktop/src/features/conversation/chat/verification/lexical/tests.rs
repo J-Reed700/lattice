@@ -1,5 +1,12 @@
 use super::super::test_support::{reply, source};
 use super::*;
+use crate::features::conversation::chat::reply_text::markers;
+use crate::features::conversation::chat::retrieval::source_names::name_sources;
+use crate::features::explorer::file_refs::FileNames;
+use lattice_core::application::services::model_contract::kept::TurnNames;
+use lattice_core::application::services::model_contract::reply::Place;
+use lattice_core::application::services::tool_handles::FolderFile;
+use std::sync::Arc;
 
 fn lexical_pass(text: &str, sources: &[SourceDto]) -> Vec<LexicalClaim> {
     super::lexical_pass(&reply(text, sources), sources)
@@ -528,11 +535,43 @@ fn a_copied_sentence_is_read_for_what_the_claim_left_out() {
     }
 }
 
+/// `text` read with the sources named in order and the folder's `files` named after them.
+fn reply_with_files(text: &str, sources: &[SourceDto], files: &[&str]) -> ReplyText {
+    let names = Arc::new(TurnNames::unstored());
+    let mut named = sources.to_vec();
+    for (index, source) in named.iter_mut().enumerate() {
+        source.chunk_id = format!("passage-{index}");
+        source.citation_id = None;
+    }
+    name_sources(&names, &mut named);
+    let file_names = FileNames::new(Arc::clone(&names));
+    for file in files {
+        file_names.name(file).unwrap();
+    }
+    let markers = markers(None).of_lines::<FolderFile>(Place::Inline);
+    ReplyText::read(&names, markers, text)
+}
+
 /// Explorer answers point at lines in the folder. Those sentences are
 /// about the file on screen, so the sources this turn retrieved cannot
 /// judge them, even when one happens to share their words.
 #[test]
-fn a_sentence_with_a_line_reference_is_not_judged_against_sources() {
+fn a_sentence_with_a_file_reference_is_not_judged_against_sources() {
+    let passage =
+        source("The main function prints a greeting and exits with status zero after setup.");
+    let reply = reply_with_files(
+        "The main function prints a greeting and exits with status zero, see [f1:1-3] [s1]. \
+             The main function prints a greeting and exits with status zero after setup [s1].",
+        std::slice::from_ref(&passage),
+        &["src/main.rs"],
+    );
+    let claims = super::lexical_pass(&reply, std::slice::from_ref(&passage));
+    assert_eq!(claims.len(), 1, "{claims:?}");
+    assert!(!claims[0].claim_text.contains("see"));
+}
+
+#[test]
+fn inline_code_that_looks_like_a_line_reference_exempts_nothing() {
     let passage =
         source("The main function prints a greeting and exits with status zero after setup.");
     let claims = lexical_pass(
@@ -540,8 +579,7 @@ fn a_sentence_with_a_line_reference_is_not_judged_against_sources() {
              The main function prints a greeting and exits with status zero after setup [s1].",
         std::slice::from_ref(&passage),
     );
-    assert_eq!(claims.len(), 1, "{claims:?}");
-    assert!(!claims[0].claim_text.contains("src/main.rs"));
+    assert_eq!(claims.len(), 2, "{claims:?}");
 }
 
 /// A diagram's labels and a picture's caption are not claims: a `[1]` inside

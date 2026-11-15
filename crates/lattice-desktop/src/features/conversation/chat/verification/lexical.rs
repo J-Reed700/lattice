@@ -66,7 +66,7 @@ pub(super) struct LexicalClaim {
 /// Returns one entry per sentence that cleared the claim filters; sentences
 /// that are too short, are questions, or are boilerplate never appear.
 pub(super) fn lexical_pass(reply: &ReplyText, sources: &[SourceDto]) -> Vec<LexicalClaim> {
-    let written = marked::marked(reply);
+    let written = marked::marked_with_files(reply);
     // A diagram's labels and a picture's caption are not claims about the
     // sources: the check, and the judge reading what it escalates, see the
     // answer without its fenced blocks and pictures.
@@ -85,7 +85,7 @@ pub(super) fn lexical_pass(reply: &ReplyText, sources: &[SourceDto]) -> Vec<Lexi
 
     let mut claims = Vec::new();
     for (sentence, citation_ids) in sentences_with_citations(response) {
-        if !is_claim_candidate(&sentence) {
+        if !is_claim_candidate(&sentence) || marked::points_at_file(&sentence) {
             continue;
         }
 
@@ -516,12 +516,6 @@ fn is_claim_candidate(sentence: &str) -> bool {
         return false;
     }
     if s.ends_with('?') {
-        return false;
-    }
-    // A sentence that points at lines in an Explorer folder (`src/main.rs:10`)
-    // is about the file on the user's screen, not about the retrieved
-    // passages, so judging it against them can only produce a false verdict.
-    if lattice_core::shared::text::contains_line_reference(s) {
         return false;
     }
     // The app's own notes, appended when the model hit a limit. The splitter

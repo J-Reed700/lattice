@@ -46,7 +46,7 @@ pub(super) async fn finalize_turn(
     };
     let reply = ReplyText::read(
         &turn.names,
-        reply_text::markers(turn.source.is_some()),
+        reply_text::markers(turn.source.as_ref()),
         &assistant_response,
     );
     let verification_start = Instant::now();

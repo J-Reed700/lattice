@@ -1,3 +1,4 @@
+use lattice_core::application::contracts::images::{FindImageOutput, NO_PICTURE_NOTE};
 use lattice_core::application::contracts::settings::ToolOutputSettingsDto;
 use lattice_core::application::contracts::tools::FunctionResult;
 use lattice_core::application::contracts::tools::{
@@ -9,12 +10,14 @@ use lattice_core::application::ports::turn_source::SourcePassages;
 use lattice_core::shared::text::safe_truncate;
 use std::collections::HashMap;
 
+use super::rendered::{Passage, Rendered};
 use super::source_citations::library_chunk_id;
 use super::source_names::marker;
 use crate::features::conversation::chat::history_tools::view as history_view;
-use crate::features::function_calling::handles::{CallView, Resume};
-use crate::features::function_calling::views as tool_views;
+use lattice_core::application::services::tool_handles::{CallView, Resume};
 use serde_json::json;
+
+mod library_views;
 
 /// Room kept at the end of a result for the line saying what had to be left
 /// out of it, so that line always fits.
@@ -31,6 +34,7 @@ const MIN_RESULT_CHARS: usize = 2 * OMISSION_NOTE_CHARS;
 /// a library result is shown under its own, since a list numbered from one
 /// would read as the passages the turn already holds. `call` names what the
 /// result shows and where it stopped, so the model never reads an id or an offset.
+/// Besides the text, it gives where in it each labelled source's own text is.
 pub(super) fn format_tool_result(
     tool_name: &str,
     result: &FunctionResult,
@@ -40,18 +44,19 @@ pub(super) fn format_tool_result(
     source_text: bool,
     citations: &HashMap<String, u32>,
     call: &CallView<'_>,
-) -> String {
+) -> Rendered {
     let allowance = allowance.max(MIN_RESULT_CHARS);
     if !result.success {
         return format!(
             "Error: {}",
             result.error_message.as_deref().unwrap_or("Unknown error")
-        );
+        )
+        .into();
     }
 
     let data = match result.data.clone() {
         Some(value) => value,
-        None => return "No data returned.".to_string(),
+        None => return "No data returned.".to_string().into(),
     };
 
     // A turn source's tools already fit their text to this call's allowance,
@@ -59,22 +64,18 @@ pub(super) fn format_tool_result(
     // below the numbered lines would arrive as one escaped string.
     if source_text {
         if let Some(text) = data.as_str() {
-            return safe_truncate(text, allowance);
+            return safe_truncate(text, allowance).into();
         }
         if let Some(text) = data.get("text").and_then(serde_json::Value::as_str) {
             let resume = data
                 .get("read_on")
                 .and_then(|next| serde_json::from_value::<Resume>(next.clone()).ok());
             let Some(name) = resume.and_then(|resume| call.handles().more(resume)) else {
-                return safe_truncate(text, allowance);
+                return safe_truncate(text, allowance).into();
             };
             let line = call.read_on_line(&name);
             let room = allowance.saturating_sub(line.chars().count() + 1);
-            return format!(
-                "{}
-{line}",
-                safe_truncate(text, room)
-            );
+            return format!("{}\n{line}", safe_truncate(text, room)).into();
         }
         if let Ok(mut output) = serde_json::from_value::<SourcePassages>(data.clone()) {
             let read_on = data
@@ -144,7 +145,7 @@ pub(super) fn format_tool_result(
                 };
                 let rendered = render(&doc.content);
                 if rendered.chars().count() <= allowance {
-                    return rendered;
+                    return rendered.into();
                 }
                 // A part larger than this call's room: the model asked for more
                 // than the window holds. Show what fits and say where the rest
@@ -159,41 +160,48 @@ pub(super) fn format_tool_result(
                     doc.offset,
                     call.read_on_line(&read_on_from(next))
                 ));
-                return keep_note(&rendered, allowance);
+                return keep_note(&rendered, allowance).into();
             }
         }
         "semantic_search" => {
             if let Ok(output) = serde_json::from_value::<SemanticSearchOutput>(data.clone()) {
-                let blocks: Vec<String> = output
+                let blocks: Vec<Block> = output
                     .results
                     .iter()
                     .map(|hit| {
-                        let label = citations
-                            .get(&library_chunk_id(hit))
-                            .map_or_else(|| "-".to_owned(), |number| marker(*number));
+                        let number = citations.get(&library_chunk_id(hit));
+                        let label = number.map_or_else(|| "-".to_owned(), |number| marker(*number));
                         let name = call
                             .handles()
                             .document(&hit.document_id)
                             .unwrap_or_default();
-                        format!(
-                            "{label} {} {name} (score: {:.3})\nExcerpt: {}",
-                            hit.filename,
-                            hit.score,
-                            hit.snippet.trim()
+                        Block::new(
+                            format!("{label} {} {name} (score: {:.3})", hit.filename, hit.score),
+                            format!("Excerpt: {}", hit.snippet.trim()),
+                            number.is_some(),
                         )
                     })
                     .collect();
                 if blocks.is_empty() {
-                    return "Search returned no results.".to_string();
+                    return "Search returned no results.".to_string().into();
                 }
-                let template = |results: &str, shown: usize| {
-                    templates
+                let template = |results: Rendered, shown: usize| -> Rendered {
+                    let filled = templates
                         .semantic_search_template
-                        .replace("{results}", results)
                         .replace("{total_found}", &output.total_found.to_string())
-                        .replace("{shown}", &shown.to_string())
+                        .replace("{shown}", &shown.to_string());
+                    match filled.split_once("{results}") {
+                        Some((before, after)) => {
+                            let after = after.replace("{results}", &results.text);
+                            results.wrapped(before, &after)
+                        }
+                        None => filled.into(),
+                    }
                 };
-                let framing = template("", blocks.len()).chars().count();
+                let framing = template(Rendered::default(), blocks.len())
+                    .text
+                    .chars()
+                    .count();
                 // Results past this page are a call away, and the result says
                 // which: without an offset, the 51st hit could never be read.
                 let more = output.next_offset.map_or_else(String::new, |next| {
@@ -202,21 +210,20 @@ pub(super) fn format_tool_result(
                         call.read_on_line(&call.read_on(&[("offset", json!(next))]))
                     )
                 });
-                let (results_text, shown) = fit_blocks(
+                let (results, shown) = fit_labelled(
                     &blocks,
                     allowance.saturating_sub(framing + more.chars().count()),
                     "Call get_document with a name above to read a document, or search again more narrowly.",
                 );
-                return keep_note(
-                    &format!("{}{more}", template(&results_text, shown)),
-                    allowance,
-                );
+                let mut rendered = template(results, shown);
+                rendered.append(more.into());
+                return keep_labelled_note(rendered, allowance);
             }
         }
         "wiki_search" => {
             if let Ok(output) = serde_json::from_value::<WikiSearchOutput>(data.clone()) {
                 if output.results.is_empty() {
-                    return "Wikipedia search returned no results.".to_string();
+                    return "Wikipedia search returned no results.".to_string().into();
                 }
                 let blocks: Vec<String> = output
                     .results
@@ -237,7 +244,7 @@ pub(super) fn format_tool_result(
                     allowance,
                     "Search again more narrowly to see them.",
                 );
-                return keep_note(&text, allowance);
+                return keep_note(&text, allowance).into();
             }
         }
         "wiki_summary" => {
@@ -246,12 +253,12 @@ pub(super) fn format_tool_result(
                     "{} ({})\nLanguage: {}\nSummary: {}",
                     output.title, output.url, output.language, output.extract
                 );
-                return fit_text(&rendered, allowance);
+                return fit_text(&rendered, allowance).into();
             }
         }
         "fetch_url_content" => {
             if let Ok(page) = serde_json::from_value::<FetchUrlContentOutput>(data.clone()) {
-                return render_fetched_page(&page, allowance, page_offset, call);
+                return render_fetched_page(&page, allowance, page_offset, call).into();
             }
         }
         "web_search" => {
@@ -281,16 +288,49 @@ pub(super) fn format_tool_result(
                     allowance.saturating_sub(heading.chars().count() + 2 + more.chars().count()),
                     "Search again more narrowly to see them.",
                 );
-                return keep_note(&format!("{heading}\n\n{text}{more}"), allowance);
+                return keep_note(&format!("{heading}\n\n{text}{more}"), allowance).into();
+            }
+        }
+        "find_image" => {
+            if let Ok(output) = serde_json::from_value::<FindImageOutput>(data.clone()) {
+                let mut lines: Vec<String> = output
+                    .images
+                    .iter()
+                    .map(|image| {
+                        let name = call.handles().picture(&image.markdown).unwrap_or_default();
+                        let dimensions = format!("{}×{}", image.width, image.height);
+                        let details = [
+                            image.caption.as_str(),
+                            image.source_title.as_deref().unwrap_or_default(),
+                            image.license.as_deref().unwrap_or_default(),
+                            dimensions.as_str(),
+                        ]
+                        .iter()
+                        .filter(|part| !part.is_empty())
+                        .copied()
+                        .collect::<Vec<_>>()
+                        .join(" · ");
+                        format!("{name} {details}").trim().to_owned()
+                    })
+                    .collect();
+                if let Some(note) = output.note.as_deref().filter(|note| !note.is_empty()) {
+                    lines.push(note.to_owned());
+                }
+                let text = if lines.is_empty() {
+                    NO_PICTURE_NOTE.to_owned()
+                } else {
+                    lines.join("\n")
+                };
+                return text.into();
             }
         }
         _ => {}
     }
 
     if let Some(text) = history_view::render(tool_name, &data, call)
-        .or_else(|| tool_views::render(tool_name, &data, call))
+        .or_else(|| library_views::render(tool_name, &data, call))
     {
-        return fit_text(&text, allowance);
+        return fit_text(&text, allowance).into();
     }
 
     if let Ok(output) = serde_json::from_value::<CustomQueryToolOutput>(data.clone()) {
@@ -300,7 +340,7 @@ pub(super) fn format_tool_result(
             output.request_url,
             serde_json::to_string(&output.data).unwrap_or_else(|_| "{}".to_string())
         );
-        return fit_text(&rendered, allowance);
+        return fit_text(&rendered, allowance).into();
     }
 
     let fallback = serde_json::to_string(&data).unwrap_or_else(|_| "null".to_string());
@@ -310,7 +350,7 @@ pub(super) fn format_tool_result(
         _ => String::new(),
     };
     let body = fit_text(&rendered, allowance.saturating_sub(more.chars().count()));
-    format!("{body}{more}")
+    format!("{body}{more}").into()
 }
 
 /// The line that names how to read the next page of a web search's results,
@@ -332,34 +372,74 @@ fn render_source_passages(
     output: &SourcePassages,
     allowance: usize,
     citations: &HashMap<String, u32>,
-) -> String {
+) -> Rendered {
     let note = output
         .note
         .as_deref()
         .map_or_else(String::new, |note| format!("\n[{note}]"));
-    let blocks: Vec<String> = output
+    let blocks: Vec<Block> = output
         .passages
         .iter()
         .map(|passage| {
-            let number = citations
-                .get(&passage.source.chunk_id)
-                .map_or_else(|| "-".to_owned(), |number| marker(*number));
-            format!(
-                "{number} {}\n{}",
-                passage.label,
-                passage.source.content.trim()
+            let number = citations.get(&passage.source.chunk_id);
+            let label = number.map_or_else(|| "-".to_owned(), |number| marker(*number));
+            Block::new(
+                format!("{label} {}", passage.label),
+                passage.source.content.trim().to_owned(),
+                number.is_some(),
             )
         })
         .collect();
     if blocks.is_empty() {
-        return note.trim_start().to_string();
+        return note.trim_start().to_string().into();
     }
-    let (text, _) = fit_blocks(
+    let (mut rendered, _) = fit_labelled(
         &blocks,
         allowance.saturating_sub(note.chars().count()),
         "Search again more narrowly to see them.",
     );
-    keep_note(&format!("{text}{note}"), allowance)
+    rendered.append(note.into());
+    keep_labelled_note(rendered, allowance)
+}
+
+/// One result of a list: the heading line the app wrote, and the text under
+/// it. A labelled block's text is one source's own text.
+struct Block {
+    text: String,
+    heading_len: usize,
+    labelled: bool,
+}
+
+impl Block {
+    fn new(heading: String, body: String, labelled: bool) -> Self {
+        Self {
+            heading_len: heading.len(),
+            text: format!("{heading}\n{body}"),
+            labelled,
+        }
+    }
+
+    fn plain(text: String) -> Self {
+        Self {
+            text,
+            heading_len: 0,
+            labelled: false,
+        }
+    }
+
+    /// This block as a result of its own, with its passage when it is labelled.
+    fn rendered(&self) -> Rendered {
+        let mut rendered = Rendered::from(self.text.clone());
+        let heading = self.text.get(..self.heading_len);
+        if let (true, Some(heading)) = (self.labelled, heading) {
+            rendered.passages.push(Passage {
+                heading: heading.to_owned(),
+                line: 0..self.heading_len,
+                body: self.heading_len + 1..self.text.len(),
+            });
+        }
+        rendered
+    }
 }
 
 /// `blocks` joined by blank lines, as many from the front as fit `room`
@@ -367,20 +447,28 @@ fn render_source_passages(
 /// says how many were left out and `how_to_reach` says how to see them: the
 /// count comes from the allowance, and the model is told so.
 fn fit_blocks(blocks: &[String], room: usize, how_to_reach: &str) -> (String, usize) {
+    let blocks: Vec<Block> = blocks.iter().cloned().map(Block::plain).collect();
+    let (rendered, shown) = fit_labelled(&blocks, room, how_to_reach);
+    (rendered.text, shown)
+}
+
+/// `fit_blocks` for blocks some of which are one labelled source's text: the
+/// result says where each shown one's text is.
+fn fit_labelled(blocks: &[Block], room: usize, how_to_reach: &str) -> (Rendered, usize) {
     let room_for_blocks = room.saturating_sub(OMISSION_NOTE_CHARS);
-    let mut text = String::new();
+    let mut rendered = Rendered::default();
     let mut used = 0usize;
     let mut shown = 0usize;
     for block in blocks {
-        let cost = block.chars().count() + if shown > 0 { 2 } else { 0 };
+        let cost = block.text.chars().count() + if shown > 0 { 2 } else { 0 };
         let fits_whole_result = shown + 1 == blocks.len() && used + cost <= room;
         if used + cost > room_for_blocks && !fits_whole_result {
             break;
         }
         if shown > 0 {
-            text.push_str("\n\n");
+            rendered.append("\n\n".to_owned().into());
         }
-        text.push_str(block);
+        rendered.append(block.rendered());
         used += cost;
         shown += 1;
     }
@@ -388,18 +476,25 @@ fn fit_blocks(blocks: &[String], room: usize, how_to_reach: &str) -> (String, us
         if let Some(first) = blocks.first() {
             // Not even one whole result fits: show the start of the best one
             // rather than nothing, and say it was cut.
-            text = safe_truncate(first, room_for_blocks);
+            rendered = first.rendered().cut(room_for_blocks);
             shown = 1;
-            text.push_str("\n[This result was cut to fit the model's context.]");
+            rendered.append(
+                "\n[This result was cut to fit the model's context.]"
+                    .to_owned()
+                    .into(),
+            );
         }
     }
     let left_out = blocks.len().saturating_sub(shown);
     if left_out > 0 {
-        text.push_str(&format!(
-            "\n\n[{left_out} more result(s) did not fit in the room this result has in the model's context. {how_to_reach}]"
-        ));
+        rendered.append(
+            format!(
+                "\n\n[{left_out} more result(s) did not fit in the room this result has in the model's context. {how_to_reach}]"
+            )
+            .into(),
+        );
     }
-    (text, shown)
+    (rendered, shown)
 }
 
 /// `text` whole when it fits `allowance`, otherwise its start with a closing
@@ -421,15 +516,24 @@ fn fit_text(text: &str, allowance: usize) -> String {
 /// that says what was left out, so a result never loses the line telling the
 /// model where the rest is.
 fn keep_note(text: &str, allowance: usize) -> String {
-    if text.chars().count() <= allowance {
-        return text.to_string();
+    keep_labelled_note(text.to_owned().into(), allowance).text
+}
+
+/// `keep_note` for a result that knows where its labelled text is: the ranges
+/// follow the cut.
+fn keep_labelled_note(rendered: Rendered, allowance: usize) -> Rendered {
+    if rendered.text.chars().count() <= allowance {
+        return rendered;
     }
-    let Some(at) = text.rfind("\n[") else {
-        return safe_truncate(text, allowance);
+    let Some(at) = rendered.text.rfind("\n[") else {
+        return rendered.cut(allowance);
     };
-    let note = &text[at..];
-    let body = safe_truncate(&text[..at], allowance.saturating_sub(note.chars().count()));
-    format!("{body}{note}")
+    let note = rendered.text.get(at..).unwrap_or_default().to_owned();
+    let mut body = rendered;
+    body.truncate_bytes(at);
+    let mut kept = body.cut(allowance.saturating_sub(note.chars().count()));
+    kept.append(note.into());
+    kept
 }
 
 /// Room kept for a fetched page's title, URL and the line saying how much of
@@ -509,9 +613,9 @@ fn render_fetched_page(
 #[cfg(test)]
 mod fetched_page_tests {
     use super::*;
-    use crate::features::function_calling::handles::ToolHandles;
     use lattice_core::application::contracts::tools::FunctionResult;
     use lattice_core::application::ports::turn_source::SourcePassage;
+    use lattice_core::application::services::tool_handles::ToolHandles;
 
     fn page(content: &str) -> FunctionResult {
         FunctionResult::success(
@@ -543,6 +647,7 @@ mod fetched_page_tests {
             &HashMap::new(),
             &CallView::new(tool, &arguments, &handles),
         )
+        .text
     }
 
     /// As JSON the article's own punctuation came through escaped.
@@ -695,6 +800,7 @@ mod fetched_page_tests {
             citations,
             &CallView::new("search_course", &arguments, &handles),
         )
+        .text
     }
 
     /// Each passage reads under the turn's number for it, so the model cites
@@ -782,7 +888,8 @@ mod fetched_page_tests {
             false,
             &citations,
             &CallView::new("semantic_search", &arguments, &handles),
-        );
+        )
+        .text;
 
         assert!(rendered.contains("[s41] file-0.pdf"), "{rendered}");
         assert!(rendered.contains("[s7] file-1.pdf"), "{rendered}");
@@ -808,7 +915,8 @@ mod fetched_page_tests {
             false,
             &HashMap::new(),
             &CallView::new("semantic_search", &arguments, &handles),
-        );
+        )
+        .text;
         assert!(
             rendered.contains("To read on, call read_more with [m1]."),
             "{rendered}"
@@ -862,7 +970,8 @@ mod fetched_page_tests {
             false,
             &HashMap::new(),
             &CallView::new("web_search", &arguments, &handles),
-        );
+        )
+        .text;
         assert!(rendered.contains("call read_more with [m1]"), "{rendered}");
         let resumed = handles
             .read_call("read_more", &json!({"handle": "m1"}))
@@ -954,7 +1063,8 @@ mod fetched_page_tests {
             false,
             &HashMap::new(),
             &CallView::new("get_document", &arguments, &handles),
-        );
+        )
+        .text;
         assert!(rendered.chars().count() <= 2_000);
         let shown = rendered.matches('§').count();
         let resumed = handles
@@ -963,4 +1073,125 @@ mod fetched_page_tests {
         assert_eq!(resumed.arguments["offset"], json!(1_000 + shown));
         assert!(!rendered.contains("offset"), "{rendered}");
     }
+
+    fn render_labelled(
+        result: &FunctionResult,
+        tool: &str,
+        source_text: bool,
+        allowance: usize,
+        citations: &HashMap<String, u32>,
+    ) -> Rendered {
+        let handles = ToolHandles::new();
+        let arguments = json!({"query": "q"});
+        format_tool_result(
+            tool,
+            result,
+            &ToolOutputSettingsDto::default(),
+            allowance,
+            0,
+            source_text,
+            citations,
+            &CallView::new(tool, &arguments, &handles),
+        )
+    }
+
+    fn line_and_body<'a>(rendered: &'a Rendered, at: usize) -> (&'a str, &'a str) {
+        let passage = &rendered.passages[at];
+        (
+            rendered.text.get(passage.line.clone()).unwrap_or_default(),
+            rendered.text.get(passage.body.clone()).unwrap_or_default(),
+        )
+    }
+
+    #[test]
+    fn a_search_result_says_where_each_cited_hit_s_text_is() {
+        let citations = HashMap::from([("chunk-0-0".to_owned(), 41)]);
+        let rendered = render_labelled(
+            &search_output(2, 1, "text"),
+            "semantic_search",
+            false,
+            4_000,
+            &citations,
+        );
+        assert_eq!(rendered.passages.len(), 1, "{}", rendered.text);
+        assert_eq!(
+            line_and_body(&rendered, 0),
+            (
+                "[s41] file-0.pdf [d1] (score: 0.500)",
+                "Excerpt: text (0/0)"
+            )
+        );
+        assert_eq!(
+            rendered.passages[0].heading,
+            "[s41] file-0.pdf [d1] (score: 0.500)"
+        );
+        assert!(rendered.text.contains("file-1.pdf [d2]"));
+    }
+
+    #[test]
+    fn the_ranges_still_cut_each_hit_after_the_result_is_cut_for_length() {
+        let citations: HashMap<String, u32> = (0..10)
+            .flat_map(|d| (0..2).map(move |m| (format!("chunk-{d}-{m}"), 1 + d * 2 + m)))
+            .collect();
+        let rendered = render_labelled(
+            &search_output(10, 2, &"text ".repeat(200)),
+            "semantic_search",
+            false,
+            4_000,
+            &citations,
+        );
+        assert!(rendered.text.contains("more result(s) did not fit"));
+        assert!(!rendered.passages.is_empty());
+        for at in 0..rendered.passages.len() {
+            let (line, body) = line_and_body(&rendered, at);
+            assert_eq!(line, rendered.passages[at].heading);
+            assert!(body.starts_with("Excerpt: text text"), "{body}");
+            assert!(!body.contains("[s"), "{body}");
+        }
+    }
+
+    #[test]
+    fn a_cut_first_hit_keeps_the_range_of_what_is_shown() {
+        let citations = HashMap::from([("chunk-0-0".to_owned(), 3)]);
+        let rendered = render_labelled(
+            &search_output(1, 1, &"word ".repeat(2_000)),
+            "semantic_search",
+            false,
+            MIN_RESULT_CHARS,
+            &citations,
+        );
+        assert!(rendered.text.chars().count() <= MIN_RESULT_CHARS);
+        let (line, body) = line_and_body(&rendered, 0);
+        assert_eq!(line, "[s3] file-0.pdf [d1] (score: 0.500)");
+        assert!(body.starts_with("Excerpt: word word"), "{body}");
+        assert!(rendered.text[rendered.passages[0].body.end..]
+            .starts_with("\n[This result was cut to fit the model's context.]"));
+    }
+
+    #[test]
+    fn a_source_s_passage_is_one_labelled_text_and_an_unlabelled_one_is_none() {
+        let citations = HashMap::from([("a".to_owned(), 7)]);
+        let result = source_result(
+            vec![
+                source_passage("a", "Fusion sums reciprocal ranks."),
+                source_passage("b", "A larger k flattens them."),
+            ],
+            Some("Call read_course_source to read on."),
+        );
+        let rendered = render_labelled(&result, "search_course", true, 4_000, &citations);
+        assert_eq!(rendered.passages.len(), 1);
+        assert_eq!(
+            line_and_body(&rendered, 0),
+            (
+                "[s7] Ranking › Fusion › Search notes (source_id: a)",
+                "Fusion sums reciprocal ranks."
+            )
+        );
+        assert!(rendered
+            .text
+            .ends_with("\n[Call read_course_source to read on.]"));
+    }
 }
+
+#[cfg(test)]
+mod picture_tests;

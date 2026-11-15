@@ -469,7 +469,10 @@ fn an_own_line_candidate_is_held_until_its_line_ends() {
     let mut splitter = Splitter::new(markers());
     assert_eq!(splitter.push(&scope, "[i1]"), vec![]);
     assert_eq!(splitter.push(&scope, "  "), vec![]);
-    assert_eq!(splitter.push(&scope, "\nnext"), vec![picture(1), text("  \nnext")]);
+    assert_eq!(
+        splitter.push(&scope, "\nnext"),
+        vec![picture(1), text("  \nnext")]
+    );
     assert_eq!(splitter.finish(&scope), vec![]);
 }
 

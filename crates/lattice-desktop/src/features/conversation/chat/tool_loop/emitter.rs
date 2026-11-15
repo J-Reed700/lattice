@@ -1,9 +1,10 @@
 //! The answer bubble's stream: every event tagged with the turn it belongs to.
 
 use super::super::{ChatEventSink, ChatStreamEventDto};
-use lattice_core::application::contracts::replies::ReplyReferenceDto;
 use lattice_core::application::services::model_contract::kept::TurnNames;
-use lattice_core::application::services::model_contract::reply::{Markers, Piece, Splitter};
+use lattice_core::application::services::model_contract::reply::{self, Markers, Piece, Splitter};
+use lattice_core::application::services::model_contract::shown::Kind;
+use lattice_core::application::services::tool_handles::{picture_line, Picture};
 use lattice_core::shared::error::Result;
 use std::sync::{Arc, Mutex, PoisonError};
 use tracing::warn;
@@ -76,8 +77,17 @@ impl<'a> StreamEmitter<'a> {
                     content: Some(text),
                     ..event
                 },
+                Piece::Reference(reference) if reference.prefix == Picture::PREFIX => {
+                    ChatStreamEventDto {
+                        content: Some(
+                            picture_line(&reference, &self.request_id)
+                                .unwrap_or_else(|| reply::written(&[Piece::Reference(reference)])),
+                        ),
+                        ..event
+                    }
+                }
                 Piece::Reference(reference) => ChatStreamEventDto {
-                    reference: Some(ReplyReferenceDto::from(&reference)),
+                    reference: Some(super::super::reply_text::wire(&reference)),
                     ..event
                 },
             })?;

@@ -1,5 +1,5 @@
 use super::*;
-use crate::features::function_calling::handles::ToolHandles;
+use lattice_core::application::services::tool_handles::ToolHandles;
 use serde_json::json;
 
 fn rendered(tool: &str, arguments: Value, data: Value, handles: &ToolHandles) -> String {

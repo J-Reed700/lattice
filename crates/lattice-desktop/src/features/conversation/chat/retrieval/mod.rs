@@ -32,6 +32,8 @@ mod overlap;
 pub(in crate::features::conversation::chat) mod page_budget;
 mod pipeline;
 mod policy;
+mod rendered;
+pub(in crate::features::conversation::chat) use self::rendered::{Legend, Passage, Rendered};
 mod rerank;
 mod source_citations;
 pub mod source_names;
@@ -669,8 +671,8 @@ pub(super) fn format_tool_result(
     page_offset: usize,
     source_text: bool,
     citations: &std::collections::HashMap<String, u32>,
-    call: &crate::features::function_calling::handles::CallView<'_>,
-) -> String {
+    call: &lattice_core::application::services::tool_handles::CallView<'_>,
+) -> Rendered {
     format_tool_result_impl(
         tool_name,
         result,

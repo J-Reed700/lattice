@@ -12,14 +12,15 @@ use lattice_core::application::services::model_contract::reply::{
     self, Lines, Markers, Piece, Place, Reference,
 };
 use lattice_core::application::services::model_contract::shown::{Drawn, Kind};
+use lattice_core::application::services::tool_handles::{FolderFile, Source};
 use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
 use lattice_core::shared::citation_markers::old_markers;
 use lattice_core::shared::stored_references::{cut, stored_places};
 use serde_json::{json, Value};
 
-use super::retrieval::source_names::{name_sources, Source};
-use crate::features::explorer::file_refs::FolderFile;
-use lattice_core::application::contracts::replies::{ReplyPieceDto, ReplyReferenceDto};
+use super::retrieval::source_names::name_sources;
+use super::TurnSource;
+use lattice_core::application::contracts::replies::{LinesDto, ReplyPieceDto, ReplyReferenceDto};
 
 #[cfg(test)]
 mod tests;
@@ -37,13 +38,12 @@ pub struct ReplyText {
     pub references: Vec<Placed>,
 }
 
-/// What a reply may point at: sources, and the lines of a folder's file in the Explorer.
-pub fn markers(explorer: bool) -> Markers {
+/// What a reply may point at: sources, and what the turn's source adds.
+pub fn markers(source: Option<&TurnSource>) -> Markers {
     let markers = Markers::new().of::<Source>(Place::Inline);
-    if explorer {
-        markers.of_lines::<FolderFile>(Place::Inline)
-    } else {
-        markers
+    match source {
+        Some(source) => source.reply_markers(markers),
+        None => markers,
     }
 }
 
@@ -70,7 +70,12 @@ impl ReplyText {
     /// sources of that message, and are read here once, as that message's own
     /// sources under their numbers in the conversation. A number that names no
     /// source of the message stays text, and code is left alone.
-    pub fn legacy(names: &TurnNames, content: &str, sources: &[SourceDto]) -> Self {
+    pub fn legacy(
+        names: &TurnNames,
+        source: Option<&TurnSource>,
+        content: &str,
+        sources: &[SourceDto],
+    ) -> Self {
         let mut named = sources.to_vec();
         name_sources(names, &mut named);
         let numbers: Vec<(u32, u32)> = sources
@@ -87,7 +92,11 @@ impl ReplyText {
             found.next().is_none().then_some(first)
         };
         let rewritten = rewrite_old_markers(content, &new_number);
-        Self::read(names, markers(false), &rewritten)
+        let rewritten = match source {
+            Some(source) => source.old_references(rewritten),
+            None => rewritten,
+        };
+        Self::read(names, markers(source), &rewritten)
     }
 
     /// The numbers of the sources it cites, in order, repeats kept.
@@ -125,7 +134,7 @@ impl ReplyText {
         for placed in &self.references {
             push_text(&mut pieces, self.text.get(at..placed.range.start));
             pieces.push(ReplyPieceDto::Reference {
-                reference: ReplyReferenceDto::from(&placed.reference),
+                reference: wire(&placed.reference),
             });
             at = placed.range.end;
         }
@@ -214,14 +223,39 @@ fn push_text(pieces: &mut Vec<ReplyPieceDto>, text: Option<&str>) {
     }
 }
 
+/// The kinds a reply points at: prefix, how it is drawn, and the kind the wire names it.
+const KINDS: [(&str, Drawn, &str); 2] = [
+    (Source::PREFIX, Source::DRAWN, "source"),
+    (FolderFile::PREFIX, FolderFile::DRAWN, "file"),
+];
+
 /// The kinds a saved reference may name, with their prefix and how they are drawn.
 fn known(prefix: &str) -> Option<(&'static str, Drawn)> {
-    [
-        (Source::PREFIX, Source::DRAWN),
-        (FolderFile::PREFIX, FolderFile::DRAWN),
-    ]
-    .into_iter()
-    .find(|(known, _)| *known == prefix)
+    KINDS
+        .into_iter()
+        .find(|(known, _, _)| *known == prefix)
+        .map(|(prefix, drawn, _)| (prefix, drawn))
+}
+
+/// A reference as the frontend draws it.
+pub fn wire(reference: &Reference) -> ReplyReferenceDto {
+    let kind = KINDS
+        .into_iter()
+        .find(|(prefix, _, _)| *prefix == reference.prefix)
+        .map_or("source", |(_, _, kind)| kind);
+    let name = match reference.drawn {
+        Drawn::Name => reference.reference.as_str().map(str::to_owned),
+        Drawn::Number | Drawn::Itself => None,
+    };
+    ReplyReferenceDto {
+        written: written(reference),
+        kind: kind.to_owned(),
+        number: reference.number,
+        lines: reference
+            .lines
+            .map(|Lines { first, last }| LinesDto { first, last }),
+        name,
+    }
 }
 
 /// `content` with each old `[n]` and `[n, m]` that names a source written as

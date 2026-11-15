@@ -9,6 +9,7 @@ use lattice_core::domain::conversation::MessageRole;
 use lattice_core::domain::ConversationMessage;
 use lattice_core::shared::error::{AppError, Result};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tauri::State;
 
 /// All messages of a conversation, oldest first.
@@ -85,6 +86,9 @@ pub async fn replies_of(
     messages: &[ConversationMessage],
 ) -> Result<HashMap<String, Vec<ReplyPieceDto>>> {
     let names = runtime.kept_names().open(conversation_id).await?;
+    let source = runtime
+        .turn_source(conversation_id, None, Arc::clone(&names))
+        .await;
     let mut replies = HashMap::new();
     for message in messages
         .iter()
@@ -100,7 +104,7 @@ pub async fn replies_of(
                 .get("sources")
                 .and_then(|sources| serde_json::from_value(sources.clone()).ok())
                 .unwrap_or_default();
-            ReplyText::legacy(&names, &message.content, &sources)
+            ReplyText::legacy(&names, source.as_ref(), &message.content, &sources)
         });
         replies.insert(message.id.clone(), reply.pieces());
     }

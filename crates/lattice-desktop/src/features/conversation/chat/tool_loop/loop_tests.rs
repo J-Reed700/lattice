@@ -1208,7 +1208,7 @@ async fn find_image_streams_its_pictures_and_cites_their_page() {
     };
     let model = Model::new([
         calls(&[("pic", "find_image", json!({ "query": "Saturn V launch" }))]),
-        CompletionResponse::from_text("It flew in 1969.\n\n![Saturn V lifting off](img-1)"),
+        CompletionResponse::from_text("It flew in 1969.\n\n[i1]"),
     ]);
     let run = run_on(runtime, &model, &[tool("find_image")], ROOMY, 3, "pictures").await;
 
@@ -1248,9 +1248,55 @@ async fn find_image_streams_its_pictures_and_cites_their_page() {
     assert!(page.citation_id.is_some());
 
     let answered = &model.requests()[1];
-    let result = results_mentioning(answered, "![Saturn V lifting off](img-1)");
+    let result = results_mentioning(answered, "[i1] Saturn V lifting off");
     assert_eq!(result.len(), 1);
     assert!(!result[0].contains("Citable passage"), "{}", result[0]);
+    assert!(!result[0].contains("img-"), "{}", result[0]);
+
+    let image_line = "![Saturn V lifting off](img-1)";
+    let response = &run.outcome.as_ref().unwrap().response;
+    assert_eq!(response, &format!("It flew in 1969.\n\n{image_line}"));
+    let streamed_text: String = run
+        .events
+        .iter()
+        .filter_map(|event| event.content.clone())
+        .collect();
+    assert!(streamed_text.contains(image_line), "{streamed_text}");
+    assert!(!streamed_text.contains("[i1]"), "{streamed_text}");
+    assert!(run.events.iter().all(|event| event.reference.is_none()));
+}
+
+async fn answer_after_a_picture(reply: &'static str) -> Run {
+    use crate::features::conversation::chat::test_runtime::{test_picture, FakeChatImages};
+
+    let runtime = FakeRuntime {
+        tools: Some(Web::with_delays(&[])),
+        images: FakeChatImages::with(vec![test_picture("img-1")]),
+        ..FakeRuntime::default()
+    };
+    let model = Model::new([
+        calls(&[("pic", "find_image", json!({ "query": "Saturn V launch" }))]),
+        CompletionResponse::from_text(reply),
+    ]);
+    run_on(runtime, &model, &[tool("find_image")], ROOMY, 3, "pictures").await
+}
+
+#[tokio::test]
+async fn a_picture_name_inside_a_sentence_stays_text() {
+    let run = answer_after_a_picture("See [i1] for the launch.").await;
+    assert_eq!(
+        run.outcome.as_ref().unwrap().response,
+        "See [i1] for the launch."
+    );
+}
+
+#[tokio::test]
+async fn a_picture_the_model_wrote_as_markdown_is_kept_as_written() {
+    let run = answer_after_a_picture("Launch.\n\n![x](img-1)").await;
+    assert_eq!(
+        run.outcome.as_ref().unwrap().response,
+        "Launch.\n\n![x](img-1)"
+    );
 }
 
 /// A call to a tool the turn does not offer is answered with the tools it

@@ -8,9 +8,9 @@
 //! - **Validation**: Validates tool definitions on registration
 //! - **Statistics**: Tracks usage metrics
 
-use crate::features::function_calling::handles;
 use crate::features::function_calling::FunctionRegistryTrait;
 use lattice_core::application::contracts::tools::{RegistryStats, ToolDefinition};
+use lattice_core::application::services::tool_handles as handles;
 use lattice_core::domain::sourcing::Ecosystem;
 use lattice_core::shared::error::{AppError, Result};
 use parking_lot::RwLock;
@@ -409,7 +409,7 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
 
     registry.register(ToolDefinition::new(
         "find_image",
-        "Find a real photograph or illustration of a concrete subject (an object, place, organism, person, artwork, machine, event) when seeing it would genuinely help the reader. Searches Wikimedia Commons, or takes the main picture of a page you read this turn when from_page_url is given. Each result is already stored; place one by pasting its `markdown` line as its own paragraph, unchanged. Never write an image address yourself: only `markdown` lines from this result display.",
+        "Find a real photograph or illustration of a concrete subject (an object, place, organism, person, artwork, machine, event) when seeing it would genuinely help the reader. Searches Wikimedia Commons, or takes the main picture of a page you read this turn when from_page_url is given. Each result is already stored; place one by writing its name, like [i2], alone on its own line. Never write an image address yourself: only a name from this result displays.",
         json!({
             "type": "object",
             "properties": {

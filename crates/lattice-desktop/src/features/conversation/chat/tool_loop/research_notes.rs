@@ -8,6 +8,7 @@
 
 use super::clock::TurnClock;
 use crate::features::conversation::chat::cancellation::cancelled_error;
+use crate::features::conversation::chat::retrieval::{Legend, Passage};
 use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepKind};
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, ContentPart, SamplingOverride,
@@ -26,7 +27,7 @@ use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::shared::error::Result;
 use lattice_core::shared::text::sentences;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
@@ -51,15 +52,43 @@ pub(super) const NOTES_HEADER: &str = "Research notes so far. These condense the
 /// Written under a result of which the model kept nothing.
 const NOTHING_KEPT: &str = "Nothing here bears on the question.";
 
-/// Names the notes of an earlier condensing among the results.
-const EARLIER_NOTES: &str = "earlier-notes";
-
 /// What one condensing did.
 pub(super) struct Condensed {
     /// The tool results it replaced, by call id.
     pub(super) result_ids: HashSet<String>,
     pub(super) chars_before: usize,
     pub(super) chars_after: usize,
+}
+
+/// What the app wrote as a label in the results of the transcript, by the id
+/// of the result, recorded when it wrote the text; and what the notes message
+/// in the transcript holds, as the app wrote it.
+#[derive(Debug, Default)]
+pub(super) struct Labels {
+    by_result: HashMap<String, Marked>,
+    notes: Vec<Source>,
+}
+
+#[derive(Debug)]
+struct Marked {
+    passages: Vec<Passage>,
+    legend: Vec<Legend>,
+}
+
+impl Labels {
+    pub(super) fn keep(&mut self, id: &str, passages: Vec<Passage>, legend: Vec<Legend>) {
+        if passages.is_empty() && legend.is_empty() {
+            self.by_result.remove(id);
+        } else {
+            self.by_result
+                .insert(id.to_owned(), Marked { passages, legend });
+        }
+    }
+
+    /// The results with these ids are no longer in the transcript.
+    pub(super) fn forget(&mut self, result_ids: &HashSet<String>) {
+        self.by_result.retain(|id, _| !result_ids.contains(id));
+    }
 }
 
 /// Characters of results the loop holds: every tool result after the planned
@@ -130,6 +159,9 @@ struct Source {
     id: String,
     heading: Told<String>,
     sentences: Vec<Sentence>,
+    /// The app's lines that label text of this result shown elsewhere in it.
+    #[serde(skip)]
+    legend: Vec<String>,
 }
 
 impl Kind for Source {
@@ -220,25 +252,109 @@ impl Source {
                     text: Told(one_line(sentence)),
                 })
                 .collect(),
+            legend: Vec::new(),
         }
     }
 }
 
+/// The parts of a result's text the app labelled, and the rest.
+struct Cut<'a> {
+    passages: Vec<(&'a Passage, &'a str)>,
+    legend: Vec<&'a str>,
+    rest: String,
+}
+
+impl<'a> Cut<'a> {
+    /// `text` cut at the ranges the app recorded. `None` when a recorded range
+    /// does not lie in `text`, in order and apart.
+    fn of(text: &'a str, marked: &'a Marked) -> Option<Self> {
+        let mut cuts: Vec<Range<usize>> = Vec::new();
+        for passage in &marked.passages {
+            text.get(passage.line.clone())?;
+            text.get(passage.body.clone())?;
+            if passage.body.start < passage.line.end {
+                return None;
+            }
+            cuts.push(passage.line.start..passage.body.end);
+        }
+        for legend in &marked.legend {
+            text.get(legend.at.clone())?;
+            cuts.push(legend.at.clone());
+        }
+        cuts.sort_by_key(|range| range.start);
+        let mut cursor = 0;
+        let mut pieces: Vec<&str> = Vec::new();
+        for range in &cuts {
+            if range.start < cursor {
+                return None;
+            }
+            pieces.push(text.get(cursor..range.start)?);
+            cursor = range.end;
+        }
+        pieces.push(text.get(cursor..)?);
+        let rest = pieces
+            .into_iter()
+            .filter(|piece| !piece.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let passages = marked
+            .passages
+            .iter()
+            .filter_map(|passage| Some((passage, text.get(passage.body.clone())?)))
+            .collect();
+        let legend = marked
+            .legend
+            .iter()
+            .map(|legend| legend.line.as_str())
+            .collect();
+        Some(Self {
+            passages,
+            legend,
+            rest,
+        })
+    }
+}
+
+/// A result as sources: each labelled source's text under the app's heading
+/// for it, and what is left once every label the app wrote is taken out. A
+/// result with nothing recorded is one source, as it stands.
+fn sources_in(id: &str, heading: &str, text: &str, marked: Option<&Marked>) -> Vec<Source> {
+    let Some(cut) = marked.and_then(|marked| Cut::of(text, marked)) else {
+        if marked.is_some() {
+            warn!("A result's recorded labels do not fit its text; offering it whole");
+        }
+        return vec![Source::of(id, heading, text)];
+    };
+    let mut sources = Vec::new();
+    let mut rest = Source::of(id, heading, &cut.rest);
+    if !rest.sentences.is_empty() {
+        rest.legend = cut.legend.iter().map(|line| (*line).to_owned()).collect();
+        sources.push(rest);
+    }
+    for (at, (passage, body)) in cut.passages.into_iter().enumerate() {
+        let source = Source::of(&format!("{id}#{at}"), &passage.heading, body);
+        if !source.sentences.is_empty() {
+            sources.push(source);
+        }
+    }
+    sources
+}
+
 /// The results in `span`: each tool result under the call that made it, and
 /// the notes of an earlier condensing.
-fn sources_of(input: &[CompletionInput], span: Range<usize>) -> Vec<Source> {
+fn sources_of(input: &[CompletionInput], span: Range<usize>, labels: &Labels) -> Vec<Source> {
     input
         .get(span)
         .unwrap_or_default()
         .iter()
-        .filter_map(|item| match item {
+        .flat_map(|item| match item {
             CompletionInput::ToolResult { id, output } => {
-                Some(Source::of(id, &heading_of(input, id), output))
+                sources_in(id, &heading_of(input, id), output, labels.by_result.get(id))
             }
-            CompletionInput::Message { content, .. } => content
-                .strip_prefix(NOTES_HEADER)
-                .map(|notes| Source::of(EARLIER_NOTES, "Earlier notes", notes)),
-            _ => None,
+            CompletionInput::Message { content, .. } if content.starts_with(NOTES_HEADER) => {
+                labels.notes.clone()
+            }
+            _ => Vec::new(),
         })
         .collect()
 }
@@ -282,8 +398,10 @@ fn question_of(input: &[CompletionInput], loop_start: usize) -> String {
 }
 
 /// One result's part of the notes. A result the model was not asked about, or
-/// whose answer did not settle, is kept whole.
-fn block(source: &Source, kept: Option<&Settled<Kept>>) -> String {
+/// whose answer did not settle, is kept whole. Each block is a passage of the
+/// notes, and the source's legend lines follow what is kept of it. With the
+/// block comes the source as the notes now hold it, when it kept a sentence.
+fn block(source: &Source, kept: Option<&Settled<Kept>>) -> (String, Option<Source>) {
     let lines: Vec<&str> = match kept {
         Some(Settled::Answered(kept)) => {
             let mut at: Vec<usize> = kept
@@ -304,29 +422,54 @@ fn block(source: &Source, kept: Option<&Settled<Kept>>) -> String {
             .map(|sentence| sentence.text.0.as_str())
             .collect(),
     };
+    let entries: Vec<String> = if lines.is_empty() && matches!(kept, Some(Settled::Answered(_))) {
+        vec![NOTHING_KEPT.to_owned()]
+    } else {
+        lines.iter().map(|line| format!("- {line}")).collect()
+    };
     let mut text = format!("{}:", source.heading.0);
-    if lines.is_empty() && matches!(kept, Some(Settled::Answered(_))) {
-        text.push_str(&format!("\n{NOTHING_KEPT}"));
+    for entry in &entries {
+        text.push('\n');
+        text.push_str(entry);
     }
-    for line in lines {
-        text.push_str(&format!("\n- {line}"));
+    if lines.is_empty() {
+        return (text, None);
     }
-    text
+    for line in &source.legend {
+        text.push('\n');
+        text.push_str(line);
+    }
+    let written = Source {
+        id: source.id.clone(),
+        heading: source.heading.clone(),
+        sentences: lines
+            .iter()
+            .enumerate()
+            .map(|(at, line)| Sentence {
+                at,
+                text: Told((*line).to_owned()),
+            })
+            .collect(),
+        legend: source.legend.clone(),
+    };
+    (text, Some(written))
 }
 
-/// The notes: each result's kept sentences, in the order of the results.
-fn notes_of(sources: &[Source], settled: Vec<Settled<Kept>>) -> String {
+/// The notes: each result's kept sentences, in the order of the results, and
+/// the sources the notes now hold.
+fn notes_of(sources: &[Source], settled: Vec<Settled<Kept>>) -> (String, Vec<Source>) {
     let mut settled = settled.into_iter();
-    sources
-        .iter()
-        .map(|source| {
-            let kept = (!source.sentences.is_empty())
-                .then(|| settled.next())
-                .flatten();
-            block(source, kept.as_ref())
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
+    let mut blocks = Vec::new();
+    let mut written = Vec::new();
+    for source in sources {
+        let kept = (!source.sentences.is_empty())
+            .then(|| settled.next())
+            .flatten();
+        let (text, held) = block(source, kept.as_ref());
+        blocks.push(text);
+        written.extend(held);
+    }
+    (blocks.join("\n\n"), written)
 }
 
 /// Condenses the loop's results so far into one notes message. `Ok(None)` when
@@ -339,6 +482,7 @@ pub(super) async fn condense(
     recorder: &TurnRecorder,
     cancel: &CancellationToken,
     clock: &TurnClock,
+    labels: &mut Labels,
 ) -> Result<Option<Condensed>> {
     let Some(span) = condensable_span(request.input(), loop_start) else {
         return Ok(None);
@@ -350,13 +494,14 @@ pub(super) async fn condense(
         "Condensing what it has read",
         Some(format!("{chars_before} characters of results")),
     );
-    let sources = sources_of(request.input(), span.clone());
+    let sources = sources_of(request.input(), span.clone(), &*labels);
     let question = Told(question_of(request.input(), loop_start));
     let Some(settled) = choose(llm, request, &sources, &question, cancel, clock).await? else {
         step.failed(Some("The model could not write notes".into()));
         return Ok(None);
     };
-    let message = format!("{NOTES_HEADER}\n\n{}", notes_of(&sources, settled));
+    let (notes, held) = notes_of(&sources, settled);
+    let message = format!("{NOTES_HEADER}\n\n{notes}");
     let chars_after = message.chars().count();
     if chars_after >= chars_before {
         warn!(
@@ -383,6 +528,7 @@ pub(super) async fn condense(
             content: message,
         }],
     );
+    labels.notes = held;
     info!(
         chars_before,
         chars_after, "Condensed the turn's tool results into notes"
@@ -508,6 +654,7 @@ pub(super) fn scripted_answer(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::conversation::chat::retrieval::Rendered;
     use futures::future::BoxFuture;
     use lattice_core::application::ports::llm_port::CompletionResponse;
     use lattice_core::application::services::model_contract::test_support::snapshot::assert_requests;
@@ -642,6 +789,14 @@ mod tests {
         model: &ScriptedModel,
         request: &mut CompletionRequest,
     ) -> Option<Condensed> {
+        condensed_with(model, request, &mut Labels::default()).await
+    }
+
+    async fn condensed_with(
+        model: &ScriptedModel,
+        request: &mut CompletionRequest,
+        labels: &mut Labels,
+    ) -> Option<Condensed> {
         condense(
             model,
             request,
@@ -652,6 +807,7 @@ mod tests {
                 std::time::Duration::from_secs(60),
                 std::time::Duration::ZERO,
             ),
+            labels,
         )
         .await
         .unwrap()
@@ -751,15 +907,31 @@ mod tests {
 
     #[tokio::test]
     async fn earlier_notes_are_condensed_with_the_results() {
+        let lines: Vec<&str> = [OPENED, NOISE].into_iter().cycle().take(12).collect();
         let earlier = format!(
-            "{NOTES_HEADER}\n\n{}",
-            vec![format!("- {OPENED}"), format!("- {NOISE}")]
-                .into_iter()
-                .cycle()
-                .take(12)
+            "{NOTES_HEADER}\n\nResult of earlier:\n{}",
+            lines
+                .iter()
+                .map(|line| format!("- {line}"))
                 .collect::<Vec<_>>()
                 .join("\n")
         );
+        let mut labels = Labels {
+            notes: vec![Source {
+                id: "earlier".into(),
+                heading: Told("Result of earlier".into()),
+                sentences: lines
+                    .iter()
+                    .enumerate()
+                    .map(|(at, line)| Sentence {
+                        at,
+                        text: Told((*line).to_owned()),
+                    })
+                    .collect(),
+                legend: Vec::new(),
+            }],
+            ..Labels::default()
+        };
         let mut items = vec![
             message("system", "policy"),
             message("user", QUESTION),
@@ -774,10 +946,13 @@ mod tests {
             reply(scripted_answer(&prompt_of(sent), |_| true, cites))
         });
         let mut request = request_of(items);
-        condensed(&model, &mut request).await.expect("notes");
-        assert!(prompt_of(&model.sent()[0]).contains("Earlier notes"));
+        condensed_with(&model, &mut request, &mut labels)
+            .await
+            .expect("notes");
+        let prompt = prompt_of(&model.sent()[0]);
+        assert!(prompt.contains("Result of earlier") && prompt.contains(OPENED));
         let notes = notes_in(&request);
-        assert!(notes.contains("Earlier notes:") && notes.contains(WIDENED));
+        assert!(notes.contains("Result of earlier:") && notes.contains(WIDENED));
         assert_eq!(request.input().len(), 3);
     }
 
@@ -799,9 +974,322 @@ mod tests {
                         text: marks.told(NOISE.to_owned()),
                     },
                 ],
+                legend: Vec::new(),
             }],
         };
         holds::<ResearchNotes>(&input, &marks);
+    }
+
+    const BRIDGE: &str = "The harbour bridge opened in 1932.";
+    const DECK: &str = "Its deck was widened in 1960.";
+    const TIDES: &str = "Tides rise twice a day.";
+    const HEADING: &str = "Citable passage [s3] — Page B";
+    const LEGEND_A: &str =
+        "Citable passage [s1] — Page A (https://example.test/a): its text is in this result above.";
+    const LEGEND_B: &str =
+        "Citable passage [s2] — Page B (https://example.test/b): its text is in this result above.";
+
+    fn passage_of(heading: &str, body: &str) -> Rendered {
+        let text = format!("{heading}\n{body}");
+        Rendered {
+            passages: vec![Passage {
+                heading: heading.to_owned(),
+                line: 0..heading.len(),
+                body: heading.len() + 1..text.len(),
+            }],
+            text,
+            legend: Vec::new(),
+        }
+    }
+
+    fn legend_of(line: &str) -> Rendered {
+        Rendered {
+            text: line.to_owned(),
+            passages: Vec::new(),
+            legend: vec![Legend {
+                line: line.to_owned(),
+                at: 0..line.len(),
+            }],
+        }
+    }
+
+    fn labelled_result(id: &str, rendered: &Rendered, labels: &mut Labels) -> CompletionInput {
+        labels.keep(id, rendered.passages.clone(), rendered.legend.clone());
+        CompletionInput::ToolResult {
+            id: id.into(),
+            output: rendered.text.clone(),
+        }
+    }
+
+    fn no_label_is_a_sentence(prompt: &str) {
+        for line in prompt.lines().filter(|line| line.starts_with("[u")) {
+            assert!(!line.contains("Citable passage"), "{line}");
+        }
+    }
+
+    fn with_passage_and_noise() -> (Vec<CompletionInput>, Labels) {
+        let mut result = Rendered::from(format!("Page A\n{}\n\n", noise()));
+        result.append(passage_of(
+            HEADING,
+            &format!("{TIDES} {BRIDGE} {}", noise()),
+        ));
+        let mut labels = Labels::default();
+        let output = labelled_result("a", &result, &mut labels);
+        let items = vec![
+            message("system", "policy"),
+            message("user", QUESTION),
+            call("a"),
+            output,
+        ];
+        (items, labels)
+    }
+
+    #[tokio::test]
+    async fn a_kept_sentence_stands_under_its_passage_s_label_without_the_model_keeping_it() {
+        let (items, mut labels) = with_passage_and_noise();
+        let model = ScriptedModel::new().on_request::<ResearchNotes>(|sent, _| {
+            reply(scripted_answer(
+                &prompt_of(sent),
+                |_| true,
+                |text| text == BRIDGE,
+            ))
+        });
+        let mut request = request_of(items);
+        condensed_with(&model, &mut request, &mut labels)
+            .await
+            .expect("notes");
+        let notes = notes_in(&request);
+        assert!(
+            notes.contains(&format!("{HEADING}:\n- {BRIDGE}")),
+            "{notes}"
+        );
+        assert!(!notes.contains(TIDES), "{notes}");
+        let prompt = prompt_of(&model.sent()[0]);
+        no_label_is_a_sentence(&prompt);
+        assert!(
+            prompt
+                .lines()
+                .any(|line| line.starts_with("[r") && line.ends_with(HEADING)),
+            "{prompt}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_page_labelled_by_a_legend_line_keeps_it_with_a_kept_sentence_only() {
+        let mut labels = Labels::default();
+        let mut first = Rendered::from(format!("{BRIDGE} {}\n\n", noise()));
+        first.append(legend_of(LEGEND_A));
+        let mut second = Rendered::from(format!("{DECK} {}\n\n", noise()));
+        second.append(legend_of(LEGEND_B));
+        let mut items = vec![
+            message("system", "policy"),
+            message("user", QUESTION),
+            call("a"),
+            call("b"),
+        ];
+        items.push(labelled_result("a", &first, &mut labels));
+        items.push(labelled_result("b", &second, &mut labels));
+        let model = ScriptedModel::new().on_request::<ResearchNotes>(|sent, _| {
+            reply(scripted_answer(
+                &prompt_of(sent),
+                |_| true,
+                |text| text == BRIDGE,
+            ))
+        });
+        let mut request = request_of(items);
+        condensed_with(&model, &mut request, &mut labels)
+            .await
+            .expect("notes");
+        let notes = notes_in(&request);
+        assert!(
+            notes.contains(&format!("- {BRIDGE}\n{LEGEND_A}")),
+            "{notes}"
+        );
+        assert!(!notes.contains(LEGEND_B), "{notes}");
+        assert!(notes.contains(NOTHING_KEPT), "{notes}");
+        no_label_is_a_sentence(&prompt_of(&model.sent()[0]));
+    }
+
+    #[tokio::test]
+    async fn a_second_condensing_keeps_the_labels_of_the_first() {
+        let (items, mut labels) = with_passage_and_noise();
+        let model = ScriptedModel::new().on_request::<ResearchNotes>(|sent, _| {
+            reply(scripted_answer(
+                &prompt_of(sent),
+                |_| true,
+                |text| text.contains("1932"),
+            ))
+        });
+        let mut request = request_of(items);
+        condensed_with(&model, &mut request, &mut labels)
+            .await
+            .expect("notes");
+        let mut later = request.input().to_vec();
+        later.push(call("c"));
+        later.push(result("c", 1_200));
+        let mut request = request_of(later);
+        condensed_with(&model, &mut request, &mut labels)
+            .await
+            .expect("notes");
+        let notes = notes_in(&request);
+        assert!(notes.contains(&format!("{HEADING}:\n- ")), "{notes}");
+        assert!(notes.contains(BRIDGE), "{notes}");
+        assert!(!notes.contains(TIDES), "{notes}");
+        let prompt = prompt_of(&model.sent()[1]);
+        no_label_is_a_sentence(&prompt);
+        assert!(
+            !prompt.contains("Earlier notes"),
+            "every earlier block is offered under its own heading: {prompt}"
+        );
+    }
+
+    fn heading_for(id: &str) -> String {
+        format!(
+            "Result of fetch_url_content {}",
+            serde_json::json!({ "url": format!("https://example.test/{id}") })
+        )
+    }
+
+    #[tokio::test]
+    async fn each_block_keeps_its_own_legend_line_through_two_condensings() {
+        let mut labels = Labels::default();
+        let mut first = Rendered::from(format!("{BRIDGE} {}\n\n", noise()));
+        first.append(legend_of(LEGEND_A));
+        let mut second = Rendered::from(format!("{DECK} {}\n\n", noise()));
+        second.append(legend_of(LEGEND_B));
+        let mut items = vec![
+            message("system", "policy"),
+            message("user", QUESTION),
+            call("a"),
+            call("b"),
+        ];
+        items.push(labelled_result("a", &first, &mut labels));
+        items.push(labelled_result("b", &second, &mut labels));
+        let model = ScriptedModel::new().on_request::<ResearchNotes>(|sent, _| {
+            reply(scripted_answer(
+                &prompt_of(sent),
+                |_| true,
+                |text| text.contains("1932") || text.contains("1960"),
+            ))
+        });
+        let mut request = request_of(items);
+        condensed_with(&model, &mut request, &mut labels)
+            .await
+            .expect("notes");
+        let mut later = request.input().to_vec();
+        later.push(call("c"));
+        later.push(result("c", 1_200));
+        let mut request = request_of(later);
+        condensed_with(&model, &mut request, &mut labels)
+            .await
+            .expect("notes");
+        let notes = notes_in(&request);
+        assert!(!notes.contains("- - "), "{notes}");
+        let (head_a, head_b) = (heading_for("a"), heading_for("b"));
+        let at = |needle: &str| notes.find(needle).unwrap_or(usize::MAX);
+        assert!(at(&head_a) < at(BRIDGE), "{notes}");
+        assert!(at(BRIDGE) < at(LEGEND_A), "{notes}");
+        assert!(at(LEGEND_A) < at(&head_b), "{notes}");
+        assert!(at(&head_b) < at(DECK), "{notes}");
+        assert!(at(DECK) < at(LEGEND_B), "{notes}");
+        assert_eq!(notes.matches(LEGEND_A).count(), 1, "{notes}");
+        assert_eq!(notes.matches(LEGEND_B).count(), 1, "{notes}");
+        let prompt = prompt_of(&model.sent()[1]);
+        no_label_is_a_sentence(&prompt);
+        assert!(!prompt.contains("Earlier notes"), "{prompt}");
+        assert!(
+            prompt
+                .lines()
+                .filter(|line| line.starts_with("[u"))
+                .all(|line| !line.contains("] - ")),
+            "{prompt}"
+        );
+    }
+
+    #[tokio::test]
+    async fn notes_are_offered_again_as_the_sentences_they_were_written_from() {
+        let model = ScriptedModel::new().on_request::<ResearchNotes>(|sent, _| {
+            reply(scripted_answer(
+                &prompt_of(sent),
+                |_| true,
+                |text| text == OPENED,
+            ))
+        });
+        let mut labels = Labels::default();
+        let mut request = request_of(two_pages());
+        condensed_with(&model, &mut request, &mut labels)
+            .await
+            .expect("notes");
+        assert!(notes_in(&request).contains(NOTHING_KEPT));
+        let mut later = request.input().to_vec();
+        later.push(call("c"));
+        later.push(result("c", 1_200));
+        let mut request = request_of(later);
+        condensed_with(&model, &mut request, &mut labels)
+            .await
+            .expect("notes");
+        let prompt = prompt_of(&model.sent()[1]);
+        let offered: Vec<&str> = prompt
+            .lines()
+            .filter(|line| line.starts_with("[u"))
+            .collect();
+        assert!(
+            offered
+                .iter()
+                .any(|line| line.ends_with(OPENED) && !line.contains("] - ")),
+            "{prompt}"
+        );
+        assert!(
+            offered.iter().all(|line| !line.contains(NOTHING_KEPT)),
+            "{prompt}"
+        );
+        assert!(!notes_in(&request).contains("- - "));
+    }
+
+    #[test]
+    fn a_result_is_cut_where_the_app_recorded_its_labels() {
+        let result = passage_of(HEADING, &format!("{TIDES} {BRIDGE}"));
+        let marked = Marked {
+            passages: result.passages.clone(),
+            legend: Vec::new(),
+        };
+        let sources = sources_in("a", "Result of x", &result.text, Some(&marked));
+        assert_eq!(sources.len(), 1, "no text is left outside the passage");
+        assert_eq!(sources[0].heading.0, HEADING);
+        let texts: Vec<&str> = sources[0]
+            .sentences
+            .iter()
+            .map(|sentence| sentence.text.0.as_str())
+            .collect();
+        assert_eq!(texts, [TIDES, BRIDGE]);
+    }
+
+    #[test]
+    fn a_range_that_is_not_in_the_result_is_ignored_and_the_result_stands_whole() {
+        let text = format!("{TIDES} {BRIDGE}");
+        let marked = Marked {
+            passages: vec![Passage {
+                heading: HEADING.to_owned(),
+                line: 0..5,
+                body: 6..text.len() + 40,
+            }],
+            legend: Vec::new(),
+        };
+        let sources = sources_in("a", "Result of x", &text, Some(&marked));
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].heading.0, "Result of x");
+        assert_eq!(sources[0].sentences.len(), 2);
+    }
+
+    #[test]
+    fn results_that_were_condensed_lose_their_labels() {
+        let mut labels = Labels::default();
+        let result = passage_of(HEADING, TIDES);
+        labels.keep("a", result.passages.clone(), Vec::new());
+        labels.keep("b", result.passages, Vec::new());
+        labels.forget(&HashSet::from(["a".to_owned()]));
+        assert!(!labels.by_result.contains_key("a"));
+        assert!(labels.by_result.contains_key("b"));
     }
 
     #[tokio::test]
