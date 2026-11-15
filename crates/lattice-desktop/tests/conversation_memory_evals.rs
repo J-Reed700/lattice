@@ -918,6 +918,13 @@ impl LLMPort for EvalLlm {
         self.inner.supports_tool_calling()
     }
 
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
+
     fn provider_name(&self) -> &str {
         self.inner.provider_name()
     }

@@ -266,6 +266,13 @@ impl LLMPort for RecordingLlm {
     fn provider_name(&self) -> &str {
         self.inner.provider_name()
     }
+
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 /// The claim as a one-paragraph answer citing source 1.

@@ -382,6 +382,7 @@ where
         items,
         rest,
         left_out: unread,
+        unread_why,
     } = <C::Answer as Listed>::read(&written(&sent), showing);
     *left_out += unread;
     let before = standing.len();
@@ -401,7 +402,8 @@ where
     let added = standing.len().saturating_sub(before);
     let rest = match rest {
         None if standing.is_empty() && (unread > 0 || refusal.is_some()) => {
-            Some(refusal.map_or(Why::NotRead, Why::Refused))
+            let unread_why = unread_why.unwrap_or(Why::NotRead);
+            Some(refusal.map_or(unread_why, Why::Refused))
         }
         rest => rest,
     };
@@ -426,6 +428,7 @@ fn found<C: Answered>(
         items,
         rest,
         left_out,
+        unread_why: None,
     })
 }
 

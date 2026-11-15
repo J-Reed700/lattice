@@ -168,6 +168,8 @@ pub struct Found<S> {
     pub rest: Option<Why>,
     /// How many items the model wrote that are not in `items`, whatever the cause.
     pub left_out: usize,
+    /// Why the first item that could not be read was not, when it had a reason of its own.
+    pub unread_why: Option<Why>,
 }
 
 /// `V`: judgement and text about the one subject of the call. No identity exists to get wrong.

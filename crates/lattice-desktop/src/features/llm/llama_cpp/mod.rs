@@ -393,7 +393,7 @@ impl ModelBackend for LlamaCppLlm {
         &self,
         _schema: &lattice_core::application::services::model_contract::shape::Schema,
     ) -> bool {
-        false
+        true
     }
     fn vision(&self) -> Option<VisionGeometry> {
         self.config.vision

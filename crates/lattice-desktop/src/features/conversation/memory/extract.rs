@@ -709,6 +709,7 @@ pub async fn extract_segments(
         items,
         rest,
         left_out,
+        ..
     } = match asked {
         Ok(found) => found,
         Err(error) => {

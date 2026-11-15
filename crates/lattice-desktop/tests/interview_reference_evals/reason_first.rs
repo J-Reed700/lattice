@@ -102,4 +102,10 @@ impl LLMPort for Candidate {
     fn is_alive(&self) -> bool {
         self.inner.is_alive()
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }

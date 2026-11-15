@@ -211,6 +211,7 @@ impl Listed for Names {
             items,
             rest,
             left_out,
+            unread_why: None,
         }
     }
 }
@@ -1329,6 +1330,7 @@ async fn items_of_a_cut_off_reply_stand_and_the_next_request_is_built_from_them(
             items: vec!["a".to_owned(), "b".to_owned(), "c".to_owned()],
             rest: None,
             left_out: 0,
+            unread_why: None
         }
     );
     assert_eq!(script.sent(), 2);
@@ -1358,6 +1360,7 @@ async fn no_input_stops_the_asking() {
             items: vec!["a".to_owned()],
             rest: Some(Why::CutOff),
             left_out: 0,
+            unread_why: None
         }
     );
     assert_eq!(script.sent(), 1);
@@ -1425,6 +1428,7 @@ async fn nothing_read_and_nothing_standing_gets_one_correction() {
             items: Vec::new(),
             rest: Some(Why::NotRead),
             left_out: 0,
+            unread_why: None
         }
     );
     assert_eq!(script.sent(), 2);
@@ -1477,6 +1481,7 @@ async fn an_answer_left_out_whole_twice_is_unanswered() {
             items: Vec::new(),
             rest: Some(Why::Refused(BAD_REASON.into())),
             left_out: 2,
+            unread_why: None
         }
     );
     assert_eq!(script.sent(), 2);
@@ -1577,6 +1582,7 @@ async fn an_answer_that_holds_nothing_is_read_to_its_end_and_not_asked_again() {
             items: Vec::new(),
             rest: None,
             left_out: 0,
+            unread_why: None
         }
     );
     assert_eq!(script.sent(), 1);

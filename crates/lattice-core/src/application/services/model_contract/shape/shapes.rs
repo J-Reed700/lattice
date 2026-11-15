@@ -145,13 +145,26 @@ fn point_schema(
     showing: &Showing<'_>,
     pointers: Pointers,
 ) -> Value {
-    if pointers == Pointers::Plain {
-        return json!({ "type": "string" });
-    }
-    let mut members = match among {
+    let shown = match among {
         Among::Shown => showing.written(prefix),
         Among::Own => showing.written_under(prefix),
     };
+    if pointers == Pointers::Plain {
+        let words = extra.join(" or ");
+        let description = match (shown.first(), words.is_empty()) {
+            (Some(first), true) => format!(
+                "One name shown in square brackets, written without the brackets, such as {first}."
+            ),
+            (Some(first), false) => format!(
+                "One name shown in square brackets, written without the brackets, such as \
+                 {first}, or the word {words}."
+            ),
+            (None, false) => format!("The word {words}."),
+            (None, true) => return json!({ "type": "string" }),
+        };
+        return json!({ "type": "string", "description": description });
+    }
+    let mut members = shown;
     members.extend(extra.iter().map(|word| (*word).to_owned()));
     if members.is_empty() {
         return json!({ "type": "string" });
@@ -397,6 +410,7 @@ pub(super) fn read_new<V: Authored>(written: &Written<'_>, showing: &Showing<'_>
                 items: Vec::new(),
                 rest: Some(why),
                 left_out: 0,
+                unread_why: None,
             }
         }
     };
@@ -405,17 +419,24 @@ pub(super) fn read_new<V: Authored>(written: &Written<'_>, showing: &Showing<'_>
             items: Vec::new(),
             rest: Some(lacking(written, &document)),
             left_out: 0,
+            unread_why: None,
         };
     };
     let mut items = Vec::with_capacity(elements.len());
+    let mut unread = None;
     for element in elements {
-        let item = element.as_object().and_then(|object| {
+        let item = element.as_object().map(|object| {
             let mut fields = Fields::of(object, showing, None);
-            V::read(&mut fields)
+            V::read(&mut fields).ok_or_else(|| fields.why())
         });
         match item {
-            Some(item) => items.push(item),
-            None => trace("unread-item", None),
+            Some(Ok(item)) => items.push(item),
+            other => {
+                trace("unread-item", None);
+                if unread.is_none() {
+                    unread = Some(other.and_then(Result::err).unwrap_or(Why::NotRead));
+                }
+            }
         }
     }
     let left_out = elements.len().saturating_sub(items.len());
@@ -423,6 +444,7 @@ pub(super) fn read_new<V: Authored>(written: &Written<'_>, showing: &Showing<'_>
         items,
         rest: (!document.closed).then(|| unfinished(written)),
         left_out,
+        unread_why: unread,
     }
 }
 

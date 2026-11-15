@@ -23,7 +23,8 @@ pub(super) fn asks_for_format(body: &Value) -> bool {
 pub(super) fn refusal(reason: &str) -> Option<AppError> {
     (reason.contains("output_config.format")
         || reason.contains("grammar")
-        || reason.contains("Schemas contains"))
+        || reason.contains("Schemas contains")
+        || reason.contains("Schema is too complex"))
     .then(|| AppError::ModelRejected(REFUSAL.into()))
 }
 
@@ -142,7 +143,9 @@ pub(in crate::features::llm) fn anthropic_schema(schema: &Value) -> Value {
 /// `schema` with each object or `enum` that occurs more than once defined
 /// once under `$defs` and referred to from its places. The answers it admits
 /// are the same. Written out in every place, a schema with many places for one
-/// large part is refused as too large a grammar.
+/// large part is refused as too large a grammar. Two parts are one only when
+/// they are written the same, the order of their fields included: a model
+/// writes an object's fields in the order its schema lists them.
 pub(in crate::features::llm) fn shared(schema: &Value) -> Value {
     let mut sent = schema.clone();
     if sent.get("$defs").is_some() {
@@ -150,7 +153,7 @@ pub(in crate::features::llm) fn shared(schema: &Value) -> Value {
     }
     let mut seen = Vec::new();
     count(&mut sent, &mut seen);
-    let repeated: Vec<Value> = seen
+    let repeated: Vec<String> = seen
         .into_iter()
         .filter(|(_, times)| *times > 1)
         .map(|(part, _)| part)
@@ -183,16 +186,21 @@ fn parts(schema: &mut Value) -> Vec<&mut Value> {
     inside
 }
 
+/// An object or an `enum` as it is written: what `shared` defines once when it repeats.
+fn definable(part: &Value) -> Option<String> {
+    (part.get("properties").is_some() || part.get("enum").is_some()).then(|| part.to_string())
+}
+
 /// How often each object and `enum` inside `schema` occurs. The inside of a
 /// part met again is not counted again: it is sent where the part is defined.
-fn count(schema: &mut Value, seen: &mut Vec<(Value, usize)>) {
+fn count(schema: &mut Value, seen: &mut Vec<(String, usize)>) {
     for part in parts(schema) {
-        if part.get("properties").is_some() || part.get("enum").is_some() {
-            if let Some((_, times)) = seen.iter_mut().find(|(other, _)| *other == *part) {
+        if let Some(written) = definable(part) {
+            if let Some((_, times)) = seen.iter_mut().find(|(other, _)| *other == written) {
                 *times += 1;
                 continue;
             }
-            seen.push((part.clone(), 1));
+            seen.push((written, 1));
         }
         count(part, seen);
     }
@@ -200,9 +208,11 @@ fn count(schema: &mut Value, seen: &mut Vec<(Value, usize)>) {
 
 /// Puts a reference in each place of a `repeated` part inside `schema`, and
 /// the part itself, with the same done inside it, in `defined`.
-fn refer(schema: &mut Value, repeated: &[Value], defined: &mut serde_json::Map<String, Value>) {
+fn refer(schema: &mut Value, repeated: &[String], defined: &mut serde_json::Map<String, Value>) {
     for part in parts(schema) {
-        let Some(index) = repeated.iter().position(|other| *other == *part) else {
+        let place =
+            definable(part).and_then(|written| repeated.iter().position(|other| *other == written));
+        let Some(index) = place else {
             refer(part, repeated, defined);
             continue;
         };

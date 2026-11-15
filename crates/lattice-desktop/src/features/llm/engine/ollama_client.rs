@@ -741,7 +741,7 @@ impl ModelBackend for OllamaClient {
         &self,
         _schema: &lattice_core::application::services::model_contract::shape::Schema,
     ) -> bool {
-        false
+        true
     }
 
     fn is_alive(&self) -> bool {

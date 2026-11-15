@@ -73,8 +73,12 @@ impl Name {
         format!("{}{}", self.prefix, self.ordinal)
     }
 
-    /// `s4` as a name. `None` for anything that is not a prefix of letters and a 1-based ordinal.
+    /// `s4` or `[s4]` as a name; `None` unless letters then a 1-based ordinal.
     fn read(written: &str) -> Option<Self> {
+        let written = written
+            .strip_prefix('[')
+            .and_then(|inner| inner.strip_suffix(']'))
+            .unwrap_or(written);
         let digits = written.find(|c: char| c.is_ascii_digit())?;
         let (prefix, ordinal) = written.split_at(digits);
         let well_formed = !prefix.is_empty()

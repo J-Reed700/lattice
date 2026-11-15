@@ -88,4 +88,10 @@ impl LLMPort for RecordingLlm {
     fn requests(&self) -> Option<RequestLoad> {
         self.inner.requests()
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
