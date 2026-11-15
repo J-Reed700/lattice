@@ -14,9 +14,11 @@ use lattice_core::application::ports::llm_port::{
 };
 use lattice_core::application::ports::{ChatImagesPort, ImageTurnScope};
 use lattice_core::application::ports::{EmbeddingPort, LLMPort};
-use lattice_core::application::services::model_contract::kept::{KeptNames, MemoryNames, TurnNames};
 use lattice_core::application::services::chat_model_resolution::{
     resolve, resolve_learning, DefaultChatModel,
+};
+use lattice_core::application::services::model_contract::kept::{
+    KeptNames, MemoryNames, TurnNames,
 };
 use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::{AppError, Result};

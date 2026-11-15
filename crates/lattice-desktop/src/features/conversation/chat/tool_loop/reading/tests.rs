@@ -168,10 +168,7 @@ async fn a_sentence_the_passage_does_not_have_makes_no_note() {
         )
     });
     let notes = read(&model).await.expect("notes");
-    assert_eq!(
-        notes.lines.get(&1),
-        Some(&Some(SLUICE_FIRST.to_string()))
-    );
+    assert_eq!(notes.lines.get(&1), Some(&Some(SLUICE_FIRST.to_string())));
     assert_eq!(
         notes.lines.get(&2),
         Some(&None),
@@ -214,10 +211,7 @@ async fn a_passage_that_stays_unanswered_has_no_line() {
 #[tokio::test]
 async fn no_sentence_chosen_from_any_passage_means_that_nothing_bears() {
     let model = choosing(|_| false);
-    assert!(matches!(
-        reading_by(&model).await,
-        Reading::NothingBears
-    ));
+    assert!(matches!(reading_by(&model).await, Reading::NothingBears));
 }
 
 #[tokio::test]
@@ -265,14 +259,16 @@ async fn the_request_shows_each_passage_by_handle_with_its_document_and_the_ques
     let request = &model.sent()[0].request;
     let prompt = shown_in(request);
     assert!(prompt.contains(READ_INSTRUCTION));
-    assert!(prompt.contains(&format!("[p3] Document: d3.md\n[u1] {KILN_FIRST}\n[u2] {KILN_SECOND}")));
-    assert!(!prompt.contains("[s3]"), "a passage is shown by its handle only");
+    assert!(prompt.contains(&format!(
+        "[p3] Document: d3.md\n[u1] {KILN_FIRST}\n[u2] {KILN_SECOND}"
+    )));
+    assert!(
+        !prompt.contains("[s3]"),
+        "a passage is shown by its handle only"
+    );
     let (passages, closing) = prompt.split_once("My question is: ").expect("the question");
     assert!(passages.contains(TIDES));
-    assert_eq!(
-        closing,
-        format!("\"{QUESTION}\"\n\n{BEARING_INSTRUCTION}")
-    );
+    assert_eq!(closing, format!("\"{QUESTION}\"\n\n{BEARING_INSTRUCTION}"));
 }
 
 #[test]

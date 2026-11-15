@@ -19,8 +19,7 @@ use lattice_core::domain::value_objects::source_context::{
 use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
 
-const PLAN: &str =
-    r#"{"queries":[{"query":"garden leave notice"}],"opening_document_ids":[],"start_at_beginning":"false"}"#;
+const PLAN: &str = r#"{"queries":[{"query":"garden leave notice"}],"opening_document_ids":[],"start_at_beginning":"false"}"#;
 
 /// What llama-server's tokenizer charges for catalog JSON: closer to three and
 /// a half characters a token than the four the estimate assumes.

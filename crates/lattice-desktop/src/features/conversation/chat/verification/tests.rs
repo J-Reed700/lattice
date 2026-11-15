@@ -711,7 +711,9 @@ const SESSION_REPLY: &str = "Good work, you have named that part exactly as the 
 /// sentence beside it still is.
 #[tokio::test]
 async fn a_sentence_that_only_runs_a_session_is_no_claim() {
-    let llm = Arc::new(ScriptedLlm::new(vec![r#"{"marks":[{"at":"s1"},{"at":"s2"}]}"#]));
+    let llm = Arc::new(ScriptedLlm::new(vec![
+        r#"{"marks":[{"at":"s1"},{"at":"s2"}]}"#,
+    ]));
     let report = GroundingVerifier::new(Some(llm.clone()))
         .without_session_talk(true)
         .verify_text(SESSION_REPLY, &[source(LEASE_PASSAGE)])
@@ -775,7 +777,9 @@ async fn a_lexical_check_keeps_every_uncited_sentence() {
 /// An ordinary chat's check costs no extra call.
 #[tokio::test]
 async fn a_chat_turn_never_asks_which_sentences_run_a_session() {
-    let llm = Arc::new(ScriptedLlm::new(vec![r#"{"marks":[{"at":"s1"},{"at":"s2"}]}"#]));
+    let llm = Arc::new(ScriptedLlm::new(vec![
+        r#"{"marks":[{"at":"s1"},{"at":"s2"}]}"#,
+    ]));
     let report = GroundingVerifier::new(Some(llm.clone()))
         .verify_text(SESSION_REPLY, &[source(LEASE_PASSAGE)])
         .await;

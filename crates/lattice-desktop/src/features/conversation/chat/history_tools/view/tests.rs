@@ -34,7 +34,10 @@ fn a_history_search_names_each_message_and_shows_no_id_or_sequence() {
         &handles,
     );
     assert!(text.contains("[h1] user: The kiln opens at dawn"), "{text}");
-    assert!(text.contains("[h2] assistant: Tide tables are posted at the harbour ..."), "{text}");
+    assert!(
+        text.contains("[h2] assistant: Tide tables are posted at the harbour ..."),
+        "{text}"
+    );
     for hidden in ["msg-aa", "msg-bb", "sequence", "offset", "continuation"] {
         assert!(!text.contains(hidden), "{hidden}: {text}");
     }
@@ -53,7 +56,10 @@ fn a_history_search_with_more_matches_resumes_at_the_next_one() {
         search_data(),
         &handles,
     );
-    assert!(text.contains("To read on, call read_more with [m1]."), "{text}");
+    assert!(
+        text.contains("To read on, call read_more with [m1]."),
+        "{text}"
+    );
     let resumed = handles
         .read_call("read_more", &json!({"handle": "[m1]"}))
         .unwrap();
@@ -79,9 +85,15 @@ fn a_cut_history_read_resumes_the_same_read() {
         data,
         &handles,
     );
-    assert!(first.contains("[h1] user (part of the message):\nRopes and tar"), "{first}");
+    assert!(
+        first.contains("[h1] user (part of the message):\nRopes and tar"),
+        "{first}"
+    );
     assert!(first.contains("call read_more with [m2]"), "{first}");
-    assert!(!first.contains("start_byte") && !first.contains("msg-cc"), "{first}");
+    assert!(
+        !first.contains("start_byte") && !first.contains("msg-cc"),
+        "{first}"
+    );
     let resumed = handles
         .read_call("read_more", &json!({"handle": "m2"}))
         .unwrap();
@@ -111,7 +123,10 @@ fn saved_knowledge_shows_the_item_and_its_evidence_without_any_id() {
         &handles,
     );
     assert!(own.contains("Kiln opens at dawn (established_fact; active; space scope; learned 2026-03-01; replaced by a later item)"), "{own}");
-    assert!(own.contains("[h1] user (assertion): The kiln opens at dawn"), "{own}");
+    assert!(
+        own.contains("[h1] user (assertion): The kiln opens at dawn"),
+        "{own}"
+    );
     for hidden in ["item-9", "item-10", "msg-dd", "conv-1", "Byte"] {
         assert!(!own.contains(hidden), "{hidden}: {own}");
     }
@@ -121,6 +136,9 @@ fn saved_knowledge_shows_the_item_and_its_evidence_without_any_id() {
         json!({"items": [item("conv-2")]}),
         &handles,
     );
-    assert!(other.contains("  user (assertion): The kiln opens at dawn"), "{other}");
+    assert!(
+        other.contains("  user (assertion): The kiln opens at dawn"),
+        "{other}"
+    );
     assert!(!other.contains("[h"), "{other}");
 }

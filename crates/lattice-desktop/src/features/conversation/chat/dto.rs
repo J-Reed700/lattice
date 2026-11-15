@@ -4,7 +4,9 @@ use super::{
     TurnStepDto, VerificationReadyDto,
 };
 use lattice_core::application::contracts::explorer::ExplorerFocusDto;
-pub use lattice_core::application::contracts::replies::{LinesDto, ReplyPieceDto, ReplyReferenceDto};
+pub use lattice_core::application::contracts::replies::{
+    LinesDto, ReplyPieceDto, ReplyReferenceDto,
+};
 pub(super) use lattice_core::application::contracts::sources::SourceDto;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;

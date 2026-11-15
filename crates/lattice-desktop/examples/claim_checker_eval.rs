@@ -416,9 +416,7 @@ async fn main() -> Result<(), BoxError> {
         name_sources(&names, std::slice::from_mut(&mut source));
         let reply = ReplyText::read(&names, markers(false), &as_cited_answer(&pair.claim));
         let started = Instant::now();
-        let report = verifier
-            .verify(&reply, std::slice::from_ref(&source))
-            .await;
+        let report = verifier.verify(&reply, std::slice::from_ref(&source)).await;
         let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
         let calls = recorder
             .as_ref()

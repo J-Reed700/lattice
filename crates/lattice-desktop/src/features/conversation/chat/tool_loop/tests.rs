@@ -1,7 +1,7 @@
+use super::super::reply_text;
 use super::room::{window_chars, MIN_TOOL_RESULT_CHARS};
 use super::*;
 use lattice_core::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN;
-use super::super::reply_text;
 use lattice_core::application::services::model_contract::kept::TurnNames;
 use std::sync::Arc;
 

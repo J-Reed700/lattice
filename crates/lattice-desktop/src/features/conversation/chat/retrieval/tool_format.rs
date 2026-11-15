@@ -70,8 +70,11 @@ pub(super) fn format_tool_result(
             };
             let line = call.read_on_line(&name);
             let room = allowance.saturating_sub(line.chars().count() + 1);
-            return format!("{}
-{line}", safe_truncate(text, room));
+            return format!(
+                "{}
+{line}",
+                safe_truncate(text, room)
+            );
         }
         if let Ok(mut output) = serde_json::from_value::<SourcePassages>(data.clone()) {
             let read_on = data
@@ -108,7 +111,10 @@ pub(super) fn format_tool_result(
                     ""
                 };
                 let shown_end = doc.offset + doc.content.chars().count();
-                let name = call.handles().document(&doc.document_id).unwrap_or_default();
+                let name = call
+                    .handles()
+                    .document(&doc.document_id)
+                    .unwrap_or_default();
                 let read_on_from = |at: usize| {
                     call.read_on(&[("offset", json!(at)), ("max_content_length", json!(null))])
                 };
@@ -314,7 +320,10 @@ fn more_results_note(output: &WebSearchOutput, call: &CallView<'_>) -> String {
         return String::new();
     }
     let next = call.read_on(&[("page", json!(output.page + 1))]);
-    format!("\n[More results are available. {}]", call.read_on_line(&next))
+    format!(
+        "\n[More results are available. {}]",
+        call.read_on_line(&next)
+    )
 }
 
 /// A turn source's passages, each under the turn's number for it as a library

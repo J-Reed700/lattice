@@ -237,8 +237,7 @@ fn row_cost(
     whole: bool,
 ) -> usize {
     let group = document.source_context.as_ref().map(|_| "g99".to_string());
-    let json =
-        catalog_json(&row(document, group, summaries, whole), "d99").unwrap_or_default();
+    let json = catalog_json(&row(document, group, summaries, whole), "d99").unwrap_or_default();
     llm.count_tokens(&json) + 1
 }
 

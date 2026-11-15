@@ -15,12 +15,12 @@ use tracing::{debug, warn};
 
 use lattice_core::application::contracts::settings::LLMVerificationSettingsDto;
 use lattice_core::application::contracts::sources::SourceDto;
+#[cfg(test)]
+use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::llm_port::{
     chars_within_tokens, InferencePriority, SamplingOverride,
 };
 use lattice_core::application::ports::LLMPort;
-#[cfg(test)]
-use lattice_core::application::ports::llm_port::CompletionInput;
 #[cfg(test)]
 use lattice_core::application::services::claim_verification::{
     parse_judge_explanation, parse_verdict_word, verdict_from_logprobs,
@@ -39,9 +39,7 @@ use lattice_core::application::services::grounded_generation::CallOptions;
 use lattice_core::application::services::model_contract::ask::{
     ask_each, Alone, Answered, Plain, Says, Settled,
 };
-use lattice_core::application::services::model_contract::shape::{
-    Authored, Fields, Flagged, Form,
-};
+use lattice_core::application::services::model_contract::shape::{Authored, Fields, Flagged, Form};
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Kind, Scope, Showing, Told,
 };
@@ -116,8 +114,13 @@ impl Answered for SessionTalk {
             .iter()
             .map(|(handle, sentence)| format!("{} {}", handle.bracketed(), sentence.text.0))
             .collect();
-        let mut says = Says::new(SESSION_TALK_INSTRUCTIONS, listed.join("
-"));
+        let mut says = Says::new(
+            SESSION_TALK_INSTRUCTIONS,
+            listed.join(
+                "
+",
+            ),
+        );
         says.output_tokens = DEFAULT_MAX_OUTPUT_TOKENS as usize;
         Ok(says)
     }

@@ -3,12 +3,12 @@
 //! answer can point at.
 
 use super::ToolOutputSettingsDto;
-use crate::features::function_calling::handles::{Resume, ToolHandles, READ_MORE};
 use crate::features::conversation::chat::dto::SourceDto;
 use crate::features::conversation::chat::retrieval::source_names::marker;
 use crate::features::conversation::chat::retrieval::{
     build_document_part_citation, build_library_source_citations, build_web_source_citations,
 };
+use crate::features::function_calling::handles::{Resume, ToolHandles, READ_MORE};
 use lattice_core::application::contracts::images::FindImageOutput;
 use lattice_core::application::contracts::tools::{
     FunctionResult, GetDocumentOutput, SemanticSearchOutput, WikiSearchOutput, WikiSummaryOutput,
@@ -425,7 +425,8 @@ mod citable_tests {
         assert_eq!(left, 10_000 - text.chars().count());
 
         let unshown = source(&page);
-        let (text, left) = citable_passages(&[(1, &unshown)], "something else", 600, &ToolHandles::new());
+        let (text, left) =
+            citable_passages(&[(1, &unshown)], "something else", 600, &ToolHandles::new());
         assert!(text.contains("Citable passage [s1] — Page A\n"));
         assert!(
             text.contains("fetch_url_content with url \"https://example.com/a\" and offset "),

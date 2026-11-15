@@ -93,8 +93,7 @@ fn summaries(entries: &[(&str, &str)]) -> HashMap<String, String> {
         .collect()
 }
 
-const PLAN: &str =
-    r#"{"queries":[{"query":"engine start"}],"opening_document_ids":[],"start_at_beginning":"false"}"#;
+const PLAN: &str = r#"{"queries":[{"query":"engine start"}],"opening_document_ids":[],"start_at_beginning":"false"}"#;
 
 #[tokio::test]
 async fn the_catalog_carries_summaries_when_the_tier_has_them() {

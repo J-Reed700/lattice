@@ -161,7 +161,9 @@ async fn the_pictures_an_answer_shows_are_attached_and_recorded() {
             highlight_terms: &[],
             focus: &focus,
             recorder: &recorder,
-            names: &std::sync::Arc::new(lattice_core::application::services::model_contract::kept::TurnNames::unstored()),
+            names: &std::sync::Arc::new(
+                lattice_core::application::services::model_contract::kept::TurnNames::unstored(),
+            ),
         },
         &user_id,
         2,

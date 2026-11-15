@@ -203,10 +203,7 @@ mod tests {
         assert!(notice.contains("in your context above"), "{notice}");
     }
 
-    fn page_call<'a>(
-        handles: &'a ToolHandles,
-        arguments: &'a serde_json::Value,
-    ) -> CallView<'a> {
+    fn page_call<'a>(handles: &'a ToolHandles, arguments: &'a serde_json::Value) -> CallView<'a> {
         CallView::new("fetch_url_content", arguments, handles)
     }
 

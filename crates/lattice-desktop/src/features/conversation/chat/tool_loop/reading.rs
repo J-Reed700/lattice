@@ -8,9 +8,9 @@ use super::clock::TurnClock;
 use super::final_round::{say_last, written_call_start};
 use super::{answer_was_cut_short, tool_schema_text, StreamEmitter, CUT_SHORT_NOTE, DECLINED_NOTE};
 use crate::features::conversation::chat::cancellation::cancelled_error;
-use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepKind};
 use crate::features::conversation::chat::reply_text::ReplyText;
 use crate::features::conversation::chat::retrieval::source_names;
+use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepKind};
 use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, ContentPart, ThinkingMode, ToolChoice,

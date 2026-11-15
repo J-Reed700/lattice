@@ -156,8 +156,9 @@ async fn a_flag_written_in_other_words_is_corrected_once() {
 /// An answer no reading can use is the caller's to fall back from.
 #[tokio::test]
 async fn an_answer_that_stays_unreadable_is_an_error_after_one_correction() {
-    let model = ScriptedModel::new()
-        .on_request::<PlanContract>(|_, _| reply("The tide tables are in the harbour office.".into()));
+    let model = ScriptedModel::new().on_request::<PlanContract>(|_, _| {
+        reply("The tide tables are in the harbour office.".into())
+    });
 
     assert!(planned(&model).await.is_err());
     assert_eq!(model.count::<PlanContract>(), 2);

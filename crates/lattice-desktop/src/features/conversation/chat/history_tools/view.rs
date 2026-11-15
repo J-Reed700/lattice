@@ -175,7 +175,10 @@ fn item_text(item: &KnowledgeItemDto, call: &CallView<'_>) -> String {
             None
         };
         lines.push(match message {
-            Some(name) => format!("  {name} {} ({}): {quoted}", evidence.role, evidence.purpose),
+            Some(name) => format!(
+                "  {name} {} ({}): {quoted}",
+                evidence.role, evidence.purpose
+            ),
             None => format!("  {} ({}): {quoted}", evidence.role, evidence.purpose),
         });
     }

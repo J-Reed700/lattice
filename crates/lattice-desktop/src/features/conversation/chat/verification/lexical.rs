@@ -13,9 +13,7 @@ pub(super) use lattice_core::application::services::evidence_retrieval::{
 use lattice_core::application::services::evidence_retrieval::{
     extract_normalized_tokens, passage_windows,
 };
-use lattice_core::shared::markdown_math::{
-    formulas_as_words, inline_math_spans, map_prose,
-};
+use lattice_core::shared::markdown_math::{formulas_as_words, inline_math_spans, map_prose};
 use lattice_core::shared::text::{
     capitalised_words, has_digit, normalize_whitespace, padded_lowercase, MONTH_MARKERS,
     NEGATION_MARKERS,

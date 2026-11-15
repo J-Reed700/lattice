@@ -99,7 +99,8 @@ async fn save_answer_citing_an_unread_page(
         "citationId": 1
     }))
     .unwrap();
-    let names = Arc::new(lattice_core::application::services::model_contract::kept::TurnNames::unstored());
+    let names =
+        Arc::new(lattice_core::application::services::model_contract::kept::TurnNames::unstored());
     super::super::retrieval::source_names::name_sources(&names, std::slice::from_mut(&mut source));
     let reply = crate::features::conversation::chat::reply_text::ReplyText::read(
         &names,

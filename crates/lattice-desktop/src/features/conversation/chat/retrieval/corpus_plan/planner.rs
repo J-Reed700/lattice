@@ -203,9 +203,8 @@ async fn plan_with(
     let ranked = shortlist::shortlist(catalog, turn.candidate_ids(), question);
     // The first pass's titles, best first, as many as the history's share of
     // the prompt holds, and the rest counted.
-    let correction = correction.map(|correction| {
-        Correction::of(&correction.fitted(llm, prompt::history_tokens(target)))
-    });
+    let correction = correction
+        .map(|correction| Correction::of(&correction.fitted(llm, prompt::history_tokens(target))));
     let parts = prompt::PromptParts {
         question,
         history: &history,

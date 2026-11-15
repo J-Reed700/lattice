@@ -125,7 +125,10 @@ async fn a_grounded_answer_reads_first_and_adds_the_passage_it_left_out() {
 
     let asked = last_text(continuation);
     assert!(asked.contains(&format!("[s7] \"{TOLL}\"")), "{asked}");
-    assert!(!asked.contains("[s2]") && !asked.contains("[s5]"), "{asked}");
+    assert!(
+        !asked.contains("[s2]") && !asked.contains("[s5]"),
+        "{asked}"
+    );
     assert_eq!(
         json_of(&continuation.input()[..writing.input().len()].to_vec()),
         json_of(&writing.input()),
@@ -366,7 +369,10 @@ async fn whatever_the_one_continuation_writes_settles_the_check() {
 
 #[tokio::test]
 async fn a_reading_the_provider_fails_is_taken_back_and_the_answer_asked_for_as_before() {
-    let model = Model::new([Scripted::Fail("The provider is down".into()), reply(ANSWER).into()]);
+    let model = Model::new([
+        Scripted::Fail("The provider is down".into()),
+        reply(ANSWER).into(),
+    ]);
     let run = grounded(&model).await;
     assert_eq!(run.outcome.expect("an answer").response, ANSWER);
     let requests = model.requests();

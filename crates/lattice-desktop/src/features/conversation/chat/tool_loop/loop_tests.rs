@@ -2,9 +2,7 @@
 //! round's shape, calls run side by side, and condensing that lets a turn
 //! read past its window.
 use super::final_round::{OUT_OF_ROUNDS_INSTRUCTION, WINDOW_FULL_INSTRUCTION};
-use super::research_notes::{
-    scripted_answer, shown_in, CONDENSE_INSTRUCTION, NOTES_HEADER,
-};
+use super::research_notes::{scripted_answer, shown_in, CONDENSE_INSTRUCTION, NOTES_HEADER};
 use super::*;
 use crate::features::conversation::chat::cancellation;
 use crate::features::conversation::chat::focus::FocusScope;
@@ -351,7 +349,11 @@ fn number_as_labelled(
     let Some(template) = sources.first() else {
         return;
     };
-    let top = sources.iter().filter_map(|source| source.citation_id).max().unwrap_or(0);
+    let top = sources
+        .iter()
+        .filter_map(|source| source.citation_id)
+        .max()
+        .unwrap_or(0);
     let mut ordered: Vec<SourceDto> = (1..=top)
         .map(|number| {
             sources
@@ -396,7 +398,8 @@ async fn run_turn(
         excerpt_chars: 300,
         ..ToolOutputSettingsDto::default()
     };
-    let names = Arc::new(lattice_core::application::services::model_contract::kept::TurnNames::unstored());
+    let names =
+        Arc::new(lattice_core::application::services::model_contract::kept::TurnNames::unstored());
     number_as_labelled(&names, &turn.sources);
     let mut sources = turn.sources;
     let mut trace = None;

@@ -383,7 +383,10 @@ mod planning_context_tests {
         let older = saved_message(MessageRole::Assistant, "Open in May [1].", None);
         let count = |text: &str| text.chars().count() / 4 + 1;
         let context = query_planning_context(&[older, saved], "pass", 100_000, &count).unwrap();
-        assert!(context.contains("assistant: The pass is open in May."), "{context}");
+        assert!(
+            context.contains("assistant: The pass is open in May."),
+            "{context}"
+        );
         assert!(!context.contains("[s1]"));
         assert!(context.contains("assistant: Open in May [1]."));
     }

@@ -68,7 +68,10 @@ fn a_heading_names_what_follows_and_is_no_claim() {
             "OCR errors propagate to the downstream model and are amplified during prediction.",
         )],
     );
-    let sentences: Vec<&str> = claims.iter().map(|claim| claim.claim_text.as_str()).collect();
+    let sentences: Vec<&str> = claims
+        .iter()
+        .map(|claim| claim.claim_text.as_str())
+        .collect();
     assert_eq!(
         sentences,
         ["OCR mistakes flow into the downstream model and get amplified ."]
@@ -602,7 +605,9 @@ fn a_formula_is_one_piece_of_its_sentence() {
 
 #[test]
 fn a_marker_in_code_is_no_citation() {
-    let held = [source("The kiln was fired every Friday at dawn by the keeper.")];
+    let held = [source(
+        "The kiln was fired every Friday at dawn by the keeper.",
+    )];
     let in_span = lexical_pass(
         "The kiln was fired every Friday at dawn by the keeper, as `[s1]` shows.",
         &held,
@@ -622,7 +627,9 @@ fn a_marker_in_code_is_no_citation() {
 
 #[test]
 fn a_marker_that_names_nothing_cites_nothing() {
-    let held = [source("The kiln was fired every Friday at dawn by the keeper.")];
+    let held = [source(
+        "The kiln was fired every Friday at dawn by the keeper.",
+    )];
     let claims = lexical_pass(
         "The kiln was fired every Friday at dawn by the keeper [s9].",
         &held,

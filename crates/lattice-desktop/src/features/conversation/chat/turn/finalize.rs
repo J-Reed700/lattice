@@ -88,9 +88,8 @@ pub(super) async fn finalize_turn(
         router,
     };
 
-    let background_verification = verification_enabled.then(|| {
-        (reply.clone(), sources.clone(), turn_record.clone())
-    });
+    let background_verification =
+        verification_enabled.then(|| (reply.clone(), sources.clone(), turn_record.clone()));
 
     let finalize_start = Instant::now();
     // Finalization marks the question failed itself when the commit does not

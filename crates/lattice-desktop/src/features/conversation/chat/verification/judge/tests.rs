@@ -206,7 +206,10 @@ fn support_deep_in_a_long_page_reaches_the_judge_in_a_later_part() {
         "Closing prose. ".repeat(50),
     );
     let sources = [source(&page)];
-    let claims = lexical_pass("The valley harvest begins in late September [s1].", &sources);
+    let claims = lexical_pass(
+        "The valley harvest begins in late September [s1].",
+        &sources,
+    );
     let parts = found_parts(evidence_for(&claims[0], &sources, 2_500));
     assert!(parts.len() > 1, "the page needs more than one call");
     assert!(parts.iter().all(|part| part.text.chars().count() <= 2_500));
@@ -754,9 +757,7 @@ mod session_talk {
     use super::*;
     use lattice_core::application::ports::llm_port::CompletionResponse;
     use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
-    use lattice_core::application::services::model_contract::test_support::{
-        ScriptedModel, Sent,
-    };
+    use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
 
     const GREETING: &str = "Good work, you named that part exactly.";
     const FACT: &str = "The tide table has six rows in total.";
@@ -821,9 +822,10 @@ mod session_talk {
 
     #[tokio::test]
     async fn the_sentences_marked_as_session_talk_are_the_only_ones_left_out() {
-        let (judge, _) = judge(ScriptedModel::new().on_request::<SessionTalk>(|sent, _| {
-            said(marks_of(sent, &[GREETING, NEXT]))
-        }));
+        let (judge, _) = judge(
+            ScriptedModel::new()
+                .on_request::<SessionTalk>(|sent, _| said(marks_of(sent, &[GREETING, NEXT]))),
+        );
 
         let about = judge.about_the_subject(&[GREETING, FACT, NEXT]).await;
 
@@ -844,10 +846,10 @@ mod session_talk {
 
     #[tokio::test]
     async fn an_answer_of_numbers_drops_nothing() {
-        let (judge, _) = judge(
-            ScriptedModel::new()
-                .on_request::<SessionTalk>(|_, _| said(r#"{"marks":[{"at":"1"},{"at":"3"}]}"#.into())),
-        );
+        let (judge, _) =
+            judge(ScriptedModel::new().on_request::<SessionTalk>(|_, _| {
+                said(r#"{"marks":[{"at":"1"},{"at":"3"}]}"#.into())
+            }));
 
         let about = judge.about_the_subject(&[GREETING, FACT, NEXT]).await;
 
@@ -856,10 +858,10 @@ mod session_talk {
 
     #[tokio::test]
     async fn an_answer_that_cannot_be_read_leaves_every_sentence_a_claim() {
-        let (judge, _) = judge(
-            ScriptedModel::new()
-                .on_request::<SessionTalk>(|_, _| said("I could not tell which are which.".into())),
-        );
+        let (judge, _) =
+            judge(ScriptedModel::new().on_request::<SessionTalk>(|_, _| {
+                said("I could not tell which are which.".into())
+            }));
 
         let about = judge.about_the_subject(&[GREETING, FACT, NEXT]).await;
 
@@ -868,15 +870,13 @@ mod session_talk {
 
     #[tokio::test]
     async fn a_mark_that_points_at_nothing_shown_is_asked_for_again() {
-        let (judge, model) = judge(ScriptedModel::new().on_request::<SessionTalk>(
-            |sent, nth| {
-                if nth == 0 {
-                    said(r#"{"marks":[{"at":"s9"}]}"#.into())
-                } else {
-                    said(marks_of(sent, &[NEXT]))
-                }
-            },
-        ));
+        let (judge, model) = judge(ScriptedModel::new().on_request::<SessionTalk>(|sent, nth| {
+            if nth == 0 {
+                said(r#"{"marks":[{"at":"s9"}]}"#.into())
+            } else {
+                said(marks_of(sent, &[NEXT]))
+            }
+        }));
 
         let about = judge.about_the_subject(&[GREETING, FACT, NEXT]).await;
 
@@ -886,11 +886,9 @@ mod session_talk {
 
     #[tokio::test]
     async fn a_backend_that_fails_settles_nothing() {
-        let (judge, _) = judge(
-            ScriptedModel::new().failing_every_request(|_| {
-                lattice_core::shared::error::AppError::InternalError("down".into())
-            }),
-        );
+        let (judge, _) = judge(ScriptedModel::new().failing_every_request(|_| {
+            lattice_core::shared::error::AppError::InternalError("down".into())
+        }));
 
         assert_eq!(judge.about_the_subject(&[GREETING, FACT]).await, None);
     }
