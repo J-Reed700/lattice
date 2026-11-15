@@ -80,19 +80,6 @@ fn system_of<C: Contract>(model: &ScriptedModel) -> String {
     task_messages(&asks::<C>(model)[0].request).0.to_owned()
 }
 
-/// Every message of the request, one after another.
-fn prompt_of(sent: &Sent) -> String {
-    sent.request
-        .input()
-        .iter()
-        .filter_map(|item| match item {
-            CompletionInput::Message { content, .. } => Some(content.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
 /// The handles a task shows for `label` ("Issue" or "Finding"), each with the rest of the line it is shown on, in the
 /// order shown.
 fn shown(task: &str, label: &str) -> Vec<(String, String)> {
@@ -567,7 +554,7 @@ async fn each_fault_is_refused_for_that_issue_alone_and_the_next_entry_is_accept
         assert_eq!(graded.ok(), Some(assessment()), "{name}");
         let asked = asks::<GradeReview>(&llm);
         assert_eq!(asked.len(), 2, "{name}");
-        let again = prompt_of(&asked[1]);
+        let again = asked[1].prompt();
         assert!(
             again.contains(message),
             "{name}: {message} is not in {again}"
@@ -604,9 +591,9 @@ async fn an_issue_found_by_something_not_shown_is_asked_again_alone_and_then_tol
     assert_eq!(graded.ok(), Some(assessment()));
     let asked = asks::<GradeReview>(&llm);
     assert_eq!(asked.len(), 3);
-    assert_eq!(shown(&prompt_of(&asked[1]), "Issue").len(), 1);
-    assert!(!prompt_of(&asked[1]).contains(message));
-    let again = prompt_of(&asked[2]);
+    assert_eq!(shown(&asked[1].prompt(), "Issue").len(), 1);
+    assert!(!asked[1].prompt().contains(message));
+    let again = asked[2].prompt();
     assert!(again.contains(message), "{message} is not in {again}");
     assert_eq!(shown(&again, "Issue").len(), 1);
     Ok(())
@@ -627,11 +614,11 @@ async fn an_issue_the_answer_leaves_out_is_asked_for_alone_and_the_others_stand(
     assert_eq!(grade(&llm, &Scene::new()).await?, assessment());
     let asked = asks::<GradeReview>(&llm);
     assert_eq!(asked.len(), 2);
-    let again = shown(&prompt_of(&asked[1]), "Issue");
+    let again = shown(&asked[1].prompt(), "Issue");
     assert_eq!(again.len(), 1);
     assert!(again[0].1.contains("orders.py line 9"), "{again:?}");
     assert_eq!(
-        shown(&prompt_of(&asked[1]), "Finding").len(),
+        shown(&asked[1].prompt(), "Finding").len(),
         4,
         "the review stays whole"
     );
@@ -698,7 +685,8 @@ async fn a_finding_without_a_reason_is_asked_about_again_alone() -> Result<()> {
     assert_eq!(grade(&llm, &Scene::new()).await?, assessment());
     let asked = asks::<GradeExtras>(&llm);
     assert_eq!(asked.len(), 2);
-    assert!(prompt_of(&asked[1])
+    assert!(asked[1]
+        .prompt()
         .contains("This finding has no reason: say why before giving its outcome."));
     Ok(())
 }

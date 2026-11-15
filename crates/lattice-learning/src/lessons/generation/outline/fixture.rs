@@ -14,11 +14,9 @@ static BUILT_ON: LazyLock<Mutex<HashMap<String, Vec<usize>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn task_of(prompt: &str) -> Option<Value> {
-    prompt.split("\n\n").find_map(|chunk| {
-        serde_json::from_str::<Value>(chunk)
-            .ok()
-            .filter(|task| task.get("task").is_some())
-    })
+    lattice_core::application::services::model_contract::test_support::tasks_in(prompt)
+        .into_iter()
+        .find(|task| task.get("task").is_some())
 }
 
 fn key_of(titles: &[&str]) -> String {

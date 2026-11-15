@@ -2,10 +2,12 @@ use super::RenderAnswer;
 use crate::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, LLMPort,
 };
+use crate::application::services::model_contract::shape::Schema;
 use crate::application::services::model_contract::{Contract, ContractCall, ContractId};
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use futures::future::BoxFuture;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -54,6 +56,45 @@ pub struct Sent {
     pub request: CompletionRequest,
 }
 
+/// Every message of `request`, system and user, one after another.
+pub fn prompt_of(request: &CompletionRequest) -> String {
+    request
+        .input()
+        .iter()
+        .filter_map(|item| match item {
+            CompletionInput::Message { content, .. } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// The JSON objects `prompt` carries, in order: each part between blank lines that begins with one.
+pub fn tasks_in(prompt: &str) -> Vec<Value> {
+    prompt
+        .split("\n\n")
+        .filter_map(|part| {
+            serde_json::Deserializer::from_str(part)
+                .into_iter::<Value>()
+                .next()
+                .and_then(std::result::Result::ok)
+                .filter(Value::is_object)
+        })
+        .collect()
+}
+
+impl Sent {
+    /// Every message of the request, one after another.
+    pub fn prompt(&self) -> String {
+        prompt_of(&self.request)
+    }
+
+    /// The JSON objects the request carries, in order.
+    pub fn tasks(&self) -> Vec<Value> {
+        tasks_in(&self.prompt())
+    }
+}
+
 type Handler = Box<dyn Fn(&Sent, usize) -> BoxFuture<'static, Handled> + Send + Sync>;
 
 type Outage = Box<dyn Fn(&Sent) -> AppError + Send + Sync>;
@@ -71,6 +112,7 @@ pub struct ScriptedModel {
     name: String,
     window: usize,
     exact_tokens: bool,
+    enforcing: bool,
     handlers: HashMap<ContractId, Handler>,
     outage: Option<Outage>,
     record: Mutex<Record>,
@@ -88,6 +130,7 @@ impl ScriptedModel {
             name: "scripted-model".into(),
             window: SCRIPTED_WINDOW,
             exact_tokens: false,
+            enforcing: false,
             handlers: HashMap::new(),
             outage: None,
             record: Mutex::new(Record::default()),
@@ -106,6 +149,12 @@ impl ScriptedModel {
 
     pub fn exact_tokens(mut self, exact: bool) -> Self {
         self.exact_tokens = exact;
+        self
+    }
+
+    /// A backend that holds an answer to its schema.
+    pub fn enforcing(mut self) -> Self {
+        self.enforcing = true;
         self
     }
 
@@ -290,6 +339,10 @@ impl LLMPort for ScriptedModel {
 
     fn counts_tokens_exactly(&self) -> bool {
         self.exact_tokens
+    }
+
+    fn enforces(&self, _schema: &Schema) -> bool {
+        self.enforcing
     }
 
     async fn is_ready(&self) -> Result<bool> {

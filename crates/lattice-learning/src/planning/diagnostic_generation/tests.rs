@@ -5,16 +5,16 @@ use super::*;
 use crate::dto::{LearningOutcomeDefinitionDto, LearningProgramDto, LearningSourceDto};
 use crate::lessons::course_generation_tests::Model;
 use futures::future::BoxFuture;
-use lattice_core::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, CompletionResponse,
-};
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::model_contract::packed::Packed;
 use lattice_core::application::services::model_contract::shape::Pointers;
 use lattice_core::application::services::model_contract::shown::Told;
 use lattice_core::application::services::model_contract::test_support::samples::schema_of;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
-use lattice_core::application::services::model_contract::test_support::ScriptedModel;
+use lattice_core::application::services::model_contract::test_support::{
+    prompt_of, tasks_in, ScriptedModel,
+};
 use lattice_core::application::services::model_contract::Contract;
 use serde_json::{json, Value};
 use std::sync::Mutex;
@@ -23,28 +23,11 @@ fn reply(text: String) -> BoxFuture<'static, Result<CompletionResponse>> {
     Box::pin(std::future::ready(Ok(CompletionResponse::from_text(text))))
 }
 
-/// Every message of the request, system and user, one after another.
-fn prompt_of(request: &CompletionRequest) -> String {
-    request
-        .input()
-        .iter()
-        .filter_map(|item| match item {
-            CompletionInput::Message { content, .. } => Some(content.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
 /// The task a prompt carries, the one that has a `key` field: a re-ask restates it.
 fn task_of(prompt: &str, key: &str) -> Value {
-    prompt
-        .rsplit("\n\n")
-        .find_map(|chunk| {
-            serde_json::from_str::<Value>(chunk)
-                .ok()
-                .filter(|task| task.get(key).is_some())
-        })
+    tasks_in(prompt)
+        .into_iter()
+        .rfind(|task| task.get(key).is_some())
         .unwrap()
 }
 

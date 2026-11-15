@@ -9,9 +9,7 @@ use crate::practice::session::fake_kind::fake_kind;
 use crate::practice::session::kind::{Kind, Kinds};
 use crate::practice_repository::KindVerdict;
 use futures::future::BoxFuture;
-use lattice_core::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, CompletionResponse,
-};
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
 use lattice_core::domain::learning::practice::work::KindId;
@@ -37,23 +35,6 @@ fn wanted(id: &str, words: &str) -> Kind {
 
 fn reason_of(kind: &str) -> String {
     format!("The reason for {kind}.")
-}
-
-/// Every message of the request, one after another.
-fn prompt_of(sent: &Sent) -> String {
-    sent.request
-        .input()
-        .iter()
-        .filter_map(|item| match item {
-            CompletionInput::Message { content, .. } => Some(content.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join(
-            "
-
-",
-        )
 }
 
 /// The handle written before each kind a request lists, with what the kind says.
@@ -93,13 +74,13 @@ fn replying(text: String) -> BoxFuture<'static, Result<CompletionResponse>> {
 /// A model that answers the nth request with `reply(prompt, n)`.
 fn scripted_by(reply: impl Fn(&str, usize) -> String + Send + Sync + 'static) -> ScriptedModel {
     ScriptedModel::new()
-        .on_request::<PracticeFit>(move |sent, nth| replying(reply(&prompt_of(sent), nth)))
+        .on_request::<PracticeFit>(move |sent, nth| replying(reply(&sent.prompt(), nth)))
 }
 
 /// A model that answers the nth request with the nth of `verdicts`, and fails a request after them.
 fn scripted(verdicts: &'static [&'static [(&'static str, bool)]]) -> ScriptedModel {
     ScriptedModel::new().on_request::<PracticeFit>(move |sent, nth| match verdicts.get(nth) {
-        Some(verdicts) => replying(answer(&prompt_of(sent), verdicts)),
+        Some(verdicts) => replying(answer(&sent.prompt(), verdicts)),
         None => Box::pin(std::future::ready(Err(AppError::InternalError(
             "Unexpected extra model call".into(),
         )))),
@@ -111,7 +92,7 @@ fn requests(model: &ScriptedModel) -> Vec<CompletionRequest> {
 }
 
 fn texts(model: &ScriptedModel) -> Vec<String> {
-    model.sent().iter().map(prompt_of).collect()
+    model.sent().iter().map(Sent::prompt).collect()
 }
 
 fn entry(kind: &str, fit: KindFit, reason: Option<&str>) -> PracticeKindFitDto {

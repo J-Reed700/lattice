@@ -5,7 +5,7 @@ use crate::practical_dto::{
     LearningSimulationTurnDto,
 };
 use futures::future::BoxFuture;
-use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
+use lattice_core::application::ports::llm_port::CompletionResponse;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
 use serde_json::json;
@@ -16,18 +16,6 @@ const KILN: &str = "The kiln fires every bowl once the damper is shut.";
 
 fn reply(text: String) -> BoxFuture<'static, Result<CompletionResponse>> {
     Box::pin(std::future::ready(Ok(CompletionResponse::from_text(text))))
-}
-
-fn prompt_of(sent: &Sent) -> String {
-    sent.request
-        .input()
-        .iter()
-        .filter_map(|item| match item {
-            CompletionInput::Message { content, .. } => Some(content.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
 }
 
 /// The handle, as written, that the prompt shows before `sentence`.
@@ -97,7 +85,7 @@ fn turn_input(passages: Packed<Excerpt>) -> TurnInput {
 /// A model that cites each sentence named in `cited` by the label the request shows before it.
 fn turn_model(cited: serde_json::Value) -> ScriptedModel {
     ScriptedModel::new().on_request::<SimulationTurn>(move |sent, _| {
-        let prompt = prompt_of(sent);
+        let prompt = sent.prompt();
         let citations: Vec<serde_json::Value> = cited
             .as_array()
             .unwrap()
@@ -280,7 +268,7 @@ async fn an_activity_names_its_sources_by_label_and_the_app_reads_the_version() 
     let Settled::Answered(draft) = asked_activity(&model, &activity_input(&[])).await else {
         panic!("the activity was not answered");
     };
-    assert!(prompt_of(&model.sent()[0]).contains("\"source\":\"s1\""));
+    assert!(model.sent()[0].prompt().contains("\"source\":\"s1\""));
     assert_eq!(draft.into_json().source_version_ids, vec!["version-1"]);
     assert_eq!(
         model.sent().len(),

@@ -106,23 +106,6 @@ fn card(question: &str, cites: &[impl AsRef<str>]) -> Value {
     })
 }
 
-/// Every message of the request, one after another.
-fn prompt_of(sent: &Sent) -> String {
-    sent.request
-        .input()
-        .iter()
-        .filter_map(|item| match item {
-            CompletionInput::Message { content, .. } => Some(content.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join(
-            "
-
-",
-        )
-}
-
 fn answer(cards: Vec<Value>) -> String {
     json!({"items":cards}).to_string()
 }
@@ -162,7 +145,7 @@ async fn a_complete_answer_is_read_and_each_card_cites_its_source() {
     let task = task(&sent[0]);
     assert_eq!(task["count"], json!(2));
     assert!(task.get("alreadyWritten").is_none());
-    let prompt = prompt_of(&sent[0]);
+    let prompt = sent[0].prompt();
     assert!(!prompt.contains(&program.sources[0].id), "{prompt}");
     assert_eq!(names(&sent[0]), ["u1", "u2", "u3"]);
 }

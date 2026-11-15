@@ -728,9 +728,7 @@ mod contracts {
     };
     use futures::future::BoxFuture;
     use lattice_core::application::services::model_contract::packed::Packed;
-    use lattice_core::application::services::model_contract::shape::{
-        Each, Pointers, Schema, Shape,
-    };
+    use lattice_core::application::services::model_contract::shape::{Each, Pointers, Shape};
     use lattice_core::application::services::model_contract::shown::{Scope, Told};
     use lattice_core::application::services::model_contract::test_support::snapshot::rendered;
     use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
@@ -764,30 +762,6 @@ mod contracts {
     fn tutoring(answer: impl Fn(&str, usize) -> String + Send + Sync + 'static) -> ScriptedModel {
         ScriptedModel::new()
             .on_request::<TutorReply>(move |sent, nth| reply(answer(&prompt_of(sent), nth)))
-    }
-
-    struct Enforcing<'a>(&'a ScriptedModel);
-
-    #[async_trait::async_trait]
-    impl LLMPort for Enforcing<'_> {
-        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-            self.0.complete(request).await
-        }
-        fn model_name(&self) -> &str {
-            self.0.model_name()
-        }
-        fn max_context_tokens(&self) -> usize {
-            self.0.max_context_tokens()
-        }
-        fn counts_tokens_exactly(&self) -> bool {
-            self.0.counts_tokens_exactly()
-        }
-        fn enforces(&self, _schema: &Schema) -> bool {
-            true
-        }
-        async fn is_ready(&self) -> Result<bool> {
-            Ok(true)
-        }
     }
 
     fn grading(answer: impl Fn(&str, usize) -> String + Send + Sync + 'static) -> ScriptedModel {
@@ -950,8 +924,9 @@ mod contracts {
         let session = started_session("I tried the second approach first.").await?;
         let sources = [passage_source(&format!("{STEP} {TIDE}"))];
         let model =
-            tutoring(|_, _| tutor_reply("Which step carries the weight?", json!([]), json!([])));
-        tutor(&Enforcing(&model), &session, &tutor_request(), &sources).await?;
+            tutoring(|_, _| tutor_reply("Which step carries the weight?", json!([]), json!([])))
+                .enforcing();
+        tutor(&model, &session, &tutor_request(), &sources).await?;
         let sent = model.sent();
         let schema = sent[0]
             .request

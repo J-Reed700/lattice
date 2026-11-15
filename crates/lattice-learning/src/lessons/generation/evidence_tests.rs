@@ -4,7 +4,7 @@ use crate::lessons::course_generation_tests::ScriptedModel;
 use crate::lessons::structured_call::is_draft_request;
 use crate::repository::LearningRepository;
 use futures::future::BoxFuture;
-use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
+use lattice_core::application::ports::llm_port::CompletionResponse;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::application::services::model_contract::test_support::{
     ScriptedModel as Scripted, Sent,
@@ -46,23 +46,9 @@ fn reply(text: String) -> BoxFuture<'static, Result<CompletionResponse>> {
 
 /// The task of a coverage request: its topics and passages.
 fn task_of(sent: &Sent) -> Value {
-    let prompt = sent
-        .request
-        .input()
-        .iter()
-        .filter_map(|item| match item {
-            CompletionInput::Message { content, .. } => Some(content.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    prompt
-        .split("\n\n")
-        .find_map(|chunk| {
-            serde_json::from_str::<Value>(chunk)
-                .ok()
-                .filter(|task| task.get("topics").is_some())
-        })
+    sent.tasks()
+        .into_iter()
+        .find(|task| task.get("topics").is_some())
         .unwrap_or(Value::Null)
 }
 

@@ -4,7 +4,7 @@ use crate::dto::LearningSourceDto;
 use crate::lessons::course_generation_tests::{length_bounds, RequestLog};
 use crate::lessons::structured_call::{is_draft_request, task_messages};
 use futures::future::BoxFuture;
-use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
+use lattice_core::application::ports::llm_port::CompletionResponse;
 use lattice_core::application::services::model_contract::shape::Pointers;
 use lattice_core::application::services::model_contract::test_support::samples::schema_of;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
@@ -21,21 +21,8 @@ fn reply(text: String) -> BoxFuture<'static, Result<CompletionResponse>> {
     Box::pin(std::future::ready(Ok(CompletionResponse::from_text(text))))
 }
 
-/// Every message of the request, system and user, one after another.
-fn prompt_of(sent: &Sent) -> String {
-    sent.request
-        .input()
-        .iter()
-        .filter_map(|item| match item {
-            CompletionInput::Message { content, .. } => Some(content.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
 fn task(sent: &Sent) -> Value {
-    task_of(&prompt_of(sent)).unwrap()
+    task_of(&sent.prompt()).unwrap()
 }
 
 fn instructions(sent: &Sent) -> String {
@@ -126,7 +113,7 @@ fn scripted(answer: impl Fn(&str, usize) -> String + Send + Sync + 'static) -> S
             return reply("The findings are weighed.".to_owned());
         }
         let earlier = asked.fetch_add(1, Ordering::SeqCst);
-        reply(answer(&prompt_of(sent), earlier))
+        reply(answer(&sent.prompt(), earlier))
     })
 }
 
@@ -303,7 +290,9 @@ async fn a_decision_that_cites_nothing_is_corrected_for_that_finding_alone() -> 
     let sent = asks(&model);
     assert_eq!(sent.len(), 2);
     assert_eq!(texts_of(&sent[1]), ["The kettle is described twice."]);
-    assert!(prompt_of(&sent[1]).contains("cites at least one reference passage in referenceIds"));
+    assert!(sent[1]
+        .prompt()
+        .contains("cites at least one reference passage in referenceIds"));
     Ok(())
 }
 
@@ -396,7 +385,9 @@ async fn a_malformed_actionable_finding_is_asked_for_once_more() -> Result<()> {
     // The refused decision is asked for once more, with its reason.
     let sent = asks(&model);
     assert_eq!(sent.len(), 2);
-    assert!(prompt_of(&sent[1]).contains("cites at least one candidate part in candidateIds"));
+    assert!(sent[1]
+        .prompt()
+        .contains("cites at least one candidate part in candidateIds"));
     Ok(())
 }
 
@@ -616,7 +607,9 @@ async fn a_blank_reason_is_still_refused() -> Result<()> {
     assert!(checked.established.is_empty());
     let sent = asks(&model);
     assert_eq!(sent.len(), 2);
-    assert!(prompt_of(&sent[1]).contains("Give the reason for this decision in reason."));
+    assert!(sent[1]
+        .prompt()
+        .contains("Give the reason for this decision in reason."));
     Ok(())
 }
 
@@ -818,7 +811,9 @@ async fn a_cite_the_request_does_not_show_costs_only_that_cite() -> Result<()> {
     assert!(checked.established.is_empty());
     let sent = asks(&model);
     assert_eq!(sent.len(), 2);
-    assert!(prompt_of(&sent[1]).contains("cites at least one reference passage in referenceIds"));
+    assert!(sent[1]
+        .prompt()
+        .contains("cites at least one reference passage in referenceIds"));
     Ok(())
 }
 
@@ -954,7 +949,7 @@ async fn each_candidate_part_is_offered_with_the_label_the_user_sees() -> Result
     )
     .await?;
     let sent = asks(&model);
-    assert!(prompt_of(&sent[0]).contains("partId"));
+    assert!(sent[0].prompt().contains("partId"));
     let parts: Vec<_> = task(&sent[0])["candidateParts"]
         .as_array()
         .unwrap()

@@ -49,12 +49,9 @@ pub(crate) fn ask_of(system: &str, user: &str) -> Option<Ask> {
 
 /// The task a request carries.
 pub(crate) fn task_of(user: &str) -> Value {
-    user.rsplit("\n\n")
-        .find_map(|chunk| {
-            serde_json::from_str::<Value>(chunk)
-                .ok()
-                .filter(|task| task.get("task").is_some())
-        })
+    lattice_core::application::services::model_contract::test_support::tasks_in(user)
+        .into_iter()
+        .rfind(|task| task.get("task").is_some())
         .unwrap_or(Value::Null)
 }
 
