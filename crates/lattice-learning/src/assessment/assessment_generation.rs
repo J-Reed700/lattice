@@ -23,7 +23,6 @@ use crate::grade_rationale::{GraderCriterion, GraderItem, GraderVerdict};
 use crate::lessons::structured_call::Asking;
 use crate::model_call::{self, ErrorClass};
 use crate::reference_collection::ReferenceCollection;
-use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::application::services::model_contract::ask::{
     self, Alone, Answered, Says, Settled,
 };
@@ -31,9 +30,7 @@ use lattice_core::application::services::model_contract::packed::Packed;
 use lattice_core::application::services::model_contract::shape::{New, Value as Whole};
 use lattice_core::application::services::model_contract::shown::{Scope, Showing, Told};
 use lattice_core::application::services::model_contract::units::{Grain, Units};
-use lattice_core::application::services::model_contract::{
-    Contract, ContractCall, ContractId, PromptInput,
-};
+use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{smaller_parts_may_succeed, AppError, Result},
