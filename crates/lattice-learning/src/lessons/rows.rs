@@ -19,7 +19,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 
+mod keys;
 mod rendering;
+mod value;
+
+pub(crate) use keys::Rekey;
 
 /// The lists of the material whose elements are parts, and whether a part of one is a question.
 const LISTS: [(&str, bool); 2] = [("blocks", false), ("questions", true)];
@@ -239,6 +243,7 @@ pub(crate) struct Edits {
     pub cite: Vec<Cite>,
     pub recite: Vec<Recite>,
     pub uncite: Vec<Picked<Citation>>,
+    pub keys: Vec<Rekey>,
 }
 
 impl Authored for Edits {
@@ -248,6 +253,7 @@ impl Authored for Edits {
             .list::<Cite>("cite")
             .list::<Recite>("recite")
             .cite::<Citation>("uncite")
+            .list::<Rekey>("keys")
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
@@ -255,11 +261,13 @@ impl Authored for Edits {
         let cite = fields.list::<Cite>("cite")?;
         let recite = fields.list::<Recite>("recite")?;
         let uncite = fields.cite::<Citation>("uncite");
+        let keys = fields.list::<Rekey>("keys")?;
         Some(Self {
             sentences,
             cite,
             recite,
             uncite,
+            keys,
         })
     }
 }
@@ -271,6 +279,7 @@ impl Edits {
             && self.cite.is_empty()
             && self.recite.is_empty()
             && self.uncite.is_empty()
+            && self.keys.is_empty()
     }
 }
 
@@ -309,6 +318,8 @@ pub(crate) struct Rows {
     citations: Vec<Citation>,
     recited: Vec<(CitationRef, Option<(u64, String)>)>,
     added: Vec<Added>,
+    /// A question's part and the option its key names now.
+    keyed: Vec<(String, usize)>,
 }
 
 /// What `Rows::shown` showed.
@@ -520,6 +531,7 @@ impl Rows {
             citations,
             recited: Vec::new(),
             added: Vec::new(),
+            keyed: Vec::new(),
         }
     }
 
@@ -532,7 +544,8 @@ impl Rows {
         let mut parts = BTreeSet::new();
         let named = units_named(edits.sentences.change())
             .into_iter()
-            .chain(edits.cite.iter().map(|cite| &cite.sentence));
+            .chain(edits.cite.iter().map(|cite| &cite.sentence))
+            .chain(edits.keys.iter().map(|key| &key.right));
         for unit in named {
             if let Some(field) = self.field_of(&unit.reference) {
                 parts.insert(field.part.clone());
@@ -730,6 +743,8 @@ impl Rows {
             }
         }
 
+        let moves = self.key_moves(&edits.keys, &current, &mut problems);
+
         let mut trials: Vec<(usize, Units)> = Vec::new();
         let mut met: Option<String> = None;
         for (at, part) in groups {
@@ -821,6 +836,7 @@ impl Rows {
                 field.units = units;
             }
         }
+        written.extend(self.move_keys(moves));
         for recite in &edits.recite {
             if let Some(quote) = quotes.get(&recite.quote.reference) {
                 self.recited.push((
@@ -874,122 +890,5 @@ impl Rows {
             }
         }
         Ok(Took { parts, written })
-    }
-
-    /// The material as it stands after the entries taken.
-    pub(crate) fn value(&self) -> Value {
-        let mut out = self.base.clone();
-        for field in self.fields.iter().filter(|field| field.units.changed()) {
-            if let Some(slot) = out.pointer_mut(&field.pointer) {
-                *slot = Value::String(field.units.text());
-            }
-        }
-        for (part_pointer, question) in part_pointers(&self.base) {
-            let (own, listed) = self.citations_of(&out, &part_pointer, question);
-            if let Some(Value::Object(map)) = out.pointer_mut(&part_pointer) {
-                if let Some((index, quote)) = own {
-                    map.insert("sourceIndex".to_owned(), index);
-                    map.insert("quote".to_owned(), quote);
-                }
-                if let Some(list) = listed {
-                    map.insert("citations".to_owned(), Value::Array(list));
-                }
-            }
-        }
-        out
-    }
-
-    /// A part's own pair and its listed citations as they now stand; `None` for what is as it was.
-    fn citations_of(
-        &self,
-        out: &Value,
-        part_pointer: &str,
-        question: bool,
-    ) -> (Option<(Value, Value)>, Option<Vec<Value>>) {
-        let own_at = CitationRef {
-            part: part_pointer.to_owned(),
-            index: None,
-        };
-        let own =
-            self.recited.iter().find(|(done, _)| *done == own_at).map(
-                |(_, recited)| match recited {
-                    Some((source, quote)) => (json!(source), json!(quote)),
-                    None => (Value::Null, json!("")),
-                },
-            );
-        let entries = self
-            .base
-            .pointer(&format!("{part_pointer}/citations"))
-            .and_then(Value::as_array);
-        let mut list: Vec<Value> = Vec::new();
-        for (index, entry) in entries.into_iter().flatten().enumerate() {
-            let at = CitationRef {
-                part: part_pointer.to_owned(),
-                index: Some(index),
-            };
-            let recited = self.recited.iter().find(|(done, _)| *done == at);
-            if let Some((_, None)) = recited {
-                continue;
-            }
-            let mut entry = entry.clone();
-            if let (Some((_, Some((source, quote)))), Some(map)) = (recited, entry.as_object_mut())
-            {
-                map.insert("sourceIndex".to_owned(), json!(source));
-                map.insert("quote".to_owned(), json!(quote));
-            }
-            let covers = self
-                .citations
-                .iter()
-                .find(|held| held.at == at)
-                .map(|held| held.covers.as_slice())
-                .unwrap_or_default();
-            let field = covers.first().and_then(|first| self.field_of(first));
-            if let Some(field) = field.filter(|field| field.units.touched(covers)) {
-                match field.units.stands(covers) {
-                    Some(sentence) => {
-                        if let Some(map) = entry.as_object_mut() {
-                            map.insert("sentence".to_owned(), Value::String(sentence));
-                        }
-                    }
-                    None => continue,
-                }
-            }
-            list.push(entry);
-        }
-        for added in &self.added {
-            let (part, sentence, source, quote) = match added {
-                Added::Cite {
-                    unit,
-                    part,
-                    source,
-                    quote,
-                } => (
-                    part,
-                    self.field_of(unit)
-                        .and_then(|field| field.units.stands(&[*unit])),
-                    *source,
-                    quote,
-                ),
-                Added::Text {
-                    part,
-                    sentence,
-                    source,
-                    quote,
-                } => (part, Some(sentence.clone()), *source, quote),
-            };
-            let (Some(sentence), true) = (sentence, part == part_pointer) else {
-                continue;
-            };
-            let Some(target) = out.pointer(part_pointer) else {
-                continue;
-            };
-            if let Some(entry) = citation_entry(target, question, &sentence, json!(source), quote) {
-                if !list.contains(&entry) {
-                    list.push(entry);
-                }
-            }
-        }
-        let listed = (entries.is_some() || !list.is_empty()).then_some(list);
-        (own, listed)
     }
 }

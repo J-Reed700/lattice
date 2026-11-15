@@ -884,3 +884,200 @@ fn new_text_that_begins_with_a_blank_line_starts_a_paragraph() {
         format!("{FIRST} {SECOND}\n\n{new}\n\n{THIRD}")
     );
 }
+
+// ---- the answer key ----
+
+fn quiz() -> Value {
+    json!({"blocks": [], "questions": [{
+        "kind": "multipleChoice",
+        "prompt": "Which tide comes first?",
+        "options": ["Neap.", "Spring.", "Slack."],
+        "correctIndex": 0,
+        "rationales": ["Neap is not first.", "Spring is not first.", "Slack is not first."],
+        "explanation": "The kiln fires at dawn.",
+        "sourceIndex": null,
+        "quote": "",
+        "citations": []
+    }]})
+}
+
+fn without_reasons() -> Value {
+    let mut material = quiz();
+    if let Some(question) = material["questions"][0].as_object_mut() {
+        question.remove("rationales");
+    }
+    material
+}
+
+fn keyed(right: &str, was_wrong: &str) -> Value {
+    json!({"keys": [{"right": right, "wasWrong": was_wrong}]})
+}
+
+#[test]
+fn a_key_is_moved_and_the_reasons_follow() {
+    let mut rows = Rows::of(&quiz());
+    let spring = h(&render(&rows), "Spring.");
+    let took = take(
+        &mut rows,
+        &Quotes::default(),
+        keyed(&spring, "  Neap tides are not the first.  "),
+    )
+    .expect("taken");
+    let value = rows.value();
+    let question = &value["questions"][0];
+    assert_eq!(question["correctIndex"], json!(1));
+    assert_eq!(
+        question["rationales"],
+        json!(["Neap tides are not the first.", "", "Slack is not first."])
+    );
+    assert_eq!(question["options"], quiz()["questions"][0]["options"]);
+    assert_eq!(took.parts.iter().collect::<Vec<_>>(), vec!["/questions/0"]);
+    assert_eq!(
+        took.written,
+        vec!["Neap tides are not the first.".to_owned()]
+    );
+}
+
+#[test]
+fn a_key_moves_again_in_a_later_entry_from_where_it_now_stands() {
+    let mut rows = Rows::of(&quiz());
+    let rendered = render(&rows);
+    let (spring, slack) = (h(&rendered, "Spring."), h(&rendered, "Slack."));
+    take(
+        &mut rows,
+        &Quotes::default(),
+        keyed(&spring, "Neap is wrong."),
+    )
+    .expect("taken");
+    assert_eq!(
+        refused(take(&mut rows, &Quotes::default(), keyed(&spring, "x"))),
+        vec![format!(
+            "The answer key already names the option {spring} is in."
+        )]
+    );
+    take(
+        &mut rows,
+        &Quotes::default(),
+        keyed(&slack, "Spring is wrong."),
+    )
+    .expect("taken");
+    assert_eq!(rows.value()["questions"][0]["correctIndex"], json!(2));
+}
+
+#[test]
+fn a_sentence_outside_an_option_of_a_keyed_question_is_refused() {
+    let none = |label: &str| {
+        format!("{label} is not a sentence of an option of a question that has an answer key.")
+    };
+    let mut rows = Rows::of(&quiz());
+    let kiln = h(&render(&rows), "The kiln fires at dawn.");
+    assert_eq!(
+        refused(take(&mut rows, &Quotes::default(), keyed(&kiln, "x"))),
+        vec![none(&kiln)]
+    );
+    assert_eq!(rows.value(), quiz());
+
+    let mut unkeyed = quiz();
+    unkeyed["questions"][0]["correctIndex"] = Value::Null;
+    let mut rows = Rows::of(&unkeyed);
+    let spring = h(&render(&rows), "Spring.");
+    assert_eq!(
+        refused(take(&mut rows, &Quotes::default(), keyed(&spring, "x"))),
+        vec![none(&spring)]
+    );
+    assert_eq!(rows.value(), unkeyed);
+
+    let mut rows = Rows::of(&lesson());
+    let first = h(&render(&rows), FIRST);
+    assert_eq!(
+        refused(take(&mut rows, &quotes(), keyed(&first, "x"))),
+        vec![none(&first)]
+    );
+}
+
+#[test]
+fn the_option_the_key_names_already_is_refused() {
+    let mut rows = Rows::of(&quiz());
+    let neap = h(&render(&rows), "Neap.");
+    assert_eq!(
+        refused(take(&mut rows, &Quotes::default(), keyed(&neap, "x"))),
+        vec![format!(
+            "The answer key already names the option {neap} is in."
+        )]
+    );
+    assert_eq!(rows.value(), quiz());
+}
+
+#[test]
+fn a_questions_key_is_moved_once_in_an_entry() {
+    let mut rows = Rows::of(&quiz());
+    let rendered = render(&rows);
+    let (spring, slack) = (h(&rendered, "Spring."), h(&rendered, "Slack."));
+    let given = json!({"keys": [
+        {"right": spring, "wasWrong": "Neap is wrong."},
+        {"right": slack, "wasWrong": "Neap is wrong."}
+    ]});
+    assert_eq!(
+        refused(take(&mut rows, &Quotes::default(), given)),
+        vec!["An entry moves a question's answer key once.".to_owned()]
+    );
+    assert_eq!(rows.value(), quiz());
+}
+
+#[test]
+fn a_blank_reason_for_the_old_key_is_refused_when_the_options_have_reasons() {
+    let mut rows = Rows::of(&quiz());
+    let spring = h(&render(&rows), "Spring.");
+    assert_eq!(
+        refused(take(&mut rows, &Quotes::default(), keyed(&spring, " \t "))),
+        vec!["Say in wasWrong why the option the answer key named until now is wrong.".to_owned()]
+    );
+    assert_eq!(rows.value(), quiz());
+}
+
+#[test]
+fn a_question_without_reasons_moves_its_key_and_ignores_what_was_wrong() {
+    let mut rows = Rows::of(&without_reasons());
+    let spring = h(&render(&rows), "Spring.");
+    let took = take(&mut rows, &Quotes::default(), keyed(&spring, "")).expect("taken");
+    let mut expected = without_reasons();
+    expected["questions"][0]["correctIndex"] = json!(1);
+    assert_eq!(rows.value(), expected);
+    assert!(took.written.is_empty());
+    assert_eq!(took.parts.len(), 1);
+}
+
+#[test]
+fn the_parts_of_a_key_are_the_questions() {
+    let rows = Rows::of(&quiz());
+    let spring = h(&render(&rows), "Spring.");
+    let edits = entry(&rows, &Quotes::default(), keyed(&spring, "Neap is wrong."));
+    assert!(!edits.is_empty());
+    assert_eq!(
+        rows.parts_of(&edits).into_iter().collect::<Vec<_>>(),
+        vec!["/questions/0".to_owned()]
+    );
+}
+
+#[test]
+fn an_entry_that_changes_a_reason_an_earlier_key_rewrote_is_left() {
+    let mut rows = Rows::of(&quiz());
+    let rendered = render(&rows);
+    let (spring, neap_reason) = (h(&rendered, "Spring."), h(&rendered, "Neap is not first."));
+    take(
+        &mut rows,
+        &Quotes::default(),
+        keyed(&spring, "Neap tides are not the first."),
+    )
+    .expect("taken");
+    let taken = take(
+        &mut rows,
+        &Quotes::default(),
+        replacing(&neap_reason, "Neap comes later in the month."),
+    );
+    assert!(matches!(taken, Err(Left::Met(_))), "{taken:?}");
+    assert_eq!(
+        rows.value()["questions"][0]["rationales"][0],
+        json!("Neap tides are not the first.")
+    );
+}

@@ -6,7 +6,7 @@
 )]
 use super::*;
 use crate::lessons::teaching::repair_script::{
-    finding_labels, quote_label, sentence_label, task_of,
+    finding_labels, key_item, quote_label, sentence_label, task_of,
 };
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::services::model_contract::{
@@ -388,7 +388,7 @@ pub(crate) fn teaching_repair_answer(task: &Value, flat: &Value) -> String {
                 .unwrap_or(FIXTURE_PLAN);
             json!({"of": label, "plan": plan, "edits": {
                 "sentences": {"replace": [], "insert": [], "remove": [], "move": []},
-                "cite": [], "recite": [], "uncite": []}})
+                "cite": [], "recite": [], "uncite": [], "keys": []}})
         })
         .collect();
     let routed = |change: &Value, path: &str| -> usize {
@@ -414,6 +414,16 @@ pub(crate) fn teaching_repair_answer(task: &Value, flat: &Value) -> String {
     let mut replaced: Vec<(usize, usize, String, String)> = Vec::new();
     for edit in flat["edits"].as_array().into_iter().flatten() {
         let path = edit["path"].as_str().unwrap_or_default();
+        if path.ends_with("/correctIndex") {
+            let Some(key) = key_item(task, edit) else {
+                panic!("a scripted key change at {path} names no option of the candidate");
+            };
+            let entry = routed(edit, path);
+            if let Some(keys) = entries[entry]["edits"]["keys"].as_array_mut() {
+                keys.push(key);
+            }
+            continue;
+        }
         let pointer = pointer_of(path);
         let (Some(marked), Some(before), Some(after)) = (
             task["candidate"].pointer(&pointer).and_then(Value::as_str),

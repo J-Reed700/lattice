@@ -272,6 +272,11 @@ impl Units {
         (out, lays)
     }
 
+    /// Makes the text `text` whole, as one change that replaces every change applied before.
+    pub fn rewrite(&mut self, text: &str) {
+        self.edited.rewrite(text.to_owned());
+    }
+
     /// Whether any change has been applied.
     pub fn changed(&self) -> bool {
         self.edited.changed()

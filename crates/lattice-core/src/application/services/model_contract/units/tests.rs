@@ -644,3 +644,16 @@ fn new_content_without_line_breaks_joins_as_before() {
     });
     assert_eq!(inserted, "Ann ran. Cy hid.\n\nBob sat.");
 }
+
+#[test]
+fn a_rewrite_makes_the_text_whole_over_earlier_changes() {
+    let mut units = Units::of("Ann ran. Bob sat. Cy hid.", Grain::Sentence);
+    units.rewrite("Dee sang.");
+    assert_eq!(units.text(), "Dee sang.");
+    assert!(units.changed());
+    units.rewrite("");
+    assert_eq!(units.text(), "");
+    let mut empty = Units::of("", Grain::Sentence);
+    empty.rewrite("Dee sang.");
+    assert_eq!(empty.text(), "Dee sang.");
+}

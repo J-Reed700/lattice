@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-use super::super::repair_script::{finding_labels, quote_label, sentence_label, task_of};
+use super::super::repair_script::{
+    finding_labels, first_label, key_item, quote_label, sentence_label, task_of,
+};
 use super::*;
 use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
@@ -70,7 +72,7 @@ fn scripted(answer: impl Fn(&Value, usize) -> Vec<Value> + Send + Sync + 'static
 fn edits(replace: Vec<Value>) -> Value {
     json!({
         "sentences": {"replace": replace, "insert": [], "remove": [], "move": []},
-        "cite": [], "recite": [], "uncite": []
+        "cite": [], "recite": [], "uncite": [], "keys": []
     })
 }
 
@@ -402,7 +404,7 @@ async fn a_citation_asked_for_cites_the_quotable_sentence_it_names() -> Result<(
             "Cite the lid.",
             json!({
                 "sentences": {"replace": [], "insert": [], "remove": [], "move": []},
-                "cite": [{"sentence": lid, "quote": quote}], "recite": [], "uncite": []
+                "cite": [{"sentence": lid, "quote": quote}], "recite": [], "uncite": [], "keys": []
             }),
         )]
     });
@@ -650,4 +652,118 @@ fn a_reach_refuses_the_first_part_outside_it_in_the_words_a_correction_tells_the
         "These edits change a text outside every block and question, which is outside this finding's part (/blocks/0 and /blocks/2). Change only sentences and citations of /blocks/0 and /blocks/2."
     );
     assert_eq!(Reach::Anywhere.refuses(&parts(&["/blocks/9", ""])), None);
+}
+
+fn question(first: &str, second: &str) -> Value {
+    json!({
+        "kind": "multipleChoice",
+        "prompt": "Which tide comes first?",
+        "options": [first, second],
+        "correctIndex": 0,
+        "rationales": ["Neap is not it.", "Spring is it."],
+        "explanation": "Springs run higher.",
+        "sourceIndex": null,
+        "quote": "",
+        "citations": []
+    })
+}
+
+fn quiz_material() -> Value {
+    json!({
+        "blocks": [block("First", &format!("{STOVE} {LID}"))],
+        "questions": [question("Neap.", "Spring."), question("Slack.", "Ebb.")]
+    })
+}
+
+fn moving_key(task: &Value, question: usize) -> Vec<Value> {
+    let right = first_label(task, &format!("/questions/{question}/options/1")).unwrap();
+    vec![entry(
+        &finding_labels(task)[0],
+        "Move the key.",
+        json!({
+            "sentences": {"replace": [], "insert": [], "remove": [], "move": []},
+            "cite": [], "recite": [], "uncite": [],
+            "keys": [{"right": right, "wasWrong": "Neap tides run lower."}]
+        }),
+    )]
+}
+
+#[tokio::test]
+async fn a_key_is_moved_with_its_reasons_inside_the_findings_part() -> Result<()> {
+    let model = scripted(|task, _| moving_key(task, 0));
+    let findings = [at(FindingSite::Question(0), 1)];
+    let made = mended(&model, &findings, Keeps::Anything, &quiz_material()).await?;
+    assert_eq!(made.outcomes, [Outcome::Applied]);
+    let question = &made.candidate["questions"][0];
+    assert_eq!(question["correctIndex"], json!(1));
+    assert_eq!(
+        question["rationales"],
+        json!(["Neap tides run lower.", ""])
+    );
+    assert_eq!(made.candidate["questions"][1]["correctIndex"], json!(0));
+    assert_eq!(made.written[0], vec!["Neap tides run lower.".to_owned()]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_key_of_a_question_outside_the_findings_part_is_refused_by_the_reach() -> Result<()> {
+    let model = scripted(|task, _| moving_key(task, 1));
+    let findings = [at(FindingSite::Question(0), 1)];
+    let made = mended(&model, &findings, Keeps::Anything, &quiz_material()).await?;
+    assert_ne!(made.outcomes, [Outcome::Applied]);
+    assert_eq!(made.candidate["questions"][1]["correctIndex"], json!(0));
+    let again = prompt_of(&model.sent()[1]);
+    assert!(
+        again.contains("outside this finding's part (/questions/0)"),
+        "{again}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_key_of_a_protected_question_is_refused_by_the_protected_check() -> Result<()> {
+    let model = scripted(|task, _| moving_key(task, 0));
+    let findings = [at(FindingSite::Question(0), 1)];
+    let protected = [Protected {
+        unit: 1,
+        field: "correctIndex".into(),
+        quote: String::new(),
+        released: false,
+    }];
+    let keeps = Keeps::Lesson {
+        protected: &protected,
+    };
+    let made = mended(&model, &findings, keeps, &quiz_material()).await?;
+    assert!(
+        matches!(&made.outcomes[0], Outcome::Refused(_)),
+        "{:?}",
+        made.outcomes
+    );
+    assert_eq!(made.candidate["questions"][0]["correctIndex"], json!(0));
+    Ok(())
+}
+
+#[test]
+fn the_instructions_hold_the_key_rule_once_right_after_the_sentence_rule() {
+    for text in [system(true), system(false)] {
+        assert_eq!(text.matches(KEYS).count(), 1);
+        let sentences = text.find(SENTENCES).unwrap();
+        assert_eq!(text.find(KEYS).unwrap(), sentences + SENTENCES.len() + 1);
+    }
+}
+
+#[test]
+fn a_flat_key_change_becomes_a_keys_item_for_the_first_sentence_of_the_right_option() {
+    let task = json!({"candidate": {"questions": [{"options": ["[u1] Three", "[u2] Four. [u3] Yes."]}]}});
+    let flat = json!({"path": "/questions/0/correctIndex", "before": 0, "after": 1});
+    assert_eq!(
+        key_item(&task, &flat),
+        Some(json!({"right": "u2", "wasWrong": "It is not the right answer."}))
+    );
+    let said = json!({"path": "/questions/0/correctIndex", "before": 1, "after": 0, "wasWrong": "Four is too many."});
+    assert_eq!(
+        key_item(&task, &said),
+        Some(json!({"right": "u1", "wasWrong": "Four is too many."}))
+    );
+    assert_eq!(key_item(&task, &json!({"path": "/questions/0/prompt"})), None);
 }

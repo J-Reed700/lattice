@@ -424,6 +424,23 @@ impl<K: Kind, W> Edited<K, W> {
                 .any(|(_, anchor)| anchor.as_ref() == Some(thing))
     }
 
+    /// Puts `with` in the place of every change applied so far: it replaces the first thing shown and
+    /// the others are removed; with nothing shown it stands alone.
+    pub fn rewrite(&mut self, with: W) {
+        self.replace.clear();
+        self.insert.clear();
+        self.remove.clear();
+        self.moved.clear();
+        let mut things = self.shown.iter();
+        match things.next() {
+            Some(first) => {
+                self.replace.push((first.clone(), with));
+                self.remove.extend(things.cloned());
+            }
+            None => self.insert.push((None, with)),
+        }
+    }
+
     /// Whether an applied change replaced, removed or moved `thing`.
     fn claims(&self, thing: &K::Ref) -> bool {
         self.replace.iter().any(|(claimed, _)| claimed == thing)
