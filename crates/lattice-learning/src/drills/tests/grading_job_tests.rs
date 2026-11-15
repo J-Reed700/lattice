@@ -2,9 +2,9 @@
 //! job, a grade asked for again, and the job on the job runtime with the judge that grades every review.
 
 use super::support::{
-    blind_assessment, extra_finding, files, fix_answer, grade_answer, grade_extras_answer, last, operator_finding,
-    operator_fixed, proved, review_assessment, unchecked, FakeGrader, FakeRunner, ScriptedModel,
-    Waiting, LITERALS, MODEL, OPERATOR,
+    blind_assessment, extra_finding, files, fix_answer, grade_answer, grade_extras_answer, last,
+    operator_finding, operator_fixed, proved, review_assessment, unchecked, FakeGrader, FakeRunner,
+    ScriptedModel, Waiting, LITERALS, MODEL, OPERATOR,
 };
 use crate::drills::attempts::{self, AttemptStatus};
 use crate::drills::grader::{Review, ReviewGrader};

@@ -478,10 +478,7 @@ pub(super) async fn gather<'a>(
     }
     let judged = judge(llm, topics, &passages, &candidates, references).await?;
     let unjudged: Vec<bool> = judged.iter().map(Option::is_none).collect();
-    let mut covering: Vec<Vec<usize>> = judged
-        .into_iter()
-        .map(Option::unwrap_or_default)
-        .collect();
+    let mut covering: Vec<Vec<usize>> = judged.into_iter().map(Option::unwrap_or_default).collect();
     let mut expanded: Option<ReferenceCollection<'a>> = None;
     loop {
         let names: Vec<String> = topics

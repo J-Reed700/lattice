@@ -22,9 +22,14 @@ fn deck() -> StudyDeckDto {
     let card = ChoiceCard {
         question: "What should be studied before selecting a procedure?",
         answer: "The stated conditions",
-        distractors: ["Only the title", "Nothing", "Only the filing date", "Only the fee"]
-            .map(String::from)
-            .to_vec(),
+        distractors: [
+            "Only the title",
+            "Nothing",
+            "Only the filing date",
+            "Only the fee",
+        ]
+        .map(String::from)
+        .to_vec(),
         explanation: "The passage explicitly asks the reader to study the stated conditions.",
         topic: "Procedures",
     }

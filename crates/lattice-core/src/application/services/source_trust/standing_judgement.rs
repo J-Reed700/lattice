@@ -541,8 +541,8 @@ async fn attempt(
     let used = metered.used();
     let value = match settled {
         Settled::Answered(conclusion) => assessment(conclusion, judging),
-        Settled::Unanswered(Why::CutOff) => {
-            return Ok(Attempt::TooLarge(refusal(&failed(&Why::CutOff))));
+        Settled::Unanswered(why @ (Why::CutOff | Why::NoRoom)) => {
+            return Ok(Attempt::TooLarge(refusal(&failed(&why))));
         }
         Settled::Unanswered(why) => fallback(
             judging,

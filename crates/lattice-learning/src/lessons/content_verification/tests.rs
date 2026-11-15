@@ -814,9 +814,11 @@ fn verdict_last(reply: &str, ids: &[String]) -> String {
 pub(crate) fn question_review_response(prompt: &str) -> Option<String> {
     if prompt.starts_with("Solve quiz questions independently") {
         let task = fixture_task(prompt).unwrap();
-        let picks = task["questions"]
-            .as_array()
-            .is_some_and(|questions| questions.iter().all(|question| question["options"].is_array()));
+        let picks = task["questions"].as_array().is_some_and(|questions| {
+            questions
+                .iter()
+                .all(|question| question["options"].is_array())
+        });
         return Some(
             if picks {
                 crate::key_review::scripted::solved(&task, |_| vec![0])

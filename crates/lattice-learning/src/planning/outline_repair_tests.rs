@@ -443,7 +443,9 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
         initial.clone(),
         no_links(),
         findings(vec![factual_finding("/modules/0/summary", claim, reason)]),
-        crate::references::web_research::needs_answer(json!([{"gap":0,"query":"random assignment confounding primary source","kind":"web"}])),
+        crate::references::web_research::needs_answer(
+            json!([{"gap":0,"query":"random assignment confounding primary source","kind":"web"}]),
+        ),
         select_all(1),
         judged("unsupported", None),
         repair_answer(initial["modules"][0].clone()),
@@ -507,7 +509,9 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
     let llm = model(vec![
         no_links(),
         json!({"verdicts":[{"id":"finding-1","status":"unresolved","reason":"The summary still asserts the guarantee without support."}],"newFindings":[]}),
-        crate::references::web_research::needs_answer(json!([{"gap":0,"query":"random assignment confounding textbook","kind":"web"}])),
+        crate::references::web_research::needs_answer(
+            json!([{"gap":0,"query":"random assignment confounding textbook","kind":"web"}]),
+        ),
         select_all(1),
         judged("supported", Some(0)),
     ]);

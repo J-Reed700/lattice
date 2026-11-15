@@ -169,7 +169,6 @@ fn evidence() -> SessionEvidence {
     }
 }
 
-
 fn reply(text: String) -> BoxFuture<'static, Result<CompletionResponse>> {
     Box::pin(std::future::ready(Ok(CompletionResponse::from_text(text))))
 }

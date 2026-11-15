@@ -251,7 +251,9 @@ struct Counting {
 #[async_trait]
 impl ask::Transport for Counting {
     async fn send(&self, llm: &dyn LLMPort, request: GroundedRequest) -> Result<Sent> {
-        let output = grounded_generation::generate(llm, request.clone()).await?;
+        let output = grounded_generation::generate(llm, request.clone())
+            .await
+            .map_err(ask::send_error)?;
         self.spent
             .fetch_add(output.output_tokens, Ordering::Relaxed);
         Ok(Sent::of(request, output))

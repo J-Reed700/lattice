@@ -124,7 +124,10 @@ pub(crate) fn prerequisites_answer(prompt: &str) -> Option<String> {
         .into_iter()
         .flatten()
         .map(|module| {
-            let earlier = module["earlierModules"].as_array().cloned().unwrap_or_default();
+            let earlier = module["earlierModules"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
             let mut titles: Vec<&str> = earlier
                 .iter()
                 .map(|before| before["title"].as_str().unwrap_or_default())

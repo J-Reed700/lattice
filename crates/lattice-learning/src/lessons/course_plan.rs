@@ -370,13 +370,17 @@ async fn generate(llm: &dyn LLMPort, program: &LearningProgramDto) -> Result<Cou
 /// The task a planning prompt carries, whatever a correction adds after it.
 #[cfg(test)]
 pub(crate) fn task_in(prompt: &str) -> Option<serde_json::Value> {
-    prompt.split("
+    prompt
+        .split(
+            "
 
-").find_map(|chunk| {
-        serde_json::from_str::<serde_json::Value>(chunk)
-            .ok()
-            .filter(|task| task.get("task").is_some())
-    })
+",
+        )
+        .find_map(|chunk| {
+            serde_json::from_str::<serde_json::Value>(chunk)
+                .ok()
+                .filter(|task| task.get("task").is_some())
+        })
 }
 
 /// The plan for the course a fixture model is asked about. `prompt` is the

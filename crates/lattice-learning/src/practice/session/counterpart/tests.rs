@@ -78,10 +78,7 @@ async fn the_schema_holds_content_parts_and_clarification_and_speak_only_on_a_ch
     let ordinary = reply("Look again.", &[]);
     let (result, model) = ask(&kind, Setting::Coached, &Cue::Reply, &[&ordinary]).await;
     assert!(result.is_ok(), "{result:?}");
-    assert_eq!(
-        properties_of(&model),
-        ["content", "parts", "clarification"]
-    );
+    assert_eq!(properties_of(&model), ["content", "parts", "clarification"]);
 
     let spoken = serde_json::json!({
         "content": "Why this one?",
@@ -131,7 +128,13 @@ async fn a_blank_reply_is_corrected_and_then_refused() {
 async fn a_reply_that_cannot_be_read_is_asked_for_again() {
     let kind = plain().build();
     let good = reply("Look at the middle one.", &["l2"]);
-    let (result, model) = ask(&kind, Setting::Coached, &Cue::Reply, &["no json here", &good]).await;
+    let (result, model) = ask(
+        &kind,
+        Setting::Coached,
+        &Cue::Reply,
+        &["no json here", &good],
+    )
+    .await;
     assert_eq!(
         result.unwrap().map(|reply| reply.parts),
         Some(vec![PartRef::new("1")])
@@ -271,7 +274,9 @@ async fn a_clarification_the_reply_points_at_is_answered_in_the_apps_words() {
     assert_eq!(model.requests().len(), 1);
     let text = &model.texts()[0];
     assert!(
-        text.contains("[k1] asked \"May the tide table be empty?\", answered \"Yes, and its total is 0.\""),
+        text.contains(
+            "[k1] asked \"May the tide table be empty?\", answered \"Yes, and its total is 0.\""
+        ),
         "{text}"
     );
 }
@@ -299,7 +304,11 @@ async fn a_clarification_that_names_nothing_shown_is_asked_for_again() {
         result.unwrap().map(|reply| reply.content),
         Some("Yes.\n\nYes.".to_owned())
     );
-    assert!(model.texts()[1].contains("not shown"), "{}", model.texts()[1]);
+    assert!(
+        model.texts()[1].contains("not shown"),
+        "{}",
+        model.texts()[1]
+    );
 }
 
 fn fixture(marks: &mut Marks, earlier: bool) -> Input {

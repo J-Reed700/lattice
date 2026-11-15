@@ -11,7 +11,8 @@ fn what_the_planner_reads_is_told() {
         minutes_per_session: Told(30),
         min_modules: Told(2),
         max_modules: Told(3),
-        existing_sources: marks.told(json!({"sources": [{"title": "A harbour master's handbook"}]})),
+        existing_sources: marks
+            .told(json!({"sources": [{"title": "A harbour master's handbook"}]})),
         planned: vec![marks.told("Harbour gates and their keepers".to_owned())],
     };
     holds::<OutlineReferencePlan>(&input, &marks);

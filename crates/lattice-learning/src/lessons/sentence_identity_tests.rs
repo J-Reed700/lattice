@@ -140,7 +140,10 @@ fn a_question_explanation_or_choice_reason_copying_the_quote_is_a_finding_at_the
 #[test]
 fn the_claim_repair_is_told_never_to_paste_the_quote_as_the_sentence() {
     let text = super::rows::words::citing();
-    assert!(text.contains("never paste the quote as the sentence"), "{text}");
+    assert!(
+        text.contains("never paste the quote as the sentence"),
+        "{text}"
+    );
 }
 
 #[test]

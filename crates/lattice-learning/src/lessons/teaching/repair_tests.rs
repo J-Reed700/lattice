@@ -143,7 +143,10 @@ async fn an_applied_entry_stands_and_says_the_sentences_it_wrote() -> Result<()>
         vec![entry(
             &finding_labels(task)[0],
             "Shut the lid.",
-            edits(vec![replacing(&lid, "The lid is shut tight until it boils.")]),
+            edits(vec![replacing(
+                &lid,
+                "The lid is shut tight until it boils.",
+            )]),
         )]
     });
     let findings = [at(FindingSite::Section(0), 1)];

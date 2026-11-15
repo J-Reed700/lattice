@@ -3,10 +3,10 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
 use crate::content_verification::tests::{fixture_completion, fixture_task};
-use contract::scripted::{ask_of, Ask, Script, CONTRACT_NOTHING};
 use crate::lessons::course_generation_tests::{clean_review, review_reply, ScriptedModel};
 use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::Held;
+use contract::scripted::{ask_of, Ask, Script, CONTRACT_NOTHING};
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use std::sync::Mutex;
 
@@ -41,9 +41,7 @@ impl LLMPort for Routed {
             let reply = self.plan.reply(ask.unwrap_or(Ask::Find), user);
             return Ok(fixture_completion(request, vec![reply]));
         }
-        if !drafting
-            && ask == Some(Ask::ConfirmClash)
-        {
+        if !drafting && ask == Some(Ask::ConfirmClash) {
             *self.clash_asked.lock().unwrap() += 1;
             let reply = self.clash_reply.lock().unwrap().clone();
             return Ok(CompletionResponse::from_text(reply.as_str()));

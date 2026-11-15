@@ -4,8 +4,8 @@ use crate::embedded_runtime::{BuiltinLabExecutionSpec, BuiltinRuntimes, Learning
 use crate::lab_runtime::{
     LearningLabExecutionResult, LearningLabFile, LearningLabLimits, LearningLabRunStatus,
 };
-use crate::reference_collection::PassageKind;
 use crate::lessons::structured_call::Asking;
+use crate::reference_collection::PassageKind;
 use lattice_core::application::services::model_contract::ask::{
     ask_each, Alone, Answered, Says, Settled,
 };
@@ -533,7 +533,9 @@ mod fence_tests {
     }
 
     fn labelled_body() -> String {
-        format!("Harbour layout:\n```text\n{TREE}```\nRunnable example:\n```javascript\n{CODE}```\n")
+        format!(
+            "Harbour layout:\n```text\n{TREE}```\nRunnable example:\n```javascript\n{CODE}```\n"
+        )
     }
 
     #[test]
@@ -552,9 +554,8 @@ mod fence_tests {
 
     #[tokio::test]
     async fn a_complete_answer_labels_every_fence_and_changes_nothing_else() -> Result<()> {
-        let model = ScriptedModel::new().on_request::<FenceLabels>(|sent, _| {
-            reply(labels(sent, by_content))
-        });
+        let model = ScriptedModel::new()
+            .on_request::<FenceLabels>(|sent, _| reply(labels(sent, by_content)));
         let corrected: Value = serde_json::from_str(&label_unlabeled(&model, lesson()).await?)?;
         assert_eq!(corrected["blocks"][0]["body"], labelled_body());
         assert_eq!(model.count::<FenceLabels>(), 1);

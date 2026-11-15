@@ -304,7 +304,8 @@ async fn a_flag_that_was_not_offered_is_asked_for_again() {
 fn the_standing_request_tells_the_signals_and_offers_the_flags_by_name() {
     let mut marks = Marks::new();
     let input = StandingInput {
-        facts: marks.told(json!({ "title": "Harbour tide tables", "publisher": "Kiln Road Press" })),
+        facts: marks
+            .told(json!({ "title": "Harbour tide tables", "publisher": "Kiln Road Press" })),
         flags: vec![Flag {
             flag: RiskFlag::SelfDeclaredOfficial,
             name: marks.told("self_declared_official".to_owned()),
@@ -535,7 +536,10 @@ async fn a_unit_is_profiled_in_one_call_and_a_left_out_claim_falls_back() {
     assert!(llm.calls() > 1, "the left-out claim is asked for again");
     assert_eq!(profiles.len(), 2);
     assert_eq!(profiles[0].value.kind, ClaimKind::General);
-    assert_eq!(profiles[0].value.reasons[0].code, ReasonCode::JudgementFailed);
+    assert_eq!(
+        profiles[0].value.reasons[0].code,
+        ReasonCode::JudgementFailed
+    );
     assert!(profiles[0].value.reasons[0]
         .text
         .starts_with("Judgement failed: "));
@@ -604,7 +608,10 @@ fn the_ownership_contract_reads_what_it_renders() {
     }
 }
 
-fn spells<W: Vocabulary + PartialEq + std::fmt::Debug>(all: &[W], name: impl Fn(W) -> &'static str) {
+fn spells<W: Vocabulary + PartialEq + std::fmt::Debug>(
+    all: &[W],
+    name: impl Fn(W) -> &'static str,
+) {
     assert_eq!(W::WORDS.len(), all.len());
     for variant in all {
         let word = W::WORDS

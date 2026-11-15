@@ -27,8 +27,7 @@ const WHAT_THE_PASSAGES_STATE: &str = "Say only what the claim's evidence passag
 /// Why a rewrite that left the sentence as it was could not be applied.
 const LEFT_AS_IT_WAS: &str = "The repair left the sentence as it was.";
 /// Why a correction that changed nothing in its sentence is charged.
-const NOT_CHANGED: &str =
-    "The correction made no change to the sentence it was asked to correct.";
+const NOT_CHANGED: &str = "The correction made no change to the sentence it was asked to correct.";
 
 /// The steps that leave a Sourced statement at `s.rewrite`.
 const AT_REWRITE: [(Step, Outcome); 3] = [
@@ -142,7 +141,8 @@ impl Corrections {
                     "the run ends at the second repair request".into(),
                 ));
             }
-            let removal = json!({"edits":[{"path":"/blocks/0/body","before":format!("{BAD} "),"after":""}]});
+            let removal =
+                json!({"edits":[{"path":"/blocks/0/body","before":format!("{BAD} "),"after":""}]});
             return Ok(super::super::tests::repair_script::answer(
                 &fixture_task(prompt).unwrap(),
                 &removal,

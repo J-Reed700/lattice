@@ -1,7 +1,9 @@
 //! The outline the model describes: its modules with their outcomes, project
 //! milestones and lessons, each item citing the supplied passages that support it.
 
-use super::{module_checks, GeneratedEvidenceText, GeneratedModule, GeneratedOutlineLesson, Titles};
+use super::{
+    module_checks, GeneratedEvidenceText, GeneratedModule, GeneratedOutlineLesson, Titles,
+};
 use crate::dto::{
     GenerateLearningProgramRequestDto, LearningCourseDepth, LearningProjectMilestoneDto,
 };

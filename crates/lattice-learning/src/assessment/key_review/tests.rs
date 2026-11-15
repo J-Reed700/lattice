@@ -82,9 +82,7 @@ fn without(mut reply: Value, of: &str) -> Value {
 
 /// A model that answers every question of every form.
 fn everything() -> ScriptedModel {
-    let model = answering::<SolvePicks>(ScriptedModel::new(), |task, _| {
-        solved(task, |_| vec![0])
-    });
+    let model = answering::<SolvePicks>(ScriptedModel::new(), |task, _| solved(task, |_| vec![0]));
     let model = answering::<SolveText>(model, |task, _| solved_text(task, "Because it follows."));
     let model = answering::<SolveBlanks>(model, |task, _| {
         let entries: Vec<Value> = task["questions"]
@@ -200,8 +198,10 @@ async fn prompt_snapshot_quiz_key_solve() {
         matching(),
         ordering(),
     ];
-    let pairs: Vec<(&LearningAssessmentCandidate, &str)> =
-        items.iter().map(|item| (item, "Reference quote.")).collect();
+    let pairs: Vec<(&LearningAssessmentCandidate, &str)> = items
+        .iter()
+        .map(|item| (item, "Reference quote."))
+        .collect();
 
     solve_items(&model, &pairs).await.unwrap();
 
@@ -222,8 +222,10 @@ async fn every_answer_form_is_read() {
         matching(),
         ordering(),
     ];
-    let pairs: Vec<(&LearningAssessmentCandidate, &str)> =
-        items.iter().map(|item| (item, "Reference quote.")).collect();
+    let pairs: Vec<(&LearningAssessmentCandidate, &str)> = items
+        .iter()
+        .map(|item| (item, "Reference quote."))
+        .collect();
 
     let solutions = solve_items(&model, &pairs).await.unwrap();
 
@@ -255,8 +257,10 @@ async fn questions_of_one_form_are_asked_together_and_forms_apart() {
         choice("Which option holds for the second case?"),
         explanation("Explain what follows from the premises."),
     ];
-    let pairs: Vec<(&LearningAssessmentCandidate, &str)> =
-        items.iter().map(|item| (item, "Reference quote.")).collect();
+    let pairs: Vec<(&LearningAssessmentCandidate, &str)> = items
+        .iter()
+        .map(|item| (item, "Reference quote."))
+        .collect();
 
     solve_items(&model, &pairs).await.unwrap();
 
@@ -272,8 +276,10 @@ async fn the_options_of_each_question_are_labelled_from_the_first() {
         choice("Which option follows from the premises?"),
         choice("Which option holds for the second case?"),
     ];
-    let pairs: Vec<(&LearningAssessmentCandidate, &str)> =
-        items.iter().map(|item| (item, "Reference quote.")).collect();
+    let pairs: Vec<(&LearningAssessmentCandidate, &str)> = items
+        .iter()
+        .map(|item| (item, "Reference quote."))
+        .collect();
 
     solve_items(&model, &pairs).await.unwrap();
 
@@ -296,9 +302,14 @@ async fn a_missing_entry_is_asked_for_again_alone() {
             reply
         }
     });
-    let items = [choice("Which option follows from the premises?"), choice(second)];
-    let pairs: Vec<(&LearningAssessmentCandidate, &str)> =
-        items.iter().map(|item| (item, "Reference quote.")).collect();
+    let items = [
+        choice("Which option follows from the premises?"),
+        choice(second),
+    ];
+    let pairs: Vec<(&LearningAssessmentCandidate, &str)> = items
+        .iter()
+        .map(|item| (item, "Reference quote."))
+        .collect();
 
     let solutions = solve_items(&model, &pairs).await.unwrap();
 
@@ -337,8 +348,10 @@ async fn an_item_that_stays_unanswered_has_no_solution_and_the_rest_stand() {
         choice("Which option follows from the premises?"),
         choice("Which option holds for the second case?"),
     ];
-    let pairs: Vec<(&LearningAssessmentCandidate, &str)> =
-        items.iter().map(|item| (item, "Reference quote.")).collect();
+    let pairs: Vec<(&LearningAssessmentCandidate, &str)> = items
+        .iter()
+        .map(|item| (item, "Reference quote."))
+        .collect();
 
     let solutions = solve_items(&model, &pairs).await.unwrap();
 
@@ -379,7 +392,9 @@ fn an_ordering_solve_with_no_reasoning_disputes_by_its_answer_alone() {
 
     assert_eq!(
         compare(&item, &solution),
-        KeyVerdict::Disputed("An independent solution answered order [\"Stamp\", \"Weigh\", \"Post\"]".into())
+        KeyVerdict::Disputed(
+            "An independent solution answered order [\"Stamp\", \"Weigh\", \"Post\"]".into()
+        )
     );
 }
 

@@ -48,9 +48,7 @@ fn filled_text(text: &str, names: &HashMap<String, String>) -> String {
 pub(super) fn filled(value: &Value, names: &HashMap<String, String>) -> Value {
     match value {
         Value::String(text) => Value::String(filled_text(text, names)),
-        Value::Array(items) => {
-            Value::Array(items.iter().map(|item| filled(item, names)).collect())
-        }
+        Value::Array(items) => Value::Array(items.iter().map(|item| filled(item, names)).collect()),
         Value::Object(fields) => Value::Object(
             fields
                 .iter()

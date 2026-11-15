@@ -13,10 +13,6 @@ use crate::practice::session::kind::Kind;
 use crate::practice::session::record::{
     DebriefSession, EventKind, SessionCheck, SessionEvent, SessionHint, SessionLearnerCase,
 };
-use lattice_core::domain::learning::practice::work::{
-    CaseResult, CaseStatus, CheckReport, CheckScope, CheckStatus, Form, LearnerCaseVerdict,
-    PartRef, Piece, Rung, Setting, Stage,
-};
 use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::CompletionResponse;
 use lattice_core::application::services::model_contract::shape::Vocabulary;
@@ -24,6 +20,10 @@ use lattice_core::application::services::model_contract::shown::Told;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
 use lattice_core::application::services::model_contract::Contract;
+use lattice_core::domain::learning::practice::work::{
+    CaseResult, CaseStatus, CheckReport, CheckScope, CheckStatus, Form, LearnerCaseVerdict,
+    PartRef, Piece, Rung, Setting, Stage,
+};
 use serde_json::{json, Value};
 
 const T1: &str = "I would start with the first slot";
@@ -278,11 +278,7 @@ async fn prompt_snapshot_debrief_answer() {
     debrief(&model, &kind(), &session())
         .await
         .expect("a debrief");
-    let requests: Vec<_> = model
-        .sent()
-        .into_iter()
-        .map(|sent| sent.request)
-        .collect();
+    let requests: Vec<_> = model.sent().into_iter().map(|sent| sent.request).collect();
     snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "debrief-answer", &requests);
 }
 
@@ -356,11 +352,7 @@ async fn parts_the_kind_does_not_join_stay_items_of_their_own_in_the_order_of_th
 #[tokio::test]
 async fn a_name_the_session_does_not_have_costs_only_that_citation() {
     let mut entries = good_entries();
-    entries[0] = entry(
-        "c1",
-        "3",
-        json!({"quotes": ["q1", "q9"], "hints": ["h1"]}),
-    );
+    entries[0] = entry("c1", "3", json!({"quotes": ["q1", "q9"], "hints": ["h1"]}));
 
     let model = scripted(in_turn(vec![answer(entries)]));
     let debrief = debrief(&model, &kind(), &session())
@@ -390,9 +382,7 @@ async fn each_sentence_of_a_learner_turn_is_a_quote_of_its_own() {
     entries[0] = entry("c1", "3", json!({"quotes": ["q2"]}));
 
     let model = scripted(in_turn(vec![answer(entries)]));
-    let debrief = debrief(&model, &kind(), &session)
-        .await
-        .expect("a debrief");
+    let debrief = debrief(&model, &kind(), &session).await.expect("a debrief");
 
     assert_eq!(
         row_of(&debrief, "accuracy").evidence,

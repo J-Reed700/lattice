@@ -221,9 +221,15 @@ async fn a_line_the_file_has_twice_comes_with_the_lines_around_it() -> Result<()
     assert_eq!(model.requests().len(), 1);
     let edit = &planted.mutations[0].edit;
     assert_eq!(edit.path, "src/limiter.py");
-    assert!(edit.before.contains("self.hits[key] = recent\n"), "{edit:?}");
+    assert!(
+        edit.before.contains("self.hits[key] = recent\n"),
+        "{edit:?}"
+    );
     assert!(edit.before.lines().count() > 1, "{edit:?}");
-    assert!(edit.after.contains("self.hits[key] = list(recent)\n"), "{edit:?}");
+    assert!(
+        edit.after.contains("self.hits[key] = list(recent)\n"),
+        "{edit:?}"
+    );
     Ok(())
 }
 
@@ -233,8 +239,7 @@ async fn a_deletion_keeps_a_neighbouring_line_in_the_edit() -> Result<()> {
     let files = baseline().files;
     let line = handle_of(&files, "src/config.py", "DEFAULT_LIMIT = 100");
     let answer = answer_with(|entries| {
-        entries[1]["change"] =
-            json!({"replace": [], "insert": [], "remove": [line], "move": []});
+        entries[1]["change"] = json!({"replace": [], "insert": [], "remove": [line], "move": []});
     });
     let model = ScriptedModel::new([answer]);
     let runner = FakeRunner::passing();
@@ -360,7 +365,10 @@ async fn a_mutation_refused_twice_fails_the_stage() -> Result<()> {
         .plant(&spec(), &baseline())
         .await
         .unwrap_err();
-    assert!(matches!(&error, AppError::ModelAnswerUnusable(_)), "{error:?}");
+    assert!(
+        matches!(&error, AppError::ModelAnswerUnusable(_)),
+        "{error:?}"
+    );
     assert_eq!(model.requests().len(), 2);
     Ok(())
 }
@@ -698,7 +706,10 @@ async fn two_lesson_issues_of_one_pattern_leave_the_second_to_be_asked_for_again
     spec.patterns.push("correctness.off_by_one".into());
     let files = baseline().files;
     let third = handle_of(&files, "src/limiter.py", "        self.limit = limit");
-    let shared = catalogue_handle(&spec.patterns.iter().map(String::as_str).collect::<Vec<_>>(), "correctness.null_dereference");
+    let shared = catalogue_handle(
+        &spec.patterns.iter().map(String::as_str).collect::<Vec<_>>(),
+        "correctness.null_dereference",
+    );
     let twice = answer_with(|entries| {
         entries.push(entry(
             "t3",
@@ -724,7 +735,11 @@ async fn two_lesson_issues_of_one_pattern_leave_the_second_to_be_asked_for_again
         .collect();
     assert_eq!(
         patterns,
-        [LITERALS, "correctness.off_by_one", "correctness.null_dereference"]
+        [
+            LITERALS,
+            "correctness.off_by_one",
+            "correctness.null_dereference"
+        ]
     );
     assert_eq!(model.requests().len(), 2);
     Ok(())
@@ -740,10 +755,6 @@ async fn prompt_snapshot_drill_plant() -> Result<()> {
     build(&db, &model, Some(&runner), &grader)
         .plant(&spec(), &baseline_with_brief())
         .await?;
-    snapshot::assert_requests(
-        env!("CARGO_MANIFEST_DIR"),
-        "drill-plant",
-        &model.requests(),
-    );
+    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "drill-plant", &model.requests());
     Ok(())
 }

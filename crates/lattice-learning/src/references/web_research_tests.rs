@@ -719,7 +719,10 @@ async fn a_search_for_a_gap_the_planner_was_not_given_is_left_out() -> Result<()
     let error = plan_needs(&alone, "topic", &gaps, json!([]), &[])
         .await
         .unwrap_err();
-    assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error:?}");
+    assert!(
+        matches!(error, AppError::ModelAnswerUnusable(_)),
+        "{error:?}"
+    );
     assert_eq!(alone.prompts.lock().unwrap().len(), 2);
     Ok(())
 }

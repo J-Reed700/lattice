@@ -11,12 +11,14 @@ use crate::repository::LearningRepository;
 use lattice_core::application::contracts::web::{
     FetchUrlContentOutput, WebSearchOutput, WebSearchResult,
 };
-use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
+use lattice_core::application::ports::MockWebService;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::application::services::model_contract::test_support::{
     ScriptedModel as Scripted, Sent,
 };
-use lattice_core::application::ports::MockWebService;
 use lattice_core::shared::persistence::Database;
 
 pub(crate) const CAPTURE: &str =
@@ -128,12 +130,17 @@ async fn a_long_reason_for_a_reference_is_read_not_refused() -> Result<()> {
     }];
     let reason = "It states the scoped point in its own words. ".repeat(20);
     let llm = ScriptedModel {
-        outputs: Mutex::new(
-            [json!({"marks":[{"at":"r1","reason":reason}]}).to_string()].into(),
-        ),
+        outputs: Mutex::new([json!({"marks":[{"at":"r1","reason":reason}]}).to_string()].into()),
         prompts: Mutex::new(vec![]),
     };
-    let selected = select_noted(&llm, "Research methods", "random assignment", &[], found(results)).await?;
+    let selected = select_noted(
+        &llm,
+        "Research methods",
+        "random assignment",
+        &[],
+        found(results),
+    )
+    .await?;
     assert_eq!(selected.len(), 1);
     assert_eq!(selected[0].1, reason.trim());
     Ok(())
@@ -204,9 +211,9 @@ async fn reference_selection_asks_about_every_result_in_as_many_requests_as_the_
             source: Some("crossref".into()),
         })
         .collect();
-    let llm = selector(|shown, _| {
-        json!({"marks":[marked(&shown[0], "Directly relevant primary reference for the requested concept.")]})
-    });
+    let llm = selector(
+        |shown, _| json!({"marks":[marked(&shown[0], "Directly relevant primary reference for the requested concept.")]}),
+    );
     let candidates = found(results);
     let selected =
         select_references(&llm, "Tonality", "tonal centre", &[], candidates.clone()).await?;
@@ -241,9 +248,9 @@ async fn reference_selection_selects_only_what_it_marks_and_never_invents_pages(
             select_references(&llm, "Rust programming", "cargo build", &[], found(results)).await
         }
     };
-    let chosen = ask(selector(|_, _| {
-        json!({"marks":[marked("r2", "The manual addresses the command's behavior.")]})
-    }))
+    let chosen = ask(selector(
+        |_, _| json!({"marks":[marked("r2", "The manual addresses the command's behavior.")]}),
+    ))
     .await?;
     assert_eq!(chosen.len(), 1);
     assert_eq!(chosen[0].url, results[1].url);
@@ -393,7 +400,9 @@ fn the_selection_request_shows_what_the_model_is_told_and_nothing_internal() {
     let input = Input {
         topic: marks.told("Harbour tides".to_owned()),
         query: marks.told("tide table sources".to_owned()),
-        gaps: marks.told(vec![json!({"claim":"The harbour gate opens at first light."})]),
+        gaps: marks.told(vec![
+            json!({"claim":"The harbour gate opens at first light."}),
+        ]),
         hits: vec![Hit {
             at: marks.reference(100_001_usize),
             card: marks.told(json!({
@@ -1605,7 +1614,9 @@ async fn a_claim_research_round_records_what_it_cost_a_claim_on_each_researched_
     // A planner that finds nothing public to search: the round ends
     // exhausted, and is timed all the same.
     let llm = ScriptedModel {
-        outputs: Mutex::new([crate::references::web_research::needs_answer(json!([])).to_string()].into()),
+        outputs: Mutex::new(
+            [crate::references::web_research::needs_answer(json!([])).to_string()].into(),
+        ),
         prompts: Mutex::new(vec![]),
     };
     let expansion = run(

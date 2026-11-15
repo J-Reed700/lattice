@@ -99,7 +99,13 @@ async fn golden_counterpart() {
     let mut golden = Golden::default();
     for task in [Form::Build, Form::Repair] {
         for (name, setting, cue) in cases() {
-            let model = asked(task, setting, &cue, vec![reply(&cue, "Say more about what you plan to do.")]).await;
+            let model = asked(
+                task,
+                setting,
+                &cue,
+                vec![reply(&cue, "Say more about what you plan to do.")],
+            )
+            .await;
             add_requests(
                 &mut golden,
                 &format!("{} {setting:?} {name}", ProgramWording.form_label(task)),
@@ -111,7 +117,10 @@ async fn golden_counterpart() {
             task,
             Setting::Coached,
             &cue,
-            vec![reply(&cue, ""), reply(&cue, "Say more about what you plan to do.")],
+            vec![
+                reply(&cue, ""),
+                reply(&cue, "Say more about what you plan to do."),
+            ],
         )
         .await;
         add_requests(

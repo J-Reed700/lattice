@@ -5,7 +5,7 @@ use crate::lessons::structured_call::Asking;
 use crate::model_call;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::model_contract::ask::{
-    self, ask_each, ask_new, Alone, Answered, Refusal, Says, Settled,
+    self, ask_each, ask_new, Alone, Answered, Refusal, Says, Settled, Why,
 };
 use lattice_core::application::services::model_contract::packed::Packed;
 use lattice_core::application::services::model_contract::shape::{
@@ -210,7 +210,9 @@ impl Answered for ConversationCards {
             (&card.topic, "topic"),
         ] {
             if blank(text) {
-                return Err(Refusal(format!("Give the {field} of this card in {field}.")));
+                return Err(Refusal(format!(
+                    "Give the {field} of this card in {field}."
+                )));
             }
         }
         choices_refusal(None, &card.distractors).map_or(Ok(()), Err)
@@ -440,7 +442,9 @@ impl Answered for StudyDeck {
             (&card.topic, "topic"),
         ] {
             if blank(text) {
-                return Err(Refusal(format!("Give the {field} of this card in {field}.")));
+                return Err(Refusal(format!(
+                    "Give the {field} of this card in {field}."
+                )));
             }
         }
         if let Some(refusal) = choices_refusal(Some(card.answer.trim()), &card.distractors) {
@@ -457,14 +461,9 @@ impl Answered for StudyDeck {
 
 /// The passage a card's cited sentences lie in, and their words as the app
 /// holds them. An error says what is wrong with the citation.
-fn cited(
-    texts: &[&str],
-    cites: &[Picked<Unit>],
-) -> std::result::Result<(usize, String), String> {
+fn cited(texts: &[&str], cites: &[Picked<Unit>]) -> std::result::Result<(usize, String), String> {
     if cites.is_empty() {
-        return Err(
-            "Cite at least one sentence that supports the answer in sourceIds.".to_owned(),
-        );
+        return Err("Cite at least one sentence that supports the answer in sourceIds.".to_owned());
     }
     let passages: Vec<Units> = texts
         .iter()
@@ -495,11 +494,10 @@ fn cited(
 
 /// The passage that holds `unit` and the unit's words.
 fn held(passages: &[Units], unit: UnitRef) -> Option<(usize, String)> {
-    passages.iter().enumerate().find_map(|(at, units)| {
-        units
-            .text_of(unit)
-            .map(|text| (at, text.trim().to_owned()))
-    })
+    passages
+        .iter()
+        .enumerate()
+        .find_map(|(at, units)| units.text_of(unit).map(|text| (at, text.trim().to_owned())))
 }
 
 /// The sources one document after another in turns, so a window that holds
@@ -630,7 +628,10 @@ pub(super) async fn generate(
             error
         }
     })?;
-    let texts: Vec<&str> = ordered.iter().map(|source| source.excerpt.as_str()).collect();
+    let texts: Vec<&str> = ordered
+        .iter()
+        .map(|source| source.excerpt.as_str())
+        .collect();
     let mut seen = HashSet::new();
     let mut cards = Vec::new();
     for card in &found.items {

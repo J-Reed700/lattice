@@ -129,11 +129,7 @@ fn a_paragraph_context_carries_only_the_paragraph_holding_the_quote() {
 #[test]
 fn general_knowledge_is_marked_for_contradiction_only() {
     let claims = vec![claim("Salt raises the boiling point.", vec![], true)];
-    let task = said(&input_of(
-        &claims,
-        &[item(0, vec![], Context::Unit)],
-        &[],
-    ));
+    let task = said(&input_of(&claims, &[item(0, vec![], Context::Unit)], &[]));
     assert!(task.contains(
         "Passages: none (accepted as general knowledge: check it for contradiction only)"
     ));
@@ -238,7 +234,9 @@ fn what_is_internal_never_reaches_the_request_and_what_is_told_does() {
         }),
         statement: marks.told("The crane lifts crate one at high tide.".to_owned()),
         lesson_text: marks.told("The crane lifts crates at high tide.".to_owned()),
-        setting: Setting::Paragraph(marks.told("Crates are lifted before the tide turns.".to_owned())),
+        setting: Setting::Paragraph(
+            marks.told("Crates are lifted before the tide turns.".to_owned()),
+        ),
         passages: vec![cited],
         general_knowledge: false,
         part: Some(Part {
@@ -295,7 +293,9 @@ async fn judged(
         .collect()
 }
 
-fn answering(verdict: impl Fn(&str, &[Labelled]) -> Value + Send + Sync + 'static) -> ScriptedVerifier {
+fn answering(
+    verdict: impl Fn(&str, &[Labelled]) -> Value + Send + Sync + 'static,
+) -> ScriptedVerifier {
     ScriptedVerifier::answering(200_000, verdict)
 }
 
@@ -342,12 +342,12 @@ async fn a_verdict_counts_only_when_it_cites_a_sentence_it_was_shown() {
         }
     );
     assert!(remembered.reason.contains("I know it"));
-    assert!(remembered
-        .reason
-        .contains("quoted no passage it was given"));
+    assert!(remembered.reason.contains("quoted no passage it was given"));
 
-    let contradicted = judged_one(json!({"verdict": "contradicted", "reason": "salt changes it",
-        "cite": "Salt raises it."}))
+    let contradicted = judged_one(
+        json!({"verdict": "contradicted", "reason": "salt changes it",
+        "cite": "Salt raises it."}),
+    )
     .await;
     assert_eq!(
         contradicted.result,
@@ -423,9 +423,11 @@ async fn a_claim_the_answer_leaves_out_is_asked_for_alone_and_the_others_stand()
     ];
     let llm = ScriptedVerifier::new(200_000, |request, call| {
         let text = if call == 1 {
-            let mut answer: Value =
-                serde_json::from_str(&answer_each(request, &|_, _| json!({"verdict": "unsupported"})))
-                    .unwrap();
+            let mut answer: Value = serde_json::from_str(&answer_each(
+                request,
+                &|_, _| json!({"verdict": "unsupported"}),
+            ))
+            .unwrap();
             answer["entries"].as_array_mut().unwrap().truncate(1);
             answer.to_string()
         } else {
@@ -458,7 +460,10 @@ async fn a_claim_the_answer_leaves_out_is_asked_for_alone_and_the_others_stand()
 
 #[tokio::test]
 async fn a_reason_and_sentence_longer_than_the_planned_room_are_read_whole() {
-    let sentence = format!("Pure water boils at 100 °C at sea level {}.", "and more ".repeat(120));
+    let sentence = format!(
+        "Pure water boils at 100 °C at sea level {}.",
+        "and more ".repeat(120)
+    );
     let reason = "The passage says so at length. "
         .repeat(30)
         .trim()

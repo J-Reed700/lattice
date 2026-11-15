@@ -5,6 +5,7 @@
 //! never leaves the machine. Pages are selected by the lesson pipeline's reference
 //! selector, captured in full, deduplicated by resolved URL and content hash,
 //! and persisted with the program like user-supplied references.
+use crate::lessons::structured_call::Asking;
 use crate::{
     content_verification::research::{select_references, selection_cost, selection_room},
     dto::*,
@@ -17,13 +18,10 @@ use crate::{
 use futures::StreamExt;
 use lattice_core::application::contracts::web::WebSearchResult;
 use lattice_core::application::ports::WebServiceTrait;
-use crate::lessons::structured_call::Asking;
 use lattice_core::application::services::model_contract::ask::{
     ask_new, Alone, Answered, Refusal, Says,
 };
-use lattice_core::application::services::model_contract::shape::{
-    Authored, Fields, Form, New,
-};
+use lattice_core::application::services::model_contract::shape::{Authored, Fields, Form, New};
 use lattice_core::application::services::model_contract::shown::{Scope, Showing, Told};
 use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::shared::hash::sha256_hex;

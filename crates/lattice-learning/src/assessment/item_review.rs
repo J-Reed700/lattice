@@ -191,7 +191,9 @@ impl Answered for QuizItemReview {
             if !others.is_empty() {
                 let listed_others: Vec<Value> = named
                     .iter()
-                    .map(|(label, sibling)| json!({"id": label.written(), "prompt": sibling.prompt}))
+                    .map(
+                        |(label, sibling)| json!({"id": label.written(), "prompt": sibling.prompt}),
+                    )
                     .collect();
                 fields.insert("otherItems".into(), json!(listed_others));
             }

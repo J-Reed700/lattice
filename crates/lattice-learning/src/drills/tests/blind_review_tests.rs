@@ -522,7 +522,12 @@ async fn extras_for(entry: String) -> Result<Vec<KeyIssue>> {
 #[tokio::test]
 async fn an_entry_of_a_planted_issues_pattern_on_its_lines_restates_it_and_is_not_added(
 ) -> Result<()> {
-    let extras = extras_for(entry_for(OPERATOR, 13, "        if len(recent) >= self.limit:")).await?;
+    let extras = extras_for(entry_for(
+        OPERATOR,
+        13,
+        "        if len(recent) >= self.limit:",
+    ))
+    .await?;
     assert!(extras.is_empty(), "{extras:?}");
     Ok(())
 }
@@ -533,7 +538,8 @@ async fn an_entry_of_another_pattern_on_a_planted_issues_lines_is_added() -> Res
         "resources.unbounded_growth",
         13,
         "        if len(recent) >= max(self.limit, 1):",
-    )).await?;
+    ))
+    .await?;
     assert_eq!(extras.len(), 1);
     assert_eq!(extras[0].span, span(13));
     Ok(())

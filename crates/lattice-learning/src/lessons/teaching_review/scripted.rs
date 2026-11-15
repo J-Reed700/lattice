@@ -32,11 +32,15 @@ pub(crate) fn reply(prompt: &str, script: &str) -> Option<String> {
             return entry["id"].clone();
         }
         // A legacy hash id is no longer shown: the nth distinct id is the nth open finding shown.
-        let at = names.iter().position(|name| name == legacy).unwrap_or_else(|| {
-            names.push(legacy.to_owned());
-            names.len() - 1
-        });
-        open.get(at).map_or(json!("f999"), |entry| entry["id"].clone())
+        let at = names
+            .iter()
+            .position(|name| name == legacy)
+            .unwrap_or_else(|| {
+                names.push(legacy.to_owned());
+                names.len() - 1
+            });
+        open.get(at)
+            .map_or(json!("f999"), |entry| entry["id"].clone())
     };
     let mut items = Vec::new();
     let mut resolved = Vec::new();
@@ -67,7 +71,9 @@ pub(crate) fn reply(prompt: &str, script: &str) -> Option<String> {
             .as_str()
             .and_then(passage_place)
             .and_then(|(section, number)| {
-                task.pointer(&format!("/candidate/blocks/{section}/bodyPassages/{number}/id"))
+                task.pointer(&format!(
+                    "/candidate/blocks/{section}/bodyPassages/{number}/id"
+                ))
             })
             .cloned()
             .unwrap_or(json!("p999"));

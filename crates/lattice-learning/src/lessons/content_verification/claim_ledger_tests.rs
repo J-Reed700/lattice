@@ -120,7 +120,12 @@ impl Figures {
     /// A research planner that plans one web search for the first gap.
     pub(super) fn planning(query: &str) -> Self {
         Self {
-            plan: Some(crate::references::web_research::needs_answer(json!([{"gap":0,"kind":"web","query":query}])).to_string()),
+            plan: Some(
+                crate::references::web_research::needs_answer(
+                    json!([{"gap":0,"kind":"web","query":query}]),
+                )
+                .to_string(),
+            ),
             ..Self::new()
         }
     }

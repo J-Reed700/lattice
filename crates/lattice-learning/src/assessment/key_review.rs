@@ -14,7 +14,7 @@ use lattice_core::application::services::model_contract::shape::{
     Authored, Each, Fields, Form, Order, Vocabulary,
 };
 use lattice_core::application::services::model_contract::shown::{
-    Drawn, Handle, Kind, Picked, Scope, Shown, Showing, Told,
+    Drawn, Handle, Kind, Picked, Scope, Showing, Shown, Told,
 };
 use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::{
@@ -722,8 +722,7 @@ fn place<S>(
     solution: impl Fn(&Question, &S) -> Solution,
 ) {
     for (question, settled) in group.iter().zip(settled) {
-        if let (Settled::Answered(statement), Some(slot)) = (settled, solved.get_mut(question.at))
-        {
+        if let (Settled::Answered(statement), Some(slot)) = (settled, solved.get_mut(question.at)) {
             *slot = Some(solution(question, &statement));
         }
     }

@@ -39,8 +39,9 @@ use serde_json::Value;
 use crate::application::ports::llm_port::{CompletionResponse, ANSWER_EFFORT};
 use crate::application::ports::LLMPort;
 use crate::application::services::grounded_generation::{
-    self, CallOptions, GroundedGenerationError, GroundedRequest, HistoryItem,
+    self, CallOptions, GroundedRequest, HistoryItem,
 };
+use crate::application::services::model_contract::ask::send_error;
 use crate::application::services::model_contract::legacy;
 use crate::application::services::model_contract::{
     answer, refusal, ContractCall, CutOffRemedy, Transport, CORRECTION_LEAD,
@@ -87,13 +88,9 @@ impl Transport for Planned {
         llm: &dyn LLMPort,
         request: &GroundedRequest,
     ) -> Result<CompletionResponse> {
-        let output = match grounded_generation::generate(llm, request.clone()).await {
-            Ok(output) => output,
-            Err(GroundedGenerationError::Budget(error)) => {
-                return Err(AppError::WindowTooSmall(error.to_string()))
-            }
-            Err(GroundedGenerationError::Model(error)) => return Err(error),
-        };
+        let output = grounded_generation::generate(llm, request.clone())
+            .await
+            .map_err(send_error)?;
         let mut tokens = self.tokens.lock().unwrap_or_else(PoisonError::into_inner);
         tokens.0 += output.input_tokens;
         tokens.1 += output.output_tokens;

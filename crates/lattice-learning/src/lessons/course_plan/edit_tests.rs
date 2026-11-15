@@ -1,7 +1,7 @@
 //! Changing a lesson's topics by hand, by asking the model, and undoing.
 #![allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
-use super::topics_support::*;
 use super::edit::ChangeInput;
+use super::topics_support::*;
 use super::*;
 use lattice_core::application::ports::llm_port::{CompletionInput, InferencePriority};
 
@@ -277,7 +277,11 @@ async fn a_change_replaces_only_the_selected_entries() {
             entry.topics.ideas,
             vec![format!("a changed idea of {handle}")]
         );
-        assert_eq!(entry.topics.actions, ["an action"], "a field not written is kept");
+        assert_eq!(
+            entry.topics.actions,
+            ["an action"],
+            "a field not written is kept"
+        );
         assert_eq!(entry.previous, Some(the_planned_entry(changed)));
     }
     for kept in [&order[0], &order[3]] {
@@ -406,7 +410,12 @@ async fn a_change_leaves_the_fields_the_model_did_not_write_as_they_were() {
     let shown = change_entries(
         &db,
         &model,
-        change_request(&program, revision, &[at(&order[1], 1)], "Sharpen the contrast"),
+        change_request(
+            &program,
+            revision,
+            &[at(&order[1], 1)],
+            "Sharpen the contrast",
+        ),
     )
     .await
     .unwrap();

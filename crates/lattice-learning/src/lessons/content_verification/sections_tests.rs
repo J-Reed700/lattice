@@ -2,15 +2,15 @@
 use super::*;
 use crate::lessons::course_generation_tests::{clean_review, verdict, ScriptedModel};
 use crate::lessons::shape;
+use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
+use lattice_core::application::services::model_contract::test_support::{
+    ScriptedModel as Scripted, Sent as Asked,
+};
 use lattice_core::domain::learning::claim_review::{
     Actor, Check, CheckResult, Checker, ClaimEvent, ClaimLocation, ClaimState, EvidenceFingerprint,
     UnitKind,
 };
 use std::sync::Mutex;
-use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
-use lattice_core::application::services::model_contract::test_support::{
-    ScriptedModel as Scripted, Sent as Asked,
-};
 
 fn block(kind: &str, title: &str, body: &str) -> Value {
     json!({"kind":kind,"title":title,"body":body,"rubric":[],"quote":""})
@@ -759,10 +759,7 @@ async fn a_flow_repair_that_inserts_a_sentence_the_lesson_already_has_is_asked_o
         let at = label(task, BODY, "This follows from it.");
         let gap = task["gaps"][0]["gap"].as_str().unwrap().to_owned();
         match earlier {
-            0 => vec![entry(
-                &gap,
-                replacing(&at, "An intro to the whole idea."),
-            )],
+            0 => vec![entry(&gap, replacing(&at, "An intro to the whole idea."))],
             _ => vec![entry(&gap, no_edits())],
         }
     });
@@ -904,9 +901,8 @@ async fn a_flow_repair_that_leaves_the_section_no_lesson_leaves_it_as_cut() -> R
 #[tokio::test]
 async fn a_flow_repair_that_asks_for_nothing_changes_nothing() -> Result<()> {
     let (_, taken, protected) = mended_section();
-    let llm = flow_model(|task, _| {
-        vec![entry(task["gaps"][0]["gap"].as_str().unwrap(), no_edits())]
-    });
+    let llm =
+        flow_model(|task, _| vec![entry(task["gaps"][0]["gap"].as_str().unwrap(), no_edits())]);
 
     assert_eq!(mend(&llm, &taken, &protected).await?, None);
     assert_eq!(llm.sent().len(), 1);
@@ -1012,9 +1008,7 @@ async fn a_gap_that_stays_unanswered_is_left_as_it_is_and_the_others_are_mended(
 
 #[test]
 fn the_flow_repair_tells_the_model_only_what_it_may_read() {
-    use lattice_core::application::services::model_contract::test_support::taint::{
-        holds, Marks,
-    };
+    use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
     let mut marks = Marks::new();
     let input = FlowInput {
         lesson: marks.internal(json!({"blocks":[{"title":"Kiln firing schedule","body":"The kiln needs dry wood."}],"questions":[]})),

@@ -152,7 +152,10 @@ async fn items_written_and_none_usable_fail_the_research() {
     let error = plan_needs(&model, "harbour", &gaps(), json!([]), &[])
         .await
         .unwrap_err();
-    assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error:?}");
+    assert!(
+        matches!(error, AppError::ModelAnswerUnusable(_)),
+        "{error:?}"
+    );
 }
 
 #[tokio::test]

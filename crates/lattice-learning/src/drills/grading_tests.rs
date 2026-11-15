@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 //! The judge against a scripted model: what it is asked, which answers it accepts and what it asks again.
 
+use super::contract::{Context, IssueView};
 use super::*;
 use crate::lessons::structured_call::{is_draft_request, task_messages};
 use futures::future::BoxFuture;
@@ -16,7 +17,6 @@ use lattice_core::domain::learning::drills::{
     overlapping, pattern, Drill, DrillFile, Edit, Finding, FindingOutcome, KeyIssue, LessonLink,
     LessonSentence, LineSpan, Material, Origin, Proof, Severity,
 };
-use super::contract::{Context, IssueView};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -324,7 +324,10 @@ fn assessment() -> Assessment {
             (FindingOutcome::Matches { issues: vec![0] }, LOOP.into()),
             (FindingOutcome::Matches { issues: vec![1] }, QUERY.into()),
             (FindingOutcome::FalsePositive, REMARK.into()),
-            (FindingOutcome::Matches { issues: vec![2] }, SWALLOWED.into()),
+            (
+                FindingOutcome::Matches { issues: vec![2] },
+                SWALLOWED.into(),
+            ),
         ],
     }
 }
@@ -391,8 +394,8 @@ async fn a_reason_is_kept_as_the_judge_wrote_it_without_the_space_around_it() ->
 }
 
 #[tokio::test]
-async fn a_finding_about_two_issues_matches_both_and_the_issues_are_listed_once_in_order() -> Result<()>
-{
+async fn a_finding_about_two_issues_matches_both_and_the_issues_are_listed_once_in_order(
+) -> Result<()> {
     let llm = judge(
         |task, _| {
             let findings = shown(task, "Finding");
@@ -400,7 +403,13 @@ async fn a_finding_about_two_issues_matches_both_and_the_issues_are_listed_once_
             let issues = shown(task, "Issue");
             entries(vec![
                 judged(&issues[0].0, LOOP, "found", &first, &[first.as_str()]),
-                judged(&issues[1].0, "It also says the query is built from the name.", "found", &first, &[]),
+                judged(
+                    &issues[1].0,
+                    "It also says the query is built from the name.",
+                    "found",
+                    &first,
+                    &[],
+                ),
                 judged(&issues[2].0, "No finding names it.", "missed", "none", &[]),
             ])
         },
@@ -444,7 +453,10 @@ async fn a_finding_listed_as_about_an_issue_it_does_not_earn_matches_it() -> Res
     let graded = grade(&llm, &Scene::new()).await?;
     assert_eq!(
         graded.findings[2],
-        (FindingOutcome::Matches { issues: vec![2] }, SWALLOWED.into())
+        (
+            FindingOutcome::Matches { issues: vec![2] },
+            SWALLOWED.into()
+        )
     );
     assert_eq!(graded.issues[2].0, IssueOutcome::HalfFound { finding: 3 });
     assert!(
@@ -578,7 +590,11 @@ async fn an_issue_found_by_something_not_shown_is_asked_again_alone_and_then_tol
             let mut list = issue_entries(task);
             if earlier < 2 {
                 let finding = shown(task, "Finding")[1].0.clone();
-                spoil("an issue found by something that is not shown", &mut list[0], &finding);
+                spoil(
+                    "an issue found by something that is not shown",
+                    &mut list[0],
+                    &finding,
+                );
             }
             entries(list)
         },
@@ -651,7 +667,10 @@ async fn an_issue_that_stays_unanswered_fails_the_grade_and_asks_nothing_about_f
         extras_answer,
     );
     let error = grade(&llm, &Scene::new()).await.unwrap_err();
-    assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error:?}");
+    assert!(
+        matches!(error, AppError::ModelAnswerUnusable(_)),
+        "{error:?}"
+    );
     assert!(asks::<GradeExtras>(&llm).is_empty());
 }
 
@@ -659,7 +678,10 @@ async fn an_issue_that_stays_unanswered_fails_the_grade_and_asks_nothing_about_f
 async fn a_finding_that_stays_unanswered_fails_the_grade() {
     let llm = judge(issues_answer, |_, _| entries(Vec::new()));
     let error = grade(&llm, &Scene::new()).await.unwrap_err();
-    assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error:?}");
+    assert!(
+        matches!(error, AppError::ModelAnswerUnusable(_)),
+        "{error:?}"
+    );
 }
 
 #[tokio::test]
@@ -802,7 +824,8 @@ async fn the_request_holds_the_files_the_clean_files_the_key_the_review_and_the_
 }
 
 #[tokio::test]
-async fn the_request_about_the_findings_no_issue_claims_holds_the_key_and_only_those_findings() -> Result<()> {
+async fn the_request_about_the_findings_no_issue_claims_holds_the_key_and_only_those_findings(
+) -> Result<()> {
     let llm = standard();
     grade(&llm, &Scene::new()).await?;
     let task = task_of::<GradeExtras>(&llm);
@@ -825,7 +848,11 @@ async fn the_request_about_the_findings_no_issue_claims_holds_the_key_and_only_t
         last = found;
     }
     assert!(!task.contains("Finding [f2]"), "{task}");
-    for claimed in Scene::new().findings.iter().filter(|finding| finding.span.is_some()) {
+    for claimed in Scene::new()
+        .findings
+        .iter()
+        .filter(|finding| finding.span.is_some())
+    {
         let first_line = claimed.text.lines().next().unwrap_or_default();
         assert!(!task.contains(first_line), "{task}");
     }
@@ -1048,7 +1075,8 @@ async fn an_odd_key_and_review_are_still_shown_whole() -> Result<()> {
 }
 
 #[tokio::test]
-async fn the_task_and_the_instructions_name_issues_and_findings_by_the_handles_shown() -> Result<()> {
+async fn the_task_and_the_instructions_name_issues_and_findings_by_the_handles_shown() -> Result<()>
+{
     let llm = standard();
     grade(&llm, &Scene::new()).await?;
     let system = system_of::<GradeReview>(&llm);
@@ -1061,7 +1089,10 @@ async fn the_task_and_the_instructions_name_issues_and_findings_by_the_handles_s
     );
     assert!(task.contains("3 issues"), "{task}");
     assert!(task.contains("4 findings"), "{task}");
-    assert!(!task.contains("Issue 1") && !task.contains("Finding 1"), "{task}");
+    assert!(
+        !task.contains("Issue 1") && !task.contains("Finding 1"),
+        "{task}"
+    );
 
     let mut one = Scene::new();
     one.drill.key.truncate(1);
@@ -1070,8 +1101,14 @@ async fn the_task_and_the_instructions_name_issues_and_findings_by_the_handles_s
     grade(&llm, &one).await?;
     let task = task_of::<GradeReview>(&llm);
     assert!(task.contains("The key: 1 issue."), "{task}");
-    assert!(task.contains("The review: 1 finding, in the order they were made."), "{task}");
-    assert!(task.contains("Give an entry for every issue, the reason first."), "{task}");
+    assert!(
+        task.contains("The review: 1 finding, in the order they were made."),
+        "{task}"
+    );
+    assert!(
+        task.contains("Give an entry for every issue, the reason first."),
+        "{task}"
+    );
     Ok(())
 }
 
@@ -1210,7 +1247,10 @@ fn assessment_unsorted() -> Assessment {
             (FindingOutcome::Matches { issues: vec![2] }, LOOP.into()),
             (FindingOutcome::Matches { issues: vec![1] }, QUERY.into()),
             (FindingOutcome::FalsePositive, REMARK.into()),
-            (FindingOutcome::Matches { issues: vec![0] }, SWALLOWED.into()),
+            (
+                FindingOutcome::Matches { issues: vec![0] },
+                SWALLOWED.into(),
+            ),
         ],
     }
 }
@@ -1263,7 +1303,8 @@ async fn the_issues_the_answer_names_are_mapped_back_to_the_keys_positions() -> 
 }
 
 #[tokio::test]
-async fn a_finding_about_issues_shown_first_and_third_holds_their_key_positions_sorted() -> Result<()> {
+async fn a_finding_about_issues_shown_first_and_third_holds_their_key_positions_sorted(
+) -> Result<()> {
     let llm = judge(
         |task, _| {
             let findings = shown(task, "Finding");
@@ -1271,7 +1312,13 @@ async fn a_finding_about_issues_shown_first_and_third_holds_their_key_positions_
             entries(vec![
                 judged(&issues[0].0, QUERY, "found", &findings[1].0, &[]),
                 judged(&issues[1].0, LOOP, "found", &findings[0].0, &[]),
-                judged(&issues[2].0, "It also points at the swallowed error.", "half_found", &findings[1].0, &[]),
+                judged(
+                    &issues[2].0,
+                    "It also points at the swallowed error.",
+                    "half_found",
+                    &findings[1].0,
+                    &[],
+                ),
             ])
         },
         |task, _| {
@@ -1297,13 +1344,17 @@ async fn a_finding_about_issues_shown_first_and_third_holds_their_key_positions_
 }
 
 fn the_scene_input(marks: &mut Marks) -> (Context, Vec<IssueView>, Vec<FindingView>) {
-    let context = Context {
-        instructions: marks.told("Grade the review against the key.".to_owned()),
-        drill: marks.told("Drill: Harbour log (python)".to_owned()),
-        reviewed: marks.told("The code as the reviewer saw it:\n\n1 | tide = 4".to_owned()),
-        original: marks.told("The same code before any issue was planted:\n\n1 | tide = 3".to_owned()),
-        source: Some(marks.told("The source passage: <passage>The tide rises twice a day.</passage>".to_owned())),
-    };
+    let context =
+        Context {
+            instructions: marks.told("Grade the review against the key.".to_owned()),
+            drill: marks.told("Drill: Harbour log (python)".to_owned()),
+            reviewed: marks.told("The code as the reviewer saw it:\n\n1 | tide = 4".to_owned()),
+            original: marks
+                .told("The same code before any issue was planted:\n\n1 | tide = 3".to_owned()),
+            source: Some(marks.told(
+                "The source passage: <passage>The tide rises twice a day.</passage>".to_owned(),
+            )),
+        };
     let issues = vec![IssueView {
         at: marks.reference(100_001_usize),
         head: marks.told("Wrong constant (major), harbour.py line 1".to_owned()),

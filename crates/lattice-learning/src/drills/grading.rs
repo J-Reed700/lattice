@@ -130,9 +130,7 @@ impl ReviewGrader for JudgeGrader<'_> {
         for (finding, settled) in asked.iter().zip(settled) {
             match settled {
                 Settled::Answered(verdict) => verdicts.push((finding.at, verdict)),
-                Settled::Unanswered(_) => {
-                    return Err(derive::unusable("a finding is unanswered"))
-                }
+                Settled::Unanswered(_) => return Err(derive::unusable("a finding is unanswered")),
             }
         }
         credits.assessment(&verdicts)

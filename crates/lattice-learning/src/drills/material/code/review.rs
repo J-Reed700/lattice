@@ -98,7 +98,11 @@ impl Answered for CleanReviewAsk {
             ));
         }
         if let Some(failed) = &input.failed {
-            let repairs: Vec<&str> = failed.repairs.iter().map(|repair| repair.0.as_str()).collect();
+            let repairs: Vec<&str> = failed
+                .repairs
+                .iter()
+                .map(|repair| repair.0.as_str())
+                .collect();
             task.push_str(&format!(
                 "\n\nYour earlier answer made these repairs:\n{}\n\n{}\nAnswer again, with repairs of the code above that keep the suite passing.",
                 repairs.join("\n\n"),
@@ -181,10 +185,7 @@ impl CodeMaterial<'_> {
                 trail.call("clean review", &model);
             }
             let (repairs, files) = made(&code.files, found.items);
-            let Some((runner, suite)) = self
-                .runner
-                .zip(suite)
-                .filter(|_| !repairs.is_empty())
+            let Some((runner, suite)) = self.runner.zip(suite).filter(|_| !repairs.is_empty())
             else {
                 return Ok(CleanReview {
                     files,

@@ -196,7 +196,10 @@ pub async fn author(
     }
     let collection = ReferenceCollection::lexical(sources)?;
     let call = crate::model_call::answer_options();
-    let items: Vec<Outcome> = selected.iter().map(|outcome| Outcome::of(outcome)).collect();
+    let items: Vec<Outcome> = selected
+        .iter()
+        .map(|outcome| Outcome::of(outcome))
+        .collect();
     let goal = Told(program.summary.goal.clone());
     let prior_knowledge = Told(program.prior_knowledge.clone());
     let room = ask::room::<DiagnosticTasks>(

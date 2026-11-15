@@ -379,8 +379,7 @@ fn uncited_lesson() -> Value {
 /// The uncited lesson with a citation of `TIMEOUT` listed in its first block.
 fn citing(quote: &str) -> Value {
     let mut revised = uncited_lesson();
-    revised["blocks"][0]["citations"] =
-        json!([{"sentence":TIMEOUT,"sourceIndex":0,"quote":quote}]);
+    revised["blocks"][0]["citations"] = json!([{"sentence":TIMEOUT,"sourceIndex":0,"quote":quote}]);
     revised
 }
 

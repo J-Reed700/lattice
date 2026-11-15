@@ -67,10 +67,7 @@ fn shown(sent: &Sent) -> Vec<(String, Vec<(String, String)>)> {
 }
 
 /// An answer that gives each section the request shows the claims `claims_of` makes of its sentences, and none to a section it gives none.
-fn answering(
-    sent: &Sent,
-    claims_of: impl Fn(&[(String, String)]) -> Option<Vec<Value>>,
-) -> String {
+fn answering(sent: &Sent, claims_of: impl Fn(&[(String, String)]) -> Option<Vec<Value>>) -> String {
     let entries: Vec<Value> = shown(sent)
         .iter()
         .filter_map(|(of, sentences)| {
@@ -259,9 +256,7 @@ async fn a_fact_mixed_with_example_names_is_extracted_without_them() -> Result<(
     assert!(!statement.contains("IOrderRepository"), "{statement}");
     let prompts = llm.prompts.lock().unwrap();
     assert!(prompts[0].contains("names this lesson invented for its examples"));
-    assert!(
-        prompts[0].contains("extract the real-world fact in general terms without those names")
-    );
+    assert!(prompts[0].contains("extract the real-world fact in general terms without those names"));
     Ok(())
 }
 

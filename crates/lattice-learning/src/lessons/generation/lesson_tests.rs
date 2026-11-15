@@ -531,7 +531,10 @@ fn writer_requirements() -> String {
 
 #[test]
 fn the_writer_writes_a_cases_own_values_plainly_and_is_not_asked_for_hypotheticals() {
-    for text in [writer_requirements(), lesson_system_with(writer_grounding())] {
+    for text in [
+        writer_requirements(),
+        lesson_system_with(writer_grounding()),
+    ] {
         assert!(!text.contains("explicit hypotheticals"), "{text}");
         assert!(!text.contains("Suppose…"), "{text}");
         assert!(

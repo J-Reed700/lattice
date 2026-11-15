@@ -1000,7 +1000,10 @@ fn new_counts_the_items_it_leaves_out_and_not_a_cut_off_tail() {
     let bad = r#"{"verdict":"maybe","text":"x","cites":[]}"#;
     with_showing(2, 0, |showing| {
         let found = via_new(&format!(r#"{{"items":[{bad}]}}"#), Ended::Complete, showing);
-        assert_eq!((found.items.len(), found.left_out, found.rest), (0, 1, None));
+        assert_eq!(
+            (found.items.len(), found.left_out, found.rest),
+            (0, 1, None)
+        );
         let found = via_new("{\"items\":[]}", Ended::Complete, showing);
         assert_eq!(found.left_out, 0);
         let found = via_new(

@@ -349,9 +349,16 @@ pub async fn change_entries(
     let mut chosen = Vec::with_capacity(request.lessons.len());
     for lesson in &request.lessons {
         let found = outline.iter().find(|item| item.id == lesson.lesson_id);
-        chosen.push(found.map(|item| outline::lesson_of(item, false)).ok_or_else(|| {
-            AppError::NotFound(format!("The lesson {} is not in this course", lesson.lesson_id))
-        })?);
+        chosen.push(
+            found
+                .map(|item| outline::lesson_of(item, false))
+                .ok_or_else(|| {
+                    AppError::NotFound(format!(
+                        "The lesson {} is not in this course",
+                        lesson.lesson_id
+                    ))
+                })?,
+        );
     }
     let everyone: Vec<Lesson> = outline
         .iter()

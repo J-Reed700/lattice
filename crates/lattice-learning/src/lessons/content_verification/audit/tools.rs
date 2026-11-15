@@ -323,7 +323,12 @@ impl Call<'_> {
         }
     }
 
-    async fn search(&self, arguments: &Value, scope: &mut Scope, research: &mut Research) -> String {
+    async fn search(
+        &self,
+        arguments: &Value,
+        scope: &mut Scope,
+        research: &mut Research,
+    ) -> String {
         let Some(searches) = serde_json::from_value::<PlannedNeed>(arguments.clone())
             .ok()
             .and_then(PlannedNeed::searches)

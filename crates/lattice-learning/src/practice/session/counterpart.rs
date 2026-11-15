@@ -120,12 +120,7 @@ pub(crate) struct Input {
 }
 
 impl Input {
-    fn of(
-        kind: &Kind,
-        policy: &Policy,
-        cue: &Cue,
-        observation: &Observation,
-    ) -> Result<Self> {
+    fn of(kind: &Kind, policy: &Policy, cue: &Cue, observation: &Observation) -> Result<Self> {
         let (brief, piece) = (&observation.brief, &observation.piece);
         let places = kind
             .parts
@@ -164,7 +159,8 @@ pub(crate) enum Speech {
 }
 
 impl Vocabulary for Speech {
-    const WORDS: &'static [(&'static str, Self)] = &[("true", Self::Speaks), ("false", Self::Silent)];
+    const WORDS: &'static [(&'static str, Self)] =
+        &[("true", Self::Speaks), ("false", Self::Silent)];
 }
 
 /// Whether the reply gives an answer the exercise already has.
@@ -243,7 +239,9 @@ impl<M: Mode> Answered for CounterpartReply<M> {
         let facts = showing.show(&input.facts)?;
         let mut closing = Vec::new();
         if !places.is_empty() {
-            let mut rows = String::from("Parts of the learner's work you may point at, each under its handle:");
+            let mut rows = String::from(
+                "Parts of the learner's work you may point at, each under its handle:",
+            );
             for (handle, place) in places.iter() {
                 let _ = write!(rows, "\n{} {}", handle.bracketed(), place.name.0);
             }

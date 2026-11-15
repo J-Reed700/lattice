@@ -7,15 +7,13 @@
 
 use std::sync::Mutex;
 
-use lattice_core::application::services::model_contract::test_support::taint::{
-    tool_holds, Marks,
-};
+use lattice_core::application::services::model_contract::test_support::taint::{tool_holds, Marks};
 use lattice_core::domain::sourcing::NeedKind;
 use lattice_core::shared::error::AppError;
 
 use super::*;
-use serde_json::json;
 use crate::lessons::verifier_audit::tests::ScriptedVerifier;
+use serde_json::json;
 
 /// Runs one tool call as a round of the research does.
 async fn call(
@@ -246,7 +244,14 @@ async fn fetch_page_takes_a_search_results_handle_and_returns_the_page_as_citabl
     assert!(found.contains("[h1] Harbour tide tables"), "{found}");
     assert!(found.contains("[h2] Kiln firing notes"), "{found}");
 
-    let page = call(&web, FETCH, &json!({"hit": "h2"}), &mut scope, &mut research).await;
+    let page = call(
+        &web,
+        FETCH,
+        &json!({"hit": "h2"}),
+        &mut scope,
+        &mut research,
+    )
+    .await;
 
     assert_eq!(
         web.saved.lock().unwrap().as_slice(),
@@ -307,7 +312,10 @@ async fn a_page_too_long_for_its_share_is_cut_to_whole_sentences() {
     assert!(kept.len() < whole.len());
     assert!(kept.ends_with("high water."), "{kept}");
     assert!(whole.starts_with(kept.as_str()));
-    assert_eq!(page.lines().count(), 1 + kept.matches("high water.").count());
+    assert_eq!(
+        page.lines().count(),
+        1 + kept.matches("high water.").count()
+    );
 }
 
 #[test]

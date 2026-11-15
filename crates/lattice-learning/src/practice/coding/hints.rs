@@ -6,9 +6,7 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::model_contract::ask::{
     self, ask, Alone, Answered, Refusal, Says, Settled,
 };
-use lattice_core::application::services::model_contract::shape::{
-    Authored, Fields, Form, Value,
-};
+use lattice_core::application::services::model_contract::shape::{Authored, Fields, Form, Value};
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Internal, Kind, Picked, Scope, Showing, Told,
 };
@@ -150,7 +148,13 @@ fn repeated_reference_line(input: &Input, shown: &[&str]) -> Option<usize> {
         .enumerate()
         .map(|(index, line)| (index + 1, line.trim()))
         .filter(|(_, line)| says_something(line))
-        .filter(|(_, line)| !input.starter.value().lines().any(|kept| kept.trim() == *line))
+        .filter(|(_, line)| {
+            !input
+                .starter
+                .value()
+                .lines()
+                .any(|kept| kept.trim() == *line)
+        })
         .find(|(_, line)| shown.iter().any(|text| text.contains(line)))
         .map(|(number, _)| number)
 }
@@ -384,8 +388,9 @@ impl Answered for HintAuthor {
         );
         let mut closing = Vec::new();
         if !lines.is_empty() {
-            let mut rows =
-                String::from("Lines of the candidate's code you may point at, each under its handle:");
+            let mut rows = String::from(
+                "Lines of the candidate's code you may point at, each under its handle:",
+            );
             let mut path: Option<&str> = None;
             for (handle, line) in lines.iter() {
                 if path != Some(line.path.0.as_str()) {
@@ -417,11 +422,7 @@ impl Answered for HintAuthor {
 }
 
 /// Asks for a hint, and asks once more with the reason when running its code refuses it.
-async fn write_checked(
-    llm: &dyn LLMPort,
-    mut input: Input,
-    proof: &dyn Proof,
-) -> Result<CodeHint> {
+async fn write_checked(llm: &dyn LLMPort, mut input: Input, proof: &dyn Proof) -> Result<CodeHint> {
     let mut scope = Scope::for_question();
     let mut again = false;
     loop {
@@ -468,8 +469,8 @@ async fn write_checked(
 mod tests {
     use super::*;
     use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-    use lattice_core::domain::learning::practice::PROBLEM_PATTERNS;
     use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
+    use lattice_core::domain::learning::practice::PROBLEM_PATTERNS;
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
@@ -824,7 +825,9 @@ mod tests {
 
         let solving = answer("Steps:\n```\nPARSES\n```");
         let llm = Scripted::new(&[&solving, &answer(CLEAN)]);
-        let hint = written(&llm, &fixture, Rung::Plan).await.expect("second is clean");
+        let hint = written(&llm, &fixture, Rung::Plan)
+            .await
+            .expect("second is clean");
         assert_eq!(hint.text, CLEAN);
         let requests = llm.requests();
         assert_eq!(requests.len(), 2);
@@ -832,7 +835,10 @@ mod tests {
 
         let llm = Scripted::new(&[&solving, &solving]);
         let error = written(&llm, &fixture, Rung::Plan).await.unwrap_err();
-        assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error:?}");
+        assert!(
+            matches!(error, AppError::ModelAnswerUnusable(_)),
+            "{error:?}"
+        );
         assert_eq!(llm.requests().len(), 2);
     }
 
@@ -880,7 +886,9 @@ mod tests {
         })
         .to_string();
         let llm = Scripted::new(&[&nothing, &pointing]);
-        let line = written(&llm, &fixture, Rung::Point).await.expect("second points");
+        let line = written(&llm, &fixture, Rung::Point)
+            .await
+            .expect("second points");
         assert_eq!(line.lines, vec![place(1)]);
         assert!(text_of(&llm.requests()[1])
             .contains("A Line hint names at least one line of the candidate's code."));

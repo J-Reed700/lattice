@@ -226,16 +226,26 @@ impl Answered for GradeReview {
         let issues = showing.show(&input.issues)?;
         let findings = showing.show(&input.findings)?;
         let mut parts = input.context.opening();
-        parts.push(format!("The key: {}.", counted(input.issues.len(), "issue")));
-        parts.extend(issues.iter().map(|(handle, issue)| {
-            block("Issue ", &handle.bracketed(), &issue.head, &issue.rest)
-        }));
+        parts.push(format!(
+            "The key: {}.",
+            counted(input.issues.len(), "issue")
+        ));
+        parts.extend(
+            issues.iter().map(|(handle, issue)| {
+                block("Issue ", &handle.bracketed(), &issue.head, &issue.rest)
+            }),
+        );
         parts.push(format!(
             "The review: {}, in the order they were made.",
             counted(input.findings.len(), "finding")
         ));
         parts.extend(findings.iter().map(|(handle, finding)| {
-            block("Finding ", &handle.bracketed(), &finding.head, &finding.rest)
+            block(
+                "Finding ",
+                &handle.bracketed(),
+                &finding.head,
+                &finding.rest,
+            )
         }));
         let named_issues: Vec<(String, &IssueView)> = issues
             .iter()
@@ -245,11 +255,7 @@ impl Answered for GradeReview {
             .iter()
             .map(|(handle, finding)| (handle.bracketed(), finding))
             .collect();
-        parts.push(overlap_block(
-            &input.noun.0,
-            &named_issues,
-            &named_findings,
-        ));
+        parts.push(overlap_block(&input.noun.0, &named_issues, &named_findings));
         parts.push("Give an entry for every issue, the reason first.".to_owned());
         Ok(Says::new(
             input.context.instructions.0.clone(),
@@ -297,7 +303,12 @@ impl Answered for GradeExtras {
             counted(input.findings.len(), "finding")
         ));
         parts.extend(findings.iter().map(|(handle, finding)| {
-            block("Finding ", &handle.bracketed(), &finding.head, &finding.rest)
+            block(
+                "Finding ",
+                &handle.bracketed(),
+                &finding.head,
+                &finding.rest,
+            )
         }));
         parts.push("Give an entry for every finding, the reason first.".to_owned());
         Ok(Says::new(

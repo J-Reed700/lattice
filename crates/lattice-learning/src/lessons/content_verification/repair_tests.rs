@@ -232,7 +232,10 @@ async fn the_failed_claims_of_one_sentence_are_one_entry_and_their_evidence_is_h
     assert_eq!(input.items[0].needs(), vec![0, 1]);
     assert_eq!(input.items[1].needs(), vec![0]);
     assert_eq!(input.passages.len(), 2);
-    assert_eq!(input.history.0, vec![json!({"unit":0,"statement":"Rejected here"})]);
+    assert_eq!(
+        input.history.0,
+        vec![json!({"unit":0,"statement":"Rejected here"})]
+    );
     assert_eq!(input.section.0["blocks"][1], Value::Null);
     assert_eq!(input.section.0["blocks"][0]["body"], body);
     Ok(())
@@ -294,7 +297,12 @@ async fn one_request_corrects_every_failed_sentence_of_a_section_and_shows_share
         {"path":"/blocks/0/body","before":THIRD_OLD,"after":THIRD_NEW},
     ]});
     let llm = recording(vec![edits.to_string()]);
-    let mut ledger = rewriting(&llm, &body, &[("a", FIRST_OLD), ("b", FIRST_OLD), ("c", THIRD_OLD)]).await?;
+    let mut ledger = rewriting(
+        &llm,
+        &body,
+        &[("a", FIRST_OLD), ("b", FIRST_OLD), ("c", THIRD_OLD)],
+    )
+    .await?;
     let context = context_of(
         &body,
         vec![
@@ -314,7 +322,10 @@ async fn one_request_corrects_every_failed_sentence_of_a_section_and_shows_share
     let task = task_in(&sent[0]).unwrap();
     assert_eq!(task["evidence"].as_array().unwrap().len(), 1);
     assert_eq!(task["failedClaims"].as_array().unwrap().len(), 3);
-    let said = messages(&sent[0]).iter().map(|(_, text)| *text).collect::<String>();
+    let said = messages(&sent[0])
+        .iter()
+        .map(|(_, text)| *text)
+        .collect::<String>();
     for id in ["claimId", "ev-1", "\"unit\""] {
         assert!(!said.contains(id), "{id} reached the request");
     }
@@ -334,7 +345,10 @@ async fn an_entry_the_model_leaves_out_costs_only_its_own_claims() -> Result<()>
     let mut ledger = rewriting(&llm, &body, &[("a", FIRST_OLD), ("c", THIRD_OLD)]).await?;
     let context = context_of(
         &body,
-        vec![failed_row("a", FIRST_OLD, &[]), failed_row("c", THIRD_OLD, &[])],
+        vec![
+            failed_row("a", FIRST_OLD, &[]),
+            failed_row("c", THIRD_OLD, &[]),
+        ],
         Vec::new(),
     );
 
@@ -343,7 +357,10 @@ async fn an_entry_the_model_leaves_out_costs_only_its_own_claims() -> Result<()>
     let body = after["blocks"][0]["body"].as_str().unwrap();
     assert_eq!(body, format!("{FIRST_NEW} {STEADY} {THIRD_OLD}"));
     assert!(rejections(ledger.entry(&ClaimId("a".into())).unwrap()).is_empty());
-    assert_eq!(rejections(ledger.entry(&ClaimId("c".into())).unwrap()).len(), 1);
+    assert_eq!(
+        rejections(ledger.entry(&ClaimId("c".into())).unwrap()).len(),
+        1
+    );
     assert!(
         llm.sent.lock().unwrap().len() >= 2,
         "the entry left out is asked again alone"
@@ -355,7 +372,8 @@ async fn an_entry_the_model_leaves_out_costs_only_its_own_claims() -> Result<()>
 async fn an_entry_the_application_refuses_is_asked_again_alone_in_the_same_conversation(
 ) -> Result<()> {
     let body = format!("{FIRST_OLD} {STEADY}");
-    let corrected = json!({"edits":[{"path":"/blocks/0/body","before":FIRST_OLD,"after":FIRST_NEW}]});
+    let corrected =
+        json!({"edits":[{"path":"/blocks/0/body","before":FIRST_OLD,"after":FIRST_NEW}]});
     let llm = recording(vec![BLANK_TEXT.to_owned(), corrected.to_string()]);
     let mut ledger = rewriting(&llm, &body, &[("a", FIRST_OLD)]).await?;
     let context = context_of(&body, vec![failed_row("a", FIRST_OLD, &[])], Vec::new());
@@ -477,7 +495,10 @@ async fn a_failed_claim_whose_evidence_does_not_fit_is_charged_and_not_asked_whi
         matches!(rows.as_slice(), [row] if row["statement"] == "Statement of b"),
         "{rows:?}"
     );
-    assert_eq!(after["blocks"][0]["body"], format!("{FIRST_OLD} {steady_new}"));
+    assert_eq!(
+        after["blocks"][0]["body"],
+        format!("{FIRST_OLD} {steady_new}")
+    );
     assert!(rejections(ledger.entry(&ClaimId("b".into())).unwrap()).is_empty());
     Ok(())
 }
@@ -851,7 +872,8 @@ async fn a_failed_example_on_its_last_attempt_is_taken_out_with_its_fences() -> 
 }
 
 #[tokio::test]
-async fn a_failed_example_is_asked_with_its_run_and_only_its_own_lines_are_corrected() -> Result<()> {
+async fn a_failed_example_is_asked_with_its_run_and_only_its_own_lines_are_corrected() -> Result<()>
+{
     let body = "Intro.
 
 ```python
@@ -903,7 +925,9 @@ After.";
     };
     assert!(row["entry"].is_string(), "{row}");
     assert!(
-        row["sentence"].as_array().is_some_and(|labels| !labels.is_empty()),
+        row["sentence"]
+            .as_array()
+            .is_some_and(|labels| !labels.is_empty()),
         "{row}"
     );
     assert_eq!(row["execution"]["id"], "example-0");
@@ -1506,7 +1530,6 @@ fn attempts(entry: &ClaimLedgerEntry) -> Vec<(u8, bool)> {
         .collect()
 }
 
-
 const GUIDE_SENTENCE: &str =
     "The guide says \"a timeout of 30 seconds applies to each request\" before it fails.";
 const GUIDE_QUOTE: &str = "A timeout of 30 seconds applies to each request.";
@@ -1602,7 +1625,8 @@ async fn a_correction_that_changes_a_sentence_a_passed_claim_shares_costs_only_i
     const THIRD_QUOTE: &str = "The third stage vitrifies the body";
     const KEPT_QUOTE: &str = "the cooling must stay slow";
     const MIXED: &str = "The third stage vitrifies the body, and the cooling must stay slow.";
-    const MIXED_NEW: &str = "The third stage turns the body to glass, and the cooling must stay slow.";
+    const MIXED_NEW: &str =
+        "The third stage turns the body to glass, and the cooling must stay slow.";
     let body = format!("{FIRST_OLD} {STEADY} {MIXED} {CLOSING}");
     // Both targets are rewritten; the third is rewritten with the words of a
     // passed claim that stands in the same sentence.

@@ -2572,12 +2572,7 @@ impl ByRequest {
                         None => wanted
                             .iter()
                             .any(|note| entry["note"].as_str() == Some(*note))
-                            .then(|| {
-                                passages_of(0)
-                                    .into_iter()
-                                    .next()
-                                    .map(|(_, _, text)| text)
-                            })
+                            .then(|| passages_of(0).into_iter().next().map(|(_, _, text)| text))
                             .flatten(),
                     };
                     match quote {

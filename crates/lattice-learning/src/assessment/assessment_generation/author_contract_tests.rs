@@ -327,7 +327,11 @@ async fn an_answer_cut_off_after_an_item_keeps_it_and_asks_for_the_rest() -> Res
     let documents = collection_of(&need);
     let collection = ReferenceCollection::lexical(&documents)?;
     let first = kiln_choice(ASKED, &[0], &["u1"]).to_string();
-    let second = kiln_choice("What happens to a tray left inside past noon?", &[1], &["u2"]);
+    let second = kiln_choice(
+        "What happens to a tray left inside past noon?",
+        &[1],
+        &["u2"],
+    );
     let llm = queued(vec![
         (format!("{{\"items\":[{first},{{\"prompt\":"), "length"),
         (json!({"items": [second]}).to_string(), "stop"),
@@ -353,7 +357,8 @@ async fn an_answer_cut_off_after_an_item_keeps_it_and_asks_for_the_rest() -> Res
 }
 
 #[tokio::test]
-async fn a_rewrite_keeps_the_difficulty_of_the_item_it_replaces_and_does_not_write_one() -> Result<()> {
+async fn a_rewrite_keeps_the_difficulty_of_the_item_it_replaces_and_does_not_write_one(
+) -> Result<()> {
     let need = single_choice();
     let documents = collection_of(&need);
     let collection = ReferenceCollection::lexical(&documents)?;
@@ -425,7 +430,12 @@ async fn a_batch_asks_for_difficulty_but_names_no_index_or_block() -> Result<()>
     let seen = llm.seen.lock().unwrap();
     let schema = &seen[0].1;
     assert!(schema.contains("difficulty"), "{schema}");
-    for gone in ["blockIndex", "answerIndex", "correctIndices", "distractorRationales"] {
+    for gone in [
+        "blockIndex",
+        "answerIndex",
+        "correctIndices",
+        "distractorRationales",
+    ] {
         assert!(!schema.contains(gone), "{gone} in {schema}");
     }
     Ok(())

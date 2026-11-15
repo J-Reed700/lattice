@@ -48,8 +48,14 @@ async fn golden_debrief() {
 
     let mut golden = Golden::default();
     for (name, requests) in [
-        ("the rows, with a criterion missing from the first answer", sent_to::<DebriefAnswer>(&model)),
-        ("what it states, with a blank statement in the first answer", sent_to::<DebriefStatements>(&model)),
+        (
+            "the rows, with a criterion missing from the first answer",
+            sent_to::<DebriefAnswer>(&model),
+        ),
+        (
+            "what it states, with a blank statement in the first answer",
+            sent_to::<DebriefStatements>(&model),
+        ),
     ] {
         let total = requests.len();
         for (at, sent) in requests.iter().enumerate() {

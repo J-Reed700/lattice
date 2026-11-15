@@ -2,11 +2,11 @@
 //! writer, a blind solver and an item judge, and the requests between them.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
-use crate::assessment_engine::LearningBlueprintRequirement;
-use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use crate::assessment::item_review::scripted::judged;
+use crate::assessment_engine::LearningBlueprintRequirement;
 use crate::key_review::scripted::{answering, solved, solved_text};
 use crate::key_review::SolvePicks;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use serde_json::json;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -860,9 +860,8 @@ pub(super) fn requests_of<C: Contract>(model: &ScriptedModel) -> Vec<CompletionR
 
 /// A model that writes `first_write`, rewrites to `FIRST_FIXED`, solves every question right and finds no defect.
 fn quiz_model(first_write: Value) -> ScriptedModel {
-    let model = writing::<QuizAuthor<ChoiceBody>>(ScriptedModel::new(), move |_| {
-        first_write.clone()
-    });
+    let model =
+        writing::<QuizAuthor<ChoiceBody>>(ScriptedModel::new(), move |_| first_write.clone());
     let model = writing::<QuizRewrite<ChoiceBody>>(model, |_| choice(FIRST_FIXED));
     let model = answering::<SolvePicks>(model, |context, _| solved(context, right_option));
     answering::<item_review::QuizItemReview>(model, |context, _| {

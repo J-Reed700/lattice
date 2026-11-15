@@ -401,10 +401,12 @@ fn evidence_room(
         (model_call::source_room(llm, &request, usize::MAX), reserve)
     };
     let brief = llm.count_tokens(&lesson_draft_brief()) + llm.count_tokens(CITATION_DRAFT_BRIEF);
-    Ok(match room(3 * output_tokens + brief + REASON_FIRST_STEP_TOKENS) {
-        (0, _) => room(2 * output_tokens),
-        found => found,
-    })
+    Ok(
+        match room(3 * output_tokens + brief + REASON_FIRST_STEP_TOKENS) {
+            (0, _) => room(2 * output_tokens),
+            found => found,
+        },
+    )
 }
 
 fn source_data(sources: &[crate::dto::LearningSourceDto]) -> Vec<serde_json::Value> {

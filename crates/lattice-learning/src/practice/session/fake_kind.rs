@@ -8,8 +8,8 @@ use crate::practice::session::author::{Author, Authored, Commission, Failed};
 use crate::practice::session::debrief::Names;
 use crate::practice::session::kind::{
     Account, Budget, Checker, Citation, Criterion, Diff, Established, Fit, Gaps, Hint, HintAsk,
-    Hinting, Kind, Known, LearnerCases, MisreadingNeed, Order, Parts, ReplyGuard, Rubric, Screen, Showing,
-    Statement, Truth, Wording,
+    Hinting, Kind, Known, LearnerCases, MisreadingNeed, Order, Parts, ReplyGuard, Rubric, Screen,
+    Showing, Statement, Truth, Wording,
 };
 use crate::practice::session::observation::{ClockView, Coverage, Observation};
 use crate::practice::session::record::{Session, SessionCheck, SessionDebrief, SessionLearnerCase};

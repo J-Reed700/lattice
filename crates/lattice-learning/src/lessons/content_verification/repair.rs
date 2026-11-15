@@ -38,13 +38,13 @@ mod citation;
 mod confine;
 mod cut;
 mod taking;
-use taking::{section_input, Taking};
 pub(super) use citation::{cite_where_supported, number_evidence, uncite, Cited};
 #[cfg(test)]
 pub(super) use citation::{quotation, Unwritten};
 pub(crate) use confine::{confine, Protected};
 #[cfg(test)]
 pub(super) use cut::last_attempts;
+use taking::{section_input, Taking};
 
 fn section_of(candidate: &Value, unit: usize) -> Result<(&'static str, usize)> {
     FindingSite::in_candidate(candidate, unit)

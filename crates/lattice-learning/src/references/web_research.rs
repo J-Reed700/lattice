@@ -3,6 +3,7 @@
 //! finder routes each to the finders that hold its kind of source. Search
 //! snippets never become evidence: only a complete capture of a page,
 //! validated for full text, is returned.
+use crate::lessons::structured_call::Asking;
 use crate::references::admission;
 use crate::references::trust::capture::web_capture;
 use crate::source_library::CapturedLearningSource;
@@ -11,7 +12,6 @@ use lattice_core::application::contracts::web::{
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::ports::WebServiceTrait;
-use crate::lessons::structured_call::Asking;
 use lattice_core::application::services::model_contract::ask::{
     ask_new, Alone, Answered, Refusal, Says,
 };
@@ -499,7 +499,14 @@ pub(crate) async fn plan_needs(
 #[cfg(test)]
 pub(crate) fn written_need(need: &Value) -> Value {
     let mut need = need.as_object().cloned().unwrap_or_default();
-    for field in ["subject", "identifier", "ecosystem", "site", "after", "asOf"] {
+    for field in [
+        "subject",
+        "identifier",
+        "ecosystem",
+        "site",
+        "after",
+        "asOf",
+    ] {
         need.entry(field).or_insert(json!(""));
     }
     let rewordings = need.remove("alternatives").unwrap_or_else(|| json!([]));

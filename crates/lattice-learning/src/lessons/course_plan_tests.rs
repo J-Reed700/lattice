@@ -2,11 +2,11 @@
 //! lessons ask for it, and every lesson of the outline is in it exactly once.
 #![allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 use super::*;
-use serde_json::Value;
 use crate::repository::LearningRepository;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
+use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -125,7 +125,10 @@ fn the_schema_names_every_lesson_by_its_handle() {
     let item = &schema.as_json()["properties"]["entries"]["items"];
     assert_eq!(item["properties"]["of"]["enum"], json!(HANDLES));
     assert_eq!(item["properties"]["ideas"]["type"], "array");
-    assert_eq!(item["properties"]["ideas"]["items"]["required"], json!(["topic"]));
+    assert_eq!(
+        item["properties"]["ideas"]["items"]["required"],
+        json!(["topic"])
+    );
     assert_eq!(
         ids(&program).len(),
         4,
@@ -333,7 +336,9 @@ async fn a_lesson_left_out_is_asked_for_again_alone_with_the_others_shown_as_pla
     assert_eq!(task["planned"].as_array().unwrap().len(), 3);
     assert!(system.contains("otherLessonId"), "{system}");
     assert!(
-        ids(&program).iter().all(|id| !said_in(&llm.request(1)).contains(id.as_str())),
+        ids(&program)
+            .iter()
+            .all(|id| !said_in(&llm.request(1)).contains(id.as_str())),
         "no lesson id reaches the model"
     );
 }
@@ -398,7 +403,6 @@ async fn an_entry_with_a_blank_topic_is_corrected_for_that_lesson_alone() {
     assert_eq!(plan.lessons[0].ideas, ["an idea"], "the others stand");
     assert_eq!(plan.lessons[1].ideas, ["the central idea"]);
 }
-
 
 #[tokio::test]
 async fn the_outline_revision_is_the_programs_content_revision() {

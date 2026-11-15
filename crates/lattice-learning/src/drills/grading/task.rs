@@ -17,16 +17,8 @@ pub(super) fn context(review: &Review<'_>, wording: &JudgeWording, instructions:
     Context {
         instructions: Told(instructions.to_owned()),
         drill: Told(format!("Drill: {} ({})", drill.title, wording.kind)),
-        reviewed: Told(format!(
-            "{}\n\n{}",
-            wording.reviewed,
-            listing(&drill.files)
-        )),
-        original: Told(format!(
-            "{}\n\n{}",
-            wording.original,
-            listing(review.clean)
-        )),
+        reviewed: Told(format!("{}\n\n{}", wording.reviewed, listing(&drill.files))),
+        original: Told(format!("{}\n\n{}", wording.original, listing(review.clean))),
         source: match (wording.source, review.source) {
             (Some(heading), Some(source)) => Some(Told(format!(
                 "{heading} {}:\n<passage>\n{}\n</passage>",

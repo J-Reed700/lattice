@@ -14,8 +14,8 @@ use super::*;
 use crate::dto::LearningSourceDto;
 use crate::generation::{parse_json, split_check, teaching_sentences};
 use crate::lessons::copied_wording::Wording;
-use crate::lessons::shape::{LessonShape, ShapePolicy};
 use crate::lessons::rows::{self, words, Held, Left, Quotes, Rows};
+use crate::lessons::shape::{LessonShape, ShapePolicy};
 use crate::lessons::structured_call::Asking;
 use crate::lessons::trace::{self, Cause, Stage};
 use crate::review_findings::{site_sha256, FindingSite};
@@ -32,10 +32,10 @@ use lattice_core::domain::learning::claim_review::ClaimId;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod units;
-pub(super) use units::{left_with_too_little, restore_units, unit_label};
-use units::{send_out, set_unit, unit_at};
 #[cfg(test)]
 use units::too_little;
+pub(super) use units::{left_with_too_little, restore_units, unit_label};
+use units::{send_out, set_unit, unit_at};
 
 /// What the flow repair is told besides the form of its answer.
 const FLOW: &str = "Sentences were taken out of this lesson section because they were shown to be wrong. Restore the flow of what is left: fix a word that now points at nothing (\"this\", \"these\", \"as above\", a step number) and join the sentences on either side of a gap if they no longer follow, changing as little as you can. gaps lists, for each place a sentence was taken out, the labels of the sentence kept before it and the one kept after it: change only those sentences, or add a short connecting sentence between them. verifiedSentences lists the labels of sentences that are checked and must stay exactly as they are; connect around them. Add no statement of fact: no new claim, figure, name, quotation, cause or consequence. Give an entry with no edits for a gap that reads well as it is.";
@@ -499,9 +499,11 @@ fn flow_check(input: &FlowInput, of: usize, fix: &Fix) -> std::result::Result<()
     };
     let gap = place.gap.value();
     let beside = |sentence: &Option<String>| {
-        sentence
-            .as_deref()
-            .and_then(|text| rows.units_over(&input.pointer(&gap.field), text).into_iter().next())
+        sentence.as_deref().and_then(|text| {
+            rows.units_over(&input.pointer(&gap.field), text)
+                .into_iter()
+                .next()
+        })
     };
     let (before, after) = (beside(&gap.before), beside(&gap.after));
     let verified: Vec<_> = input
@@ -580,9 +582,7 @@ impl Answered for FlowRepair {
             .map(|(handle, place)| {
                 let gap = place.gap.value();
                 let beside = |sentence: &Option<String>| {
-                    sentence
-                        .as_deref()
-                        .and_then(|text| label(&gap.field, text))
+                    sentence.as_deref().and_then(|text| label(&gap.field, text))
                 };
                 json!({
                     "gap": handle.written(),

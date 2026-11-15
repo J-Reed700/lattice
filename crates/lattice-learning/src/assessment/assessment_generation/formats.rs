@@ -61,7 +61,8 @@ pub(crate) enum Mark {
 }
 
 impl Vocabulary for Mark {
-    const WORDS: &'static [(&'static str, Self)] = &[("right", Self::Right), ("wrong", Self::Wrong)];
+    const WORDS: &'static [(&'static str, Self)] =
+        &[("right", Self::Right), ("wrong", Self::Wrong)];
 }
 
 /// A truth value, written as a word.

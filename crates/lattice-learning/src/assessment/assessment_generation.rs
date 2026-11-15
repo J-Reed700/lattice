@@ -183,11 +183,7 @@ impl Input {
 }
 
 /// The request for `input`; `lead` opens the sentence that says how to answer.
-fn says<B: Body, R: Role>(
-    input: &Input,
-    showing: &mut Showing<'_>,
-    lead: &str,
-) -> Result<Says> {
+fn says<B: Body, R: Role>(input: &Input, showing: &mut Showing<'_>, lead: &str) -> Result<Says> {
     let mut entries = Vec::new();
     for passage in input.passages.iter() {
         let units = Units::of(&passage.text.0, Grain::Sentence);
@@ -486,7 +482,10 @@ impl Batch<'_> {
                 (remaining > 0).then(|| {
                     input.continued(
                         remaining,
-                        standing.iter().map(|item| item.prompt().to_owned()).collect(),
+                        standing
+                            .iter()
+                            .map(|item| item.prompt().to_owned())
+                            .collect(),
                     )
                 })
             },

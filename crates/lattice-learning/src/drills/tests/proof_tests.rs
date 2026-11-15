@@ -1,9 +1,9 @@
 //! Proof is a Strategy: the table of strategies cell by cell, and each strategy on its own.
 
 use super::support::{
-    files, handle_of, judge_answer, last, literals_edit, literals_mutation, messages, operator_edit,
-    operator_mutation, FakeRunner, ScriptedModel, KILLING_TEST, LITERALS, LITERALS_AFTER,
-    LITERALS_BEFORE, OPERATOR, OPERATOR_AFTER, SUITE,
+    files, handle_of, judge_answer, last, literals_edit, literals_mutation, messages,
+    operator_edit, operator_mutation, FakeRunner, ScriptedModel, KILLING_TEST, LITERALS,
+    LITERALS_AFTER, LITERALS_BEFORE, OPERATOR, OPERATOR_AFTER, SUITE,
 };
 use crate::drills::build::{Mutation, Trail, Verification};
 use crate::drills::proof::{
@@ -716,7 +716,11 @@ async fn refused_once_then_placed(first: String, fragment: &str) -> Result<()> {
     let (_, mutation, _) = proven(verdict);
     assert_eq!(mutation.edit.after, RESHAPED, "{fragment}");
     let requests = model.requests();
-    assert_eq!(model.purposes(), ["new edit", "new edit", "judge"], "{fragment}");
+    assert_eq!(
+        model.purposes(),
+        ["new edit", "new edit", "judge"],
+        "{fragment}"
+    );
     let told = last(&requests[1]);
     assert!(told.contains(fragment), "{fragment} in {told}");
     Ok(())

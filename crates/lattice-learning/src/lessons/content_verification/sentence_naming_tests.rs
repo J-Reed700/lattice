@@ -85,7 +85,9 @@ fn reply(claims: Vec<Value>) -> String {
 /// An extractor that names the third sentence for a statement that shares no
 /// word with it.
 fn names_the_third(_: &str) -> String {
-    reply(vec![json!({"sentenceId":THIRD_HANDLE,"statement":ABOUT_THIRD})])
+    reply(vec![
+        json!({"sentenceId":THIRD_HANDLE,"statement":ABOUT_THIRD}),
+    ])
 }
 
 /// An extractor that names the first and the third sentence.
@@ -97,9 +99,7 @@ fn names_the_first_and_the_third(_: &str) -> String {
 }
 
 fn names_no_such_sentence(_: &str) -> String {
-    reply(vec![
-        json!({"sentenceId":"u9","statement":ABOUT_THIRD}),
-    ])
+    reply(vec![json!({"sentenceId":"u9","statement":ABOUT_THIRD})])
 }
 
 fn answers_nothing(_: &str) -> String {
@@ -193,8 +193,10 @@ async fn repair_beside_the_protected_third() -> std::result::Result<String, Stri
 async fn protecting_a_claim_protects_its_sentence_and_not_the_passage_it_is_in() {
     assert_eq!(
         repair_beside_the_protected_third().await,
-        Ok("Alpha now holds the line. Bravo stands firm today. Charlie rests in the shade."
-            .to_owned())
+        Ok(
+            "Alpha now holds the line. Bravo stands firm today. Charlie rests in the shade."
+                .to_owned()
+        )
     );
 }
 

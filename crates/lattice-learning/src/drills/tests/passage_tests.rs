@@ -2068,9 +2068,9 @@ fn the_judge_of_a_passage_reads_an_explanation_in_sentences_with_its_source() ->
     assert!(wording
         .system
         .starts_with("You grade a review of an explanation against an answer key."));
-    assert!(wording
-        .system
-        .contains("Each issue and each finding is named by the handle in square brackets shown with it."));
+    assert!(wording.system.contains(
+        "Each issue and each finding is named by the handle in square brackets shown with it."
+    ));
     assert!(wording.extras.contains("valid_extra"));
     assert_eq!(wording.line, "sentence");
     assert_eq!(wording.lines, "sentences");

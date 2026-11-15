@@ -14,7 +14,7 @@ use lattice_core::application::services::model_contract::shape::{
     Authored, Each, Fields, Form, Vocabulary,
 };
 use lattice_core::application::services::model_contract::shown::{
-    Kind, Picked, Scope, Shown, Showing, Told,
+    Kind, Picked, Scope, Showing, Shown, Told,
 };
 use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::domain::learning::practice::work::PartRef;
@@ -194,11 +194,19 @@ impl Answered for DebriefAnswer {
             input.check_nouns.0
         );
         let closing = format!("{ROW_RULES} {AUDIENCE}");
-        let instructions = [opening, scoring, evidence, silence, closing, EXCHANGE.to_owned()]
-            .join("\n\n");
-        let task = serde_json::to_string_pretty(&filled(&input.body.0, &names)).map_err(|error| {
-            AppError::InternalError(format!("The session could not be written out: {error}"))
-        })?;
+        let instructions = [
+            opening,
+            scoring,
+            evidence,
+            silence,
+            closing,
+            EXCHANGE.to_owned(),
+        ]
+        .join("\n\n");
+        let task =
+            serde_json::to_string_pretty(&filled(&input.body.0, &names)).map_err(|error| {
+                AppError::InternalError(format!("The session could not be written out: {error}"))
+            })?;
         Ok(Says::new(instructions, task))
     }
 }

@@ -1141,9 +1141,7 @@ async fn typography_only_mismatches_are_restored_before_the_author_citation_is_o
 async fn a_course_plan_keeps_rewordings_and_dates_and_refuses_an_unreadable_date() -> Result<()> {
     let request = request(LearningCourseDepth::Focused);
     let progress = OutlineProgress::default();
-    let subtopic = |need: Value| {
-        json!({"items":[{"title":"Release cadence","needs":[crate::references::web_research::written_need(&need)]}]})
-    };
+    let subtopic = |need: Value| json!({"items":[{"title":"Release cadence","needs":[crate::references::web_research::written_need(&need)]}]});
     let llm = model(vec![subtopic(json!({
         "query": "Python release cycle",
         "kind": "official_docs",
@@ -1194,7 +1192,9 @@ async fn a_subtopic_with_an_unusable_search_is_left_out_and_the_others_stand() -
         "query": "harbour gate opening times", "kind": "web", "after": "last spring"
     }))]});
     let usable = plan_output(&[("Tide tables", &["tide table revision schedule"])]);
-    let llm = model(vec![json!({"items":[unusable, usable["items"][0].clone()]})]);
+    let llm = model(vec![
+        json!({"items":[unusable, usable["items"][0].clone()]}),
+    ]);
     let plan = outline_references::plan(&llm, &request, &[], &OutlineProgress::default()).await?;
     assert_eq!(plan.subtopic_titles(), ["Tide tables"]);
     Ok(())

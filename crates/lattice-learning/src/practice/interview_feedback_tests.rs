@@ -121,12 +121,10 @@ fn task_of(sent: &Sent) -> Value {
         .input()
         .iter()
         .filter_map(|item| match item {
-            CompletionInput::Message { content, .. } => {
-                serde_json::Deserializer::from_str(content)
-                    .into_iter::<Value>()
-                    .next()
-                    .and_then(std::result::Result::ok)
-            }
+            CompletionInput::Message { content, .. } => serde_json::Deserializer::from_str(content)
+                .into_iter::<Value>()
+                .next()
+                .and_then(std::result::Result::ok),
             _ => None,
         })
         .find(|task| task.get("rubric").is_some())
@@ -512,7 +510,9 @@ async fn a_selected_source_names_its_question_and_equal_quotes_count_once() -> R
         |_, _| review("Preserve intended effects.", &["q1"], &["e1", "e2"]),
     );
     let result = close(&model, &evidence, &session).await?;
-    assert!(result.content.contains(&format!("{FIRST_GAP}\n\n{SECOND_GAP}")));
+    assert!(result
+        .content
+        .contains(&format!("{FIRST_GAP}\n\n{SECOND_GAP}")));
     assert_eq!(
         result.citations.len(),
         1,

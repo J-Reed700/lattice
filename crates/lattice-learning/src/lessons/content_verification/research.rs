@@ -12,9 +12,7 @@ use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::application::services::model_contract::ask::{
     self, ask_each, Alone, Answered, Refusal, Says, Settled,
 };
-use lattice_core::application::services::model_contract::shape::{
-    Authored, Fields, Flagged, Form,
-};
+use lattice_core::application::services::model_contract::shape::{Authored, Fields, Flagged, Form};
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Kind, Scope, Showing, Told,
 };
@@ -155,7 +153,9 @@ impl Answered for ResearchQuery {
             .iter()
             .map(|(handle, hit)| entry(&handle.written(), &hit.card.0))
             .collect();
-        let task = json!({"topic":input.topic,"query":input.query,"gaps":input.gaps,"results":results}).to_string();
+        let task =
+            json!({"topic":input.topic,"query":input.query,"gaps":input.gaps,"results":results})
+                .to_string();
         let mut says = Says::new(SELECT_SYSTEM, task);
         says.output_tokens = SELECTION_ANSWER_TOKENS;
         Ok(says)
@@ -280,7 +280,6 @@ async fn select_noted(
         })
         .collect())
 }
-
 
 tokio::task_local! { static CURRENT:Context; }
 

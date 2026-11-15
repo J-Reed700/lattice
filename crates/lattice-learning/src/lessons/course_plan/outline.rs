@@ -152,14 +152,13 @@ impl Outline {
         };
         for (handle, lesson) in showing.show(asked)?.iter() {
             outline.handles.insert(lesson.id.clone(), handle.written());
-            outline
-                .lessons
-                .insert(lesson.id.clone(), lesson_value("lessonId", &handle.written(), lesson));
+            outline.lessons.insert(
+                lesson.id.clone(),
+                lesson_value("lessonId", &handle.written(), lesson),
+            );
         }
         for (handle, other) in showing.show(others)?.iter() {
-            outline
-                .handles
-                .insert(other.0.id.clone(), handle.written());
+            outline.handles.insert(other.0.id.clone(), handle.written());
             outline.others.insert(
                 other.0.id.clone(),
                 lesson_value("otherLessonId", &handle.written(), &other.0),

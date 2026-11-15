@@ -108,11 +108,7 @@ async fn the_reviewer_is_shown_every_line_under_a_name_and_no_other_number() -> 
         .clean_review(&spec(), &flawed())
         .await?;
     let task = last(&model.requests()[0]);
-    let shown = format!(
-        "[{}] {}",
-        handle("src/limiter.py", FLAW_LINE),
-        FLAW_LINE
-    );
+    let shown = format!("[{}] {}", handle("src/limiter.py", FLAW_LINE), FLAW_LINE);
     assert!(task.contains(&shown), "{task}");
     assert!(task.contains("[u1] class RateLimiter:"), "{task}");
     Ok(())
@@ -153,8 +149,14 @@ async fn a_repair_the_app_cannot_use_is_left_out_and_the_others_stand() -> Resul
     let mut nameless = repair();
     nameless["description"] = json!("  ");
     let cases = [
-        (problem(replace("u999", REPAIR_LINE)), "a line that is not shown"),
-        (problem(replace(&at, FLAW_LINE)), "a repair that changes nothing"),
+        (
+            problem(replace("u999", REPAIR_LINE)),
+            "a line that is not shown",
+        ),
+        (
+            problem(replace(&at, FLAW_LINE)),
+            "a repair that changes nothing",
+        ),
         (problem(twice), "a line changed twice"),
         (problem(across), "two files in one repair"),
         (problem(at_start), "an insert at the start of several files"),
@@ -167,7 +169,8 @@ async fn a_repair_the_app_cannot_use_is_left_out_and_the_others_stand() -> Resul
 }
 
 #[tokio::test]
-async fn a_repair_on_a_line_an_earlier_repair_changed_is_left_out_and_the_others_stand() -> Result<()> {
+async fn a_repair_on_a_line_an_earlier_repair_changed_is_left_out_and_the_others_stand(
+) -> Result<()> {
     let db = Database::new(pool().await?);
     let at = handle("src/limiter.py", FLAW_LINE);
     let model = ScriptedModel::new([review_answer(vec![
@@ -195,7 +198,10 @@ async fn a_review_that_cannot_be_read_twice_fails_the_stage() -> Result<()> {
         .clean_review(&spec(), &flawed())
         .await
         .unwrap_err();
-    assert!(matches!(&error, AppError::ModelAnswerUnusable(_)), "{error:?}");
+    assert!(
+        matches!(&error, AppError::ModelAnswerUnusable(_)),
+        "{error:?}"
+    );
     assert_eq!(model.requests().len(), 2);
     assert!(runner.runs().is_empty());
     Ok(())
@@ -224,7 +230,10 @@ async fn a_repair_that_breaks_the_suite_is_sent_back_once_with_the_output() -> R
         .await?;
     assert_eq!(reviewed.files, files());
     let reask = last(&model.requests()[1]);
-    assert!(reask.contains("Your earlier answer made these repairs"), "{reask}");
+    assert!(
+        reask.contains("Your earlier answer made these repairs"),
+        "{reask}"
+    );
     assert!(reask.contains("self.hits.clear()"), "{reask}");
     assert!(reask.contains("the limiter forgot every key"), "{reask}");
     let purposes: Vec<&str> = reviewed

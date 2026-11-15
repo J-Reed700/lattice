@@ -91,7 +91,9 @@ impl LessonBrief {
             .map(|&number| Some((number, self.evidence.get(number.checked_sub(1)?)?)))
             .collect::<Option<Vec<_>>>()?;
         let mut shown = String::new();
-        write_evidence(&mut shown, units.into_iter(), &|number| format!("L{number}"));
+        write_evidence(&mut shown, units.into_iter(), &|number| {
+            format!("L{number}")
+        });
         if shown.ends_with('\n') {
             shown.pop();
         }

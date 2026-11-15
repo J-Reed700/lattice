@@ -494,7 +494,10 @@ async fn the_request_names_the_requested_pattern_and_offers_the_others_by_handle
     let offered = other_than(&["hash_map_lookup"]);
     assert!(sent.contains("[t1]"), "{sent}");
     assert!(sent.contains(&format!("[t{}]", offered.len())), "{sent}");
-    assert!(!sent.contains(&format!("[t{}]", offered.len() + 1)), "{sent}");
+    assert!(
+        !sent.contains(&format!("[t{}]", offered.len() + 1)),
+        "{sent}"
+    );
     assert!(
         PROBLEM_PATTERNS
             .iter()
@@ -506,8 +509,16 @@ async fn the_request_names_the_requested_pattern_and_offers_the_others_by_handle
 
 #[tokio::test]
 async fn a_float_comparison_needs_a_tolerance_above_zero_and_is_asked_again() {
-    let loose = with(with(answer(), "compare", json!("float_within")), "tolerance", json!("0"));
-    let fine = with(with(answer(), "compare", json!("float_within")), "tolerance", json!("0.001"));
+    let loose = with(
+        with(answer(), "compare", json!("float_within")),
+        "tolerance",
+        json!("0"),
+    );
+    let fine = with(
+        with(answer(), "compare", json!("float_within")),
+        "tolerance",
+        json!("0.001"),
+    );
     let runner = runner(killers());
     let (problem, model) = built(build(vec![loose, fine], &runner, &request(Form::Build)).await);
     assert_eq!(model.calls(), 2);

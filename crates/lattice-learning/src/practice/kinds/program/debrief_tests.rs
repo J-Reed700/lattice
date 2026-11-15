@@ -242,10 +242,22 @@ fn the_model_cites_lines_runs_and_examples_by_name() {
 fn a_line_continues_the_line_before_it_in_the_same_file_and_no_other() {
     let continues = |before, next| ProgramParts.continues(&before, &next);
 
-    assert!(continues(part_of("solution.py", 2), part_of("solution.py", 3)));
-    assert!(!continues(part_of("solution.py", 2), part_of("solution.py", 4)));
-    assert!(!continues(part_of("solution.py", 3), part_of("solution.py", 2)));
-    assert!(!continues(part_of("solution.py", 2), part_of("other.py", 3)));
+    assert!(continues(
+        part_of("solution.py", 2),
+        part_of("solution.py", 3)
+    ));
+    assert!(!continues(
+        part_of("solution.py", 2),
+        part_of("solution.py", 4)
+    ));
+    assert!(!continues(
+        part_of("solution.py", 3),
+        part_of("solution.py", 2)
+    ));
+    assert!(!continues(
+        part_of("solution.py", 2),
+        part_of("other.py", 3)
+    ));
 }
 
 #[test]

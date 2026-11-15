@@ -362,9 +362,9 @@ fn whole_number(value: &serde_json::Value) -> Option<i128> {
     }
 }
 
-/// `value` as an integer when it is finite and whole; the cap keeps the cast inside `i128`.
+/// `value` as an integer when it is finite and whole; the cast saturates.
 fn whole_float(value: f64) -> Option<i128> {
-    (value.is_finite() && value.fract() == 0.0 && value.abs() < 1.0e30).then_some(value as i128)
+    (value.is_finite() && value.fract() == 0.0).then_some(value as i128)
 }
 
 /// A tool's result as the model reads it: lines of text, named facts, and a

@@ -10,9 +10,7 @@ use lattice_core::application::services::model_contract::shape::{
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Internal, Kind, Picked, Showing, Told,
 };
-use lattice_core::application::services::model_contract::{
-    Contract, ContractId, CORRECTION_LEAD,
-};
+use lattice_core::application::services::model_contract::{Contract, ContractId, CORRECTION_LEAD};
 use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 
@@ -345,7 +343,12 @@ impl Answered for AuthorProblem {
             let listed: Vec<String> = shown
                 .iter()
                 .map(|(handle, pattern)| {
-                    format!("{} {}: {}", handle.bracketed(), pattern.name.0, pattern.cue.0)
+                    format!(
+                        "{} {}: {}",
+                        handle.bracketed(),
+                        pattern.name.0,
+                        pattern.cue.0
+                    )
                 })
                 .collect();
             let lead = if input.wanted.is_empty() {

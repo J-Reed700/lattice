@@ -12,7 +12,7 @@ use lattice_core::application::services::model_contract::shape::{
     Authored, Each, Fields, Form, Vocabulary,
 };
 use lattice_core::application::services::model_contract::shown::{
-    Drawn, Internal, Kind, Picked, Shown, Showing, Told,
+    Drawn, Internal, Kind, Picked, Showing, Shown, Told,
 };
 use lattice_core::application::services::model_contract::units::{Grain, Unit, Units};
 use lattice_core::domain::learning::claim_review::{CheckResult, VerdictKind};

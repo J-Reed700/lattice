@@ -28,7 +28,11 @@ fn task(sent: &Sent) -> Json {
         .unwrap_or_default();
     prompt
         .split("\n\n")
-        .find_map(|chunk| serde_json::from_str::<Json>(chunk).ok().filter(Json::is_object))
+        .find_map(|chunk| {
+            serde_json::from_str::<Json>(chunk)
+                .ok()
+                .filter(Json::is_object)
+        })
         .unwrap()
 }
 
@@ -216,10 +220,7 @@ async fn a_cited_passage_is_named_by_its_handle_and_stored_as_its_words() -> Res
 }
 
 fn describe_bounds(sent: &Sent) -> Bounds {
-    let requirement = task(sent)["requirements"][0]
-        .as_str()
-        .unwrap()
-        .to_owned();
+    let requirement = task(sent)["requirements"][0].as_str().unwrap().to_owned();
     let numbers: Vec<usize> = requirement
         .split(|c: char| !c.is_ascii_digit())
         .filter_map(|part| part.parse().ok())
@@ -258,10 +259,7 @@ async fn a_handle_that_names_no_passage_costs_only_that_citation() -> Result<()>
 async fn a_lesson_count_outside_the_asked_range_does_not_refuse_the_outline() -> Result<()> {
     let model = ScriptedModel::new().on_request::<OutlineDescription>(|sent, _| {
         let bounds = describe_bounds(sent);
-        reply(answer(modules(
-            bounds.min_modules,
-            bounds.max_lessons + 1,
-        )))
+        reply(answer(modules(bounds.min_modules, bounds.max_lessons + 1)))
     });
     let input = describe(&model);
     let outline = answered(asked(&model, &input).await?);

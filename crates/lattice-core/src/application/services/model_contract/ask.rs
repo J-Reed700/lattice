@@ -21,7 +21,8 @@ use super::shown::{Kind, Picked, Scope, Showing};
 use super::{tagged, Contract, ContractCall};
 use crate::application::ports::llm_port::{Finish, LLMPort};
 use crate::application::services::grounded_generation::{
-    self, CallOptions, EvidencePassage, EvidenceSelection, GroundedOutput, HistoryItem,
+    self, CallOptions, EvidencePassage, EvidenceSelection, GroundedGenerationError, GroundedOutput,
+    HistoryItem,
 };
 use crate::shared::error::{AppError, ErrorClass, Result};
 
@@ -192,13 +193,24 @@ pub trait Transport: Sync {
     }
 }
 
+/// The error of a send that failed. A request the app built and the planner
+/// refuses does not fit the window.
+pub fn send_error(error: GroundedGenerationError) -> AppError {
+    match error {
+        GroundedGenerationError::Budget(error) => AppError::WindowTooSmall(error.to_string()),
+        GroundedGenerationError::Model(error) => error,
+    }
+}
+
 /// A request sent as it is.
 pub struct Plain;
 
 #[async_trait]
 impl Transport for Plain {
     async fn send(&self, llm: &dyn LLMPort, request: GroundedRequest) -> Result<Sent> {
-        let output = grounded_generation::generate(llm, request.clone()).await?;
+        let output = grounded_generation::generate(llm, request.clone())
+            .await
+            .map_err(send_error)?;
         Ok(Sent::of(request, output))
     }
 

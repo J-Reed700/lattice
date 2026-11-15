@@ -754,8 +754,9 @@ pub async fn extract_segments(
         }
     }
     if add.is_empty() && transitions.is_empty() && left_out + refused > 0 {
-        let error =
-            MemoryValidationError::Malformed("every proposal of the answer was left out".to_owned());
+        let error = MemoryValidationError::Malformed(
+            "every proposal of the answer was left out".to_owned(),
+        );
         warn!(
             code = error.code(),
             segments = segments.len(),

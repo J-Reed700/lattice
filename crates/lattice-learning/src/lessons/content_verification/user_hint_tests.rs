@@ -115,7 +115,9 @@ impl LLMPort for Searching {
 
 /// A plan of one search, for the gap of the claim the round is for.
 fn one_search() -> Value {
-    crate::references::web_research::needs_answer(json!([{"gap":0,"kind":"web","query":"random assignment confounding official guidance"}]))
+    crate::references::web_research::needs_answer(
+        json!([{"gap":0,"kind":"web","query":"random assignment confounding official guidance"}]),
+    )
 }
 
 type Scope<'a> = (&'a LearningCurriculumRepository, &'a str, &'a str);

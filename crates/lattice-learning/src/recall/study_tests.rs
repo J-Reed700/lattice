@@ -52,9 +52,14 @@ fn deck() -> StudyDeckDto {
     let mut card = ChoiceCard {
         question: "What should be studied before selecting a procedure?",
         answer: "The stated conditions",
-        distractors: ["Only the title", "Nothing", "Only the filing date", "Only the fee"]
-            .map(String::from)
-            .to_vec(),
+        distractors: [
+            "Only the title",
+            "Nothing",
+            "Only the filing date",
+            "Only the fee",
+        ]
+        .map(String::from)
+        .to_vec(),
         explanation: "The passage explicitly asks the reader to study the stated conditions.",
         topic: "Procedures",
     }
@@ -337,14 +342,10 @@ async fn conversation_cards_preserve_every_verified_claim_and_its_citations() {
             .collect();
         reply(json!({ "entries": entries }))
     });
-    let cards = super::study_generation::generate_from_conversation(
-        &model,
-        &[first, second],
-        "deck",
-        10,
-    )
-    .await
-    .unwrap();
+    let cards =
+        super::study_generation::generate_from_conversation(&model, &[first, second], "deck", 10)
+            .await
+            .unwrap();
     assert_eq!(cards.len(), 2);
     assert_eq!(cards[0].answer, "The first verified claim remains exact.");
     assert_eq!(
@@ -420,7 +421,13 @@ async fn a_distractor_repeating_the_claim_leaves_the_claim_without_a_card() {
     let model = ScriptedModel::new().on_request::<ConversationCards>(move |sent, _| {
         let entries: Vec<_> = claim_ids(sent)
             .iter()
-            .map(|id| card_entry(id, "When is equilibrium reached?", &[answer.as_str(), "B", "C", "D"]))
+            .map(|id| {
+                card_entry(
+                    id,
+                    "When is equilibrium reached?",
+                    &[answer.as_str(), "B", "C", "D"],
+                )
+            })
             .collect();
         reply(json!({ "entries": entries }))
     });
@@ -480,7 +487,10 @@ async fn a_card_is_read_at_any_length() {
     assert_eq!(cards[0].question, question.trim());
     assert_eq!(cards[0].explanation, explanation.trim());
     assert_eq!(cards[0].topic, topic.trim());
-    assert!(cards[0].options.iter().any(|choice| choice == option.trim()));
+    assert!(cards[0]
+        .options
+        .iter()
+        .any(|choice| choice == option.trim()));
     assert_eq!(cards[0].source.excerpt, excerpt.trim());
 }
 
@@ -998,7 +1008,9 @@ impl lattice_core::application::ports::LLMPort for Notation {
         }
         let prompt = task_holding(request, "claims")
             .or_else(|| task_holding(request, "passages"))
-            .ok_or_else(|| lattice_core::shared::error::AppError::InternalError("no task".into()))?;
+            .ok_or_else(|| {
+                lattice_core::shared::error::AppError::InternalError("no task".into())
+            })?;
         let reply = match prompt["claims"].as_array() {
             Some(claims) => {
                 let spoiled = self

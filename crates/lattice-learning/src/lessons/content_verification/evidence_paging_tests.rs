@@ -414,7 +414,8 @@ impl LLMPort for BrokenJudge {
         if user.contains("Claim: ")
             || request.contract().is_some_and(|call| {
                 call.id == lattice_core::application::services::claim_verification::ClaimBatch::ID
-            }) {
+            })
+        {
             if self.outage {
                 return Err(AppError::ServiceNotAvailable("503: loading model".into()));
             }

@@ -515,11 +515,12 @@ fn drafted(input: &Input, answer: &ProblemAnswer) -> std::result::Result<Draft, 
 /// The answer as the model wrote it, to hand back when the proof refuses it.
 fn answer_text(answer: &ProblemAnswer) -> String {
     let lines = |lines: &[Line]| -> Vec<Value> {
-        lines.iter().map(|line| json!({"text": line.text})).collect()
+        lines
+            .iter()
+            .map(|line| json!({"text": line.text}))
+            .collect()
     };
-    let case = |case: &CaseAnswer| {
-        json!({"category": case.category, "args": lines(&case.args), "expected": case.expected})
-    };
+    let case = |case: &CaseAnswer| json!({"category": case.category, "args": lines(&case.args), "expected": case.expected});
     json!({
         "title": answer.title,
         "statement": answer.statement,

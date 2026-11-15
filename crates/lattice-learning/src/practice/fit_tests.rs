@@ -9,7 +9,9 @@ use crate::practice::session::fake_kind::fake_kind;
 use crate::practice::session::kind::{Kind, Kinds};
 use crate::practice_repository::KindVerdict;
 use futures::future::BoxFuture;
-use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
 use lattice_core::domain::learning::practice::work::KindId;
@@ -47,9 +49,11 @@ fn prompt_of(sent: &Sent) -> String {
             _ => None,
         })
         .collect::<Vec<_>>()
-        .join("
+        .join(
+            "
 
-")
+",
+        )
 }
 
 /// The handle written before each kind a request lists, with what the kind says.
@@ -177,7 +181,11 @@ async fn prompt_snapshot_practice_fit() -> Result<()> {
     let kinds = Kinds::new([kind("rope", ROPE), kind("beads", BEADS)])?;
     let model = scripted(&[&[("beads", true), ("rope", false)]]);
     check_practice_fit(&repo, &kinds, &model, &program.summary.id).await?;
-    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "practice-fit", &requests(&model));
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "practice-fit",
+        &requests(&model),
+    );
     Ok(())
 }
 
@@ -440,7 +448,9 @@ async fn a_kind_the_answer_leaves_out_is_asked_again_alone_and_the_others_stand(
 
     let sent = texts(&model);
     assert_eq!(sent.len(), 2);
-    assert!(sent.get(1).is_some_and(|text| text.contains(ROPE) && !text.contains(BEADS)));
+    assert!(sent
+        .get(1)
+        .is_some_and(|text| text.contains(ROPE) && !text.contains(BEADS)));
     assert_eq!(
         checked.kinds,
         vec![
@@ -473,7 +483,9 @@ async fn a_blank_reason_is_corrected_for_that_kind_alone() -> Result<()> {
 
     let sent = texts(&model);
     assert_eq!(sent.len(), 2);
-    assert!(sent.get(1).is_some_and(|text| text.contains("The reason for this kind is empty")));
+    assert!(sent
+        .get(1)
+        .is_some_and(|text| text.contains("The reason for this kind is empty")));
     assert_eq!(
         checked.kinds,
         vec![
@@ -502,7 +514,9 @@ async fn a_kind_answered_twice_differently_is_asked_again_alone() -> Result<()> 
 
     let sent = texts(&model);
     assert_eq!(sent.len(), 2);
-    assert!(sent.get(1).is_some_and(|text| text.contains(BEADS) && !text.contains(ROPE)));
+    assert!(sent
+        .get(1)
+        .is_some_and(|text| text.contains(BEADS) && !text.contains(ROPE)));
     assert_eq!(
         checked.kinds,
         vec![
@@ -535,7 +549,9 @@ async fn a_kind_the_model_never_answers_stays_being_checked_and_is_the_only_one_
 
     let sent = texts(&later);
     assert_eq!(sent.len(), 1);
-    assert!(sent.first().is_some_and(|text| text.contains(ROPE) && !text.contains(BEADS)));
+    assert!(sent
+        .first()
+        .is_some_and(|text| text.contains(ROPE) && !text.contains(BEADS)));
     assert_eq!(
         checked.kinds,
         vec![

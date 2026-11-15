@@ -40,9 +40,7 @@ fn context(learner_has: &[String]) -> Context<'_> {
 
 /// A model whose solver finds every key right and whose judge answers as `judge` does.
 fn model(judge: impl Fn(&Value, usize) -> Value + Send + Sync + 'static) -> ScriptedModel {
-    let model = answering::<SolvePicks>(ScriptedModel::new(), |task, _| {
-        solved(task, |_| vec![0])
-    });
+    let model = answering::<SolvePicks>(ScriptedModel::new(), |task, _| solved(task, |_| vec![0]));
     answering::<QuizItemReview>(model, judge)
 }
 
@@ -59,7 +57,9 @@ async fn review_of(
             quote: "Reference quote.",
         })
         .collect();
-    review(model, &entries, &context(learner_has)).await.unwrap()
+    review(model, &entries, &context(learner_has))
+        .await
+        .unwrap()
 }
 
 /// The reply with the entry named `of` left out.
@@ -193,8 +193,14 @@ async fn an_item_is_offered_the_other_items_and_never_itself() {
         .unwrap();
     let task: Value = serde_json::from_str(task_messages(&sent.request).1).unwrap();
     assert_eq!(task["items"][0]["id"], "q1");
-    assert_eq!(task["items"][0]["otherItems"], json!([{"id": "n1", "prompt": SECOND}]));
-    assert_eq!(task["items"][1]["otherItems"], json!([{"id": "n1", "prompt": FIRST}]));
+    assert_eq!(
+        task["items"][0]["otherItems"],
+        json!([{"id": "n1", "prompt": SECOND}])
+    );
+    assert_eq!(
+        task["items"][1]["otherItems"],
+        json!([{"id": "n1", "prompt": FIRST}])
+    );
     assert!(task.get("otherItems").is_none());
 }
 

@@ -3,8 +3,8 @@
 
 use super::support::{
     blind_answer, blind_assessment, built_drill, clean_code_answer, code_check_answer, code_spec,
-    entry_answer, grade_answer, grade_extras_answer, judge_answer, lesson_spec, messages, plant_answer, review_answer,
-    ScriptedModel,
+    entry_answer, grade_answer, grade_extras_answer, judge_answer, lesson_spec, messages,
+    plant_answer, review_answer, ScriptedModel,
 };
 use crate::drills::bank::queue_build;
 use crate::drills::jobs::{drill_job_config, judge_grader, spec_of, DrillBuildWorker, DRILL_BUILD};

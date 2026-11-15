@@ -92,7 +92,10 @@ pub(crate) fn answer(task: &Value, flat: &Value) -> String {
         };
         let (lead, pieces) = labelled(marked);
         let plain = unmarked(marked);
-        let Some(start) = edit["before"].as_str().and_then(|before| plain.find(before)) else {
+        let Some(start) = edit["before"]
+            .as_str()
+            .and_then(|before| plain.find(before))
+        else {
             continue;
         };
         let mut at = lead.len();

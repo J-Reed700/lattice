@@ -166,29 +166,20 @@ mod tests {
             packed.for_owners(9, &needs),
             [(0, vec![0, 1]), (1, vec![1, 2]), (2, vec![0, 2])]
         );
-        assert_eq!(
-            packed.for_owners(7, &needs),
-            [(0, vec![0, 1])]
-        );
+        assert_eq!(packed.for_owners(7, &needs), [(0, vec![0, 1])]);
     }
 
     #[test]
     fn an_owner_that_does_not_fit_is_passed_over_and_later_ones_are_tried() {
         let packed = costed(&[2, 9, 1]);
         let needs = vec![vec![0], vec![1], vec![2]];
-        assert_eq!(
-            packed.for_owners(4, &needs),
-            [(0, vec![0]), (2, vec![2])]
-        );
+        assert_eq!(packed.for_owners(4, &needs), [(0, vec![0]), (2, vec![2])]);
     }
 
     #[test]
     fn an_owner_with_no_needs_always_fits() {
         let packed = costed(&[5]);
-        assert_eq!(
-            packed.for_owners(0, &[vec![0], vec![]]),
-            [(1, vec![])]
-        );
+        assert_eq!(packed.for_owners(0, &[vec![0], vec![]]), [(1, vec![])]);
     }
 
     #[test]

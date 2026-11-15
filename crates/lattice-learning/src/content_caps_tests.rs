@@ -187,7 +187,10 @@ async fn research_plans_as_many_searches_as_the_gaps_need() -> Result<()> {
         .iter()
         .map(|query| json!({"gap": 0, "query": query, "kind": "web"}))
         .collect();
-    let llm = scripted(vec![crate::references::web_research::needs_answer(json!(needs)).to_string()]);
+    let llm = scripted(vec![crate::references::web_research::needs_answer(json!(
+        needs
+    ))
+    .to_string()]);
     let planned = crate::references::web_research::plan_needs(
         &llm,
         "topic",

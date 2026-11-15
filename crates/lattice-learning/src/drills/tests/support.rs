@@ -19,18 +19,17 @@ use crate::drills::runner::{CodeRunner, RunOutcome};
 use crate::drills::schedules;
 use crate::drills::spec::DrillSpec;
 use crate::lessons::structured_call::is_draft_request;
-#[cfg(test)]
-use lattice_core::domain::learning::drills::patterns_for;
 use crate::persistence::now;
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
 use lattice_core::application::ports::LLMPort;
+#[cfg(test)]
+use lattice_core::domain::learning::drills::patterns_for;
 use lattice_core::domain::learning::drills::{
-    apply, Assessment, Drill, DrillFile, Edit, Finding, FindingOutcome, IssueOutcome,
-    KeyIssue, LessonBrief, LessonSentence, LineSpan, Material, PatternDue, Proof,
-    Severity,
+    apply, Assessment, Drill, DrillFile, Edit, Finding, FindingOutcome, IssueOutcome, KeyIssue,
+    LessonBrief, LessonSentence, LineSpan, Material, PatternDue, Proof, Severity,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Database;
