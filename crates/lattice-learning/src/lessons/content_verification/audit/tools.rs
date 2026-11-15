@@ -329,15 +329,14 @@ impl Call<'_> {
         scope: &mut Scope,
         research: &mut Research,
     ) -> String {
-        let Some(searches) = serde_json::from_value::<PlannedNeed>(arguments.clone())
-            .ok()
-            .and_then(PlannedNeed::searches)
-        else {
-            return "Search not run: give a query and rewordings that are not blank once any \
-                    site: operators are lifted out, a site that is an address, one of the \
-                    listed kinds, dates as YYYY-MM-DD, and for asOf the page's address as \
-                    identifier."
-                .into();
+        let searches = match serde_json::from_value::<PlannedNeed>(arguments.clone())
+            .map(PlannedNeed::searches)
+        {
+            Ok(Ok(searches)) => searches,
+            Ok(Err(outside)) => return format!("Search not run. {}", outside.says()),
+            Err(_) => {
+                return "Search not run: give a query and one of the listed kinds.".into();
+            }
         };
         // A query naming several sites is one search per site, sharing
         // the room the one call has. The call fails only when every

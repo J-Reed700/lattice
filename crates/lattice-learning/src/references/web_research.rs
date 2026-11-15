@@ -373,7 +373,7 @@ pub(crate) enum Outside {
 
 impl Outside {
     /// What the planner is told to write instead.
-    fn says(self) -> &'static str {
+    pub(crate) fn says(self) -> &'static str {
         match self {
             Self::Query => "A search needs a query that is not blank once any site: operators are lifted out.",
             Self::Rewording => "A rewording is not blank once any site: operators are lifted out.",
