@@ -88,9 +88,9 @@ mod tests {
     use std::sync::Arc;
 
     async fn pool() -> SqlitePool {
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        pool
+        lattice_core::shared::testing::sqlite::migrated_in_memory()
+            .await
+            .unwrap()
     }
 
     async fn insert_document(pool: &SqlitePool, id: &str) {

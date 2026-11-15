@@ -23,15 +23,18 @@ async fn real_model_import_search_and_disk_restart_preserve_results() {
     let dimension = model.dimension();
     let identity = model.model_identity();
     let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("library.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path)
+        .await
+        .unwrap();
     let options = SqliteConnectOptions::new()
-        .filename(dir.path().join("library.db"))
+        .filename(&path)
         .create_if_missing(true);
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options.clone())
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     let db = Database::new(pool.clone());
 
     // Actual repository prose, rather than seeded vectors or generated facts.

@@ -16,17 +16,18 @@ use tempfile::tempdir;
 type TestBuilder = tar::Builder<zstd::Encoder<'static, Vec<u8>>>;
 
 async fn migrated_pool(db_path: &Path) -> SqlitePool {
+    lattice_core::shared::testing::sqlite::write_migrated(db_path)
+        .await
+        .unwrap();
     let options = SqliteConnectOptions::new()
         .filename(db_path)
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Delete);
-    let pool = SqlitePoolOptions::new()
+    SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
         .await
-        .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    pool
+        .unwrap()
 }
 
 async fn read_only_pool(db_path: &Path) -> SqlitePool {

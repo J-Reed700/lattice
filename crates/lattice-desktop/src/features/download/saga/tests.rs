@@ -104,15 +104,9 @@ async fn complete_gguf_embedding_download(
     use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
     use std::sync::Arc;
 
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(":memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .expect("create in-memory pool");
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .expect("run migrations");
     let db = Database::new(pool.clone());
 
     sqlx::query(
@@ -232,15 +226,9 @@ async fn saga_with_one_file(
     use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
     use std::sync::Arc;
 
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(":memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .expect("create in-memory pool");
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .expect("run migrations");
     let db = Database::new(pool.clone());
     sqlx::query(
         "INSERT INTO models (id, model_name, model_id, base_path, model_type, architecture, status)
@@ -350,15 +338,9 @@ async fn complete_chat_download(
     use lattice_core::application::ports::{MockSettingsRepository, SettingsRepositoryPort};
     use std::sync::Arc;
 
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(":memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .expect("create in-memory pool");
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .expect("run migrations");
     let db = Database::new(pool.clone());
     sqlx::query(
         "INSERT INTO models (id, model_name, model_id, base_path, model_type, architecture, status)

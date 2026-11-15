@@ -69,14 +69,9 @@ impl Fixture {
 }
 
 async fn fixture() -> Fixture {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .idle_timeout(None)
-        .max_lifetime(None)
-        .connect(":memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     for conversation in [CONVERSATION, OTHER] {
         sqlx::query(
             "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \

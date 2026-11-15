@@ -930,11 +930,13 @@ async fn concurrent_retries_of_one_memory_operation_serialize_idempotently() {
     // in-memory/single-connection fixture would accidentally serialize these
     // calls before SQLite's read-to-write upgrade race is exercised.
     let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("memory-concurrency.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path)
+        .await
+        .unwrap();
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(5)
-        .connect_with(crate::tests::sqlite::file_options(
-            temp.path().join("memory-concurrency.db"),
-        ))
+        .connect_with(lattice_core::shared::testing::sqlite::file_options(&path))
         .await
         .unwrap();
     setup_schema(&pool).await;

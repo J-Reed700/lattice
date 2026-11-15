@@ -14,16 +14,16 @@ const HELD: Duration = Duration::from_millis(300);
 #[tokio::test]
 async fn binding_decides_on_the_course_as_the_other_writer_left_it() {
     let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("t.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path)
+        .await
+        .unwrap();
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
-        .connect_with(file_options(dir.path().join("t.db")))
+        .connect_with(file_options(path))
         .await
         .unwrap();
     let db = Database::new(pool.clone());
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .unwrap();
     let mut program = fixture();
     program.summary.status = LearningProgramStatus::Active;
     LearningRepository::new(db.clone())

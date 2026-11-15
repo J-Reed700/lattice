@@ -35,10 +35,6 @@ async fn persistent_pool(path: std::path::PathBuf) -> Result<SqlitePool> {
         .max_connections(1)
         .connect_with(options)
         .await?;
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
     sqlx::query("PRAGMA foreign_keys=ON").execute(&pool).await?;
     Ok(pool)
 }
@@ -363,6 +359,7 @@ async fn canvas_scene_and_snapshot_survive_a_database_restart() -> Result<()> {
     let directory = tempfile::tempdir()
         .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     let path = directory.path().join("canvas.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
     let first = persistent_pool(path.clone()).await?;
     let first_db = Database::new(first.clone());
     let program = active_program(&first_db).await?;
@@ -414,6 +411,7 @@ async fn concurrent_retry_of_identical_save_commits_one_revision_and_receipt() -
     let directory = tempfile::tempdir()
         .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     let path = directory.path().join("canvas-concurrent.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
     let setup_pool = persistent_pool(path.clone()).await?;
     let setup_db = Database::new(setup_pool.clone());
     let program = active_program(&setup_db).await?;

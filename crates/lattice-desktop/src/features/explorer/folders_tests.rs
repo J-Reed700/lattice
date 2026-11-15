@@ -11,14 +11,15 @@ const ROOT: &str = "/w/a";
 
 async fn database() -> (SqlitePool, Database, tempfile::TempDir) {
     let directory = tempfile::tempdir().unwrap();
-    let pool = SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(crate::tests::sqlite::file_options(
-            directory.path().join("explorer.db"),
-        ))
+    let path = directory.path().join("explorer.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path)
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(lattice_core::shared::testing::sqlite::file_options(&path))
+        .await
+        .unwrap();
     let db = Database::new(pool.clone());
     sqlx::query("INSERT INTO conversation_spaces (id, name) VALUES ('space_music', 'Music')")
         .execute(&pool)

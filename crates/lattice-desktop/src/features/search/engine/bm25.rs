@@ -350,8 +350,9 @@ mod tests {
     /// shipped triggers are what has to keep the trigram index in step.
     #[tokio::test]
     async fn the_migration_triggers_keep_both_indexes_in_step() {
-        let pool = SqlitePool::connect(":memory:").await.unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+            .await
+            .unwrap();
         sqlx::query(
             "INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, checksum) \
              VALUES ('doc', '/support.md', 'support.md', 1, CURRENT_TIMESTAMP, 'checksum')",

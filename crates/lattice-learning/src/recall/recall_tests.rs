@@ -426,12 +426,9 @@ async fn recall_card_and_immutable_version_survive_database_reopen() -> Result<(
     let directory = tempfile::tempdir()
         .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
     let path = directory.path().join("learning-recall.sqlite");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
     let pool = file_pool(&path).await?;
     let db = Database::new(pool.clone());
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
     let program = active_program(&db).await?;
     let lesson = program
         .modules
@@ -468,10 +465,6 @@ async fn recall_card_and_immutable_version_survive_database_reopen() -> Result<(
 
     let reopened = file_pool(&path).await?;
     let reopened_db = Database::new(reopened.clone());
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&reopened)
-        .await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
     let workspace = LearningRecallRepository::new(reopened_db)
         .workspace(&program.summary.id)
         .await?;

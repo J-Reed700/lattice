@@ -502,15 +502,12 @@ async fn practical_draft_survives_closing_and_reopening_file_backed_database() -
 
     let directory = tempfile::tempdir().map_err(|error| AppError::Database(error.to_string()))?;
     let database_path = directory.path().join("learning-studio.sqlite");
+    lattice_core::shared::testing::sqlite::write_migrated(&database_path).await?;
     let options = || crate::test_support::file_options(&database_path);
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options())
         .await?;
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|error| AppError::Database(error.to_string()))?;
     let database = Database::new(pool.clone());
     let (_, program_id, lesson_id, _) = fixture_on_pool(pool, &database).await?;
     let repository = LearningPracticalRepository::new(database.clone());

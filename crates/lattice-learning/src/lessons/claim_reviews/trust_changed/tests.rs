@@ -61,15 +61,13 @@ impl Published {
 /// user and the ledger's end state is Needs review.
 async fn published() -> Published {
     let file = tempfile::tempdir().unwrap();
-    let pool = SqlitePoolOptions::new()
-        .max_connections(3)
-        .connect_with(crate::test_support::file_options(
-            file.path().join("held.db"),
-        ))
+    let path = file.path().join("held.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path)
         .await
         .unwrap();
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
+    let pool = SqlitePoolOptions::new()
+        .max_connections(3)
+        .connect_with(crate::test_support::file_options(path))
         .await
         .unwrap();
     let db = Database::new(pool.clone());

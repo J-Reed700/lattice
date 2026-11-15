@@ -11,15 +11,9 @@ const A: &str = "6f1c0d1e-3b5a-4c52-9d0b-0a1b2c3d4e5f";
 const B: &str = "b7e2f4a9-8c61-4d3e-a5f0-9e8d7c6b5a40";
 
 async fn migrated_pool() -> SqlitePool {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .idle_timeout(None)
-        .max_lifetime(None)
-        .connect("sqlite::memory:")
+    lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
-        .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    pool
+        .unwrap()
 }
 
 fn files_in(home: &Path) -> LibraryFiles {
