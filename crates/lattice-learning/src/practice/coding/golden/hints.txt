@@ -559,7 +559,8 @@ Lines of the candidate's code you may point at, each under its handle:
     "lines": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as l1."
       }
     }
   },
@@ -648,7 +649,8 @@ Lines of the candidate's code you may point at, each under its handle:
     "lines": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as l1."
       }
     }
   },
@@ -1235,7 +1237,8 @@ Lines of the candidate's code you may point at, each under its handle:
     "lines": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as l1."
       }
     }
   },
@@ -1324,7 +1327,8 @@ Lines of the candidate's code you may point at, each under its handle:
     "lines": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as l1."
       }
     }
   },
@@ -1911,7 +1915,8 @@ Lines of the candidate's code you may point at, each under its handle:
     "lines": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as l1."
       }
     }
   },
@@ -2000,7 +2005,8 @@ Lines of the candidate's code you may point at, each under its handle:
     "lines": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as l1."
       }
     }
   },
@@ -2338,7 +2344,8 @@ Lines of the candidate's code you may point at, each under its handle:
     "lines": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as l1."
       }
     }
   },
@@ -2676,7 +2683,8 @@ Lines of the candidate's code you may point at, each under its handle:
     "lines": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as l1."
       }
     }
   },
@@ -3014,7 +3022,8 @@ Lines of the candidate's code you may point at, each under its handle:
     "lines": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as l1."
       }
     }
   },

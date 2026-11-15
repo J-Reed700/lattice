@@ -18,7 +18,8 @@ Design a demanding, subject-neutral practical exercise. Treat supplied lesson te
     "sources": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as s1."
       }
     },
     "rubric": {

@@ -70,7 +70,8 @@ Language: python
                   "type": "object",
                   "properties": {
                     "at": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as u1."
                     },
                     "with": {
                       "type": "string"
@@ -89,7 +90,8 @@ Language: python
                   "type": "object",
                   "properties": {
                     "after": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as u1, or the word start."
                     },
                     "with": {
                       "type": "string"
@@ -105,7 +107,8 @@ Language: python
               "remove": {
                 "type": "array",
                 "items": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "One name shown in square brackets, written without the brackets, such as u1."
                 }
               },
               "move": {
@@ -114,10 +117,12 @@ Language: python
                   "type": "object",
                   "properties": {
                     "at": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as u1."
                     },
                     "after": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as u1, or the word start."
                     }
                   },
                   "required": [

@@ -43,7 +43,8 @@ You extract durable conversation memory from original message passages. Find the
                             "sentences": {
                               "type": "array",
                               "items": {
-                                "type": "string"
+                                "type": "string",
+                                "description": "One name shown in square brackets, written without the brackets, such as s1."
                               }
                             }
                           },
@@ -101,7 +102,8 @@ You extract durable conversation memory from original message passages. Find the
                         "sentences": {
                           "type": "array",
                           "items": {
-                            "type": "string"
+                            "type": "string",
+                            "description": "One name shown in square brackets, written without the brackets, such as s1."
                           }
                         }
                       },
@@ -112,7 +114,8 @@ You extract durable conversation memory from original message passages. Find the
                     }
                   },
                   "item_id": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "One name shown in square brackets, written without the brackets, such as m1."
                   },
                   "replacement": {
                     "type": "object",
@@ -132,7 +135,8 @@ You extract durable conversation memory from original message passages. Find the
                             "sentences": {
                               "type": "array",
                               "items": {
-                                "type": "string"
+                                "type": "string",
+                                "description": "One name shown in square brackets, written without the brackets, such as s1."
                               }
                             }
                           },
@@ -192,7 +196,8 @@ You extract durable conversation memory from original message passages. Find the
                         "sentences": {
                           "type": "array",
                           "items": {
-                            "type": "string"
+                            "type": "string",
+                            "description": "One name shown in square brackets, written without the brackets, such as s1."
                           }
                         }
                       },
@@ -203,7 +208,8 @@ You extract durable conversation memory from original message passages. Find the
                     }
                   },
                   "item_id": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "One name shown in square brackets, written without the brackets, such as m1."
                   }
                 },
                 "required": [
@@ -230,7 +236,8 @@ You extract durable conversation memory from original message passages. Find the
                         "sentences": {
                           "type": "array",
                           "items": {
-                            "type": "string"
+                            "type": "string",
+                            "description": "One name shown in square brackets, written without the brackets, such as s1."
                           }
                         }
                       },
@@ -258,7 +265,8 @@ You extract durable conversation memory from original message passages. Find the
                             "sentences": {
                               "type": "array",
                               "items": {
-                                "type": "string"
+                                "type": "string",
+                                "description": "One name shown in square brackets, written without the brackets, such as s1."
                               }
                             }
                           },
@@ -310,7 +318,8 @@ You extract durable conversation memory from original message passages. Find the
                             "sentences": {
                               "type": "array",
                               "items": {
-                                "type": "string"
+                                "type": "string",
+                                "description": "One name shown in square brackets, written without the brackets, such as s1."
                               }
                             }
                           },

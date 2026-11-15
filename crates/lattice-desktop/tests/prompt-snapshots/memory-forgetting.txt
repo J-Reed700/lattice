@@ -15,7 +15,8 @@ You check lines of a conversation's working summary against the facts the user a
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as l1."
           },
           "verdict": {
             "type": "string",

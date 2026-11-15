@@ -49,7 +49,8 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as i1."
           },
           "taught": {
             "type": "string",
@@ -61,7 +62,8 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
           "units": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as u1."
             }
           }
         },

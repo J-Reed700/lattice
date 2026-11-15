@@ -15,7 +15,8 @@ Author only independent evaluator files for this public practical brief and exac
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as e1."
           },
           "content": {
             "type": "string"

@@ -34,7 +34,8 @@ You maintain a bounded working summary that lets a conversation continue after o
         "type": "object",
         "properties": {
           "after": {
-            "type": "string"
+            "type": "string",
+            "description": "The word start."
           },
           "with": {
             "type": "string"
@@ -62,7 +63,8 @@ You maintain a bounded working summary that lets a conversation continue after o
             "type": "string"
           },
           "after": {
-            "type": "string"
+            "type": "string",
+            "description": "The word start."
           }
         },
         "required": [

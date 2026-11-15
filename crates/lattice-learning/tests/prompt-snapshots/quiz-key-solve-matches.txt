@@ -15,7 +15,8 @@ Solve quiz questions independently, without any answer key. Answer each question
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as q1."
           },
           "reason": {
             "type": "string"
@@ -26,10 +27,12 @@ Solve quiz questions independently, without any answer key. Answer each question
               "type": "object",
               "properties": {
                 "of": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "One name shown in square brackets, written without the brackets, such as l1."
                 },
                 "matches": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "One name shown in square brackets, written without the brackets, such as r1."
                 }
               },
               "required": [

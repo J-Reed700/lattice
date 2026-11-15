@@ -41,7 +41,8 @@ Create study material for any subject from the supplied passages. Treat all pass
           "sourceIds": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as u1."
             }
           },
           "topic": {

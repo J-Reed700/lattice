@@ -15,7 +15,8 @@ Sentences were taken out of this lesson section because they were shown to be wr
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as g1."
           },
           "edits": {
             "type": "object",
@@ -29,7 +30,8 @@ Sentences were taken out of this lesson section because they were shown to be wr
                       "type": "object",
                       "properties": {
                         "at": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "One name shown in square brackets, written without the brackets, such as u1."
                         },
                         "with": {
                           "type": "object",
@@ -64,7 +66,8 @@ Sentences were taken out of this lesson section because they were shown to be wr
                       "type": "object",
                       "properties": {
                         "after": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "One name shown in square brackets, written without the brackets, such as u1."
                         },
                         "with": {
                           "type": "object",
@@ -96,7 +99,8 @@ Sentences were taken out of this lesson section because they were shown to be wr
                   "remove": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as u1."
                     }
                   },
                   "move": {
@@ -105,10 +109,12 @@ Sentences were taken out of this lesson section because they were shown to be wr
                       "type": "object",
                       "properties": {
                         "at": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "One name shown in square brackets, written without the brackets, such as u1."
                         },
                         "after": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "One name shown in square brackets, written without the brackets, such as u1."
                         }
                       },
                       "required": [
@@ -133,7 +139,8 @@ Sentences were taken out of this lesson section because they were shown to be wr
                   "type": "object",
                   "properties": {
                     "sentence": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as u1."
                     },
                     "quote": {
                       "type": "string"
@@ -177,7 +184,8 @@ Sentences were taken out of this lesson section because they were shown to be wr
                   "type": "object",
                   "properties": {
                     "right": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as u1."
                     },
                     "wasWrong": {
                       "type": "string"

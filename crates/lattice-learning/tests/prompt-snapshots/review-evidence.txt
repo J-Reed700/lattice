@@ -15,7 +15,8 @@ Check whether proposed lesson-review findings are justified BEFORE they may trig
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as i1."
           },
           "verdict": {
             "type": "string",
@@ -35,23 +36,27 @@ Check whether proposed lesson-review findings are justified BEFORE they may trig
           "candidateIds": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as p1."
             }
           },
           "referenceIds": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as r1."
             }
           },
           "reason": {
             "type": "string"
           },
           "partId": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as p1, or the word none."
           },
           "leftTo": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as k1, or the word none."
           }
         },
         "required": [

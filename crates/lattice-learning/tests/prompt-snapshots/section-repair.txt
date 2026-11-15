@@ -15,7 +15,8 @@ Repair verified lesson defects. Correct the listed factual defects using the rec
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as f1."
           },
           "edits": {
             "type": "object",
@@ -29,7 +30,8 @@ Repair verified lesson defects. Correct the listed factual defects using the rec
                       "type": "object",
                       "properties": {
                         "at": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "One name shown in square brackets, written without the brackets, such as u1."
                         },
                         "with": {
                           "type": "object",
@@ -40,7 +42,8 @@ Repair verified lesson defects. Correct the listed factual defects using the rec
                             "from": {
                               "type": "array",
                               "items": {
-                                "type": "string"
+                                "type": "string",
+                                "description": "One name shown in square brackets, written without the brackets, such as q1."
                               }
                             }
                           },
@@ -64,7 +67,8 @@ Repair verified lesson defects. Correct the listed factual defects using the rec
                       "type": "object",
                       "properties": {
                         "after": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "One name shown in square brackets, written without the brackets, such as u1."
                         },
                         "with": {
                           "type": "object",
@@ -75,7 +79,8 @@ Repair verified lesson defects. Correct the listed factual defects using the rec
                             "from": {
                               "type": "array",
                               "items": {
-                                "type": "string"
+                                "type": "string",
+                                "description": "One name shown in square brackets, written without the brackets, such as q1."
                               }
                             }
                           },
@@ -96,7 +101,8 @@ Repair verified lesson defects. Correct the listed factual defects using the rec
                   "remove": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as u1."
                     }
                   },
                   "move": {
@@ -105,10 +111,12 @@ Repair verified lesson defects. Correct the listed factual defects using the rec
                       "type": "object",
                       "properties": {
                         "at": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "One name shown in square brackets, written without the brackets, such as u1."
                         },
                         "after": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "One name shown in square brackets, written without the brackets, such as u1."
                         }
                       },
                       "required": [
@@ -133,10 +141,12 @@ Repair verified lesson defects. Correct the listed factual defects using the rec
                   "type": "object",
                   "properties": {
                     "sentence": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as u1."
                     },
                     "quote": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as q1."
                     }
                   },
                   "required": [
@@ -155,7 +165,8 @@ Repair verified lesson defects. Correct the listed factual defects using the rec
                       "type": "string"
                     },
                     "quote": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as q1."
                     }
                   },
                   "required": [
@@ -177,7 +188,8 @@ Repair verified lesson defects. Correct the listed factual defects using the rec
                   "type": "object",
                   "properties": {
                     "right": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as u1."
                     },
                     "wasWrong": {
                       "type": "string"

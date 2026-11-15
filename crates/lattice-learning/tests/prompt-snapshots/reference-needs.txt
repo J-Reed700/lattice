@@ -65,7 +65,8 @@ Plan focused reference searches for unresolved lesson claims. All lesson text an
             "type": "string"
           },
           "gap": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as g1."
           }
         },
         "required": [

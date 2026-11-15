@@ -182,12 +182,14 @@ Passages: [p2]
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as c1."
           },
           "sentencesUsed": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as u1."
             }
           },
           "verdict": {

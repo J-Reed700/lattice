@@ -15,7 +15,8 @@ Continue the role simulation as the named counterpart. Stay inside the scenario,
     "citations": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as u1."
       }
     }
   },

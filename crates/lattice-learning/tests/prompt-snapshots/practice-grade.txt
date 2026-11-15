@@ -15,19 +15,22 @@ Evaluate the learner artifact against each visible criterion. Scores are limited
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as c1."
           },
           "evidence": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as u1."
             }
           },
           "observation": {
             "type": "string"
           },
           "score": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as l1, or the word none."
           }
         },
         "required": [

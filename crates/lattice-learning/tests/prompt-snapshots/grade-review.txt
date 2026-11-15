@@ -120,7 +120,8 @@ Give an entry for every issue, the reason first.
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as i1."
           },
           "reason": {
             "type": "string"
@@ -134,12 +135,14 @@ Give an entry for every issue, the reason first.
             ]
           },
           "finding": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as f1, or the word none."
           },
           "findings": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as f1."
             }
           }
         },

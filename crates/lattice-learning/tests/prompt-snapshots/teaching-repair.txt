@@ -15,7 +15,8 @@ You are editing a rejected draft. Correct only the established teaching defects.
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as f1."
           },
           "plan": {
             "type": "string"
@@ -32,7 +33,8 @@ You are editing a rejected draft. Correct only the established teaching defects.
                       "type": "object",
                       "properties": {
                         "at": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "One name shown in square brackets, written without the brackets, such as u1."
                         },
                         "with": {
                           "type": "object",
@@ -43,7 +45,8 @@ You are editing a rejected draft. Correct only the established teaching defects.
                             "from": {
                               "type": "array",
                               "items": {
-                                "type": "string"
+                                "type": "string",
+                                "description": "One name shown in square brackets, written without the brackets, such as q1."
                               }
                             }
                           },
@@ -67,7 +70,8 @@ You are editing a rejected draft. Correct only the established teaching defects.
                       "type": "object",
                       "properties": {
                         "after": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "One name shown in square brackets, written without the brackets, such as u1."
                         },
                         "with": {
                           "type": "object",
@@ -78,7 +82,8 @@ You are editing a rejected draft. Correct only the established teaching defects.
                             "from": {
                               "type": "array",
                               "items": {
-                                "type": "string"
+                                "type": "string",
+                                "description": "One name shown in square brackets, written without the brackets, such as q1."
                               }
                             }
                           },
@@ -99,7 +104,8 @@ You are editing a rejected draft. Correct only the established teaching defects.
                   "remove": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as u1."
                     }
                   },
                   "move": {
@@ -108,10 +114,12 @@ You are editing a rejected draft. Correct only the established teaching defects.
                       "type": "object",
                       "properties": {
                         "at": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "One name shown in square brackets, written without the brackets, such as u1."
                         },
                         "after": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "One name shown in square brackets, written without the brackets, such as u1."
                         }
                       },
                       "required": [
@@ -136,10 +144,12 @@ You are editing a rejected draft. Correct only the established teaching defects.
                   "type": "object",
                   "properties": {
                     "sentence": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as u1."
                     },
                     "quote": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as q1."
                     }
                   },
                   "required": [
@@ -155,10 +165,12 @@ You are editing a rejected draft. Correct only the established teaching defects.
                   "type": "object",
                   "properties": {
                     "citation": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as c1."
                     },
                     "quote": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as q1."
                     }
                   },
                   "required": [
@@ -171,7 +183,8 @@ You are editing a rejected draft. Correct only the established teaching defects.
               "uncite": {
                 "type": "array",
                 "items": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "One name shown in square brackets, written without the brackets, such as c1."
                 }
               },
               "keys": {
@@ -180,7 +193,8 @@ You are editing a rejected draft. Correct only the established teaching defects.
                   "type": "object",
                   "properties": {
                     "right": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as u1."
                     },
                     "wasWrong": {
                       "type": "string"

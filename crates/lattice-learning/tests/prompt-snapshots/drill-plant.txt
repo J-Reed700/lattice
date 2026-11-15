@@ -188,16 +188,19 @@ The other patterns of the catalogue, for the pattern of a lesson issue:
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as t1."
           },
           "lessonSentences": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as e1."
             }
           },
           "lessonPattern": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as c1, or the word none."
           },
           "change": {
             "type": "object",
@@ -208,7 +211,8 @@ The other patterns of the catalogue, for the pattern of a lesson issue:
                   "type": "object",
                   "properties": {
                     "at": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as u1."
                     },
                     "with": {
                       "type": "string"
@@ -227,7 +231,8 @@ The other patterns of the catalogue, for the pattern of a lesson issue:
                   "type": "object",
                   "properties": {
                     "after": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as u1, or the word start."
                     },
                     "with": {
                       "type": "string"
@@ -243,7 +248,8 @@ The other patterns of the catalogue, for the pattern of a lesson issue:
               "remove": {
                 "type": "array",
                 "items": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "One name shown in square brackets, written without the brackets, such as u1."
                 }
               },
               "move": {
@@ -252,10 +258,12 @@ The other patterns of the catalogue, for the pattern of a lesson issue:
                   "type": "object",
                   "properties": {
                     "at": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as u1."
                     },
                     "after": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "One name shown in square brackets, written without the brackets, such as u1, or the word start."
                     }
                   },
                   "required": [

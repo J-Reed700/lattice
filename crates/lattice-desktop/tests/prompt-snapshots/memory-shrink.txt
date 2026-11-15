@@ -15,7 +15,8 @@ You maintain a bounded working summary that lets a conversation continue after o
         "type": "object",
         "properties": {
           "at": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as u1."
           },
           "with": {
             "type": "string"
@@ -34,7 +35,8 @@ You maintain a bounded working summary that lets a conversation continue after o
         "type": "object",
         "properties": {
           "after": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as u1, or the word start."
           },
           "with": {
             "type": "string"
@@ -50,7 +52,8 @@ You maintain a bounded working summary that lets a conversation continue after o
     "remove": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as u1."
       }
     },
     "move": {
@@ -59,10 +62,12 @@ You maintain a bounded working summary that lets a conversation continue after o
         "type": "object",
         "properties": {
           "at": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as u1."
           },
           "after": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as u1, or the word start."
           }
         },
         "required": [

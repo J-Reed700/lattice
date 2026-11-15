@@ -105,7 +105,8 @@ Keep every name and signature the suite uses, and change only how the code is wr
             "type": "object",
             "properties": {
               "at": {
-                "type": "string"
+                "type": "string",
+                "description": "One name shown in square brackets, written without the brackets, such as u1."
               },
               "with": {
                 "type": "string"
@@ -124,7 +125,8 @@ Keep every name and signature the suite uses, and change only how the code is wr
             "type": "object",
             "properties": {
               "after": {
-                "type": "string"
+                "type": "string",
+                "description": "One name shown in square brackets, written without the brackets, such as u1, or the word start."
               },
               "with": {
                 "type": "string"
@@ -140,7 +142,8 @@ Keep every name and signature the suite uses, and change only how the code is wr
         "remove": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as u1."
           }
         },
         "move": {
@@ -149,10 +152,12 @@ Keep every name and signature the suite uses, and change only how the code is wr
             "type": "object",
             "properties": {
               "at": {
-                "type": "string"
+                "type": "string",
+                "description": "One name shown in square brackets, written without the brackets, such as u1."
               },
               "after": {
-                "type": "string"
+                "type": "string",
+                "description": "One name shown in square brackets, written without the brackets, such as u1, or the word start."
               }
             },
             "required": [

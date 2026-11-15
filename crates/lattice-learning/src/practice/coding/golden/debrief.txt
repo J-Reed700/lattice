@@ -144,7 +144,8 @@ Answer with an entries list, one entry for each criterion listed above. In an en
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as c1."
           },
           "score": {
             "type": "string",
@@ -160,31 +161,36 @@ Answer with an entries list, one entry for each criterion listed above. In an en
           "quotes": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as q1."
             }
           },
           "parts": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as l1."
             }
           },
           "checks": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as r1."
             }
           },
           "cases": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as e1."
             }
           },
           "hints": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as h1."
             }
           },
           "feedback": {
@@ -372,7 +378,8 @@ Answer with an entries list, one entry for each criterion listed above. In an en
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as c4."
           },
           "score": {
             "type": "string",
@@ -388,31 +395,36 @@ Answer with an entries list, one entry for each criterion listed above. In an en
           "quotes": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as q1."
             }
           },
           "parts": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as l1."
             }
           },
           "checks": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as r1."
             }
           },
           "cases": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as e1."
             }
           },
           "hints": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as h1."
             }
           },
           "feedback": {
@@ -503,7 +515,8 @@ Answer with an entries list, one entry for each thing listed above: of is its na
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as k1."
           },
           "text": {
             "type": "string"
@@ -584,7 +597,8 @@ Write the text for this entry. Answer again.
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as k1."
           },
           "text": {
             "type": "string"

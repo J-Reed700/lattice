@@ -61,7 +61,8 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
                     "type": "string"
                   },
                   "continues": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "One name shown in square brackets, written without the brackets, such as f1, or the word none."
                   }
                 },
                 "required": [
@@ -81,13 +82,15 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
                     ]
                   },
                   "passageId": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "One name shown in square brackets, written without the brackets, such as p1."
                   },
                   "finding": {
                     "type": "string"
                   },
                   "continues": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "One name shown in square brackets, written without the brackets, such as f1, or the word none."
                   }
                 },
                 "required": [
@@ -108,7 +111,8 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
                     ]
                   },
                   "openFinding": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "One name shown in square brackets, written without the brackets, such as f1."
                   }
                 },
                 "required": [

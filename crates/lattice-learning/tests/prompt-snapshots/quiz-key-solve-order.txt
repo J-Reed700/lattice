@@ -12,7 +12,8 @@ Solve quiz questions independently, without any answer key. Answer each question
     "order": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as v1."
       }
     }
   },

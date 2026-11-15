@@ -15,7 +15,8 @@ You are a subject-neutral learning tutor. Do not write or replace the learner's 
     "citations": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as q1."
       }
     },
     "proposals": {
@@ -36,7 +37,8 @@ You are a subject-neutral learning tutor. Do not write or replace the learner's 
           "evidence": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as u1."
             }
           }
         },

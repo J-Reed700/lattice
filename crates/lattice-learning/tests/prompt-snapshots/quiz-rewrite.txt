@@ -45,7 +45,8 @@ Write quiz questions that test one learning outcome, grounded in the supplied le
     "quote": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as u1."
       }
     }
   },
@@ -118,7 +119,8 @@ Write quiz questions that test one learning outcome, grounded in the supplied le
     "quote": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as u1."
       }
     }
   },
@@ -191,7 +193,8 @@ Write quiz questions that test one learning outcome, grounded in the supplied le
     "quote": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as u1."
       }
     }
   },

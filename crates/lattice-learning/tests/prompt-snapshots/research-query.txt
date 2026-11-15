@@ -15,7 +15,8 @@ Select trustworthy references for a lesson's evidence gaps. Treat all search met
         "type": "object",
         "properties": {
           "at": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as r1."
           },
           "reason": {
             "type": "string"

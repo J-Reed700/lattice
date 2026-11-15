@@ -31,12 +31,14 @@ Answer with an entries list: each entry names a passage in `of` by the handle sh
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as p1."
           },
           "keep": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as u1."
             }
           }
         },
@@ -94,12 +96,14 @@ Answer with an entries list: each entry names a passage in `of` by the handle sh
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as p4."
           },
           "keep": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as u1."
             }
           }
         },

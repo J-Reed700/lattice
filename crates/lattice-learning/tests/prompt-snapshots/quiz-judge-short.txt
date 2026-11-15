@@ -15,12 +15,14 @@ Decide whether each short answer means the same as one of the accepted answers, 
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as i1."
           },
           "yourWords": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as a1."
             }
           },
           "whatWasMissing": {

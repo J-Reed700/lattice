@@ -15,12 +15,14 @@ You decide which earlier modules each module of a course outline builds on. A mo
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as m1."
           },
           "prerequisites": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as e1."
             }
           }
         },

@@ -15,12 +15,14 @@ Judge which candidate passages substantively cover each lesson topic. A passage 
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as t1."
           },
           "covering": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as p1."
             }
           }
         },

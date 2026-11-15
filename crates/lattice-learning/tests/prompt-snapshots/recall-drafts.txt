@@ -26,7 +26,8 @@ Draft subject-neutral recall cards from only the provided lesson blocks and sour
           "cites": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as u1."
             }
           }
         },

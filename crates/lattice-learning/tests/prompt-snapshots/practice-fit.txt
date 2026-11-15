@@ -27,7 +27,8 @@ Kinds of work:
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as k1."
           },
           "reason": {
             "type": "string"

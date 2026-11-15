@@ -15,7 +15,8 @@ Give a concise worked reference solution for the learning task. Show each step w
     "citations": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as q1."
       }
     }
   },

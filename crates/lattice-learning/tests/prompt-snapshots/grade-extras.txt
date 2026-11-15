@@ -90,7 +90,8 @@ Give an entry for every finding, the reason first.
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as f1."
           },
           "reason": {
             "type": "string"

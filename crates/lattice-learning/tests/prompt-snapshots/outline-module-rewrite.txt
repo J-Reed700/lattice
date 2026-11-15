@@ -18,7 +18,8 @@ Repair a saved curriculum module. Apply each listed finding exactly as its instr
             "type": "object",
             "properties": {
               "at": {
-                "type": "string"
+                "type": "string",
+                "description": "One name shown in square brackets, written without the brackets, such as t1."
               },
               "with": {
                 "type": "string"
@@ -37,7 +38,8 @@ Repair a saved curriculum module. Apply each listed finding exactly as its instr
             "type": "object",
             "properties": {
               "after": {
-                "type": "string"
+                "type": "string",
+                "description": "One name shown in square brackets, written without the brackets, such as t1, or the word start."
               },
               "with": {
                 "type": "string"
@@ -53,7 +55,8 @@ Repair a saved curriculum module. Apply each listed finding exactly as its instr
         "remove": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as t1."
           }
         },
         "move": {
@@ -62,10 +65,12 @@ Repair a saved curriculum module. Apply each listed finding exactly as its instr
             "type": "object",
             "properties": {
               "at": {
-                "type": "string"
+                "type": "string",
+                "description": "One name shown in square brackets, written without the brackets, such as t1."
               },
               "after": {
-                "type": "string"
+                "type": "string",
+                "description": "One name shown in square brackets, written without the brackets, such as t1, or the word start."
               }
             },
             "required": [
@@ -90,7 +95,8 @@ Repair a saved curriculum module. Apply each listed finding exactly as its instr
         "type": "object",
         "properties": {
           "after": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as l1, or the word none."
           },
           "title": {
             "type": "string"
@@ -117,7 +123,8 @@ Repair a saved curriculum module. Apply each listed finding exactly as its instr
         "type": "object",
         "properties": {
           "lesson": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as l1."
           },
           "minutes": {
             "type": "integer"

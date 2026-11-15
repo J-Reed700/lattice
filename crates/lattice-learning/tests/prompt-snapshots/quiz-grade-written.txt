@@ -15,7 +15,8 @@ Grade each written answer against its rubric, criterion by criterion. For every 
         "type": "object",
         "properties": {
           "of": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as i1."
           },
           "criteria": {
             "type": "array",
@@ -23,12 +24,14 @@ Grade each written answer against its rubric, criterion by criterion. For every 
               "type": "object",
               "properties": {
                 "of": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "One name shown in square brackets, written without the brackets, such as c1."
                 },
                 "yourWords": {
                   "type": "array",
                   "items": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "One name shown in square brackets, written without the brackets, such as a1."
                   }
                 },
                 "whatWasMissing": {
@@ -40,7 +43,8 @@ Grade each written answer against its rubric, criterion by criterion. For every 
                 "sourceQuote": {
                   "type": "array",
                   "items": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "One name shown in square brackets, written without the brackets, such as r1."
                   }
                 },
                 "verdict": {

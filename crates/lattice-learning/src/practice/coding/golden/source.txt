@@ -115,7 +115,8 @@ Rules:
     "patterns": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as t1."
       }
     },
     "compare": {
@@ -405,7 +406,8 @@ Rules:
     "patterns": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as t1."
       }
     },
     "compare": {
@@ -695,7 +697,8 @@ Rules:
     "patterns": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as t1."
       }
     },
     "compare": {
@@ -987,7 +990,8 @@ The learner will be handed one misreading as buggy code to repair, so write each
     "patterns": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as t1."
       }
     },
     "compare": {
@@ -1279,7 +1283,8 @@ The learner will be handed one misreading as buggy code to repair, so write each
     "patterns": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as t1."
       }
     },
     "compare": {
@@ -1571,7 +1576,8 @@ The learner will be handed one misreading as buggy code to repair, so write each
     "patterns": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as t1."
       }
     },
     "compare": {
@@ -1861,7 +1867,8 @@ Rules:
     "patterns": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as t1."
       }
     },
     "compare": {
@@ -2151,7 +2158,8 @@ Rules:
     "patterns": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as t1."
       }
     },
     "compare": {
@@ -2447,7 +2455,8 @@ Fix the reference, or the cases that disagree with the statement. Answer the sam
     "patterns": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as t1."
       }
     },
     "compare": {
@@ -2739,7 +2748,8 @@ The learner will be handed one misreading as buggy code to repair, so write each
     "patterns": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as t1."
       }
     },
     "compare": {
@@ -3037,7 +3047,8 @@ Fix the reference, or the cases that disagree with the statement. Answer the sam
     "patterns": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "description": "One name shown in square brackets, written without the brackets, such as t1."
       }
     },
     "compare": {
