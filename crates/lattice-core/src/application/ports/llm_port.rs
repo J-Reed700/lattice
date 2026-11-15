@@ -250,9 +250,7 @@ pub trait LLMPort: Send + Sync {
     }
 
     /// Whether this backend holds an answer to `schema` as written.
-    fn enforces(&self, _schema: &Schema) -> bool {
-        false
-    }
+    fn enforces(&self, schema: &Schema) -> bool;
 
     /// The geometry this model's vision encoder was declared with, or `None`
     /// for a model that cannot see. Declared (catalog, Settings, provider

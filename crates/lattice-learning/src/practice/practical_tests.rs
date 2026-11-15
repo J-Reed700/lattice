@@ -1067,6 +1067,12 @@ impl lattice_core::application::ports::LLMPort for TestResearchLLM {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]
@@ -1257,6 +1263,12 @@ impl lattice_core::application::ports::LLMPort for RecordingResearchLlm {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -1532,6 +1544,12 @@ impl lattice_core::application::ports::LLMPort for Authors {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 

@@ -196,6 +196,12 @@ impl LLMPort for Classes {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 fn lesson(body: &str) -> Value {
@@ -749,6 +755,12 @@ impl LLMPort for Reads {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
     }
 }
 

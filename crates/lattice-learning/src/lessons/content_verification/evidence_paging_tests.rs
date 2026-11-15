@@ -130,6 +130,12 @@ impl LLMPort for PagingModel {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 pub(super) fn reference(id: String, excerpt: String) -> LearningSourceDto {
@@ -435,6 +441,12 @@ impl LLMPort for BrokenJudge {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 #[tokio::test]
@@ -658,6 +670,12 @@ impl LLMPort for DenseModel {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.paging.enforces(schema)
+    }
 }
 
 #[tokio::test]
@@ -768,6 +786,12 @@ impl LLMPort for CountingDenseModel {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.paging.enforces(schema)
     }
 }
 

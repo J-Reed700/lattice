@@ -91,6 +91,12 @@ impl LLMPort for Window {
     async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// The answer room and the running summary in the prompt are two

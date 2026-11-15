@@ -125,6 +125,12 @@ impl LLMPort for Answering {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]
@@ -897,6 +903,12 @@ impl LLMPort for Notation {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 /// A paragraph of about 1,100 characters of reaction notation, prose by the
@@ -1035,6 +1047,12 @@ impl LLMPort for Watching<'_> {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
     }
 }
 
@@ -1193,6 +1211,12 @@ impl LLMPort for Measuring {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
     }
 }
 

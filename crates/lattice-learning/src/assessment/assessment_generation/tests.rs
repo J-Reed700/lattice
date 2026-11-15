@@ -73,6 +73,12 @@ impl LLMPort for Notation {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// About 1,100 characters of reaction notation.
@@ -200,6 +206,12 @@ impl LLMPort for CutOff {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]
@@ -257,6 +269,12 @@ impl LLMPort for CutOnce {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -329,6 +347,12 @@ impl LLMPort for InstructionRecorder {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -551,6 +575,12 @@ impl LLMPort for Rewriter {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 fn rewriter(writes: Vec<Value>, flag: &'static str) -> Rewriter {
@@ -670,6 +700,12 @@ impl LLMPort for Incomplete {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 

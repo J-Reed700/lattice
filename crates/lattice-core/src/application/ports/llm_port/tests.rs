@@ -194,6 +194,12 @@ fn a_model_sees_nothing_unless_declared() {
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+        fn enforces(
+            &self,
+            _schema: &crate::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
+        }
     }
     assert_eq!(Plain.vision(), None);
 }

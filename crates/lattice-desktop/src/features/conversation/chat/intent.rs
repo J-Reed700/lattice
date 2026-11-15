@@ -342,6 +342,12 @@ mod tests {
         async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
             Ok(true)
         }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
+        }
     }
     impl MockLLM {
         async fn respond(&self, _prompt: &str) -> lattice_core::shared::error::Result<String> {
@@ -452,6 +458,12 @@ mod tests {
         }
         async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
             Ok(true)
+        }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
         }
     }
 
@@ -671,6 +683,12 @@ mod tests {
         }
         async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
             Ok(true)
+        }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
         }
     }
 

@@ -1060,6 +1060,12 @@ impl lattice_core::application::ports::LLMPort for Notation {
     async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// About 1,100 characters of reaction notation, `sentences` of them more.

@@ -1867,6 +1867,12 @@ mod fitting {
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+        fn enforces(
+            &self,
+            schema: &crate::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            self.inner.enforces(schema)
+        }
     }
 
     /// The text of a page that the model estimates at `tokens`.
@@ -2097,6 +2103,12 @@ mod metering {
 
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
+        }
+        fn enforces(
+            &self,
+            _schema: &crate::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
         }
     }
 

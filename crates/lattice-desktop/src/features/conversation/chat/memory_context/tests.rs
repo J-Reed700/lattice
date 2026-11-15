@@ -650,6 +650,12 @@ impl LLMPort for DenseTokenizer {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 impl DenseTokenizer {
     async fn respond(&self, _prompt: &str) -> Result<String> {

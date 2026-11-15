@@ -46,6 +46,12 @@ impl LLMPort for FakeLlm {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// A budget that answers from `answer`, given whether the watched model has

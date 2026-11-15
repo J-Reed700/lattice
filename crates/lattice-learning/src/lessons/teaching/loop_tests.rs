@@ -386,6 +386,12 @@ impl lattice_core::application::ports::llm_port::LLMPort for RepairTooLong {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.0.enforces(schema)
+    }
 }
 
 /// A repair request too long for the window was never sent: the lesson
@@ -936,6 +942,12 @@ impl LLMPort for Answering {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.review.enforces(schema)
+    }
 }
 
 impl Answering {
@@ -1259,6 +1271,12 @@ impl lattice_core::application::ports::llm_port::LLMPort for DropsAfterRepair {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.model.enforces(schema)
     }
 }
 
@@ -2672,6 +2690,12 @@ impl LLMPort for ByRequest {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 

@@ -559,6 +559,12 @@ impl LLMPort for CountingChecker {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// The function-calling lesson (`live_fixtures/function_calling_claims.json`):
@@ -716,6 +722,12 @@ impl LLMPort for SecondUnitFails {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]
@@ -869,6 +881,12 @@ impl LLMPort for Judges {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 

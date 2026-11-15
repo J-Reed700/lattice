@@ -54,6 +54,12 @@ impl LLMPort for MockLLM {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[test]
@@ -272,6 +278,12 @@ async fn test_greeting_fast_path_performance() {
 
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
+        }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
         }
     }
 

@@ -29,6 +29,12 @@ impl LLMPort for Failing {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &crate::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]

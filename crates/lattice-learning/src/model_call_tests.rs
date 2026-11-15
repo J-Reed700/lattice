@@ -46,6 +46,12 @@ impl LLMPort for Recorder {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 fn recorder(window: usize) -> Recorder {
@@ -179,6 +185,12 @@ impl LLMPort for Refusing {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]
@@ -282,6 +294,12 @@ impl LLMPort for Dense {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// Cannot count, and refuses, as a server does, any prompt longer than a
@@ -329,6 +347,12 @@ impl LLMPort for Blind {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -470,6 +494,12 @@ impl LLMPort for Windowed {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
     }
 }
 

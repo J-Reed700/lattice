@@ -287,6 +287,12 @@ impl LLMPort for PerRequirement {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 #[tokio::test]
@@ -409,6 +415,12 @@ impl LLMPort for Recording<'_> {
     }
     async fn is_ready(&self) -> Result<bool> {
         self.inner.is_ready().await
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
     }
 }
 

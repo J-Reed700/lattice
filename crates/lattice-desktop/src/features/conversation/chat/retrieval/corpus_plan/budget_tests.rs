@@ -119,6 +119,12 @@ impl LLMPort for UtilityStub {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 fn uuid(index: usize) -> String {
@@ -237,6 +243,12 @@ impl LLMPort for OneTokenStub {
 
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -558,6 +570,12 @@ async fn the_planners_request_carries_the_turns_stop() {
         }
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
+        }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
         }
     }
     let health = PlannerHealth::default();

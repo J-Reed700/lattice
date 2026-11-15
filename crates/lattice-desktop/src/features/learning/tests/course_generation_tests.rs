@@ -94,6 +94,12 @@ async fn live_outline_generation_and_save() -> Result<()> {
         async fn is_ready(&self) -> Result<bool> {
             self.inner.is_ready().await
         }
+        fn enforces(
+            &self,
+            schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            self.inner.enforces(schema)
+        }
     }
     let client = ObservedModel {
         inner: LlamaCppLlm::new(&config, header)?.into_port().await,

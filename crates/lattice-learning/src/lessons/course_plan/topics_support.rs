@@ -124,6 +124,12 @@ impl LLMPort for Topics {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 pub(super) async fn saved_program(db: &Database) -> LearningProgramDto {

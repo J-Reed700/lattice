@@ -70,6 +70,12 @@ impl LLMPort for Mended<'_> {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.0.enforces(schema)
+    }
 }
 
 /// Two sections each hold a defect; the one repair changes only the first.

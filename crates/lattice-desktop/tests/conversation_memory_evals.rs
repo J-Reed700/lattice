@@ -996,6 +996,12 @@ impl LLMPort for TwoToolsThenAnswer {
     fn supports_tool_calling(&self) -> bool {
         true
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[async_trait]
@@ -1026,6 +1032,12 @@ impl LLMPort for EmptyThenAnswer {
 
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 

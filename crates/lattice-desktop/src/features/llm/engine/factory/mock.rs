@@ -121,4 +121,10 @@ impl LLMPort for MockLLMPort {
     fn provider_name(&self) -> &str {
         "mock"
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }

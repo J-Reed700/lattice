@@ -36,6 +36,12 @@ impl LLMPort for Model {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 impl Model {
     async fn respond(&self, prompt: &str) -> Result<String> {
@@ -506,6 +512,12 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+        fn enforces(
+            &self,
+            schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            self.inner.enforces(schema)
+        }
     }
     impl InterruptedReviewer {
         async fn respond(&self, prompt: &str) -> Result<String> {
@@ -672,6 +684,12 @@ impl LLMPort for ScriptedModel {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 /// A teaching-review verdict on the finding `id`: "present" or "resolved".
@@ -875,6 +893,12 @@ where
     async fn is_ready(&self) -> Result<bool> {
         self.inner.is_ready().await
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 /// [`ScriptedModel`] with a window of `.1` tokens.
@@ -896,6 +920,12 @@ impl LLMPort for Windowed<'_> {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.0.enforces(schema)
     }
 }
 
@@ -974,6 +1004,12 @@ async fn a_question_may_cite_a_reference_verification_saved_for_the_program() ->
         }
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
+        }
+        fn enforces(
+            &self,
+            schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            self.inner.enforces(schema)
         }
     }
     impl Researching {
@@ -1491,6 +1527,12 @@ async fn outline_model_streams_without_a_deadline_and_rejects_truncated_output()
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
+        }
     }
     struct StreamedOutline;
     impl Contract for StreamedOutline {
@@ -1575,6 +1617,12 @@ impl LLMPort for DelayedOutlineModel {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
     }
 }
 
@@ -1862,6 +1910,12 @@ async fn outline_draft_survives_cancellation_and_resumes_without_redrafting() ->
         }
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
+        }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
         }
     }
     impl WaitingModel {

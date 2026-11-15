@@ -188,6 +188,12 @@ impl LLMPort for Rewriter {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// The flags of an unflagged turn the intent step read as needing the web.

@@ -67,6 +67,12 @@ impl LLMPort for Scripted {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &crate::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 pub(super) fn checker(llm: &Scripted, policy: CheckPolicy) -> ClaimChecker<'_> {

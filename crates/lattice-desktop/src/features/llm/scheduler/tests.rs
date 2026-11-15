@@ -599,6 +599,12 @@ impl LLMPort for TimedModel {
     async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]

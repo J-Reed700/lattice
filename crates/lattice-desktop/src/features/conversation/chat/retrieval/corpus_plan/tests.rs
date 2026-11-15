@@ -935,6 +935,12 @@ impl LLMPort for PlannerStub {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 fn correction_catalog() -> Vec<CorpusDocument> {
@@ -1176,6 +1182,12 @@ impl LLMPort for NarrowWindowStub {
 
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 

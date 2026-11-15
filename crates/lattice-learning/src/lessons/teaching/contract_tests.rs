@@ -169,6 +169,12 @@ impl LLMPort for Routed<'_> {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 fn protected_sentence(unit: usize, quote: &str) -> Protected {

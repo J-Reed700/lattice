@@ -377,6 +377,12 @@ impl LLMPort for ObservedModel {
     async fn is_ready(&self) -> Result<bool> {
         self.inner.is_ready().await
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 /// A backend that reports each answer's timing, as llama-server does: it
@@ -404,6 +410,12 @@ impl LLMPort for TimedBackend {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 

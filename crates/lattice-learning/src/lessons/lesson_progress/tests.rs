@@ -124,6 +124,12 @@ async fn lesson_model_can_run_past_old_deadlines_and_reports_stream_activity() -
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
+        }
     }
     let progress = Progress::default();
     CURRENT.scope(progress.clone(), async {

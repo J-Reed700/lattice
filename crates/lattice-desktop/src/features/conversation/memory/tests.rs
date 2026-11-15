@@ -1142,6 +1142,12 @@ impl LLMPort for FakeLlm {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// Words, so a test can set a token budget it can reason about.

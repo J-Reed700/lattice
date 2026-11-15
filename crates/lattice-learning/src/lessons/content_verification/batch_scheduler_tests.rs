@@ -128,6 +128,12 @@ impl LLMPort for BatchModel {
         on_text(response.text.clone())?;
         Ok(response)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]

@@ -2388,6 +2388,12 @@ impl LLMPort for Down {
     async fn is_ready(&self) -> Result<bool> {
         Ok(false)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]

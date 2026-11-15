@@ -897,6 +897,12 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
+        }
     }
     impl Model {
         async fn respond(&self, prompt: &str) -> Result<String> {
@@ -1202,6 +1208,12 @@ impl LLMPort for Notation {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]
@@ -1315,6 +1327,12 @@ impl LLMPort for Failing {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 

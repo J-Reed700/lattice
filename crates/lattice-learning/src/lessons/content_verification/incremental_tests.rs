@@ -31,6 +31,12 @@ impl LLMPort for IncrementalModel {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 impl IncrementalModel {
     async fn respond(&self, prompt: &str) -> Result<String> {
@@ -127,6 +133,9 @@ async fn one_fact_edit_in_175_claims_rechecks_only_that_fact_and_resume_reuses_a
             fn max_context_tokens(&self) -> usize { 128000 }
             fn count_tokens(&self, text: &str) -> usize { text.len()/4 }
             async fn is_ready(&self) -> Result<bool> { Ok(true) }
+            fn enforces(&self, _schema: &lattice_core::application::services::model_contract::shape::Schema) -> bool {
+                false
+            }
         }
         impl DeltaModel {
             async fn respond(&self, prompt: &str) -> Result<String> {
@@ -551,6 +560,12 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
             }
             async fn is_ready(&self) -> Result<bool> {
                 Ok(true)
+            }
+            fn enforces(
+                &self,
+                _schema: &lattice_core::application::services::model_contract::shape::Schema,
+            ) -> bool {
+                false
             }
         }
         impl NoRequests {

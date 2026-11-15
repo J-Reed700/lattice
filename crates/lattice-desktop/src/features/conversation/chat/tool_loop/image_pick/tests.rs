@@ -68,6 +68,12 @@ impl LLMPort for Judge {
     fn vision(&self) -> Option<VisionGeometry> {
         self.vision
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 struct Called {

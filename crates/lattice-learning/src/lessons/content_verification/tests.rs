@@ -909,6 +909,12 @@ impl LLMPort for Model {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 impl Model {
     async fn respond(&self, prompt: &str) -> Result<String> {
@@ -1537,6 +1543,12 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+        fn enforces(
+            &self,
+            schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            self.model.enforces(schema)
+        }
     }
     impl InterruptedRepair {
         async fn respond(&self, prompt: &str) -> Result<String> {
@@ -1689,6 +1701,12 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
         }
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
+        }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
         }
     }
     impl GradualRepair {
@@ -2441,6 +2459,12 @@ async fn durable_judge_recovers_truncated_output_without_using_it_as_approval() 
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
+        }
     }
     let model = TruncatedJudge(Default::default());
     let result = ClaimChecker::new(
@@ -2476,6 +2500,12 @@ impl LLMPort for TypedModel {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 #[tokio::test]

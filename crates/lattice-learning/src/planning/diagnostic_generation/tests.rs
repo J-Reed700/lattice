@@ -84,6 +84,12 @@ impl<F: Fn(&str, usize) -> String + Send + Sync> LLMPort for Writer<F> {
     async fn is_ready(&self) -> Result<bool> {
         self.rest.is_ready().await
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.rest.enforces(schema)
+    }
 }
 
 fn program_and_outcomes() -> (LearningProgramDto, Vec<LearningOutcomeDefinitionDto>) {

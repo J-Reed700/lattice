@@ -1279,6 +1279,12 @@ impl lattice_core::application::ports::LLMPort for SystemText<'_> {
     async fn is_ready(&self) -> Result<bool> {
         self.inner.is_ready().await
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 #[tokio::test]
@@ -1445,6 +1451,12 @@ impl lattice_core::application::ports::LLMPort for Capture<'_> {
     }
     async fn is_ready(&self) -> Result<bool> {
         self.inner.is_ready().await
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
     }
 }
 

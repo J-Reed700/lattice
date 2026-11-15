@@ -228,6 +228,12 @@ impl LLMPort for Script {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// How preparing a lesson of one section ended, the claims its ledger holds

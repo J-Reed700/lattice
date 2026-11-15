@@ -81,6 +81,12 @@ impl LLMPort for AnswerModel {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.scripted.enforces(schema)
+    }
 }
 
 fn model(outputs: Vec<Value>) -> AnswerModel {
