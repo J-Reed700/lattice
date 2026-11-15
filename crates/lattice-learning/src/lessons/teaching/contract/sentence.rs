@@ -124,7 +124,7 @@ impl View {
     fn of(order: usize, part: &Part, named: bool) -> Self {
         let mut frame = part.shown.clone();
         if let Some(fields) = frame.as_object_mut() {
-            fields.remove("id");
+            fields.shift_remove("id");
         }
         let mut texts = Vec::new();
         for (text, (field, words)) in part.fields.iter().zip(&part.texts).enumerate() {

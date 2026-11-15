@@ -700,7 +700,7 @@ pub async fn review(
             "Teaching review requires an object context.".into(),
         ));
     };
-    prompt.remove("candidate");
+    prompt.shift_remove("candidate");
     let count = candidate
         .get("blocks")
         .and_then(Value::as_array)

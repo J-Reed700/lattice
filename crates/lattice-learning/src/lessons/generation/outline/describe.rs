@@ -155,7 +155,7 @@ impl Describe {
         });
         let mut frame = catalog.clone();
         if let Some(fields) = frame.as_object_mut() {
-            fields.remove("sources");
+            fields.shift_remove("sources");
         }
         Self {
             goal: Told(request.goal.clone()),
@@ -256,8 +256,8 @@ fn frame_of(source: &Json) -> Option<Frame> {
     let index = index_of(source)?;
     let mut fields = source.clone();
     if let Some(object) = fields.as_object_mut() {
-        object.remove("sourceIndex");
-        object.remove("passages");
+        object.shift_remove("sourceIndex");
+        object.shift_remove("passages");
     }
     Some(Frame {
         index: Internal::of(index),

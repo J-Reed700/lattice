@@ -7,7 +7,7 @@ fn row_of(failure: &Value) -> Value {
     let mut row = failure.clone();
     if let Some(fields) = row.as_object_mut() {
         for key in ["unit", "claimId", "sentence", "evidence"] {
-            fields.remove(key);
+            fields.shift_remove(key);
         }
     }
     row

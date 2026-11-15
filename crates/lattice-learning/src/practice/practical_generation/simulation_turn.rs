@@ -6,11 +6,11 @@ use super::*;
 fn told_plan(plan: &LearningInterviewPlanDto) -> serde_json::Value {
     let mut told = serde_json::json!(plan);
     if let Some(fields) = told.as_object_mut() {
-        fields.remove("researchedSourceVersionIds");
+        fields.shift_remove("researchedSourceVersionIds");
         if let Some(serde_json::Value::Array(questions)) = fields.get_mut("questions") {
             for question in questions {
                 if let Some(question) = question.as_object_mut() {
-                    question.remove("id");
+                    question.shift_remove("id");
                 }
             }
         }

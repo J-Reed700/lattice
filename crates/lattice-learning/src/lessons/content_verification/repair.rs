@@ -544,7 +544,7 @@ pub(super) fn shown_section(rows: &Rows, shown: &rows::ShownRows<'_>, part: &str
         .cloned()
         .unwrap_or(Value::Null);
     if let Some(fields) = section.as_object_mut() {
-        fields.remove("part");
+        fields.shift_remove("part");
     }
     section
 }
