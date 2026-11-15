@@ -438,7 +438,9 @@ pub(crate) fn teaching_repair_answer(task: &Value, flat: &Value) -> String {
         };
         let (lead, pieces) = labelled(marked);
         let plain = unmarked(marked);
-        let Some(start) = plain.find(before) else {
+        // A fixture may copy its `before` from the candidate as the request shows it, labels and all.
+        let before = unmarked(before);
+        let Some(start) = plain.find(&before) else {
             panic!("a scripted repair edit at {path} finds no {before:?} in {plain:?}");
         };
         let end = start + before.len();

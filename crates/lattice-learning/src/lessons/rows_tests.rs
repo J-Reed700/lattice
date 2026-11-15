@@ -102,6 +102,7 @@ fn entry(rows: &Rows, quotes: &Quotes, given: Value) -> Edits {
         "cite": list(&given, "cite"),
         "recite": list(&given, "recite"),
         "uncite": list(&given, "uncite"),
+        "keys": list(&given, "keys"),
     })
     .to_string();
     let mut scope = Scope::for_question();
