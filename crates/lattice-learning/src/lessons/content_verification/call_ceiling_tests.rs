@@ -64,7 +64,7 @@ impl Rounds {
                     let mut decision = crate::review_evidence::decided(
                         "actionable",
                         "internal_conflict",
-                        &[part.clone()],
+                        std::slice::from_ref(&part),
                         &[],
                         &part,
                         "none",

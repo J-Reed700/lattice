@@ -184,7 +184,7 @@ fn grounded(shows: &Shows) -> Option<Value> {
     Some(decided(
         "actionable",
         "internal_conflict",
-        &[part.clone()],
+        std::slice::from_ref(&part),
         &[],
         &part,
         "none",
@@ -575,7 +575,7 @@ async fn a_short_or_long_reason_is_read_not_refused() -> Result<()> {
                 let mut decision = decided(
                     "actionable",
                     "internal_conflict",
-                    &[part.clone()],
+                    std::slice::from_ref(&part),
                     &[],
                     &part,
                     "none",
@@ -604,7 +604,7 @@ async fn a_blank_reason_is_still_refused() -> Result<()> {
         let mut decision = decided(
             "actionable",
             "internal_conflict",
-            &[part.clone()],
+            std::slice::from_ref(&part),
             &[],
             &part,
             "none",
