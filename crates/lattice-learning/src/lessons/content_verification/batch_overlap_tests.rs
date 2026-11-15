@@ -156,6 +156,7 @@ struct Mappings<'m> {
     peak: tokio::sync::watch::Sender<usize>,
     now: AtomicUsize,
     most: AtomicUsize,
+    asked: Mutex<Vec<String>>,
 }
 
 #[async_trait::async_trait]
@@ -165,6 +166,7 @@ impl LLMPort for Mappings<'_> {
             .iter()
             .any(|prompt| prompt.starts_with("Audit claim coverage independently."));
         if mapping {
+            self.asked.lock().unwrap().extend(fixture_prompts(request));
             let now = self.now.fetch_add(1, Ordering::SeqCst) + 1;
             self.most.fetch_max(now, Ordering::SeqCst);
             self.peak.send_modify(|peak| *peak = (*peak).max(now));
@@ -198,13 +200,14 @@ impl LLMPort for Mappings<'_> {
 }
 
 #[tokio::test]
-async fn coverage_audits_its_batches_of_sections_at_once() -> Result<()> {
+async fn each_unit_is_asked_about_on_its_own() -> Result<()> {
     let inner = Model::new();
     let model = Mappings {
         inner: &inner,
         peak: tokio::sync::watch::channel(0).0,
         now: AtomicUsize::new(0),
         most: AtomicUsize::new(0),
+        asked: Mutex::new(Vec::new()),
     };
     let content = sections(5);
     let inventory = inventory_of(5);
@@ -212,11 +215,15 @@ async fn coverage_audits_its_batches_of_sections_at_once() -> Result<()> {
     let audited = coverage::audit(&model, &content, &inventory, None).await?;
     let alone = coverage::audit(&Model::new(), &content, &inventory, None).await?;
 
-    assert_eq!(model.most.load(Ordering::SeqCst), 2);
-    assert_eq!(
-        sorted(&inner.audited_sections),
-        vec![vec![0, 1, 2, 3], vec![4]]
-    );
+    assert!(model.most.load(Ordering::SeqCst) >= 2);
+    assert_eq!(inner.audited(), vec![0, 1, 2, 3, 4]);
+    let asked = model.asked.lock().unwrap();
+    assert_eq!(asked.len(), 5);
+    for prompt in asked.iter() {
+        let unit = &coverage::task_of(prompt).unwrap()["unit"];
+        assert_eq!(unit["passages"].as_array().unwrap().len(), 1);
+        assert_eq!(unit["claims"].as_array().unwrap().len(), 1);
+    }
     let indices: Vec<usize> = audited.units.iter().map(|unit| unit.index).collect();
     assert_eq!(indices, vec![0, 1, 2, 3, 4]);
     assert_eq!(
@@ -262,9 +269,7 @@ async fn fidelity_checks_every_passage_of_a_section_at_once() -> Result<()> {
         "units": [{"index":0,
             "passages":(0..passages).map(|i|json!({"id":format!("p-{i}"),"text":"Equal inputs guarantee identical results."})).collect::<Vec<_>>(),
             "claims":[{"id":"claim-a","statement":"Equal inputs guarantee identical results."}]}],
-        "mapping": (0..passages)
-            .map(|i| (format!("p-{i}"), json!({"claimIds":["claim-a"],"nonFactualReason":"","missingClaims":[]})))
-            .collect::<std::collections::BTreeMap<_, _>>(),
+        "judged": (0..passages).map(|i| format!("p-{i}")).collect::<Vec<_>>(),
     });
 
     coverage::live_mapping_fixture(&model, &fixture).await?;

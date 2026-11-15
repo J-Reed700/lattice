@@ -52,11 +52,16 @@ pub(crate) fn structured(
     let says = legacy::grounded_says(&mut request);
     *says.output_tokens = output_tokens;
     *says.schema = Some(legacy::schema(schema));
-    request.call = CallOptions {
+    request.call = answer_options();
+    request
+}
+
+/// The options of a learning call that answers in a structure.
+pub(crate) fn answer_options() -> CallOptions {
+    CallOptions {
         reasoning_effort: Some(ANSWER_EFFORT.to_owned()),
         ..Default::default()
-    };
-    request
+    }
 }
 
 /// What a request the model's window cannot hold fails with.
@@ -79,18 +84,25 @@ impl<'a> From<&'a str> for TooLarge<'a> {
 pub(crate) async fn send<'a>(
     llm: &dyn LLMPort,
     call: &ContractCall,
+    request: GroundedRequest,
+    streaming: Option<&Streaming<'_>>,
+    too_large: impl Into<TooLarge<'a>>,
+) -> Result<GroundedOutput> {
+    send_tagged(&tagged(llm, call), request, streaming, too_large).await
+}
+
+/// Send `request` with no elapsed-time limit through `llm` as it is, already tagged by its caller.
+pub(crate) async fn send_tagged<'a>(
+    llm: &dyn LLMPort,
     mut request: GroundedRequest,
     streaming: Option<&Streaming<'_>>,
     too_large: impl Into<TooLarge<'a>>,
 ) -> Result<GroundedOutput> {
     request.call.time_budget = None;
     request.call.no_time_limit = true;
-    let sender = tagged(llm, call);
     let result = match streaming {
-        Some(streaming) => {
-            grounded_generation::generate_streaming(&sender, request, streaming).await
-        }
-        None => grounded_generation::generate(&sender, request).await,
+        Some(streaming) => grounded_generation::generate_streaming(llm, request, streaming).await,
+        None => grounded_generation::generate(llm, request).await,
     };
     result.map_err(|error| match error {
         GroundedGenerationError::Budget(_) => match too_large.into() {

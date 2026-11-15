@@ -84,7 +84,7 @@ pub(super) fn sections_in_review(sent: &Value) -> Value {
 }
 
 fn actionable() -> String {
-    json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"reason":"The example's printed result contradicts the value the code returns."}]}).to_string()
+    json!({"entries":[{"of":"i1","verdict":"actionable","basis":"internal_conflict","candidateIds":["p1"],"referenceIds":[],"partId":"p1","leftTo":"none","reason":"The example's printed result contradicts the value the code returns."}]}).to_string()
 }
 
 fn retitle(after: &str) -> String {
@@ -1768,17 +1768,18 @@ fn parts_evidence(defective: &[usize]) -> String {
         .enumerate()
         .map(|(position, index)| {
             json!({
-                "issueId": format!("issue-{position}"),
+                "of": format!("i{}", position + 1),
                 "verdict": "actionable",
                 "basis": "internal_conflict",
-                "evidenceIds": [format!("blocks-{index}")],
-                "partId": format!("blocks-{index}"),
-                "requirementId": null,
+                "candidateIds": [format!("p{}", index + 1)],
+                "referenceIds": [],
+                "partId": format!("p{}", index + 1),
+                "leftTo": "none",
                 "reason": FIRST_IDEA_PROMISE
             })
         })
         .collect();
-    json!({"decisions": decisions}).to_string()
+    json!({"entries": decisions}).to_string()
 }
 
 fn edits_answer(edits: Vec<Value>) -> String {
@@ -3042,45 +3043,26 @@ impl ByRequest {
     }
 }
 
-/// The evidence check's answer: each proposal is actionable, at the section
-/// its note names, or at the lesson.
-fn evidence_answer(sent: &Value, schema: &Value) -> String {
-    let keys = schema
-        .pointer("/properties/decisions/items/properties/issueId/enum")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let notes = sent["proposals"].as_array().cloned().unwrap_or_default();
-    let first = sent["candidateParts"][0]["id"]
-        .as_str()
-        .unwrap_or("blocks-0")
-        .to_owned();
-    let decisions: Vec<Value> = keys
-        .iter()
-        .zip(&notes)
-        .map(|(key, note)| {
-            let section = note
-                .as_str()
-                .and_then(|note| note.split("Section ").nth(1))
-                .and_then(|rest| {
-                    rest.split(|c: char| !c.is_ascii_digit())
-                        .next()?
-                        .parse::<usize>()
-                        .ok()
-                })
-                .map(|number| format!("blocks-{}", number.saturating_sub(1)));
-            json!({
-                "issueId": key,
-                "verdict": "actionable",
-                "basis": "internal_conflict",
-                "evidenceIds": [section.clone().unwrap_or(first.clone())],
-                "requirementId": null,
-                "reason": "The note describes a concrete conflict in the lesson.",
-                "partId": section.unwrap_or_else(|| "lesson".to_owned()),
-            })
-        })
-        .collect();
-    json!({"decisions": decisions}).to_string()
+/// The evidence check's answer: each proposal is actionable, at the lesson,
+/// citing the first part.
+fn evidence_answer(sent: &Value) -> String {
+    crate::review_evidence::scripted_entries(&sent.to_string(), |shows| {
+        let first = shows
+            .parts
+            .first()
+            .map(|(_, handle)| handle.clone())
+            .unwrap_or_default();
+        let mut decision = crate::review_evidence::decided(
+            "actionable",
+            "internal_conflict",
+            &[first],
+            &[],
+            "none",
+            "none",
+        );
+        decision["reason"] = json!("The note describes a concrete conflict in the lesson.");
+        Some(decision)
+    })
 }
 
 #[async_trait::async_trait]
@@ -3105,8 +3087,8 @@ impl LLMPort for ByRequest {
                 seen.len() - 1
             };
             json!({"edits": (self.repair)(&sent, number)}).to_string()
-        } else if schema.pointer("/properties/decisions").is_some() {
-            evidence_answer(&sent, &schema)
+        } else if sent.get("proposals").is_some() {
+            evidence_answer(&sent)
         } else if schema.pointer("/properties/issues").is_some() {
             let number = {
                 self.seen_schemas.lock().unwrap().push(schema.clone());
@@ -3527,13 +3509,14 @@ async fn a_contradiction_between_two_parts_is_kept_with_both_and_repaired() -> R
         })
         .to_string()
     };
-    let clash = json!({"decisions":[{
-        "issueId": "issue-0",
+    let clash = json!({"entries":[{
+        "of": "i1",
         "verdict": "actionable",
         "basis": "internal_conflict",
-        "evidenceIds": ["blocks-0", "blocks-1"],
-        "partId": "blocks-1",
-        "requirementId": null,
+        "candidateIds": ["p1", "p2"],
+        "referenceIds": [],
+        "partId": "p2",
+        "leftTo": "none",
         "reason": "Part A and Part B state opposite ideas."
     }]})
     .to_string();

@@ -990,14 +990,15 @@ async fn settle_does_not_rerun_teaching_review_on_cut_lesson_when_surviving_sect
     })
     .to_string();
 
-    let actionable_evidence = json!({"decisions": [
+    let actionable_evidence = json!({"entries": [
         {
-            "issueId": "issue-0",
+            "of": "i1",
             "verdict": "actionable",
             "basis": "internal_conflict",
-            "evidenceIds": ["blocks-0"],
-            "partId": "blocks-0",
-            "requirementId": null,
+            "candidateIds": ["p1"],
+            "referenceIds": [],
+            "partId": "p1",
+            "leftTo": "none",
             "reason": "Section 0 defect."
         }
     ]})

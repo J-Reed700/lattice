@@ -176,7 +176,7 @@ async fn live_coverage_mapping_recovers_existing_claims_without_inventing_missin
             cases.push((serde_json::json!({"units":[{"index":0,"kind":"teaching",
                 "passages":[{"id":"target","field":"/body","text":text}],
                 "claims":[{"id":"selected","statement":selected},{"id":"unselected","statement":if complete { omitted } else { unrelated }}]}],
-                "mapping":{"target":{"claimIds":["selected"],"nonFactualReason":"","missingClaims":[]}}}), complete));
+                "judged":["target"]}), complete));
         }
     }
     // An optional recorded teaching passage reproduces a real mapping omission.

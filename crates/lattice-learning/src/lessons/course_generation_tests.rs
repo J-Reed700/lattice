@@ -71,18 +71,22 @@ pub(crate) fn request(depth: LearningCourseDepth) -> GenerateLearningProgramRequ
         course_depth: Some(depth),
     }
 }
+/// Prefix of a scripted module-repair answer. The model answers with its
+/// changes to the module it was shown, so the answer is built from the prompt:
+/// the sentinel holds the module the scripted model wants and, for each of its
+/// lessons, the position of the shown lesson it revises (`null`: a new one).
+pub(crate) const REPAIR_SENTINEL: &str = "{\"@repair\":";
+
+/// What a repair prompt starts with.
+const REPAIR_PROMPT: &str = "Repair a saved curriculum module.";
+
 /// A repair answer whose lessons revise the existing lessons at `froms`
 /// (`None` for a new lesson), in answer order.
 pub(crate) fn repair_answer_with(
-    mut module: serde_json::Value,
+    module: serde_json::Value,
     froms: &[Option<usize>],
 ) -> serde_json::Value {
-    if let Some(lessons) = module["lessons"].as_array_mut() {
-        for (lesson, from) in lessons.iter_mut().zip(froms) {
-            lesson["from"] = json!(from);
-        }
-    }
-    json!({"module":module})
+    json!({"@repair":{"module":module,"froms":froms}})
 }
 
 /// A repair answer that keeps every lesson of `module` where it is.
@@ -90,6 +94,135 @@ pub(crate) fn repair_answer(module: serde_json::Value) -> serde_json::Value {
     let count = module["lessons"].as_array().map_or(0, Vec::len);
     let froms: Vec<_> = (0..count).map(Some).collect();
     repair_answer_with(module, &froms)
+}
+
+/// The repair task the latest repair prompt carries. A correction repeats the
+/// system text only, so its task is the one of the prompt it follows.
+fn repair_task(prompts: &[String]) -> Option<serde_json::Value> {
+    prompts.iter().rev().find_map(|prompt| {
+        fixture_task(prompt)
+            .filter(|task| task.get("courseSequence").is_some() && task.get("module").is_some())
+    })
+}
+
+/// The answer in the form the repair asks for that turns the module of `task`
+/// into the one `sentinel` wants. Supports reworded texts, rows added to or
+/// removed from the end of a list, new lessons placed after the kept lesson
+/// before them, new estimates and prerequisites added or removed; anything else
+/// panics.
+fn repair_reply(task: &serde_json::Value, sentinel: &str) -> String {
+    let wanted: serde_json::Value = serde_json::from_str(sentinel).expect("repair sentinel");
+    let wanted = &wanted["@repair"];
+    let module = &wanted["module"];
+    let froms: Vec<Option<usize>> = wanted["froms"]
+        .as_array()
+        .expect("froms")
+        .iter()
+        .map(|from| from.as_u64().and_then(|from| usize::try_from(from).ok()))
+        .collect();
+    let shown = &task["module"];
+    let mut replace = Vec::new();
+    let mut insert = Vec::new();
+    let mut remove = Vec::new();
+    let mut reword = |row: &serde_json::Value, text: &serde_json::Value| {
+        if row["text"] != *text {
+            replace.push(json!({"at":row["at"],"with":text}));
+        }
+    };
+    reword(&shown["title"], &module["title"]);
+    reword(&shown["summary"], &module["summary"]["text"]);
+    reword(&shown["project"]["title"], &module["project"]["title"]);
+    reword(&shown["project"]["brief"], &module["project"]["brief"]);
+    let mut lists: Vec<(Vec<serde_json::Value>, Vec<serde_json::Value>)> = Vec::new();
+    let rows = |value: &serde_json::Value| value.as_array().cloned().unwrap_or_default();
+    lists.push((
+        rows(&shown["outcomes"]),
+        rows(&module["outcomes"])
+            .iter()
+            .map(|outcome| outcome["text"].clone())
+            .collect(),
+    ));
+    lists.push((
+        rows(&shown["project"]["deliverables"]),
+        rows(&module["project"]["deliverables"]),
+    ));
+    lists.push((
+        rows(&shown["project"]["successCriteria"]),
+        rows(&module["project"]["successCriteria"]),
+    ));
+    for (saved, wanted) in &lists {
+        for (row, text) in saved.iter().zip(wanted) {
+            reword(row, text);
+        }
+        for row in saved.iter().skip(wanted.len()) {
+            remove.push(row["at"].clone());
+        }
+        let after = saved.last().map(|row| row["at"].clone());
+        for text in wanted.iter().skip(saved.len()) {
+            let anchor = after.clone().expect("a list that has a row to add after");
+            insert.push(json!({"after":anchor,"with":text}));
+        }
+    }
+    let shown_lessons = shown["lessons"].as_array().cloned().unwrap_or_default();
+    let mut new_lessons = Vec::new();
+    let mut minutes = Vec::new();
+    let mut previous = json!("none");
+    for (lesson, from) in module["lessons"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .zip(&froms)
+    {
+        match from.and_then(|from| shown_lessons.get(from)) {
+            Some(saved) => {
+                reword(&saved["title"], &lesson["title"]);
+                reword(&saved["objective"], &lesson["objective"]);
+                if saved["estimatedMinutes"] != lesson["estimatedMinutes"] {
+                    minutes.push(json!({"lesson":saved["lesson"],"minutes":lesson["estimatedMinutes"]}));
+                }
+                previous = saved["lesson"].clone();
+            }
+            None => new_lessons.push(json!({"after":previous,"title":lesson["title"],"objective":lesson["objective"],"minutes":lesson["estimatedMinutes"]})),
+        }
+    }
+    let handle_of_module = |position: usize| -> serde_json::Value {
+        task["courseSequence"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|entry| entry["moduleNumber"] == position + 1)
+            .and_then(|entry| entry.get("module").cloned())
+            .unwrap_or_else(|| panic!("module {position} has no handle: only earlier modules do"))
+    };
+    let saved_prerequisites: Vec<serde_json::Value> = shown["prerequisites"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let wanted_positions: Vec<usize> = module["prerequisiteIndices"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|position| position.as_u64().and_then(|n| usize::try_from(n).ok()))
+        .collect();
+    let wanted_handles: Vec<serde_json::Value> = wanted_positions
+        .iter()
+        .map(|position| handle_of_module(*position))
+        .collect();
+    let add: Vec<_> = wanted_handles
+        .iter()
+        .filter(|handle| !saved_prerequisites.contains(handle))
+        .collect();
+    let dropped: Vec<_> = saved_prerequisites
+        .iter()
+        .filter(|handle| !wanted_handles.contains(handle))
+        .collect();
+    json!({
+        "text":{"replace":replace,"insert":insert,"remove":remove,"move":[]},
+        "newLessons":new_lessons,
+        "minutes":minutes,
+        "prerequisites":{"add":add,"remove":dropped},
+    })
+    .to_string()
 }
 
 pub(crate) fn outline(modules: usize, lessons: usize) -> Model {
@@ -642,6 +775,17 @@ impl ScriptedModel {
         let front = outputs
             .front()
             .ok_or_else(|| AppError::InvalidInput("Unexpected extra model call".into()))?;
+        if prompt.starts_with(REPAIR_PROMPT) && front.starts_with(REPAIR_SENTINEL) {
+            let prompts = self
+                .prompts
+                .lock()
+                .map_err(|_| AppError::InternalError("fixture lock".into()))?;
+            let task = repair_task(&prompts).expect("a repair task");
+            let reply = repair_reply(&task, front);
+            drop(prompts);
+            outputs.pop_front();
+            return Ok(reply);
+        }
         if linking && front.starts_with(LINKS_SENTINEL) {
             return Ok(link_reply(prompt, front));
         }

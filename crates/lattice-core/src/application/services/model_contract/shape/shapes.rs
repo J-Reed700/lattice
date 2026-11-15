@@ -162,6 +162,7 @@ fn field_schema(field: &Field, showing: &Showing<'_>, pointers: Pointers) -> Val
     match field {
         Field::Text => json!({ "type": "string" }),
         Field::Word(list) => words(list),
+        Field::Number => json!({ "type": "integer" }),
         Field::Point {
             prefix,
             among,

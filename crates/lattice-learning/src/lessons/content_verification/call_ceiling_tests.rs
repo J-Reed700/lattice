@@ -59,7 +59,21 @@ impl Rounds {
                 return Ok(fault(prompt, section, sentence));
             }
             if prompt.starts_with("Check whether proposed lesson-review findings are justified") {
-                return Ok(json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":[format!("blocks-{section}")],"partId":format!("blocks-{section}"),"requirementId":null,"reason":"The step promises that the tutor runs the learner's code and reports whether the tests pass."}]}).to_string());
+                return Ok(crate::review_evidence::scripted_entries(prompt, |shows| {
+                    let part = shows.part(&format!("Section {}", section + 1));
+                    let mut decision = crate::review_evidence::decided(
+                        "actionable",
+                        "internal_conflict",
+                        &[part.clone()],
+                        &[],
+                        &part,
+                        "none",
+                    );
+                    decision["reason"] = json!(
+                        "The step promises that the tutor runs the learner's code and reports whether the tests pass."
+                    );
+                    Some(decision)
+                }));
             }
             if prompt.starts_with("You are editing a rejected draft.") {
                 return Ok(json!({"edits":[{"path":format!("/blocks/{section}/body"),"before":sentence,"after":written}]}).to_string());

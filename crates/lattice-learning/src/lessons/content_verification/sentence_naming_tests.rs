@@ -220,27 +220,10 @@ fn audits(prompt: &str) -> String {
         })
         .to_string();
     }
-    let data: Value = fixture_task(prompt).unwrap();
-    let decisions: Vec<Value> = data["units"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .flat_map(|unit| {
-            let claims: Vec<Value> = unit["claims"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|claim| claim["id"].clone())
-                .collect();
-            unit["passages"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|passage| json!({"passageId":passage["id"],"claimIds":claims,"nonFactualReason":"","missingClaims":[]}))
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    json!({"passages":decisions}).to_string()
+    coverage::scripted_decisions(
+        prompt,
+        |_, claims| json!({"claimIds":claims,"nonFactualReason":"","missingClaims":[]}),
+    )
 }
 
 /// The quotes of the claims the audit adds to an inventory that holds a claim

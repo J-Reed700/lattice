@@ -132,12 +132,13 @@ fn resolved() -> String {
     )
 }
 
+/// The gate's answer for its one proposal, `i1`, over a lesson whose first section is `p1`; `leftTo` names a check or a recorded finding by its handle: the three checks are `k1` to `k3`, the recorded findings follow from `k4`.
 fn gate_answer(left_to: &str) -> String {
-    json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"leftTo":left_to,"reason":"The explanation contradicts the sum it states."}]}).to_string()
+    json!({"entries":[{"of":"i1","verdict":"actionable","basis":"internal_conflict","candidateIds":["p1"],"referenceIds":[],"partId":"p1","leftTo":left_to,"reason":"The explanation contradicts the sum it states."}]}).to_string()
 }
 
 fn gate_not_established(left_to: &str) -> String {
-    json!({"decisions":[{"issueId":"issue-0","verdict":"not_established","basis":"internal_conflict","evidenceIds":[],"partId":"lesson","requirementId":null,"leftTo":left_to,"reason":"Nothing in the explanation shows it."}]}).to_string()
+    json!({"entries":[{"of":"i1","verdict":"not_established","basis":"internal_conflict","candidateIds":[],"referenceIds":[],"partId":"none","leftTo":left_to,"reason":"Nothing in the explanation shows it."}]}).to_string()
 }
 
 /// `reply` with the plan check's ruling on each report: whether each is about a kind it decides.
@@ -189,7 +190,7 @@ async fn a_reviewer_finding_the_plan_check_recorded_is_not_repaired_a_second_tim
     let model = routed(
         vec![
             reporting(REVIEWER_ONLY),
-            gate_answer("recorded-0"),
+            gate_answer("k4"),
             json!({"edits":[{"path":"/blocks/0/title","before":"Example","after":"Corrected example"}]}).to_string(),
             clean_review(&[]),
         ],
@@ -230,7 +231,7 @@ async fn the_gate_is_handed_the_other_checks_findings_and_not_the_reviewers() ->
         .iter()
         .map(|finding| finding["id"].as_str().unwrap())
         .collect();
-    assert_eq!(ids, ["recorded-0", "recorded-1"]);
+    assert_eq!(ids, ["k4", "k5"]);
     assert!(!gate[0]["recordedFindings"]
         .to_string()
         .contains(REVIEWER_ONLY));
@@ -244,7 +245,7 @@ async fn a_reviewer_finding_about_what_the_plan_check_decides_is_left_to_it_when
     let model = routed(
         vec![
             reporting(REVIEWER_ONLY),
-            gate_answer("check-1"),
+            gate_answer("k2"),
             clean_review(&[]),
         ],
         vec![
@@ -273,9 +274,9 @@ async fn the_gate_is_told_what_each_of_the_three_checks_decides_in_order() -> Re
     assert_eq!(
         gate[0]["otherChecks"],
         json!([
-            {"id":"check-0","decides":crate::question_review::DECIDES},
-            {"id":"check-1","decides":contract::DECIDES},
-            {"id":"check-2","decides":RULES_DECIDE}
+            {"id":"k1","decides":crate::question_review::DECIDES},
+            {"id":"k2","decides":contract::DECIDES},
+            {"id":"k3","decides":RULES_DECIDE}
         ])
     );
     Ok(())
@@ -314,7 +315,7 @@ async fn what_the_review_reported_about_a_contradiction_is_ruled_on_by_the_plan_
     let model = routed(
         vec![
             reporting(REVIEWER_ONLY),
-            gate_answer("check-1"),
+            gate_answer("k2"),
             repair_edit(),
             clean_review(&[]),
         ],
@@ -334,7 +335,7 @@ async fn the_plan_check_is_asked_again_with_what_the_review_reported() -> Result
     let model = routed(
         vec![
             reporting(REVIEWER_ONLY),
-            gate_answer("check-1"),
+            gate_answer("k2"),
             repair_edit(),
             clean_review(&[]),
         ],
@@ -357,7 +358,7 @@ async fn a_finding_left_to_the_question_review_is_not_given_to_the_plan_check() 
     let model = routed(
         vec![
             reporting(REVIEWER_ONLY),
-            gate_not_established("check-0"),
+            gate_not_established("k1"),
             clean_review(&[]),
         ],
         vec![CONTRACT_NOTHING.to_owned(), contradiction()],
@@ -375,7 +376,7 @@ async fn a_contradiction_the_reported_ask_lists_is_confirmed_once_before_it_is_r
     let model = routed(
         vec![
             reporting(REVIEWER_ONLY),
-            gate_answer("check-1"),
+            gate_answer("k2"),
             repair_edit(),
             clean_review(&[]),
         ],
@@ -393,7 +394,7 @@ async fn a_contradiction_the_reported_ask_lists_and_the_read_refuses_repairs_not
     let model = routed(
         vec![
             reporting(REVIEWER_ONLY),
-            gate_answer("check-1"),
+            gate_answer("k2"),
             clean_review(&[]),
         ],
         vec![CONTRACT_NOTHING.to_owned(), contradiction()],
@@ -413,7 +414,7 @@ async fn a_report_the_plan_check_does_not_hold_up_repairs_nothing() -> Result<()
     let model = routed(
         vec![
             reporting(REVIEWER_ONLY),
-            gate_answer("check-1"),
+            gate_answer("k2"),
             clean_review(&[]),
         ],
         vec![
@@ -446,7 +447,7 @@ async fn a_report_the_plan_check_says_is_of_another_kind_stands_on_the_gates_ver
     let model = routed(
         vec![
             reporting(REVIEWER_ONLY),
-            gate_answer("check-1"),
+            gate_answer("k2"),
             repair_edit(),
             resolved(),
         ],
@@ -466,7 +467,7 @@ async fn a_report_the_plan_check_says_is_of_its_kind_and_leaves_out_is_not_repai
     let model = routed(
         vec![
             reporting(REVIEWER_ONLY),
-            gate_answer("check-1"),
+            gate_answer("k2"),
             clean_review(&[]),
         ],
         vec![
@@ -486,7 +487,7 @@ async fn a_report_the_gate_did_not_establish_is_not_repaired_even_when_it_is_of_
     let model = routed(
         vec![
             reporting(REVIEWER_ONLY),
-            gate_not_established("check-1"),
+            gate_not_established("k2"),
             clean_review(&[]),
         ],
         vec![
@@ -506,7 +507,7 @@ async fn a_finding_left_to_the_question_review_is_repaired_when_the_gate_establi
     let model = routed(
         vec![
             reporting(REVIEWER_ONLY),
-            gate_answer("check-0"),
+            gate_answer("k1"),
             repair_edit(),
             resolved(),
         ],
@@ -523,7 +524,7 @@ async fn a_finding_left_to_the_question_review_is_not_repaired_when_the_gate_did
     let model = routed(
         vec![
             reporting(REVIEWER_ONLY),
-            gate_not_established("check-0"),
+            gate_not_established("k1"),
             clean_review(&[]),
         ],
         Vec::new(),
@@ -539,7 +540,7 @@ async fn a_finding_left_to_the_rules_is_repaired_when_the_gate_established_it() 
     let model = routed(
         vec![
             reporting(REVIEWER_ONLY),
-            gate_answer("check-2"),
+            gate_answer("k3"),
             repair_edit(),
             resolved(),
         ],

@@ -24,6 +24,8 @@ pub enum Among {
 pub enum Field {
     Text,
     Word(Vec<&'static str>),
+    /// A quantity the model judges, such as minutes. Never a position, an id or a count.
+    Number,
     /// A placing pointer. `none` adds the member `"none"`.
     Point {
         prefix: &'static str,
@@ -74,6 +76,11 @@ impl Form {
             name,
             Field::Word(W::WORDS.iter().map(|(word, _)| *word).collect()),
         )
+    }
+
+    /// A whole number the model judges.
+    pub fn number(self, name: &'static str) -> Self {
+        self.with(name, Field::Number)
     }
 
     /// A placing pointer at one of the things of kind `K` the request shows.

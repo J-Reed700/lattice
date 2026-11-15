@@ -327,6 +327,6 @@ async fn incremental_review_anchors_cross_module_effects_to_the_module_that_must
     let recheck = fixture_task(&prompts[3]).unwrap();
     assert_eq!(recheck["openFindings"][0]["id"], "finding-1");
     assert_eq!(recheck["openFindings"][0]["attempts"], 1);
-    assert_eq!(fixture_task(&prompts[4]).unwrap()["moduleIndex"], 1);
+    assert_eq!(fixture_task(&prompts[4]).unwrap()["moduleNumber"], 2);
     Ok(())
 }

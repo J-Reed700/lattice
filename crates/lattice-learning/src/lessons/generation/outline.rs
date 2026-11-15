@@ -59,45 +59,36 @@ pub(crate) struct GeneratedOutline {
     modules: Vec<GeneratedModule>,
 }
 
-#[derive(Debug, Deserialize)]
-#[cfg_attr(
-    any(test, feature = "test-support"),
-    derive(serde::Serialize, PartialEq)
-)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(rename_all = "camelCase")]
-struct GeneratedModule {
-    prerequisite_indices: Vec<usize>,
-    project: crate::dto::LearningProjectMilestoneDto,
-    title: String,
-    summary: GeneratedEvidenceText,
-    outcomes: Vec<GeneratedEvidenceText>,
-    lessons: Vec<GeneratedOutlineLesson>,
+pub(crate) struct GeneratedModule {
+    pub(crate) prerequisite_indices: Vec<usize>,
+    pub(crate) project: crate::dto::LearningProjectMilestoneDto,
+    pub(crate) title: String,
+    pub(crate) summary: GeneratedEvidenceText,
+    pub(crate) outcomes: Vec<GeneratedEvidenceText>,
+    pub(crate) lessons: Vec<GeneratedOutlineLesson>,
 }
 
-#[derive(Debug, Deserialize)]
-#[cfg_attr(
-    any(test, feature = "test-support"),
-    derive(serde::Serialize, PartialEq)
-)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(rename_all = "camelCase")]
-struct GeneratedEvidenceText {
-    text: String,
-    source_index: Option<usize>,
-    quote: String,
+pub(crate) struct GeneratedEvidenceText {
+    pub(crate) text: String,
+    pub(crate) source_index: Option<usize>,
+    pub(crate) quote: String,
 }
 
-#[derive(Debug, Deserialize)]
-#[cfg_attr(
-    any(test, feature = "test-support"),
-    derive(serde::Serialize, PartialEq)
-)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(rename_all = "camelCase")]
-struct GeneratedOutlineLesson {
-    title: String,
-    objective: String,
-    estimated_minutes: i64,
-    source_index: Option<usize>,
-    quote: String,
+pub(crate) struct GeneratedOutlineLesson {
+    pub(crate) title: String,
+    pub(crate) objective: String,
+    pub(crate) estimated_minutes: i64,
+    pub(crate) source_index: Option<usize>,
+    pub(crate) quote: String,
 }
 
 /// The outline a reply holds, before it is held to the depth asked for.
@@ -426,6 +417,109 @@ fn reference_instructions(sources: &[LearningSourceDto]) -> &'static str {
     }
 }
 
+/// Normalized titles seen so far, with the module or lesson that first used each.
+#[derive(Debug, Default)]
+pub(crate) struct Titles {
+    modules: HashMap<String, usize>,
+    lessons: HashMap<String, (usize, usize)>,
+}
+
+impl Titles {
+    /// Record module `number`'s title, refusing one an earlier module has.
+    pub(crate) fn module(&mut self, number: usize, title: &str) -> Result<()> {
+        match self.modules.insert(fold(title), number) {
+            Some(earlier) => Err(invalid(format!(
+                "Modules {earlier} and {number} share the title \"{}\"; give each module its own title.",
+                title.trim()
+            ))),
+            None => Ok(()),
+        }
+    }
+
+    /// Record the title of lesson `place` (module, lesson), refusing one an earlier lesson has.
+    pub(crate) fn lesson(&mut self, place: (usize, usize), title: &str) -> Result<()> {
+        match self.lessons.insert(fold(title), place) {
+            Some((m, l)) => Err(invalid(format!(
+                "Lessons {m}.{l} and {}.{} share the title \"{}\"; give each lesson its own title.",
+                place.0,
+                place.1,
+                title.trim()
+            ))),
+            None => Ok(()),
+        }
+    }
+}
+
+/// The rules one module of an outline keeps, whoever wrote it.
+pub(crate) fn module_rules(
+    number: usize,
+    module: &GeneratedModule,
+    depth: Option<LearningCourseDepth>,
+    titles: &mut Titles,
+) -> Result<()> {
+    let (_, _, min_lessons, max_lessons) = LearningCourseDepth::bounds(depth);
+    let module_index = number.saturating_sub(1);
+    crate::teaching::validate_project(&module.project)?;
+    let unique_prerequisites: HashSet<_> = module.prerequisite_indices.iter().collect();
+    if unique_prerequisites.len() != module.prerequisite_indices.len()
+        || module
+            .prerequisite_indices
+            .iter()
+            .any(|i| *i >= module_index)
+    {
+        return Err(invalid(match module_index {
+            0 => "Module 1 comes first, so its prerequisiteIndices must be empty.".to_owned(),
+            _ => format!(
+                "Module {number}'s prerequisiteIndices must be distinct zero-based positions of earlier modules, 0 to {}.",
+                module_index.saturating_sub(1)
+            ),
+        }));
+    }
+    if !validate_text(&module.title) {
+        return Err(invalid(format!("Module {number} needs a title.")));
+    }
+    if !validate_text(&module.summary.text) {
+        return Err(invalid(format!("Module {number} needs a summary.")));
+    }
+    if module.outcomes.is_empty() {
+        return Err(invalid(format!(
+            "Module {number} needs at least one outcome."
+        )));
+    }
+    if !(min_lessons..=max_lessons).contains(&module.lessons.len()) {
+        return Err(invalid(format!(
+            "Module {number} needs {min_lessons} to {max_lessons} lessons; it has {}.",
+            module.lessons.len()
+        )));
+    }
+    titles.module(number, &module.title)?;
+    for (outcome_index, outcome) in module.outcomes.iter().enumerate() {
+        if !validate_text(&outcome.text) {
+            return Err(invalid(format!(
+                "Outcome {} of module {number} must not be blank.",
+                outcome_index + 1
+            )));
+        }
+    }
+    for (lesson_index, lesson) in module.lessons.iter().enumerate() {
+        let place = (number, lesson_index + 1);
+        let at = format!("Lesson {}.{}", place.0, place.1);
+        if !validate_text(&lesson.title) {
+            return Err(invalid(format!("{at} needs a title.")));
+        }
+        if !validate_text(&lesson.objective) {
+            return Err(invalid(format!("{at} needs an objective.")));
+        }
+        if lesson.estimated_minutes < 1 {
+            return Err(invalid(format!(
+                "{at} needs an estimate of at least one minute."
+            )));
+        }
+        titles.lesson(place, &lesson.title)?;
+    }
+    Ok(())
+}
+
 // Drafts must be structurally usable. Citations are optional; a present one
 // must match its source exactly, which is the same rule the author, the
 // repairer and the citation check all apply. A refusal names the module or
@@ -435,8 +529,7 @@ pub(crate) fn decode_outline(
     request: &GenerateLearningProgramRequestDto,
     sources: &[LearningSourceDto],
 ) -> Result<Vec<LearningModuleDto>> {
-    let (min_modules, max_modules, min_lessons, max_lessons) =
-        LearningCourseDepth::bounds(request.course_depth);
+    let (min_modules, max_modules, _, _) = LearningCourseDepth::bounds(request.course_depth);
     let generated = read_outline(raw)?;
     if !(min_modules..=max_modules).contains(&generated.modules.len()) {
         return Err(invalid(format!(
@@ -444,10 +537,7 @@ pub(crate) fn decode_outline(
             generated.modules.len()
         )));
     }
-    // Normalized title -> the module number, or module and lesson numbers,
-    // that first used it.
-    let mut module_titles: HashMap<String, usize> = HashMap::new();
-    let mut lesson_titles: HashMap<String, (usize, usize)> = HashMap::new();
+    let mut titles = Titles::default();
     let mut modules = Vec::with_capacity(generated.modules.len());
     let module_ids: Vec<_> = generated
         .modules
@@ -456,80 +546,15 @@ pub(crate) fn decode_outline(
         .collect();
     for (module_index, module) in generated.modules.into_iter().enumerate() {
         let number = module_index + 1;
-        crate::teaching::validate_project(&module.project)?;
-        let unique_prerequisites: HashSet<_> = module.prerequisite_indices.iter().collect();
-        if unique_prerequisites.len() != module.prerequisite_indices.len()
-            || module
-                .prerequisite_indices
-                .iter()
-                .any(|i| *i >= module_index)
-        {
-            return Err(invalid(match module_index {
-                0 => "Module 1 comes first, so its prerequisiteIndices must be empty.".to_owned(),
-                _ => format!(
-                    "Module {number}'s prerequisiteIndices must be distinct zero-based positions of earlier modules, 0 to {}.",
-                    module_index - 1
-                ),
-            }));
-        }
-        if !validate_text(&module.title) {
-            return Err(invalid(format!("Module {number} needs a title.")));
-        }
-        if !validate_text(&module.summary.text) {
-            return Err(invalid(format!("Module {number} needs a summary.")));
-        }
-        if module.outcomes.is_empty() {
-            return Err(invalid(format!(
-                "Module {number} needs at least one outcome."
-            )));
-        }
-        if !(min_lessons..=max_lessons).contains(&module.lessons.len()) {
-            return Err(invalid(format!(
-                "Module {number} needs {min_lessons} to {max_lessons} lessons; it has {}.",
-                module.lessons.len()
-            )));
-        }
-        if let Some(earlier) = module_titles.insert(fold(&module.title), number) {
-            return Err(invalid(format!(
-                "Modules {earlier} and {number} share the title \"{}\"; give each module its own title.",
-                module.title.trim()
-            )));
-        }
+        module_rules(number, &module, request.course_depth, &mut titles)?;
         optional_citation(sources, module.summary.source_index, &module.summary.quote)?;
         let mut outcomes = Vec::with_capacity(module.outcomes.len());
-        for (outcome_index, outcome) in module.outcomes.into_iter().enumerate() {
-            if !validate_text(&outcome.text) {
-                return Err(invalid(format!(
-                    "Outcome {} of module {number} must not be blank.",
-                    outcome_index + 1
-                )));
-            }
+        for outcome in module.outcomes {
             optional_citation(sources, outcome.source_index, &outcome.quote)?;
             outcomes.push(outcome.text.trim().to_owned());
         }
         let mut lessons = Vec::with_capacity(module.lessons.len());
-        for (lesson_index, lesson) in module.lessons.into_iter().enumerate() {
-            let place = (number, lesson_index + 1);
-            let at = format!("Lesson {}.{}", place.0, place.1);
-            if !validate_text(&lesson.title) {
-                return Err(invalid(format!("{at} needs a title.")));
-            }
-            if !validate_text(&lesson.objective) {
-                return Err(invalid(format!("{at} needs an objective.")));
-            }
-            if lesson.estimated_minutes < 1 {
-                return Err(invalid(format!(
-                    "{at} needs an estimate of at least one minute."
-                )));
-            }
-            if let Some((m, l)) = lesson_titles.insert(fold(&lesson.title), place) {
-                return Err(invalid(format!(
-                    "Lessons {m}.{l} and {}.{} share the title \"{}\"; give each lesson its own title.",
-                    place.0,
-                    place.1,
-                    lesson.title.trim()
-                )));
-            }
+        for lesson in module.lessons {
             optional_citation(sources, lesson.source_index, &lesson.quote)?;
             lessons.push(LearningLessonDto {
                 id: uuid::Uuid::new_v4().to_string(),

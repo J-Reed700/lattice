@@ -123,6 +123,7 @@ impl Union for Choice {
 struct Rich {
     text: String,
     verdict: Verdict,
+    amount: u32,
     sheet: Picked<Sheet>,
     maybe: Option<Picked<Sheet>>,
     opt: Picked<Opt>,
@@ -141,6 +142,7 @@ impl Authored for Rich {
         Form::new()
             .text("text")
             .word::<Verdict>("verdict")
+            .number("amount")
             .point::<Sheet>("sheet")
             .point_or_none::<Sheet>("maybe")
             .own::<Opt>("opt")
@@ -158,6 +160,7 @@ impl Authored for Rich {
         Some(Rich {
             text: fields.text("text")?,
             verdict: fields.word("verdict")?,
+            amount: fields.number("amount")?,
             sheet: fields.point("sheet")?,
             maybe: fields.point_or_none("maybe")?,
             opt: fields.own("opt")?,
@@ -169,6 +172,24 @@ impl Authored for Rich {
             per_opt: fields.each_own("per_opt")?,
             edit: fields.change("edit")?,
             choice: fields.one_of("choice")?,
+        })
+    }
+}
+
+/// A statement of one whole number.
+#[derive(Debug, PartialEq)]
+struct Amount {
+    amount: u32,
+}
+
+impl Authored for Amount {
+    fn form() -> Form {
+        Form::new().number("amount")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Amount {
+            amount: fields.number("amount")?,
         })
     }
 }
@@ -389,6 +410,7 @@ fn assert_dialect(schema: &Value) {
                 assert!(members.iter().all(Value::is_string));
             }
         }
+        "integer" => assert_eq!(object.len(), 1),
         "array" => {
             assert_eq!(object.len(), 2);
             assert_dialect(&object["items"]);
@@ -431,6 +453,7 @@ fn validate(schema: &Value, value: &Value) -> bool {
                     .any(|member| member.as_str() == Some(text))
             })
         }),
+        "integer" => value.as_u64().is_some(),
         "array" => value.as_array().is_some_and(|elements| {
             elements
                 .iter()
@@ -689,6 +712,38 @@ fn value_reasons() {
             via_value(extra, Ended::Complete, showing),
             Settled::Answered(_)
         ));
+    });
+}
+
+#[test]
+fn a_number_is_read_as_written() {
+    with_showing(1, 0, |showing| {
+        let read =
+            <Whole<Amount> as Single>::read(&written(r#"{"amount":30}"#, Ended::Complete), showing);
+        assert_eq!(read, Settled::Answered(Amount { amount: 30 }));
+    });
+}
+
+#[test]
+fn a_number_written_as_text_a_fraction_or_a_negative_is_not_read() {
+    with_showing(1, 0, |showing| {
+        for broken in [
+            r#"{"amount":"30"}"#,
+            r#"{"amount":1.5}"#,
+            r#"{"amount":-1}"#,
+        ] {
+            let read = <Whole<Amount> as Single>::read(&written(broken, Ended::Complete), showing);
+            assert_eq!(read, Settled::Unanswered(Why::NotRead), "{broken}");
+        }
+    });
+}
+
+#[test]
+fn a_number_field_is_an_integer_schema_without_a_range() {
+    with_showing(1, 0, |showing| {
+        let schema = schema_of::<Whole<Amount>>(showing, Pointers::Enum);
+        assert_eq!(schema["properties"]["amount"], json!({"type": "integer"}));
+        assert_dialect(&schema);
     });
 }
 
@@ -1066,6 +1121,7 @@ fn rich_entry(number: usize, stray: bool) -> String {
         "of": handle_of(number),
         "text": "words",
         "verdict": "yes",
+        "amount": 30,
         "sheet": "s2",
         "maybe": "none",
         "opt": "o1",
@@ -1102,6 +1158,7 @@ fn each_reads_a_statement_with_a_field_of_every_kind() {
                 let Settled::Answered(rich) = settled else {
                     panic!("{settled:?}");
                 };
+                assert_eq!(rich.amount, 30);
                 assert_eq!(rich.cites.len(), 1);
                 assert_eq!(rich.own_cites.len(), 1);
                 assert_eq!(rich.maybe, None);
@@ -1127,7 +1184,7 @@ fn each_reads_a_statement_with_a_field_of_every_kind() {
 fn an_inner_list_that_lacks_an_own_thing_leaves_the_entry_unanswered() {
     with_showing(1, 2, |showing| {
         let entry = json!({
-            "of": "s1", "text": "w", "verdict": "no", "sheet": "s1", "maybe": "none",
+            "of": "s1", "text": "w", "verdict": "no", "amount": 5, "sheet": "s1", "maybe": "none",
             "opt": "o1", "maybe_opt": "none", "cites": [], "own_cites": [],
             "inner": { "label": "a" }, "inners": [],
             "per_opt": [{ "of": "o1", "label": "x" }],

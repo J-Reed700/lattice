@@ -991,7 +991,7 @@ fn defect_in_first_section() -> String {
 }
 
 fn actionable() -> String {
-    json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"reason":"The section promises expert certification."}]}).to_string()
+    json!({"entries":[{"of":"i1","verdict":"actionable","basis":"internal_conflict","candidateIds":["p1"],"referenceIds":[],"partId":"p1","leftTo":"none","reason":"The section promises expert certification."}]}).to_string()
 }
 
 const LEARNER_SEES_ONLY_THE_LESSON: &str = "never mentions the course plan";

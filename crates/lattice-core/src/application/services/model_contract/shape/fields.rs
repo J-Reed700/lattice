@@ -54,6 +54,18 @@ impl<'r, 's> Fields<'r, 's> {
         }
     }
 
+    /// The whole number written in `name`.
+    pub fn number(&mut self, name: &'static str) -> Option<u32> {
+        let written = self
+            .value(name)?
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok());
+        match written {
+            Some(number) => Some(number),
+            None => self.fail(Why::NotRead),
+        }
+    }
+
     /// The shown `K` the field points at. Unresolved: `Why::Unplaced`.
     pub fn point<K: Kind>(&mut self, name: &'static str) -> Option<Picked<K>> {
         let written = self.string(name)?;
