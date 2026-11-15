@@ -154,9 +154,9 @@ export const Message = memo(({
     verificationBadge,
   } = verification;
 
-  const drawn = useDrawnReply(message, !isUser);
+  const drawn = useDrawnReply(message, !isUser, showsCodeRefs);
   const normalizedMarkdownContent = drawn ? drawn.readable : message.content;
-  useRevealStreamingRef(normalizedMarkdownContent, showsCodeRefs && isPending);
+  useRevealStreamingRef(drawn?.files, showsCodeRefs && isPending);
 
   const {
     isEditing,
@@ -301,6 +301,7 @@ export const Message = memo(({
             claims={isUser ? undefined : claimVerdicts}
             showEvidence={showCitations}
             codeRefs={showsCodeRefs}
+            files={drawn?.files}
             streaming={isPending}
             images={figures}
           />

@@ -5,7 +5,7 @@ import { Markdown } from 'tiptap-markdown';
 
 import { MediaLightbox } from '@/components/MediaLightbox';
 import { hasUnclosedFence } from '@/utils/assistantMarkdown';
-import { findReplyMarks, writeMarksAsNumbers } from '@/utils/replyPieces';
+import { findReplyMarks, writeMarksAsNumbers, type FileTarget } from '@/utils/replyPieces';
 
 import { createExtensions } from './extensions';
 import { chatImagesKey, figureCredit, type ChatFigure, type ChatImageHost } from './extensions/chatImage';
@@ -30,8 +30,10 @@ export interface TiptapViewerProps {
   claims?: readonly ClaimMark[];
   /** Presentation-only clean reading mode. The markdown and evidence remain intact. */
   showEvidence?: boolean;
-  /** Draw `path:line` inline code as line-reference chips (Explorer conversations). */
+  /** Draw links into the folder as file chips (Explorer conversations). */
   codeRefs?: boolean;
+  /** The file of each file mark in `content` (see `drawReply`), by the index the mark carries. */
+  files?: readonly FileTarget[];
   /** The text is still arriving. A fence it has not closed yet is not drawn as a diagram. */
   streaming?: boolean;
   /** Draw ```mermaid fences as diagrams (default on). Read when the viewer is created. */
@@ -46,6 +48,7 @@ export interface TiptapViewerProps {
 
 const NO_CLAIMS: readonly ClaimMark[] = [];
 const NO_MARKS: readonly number[] = [];
+const NO_FILES: readonly FileTarget[] = [];
 const NO_FIGURES: readonly ChatFigure[] = [];
 
 /**
@@ -62,6 +65,7 @@ export function TiptapViewer({
   claims,
   showEvidence = true,
   codeRefs = false,
+  files,
   streaming = false,
   diagrams = true,
   images,
@@ -73,6 +77,7 @@ export function TiptapViewer({
   const citationSignature = `${showEvidence ? 'visible' : 'hidden'}:${(citationNumbers ?? []).join(',')}`;
   const claimsRef = useRef<readonly ClaimMark[]>(showEvidence ? claims ?? NO_CLAIMS : NO_CLAIMS);
   const codeRefsRef = useRef(codeRefs);
+  const filesRef = useRef<readonly FileTarget[]>(files ?? NO_FILES);
   const suspendLastBlock = streaming && hasUnclosedFence(content);
   const suspendLastBlockRef = useRef(suspendLastBlock);
   const figuresRef = useRef<readonly ChatFigure[]>(images ?? NO_FIGURES);
@@ -98,7 +103,7 @@ export function TiptapViewer({
         isVisible: () => evidenceVisibleRef.current,
       }),
       ClaimMarks.configure({ getClaims: () => claimsRef.current }),
-      CodeRefMarks.configure({ isEnabled: () => codeRefsRef.current }),
+      CodeRefMarks.configure({ isEnabled: () => codeRefsRef.current, getFiles: () => filesRef.current }),
       Markdown.configure({
         html: false,
         transformPastedText: false,
@@ -147,13 +152,14 @@ export function TiptapViewer({
   useEffect(() => {
     citationNumbersRef.current = citationNumbers ?? [];
     marksRef.current = marks ?? NO_MARKS;
+    filesRef.current = files ?? NO_FILES;
     evidenceVisibleRef.current = showEvidence;
     if (!editor || editor.isDestroyed) return;
     // An empty transaction: nothing changes but the decorations are redrawn.
     // Pictures' caption chips follow the same switch.
     const tr = editor.state.tr.setMeta(citationMarksKey, citationSignature);
     editor.view.dispatch(chatImages ? tr.setMeta(chatImagesKey, true) : tr);
-  }, [editor, chatImages, citationNumbers, citationSignature, marks, showEvidence]);
+  }, [editor, chatImages, citationNumbers, citationSignature, marks, files, showEvidence]);
 
   useEffect(() => {
     const previous = claimsRef.current;

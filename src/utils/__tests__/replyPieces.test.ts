@@ -5,6 +5,7 @@ import { filePiece, reply, said } from '@/tests/replyFixtures';
 import {
   drawReply,
   extendReply,
+  fileMarkFor,
   findReplyMarks,
   markFor,
   markIndex,
@@ -44,11 +45,21 @@ describe('reply pieces', () => {
     expect(drawn.readable).toBe('Kale grows [3] and chard [5].');
   });
 
-  it('draws a file reference as the text it was written with', () => {
-    const drawn = drawReply([said('See '), filePiece(2, 'grid.rs', 4, 9), said('.')]);
+  it('draws a file reference as inline code with the lines it names', () => {
+    const drawn = drawReply([said('See '), filePiece(2, 'grid.rs', 4, 9), said(' and '), filePiece(3, 'a.rs', 7, 7), said('.')]);
 
     expect(drawn.numbers).toEqual([]);
-    expect(drawn.markdown).toBe('See [f2:4-9].');
+    expect(drawn.files).toEqual([]);
+    expect(drawn.markdown).toBe('See `grid.rs:4-9` and `a.rs:7`.');
+    expect(plainTextOf({ content: '', reply: [filePiece(2, 'grid.rs', 4, 9)] })).toBe('grid.rs:4-9');
+  });
+
+  it('gives a folder reply file marks that read as the same text', () => {
+    const drawn = drawReply([said('See '), filePiece(2, 'grid.rs', 4, 9), said('.')], true);
+
+    expect(drawn.files).toEqual([{ name: 'grid.rs', lines: { first: 4, last: 9 } }]);
+    expect(drawn.markdown).toBe(`See \`${fileMarkFor(0)}grid.rs:4-9\`.`);
+    expect(drawn.readable).toBe('See `grid.rs:4-9`.');
   });
 
   it('leaves bracketed digits in text alone', () => {
