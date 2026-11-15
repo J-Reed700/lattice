@@ -94,9 +94,7 @@ pub(super) trait CompletionProtocol: ProviderApi {
     /// answer the body, the reply ceiling and the port's reasoning flag read.
     fn thinking(&self, model: &str, request: &CompletionRequest) -> Thinking;
     /// Whether this provider holds an answer to `schema` as written.
-    fn enforces(&self, _schema: &Value) -> bool {
-        false
-    }
+    fn enforces(&self, schema: &Value) -> bool;
     /// The request body for the fitted request on `model`.
     fn body(&self, model: &str, fitted: &Fitted<'_>, stream: bool) -> Result<Value>;
     /// A whole reply, streamed or not, read back into a completion.

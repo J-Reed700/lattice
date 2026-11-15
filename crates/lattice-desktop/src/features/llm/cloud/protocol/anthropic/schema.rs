@@ -1,7 +1,7 @@
 //! The JSON Schema subset Claude's structured outputs compile: what a
-//! learning schema must lose or move before it reaches Anthropic, when a
-//! schema is too large to send as a format at all, and the retry in words when
-//! Claude refuses one anyway.
+//! learning schema must lose or move before it reaches Anthropic, how a part
+//! that repeats is written once, when a schema is too large to send as a
+//! format at all, and the retry in words when Claude refuses one anyway.
 
 use lattice_core::shared::error::AppError;
 use serde_json::{json, Value};
@@ -136,6 +136,82 @@ pub(in crate::features::llm) fn anthropic_schema(schema: &Value) -> Value {
         }
         Value::Array(items) => Value::Array(items.iter().map(anthropic_schema).collect()),
         other => other.clone(),
+    }
+}
+
+/// `schema` with each object or `enum` that occurs more than once defined
+/// once under `$defs` and referred to from its places. The answers it admits
+/// are the same. Written out in every place, a schema with many places for one
+/// large part is refused as too large a grammar.
+pub(in crate::features::llm) fn shared(schema: &Value) -> Value {
+    let mut sent = schema.clone();
+    if sent.get("$defs").is_some() {
+        return sent;
+    }
+    let mut seen = Vec::new();
+    count(&mut sent, &mut seen);
+    let repeated: Vec<Value> = seen
+        .into_iter()
+        .filter(|(_, times)| *times > 1)
+        .map(|(part, _)| part)
+        .collect();
+    if repeated.is_empty() {
+        return sent;
+    }
+    let mut defined = serde_json::Map::new();
+    refer(&mut sent, &repeated, &mut defined);
+    if let Value::Object(fields) = &mut sent {
+        fields.insert("$defs".into(), Value::Object(defined));
+    }
+    sent
+}
+
+/// The schemas directly inside `schema`: its properties, its items and its alternatives.
+fn parts(schema: &mut Value) -> Vec<&mut Value> {
+    let Value::Object(fields) = schema else {
+        return Vec::new();
+    };
+    let mut inside = Vec::new();
+    for (key, value) in fields.iter_mut() {
+        match (key.as_str(), value) {
+            ("properties", Value::Object(properties)) => inside.extend(properties.values_mut()),
+            ("anyOf", Value::Array(alternatives)) => inside.extend(alternatives.iter_mut()),
+            ("items", items) if items.is_object() => inside.push(items),
+            _ => {}
+        }
+    }
+    inside
+}
+
+/// How often each object and `enum` inside `schema` occurs. The inside of a
+/// part met again is not counted again: it is sent where the part is defined.
+fn count(schema: &mut Value, seen: &mut Vec<(Value, usize)>) {
+    for part in parts(schema) {
+        if part.get("properties").is_some() || part.get("enum").is_some() {
+            if let Some((_, times)) = seen.iter_mut().find(|(other, _)| *other == *part) {
+                *times += 1;
+                continue;
+            }
+            seen.push((part.clone(), 1));
+        }
+        count(part, seen);
+    }
+}
+
+/// Puts a reference in each place of a `repeated` part inside `schema`, and
+/// the part itself, with the same done inside it, in `defined`.
+fn refer(schema: &mut Value, repeated: &[Value], defined: &mut serde_json::Map<String, Value>) {
+    for part in parts(schema) {
+        let Some(index) = repeated.iter().position(|other| *other == *part) else {
+            refer(part, repeated, defined);
+            continue;
+        };
+        let name = format!("d{}", index + 1);
+        let mut written = std::mem::replace(part, json!({"$ref": format!("#/$defs/{name}")}));
+        if !defined.contains_key(&name) {
+            refer(&mut written, repeated, defined);
+            defined.insert(name, written);
+        }
     }
 }
 

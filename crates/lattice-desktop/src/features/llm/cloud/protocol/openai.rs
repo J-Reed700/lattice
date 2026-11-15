@@ -56,6 +56,10 @@ impl CompletionProtocol for OpenAi {
         }
     }
 
+    fn enforces(&self, _schema: &Value) -> bool {
+        false
+    }
+
     fn body(&self, model: &str, fitted: &Fitted<'_>, stream: bool) -> Result<Value> {
         let request = fitted.request();
         let reasons = fitted.thinking().is_on();

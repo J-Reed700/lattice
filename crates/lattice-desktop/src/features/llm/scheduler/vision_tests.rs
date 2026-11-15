@@ -47,6 +47,12 @@ impl ModelBackend for Recorder {
     fn keeps_read_prompts(&self) -> bool {
         false
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
     fn is_alive(&self) -> bool {
         true
     }

@@ -389,6 +389,12 @@ impl ModelBackend for LlamaCppLlm {
     fn keeps_read_prompts(&self) -> bool {
         true
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
     fn vision(&self) -> Option<VisionGeometry> {
         self.config.vision
     }

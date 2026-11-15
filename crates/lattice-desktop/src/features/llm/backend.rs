@@ -48,9 +48,7 @@ pub(crate) trait ModelBackend: Send + Sync {
     fn vision(&self) -> Option<VisionGeometry>;
     fn keeps_read_prompts(&self) -> bool;
     /// Whether this backend holds an answer to `schema` as written.
-    fn enforces(&self, _schema: &Schema) -> bool {
-        false
-    }
+    fn enforces(&self, schema: &Schema) -> bool;
     fn is_alive(&self) -> bool;
     async fn is_ready(&self) -> Result<bool>;
     async fn send(&self, fitted: &Fitted<'_>, progress: Progress<'_>)

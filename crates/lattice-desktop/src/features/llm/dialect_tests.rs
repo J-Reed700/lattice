@@ -13,7 +13,9 @@ use lattice_core::application::ports::llm_port::{
 use lattice_core::application::services::model_contract::test_support::samples;
 use serde_json::Value;
 
-use super::cloud::protocol::anthropic::schema::{anthropic_schema, anthropic_schema_compiles};
+use super::cloud::protocol::anthropic::schema::{
+    anthropic_schema, anthropic_schema_compiles, shared,
+};
 
 /// Keywords the dialect never writes and a strict subset does not take.
 const OUTSIDE_THE_DIALECT: [&str; 7] = [
@@ -89,6 +91,53 @@ fn anthropic_enforces_every_schema_as_written() {
             "{name} does not compile for Anthropic"
         );
     }
+}
+
+/// `schema` with each reference replaced by the part it names.
+fn written_out(schema: &Value) -> Value {
+    fn resolved(part: &Value, defined: &Value) -> Value {
+        match part {
+            Value::Object(fields) => match fields.get("$ref").and_then(Value::as_str) {
+                Some(name) => resolved(&defined[name.trim_start_matches("#/$defs/")], defined),
+                None => Value::Object(
+                    fields
+                        .iter()
+                        .filter(|(key, _)| key.as_str() != "$defs")
+                        .map(|(key, value)| (key.clone(), resolved(value, defined)))
+                        .collect(),
+                ),
+            },
+            Value::Array(items) => {
+                Value::Array(items.iter().map(|item| resolved(item, defined)).collect())
+            }
+            other => other.clone(),
+        }
+    }
+    resolved(schema, &schema["$defs"])
+}
+
+#[test]
+fn anthropic_sends_every_schema_with_the_meaning_it_was_written_with() {
+    let mut defining = 0;
+    for (name, schema) in samples::schemas() {
+        let written = schema.as_json();
+        let sent = shared(written);
+        assert_eq!(&written_out(&sent), written, "{name}");
+        if sent.get("$defs").is_some() {
+            defining += 1;
+        } else {
+            assert_eq!(&sent, written, "{name}");
+        }
+    }
+    assert!(defining > 0, "no sample repeats a part");
+}
+
+#[test]
+fn a_schema_that_defines_parts_itself_is_sent_as_written() {
+    let part = serde_json::json!({"type":"object","properties":{"a":{"type":"string"}}});
+    let written = serde_json::json!({"type":"object","$defs":{"d1":{"type":"integer"}},
+        "properties":{"first":part,"second":part,"third":{"$ref":"#/$defs/d1"}}});
+    assert_eq!(shared(&written), written);
 }
 
 #[test]

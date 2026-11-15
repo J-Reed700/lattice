@@ -147,6 +147,7 @@ impl CompletionProtocol for Anthropic {
         if let Some(schema) = request.schema().map(|schema| schema.as_json()) {
             let schema = schema::anthropic_schema(schema);
             let compiles = schema::anthropic_schema_compiles(&schema);
+            let schema = schema::shared(&schema);
             let mut config = field(&body, "output_config").clone();
             if config.is_null() {
                 config = json!({});
