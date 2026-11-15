@@ -713,8 +713,7 @@ impl Reads {
                 json!({"part": format!("the {kind} part of the claim"), "kind": kind, "passage": passage})
             })
             .collect();
-        json!({"parts": parts, "verdict": "supported_with_common", "reason": "Each part was read."})
-            .to_string()
+        super::bridge_tests::parts_json(json!(parts), "Each part was read.")
     }
 }
 

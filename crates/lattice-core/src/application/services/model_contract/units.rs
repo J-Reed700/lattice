@@ -177,7 +177,18 @@ impl Units {
     /// The text as it stands after the changes applied so far. New content is
     /// segmented again by `shared/text/segmentation`, never by a change.
     pub fn text(&self) -> String {
-        self.laid().0
+        self.laid(&[]).0
+    }
+
+    /// The units as shown, in order.
+    pub fn units(&self) -> &[Unit] {
+        &self.shown
+    }
+
+    /// [`Units::text`] with the shown units at `positions` (their places in
+    /// [`Units::units`]) left out.
+    pub fn text_without(&self, positions: &[usize]) -> String {
+        self.laid(positions).0
     }
 
     /// Whether `unit` is one of this text's units as shown.
@@ -228,7 +239,7 @@ impl Units {
     /// The text that now stands where `units` stood: from the first to the last place that holds one of
     /// them, kept or replaced, and whatever lies between. `None` when none of them is left.
     pub fn stands(&self, units: &[UnitRef]) -> Option<String> {
-        let (out, lays) = self.laid();
+        let (out, lays) = self.laid(&[]);
         let mut from: Option<usize> = None;
         let mut to: Option<usize> = None;
         for (held, range) in &lays {
@@ -241,8 +252,9 @@ impl Units {
         out.get(from?..to?).map(str::to_owned)
     }
 
-    /// The text as it stands, and for each place the shown unit it holds and its bytes of that text.
-    fn laid(&self) -> Laying {
+    /// The text as it stands without the shown units at `positions`, and for each place the shown unit
+    /// it holds and its bytes of that text.
+    fn laid(&self, positions: &[usize]) -> Laying {
         // A text with no unit has one gap, its whole content.
         let (lead, tail) = match self.gaps.as_slice() {
             [lead, .., tail] => (lead.as_str(), tail.as_str()),
@@ -254,6 +266,7 @@ impl Units {
         let mut previous: Option<(Option<usize>, bool)> = None;
         for place in self.edited.places() {
             let (held, text, wrote) = match place.laid {
+                Laid::Kept(unit) if positions.contains(&unit.index) => continue,
                 Laid::Kept(unit) => (Some(*unit), self.text_of(*unit).unwrap_or_default(), false),
                 Laid::Wrote { content, replaces } => (replaces.copied(), content.as_str(), true),
             };
