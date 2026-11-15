@@ -314,18 +314,28 @@ async fn a_column_left_out_is_asked_for_again_alone() {
 async fn a_blank_value_is_corrected_alone() {
     let model = Arc::new(ScriptedModel::new().on_request::<CompareRow>(|sent, nth| {
         let prompt = shown(sent);
-        let value = if nth == 0 { "  " } else { "at dawn" };
-        reply(entries(vec![
-            stated(&handle_of(&prompt, "kiln firing"), value, &[]),
-            not_stated(&handle_of(&prompt, "crane count")),
-        ]))
+        let kiln = handle_of(&prompt, "kiln firing");
+        if nth == 0 {
+            reply(entries(vec![
+                stated(&kiln, "  ", &[]),
+                not_stated(&handle_of(&prompt, "crane count")),
+            ]))
+        } else {
+            reply(entries(vec![stated(
+                &kiln,
+                "at dawn",
+                &[&handle_of(&prompt, KILN)],
+            )]))
+        }
     }));
     let row = row_of(&model, &row_columns()).await.unwrap();
 
     assert_eq!(row.cells[0].value.as_deref(), Some("at dawn"));
     let sent = model.sent();
     assert_eq!(sent.len(), 2);
-    assert!(shown(&sent[1]).contains("The value is empty."));
+    let again = shown(&sent[1]);
+    assert!(again.contains("The value is empty."), "{again}");
+    assert!(!again.contains("crane count"), "{again}");
 }
 
 /// A column the model never answers is an empty cell the row says it could

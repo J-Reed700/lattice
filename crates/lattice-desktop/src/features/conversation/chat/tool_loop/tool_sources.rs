@@ -451,7 +451,7 @@ mod citable_tests {
         let text = rendered.text;
         assert!(text.contains("Citable passage [s1] — Page A\n"));
         assert!(
-            text.contains("fetch_url_content with url \"https://example.com/a\" and offset "),
+            text.contains("call read_more with [m1] to read on]"),
             "{text}"
         );
         assert!(text.chars().count() <= 300, "{}", text.chars().count());

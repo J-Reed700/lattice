@@ -434,7 +434,7 @@ mod model_tools {
         .unwrap();
         // A room that holds the whole file gets the whole file.
         assert!(
-            first.starts_with("src/long.txt · lines 1–1000 of 1000\n"),
+            first.starts_with("[f1] src/long.txt · lines 1–1000 of 1000\n"),
             "{first:.200}"
         );
         assert!(first.contains("   1│ line 1\n"));
@@ -472,7 +472,7 @@ mod model_tools {
         .unwrap();
         assert!(
             window.starts_with(&format!(
-                "huge.log · lines {}–{lines} of {lines}\n",
+                "[f1] huge.log · lines {}–{lines} of {lines}\n",
                 lines - 1
             )),
             "{window:.200}"
@@ -1038,8 +1038,8 @@ fn the_folder_template_cites_only_numbered_passages() {
     use sha2::{Digest, Sha256};
     assert_eq!(
         format!("{:x}", Sha256::digest(FOLDER_TEMPLATE)),
-        "5e7d373f236b08e444b79c131faa23cf8dfb8ab2ec2af20f347b1aa24d0c73ec",
-        "the folder's template is as it was before the tutor, but for its citation labels"
+        "47b4ef6f1b2da4f1e209b8dcede0fb8f7efd1154fa70c09e716605cce71f4d01",
+        "the folder's template is as it was before the tutor, but for how it names passages and files"
     );
 }
 

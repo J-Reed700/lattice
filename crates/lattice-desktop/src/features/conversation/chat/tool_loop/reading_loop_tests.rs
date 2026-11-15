@@ -73,10 +73,17 @@ async fn grounded(model: &Arc<Model>) -> Run {
     .await
 }
 
+/// The reply as its events drew it: the text, and each reference as written.
 fn streamed(run: &Run) -> String {
     run.events
         .iter()
-        .filter_map(|event| event.content.clone())
+        .filter_map(|event| {
+            let reference = event.reference.as_ref();
+            event
+                .content
+                .clone()
+                .or_else(|| reference.map(|reference| reference.written.clone()))
+        })
         .collect()
 }
 
@@ -179,7 +186,12 @@ async fn a_call_a_continuation_writes_as_text_is_neither_shown_nor_kept() {
 
 #[tokio::test]
 async fn a_window_with_no_room_left_adds_nothing_to_the_answer() {
-    let model = Model::new([reply(READING), reply(ANSWER)]);
+    // An answer that takes the room the window had left for it.
+    let answer = format!(
+        "{ANSWER}{}",
+        " The parish kept its accounts in order.".repeat(1_500)
+    );
+    let model = Model::new([reply(READING), reply(&answer)]);
     // The continuation's request, as the loop would send it, fills the window.
     let continuation = legacy::completion(legacy::Completion {
         input: vec![
@@ -201,7 +213,7 @@ async fn a_window_with_no_room_left_adds_nothing_to_the_answer() {
             },
             CompletionInput::Message {
                 role: "assistant".into(),
-                content: ANSWER.into(),
+                content: answer.clone(),
             },
             CompletionInput::Message {
                 role: "user".into(),
@@ -215,7 +227,7 @@ async fn a_window_with_no_room_left_adds_nothing_to_the_answer() {
     model.window.store(window, Ordering::Relaxed);
     let run = grounded(&model).await;
     let outcome = run.outcome.as_ref().expect("an answer");
-    assert_eq!(outcome.response, ANSWER);
+    assert_eq!(outcome.response, answer);
     assert_eq!(streamed(&run), outcome.response);
     let requests = model.requests();
     assert_eq!(requests.len(), 2, "no continuation");

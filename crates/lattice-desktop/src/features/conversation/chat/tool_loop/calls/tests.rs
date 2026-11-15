@@ -34,6 +34,7 @@ fn every_registered_tool_is_classified() {
             "get_document",
             "list_attachments",
             "list_documents",
+            "read_more",
             "semantic_search",
             "web_search",
             "wiki_search",
@@ -42,10 +43,12 @@ fn every_registered_tool_is_classified() {
         "a tool was added or removed: decide whether it only reads, then \
          update `runs_alongside_others` and this list together"
     );
-    // `find_image` stores pictures and numbers them after the turn's last.
+    // `find_image` stores pictures and numbers them after the turn's last, and
+    // `read_more` carries on a read of any tool.
     assert!(names
         .iter()
-        .all(|name| runs_alongside_others(name) == (name != "find_image")));
+        .all(|name| runs_alongside_others(name)
+            == !matches!(name.as_str(), "find_image" | "read_more")));
 }
 
 /// A source with one tool that reads and one that writes.

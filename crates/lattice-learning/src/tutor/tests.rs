@@ -575,7 +575,7 @@ async fn the_outline_names_what_the_learner_finished_and_the_sources() {
         "{outline}"
     );
     assert!(outline.contains("1.2 Lesson 0-1 [l2]"), "{outline}");
-    assert!(outline.contains("Search notes [r1]"), "{outline}");
+    assert!(outline.contains("Search notes [r2]"), "{outline}");
     assert!(!outline.contains(&lesson), "{outline}");
     assert!(!outline.contains(&course.version), "{outline}");
 }
@@ -598,7 +598,7 @@ async fn due_reviews_shows_fronts_and_never_answers() {
 #[tokio::test]
 async fn due_reviews_says_how_many_it_had_no_room_for() {
     let course = course().await;
-    for number in 0..4 {
+    for number in 0..12 {
         course.save_card(&format!("Question {number}")).await;
     }
     let result = course
@@ -1293,7 +1293,7 @@ fn the_tutor_s_prompt_and_tool_schemas_are_pinned() {
     let digest = Sha256::digest(format!("{TUTOR_TEMPLATE}\u{0}{schemas}"));
     assert_eq!(
         format!("{digest:x}"),
-        "7c1ad1b16bc3d71fc5ce655b87daeada6345cdfd5b427709031621e4a15a7d3d"
+        "192d1a5ad20cd7d6892122f00e787780658989b5c34534a70326600cd289df3a"
     );
 }
 

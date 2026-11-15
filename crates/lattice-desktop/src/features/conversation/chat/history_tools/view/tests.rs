@@ -89,13 +89,13 @@ fn a_cut_history_read_resumes_the_same_read() {
         first.contains("[h1] user (part of the message):\nRopes and tar"),
         "{first}"
     );
-    assert!(first.contains("call read_more with [m2]"), "{first}");
+    assert!(first.contains("call read_more with [m1]"), "{first}");
     assert!(
         !first.contains("start_byte") && !first.contains("msg-cc"),
         "{first}"
     );
     let resumed = handles
-        .read_call("read_more", &json!({"handle": "m2"}))
+        .read_call("read_more", &json!({"handle": "m1"}))
         .unwrap();
     assert_eq!(resumed.tool, TOOL_READ_CONVERSATION_HISTORY);
 }

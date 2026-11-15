@@ -329,18 +329,41 @@ fn short_cited_numeric_answers_are_not_skipped() {
 }
 
 #[test]
-fn invalid_citation_cannot_borrow_support_from_another_source() {
-    for citation in ["[s99]", "[s0]", "[s1][s99]"] {
-        let claims = lexical_pass(
+fn a_name_the_app_never_gave_is_no_citation() {
+    let passage = "Blueberry plants showed improved cold tolerance after salicylic acid treatment.";
+    let cited = |citation: &str| {
+        lexical_pass(
             &format!("Blueberry plants showed improved cold tolerance after salicylic acid treatment {citation}."),
-            &[source("Blueberry plants showed improved cold tolerance after salicylic acid treatment.")],
-        );
+            &[source(passage)],
+        )
+    };
+    for citation in ["[s99]", "[s0]"] {
+        let claims = cited(citation);
         assert_eq!(claims.len(), 1);
-        assert!(
-            !claims[0].supported,
-            "invalid citation {citation} must fail closed"
-        );
+        assert!(claims[0].citation_ids.is_empty(), "{citation}");
+        assert!(!claims[0].supported, "{citation} backs nothing");
     }
+
+    // Beside a citation that resolves it costs only itself.
+    let claims = cited("[s1][s99]");
+    assert_eq!(claims[0].citation_ids, vec![1]);
+    assert!(claims[0].supported);
+}
+
+#[test]
+fn a_citation_of_a_source_the_check_was_not_given_backs_nothing() {
+    let passage = "Blueberry plants showed improved cold tolerance after salicylic acid treatment.";
+    let named = [source(passage), source(passage)];
+    let claims = super::lexical_pass(
+        &reply(
+            "Blueberry plants showed improved cold tolerance after salicylic acid treatment [s1][s2].",
+            &named,
+        ),
+        &named[..1],
+    );
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].citation_ids, vec![1, 2]);
+    assert!(!claims[0].supported);
 }
 
 #[test]

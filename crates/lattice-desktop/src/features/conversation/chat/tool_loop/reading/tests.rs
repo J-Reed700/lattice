@@ -277,7 +277,7 @@ fn the_reading_request_shows_what_the_model_is_told_and_nothing_internal() {
     let input = Input {
         question: marks.told(QUESTION.to_owned()),
         passages: vec![Excerpt {
-            label: marks.reference(4417u32),
+            label: marks.reference(441_700u32),
             document: marks.told("harbour-notes.md".to_owned()),
             sentences: vec![
                 Sentence {

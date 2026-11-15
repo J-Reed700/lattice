@@ -548,7 +548,7 @@ async fn a_source_s_passages_take_the_turn_s_numbers() {
         calls(&[("first", "search_course", json!({ "chunk": "one" }))]),
         calls(&[("second", "search_course", json!({ "chunk": "two" }))]),
         calls(&[("third", "save_note", json!({}))]),
-        CompletionResponse::from_text("Fusion sums ranks [2]; k flattens them [4]."),
+        CompletionResponse::from_text("Fusion sums ranks [s2]; k flattens them [s4]."),
     ]);
     let library = serde_json::from_value::<SourceDto>(json!({
         "documentId": "doc-1",
@@ -600,17 +600,17 @@ async fn a_source_s_passages_take_the_turn_s_numbers() {
     let requests = model.requests();
     let first = last_text(&requests[1]);
     assert!(
-        first.contains("[2] Ranking › Fusion › Notes (known)\nFusion sums reciprocal ranks."),
+        first.contains("[s2] Ranking › Fusion › Notes (known)\nFusion sums reciprocal ranks."),
         "{first}"
     );
-    assert!(first.contains("[3] Ranking"), "{first}");
+    assert!(first.contains("[s3] Ranking"), "{first}");
     assert!(!first.contains("Citable passage"), "{first}");
     let second = last_text(&requests[2]);
     assert!(
-        second.contains("[2] Ranking"),
+        second.contains("[s2] Ranking"),
         "the repeat keeps it: {second}"
     );
-    assert!(second.contains("[4] Ranking"), "{second}");
+    assert!(second.contains("[s4] Ranking"), "{second}");
     assert!(last_text(&requests[3]).contains("Saved."));
 }
 
@@ -1059,7 +1059,7 @@ async fn citations_from_before_condensing_still_resolve() {
     let model = Model::new([
         reads(&[PAGE_A]),
         reads(&[PAGE_B]),
-        CompletionResponse::from_text("It opened in 1932 [1]."),
+        CompletionResponse::from_text("It opened in 1932 [s1]."),
     ]);
     let run = run(
         &model,
@@ -1076,15 +1076,15 @@ async fn citations_from_before_condensing_still_resolve() {
         .sources
         .iter()
         .find(|source| source.citation_id == Some(1))
-        .expect("[1] still has a source");
+        .expect("[s1] still has a source");
     assert_eq!(cited.path.as_deref(), Some(PAGE_A));
-    // The model was shown the number it has to keep.
+    // The model was shown the name it has to keep.
     let requests = model.requests();
     let condense = requests
         .iter()
         .find(|request| is_condense_request(request))
         .expect("the window filled and was condensed");
-    assert!(shown_in(condense).contains("Citable passage [1]"));
+    assert!(shown_in(condense).contains("Citable passage [s1]"));
     // The research deck's card for page A still links to it.
     assert!(run
         .steps

@@ -807,7 +807,7 @@ fn a_source_s_passages_join_the_turn_s_numbered_passages() {
     let message = &prompt.enhanced_message;
     assert!(
         message.contains(
-            "[1] Document: Ranking › Fusion › Notes (chunk-1)\nContent: Fusion sums reciprocal ranks."
+            "[s1] Document: Ranking › Fusion › Notes (chunk-1)\nContent: Fusion sums reciprocal ranks."
         ),
         "{message}"
     );

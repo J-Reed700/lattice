@@ -1570,13 +1570,8 @@ async fn a_repair_that_validates_is_committed_and_reported_as_repaired() {
     assert_eq!(outcome.processed_through_sequence, 4);
     assert_eq!(
         llm.request_limits(),
-        vec![
-            (None, Some(8_192)),
-            (None, Some(8_192)),
-            (None, Some(4_096)),
-            (None, Some(8_192)),
-        ],
-        "structured utility requests keep model-default reasoning and the review output budget"
+        vec![(None, Some(4_096)); 4],
+        "structured utility requests keep model-default reasoning, and the answer room the fake's window leaves"
     );
     assert!(
         llm.samplings()
@@ -3168,8 +3163,13 @@ fn two_constraints() -> Vec<Result<String>> {
     ))]
 }
 
+/// The ids a review prompt shows. A second ask says why after the task.
 fn reviewed_ids(prompt: &str) -> Vec<String> {
-    let payload: serde_json::Value = serde_json::from_str(prompt).expect("review prompt JSON");
+    let payload = serde_json::Deserializer::from_str(prompt)
+        .into_iter::<serde_json::Value>()
+        .next()
+        .and_then(std::result::Result::ok)
+        .expect("review prompt JSON");
     payload["reviews"]
         .as_array()
         .expect("reviews")
@@ -3477,6 +3477,11 @@ async fn a_verdict_without_a_reason_is_corrected_on_its_own_while_the_others_sta
     let prompts = llm.prompts_for(Task::Review);
     assert_eq!(prompts.len(), 2);
     assert_eq!(reviewed_ids(&prompts[1]), ["r2"]);
+    assert!(
+        prompts[1].contains("Give this review a reason of one short sentence."),
+        "{}",
+        prompts[1]
+    );
     assert!(!outcome.review_degraded);
     assert!(outcome
         .commit
@@ -3531,7 +3536,7 @@ fn surrounding_shown(input: &super::verify::Input) -> Vec<serde_json::Value> {
 fn the_surrounding_text_is_cut_to_the_room_the_window_leaves() {
     use super::verify::MemoryReview;
     use lattice_core::application::services::model_contract::ask::Answered;
-    let long = "The tide table is posted at the quay. ".repeat(20);
+    let long = "The tide table is posted. ".repeat(20);
     let input = review_with_context(&long);
 
     let whole = surrounding_shown(&input);
@@ -3783,8 +3788,8 @@ fn the_extraction_request_holds_no_identity_of_the_app() {
     let sentence = |marks: &mut Marks, passage: usize, words: &str| Sentence {
         place: marks.internal(Place {
             message_id: "message-quay-3".to_owned(),
-            passage,
-            index: 0,
+            passage: 310_000 + passage,
+            index: 410_000,
             start: 120_000,
             end: 120_040,
         }),
@@ -3792,7 +3797,7 @@ fn the_extraction_request_holds_no_identity_of_the_app() {
     };
     let segment = Segment {
         sequence: Told(3),
-        role: marks.told("user".to_owned()),
+        role: Told("user".to_owned()),
         whole_message: Told(true),
         context_before: marks.told("The tide table was posted at the quay.".to_owned()),
         context_after: marks.told("The kiln was cold by evening.".to_owned()),
