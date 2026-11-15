@@ -165,6 +165,7 @@ impl Fit {
 /// shrinks the room in proportion and builds again. `room` is in the planner's
 /// estimate tokens (see [`source_room`]); `build(0)` is the skeleton, with no
 /// material.
+#[cfg(test)]
 pub(crate) async fn fit_room(
     llm: &dyn LLMPort,
     room: usize,
