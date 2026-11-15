@@ -765,6 +765,7 @@ mod apply_tests {
             ),
             rest: Some(Why::CutOff),
             left_out: 0,
+            unread_why: None,
         };
         apply(&mut draft, cut.items, cut.rest.is_none(), &[]);
         let paths: Vec<&str> = draft
