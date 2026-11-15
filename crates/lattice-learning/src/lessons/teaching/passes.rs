@@ -71,7 +71,7 @@ impl Outcome {
     }
 
     /// What became of the attempt, for the user's log.
-    fn in_words(&self) -> String {
+    pub(super) fn in_words(&self) -> String {
         match self {
             Self::Applied => "its edits were applied and the defect was still found".to_owned(),
             Self::NotApplied(reasons) => {

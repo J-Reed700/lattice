@@ -113,6 +113,20 @@ pub(super) struct Mended {
     pub written: Vec<Vec<String>>,
 }
 
+impl Mended {
+    /// Why nothing changed, finding by finding, for material that fails closed.
+    pub(super) fn unmade(&self) -> String {
+        let mut said: Vec<String> = Vec::new();
+        for outcome in &self.outcomes {
+            let words = outcome.in_words();
+            if !said.contains(&words) {
+                said.push(words);
+            }
+        }
+        format!("The repair changed nothing: {}", said.join(" | "))
+    }
+}
+
 /// A finding whose correction was refused whole, charged with why.
 pub(super) fn refusal(reasons: &[String]) -> Outcome {
     Outcome::Refused(reasons.iter().map(|reason| format!("{reason}.")).collect())
@@ -248,6 +262,8 @@ fn quotes_of(input: &Input) -> Quotes {
     Quotes::of(input.excerpts.iter().map(|excerpt| &excerpt.entry.0))
 }
 
+const NO_CHANGE: &str = "These edits changed nothing: the material reads as it did.";
+
 /// Why the entry for the finding `id` is refused, when it is.
 fn check(input: &Input, id: &str, repair: &Repair) -> std::result::Result<(), Refusal> {
     if repair.plan.trim().is_empty() {
@@ -267,7 +283,9 @@ fn check(input: &Input, id: &str, repair: &Repair) -> std::result::Result<(), Re
     let held = Held {
         wording: input.wording.value(),
     };
+    let before = rows.value();
     match rows.take(&repair.edits, &quotes_of(input), &held) {
+        Ok(_) if rows.value() == before => Err(Refusal(NO_CHANGE.into())),
         Ok(_) => Ok(()),
         Err(Left::Refused(reasons)) => Err(Refusal(reasons.join(" "))),
         Err(Left::Met(words)) => Err(Refusal(words)),

@@ -180,7 +180,10 @@ impl Subject for MaterialSubject {
         _send: &[ReviewFinding],
         mended: repair::Mended,
     ) -> Result<Settled> {
-        Ok(Settled::Changed(mended.candidate.to_string()))
+        if mended.changed {
+            return Ok(Settled::Changed(mended.candidate.to_string()));
+        }
+        Err(AppError::ModelAnswerUnusable(mended.unmade()))
     }
 
     fn settle_rewrite(
