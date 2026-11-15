@@ -4,11 +4,11 @@ use crate::features::llm::backend::{ignore_text, ModelBackend, Progress, TextSin
 use crate::features::llm::engine::vision::not_set_up_to_see;
 use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
 use async_trait::async_trait;
+use lattice_core::application::services::model_contract::shape::Schema;
 use lattice_core::application::{
     contracts::settings::LLMSettingsDto,
     ports::llm_port::{CompletionRequest, CompletionResponse, LLMPort},
 };
-use lattice_core::application::services::model_contract::shape::Schema;
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
 use protocol::{cloud_provider, protocols, CompletionProtocol, ProviderApi};

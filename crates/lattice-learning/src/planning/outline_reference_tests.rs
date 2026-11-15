@@ -1380,7 +1380,10 @@ async fn prompt_snapshot_outline_reference_plan() -> Result<()> {
             "Randomized comparison",
             &["randomized controlled trial design documentation"],
         ),
-        ("Uncertainty", &["confidence interval interpretation textbook"]),
+        (
+            "Uncertainty",
+            &["confidence interval interpretation textbook"],
+        ),
     ])]);
     let capture = Capture::named(
         &llm,

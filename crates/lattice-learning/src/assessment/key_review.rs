@@ -460,7 +460,12 @@ mod tests {
         let choice = LearningAssessmentCandidate {
             format: engine::LearningItemFormat::SingleChoice,
             prompt: "Which option follows from the premises?".into(),
-            options: vec!["Alpha".into(), "Bravo".into(), "Charlie".into(), "Delta".into()],
+            options: vec![
+                "Alpha".into(),
+                "Bravo".into(),
+                "Charlie".into(),
+                "Delta".into(),
+            ],
             key: engine::LearningAssessmentKey::Choice(0),
             explanation: "Alpha follows.".into(),
             ..rubric_item()
@@ -477,7 +482,10 @@ mod tests {
 
         solve_items(
             &model,
-            &[(&choice, "Alpha follows from the premises."), (&written, "The premises are listed in order.")],
+            &[
+                (&choice, "Alpha follows from the premises."),
+                (&written, "The premises are listed in order."),
+            ],
         )
         .await?;
 

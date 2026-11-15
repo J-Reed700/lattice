@@ -112,7 +112,11 @@ async fn prompt_snapshot_practice_fit() -> Result<()> {
     let kinds = Kinds::new([kind("rope", ROPE), kind("beads", BEADS)])?;
     let model = scripted(&[answer(&[("beads", true), ("rope", false)])]);
     check_practice_fit(&repo, &kinds, &model, &program.summary.id).await?;
-    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "practice-fit", &model.requests());
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "practice-fit",
+        &model.requests(),
+    );
     Ok(())
 }
 

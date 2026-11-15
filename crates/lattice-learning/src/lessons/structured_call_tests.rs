@@ -214,7 +214,10 @@ async fn the_draft_is_answered_from_under_the_schema_with_no_format_named() -> R
 
     // The answer step continues the draft's conversation, so it opens with
     // exactly the messages the server has just read.
-    assert_eq!(structured.schema().map(|schema| schema.as_json()), Some(&schema()));
+    assert_eq!(
+        structured.schema().map(|schema| schema.as_json()),
+        Some(&schema())
+    );
     let answer_step = answer_step_task();
     assert_eq!(
         messages(structured),
@@ -248,7 +251,10 @@ async fn a_window_without_room_for_a_draft_answers_in_one_step() -> Result<()> {
     assert_eq!(call(&llm, CallKind::Authoring).await?, ANSWER);
     let sent = llm.sent();
     assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0].schema().map(|schema| schema.as_json()), Some(&schema()));
+    assert_eq!(
+        sent[0].schema().map(|schema| schema.as_json()),
+        Some(&schema())
+    );
     assert_eq!(
         messages(&sent[0]),
         vec![("system", SYSTEM), ("user", PROMPT)]
@@ -267,7 +273,10 @@ async fn an_answer_step_only_the_exact_count_rejects_falls_back_to_one_step() ->
     let sent = llm.sent();
     assert_eq!(sent.len(), 2);
     assert_eq!(sent[0].schema().map(|schema| schema.as_json()), None);
-    assert_eq!(sent[1].schema().map(|schema| schema.as_json()), Some(&schema()));
+    assert_eq!(
+        sent[1].schema().map(|schema| schema.as_json()),
+        Some(&schema())
+    );
     assert_eq!(
         messages(&sent[1]),
         vec![("system", SYSTEM), ("user", PROMPT)]
@@ -298,7 +307,10 @@ async fn a_model_that_thinks_before_answering_is_asked_in_one_step() -> Result<(
     assert_eq!(call(&llm, CallKind::Authoring).await?, ANSWER);
     let sent = llm.sent();
     assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0].schema().map(|schema| schema.as_json()), Some(&schema()));
+    assert_eq!(
+        sent[0].schema().map(|schema| schema.as_json()),
+        Some(&schema())
+    );
     assert_eq!(
         messages(&sent[0]),
         vec![("system", SYSTEM), ("user", PROMPT)]
@@ -394,7 +406,10 @@ async fn a_lesson_job_interrupted_before_the_answer_resumes_from_its_saved_draft
     assert_eq!(answer, ANSWER);
     let sent = resumed.sent();
     assert_eq!(sent.len(), 1, "the saved draft is not written again");
-    assert_eq!(sent[0].schema().map(|schema| schema.as_json()), Some(&schema()));
+    assert_eq!(
+        sent[0].schema().map(|schema| schema.as_json()),
+        Some(&schema())
+    );
     assert!(messages(&sent[0]).contains(&("assistant", DRAFT)));
     Ok(())
 }
@@ -586,7 +601,10 @@ async fn a_refused_answer_is_asked_for_once_more_with_the_reason() -> Result<()>
     // The request asking again opens with every message of the first, so the
     // server reuses what it has just read.
     assert_eq!(messages(&sent[0]), messages(&sent[1])[..2].to_vec());
-    assert_eq!(sent[1].schema().map(|schema| schema.as_json()), Some(&schema()));
+    assert_eq!(
+        sent[1].schema().map(|schema| schema.as_json()),
+        Some(&schema())
+    );
     assert_eq!(task_messages(&sent[1]), (SYSTEM, PROMPT));
     Ok(())
 }

@@ -1,5 +1,4 @@
 use super::*;
-use lattice_core::application::services::model_contract::legacy;
 use crate::features::llm::backend::{ModelBackend, Progress};
 use crate::features::llm::fitting::{Fitted, OutputLimits, PortBackend, Sent, Thinking};
 use async_trait::async_trait;
@@ -7,6 +6,7 @@ use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, InferencePriority, ServedTiming,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::runtime::jobs::{RankScope, RankTicket};
 use parking_lot::Mutex as SyncMutex;

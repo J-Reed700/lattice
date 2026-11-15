@@ -839,9 +839,8 @@ pub(super) fn requests_of<C: Contract>(model: &ScriptedModel) -> Vec<CompletionR
 fn quiz_model(first_write: Value) -> ScriptedModel {
     let model = replying::<QuizAuthor>(ScriptedModel::new(), move |_| first_write.clone());
     let model = replying::<QuizRewrite>(model, |_| written(&[FIRST_FIXED]));
-    let model = replying::<crate::key_review::QuizKeySolve>(model, |context| {
-        solved(context, right_option)
-    });
+    let model =
+        replying::<crate::key_review::QuizKeySolve>(model, |context| solved(context, right_option));
     replying::<item_review::QuizItemReview>(model, |context| {
         judged(context, |_| (String::new(), vec![]))
     })

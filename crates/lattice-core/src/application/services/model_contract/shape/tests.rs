@@ -6,11 +6,11 @@ use serde_json::{json, Map, Value};
 use super::super::edit::{Change, Consistent, Made};
 use super::super::shown::{Drawn, Kind, Picked, Scope, Showing};
 use super::document;
+use super::Value as Whole;
 use super::{
     Authored, Each, Ended, Fields, Flagged, Form, Found, Lead, Led, Listed, New, Order, PerItem,
     Pick, PickSome, Pointers, Settled, Shape, Single, Union, Vocabulary, Why, Written,
 };
-use super::Value as Whole;
 
 // ---- kinds and statements ----
 
@@ -255,7 +255,10 @@ fn note_object(lead: Option<(&str, &str)>, number: usize, cites: &[String]) -> S
         object.insert(key.to_owned(), json!(handle));
     }
     object.insert("verdict".to_owned(), json!(verdict_word(number)));
-    object.insert("text".to_owned(), json!(format!("t{number} \u{e9}\u{65e5}")));
+    object.insert(
+        "text".to_owned(),
+        json!(format!("t{number} \u{e9}\u{65e5}")),
+    );
     object.insert("cites".to_owned(), json!(cites));
     Value::Object(object).to_string()
 }
@@ -364,7 +367,10 @@ const ALLOWED: [&str; 7] = [
 fn assert_dialect(schema: &Value) {
     let object = schema.as_object().unwrap();
     for key in object.keys() {
-        assert!(ALLOWED.contains(&key.as_str()), "keyword {key} is outside the dialect");
+        assert!(
+            ALLOWED.contains(&key.as_str()),
+            "keyword {key} is outside the dialect"
+        );
     }
     if let Some(branches) = object.get("anyOf") {
         assert_eq!(object.len(), 1);
@@ -425,9 +431,11 @@ fn validate(schema: &Value, value: &Value) -> bool {
                     .any(|member| member.as_str() == Some(text))
             })
         }),
-        "array" => value
-            .as_array()
-            .is_some_and(|elements| elements.iter().all(|element| validate(&schema["items"], element))),
+        "array" => value.as_array().is_some_and(|elements| {
+            elements
+                .iter()
+                .all(|element| validate(&schema["items"], element))
+        }),
         "object" => value.as_object().is_some_and(|object| {
             let properties = schema["properties"].as_object().unwrap();
             object.len() == properties.len()
@@ -474,8 +482,7 @@ fn document_is_none_when_no_object_begins() {
 
 #[test]
 fn document_keeps_closed_fields_and_the_open_list() {
-    let read =
-        document::read("{\"a\": 1, \"items\": [{\"x\": 1}, {\"x\": 2}, {\"x\"").unwrap();
+    let read = document::read("{\"a\": 1, \"items\": [{\"x\": 1}, {\"x\": 2}, {\"x\"").unwrap();
     assert!(!read.closed);
     assert_eq!(read.fields.len(), 1);
     let (name, elements) = read.open_list.unwrap();
@@ -591,7 +598,10 @@ fn pointer_enums_hold_the_shown_handles_and_none() {
 fn nothing_shown_renders_a_plain_pointer() {
     with_showing(0, 0, |showing| {
         let schema = schema_of::<PickSome<Sheet>>(showing, Pointers::Enum);
-        assert_eq!(schema["properties"]["picks"]["items"], json!({"type": "string"}));
+        assert_eq!(
+            schema["properties"]["picks"]["items"],
+            json!({"type": "string"})
+        );
         let schema = schema_of::<Pick<Sheet>>(showing, Pointers::Enum);
         assert_eq!(schema["properties"]["pick"]["enum"], json!(["none"]));
     });
@@ -1001,7 +1011,9 @@ fn each_contradicted_and_equal_entries() {
         let read = via_each(&text, Ended::Complete, showing);
         assert_eq!(
             read.first().map(|(_, settled)| settled.clone_why()),
-            Some(Some(Why::Contradicted("s1 has two entries that differ.".to_owned())))
+            Some(Some(Why::Contradicted(
+                "s1 has two entries that differ.".to_owned()
+            )))
         );
         let text = list_doc("entries", &[one.clone(), one]).text;
         let read = via_each(&text, Ended::Complete, showing);
@@ -1040,7 +1052,10 @@ fn each_reasons() {
 fn rich_entry(number: usize, stray: bool) -> String {
     let mut cites = vec!["s1"];
     let mut own_cites = vec!["o2"];
-    let mut per_opt = vec![json!({ "of": "o2", "label": "y" }), json!({ "of": "o1", "label": "x" })];
+    let mut per_opt = vec![
+        json!({ "of": "o2", "label": "y" }),
+        json!({ "of": "o1", "label": "x" }),
+    ];
     if stray {
         cites.extend(["s99", "s1"]);
         own_cites.push("o9");
@@ -1205,7 +1220,9 @@ fn flagged_with_a_mark_that_does_not_place_clears_nothing() {
         let read = via_flagged(&differing, Ended::Complete, showing);
         assert_eq!(
             read.first().map(|(_, settled)| settled.clone_why()),
-            Some(Some(Why::Contradicted("s1 has two entries that differ.".to_owned())))
+            Some(Some(Why::Contradicted(
+                "s1 has two entries that differ.".to_owned()
+            )))
         );
     });
 }
@@ -1295,12 +1312,27 @@ fn change_reasons() {
             Settled::Answered(change) if change.change().is_empty()
         ));
         for (text, want) in [
-            (r#"{"replace":[],"insert":[],"remove":["s99"],"move":[]}"#, Why::Unplaced),
-            (r#"{"replace":[{"at":"s9","with":"x"}],"insert":[],"remove":[],"move":[]}"#, Why::Unplaced),
-            (r#"{"replace":[],"insert":[{"after":"s9","with":"x"}],"remove":[],"move":[]}"#, Why::Unplaced),
-            (r#"{"replace":[],"insert":[],"remove":[],"move":[{"at":"s1","after":"nowhere"}]}"#, Why::Unplaced),
+            (
+                r#"{"replace":[],"insert":[],"remove":["s99"],"move":[]}"#,
+                Why::Unplaced,
+            ),
+            (
+                r#"{"replace":[{"at":"s9","with":"x"}],"insert":[],"remove":[],"move":[]}"#,
+                Why::Unplaced,
+            ),
+            (
+                r#"{"replace":[],"insert":[{"after":"s9","with":"x"}],"remove":[],"move":[]}"#,
+                Why::Unplaced,
+            ),
+            (
+                r#"{"replace":[],"insert":[],"remove":[],"move":[{"at":"s1","after":"nowhere"}]}"#,
+                Why::Unplaced,
+            ),
             (r#"{"replace":[],"insert":[],"remove":[]}"#, Why::NotRead),
-            (r#"{"replace":[{"at":"s1"}],"insert":[],"remove":[],"move":[]}"#, Why::NotRead),
+            (
+                r#"{"replace":[{"at":"s1"}],"insert":[],"remove":[],"move":[]}"#,
+                Why::NotRead,
+            ),
         ] {
             assert_eq!(
                 via_change(text, Ended::Complete, showing),
@@ -1330,15 +1362,26 @@ fn change_reasons() {
 #[test]
 fn lead_reads_verdict_text_and_pointer() {
     with_showing(3, 0, |showing| {
-        let read = via_lead("yes\nThe sheet shows it plainly.\ns2", Ended::Complete, showing);
+        let read = via_lead(
+            "yes\nThe sheet shows it plainly.\ns2",
+            Ended::Complete,
+            showing,
+        );
         let Settled::Answered(led) = read else {
             panic!("{read:?}");
         };
         assert_eq!(led.verdict, Verdict::Yes);
         assert_eq!(led.text, "The sheet shows it plainly.");
-        assert_eq!(led.pointer.map(|p| p.handle.written()), Some("s2".to_owned()));
+        assert_eq!(
+            led.pointer.map(|p| p.handle.written()),
+            Some("s2".to_owned())
+        );
 
-        let read = via_lead("  no.  Because.\n\nmore words\n none \n", Ended::Complete, showing);
+        let read = via_lead(
+            "  no.  Because.\n\nmore words\n none \n",
+            Ended::Complete,
+            showing,
+        );
         let Settled::Answered(led) = read else {
             panic!("{read:?}");
         };
@@ -1360,7 +1403,11 @@ fn lead_reasons() {
             ("", Ended::Complete, Why::NotRead),
             ("yes\nwords\ns99", Ended::Complete, Why::Unplaced),
             ("yes\nwords\n[s1]", Ended::Complete, Why::Unplaced),
-            ("yes\nwords\nThe answer is s1", Ended::Complete, Why::Unplaced),
+            (
+                "yes\nwords\nThe answer is s1",
+                Ended::Complete,
+                Why::Unplaced,
+            ),
             ("yes", Ended::Complete, Why::Unplaced),
             ("yes s1", Ended::Complete, Why::Unplaced),
             ("yes\nwords\ns1", Ended::CutOff, Why::CutOff),
@@ -1394,8 +1441,8 @@ proptest! {
 fn arbitrary_json() -> impl Strategy<Value = Value> {
     let key = prop_oneof![
         prop::sample::select(vec![
-            "pick", "picks", "order", "items", "entries", "marks", "of", "at", "replace",
-            "insert", "remove", "move", "verdict", "text", "cites", "with", "after",
+            "pick", "picks", "order", "items", "entries", "marks", "of", "at", "replace", "insert",
+            "remove", "move", "verdict", "text", "cites", "with", "after",
         ])
         .prop_map(str::to_owned),
         "[a-z]{1,4}",

@@ -660,9 +660,17 @@ async fn prompt_snapshot_practice_tutor_reply() -> Result<()> {
         created_at: 0,
     });
     let sources = [passage_source("The passage states one condition.")];
-    let llm = Reply::new(tutor_reply("Which step carries the weight?", json!([]), json!([])));
+    let llm = Reply::new(tutor_reply(
+        "Which step carries the weight?",
+        json!([]),
+        json!([]),
+    ));
     tutor(&llm, &session, &tutor_request(), &sources).await?;
-    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "practice-tutor-reply", &sent_by(&llm));
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "practice-tutor-reply",
+        &sent_by(&llm),
+    );
     Ok(())
 }
 
@@ -673,7 +681,11 @@ async fn prompt_snapshot_practice_reference_solution() -> Result<()> {
     let sources = [passage_source("The passage states one condition.")];
     let llm = Reply::new(json!({"solution": "Apply the condition.", "citations": []}).to_string());
     solution(&llm, &session, &sources).await?;
-    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "practice-reference-solution", &sent_by(&llm));
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "practice-reference-solution",
+        &sent_by(&llm),
+    );
     Ok(())
 }
 

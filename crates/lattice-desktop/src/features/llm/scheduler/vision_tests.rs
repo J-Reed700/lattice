@@ -3,7 +3,6 @@
 //! refusal.
 
 use super::*;
-use lattice_core::application::services::model_contract::legacy;
 use crate::features::llm::backend::{ModelBackend, Progress};
 use crate::features::llm::fitting::{Fitted, OutputLimits, Sent, Thinking};
 use async_trait::async_trait;
@@ -11,6 +10,7 @@ use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, ContentPart, ImagePart,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::domain::models::vision::{VisionGeometry, VisionPreset};
 use lattice_core::shared::error::{AppError, Result};
 use parking_lot::Mutex;

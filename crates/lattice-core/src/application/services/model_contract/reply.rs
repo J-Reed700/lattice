@@ -128,7 +128,10 @@ enum Candidate {
 }
 
 enum Number {
-    Done { value: u32, end: usize },
+    Done {
+        value: u32,
+        end: usize,
+    },
     /// The input ended inside the digits.
     Open,
     Bad,
@@ -209,7 +212,12 @@ impl<'s> Splitter<'s> {
                 self.line_blank = true;
                 self.indent = Some(0);
             }
-            ' ' => self.indent = self.indent.map(|spaces| spaces + 1).filter(|spaces| *spaces <= 3),
+            ' ' => {
+                self.indent = self
+                    .indent
+                    .map(|spaces| spaces + 1)
+                    .filter(|spaces| *spaces <= 3)
+            }
             '\t' => self.indent = None,
             // Before a line feed it is part of the line's end.
             '\r' => {}
@@ -287,7 +295,12 @@ impl<'s> Splitter<'s> {
                 Some(b) if b.is_ascii_alphabetic() => {
                     letters_end += 1;
                     let letters = rest.get(1..letters_end).unwrap_or_default();
-                    if !self.markers.kinds.iter().any(|kind| kind.prefix.starts_with(letters)) {
+                    if !self
+                        .markers
+                        .kinds
+                        .iter()
+                        .any(|kind| kind.prefix.starts_with(letters))
+                    {
                         return Candidate::Text;
                     }
                 }
@@ -365,7 +378,10 @@ fn read_number(bytes: &[u8], from: usize) -> Number {
                     return Number::Bad;
                 }
                 let digit = u32::from(b - b'0');
-                match value.checked_mul(10).and_then(|tens| tens.checked_add(digit)) {
+                match value
+                    .checked_mul(10)
+                    .and_then(|tens| tens.checked_add(digit))
+                {
                     Some(next) => value = next,
                     None => return Number::Bad,
                 }
@@ -387,13 +403,7 @@ fn read_range(bytes: &[u8], from: usize) -> Ranged {
     };
     match bytes.get(after_first).copied() {
         None => Ranged::Open,
-        Some(b']') => Ranged::Done(
-            Lines {
-                first,
-                last: first,
-            },
-            after_first,
-        ),
+        Some(b']') => Ranged::Done(Lines { first, last: first }, after_first),
         Some(b'-') => match read_number(bytes, after_first.saturating_add(1)) {
             Number::Done { value: last, end } => match bytes.get(end).copied() {
                 None => Ranged::Open,

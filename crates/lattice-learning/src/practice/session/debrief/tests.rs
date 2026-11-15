@@ -210,7 +210,11 @@ async fn prompt_snapshot_debrief_answer() {
     use lattice_core::application::services::model_contract::test_support::snapshot;
     let (result, model) = ask(&[answer(good_rows())], &kind(), &session()).await;
     result.expect("a debrief");
-    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "debrief-answer", &model.requests());
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "debrief-answer",
+        &model.requests(),
+    );
 }
 
 #[tokio::test]

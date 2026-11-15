@@ -591,10 +591,7 @@ async fn the_last_round_keeps_the_tools_and_forbids_calling_them() {
     assert_eq!(requests[1].tool_choice(), Some(ToolChoice::None));
     // The same tools, so the prompt the server has cached is still a prefix
     // of this one.
-    assert_eq!(
-        json_of(&requests[1].tools()),
-        json_of(&requests[0].tools())
-    );
+    assert_eq!(json_of(&requests[1].tools()), json_of(&requests[0].tools()));
     let earlier = json_of(&requests[0].input());
     let later = json_of(&requests[1].input());
     assert_eq!(

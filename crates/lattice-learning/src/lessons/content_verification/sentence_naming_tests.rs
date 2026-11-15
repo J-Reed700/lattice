@@ -40,7 +40,11 @@ impl LLMPort for Naming {
         for prompt in fixture_prompts(request) {
             self.asked.lock().unwrap().push((
                 prompt.clone(),
-                request.schema().map(|schema| schema.as_json()).cloned().unwrap_or(Value::Null),
+                request
+                    .schema()
+                    .map(|schema| schema.as_json())
+                    .cloned()
+                    .unwrap_or(Value::Null),
             ));
             replies.push((self.answer)(&prompt));
         }

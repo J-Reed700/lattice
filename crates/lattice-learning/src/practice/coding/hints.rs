@@ -722,7 +722,13 @@ mod tests {
         let observation = "Problem: find two numbers that add up to the target.
 The candidate ran the cases: 1 of 3 passed.
 Their file solution.py returns on the first pass of the loop.";
-        let request = ask(&fixture.reference, observation, Rung::Idea, true, Setting::Coached);
+        let request = ask(
+            &fixture.reference,
+            observation,
+            Rung::Idea,
+            true,
+            Setting::Coached,
+        );
         write_checked(&llm, &hinting, &Fake, request, Rung::Idea)
             .await
             .expect("clean");

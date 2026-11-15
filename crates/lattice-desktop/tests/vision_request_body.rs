@@ -20,10 +20,10 @@ use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, ImagePart, ToolDefinition,
 };
 use lattice_core::application::ports::LLMPort;
-use lattice_core::application::services::model_contract::legacy;
 use lattice_core::application::services::completion_input::{
     attach_images_to_last_user, strip_images,
 };
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::domain::models::vision::{VisionGeometry, VisionPreset};
 use serde_json::{json, Value};
 use std::sync::Arc;

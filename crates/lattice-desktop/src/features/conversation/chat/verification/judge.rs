@@ -18,7 +18,6 @@ use lattice_core::application::ports::llm_port::{
     chars_within_tokens, CompletionInput, InferencePriority, SamplingOverride,
 };
 use lattice_core::application::ports::LLMPort;
-use lattice_core::application::services::model_contract::legacy;
 #[cfg(test)]
 use lattice_core::application::services::claim_verification::{
     parse_judge_explanation, parse_verdict_word, verdict_from_logprobs,
@@ -33,6 +32,7 @@ use lattice_core::application::services::evidence_retrieval::extract_normalized_
 use lattice_core::application::services::evidence_retrieval::{
     join_windows, scored_windows, WINDOW_OVERLAP_CHARS,
 };
+use lattice_core::application::services::model_contract::legacy;
 #[cfg(test)]
 use lattice_core::shared::error::Result;
 

@@ -199,7 +199,8 @@ fn field_schema(field: &Field, showing: &Showing<'_>, pointers: Pointers) -> Val
                     "insert".to_owned(),
                     array(closed(vec![
                         ("after".to_owned(), anchor.clone()),
-                        ("with".to_owned(), with)])),
+                        ("with".to_owned(), with),
+                    ])),
                 ),
                 ("remove".to_owned(), array(at.clone())),
                 (
@@ -503,10 +504,7 @@ fn per_item<K: Kind, V: PartialEq, T>(
         .collect()
 }
 
-fn all_unanswered<K: Kind, T>(
-    shown: Vec<Picked<K>>,
-    why: &Why,
-) -> Rows<K, T> {
+fn all_unanswered<K: Kind, T>(shown: Vec<Picked<K>>, why: &Why) -> Rows<K, T> {
     shown
         .into_iter()
         .map(|item| (item, Settled::Unanswered(why.clone())))
@@ -596,7 +594,10 @@ pub(super) fn read_lead<W: Vocabulary, K: Kind>(
     let Some((_, verdict)) = W::WORDS.iter().find(|(candidate, _)| *candidate == word) else {
         return Settled::Unanswered(Why::NotRead);
     };
-    let after_word = text.len().saturating_sub(lead.len()).saturating_add(word_end);
+    let after_word = text
+        .len()
+        .saturating_sub(lead.len())
+        .saturating_add(word_end);
     let mut offset = 0usize;
     let mut last: Option<(usize, &str)> = None;
     for line in text.split_inclusive('\n') {

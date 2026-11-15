@@ -3086,7 +3086,11 @@ impl LLMPort for ByRequest {
                 Vec::new(),
             ));
         };
-        let schema = request.schema().map(|schema| schema.as_json()).cloned().unwrap_or(Value::Null);
+        let schema = request
+            .schema()
+            .map(|schema| schema.as_json())
+            .cloned()
+            .unwrap_or(Value::Null);
         let reply = if asks_for_repair(request) {
             let number = {
                 let mut seen = self.seen_repairs.lock().unwrap();

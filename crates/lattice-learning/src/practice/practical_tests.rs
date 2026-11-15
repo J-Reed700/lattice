@@ -1260,7 +1260,11 @@ impl lattice_core::application::ports::LLMPort for RecordingResearchLlm {
     }
 }
 
-fn research_page(url: &str, title: &str, content: &str) -> lattice_core::application::contracts::web::FetchUrlContentOutput {
+fn research_page(
+    url: &str,
+    title: &str,
+    content: &str,
+) -> lattice_core::application::contracts::web::FetchUrlContentOutput {
     lattice_core::application::contracts::web::FetchUrlContentOutput {
         url: url.into(),
         title: Some(title.into()),
@@ -1290,11 +1294,19 @@ async fn prompt_snapshot_interview_company_searches() -> Result<()> {
     let web = MockWebService::new();
     web.set_url_content(
         "https://acme.example",
-        research_page("https://acme.example", "Acme parcels", "Acme routes parcels between made-up towns."),
+        research_page(
+            "https://acme.example",
+            "Acme parcels",
+            "Acme routes parcels between made-up towns.",
+        ),
     );
     web.set_url_content(
         "https://acme.example/blog/routing",
-        research_page("https://acme.example/blog/routing", "Acme routing", "The Acme engineering team plans parcel routes."),
+        research_page(
+            "https://acme.example/blog/routing",
+            "Acme routing",
+            "The Acme engineering team plans parcel routes.",
+        ),
     );
     web.set_search_results(vec![WebSearchResult {
         title: "Acme routing".into(),
@@ -1322,7 +1334,11 @@ async fn prompt_snapshot_interview_company_searches() -> Result<()> {
     )
     .await?;
     let requests = llm.requests.lock().expect("requests").clone();
-    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "interview-company-searches", &requests);
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "interview-company-searches",
+        &requests,
+    );
     Ok(())
 }
 
@@ -1344,7 +1360,11 @@ async fn prompt_snapshot_interview_answer_searches() -> Result<()> {
     let url = "https://spec.example/idempotency";
     web.set_url_content(
         url,
-        research_page(url, "Idempotent operations", "An idempotent operation has the same intended effect when repeated."),
+        research_page(
+            url,
+            "Idempotent operations",
+            "An idempotent operation has the same intended effect when repeated.",
+        ),
     );
     web.set_search_results(vec![WebSearchResult {
         title: "Idempotent operations".into(),
@@ -1370,7 +1390,11 @@ async fn prompt_snapshot_interview_answer_searches() -> Result<()> {
     )
     .await?;
     let requests = llm.requests.lock().expect("requests").clone();
-    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "interview-answer-searches", &requests);
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "interview-answer-searches",
+        &requests,
+    );
     Ok(())
 }
 

@@ -143,7 +143,11 @@ fn sent_for(llm: &AnswerModel, id: &str) -> Vec<CompletionRequest> {
         .lock()
         .expect("requests")
         .iter()
-        .filter(|request| request.contract().is_some_and(|call| call.id.as_str() == id))
+        .filter(|request| {
+            request
+                .contract()
+                .is_some_and(|call| call.id.as_str() == id)
+        })
         .cloned()
         .collect()
 }

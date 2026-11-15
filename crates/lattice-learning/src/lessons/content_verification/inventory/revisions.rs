@@ -474,7 +474,11 @@ mod revision_tests {
         async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
             self.asked.lock().unwrap().push((
                 fixture_prompts(request).concat(),
-                request.schema().map(|schema| schema.as_json()).cloned().unwrap_or(Value::Null),
+                request
+                    .schema()
+                    .map(|schema| schema.as_json())
+                    .cloned()
+                    .unwrap_or(Value::Null),
             ));
             Ok(fixture_completion(request, vec![self.reply.clone()]))
         }

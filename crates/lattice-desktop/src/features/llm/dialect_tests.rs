@@ -7,7 +7,9 @@
 //! (`ollama_client.rs`, the `format` field) also send it as it is and build a grammar from it, so a
 //! schema is accepted when no repetition bound exceeds what that conversion takes.
 
-use lattice_core::application::ports::llm_port::{largest_repetition_bound, GRAMMAR_REPETITION_LIMIT};
+use lattice_core::application::ports::llm_port::{
+    largest_repetition_bound, GRAMMAR_REPETITION_LIMIT,
+};
 use lattice_core::application::services::model_contract::test_support::samples;
 use serde_json::Value;
 
@@ -28,11 +30,16 @@ const OUTSIDE_THE_DIALECT: [&str; 7] = [
 fn strict_problem(schema: &Value, at: &str) -> Option<String> {
     match schema {
         Value::Object(map) => {
-            if let Some(keyword) = OUTSIDE_THE_DIALECT.iter().find(|key| map.contains_key(**key)) {
+            if let Some(keyword) = OUTSIDE_THE_DIALECT
+                .iter()
+                .find(|key| map.contains_key(**key))
+            {
                 return Some(format!("{at}: `{keyword}` is outside the dialect"));
             }
             if map.get("type").is_some_and(Value::is_array) {
-                return Some(format!("{at}: a type that is a list (nullable) is outside the dialect"));
+                return Some(format!(
+                    "{at}: a type that is a list (nullable) is outside the dialect"
+                ));
             }
             if let Some(Value::Object(properties)) = map.get("properties") {
                 if map.get("additionalProperties") != Some(&Value::Bool(false)) {
@@ -43,7 +50,10 @@ fn strict_problem(schema: &Value, at: &str) -> Option<String> {
                     .and_then(Value::as_array)
                     .map(|names| names.iter().filter_map(Value::as_str).collect())
                     .unwrap_or_default();
-                if let Some(name) = properties.keys().find(|name| !required.contains(&name.as_str())) {
+                if let Some(name) = properties
+                    .keys()
+                    .find(|name| !required.contains(&name.as_str()))
+                {
                     return Some(format!("{at}: property `{name}` is not required"));
                 }
             }
@@ -69,8 +79,15 @@ fn the_samples_cover_every_structured_shape_both_ways() {
 fn anthropic_enforces_every_schema_as_written() {
     for (name, schema) in samples::schemas() {
         let written = schema.as_json();
-        assert_eq!(&anthropic_schema(written), written, "{name} is changed for Anthropic");
-        assert!(anthropic_schema_compiles(written), "{name} does not compile for Anthropic");
+        assert_eq!(
+            &anthropic_schema(written),
+            written,
+            "{name} is changed for Anthropic"
+        );
+        assert!(
+            anthropic_schema_compiles(written),
+            "{name} does not compile for Anthropic"
+        );
     }
 }
 

@@ -3,11 +3,11 @@
 //! used (a cut-off reply of a call that splits is reported at once; otherwise
 //! one larger send where there is one, one correction, then unusable).
 
+use self::shape::Schema;
 use crate::application::ports::llm_port::{
     CacheHold, CompletionInput, CompletionRequest, CompletionResponse, Finish, LLMPort, Pace,
     RequestLoad,
 };
-use self::shape::Schema;
 use crate::domain::models::vision::VisionGeometry;
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
@@ -314,14 +314,18 @@ impl Transport for Plain {
         refusal: &str,
     ) -> Result<CompletionRequest> {
         let mut next = request.clone();
-        legacy::says(&mut next).input.push(CompletionInput::Message {
-            role: "assistant".into(),
-            content: previous.text.clone(),
-        });
-        legacy::says(&mut next).input.push(CompletionInput::Message {
-            role: "user".into(),
-            content: format!("{CORRECTION_LEAD} {refusal}"),
-        });
+        legacy::says(&mut next)
+            .input
+            .push(CompletionInput::Message {
+                role: "assistant".into(),
+                content: previous.text.clone(),
+            });
+        legacy::says(&mut next)
+            .input
+            .push(CompletionInput::Message {
+                role: "user".into(),
+                content: format!("{CORRECTION_LEAD} {refusal}"),
+            });
         Ok(next)
     }
 

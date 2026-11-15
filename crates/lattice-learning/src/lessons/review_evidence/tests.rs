@@ -595,7 +595,11 @@ impl LLMPort for Seen {
             self.sent.lock().unwrap().push(Sent {
                 system: system.to_owned(),
                 user: serde_json::from_str(user).unwrap(),
-                schema: request.schema().map(|schema| schema.as_json()).cloned().unwrap(),
+                schema: request
+                    .schema()
+                    .map(|schema| schema.as_json())
+                    .cloned()
+                    .unwrap(),
             });
         }
         self.inner.complete(request).await

@@ -2,8 +2,8 @@ use super::Contract;
 use crate::shared::error::Result;
 use std::fmt::Debug;
 
-mod scripted;
 pub mod samples;
+mod scripted;
 pub mod snapshot;
 pub mod taint;
 

@@ -1,9 +1,9 @@
 use super::protocol::{cloud_provider, protocols};
 use super::*;
-use lattice_core::application::services::model_contract::legacy;
 use lattice_core::application::contracts::settings::LLMProvider;
 use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::llm_port::{ThinkingMode, ToolChoice};
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::domain::models::model_ref::CloudProvider;
 use serde_json::json;
 

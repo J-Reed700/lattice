@@ -376,9 +376,7 @@ async fn a_verified_assertion_is_listed_to_the_reviewer_and_a_repeat_is_dropped_
 
 #[tokio::test]
 async fn prompt_snapshot_outline_review() -> Result<()> {
-    use lattice_core::application::services::model_contract::{
-        test_support::snapshot, ContractId,
-    };
+    use lattice_core::application::services::model_contract::{test_support::snapshot, ContractId};
     let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     let llm = model(vec![

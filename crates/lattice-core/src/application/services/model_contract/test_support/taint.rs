@@ -181,7 +181,11 @@ fn crowded(prefixes: &BTreeSet<String>) -> Scope {
 }
 
 /// A token of `text` that is a handle written out and that the request does not show.
-fn unshown_handle(text: &str, prefixes: &BTreeSet<String>, shown: &BTreeSet<String>) -> Option<String> {
+fn unshown_handle(
+    text: &str,
+    prefixes: &BTreeSet<String>,
+    shown: &BTreeSet<String>,
+) -> Option<String> {
     text.split(|c: char| !c.is_ascii_alphanumeric())
         .find(|token| {
             prefixes.iter().any(|prefix| {

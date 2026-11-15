@@ -140,7 +140,9 @@ impl CompletionRequest {
 
     /// Whether any message carries a picture.
     pub fn has_images(&self) -> bool {
-        self.input().iter().any(|item| item.images().next().is_some())
+        self.input()
+            .iter()
+            .any(|item| item.images().next().is_some())
     }
 
     /// How many pictures the request carries.

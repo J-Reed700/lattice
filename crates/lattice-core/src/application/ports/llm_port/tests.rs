@@ -33,7 +33,10 @@ fn interactive_work_outranks_verification_maintenance_and_background() {
     assert!(Interactive > Verification);
     assert!(Verification > Maintenance);
     assert!(Maintenance > Background);
-    assert_eq!(legacy::completion(legacy::Completion::default()).priority, Background);
+    assert_eq!(
+        legacy::completion(legacy::Completion::default()).priority,
+        Background
+    );
 }
 
 #[test]

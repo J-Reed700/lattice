@@ -355,14 +355,16 @@ async fn prompt_snapshot_simulation_turn() -> Result<()> {
     let llm = RecordingLlm::answering(vec![
         json!({"content":"The parcel scanner now reports two pickups for one door. What do you check first?","citations":[]}).to_string(),
     ]);
-    let turn = |ordinal: i64, speaker: LearningSimulationSpeaker, content: &str| LearningSimulationTurnDto {
-        id: format!("turn-{ordinal}"),
-        ordinal,
-        speaker,
-        content: content.into(),
-        citations: vec![],
-        model_name: None,
-        created_at: 0,
+    let turn = |ordinal: i64, speaker: LearningSimulationSpeaker, content: &str| {
+        LearningSimulationTurnDto {
+            id: format!("turn-{ordinal}"),
+            ordinal,
+            speaker,
+            content: content.into(),
+            citations: vec![],
+            model_name: None,
+            created_at: 0,
+        }
     };
     let session = LearningSimulationSessionDto {
         id: "session".into(),
@@ -375,10 +377,26 @@ async fn prompt_snapshot_simulation_turn() -> Result<()> {
         status: LearningSimulationStatus::Active,
         revision: 3,
         turns: vec![
-            turn(0, LearningSimulationSpeaker::Counterpart, "A van left the depot with the wrong route sheet."),
-            turn(1, LearningSimulationSpeaker::Learner, "I would call the driver and confirm the stops already made."),
-            turn(2, LearningSimulationSpeaker::Counterpart, "The driver does not answer."),
-            turn(3, LearningSimulationSpeaker::Learner, "Then I check the last scan for the van."),
+            turn(
+                0,
+                LearningSimulationSpeaker::Counterpart,
+                "A van left the depot with the wrong route sheet.",
+            ),
+            turn(
+                1,
+                LearningSimulationSpeaker::Learner,
+                "I would call the driver and confirm the stops already made.",
+            ),
+            turn(
+                2,
+                LearningSimulationSpeaker::Counterpart,
+                "The driver does not answer.",
+            ),
+            turn(
+                3,
+                LearningSimulationSpeaker::Learner,
+                "Then I check the last scan for the van.",
+            ),
         ],
         created_at: 0,
         updated_at: 0,
@@ -412,7 +430,11 @@ async fn prompt_snapshot_simulation_turn() -> Result<()> {
 fn requests_of(requests: Vec<CompletionRequest>, id: &str) -> Vec<CompletionRequest> {
     requests
         .into_iter()
-        .filter(|request| request.contract().is_some_and(|call| call.id.as_str() == id))
+        .filter(|request| {
+            request
+                .contract()
+                .is_some_and(|call| call.id.as_str() == id)
+        })
         .collect()
 }
 

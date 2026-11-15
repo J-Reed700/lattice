@@ -1,12 +1,12 @@
 //! The thinking switch, per-mode sampling, tool choice and server timings.
 use super::*;
-use lattice_core::application::services::model_contract::legacy;
 use crate::features::llm::fitting::PromptMeasure;
 use lattice_core::application::contracts::settings::ThinkingOverrideDto;
 use lattice_core::application::ports::llm_port::{
     RequestSize, SamplingOverride, ServedTiming, ThinkingMode, ThinkingPolicy, ToolChoice,
     ToolDefinition,
 };
+use lattice_core::application::services::model_contract::legacy;
 
 /// The body `request` becomes, with no window to cut it to.
 fn body_of(client: &LlamaCppLlm, request: &CompletionRequest) -> Result<Value> {

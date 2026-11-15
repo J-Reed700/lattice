@@ -1,7 +1,7 @@
 use super::*;
-use lattice_core::application::services::model_contract::legacy;
 use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use lattice_core::application::services::credentials::memory::InMemoryCredentials;
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::shared::error::ErrorClass;
 use lattice_core::shared::persistence::Database;
 

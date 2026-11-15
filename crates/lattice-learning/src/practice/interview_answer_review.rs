@@ -11,9 +11,7 @@ use lattice_core::{
             llm_port::{SamplingOverride, ANSWER_EFFORT},
             LLMPort,
         },
-        services::{
-            model_contract::{legacy, Contract, ContractCall, ContractId, PromptInput},
-        },
+        services::model_contract::{legacy, Contract, ContractCall, ContractId, PromptInput},
     },
     shared::error::Result,
 };

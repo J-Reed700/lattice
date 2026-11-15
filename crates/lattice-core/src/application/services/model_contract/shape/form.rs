@@ -31,15 +31,24 @@ pub enum Field {
         none: bool,
     },
     /// Evidence pointers: a list of handles.
-    Cite { prefix: &'static str, among: Among },
+    Cite {
+        prefix: &'static str,
+        among: Among,
+    },
     /// A closed object of fixed fields.
     Group(Form),
     /// A list of new things.
     List(Form),
     /// One entry per own thing of the item: `[{ "of": "o2", …fields }]`.
-    EachOwn { prefix: &'static str, form: Form },
+    EachOwn {
+        prefix: &'static str,
+        form: Form,
+    },
     /// A change over the shown things of a kind; `with` is the content's field.
-    Change { prefix: &'static str, with: Box<Field> },
+    Change {
+        prefix: &'static str,
+        with: Box<Field>,
+    },
     /// One of several forms, told apart by `kind`.
     OneOf(Vec<(&'static str, Form)>),
 }
@@ -61,7 +70,10 @@ impl Form {
 
     /// A judgement from a fixed vocabulary.
     pub fn word<W: Vocabulary>(self, name: &'static str) -> Self {
-        self.with(name, Field::Word(W::WORDS.iter().map(|(word, _)| *word).collect()))
+        self.with(
+            name,
+            Field::Word(W::WORDS.iter().map(|(word, _)| *word).collect()),
+        )
     }
 
     /// A placing pointer at one of the things of kind `K` the request shows.

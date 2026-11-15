@@ -56,12 +56,7 @@ fn text(text: &str) -> Piece {
     Piece::Text(text.to_owned())
 }
 
-fn reference(
-    prefix: &'static str,
-    number: u32,
-    drawn: Drawn,
-    lines: Option<(u32, u32)>,
-) -> Piece {
+fn reference(prefix: &'static str, number: u32, drawn: Drawn, lines: Option<(u32, u32)>) -> Piece {
     Piece::Reference(Reference {
         prefix,
         number,
@@ -137,7 +132,10 @@ fn assert_well_formed(pieces: &[Piece]) {
 fn check(input: &str, expected: Vec<Piece>) {
     let scope = scope();
     assert_eq!(whole(&scope, input), expected, "whole: {input:?}");
-    for (index, _) in input.char_indices().chain(std::iter::once((input.len(), ' '))) {
+    for (index, _) in input
+        .char_indices()
+        .chain(std::iter::once((input.len(), ' ')))
+    {
         let (head, tail) = input.split_at(index);
         assert_eq!(
             chunked(&scope, &[head, tail]),
@@ -178,7 +176,10 @@ fn a_marker_at_the_start_and_at_the_end() {
 #[test]
 fn adjacent_markers() {
     check("[s1][s2]", vec![source(1), source(2)]);
-    check("[s1][s2][s3]x", vec![source(1), source(2), source(3), text("x")]);
+    check(
+        "[s1][s2][s3]x",
+        vec![source(1), source(2), source(3), text("x")],
+    );
 }
 
 #[test]
@@ -266,7 +267,10 @@ fn a_range_on_a_kind_with_lines() {
         vec![text("see "), file(2, 7, 7), text(" there")],
     );
     check("[f2:10-10]", vec![file(2, 10, 10)]);
-    check("[f1:4294967295-4294967295]", vec![file(1, u32::MAX, u32::MAX)]);
+    check(
+        "[f1:4294967295-4294967295]",
+        vec![file(1, u32::MAX, u32::MAX)],
+    );
 }
 
 #[test]
@@ -292,9 +296,15 @@ fn written_gives_each_form_back() {
 #[test]
 fn an_own_line_marker_counts_alone_on_its_line() {
     check("[i1]", vec![picture(1)]);
-    check("before\n[i1]\nafter", vec![text("before\n"), picture(1), text("\nafter")]);
+    check(
+        "before\n[i1]\nafter",
+        vec![text("before\n"), picture(1), text("\nafter")],
+    );
     check("[i1]\n", vec![picture(1), text("\n")]);
-    check("  [i1]  \t\nx", vec![text("  "), picture(1), text("  \t\nx")]);
+    check(
+        "  [i1]  \t\nx",
+        vec![text("  "), picture(1), text("  \t\nx")],
+    );
     check("a\n\t[i2]", vec![text("a\n\t"), picture(2)]);
     check("a\n[i3]   ", vec![text("a\n"), picture(3), text("   ")]);
 }
@@ -305,10 +315,7 @@ fn an_own_line_marker_counts_on_lines_that_end_with_a_carriage_return() {
         "before\r\n[i1]\r\nafter",
         vec![text("before\r\n"), picture(1), text("\r\nafter")],
     );
-    check(
-        "`open\r\n\r\n[s1]",
-        vec![text("`open\r\n\r\n"), source(1)],
-    );
+    check("`open\r\n\r\n[s1]", vec![text("`open\r\n\r\n"), source(1)]);
 }
 
 #[test]
@@ -388,7 +395,10 @@ fn a_marker_before_a_fence_still_counts() {
 #[test]
 fn an_inline_span_holds_no_markers() {
     check("`[s1]` [s2]", vec![text("`[s1]` "), source(2)]);
-    check("[s1] `[s2]` [s3]", vec![source(1), text(" `[s2]` "), source(3)]);
+    check(
+        "[s1] `[s2]` [s3]",
+        vec![source(1), text(" `[s2]` "), source(3)],
+    );
     check(
         "``[s1] ` [s1]`` [s2]",
         vec![text("``[s1] ` [s1]`` "), source(2)],
@@ -400,10 +410,7 @@ fn an_inline_span_holds_no_markers() {
 fn an_unclosed_span_runs_to_the_end_of_its_paragraph() {
     check_text("a `[s1] more\n[s2]");
     check_text("``a` [s1]");
-    check(
-        "a `[s1]\n\n[s2]",
-        vec![text("a `[s1]\n\n"), source(2)],
-    );
+    check("a `[s1]\n\n[s2]", vec![text("a `[s1]\n\n"), source(2)]);
     check(
         "a `[s1]\n  \t\n[s2]",
         vec![text("a `[s1]\n  \t\n"), source(2)],
@@ -426,7 +433,13 @@ fn a_run_of_tildes_that_is_not_a_fence_is_text() {
 fn text_with_multibyte_characters_around_markers() {
     check(
         "é [s1] ü\n[i2]\n日本",
-        vec![text("é "), source(1), text(" ü\n"), picture(2), text("\n日本")],
+        vec![
+            text("é "),
+            source(1),
+            text(" ü\n"),
+            picture(2),
+            text("\n日本"),
+        ],
     );
 }
 

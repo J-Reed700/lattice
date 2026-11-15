@@ -5,9 +5,9 @@ use crate::application::ports::llm_port::{
     ANSWER_EFFORT,
 };
 use crate::application::ports::LLMPort;
+use crate::application::services::model_contract::legacy;
 #[cfg(any(test, feature = "test-support"))]
 use crate::application::services::model_contract::test_support::RenderAnswer;
-use crate::application::services::model_contract::legacy;
 use crate::application::services::model_contract::{
     answer, refusal, Contract, ContractCall, ContractId, CutOffRemedy, Plain, Transport,
 };

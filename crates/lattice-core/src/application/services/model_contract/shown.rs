@@ -371,7 +371,11 @@ impl Scope {
     }
 }
 
-fn picked<K: Kind>(name: Name, of: Option<Name>, reference: &serde_json::Value) -> Option<Picked<K>> {
+fn picked<K: Kind>(
+    name: Name,
+    of: Option<Name>,
+    reference: &serde_json::Value,
+) -> Option<Picked<K>> {
     let reference = serde_json::from_value(reference.clone()).ok()?;
     Some(Picked {
         handle: Handle::new(name, of),
@@ -435,7 +439,10 @@ impl Showing<'_> {
     /// The thing of kind `K` this request shows under `written`.
     pub(super) fn resolve<K: Kind>(&self, written: &str) -> Option<Picked<K>> {
         let name = Name::read(written).filter(|name| name.prefix == K::PREFIX)?;
-        self.top.get(K::PREFIX)?.contains(&name.ordinal).then_some(())?;
+        self.top
+            .get(K::PREFIX)?
+            .contains(&name.ordinal)
+            .then_some(())?;
         let reference = self.scope.top.get(K::PREFIX)?.reference(name.ordinal)?;
         picked(name, None, reference)
     }

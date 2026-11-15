@@ -1,8 +1,8 @@
 //! Tests for typed completions, streaming, tool calls and timeouts against scripted Ollama servers.
 
 use super::*;
-use lattice_core::application::services::model_contract::legacy;
 use crate::features::llm::fitting::SendUnscheduled;
+use lattice_core::application::services::model_contract::legacy;
 use std::sync::Arc;
 
 trait UncutChatRequest {
@@ -720,9 +720,7 @@ async fn the_window_is_asked_for_and_held_to_what_the_server_reports() {
     let client = client.with_context_window(16_384);
     assert_eq!(ModelBackend::window(&client), 16_384);
     let body = client
-        .uncut_chat_request(
-            &legacy::completion(legacy::Completion::default()),
-        )
+        .uncut_chat_request(&legacy::completion(legacy::Completion::default()))
         .unwrap();
     assert_eq!(
         serde_json::to_value(body).unwrap()["options"]["num_ctx"],

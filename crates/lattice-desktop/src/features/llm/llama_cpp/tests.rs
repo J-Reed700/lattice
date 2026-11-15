@@ -1,7 +1,7 @@
 use super::*;
-use lattice_core::application::services::model_contract::legacy;
 use crate::features::llm::fitting::SendUnscheduled;
 use lattice_core::application::ports::llm_port::{invalid_tool_call_problem, RequestSize};
+use lattice_core::application::services::model_contract::legacy;
 use wiremock::{
     matchers::{body_partial_json, header, method, path},
     Mock, MockServer, ResponseTemplate,
@@ -722,10 +722,14 @@ async fn stream_that_goes_silent_after_starting_is_retried() {
     let client = LlamaCppLlm::new(&config, credential()).unwrap();
     let retries = std::sync::atomic::AtomicUsize::new(0);
     let response = client
-        .complete_with_retry_progress(&legacy::completion(legacy::Completion::default()), &|_| Ok(()), &|_| {
-            retries.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Ok(())
-        })
+        .complete_with_retry_progress(
+            &legacy::completion(legacy::Completion::default()),
+            &|_| Ok(()),
+            &|_| {
+                retries.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            },
+        )
         .await
         .unwrap();
     assert_eq!(response.text, "Recovered");
@@ -978,10 +982,14 @@ async fn transient_sse_errors_retry_but_context_errors_do_not() {
     let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let attempts = std::sync::Mutex::new(Vec::new());
     let response = client
-        .complete_with_retry_progress(&legacy::completion(legacy::Completion::default()), &|_| Ok(()), &|attempt| {
-            attempts.lock().unwrap().push(attempt);
-            Ok(())
-        })
+        .complete_with_retry_progress(
+            &legacy::completion(legacy::Completion::default()),
+            &|_| Ok(()),
+            &|attempt| {
+                attempts.lock().unwrap().push(attempt);
+                Ok(())
+            },
+        )
         .await
         .unwrap();
     assert_eq!(response.text, "Recovered");
@@ -1237,10 +1245,13 @@ async fn text_only_progress_does_not_repeat_a_partial_answer() {
     let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let text = std::sync::Mutex::new(String::new());
     let result = client
-        .complete_with_progress(&legacy::completion(legacy::Completion::default()), &|chunk| {
-            text.lock().unwrap().push_str(&chunk);
-            Ok(())
-        })
+        .complete_with_progress(
+            &legacy::completion(legacy::Completion::default()),
+            &|chunk| {
+                text.lock().unwrap().push_str(&chunk);
+                Ok(())
+            },
+        )
         .await;
     assert!(result.is_err());
     assert_eq!(*text.lock().unwrap(), "Partial");

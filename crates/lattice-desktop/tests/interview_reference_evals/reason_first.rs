@@ -62,10 +62,12 @@ impl LLMPort for Candidate {
         let mut answer = draft_request;
         *legacy::says(&mut answer).schema = request.schema().cloned();
         answer.sampling = Some(SamplingOverride::deterministic());
-        legacy::says(&mut answer).input.push(CompletionInput::Message {
-            role: "assistant".into(),
-            content: draft.text,
-        });
+        legacy::says(&mut answer)
+            .input
+            .push(CompletionInput::Message {
+                role: "assistant".into(),
+                content: draft.text,
+            });
         legacy::says(&mut answer).input.push(CompletionInput::Message {
             role:"user".into(),
             content:"Step 2: give the final answer from your draft. Keep its content, wording, numbers, citations and answers. Copy quotations and identifiers exactly as the task supplies them. Where the draft left something out or stopped early, complete it from the task.".into(),

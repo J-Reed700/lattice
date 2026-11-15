@@ -431,17 +431,14 @@ mod tests {
             LastRound::WindowFull,
             LastRound::OutOfTime,
         ] {
-            for mut request in [
-                request_with_a_tool(),
-                {
-                    let mut next = request_with_a_tool();
-                    *legacy::says(&mut next).input = vec![CompletionInput::Message {
-                        role: "user".into(),
-                        content: "question".into(),
-                    }];
-                    next
-                },
-            ] {
+            for mut request in [request_with_a_tool(), {
+                let mut next = request_with_a_tool();
+                *legacy::says(&mut next).input = vec![CompletionInput::Message {
+                    role: "user".into(),
+                    content: "question".into(),
+                }];
+                next
+            }] {
                 ask_for_answer(&mut request, last_round);
                 let before = request.input().len();
                 insist_on_answer(&mut request, last_round);

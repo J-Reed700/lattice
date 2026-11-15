@@ -111,10 +111,13 @@ impl LLMPort for Asked {
             .lock()
             .unwrap()
             .push(serde_json::from_str(user).unwrap());
-        self.schemas
-            .lock()
-            .unwrap()
-            .push(request.schema().map(|schema| schema.as_json()).cloned().unwrap());
+        self.schemas.lock().unwrap().push(
+            request
+                .schema()
+                .map(|schema| schema.as_json())
+                .cloned()
+                .unwrap(),
+        );
         Ok(CompletionResponse::from_text(self.reply.as_str()))
     }
     fn model_name(&self) -> &str {

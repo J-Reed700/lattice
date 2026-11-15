@@ -783,12 +783,19 @@ async fn one_claim_the_window_cannot_hold_by_exact_count_names_the_window() {
     assert!(llm.calls.lock().unwrap().is_empty());
 }
 
-fn requests_of(llm: &Notation, id: &str) -> Vec<lattice_core::application::ports::llm_port::CompletionRequest> {
+fn requests_of(
+    llm: &Notation,
+    id: &str,
+) -> Vec<lattice_core::application::ports::llm_port::CompletionRequest> {
     llm.requests
         .lock()
         .unwrap()
         .iter()
-        .filter(|request| request.contract().is_some_and(|call| call.id.as_str() == id))
+        .filter(|request| {
+            request
+                .contract()
+                .is_some_and(|call| call.id.as_str() == id)
+        })
         .cloned()
         .collect()
 }

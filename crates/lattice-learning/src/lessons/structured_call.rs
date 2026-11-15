@@ -261,7 +261,8 @@ pub(crate) async fn complete_checked_request<T>(
     }
 
     let key = DRAFT_CHECKPOINT_POLICY.key(sha256_hex(
-        json!({"model":llm.model_name(),"system":draft_request.instructions(),"prompt":prompt}).to_string(),
+        json!({"model":llm.model_name(),"system":draft_request.instructions(),"prompt":prompt})
+            .to_string(),
     ));
     let saved = lesson_drafts::checkpoint(&key).await?.and_then(|value| {
         value

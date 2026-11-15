@@ -261,8 +261,7 @@ pub(super) async fn append_notes(
         legacy::says(request).input.truncate(planned);
         return false;
     }
-    *legacy::says(request).max_output_tokens =
-        Some(within(request.max_output_tokens(), room));
+    *legacy::says(request).max_output_tokens = Some(within(request.max_output_tokens(), room));
     true
 }
 
@@ -351,8 +350,7 @@ pub(super) async fn add_what_was_left_out(
             break;
         }
         info!(left_out = ?left, "The answer left out passages its notes quote; asking for them");
-        *legacy::says(request).max_output_tokens =
-            Some(within(request.max_output_tokens(), room));
+        *legacy::says(request).max_output_tokens = Some(within(request.max_output_tokens(), room));
         request.time_budget = Some(remaining);
         let step = recorder.begin_guarded(TurnStepKind::Generate, "Adding what was left out", None);
         let completion = timeout(remaining, llm.complete(request));

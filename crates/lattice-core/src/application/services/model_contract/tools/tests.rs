@@ -118,7 +118,9 @@ fn schema_lists_properties_in_the_order_added() {
 #[test]
 fn a_handle_has_no_enum_in_its_schema() {
     let schema = parameters().schema();
-    assert!(schema.as_json()["properties"]["shape"].get("enum").is_none());
+    assert!(schema.as_json()["properties"]["shape"]
+        .get("enum")
+        .is_none());
 }
 
 #[test]
@@ -270,9 +272,7 @@ fn an_unknown_handle_is_an_error_and_not_a_panic() {
         assert!(!error.0.is_empty());
         if !written.is_empty() {
             assert!(
-                error
-                    .0
-                    .contains("names nothing shown in this conversation"),
+                error.0.contains("names nothing shown in this conversation"),
                 "{error:?}"
             );
             assert!(error.0.contains("earlier tool result"), "{error:?}");

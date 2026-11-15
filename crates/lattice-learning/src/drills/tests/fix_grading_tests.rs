@@ -1408,6 +1408,10 @@ async fn prompt_snapshot_fix_judgement() -> Result<()> {
 
     grade(&model, Some(&runner), Some(SUITE), &drill(), &learner).await?;
 
-    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "fix-judgement", &model.requests());
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "fix-judgement",
+        &model.requests(),
+    );
     Ok(())
 }

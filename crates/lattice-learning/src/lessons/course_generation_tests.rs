@@ -712,7 +712,11 @@ impl<M> RequestLog<M> {
             .lock()
             .expect("recording lock")
             .iter()
-            .filter(|request| request.contract().is_some_and(|call| call.id.as_str() == id))
+            .filter(|request| {
+                request
+                    .contract()
+                    .is_some_and(|call| call.id.as_str() == id)
+            })
             .cloned()
             .collect();
         assert!(!sent.is_empty(), "{id} sent no request");

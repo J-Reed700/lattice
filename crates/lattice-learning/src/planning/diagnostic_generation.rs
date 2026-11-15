@@ -558,7 +558,9 @@ mod tests {
         let responses = vec![
             LearningDiagnosticResponseDto {
                 prompt_id: "p1".into(),
-                response: "I would index the join column first, because it lets the planner skip a scan.".into(),
+                response:
+                    "I would index the join column first, because it lets the planner skip a scan."
+                        .into(),
             },
             LearningDiagnosticResponseDto {
                 prompt_id: "p2".into(),

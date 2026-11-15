@@ -482,10 +482,13 @@ mod tests {
         let call = ContractCall::of::<Word>(&input("a")).unwrap();
         let shown = Mutex::new(Vec::new());
         let response = tagged(&model, &call)
-            .complete_with_progress(&legacy::completion(legacy::Completion::default()), &|text| {
-                shown.lock().unwrap().push(text);
-                Ok(())
-            })
+            .complete_with_progress(
+                &legacy::completion(legacy::Completion::default()),
+                &|text| {
+                    shown.lock().unwrap().push(text);
+                    Ok(())
+                },
+            )
             .await
             .unwrap();
         assert_eq!(*shown.lock().unwrap(), [response.text]);

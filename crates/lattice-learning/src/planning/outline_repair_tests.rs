@@ -1105,9 +1105,7 @@ async fn saving_an_outline_that_loses_a_saved_lesson_is_refused() -> Result<()> 
 
 #[tokio::test]
 async fn prompt_snapshot_outline_module_rewrite() -> Result<()> {
-    use lattice_core::application::services::model_contract::{
-        test_support::snapshot, ContractId,
-    };
+    use lattice_core::application::services::model_contract::{test_support::snapshot, ContractId};
     let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     let mut fixed = initial["modules"][0].clone();

@@ -894,9 +894,10 @@ impl FakeLlm {
 #[async_trait]
 impl LLMPort for FakeLlm {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        self.request_limits
-            .lock()
-            .push((request.reasoning_effort.clone(), request.max_output_tokens()));
+        self.request_limits.lock().push((
+            request.reasoning_effort.clone(),
+            request.max_output_tokens(),
+        ));
         self.samplings.lock().push(request.sampling);
         self.requests.lock().push(request.clone());
         let prompt = request

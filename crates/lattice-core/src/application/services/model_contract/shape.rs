@@ -153,10 +153,7 @@ pub trait PerItem: Shape {
     type Item: Kind;
 
     /// Every item of kind `Item` the request shows, exactly once, in the order shown.
-    fn read(
-        written: &Written<'_>,
-        showing: &Showing<'_>,
-    ) -> Rows<Self::Item, Self::Statement>;
+    fn read(written: &Written<'_>, showing: &Showing<'_>) -> Rows<Self::Item, Self::Statement>;
 }
 
 /// The new things an answer held.

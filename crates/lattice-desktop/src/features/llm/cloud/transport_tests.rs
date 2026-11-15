@@ -1,9 +1,9 @@
 use super::protocol::protocols;
 use super::*;
-use lattice_core::application::services::model_contract::legacy;
 use crate::features::llm::fitting::SendUnscheduled;
 use lattice_core::application::contracts::settings::LLMProvider;
 use lattice_core::application::ports::llm_port::CompletionInput;
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::domain::models::model_ref::CloudProvider;
 use lattice_core::shared::error::ErrorClass;
 use serde_json::json;
@@ -70,7 +70,9 @@ async fn streams_text_and_requires_terminal_event() {
         .mount(&server)
         .await;
     assert!(client
-        .complete_with_progress(&legacy::completion(legacy::Completion::default()), &|_| Ok(()))
+        .complete_with_progress(&legacy::completion(legacy::Completion::default()), &|_| Ok(
+            ()
+        ))
         .await
         .is_err());
 }
@@ -474,7 +476,10 @@ async fn any_other_bad_request_is_not_resent() {
 /// reworded, with or without a schema.
 #[tokio::test]
 async fn an_account_out_of_credit_is_a_setting_to_fix() {
-    for request in [legacy::completion(legacy::Completion::default()), structured()] {
+    for request in [
+        legacy::completion(legacy::Completion::default()),
+        structured(),
+    ] {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .respond_with(
@@ -515,7 +520,9 @@ async fn dropping_a_completion_cancels_the_request_without_a_retry() {
     let client = client(&server).await;
     let abandoned = tokio::time::timeout(
         Duration::from_millis(100),
-        client.complete_with_progress(&legacy::completion(legacy::Completion::default()), &|_| Ok(())),
+        client.complete_with_progress(&legacy::completion(legacy::Completion::default()), &|_| {
+            Ok(())
+        }),
     )
     .await;
     assert!(abandoned.is_err());

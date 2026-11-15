@@ -557,8 +557,7 @@ pub(crate) async fn link(
     // costs one batch. Each item's candidates fill an equal share of its
     // batch request's room.
     let batch = BATCH_SIZE.min(items.len()).max(1);
-    let mut skeleton =
-        legacy::grounded(LINK_SYSTEM, json!({"passages":[],"items":[]}).to_string());
+    let mut skeleton = legacy::grounded(LINK_SYSTEM, json!({"passages":[],"items":[]}).to_string());
     *legacy::grounded_says(&mut skeleton).output_tokens = 200 + 120 * batch;
     let share = crate::model_call::source_room(llm, &skeleton, usize::MAX) / batch;
     let mut pending = Vec::new();

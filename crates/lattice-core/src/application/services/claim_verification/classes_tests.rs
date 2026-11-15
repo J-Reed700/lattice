@@ -153,7 +153,8 @@ async fn a_consistency_check_sends_the_prompt_of_record_and_reads_each_verdict()
         );
         assert_eq!(sent[0].sampling, Some(SamplingOverride::deterministic()));
         assert_eq!(
-            sent[0].schema().map(|schema| schema.as_json()).unwrap()["properties"]["verdict"]["enum"],
+            sent[0].schema().map(|schema| schema.as_json()).unwrap()["properties"]["verdict"]
+                ["enum"],
             json!(["consistent", "contradicted", "unfounded_specific"])
         );
     }

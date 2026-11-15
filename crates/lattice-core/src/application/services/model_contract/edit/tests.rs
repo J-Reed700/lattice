@@ -454,7 +454,10 @@ fn a_later_move_after_the_same_thing_comes_after_the_earlier_one() {
     let mut second = nothing();
     second.moved.push((p[7].clone(), after(&p[4])));
     applied(run(&mut doc, second));
-    assert_eq!(order(&doc), ["t1", "t2", "t3", "t4", "t5", "t7", "t8", "t6"]);
+    assert_eq!(
+        order(&doc),
+        ["t1", "t2", "t3", "t4", "t5", "t7", "t8", "t6"]
+    );
 }
 
 #[test]
@@ -584,7 +587,12 @@ fn check_structure(count: usize, accepted: &[Change<Thing, String>], doc: &Doc) 
                 Laid::Wrote { replaces, .. } => *replaces == Some(&thing),
             })
             .count();
-        assert_eq!(held, usize::from(!removed.contains(&thing)), "{}", name(thing));
+        assert_eq!(
+            held,
+            usize::from(!removed.contains(&thing)),
+            "{}",
+            name(thing)
+        );
     }
     let contents = accepted.iter().flat_map(|change| {
         change
@@ -596,7 +604,9 @@ fn check_structure(count: usize, accepted: &[Change<Thing, String>], doc: &Doc) 
     for wanted in contents {
         let held = places
             .iter()
-            .filter(|place| matches!(&place.laid, Laid::Wrote { content, .. } if *content == wanted))
+            .filter(
+                |place| matches!(&place.laid, Laid::Wrote { content, .. } if *content == wanted),
+            )
             .count();
         assert_eq!(held, 1, "{wanted}");
     }

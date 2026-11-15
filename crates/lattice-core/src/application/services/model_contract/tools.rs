@@ -84,7 +84,12 @@ impl Parameters {
         name: &'static str,
         description: &'static str,
     ) -> Self {
-        self.with(name, description, ParameterKind::Choice(words::<W>()), false)
+        self.with(
+            name,
+            description,
+            ParameterKind::Choice(words::<W>()),
+            false,
+        )
     }
 
     /// The handle of a thing of kind `K` the app showed.

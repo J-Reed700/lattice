@@ -43,7 +43,9 @@ pub fn rendered(request: &CompletionRequest) -> String {
                     }
                 }
             }
-            CompletionInput::ToolCall { name, arguments, .. } => {
+            CompletionInput::ToolCall {
+                name, arguments, ..
+            } => {
                 section(&mut out, &format!("input {number}: tool call {name}"));
                 out.push_str(&pretty(arguments));
                 out.push('\n');
@@ -124,7 +126,10 @@ pub fn assert_requests(manifest_dir: &str, name: &str, requests: &[CompletionReq
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
         "a snapshot name holds only ASCII letters, digits, '-' and '_': {name:?}"
     );
-    assert!(!requests.is_empty(), "no request was sent for the snapshot {name}");
+    assert!(
+        !requests.is_empty(),
+        "no request was sent for the snapshot {name}"
+    );
     let path = path_of(manifest_dir, name);
     let actual = normalised(&joined(requests));
     if std::env::var(UPDATE_VARIABLE).is_ok_and(|value| value == "1") {

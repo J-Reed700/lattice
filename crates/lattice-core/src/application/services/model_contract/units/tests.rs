@@ -98,9 +98,15 @@ proptest! {
 fn sentence_units_are_the_segmentations_sentences() {
     let units = Units::of(SENTENCES, Grain::Sentence);
     assert_eq!(units.shown.len(), 3);
-    assert_eq!(units.text_of(at(&units, 0)), Some("Squares have four sides."));
+    assert_eq!(
+        units.text_of(at(&units, 0)),
+        Some("Squares have four sides.")
+    );
     assert_eq!(units.text_of(at(&units, 1)), Some("Circles have none."));
-    assert_eq!(units.text_of(at(&units, 2)), Some("Triangles have three sides."));
+    assert_eq!(
+        units.text_of(at(&units, 2)),
+        Some("Triangles have three sides.")
+    );
     assert_eq!(units.text_of(at(&units, 3)), None);
     assert_eq!(units.gaps.len(), units.shown.len() + 1);
 }
@@ -181,7 +187,9 @@ fn a_sentence_is_replaced_where_it_was() {
     let mut units = Units::of(SENTENCES, Grain::Sentence);
     let (_, u) = shown_rows(&units);
     let mut change = nothing();
-    change.replace.push((u[1].clone(), "Circles are round.".to_owned()));
+    change
+        .replace
+        .push((u[1].clone(), "Circles are round.".to_owned()));
     let result = applied(&mut units, change);
     assert_eq!(
         units.text(),
@@ -196,7 +204,9 @@ fn a_sentence_is_inserted_after_its_anchor() {
     let mut units = Units::of(SENTENCES, Grain::Sentence);
     let (_, u) = shown_rows(&units);
     let mut change = nothing();
-    change.insert.push((after(&u[0]), "Hexagons have six sides.".to_owned()));
+    change
+        .insert
+        .push((after(&u[0]), "Hexagons have six sides.".to_owned()));
     applied(&mut units, change);
     assert_eq!(
         units.text(),
@@ -318,19 +328,13 @@ fn a_second_change_on_a_claimed_unit_is_refused_and_the_text_is_unchanged() {
         second.remove.push(u[1].clone());
         second.insert.push((Anchor::Start, "Also".to_owned()));
         let settled = units.apply(consistent(second).expect("consistent"));
-        assert!(matches!(
-            settled,
-            Settled::Unanswered(Why::Contradicted(_))
-        ));
+        assert!(matches!(settled, Settled::Unanswered(Why::Contradicted(_))));
         assert_eq!(units.text(), after_first);
 
         let mut anchored = nothing();
         anchored.insert.push((after(&u[1]), "Also".to_owned()));
         let settled = units.apply(consistent(anchored).expect("consistent"));
-        assert!(matches!(
-            settled,
-            Settled::Unanswered(Why::Contradicted(_))
-        ));
+        assert!(matches!(settled, Settled::Unanswered(Why::Contradicted(_))));
         assert_eq!(units.text(), after_first);
     }
 }
@@ -342,7 +346,10 @@ fn text_of_a_unit_is_the_original_even_after_a_change() {
     let mut change = nothing();
     change.replace.push((u[0].clone(), "Replaced.".to_owned()));
     applied(&mut units, change);
-    assert_eq!(units.text_of(at(&units, 0)), Some("Squares have four sides."));
+    assert_eq!(
+        units.text_of(at(&units, 0)),
+        Some("Squares have four sides.")
+    );
 }
 
 #[test]
@@ -356,7 +363,9 @@ fn units_of_two_texts_shown_in_one_request_are_never_one_thing() {
     assert_eq!(rows_of_first, ["[u1] Ann ran.", "[u2] Bob sat."].join("\n"));
     assert_eq!(rows_of_second, ["[u3] Cy hid.", "[u4] Di won."].join("\n"));
 
-    let of_first = showing.resolve::<Unit>("u1").expect("a shown unit resolves");
+    let of_first = showing
+        .resolve::<Unit>("u1")
+        .expect("a shown unit resolves");
     assert_eq!(second.text_of(of_first.reference), None);
     let mut change = nothing();
     change.remove.push(of_first);

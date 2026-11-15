@@ -150,7 +150,8 @@ impl<'r, 's> Fields<'r, 's> {
             let value = self.nested::<V>(object)?;
             match read.iter().find(|(held, _)| *held == own) {
                 Some((_, first)) if *first != value => {
-                    let why = Why::Contradicted(format!("{} has two entries that differ.", own.handle));
+                    let why =
+                        Why::Contradicted(format!("{} has two entries that differ.", own.handle));
                     return self.fail(why);
                 }
                 Some(_) => {}
