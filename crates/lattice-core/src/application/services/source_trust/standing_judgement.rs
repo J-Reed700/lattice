@@ -14,7 +14,7 @@ use crate::application::services::model_contract::ask::{
     ask, failed, Alone, Answered, Metered, Plain, Refusal, Says, Settled, Why,
 };
 use crate::application::services::model_contract::shape::{
-    Authored, Fields, Form, Union, Value as Statement, Vocabulary, STATEMENTS,
+    Authored, Count, Fields, Form, Union, Value as Statement, Vocabulary,
 };
 use crate::application::services::model_contract::shown::{
     Drawn, Kind, Picked, Scope, Showing, Told,
@@ -30,6 +30,8 @@ use crate::shared::hash::sha256_hex;
 
 /// The model call of the standing judgement.
 pub(crate) struct SourceStanding;
+
+static REASONS: Count = Count("reasons");
 
 impl Contract for SourceStanding {
     const ID: ContractId = ContractId::new("source-standing");
@@ -321,7 +323,7 @@ impl Authored for Conclusion {
             .word::<EditorialProcess>("editorial")
             .word::<ContentNature>("nature")
             .list::<Raised>("flags")
-            .counted::<Basis>("reasons", &STATEMENTS)
+            .counted::<Basis>("reasons", &REASONS)
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
@@ -347,7 +349,7 @@ impl Answered for SourceStanding {
     const ALONE: Alone = Alone::Pending;
 
     fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
-        showing.asks(&STATEMENTS, 1..);
+        showing.asks(&REASONS, 1..);
         let flags = showing.show(&input.flags)?;
         let listed: Vec<String> = flags
             .iter()

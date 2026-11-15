@@ -16,7 +16,7 @@ use crate::application::services::model_contract::ask::{
 };
 use crate::application::services::model_contract::request::GroundedRequest;
 use crate::application::services::model_contract::shape::{
-    Authored, Fields, Form, Value, Vocabulary, STATEMENTS,
+    Authored, Count, Fields, Form, Value, Vocabulary,
 };
 use crate::application::services::model_contract::shown::{
     Drawn, Internal, Kind, Picked, Scope, Showing, Told,
@@ -88,6 +88,8 @@ pub struct BridgeOutcome {
 
 /// The model call of the part-wise judge.
 pub struct ClaimParts;
+
+static PARTS: Count = Count("parts");
 
 /// One passage the part-wise judge is shown, and its place among those shown.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,7 +177,7 @@ pub struct ReadParts {
 impl Authored for ReadParts {
     fn form() -> Form {
         Form::new()
-            .counted::<ReadPart>("parts", &STATEMENTS)
+            .counted::<ReadPart>("parts", &PARTS)
             .text("reason")
     }
 
@@ -208,7 +210,7 @@ impl ask::Answered for ClaimParts {
     const ALONE: Alone = Alone::Pending;
 
     fn says(input: &PartsInput, showing: &mut Showing<'_>) -> Result<Says> {
-        showing.asks(&STATEMENTS, 1..);
+        showing.asks(&PARTS, 1..);
         let mut listed = Vec::with_capacity(input.passages.len());
         for (handle, passage) in showing.show(&input.passages)?.iter() {
             listed.push(format!("{}\n{}", handle.bracketed(), passage.text.0));
