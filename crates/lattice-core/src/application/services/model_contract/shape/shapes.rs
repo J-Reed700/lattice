@@ -10,41 +10,35 @@ use super::document::{self, Document};
 use super::fields::trace;
 use super::form::{Among, Field, Form};
 use super::{
-    Authored, Ended, Fields, Found, Led, Pointers, Rows, Schema, Settled, Vocabulary, Why, Written,
+    Authored, Ended, Fields, Found, Held, Led, Rows, Schema, Settled, Vocabulary, Why, Written,
 };
 
 // ---- schema ----
 
-pub(super) fn value_schema<V: Authored>(
-    showing: &Showing<'_>,
-    pointers: Pointers,
-) -> Option<Schema> {
+pub(super) fn value_schema<V: Authored>(showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
     Some(made(form_object(&V::form(), showing, pointers)))
 }
 
-pub(super) fn pick_schema<K: Kind>(showing: &Showing<'_>, pointers: Pointers) -> Option<Schema> {
+pub(super) fn pick_schema<K: Kind>(showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
     let pick = point_schema(K::PREFIX, Among::Shown, &["none"], showing, pointers);
     Some(made(closed(vec![("pick".to_owned(), pick)])))
 }
 
-pub(super) fn pick_some_schema<K: Kind>(
-    showing: &Showing<'_>,
-    pointers: Pointers,
-) -> Option<Schema> {
+pub(super) fn pick_some_schema<K: Kind>(showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
     Some(made(closed(vec![(
         "picks".to_owned(),
         handles_schema(K::PREFIX, showing, pointers),
     )])))
 }
 
-pub(super) fn new_schema<V: Authored>(showing: &Showing<'_>, pointers: Pointers) -> Option<Schema> {
+pub(super) fn new_schema<V: Authored>(showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
     let items = array(form_object(&V::form(), showing, pointers));
     Some(made(closed(vec![("items".to_owned(), items)])))
 }
 
 pub(super) fn each_schema<K: Kind, V: Authored>(
     showing: &Showing<'_>,
-    pointers: Pointers,
+    pointers: Held,
 ) -> Option<Schema> {
     Some(made(closed(vec![(
         "entries".to_owned(),
@@ -54,7 +48,7 @@ pub(super) fn each_schema<K: Kind, V: Authored>(
 
 pub(super) fn flagged_schema<K: Kind, V: Authored>(
     showing: &Showing<'_>,
-    pointers: Pointers,
+    pointers: Held,
 ) -> Option<Schema> {
     Some(made(closed(vec![(
         "marks".to_owned(),
@@ -64,7 +58,7 @@ pub(super) fn flagged_schema<K: Kind, V: Authored>(
 
 pub(super) fn change_schema<K: Kind, W: Content>(
     showing: &Showing<'_>,
-    pointers: Pointers,
+    pointers: Held,
 ) -> Option<Schema> {
     let field = Field::Change {
         prefix: K::PREFIX,
@@ -100,23 +94,19 @@ fn words(words: &[&str]) -> Value {
     json!({ "type": "string", "enum": words })
 }
 
-fn form_properties(form: &Form, showing: &Showing<'_>, pointers: Pointers) -> Vec<(String, Value)> {
+fn form_properties(form: &Form, showing: &Showing<'_>, pointers: Held) -> Vec<(String, Value)> {
     form.fields
         .iter()
         .map(|(name, field)| ((*name).to_owned(), field_schema(field, showing, pointers)))
         .collect()
 }
 
-fn form_object(form: &Form, showing: &Showing<'_>, pointers: Pointers) -> Value {
+fn form_object(form: &Form, showing: &Showing<'_>, pointers: Held) -> Value {
     closed(form_properties(form, showing, pointers))
 }
 
 /// A list of closed objects: a handle under `key` for a shown `K`, then `V`'s fields.
-fn keyed_entries<K: Kind, V: Authored>(
-    key: &str,
-    showing: &Showing<'_>,
-    pointers: Pointers,
-) -> Value {
+fn keyed_entries<K: Kind, V: Authored>(key: &str, showing: &Showing<'_>, pointers: Held) -> Value {
     let mut properties = vec![(
         key.to_owned(),
         point_schema(K::PREFIX, Among::Shown, &[], showing, pointers),
@@ -125,7 +115,7 @@ fn keyed_entries<K: Kind, V: Authored>(
     array(closed(properties))
 }
 
-fn handles_schema(prefix: &str, showing: &Showing<'_>, pointers: Pointers) -> Value {
+fn handles_schema(prefix: &str, showing: &Showing<'_>, pointers: Held) -> Value {
     array(point_schema(prefix, Among::Shown, &[], showing, pointers))
 }
 
@@ -136,13 +126,13 @@ fn point_schema(
     among: Among,
     extra: &[&str],
     showing: &Showing<'_>,
-    pointers: Pointers,
+    pointers: Held,
 ) -> Value {
     let shown = match among {
         Among::Shown => showing.written(prefix),
         Among::Own => showing.written_under(prefix),
     };
-    if pointers == Pointers::Plain {
+    if pointers == Held::Plain {
         let words = extra.join(" or ");
         let description = match (shown.first(), words.is_empty()) {
             (Some(first), true) => {
@@ -164,7 +154,7 @@ fn point_schema(
     json!({ "type": "string", "enum": members })
 }
 
-fn field_schema(field: &Field, showing: &Showing<'_>, pointers: Pointers) -> Value {
+fn field_schema(field: &Field, showing: &Showing<'_>, pointers: Held) -> Value {
     match field {
         Field::Text => json!({ "type": "string" }),
         Field::Word(list) => words(list),
@@ -195,7 +185,7 @@ fn field_schema(field: &Field, showing: &Showing<'_>, pointers: Pointers) -> Val
         }
         Field::Order { prefix } => handles_schema(prefix, showing, pointers),
         Field::Group(form) => form_object(form, showing, pointers),
-        Field::List(form) => array(form_object(form, showing, pointers)),
+        Field::List { form, .. } => array(form_object(form, showing, pointers)),
         Field::EachOwn { prefix, form } => {
             let mut properties = vec![(
                 "of".to_owned(),

@@ -4,7 +4,7 @@ use super::*;
 use crate::practical_dto::LearningPracticalActivityKind;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::services::model_contract::shape::{
-    Ended, Pointers, Shape, Single, Value as Whole, Written,
+    Ended, Held, Shape, Single, Value as Whole, Written,
 };
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use serde_json::{json, Value};
@@ -349,7 +349,7 @@ fn the_interview_plan_schema_holds_no_text_length_cap() {
         let mut scope = Scope::for_question();
         let showing = scope.request();
         let schema =
-            <<InterviewPlan<V> as Answered>::Answer as Shape>::schema(&showing, Pointers::Enum)
+            <<InterviewPlan<V> as Answered>::Answer as Shape>::schema(&showing, Held::Enums)
                 .expect("a schema");
         text_length_rules(schema.as_json())
     }

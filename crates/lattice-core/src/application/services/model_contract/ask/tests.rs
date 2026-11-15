@@ -91,10 +91,11 @@ fn refuse(statement: &str) -> std::result::Result<(), Refusal> {
     }
 }
 
-fn schema_of(pointers: Pointers) -> Option<Schema> {
+fn schema_of(pointers: Held) -> Option<Schema> {
     let word = match pointers {
-        Pointers::Enum => "enum",
-        Pointers::Plain => "plain",
+        Held::Counts => "counts",
+        Held::Enums => "enum",
+        Held::Plain => "plain",
     };
     Some(Schema::made(serde_json::json!({ "pointers": word })))
 }
@@ -105,7 +106,7 @@ struct Verdicts;
 impl Shape for Verdicts {
     type Statement = String;
 
-    fn schema(_showing: &Showing<'_>, pointers: Pointers) -> Option<Schema> {
+    fn schema(_showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
         schema_of(pointers)
     }
 }
@@ -156,7 +157,7 @@ struct Word;
 impl Shape for Word {
     type Statement = String;
 
-    fn schema(_showing: &Showing<'_>, pointers: Pointers) -> Option<Schema> {
+    fn schema(_showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
         schema_of(pointers)
     }
 }
@@ -179,7 +180,7 @@ struct Names;
 impl Shape for Names {
     type Statement = String;
 
-    fn schema(_showing: &Showing<'_>, pointers: Pointers) -> Option<Schema> {
+    fn schema(_showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
         schema_of(pointers)
     }
 }
@@ -258,6 +259,7 @@ struct Script {
     fallback: Option<(String, &'static str)>,
     seen: Mutex<Vec<CompletionRequest>>,
     enforcing: bool,
+    enforces_where: Option<Box<dyn Fn(&Schema) -> bool + Send + Sync>>,
     fail_at: Option<usize>,
     too_large: Option<TooLarge>,
 }
@@ -276,6 +278,7 @@ impl Script {
             fallback: None,
             seen: Mutex::new(Vec::new()),
             enforcing: false,
+            enforces_where: None,
             fail_at: None,
             too_large: None,
         }
@@ -296,6 +299,12 @@ impl Script {
 
     fn enforcing(mut self) -> Self {
         self.enforcing = true;
+        self
+    }
+
+    /// Enforces exactly the schemas `holds` says it does.
+    fn enforcing_where(mut self, holds: impl Fn(&Schema) -> bool + Send + Sync + 'static) -> Self {
+        self.enforces_where = Some(Box::new(holds));
         self
     }
 
@@ -388,8 +397,11 @@ impl LLMPort for Script {
         self.window
     }
 
-    fn enforces(&self, _schema: &Schema) -> bool {
-        self.enforcing
+    fn enforces(&self, schema: &Schema) -> bool {
+        match &self.enforces_where {
+            Some(holds) => holds(schema),
+            None => self.enforcing,
+        }
     }
 
     async fn is_ready(&self) -> Result<bool> {
@@ -643,8 +655,29 @@ async fn the_schema_is_the_enum_form_only_where_the_backend_enforces_it() {
             .schema()
             .map(|schema| schema.as_json()["pointers"].clone())
     };
-    assert_eq!(pointers(&enforcing), Some(serde_json::json!("enum")));
+    assert_eq!(pointers(&enforcing), Some(serde_json::json!("counts")));
     assert_eq!(pointers(&plain), Some(serde_json::json!("plain")));
+}
+
+#[tokio::test]
+async fn a_backend_that_refuses_the_lengths_is_sent_the_enum_form_without_them() {
+    let refuses_counts = Script::new(&[("ok", STOP)])
+        .enforcing_where(|schema| schema.as_json()["pointers"] != serde_json::json!("counts"));
+    run_one(&refuses_counts, &Input::of(&[])).await.unwrap();
+    let sent = refuses_counts.requests()[0]
+        .schema()
+        .map(|schema| schema.as_json()["pointers"].clone());
+    assert_eq!(sent, Some(serde_json::json!("enum")));
+}
+
+#[tokio::test]
+async fn a_backend_that_enforces_no_schema_is_sent_the_plain_form() {
+    let none = Script::new(&[("ok", STOP)]).enforcing_where(|_| false);
+    run_one(&none, &Input::of(&[])).await.unwrap();
+    let sent = none.requests()[0]
+        .schema()
+        .map(|schema| schema.as_json()["pointers"].clone());
+    assert_eq!(sent, Some(serde_json::json!("plain")));
 }
 
 #[tokio::test]

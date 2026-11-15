@@ -338,6 +338,23 @@ fn anthropic_never_sends_sampling_knobs() {
     }
 }
 
+#[test]
+fn anthropic_holds_no_schema_that_bounds_a_list_beyond_one() {
+    let completion = protocols(CloudProvider::Anthropic).completion;
+    let with = |bounds: serde_json::Value| {
+        let mut list = json!({"type":"array","items":{"type":"string"}});
+        list.as_object_mut()
+            .unwrap()
+            .extend(bounds.as_object().unwrap().clone());
+        json!({"type":"object","properties":{"things":list},"required":["things"],
+            "additionalProperties":false})
+    };
+    assert!(completion.enforces(&with(json!({}))));
+    assert!(completion.enforces(&with(json!({"minItems":1}))));
+    assert!(!completion.enforces(&with(json!({"maxItems":6}))));
+    assert!(!completion.enforces(&with(json!({"minItems":4}))));
+}
+
 /// Claude's structured outputs 400 on `maxItems`, `uniqueItems`, numeric
 /// bounds and a `minItems` above 1, so they reach the model as description.
 #[test]

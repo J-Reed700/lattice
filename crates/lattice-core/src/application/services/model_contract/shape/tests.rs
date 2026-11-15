@@ -8,8 +8,9 @@ use super::super::shown::{Drawn, Kind, Picked, Scope, Showing};
 use super::document;
 use super::Value as Whole;
 use super::{
-    Authored, Each, Ended, Fields, Flagged, Form, Found, Lead, Led, Listed, New, PerItem, Pick,
-    PickSome, Place, Pointers, Settled, Shape, Single, Union, Vocabulary, Why, Written,
+    Authored, Count, Each, Ended, Fields, Flagged, Form, Found, Held, Lead, Led, Listed, New,
+    PerItem, Pick, PickSome, Place, Settled, Shape, Single, Union, Vocabulary, Why, Written,
+    STATEMENTS,
 };
 
 // ---- kinds and statements ----
@@ -372,7 +373,7 @@ fn list_doc(key: &str, elements: &[String]) -> Built {
     Built { text, ends }
 }
 
-fn schema_of<S: Shape>(showing: &Showing<'_>, pointers: Pointers) -> Value {
+fn schema_of<S: Shape>(showing: &Showing<'_>, pointers: Held) -> Value {
     S::schema(showing, pointers).unwrap().as_json().clone()
 }
 
@@ -542,7 +543,7 @@ fn validate(schema: &Value, value: &Value) -> bool {
 
 fn assert_valid<S: Shape>(showing: &Showing<'_>, answer: &str) {
     let value: Value = serde_json::from_str(answer).unwrap();
-    for pointers in [Pointers::Enum, Pointers::Plain] {
+    for pointers in [Held::Enums, Held::Plain] {
         let schema = schema_of::<S>(showing, pointers);
         assert!(validate(&schema, &value), "{answer} does not fit {schema}");
     }
@@ -640,7 +641,7 @@ proptest! {
 fn every_schema_obeys_the_dialect() {
     for (sheets, own) in [(0, 0), (1, 0), (3, 2), (12, 4)] {
         with_showing(sheets, own, |showing| {
-            for pointers in [Pointers::Enum, Pointers::Plain] {
+            for pointers in [Held::Enums, Held::Plain] {
                 let schemas = [
                     schema_of::<Whole<Rich>>(showing, pointers),
                     schema_of::<Pick<Sheet>>(showing, pointers),
@@ -664,24 +665,24 @@ fn every_schema_obeys_the_dialect() {
 #[test]
 fn a_lead_has_no_schema() {
     with_showing(2, 0, |showing| {
-        assert!(<Lead<Verdict, Sheet> as Shape>::schema(showing, Pointers::Enum).is_none());
+        assert!(<Lead<Verdict, Sheet> as Shape>::schema(showing, Held::Enums).is_none());
     });
 }
 
 #[test]
 fn pointer_enums_hold_the_shown_handles_and_none() {
     with_showing(3, 2, |showing| {
-        let schema = schema_of::<Pick<Sheet>>(showing, Pointers::Enum);
+        let schema = schema_of::<Pick<Sheet>>(showing, Held::Enums);
         assert_eq!(
             schema["properties"]["pick"]["enum"],
             json!(["s1", "s2", "s3", "none"])
         );
-        let schema = schema_of::<Pick<Sheet>>(showing, Pointers::Plain);
+        let schema = schema_of::<Pick<Sheet>>(showing, Held::Plain);
         assert_eq!(
             schema["properties"]["pick"],
             json!({"type": "string", "description": PLAIN_NOTE_OR_NONE})
         );
-        let schema = schema_of::<Each<Sheet, Rich>>(showing, Pointers::Enum);
+        let schema = schema_of::<Each<Sheet, Rich>>(showing, Held::Enums);
         let entry = &schema["properties"]["entries"]["items"]["properties"];
         assert_eq!(entry["of"]["enum"], json!(["s1", "s2", "s3"]));
         assert_eq!(entry["opt"]["enum"], json!(["o1", "o2"]));
@@ -698,13 +699,13 @@ const PLAIN_NOTE_OR_NONE: &str =
 #[test]
 fn a_plain_pointer_says_how_a_handle_is_written() {
     with_showing(3, 2, |showing| {
-        let schema = schema_of::<Each<Sheet, Rich>>(showing, Pointers::Plain);
+        let schema = schema_of::<Each<Sheet, Rich>>(showing, Held::Plain);
         let entry = &schema["properties"]["entries"]["items"]["properties"];
         assert_eq!(
             entry["of"],
             json!({"type": "string", "description": PLAIN_NOTE})
         );
-        let schema = schema_of::<Each<Sheet, Rich>>(showing, Pointers::Enum);
+        let schema = schema_of::<Each<Sheet, Rich>>(showing, Held::Enums);
         let entry = &schema["properties"]["entries"]["items"]["properties"];
         assert_eq!(
             entry["of"],
@@ -716,7 +717,7 @@ fn a_plain_pointer_says_how_a_handle_is_written() {
 #[test]
 fn a_plain_pointer_that_may_be_none_names_the_word_too() {
     with_showing(3, 0, |showing| {
-        let schema = schema_of::<Pick<Sheet>>(showing, Pointers::Plain);
+        let schema = schema_of::<Pick<Sheet>>(showing, Held::Plain);
         assert_eq!(
             schema["properties"]["pick"],
             json!({"type": "string", "description": PLAIN_NOTE_OR_NONE})
@@ -727,12 +728,12 @@ fn a_plain_pointer_that_may_be_none_names_the_word_too() {
 #[test]
 fn a_plain_pointer_with_nothing_shown_holds_only_the_extra_word() {
     with_showing(0, 0, |showing| {
-        let schema = schema_of::<Pick<Sheet>>(showing, Pointers::Plain);
+        let schema = schema_of::<Pick<Sheet>>(showing, Held::Plain);
         assert_eq!(
             schema["properties"]["pick"],
             json!({"type": "string", "description": "The word none."})
         );
-        let schema = schema_of::<PickSome<Sheet>>(showing, Pointers::Plain);
+        let schema = schema_of::<PickSome<Sheet>>(showing, Held::Plain);
         assert_eq!(
             schema["properties"]["picks"]["items"],
             json!({"type": "string"})
@@ -743,12 +744,12 @@ fn a_plain_pointer_with_nothing_shown_holds_only_the_extra_word() {
 #[test]
 fn nothing_shown_renders_a_plain_pointer() {
     with_showing(0, 0, |showing| {
-        let schema = schema_of::<PickSome<Sheet>>(showing, Pointers::Enum);
+        let schema = schema_of::<PickSome<Sheet>>(showing, Held::Enums);
         assert_eq!(
             schema["properties"]["picks"]["items"],
             json!({"type": "string"})
         );
-        let schema = schema_of::<Pick<Sheet>>(showing, Pointers::Enum);
+        let schema = schema_of::<Pick<Sheet>>(showing, Held::Enums);
         assert_eq!(schema["properties"]["pick"]["enum"], json!(["none"]));
     });
 }
@@ -756,7 +757,7 @@ fn nothing_shown_renders_a_plain_pointer() {
 #[test]
 fn cite_some_holds_one_item_at_least_when_things_are_shown() {
     with_showing(3, 0, |showing| {
-        for pointers in [Pointers::Enum, Pointers::Plain] {
+        for pointers in [Held::Enums, Held::Plain] {
             let schema = schema_of::<Whole<Backed>>(showing, pointers);
             assert_eq!(schema["properties"]["cites"]["minItems"], json!(1));
         }
@@ -766,7 +767,7 @@ fn cite_some_holds_one_item_at_least_when_things_are_shown() {
 #[test]
 fn cite_some_holds_no_count_when_nothing_is_shown() {
     with_showing(0, 0, |showing| {
-        let schema = schema_of::<Whole<Backed>>(showing, Pointers::Enum);
+        let schema = schema_of::<Whole<Backed>>(showing, Held::Enums);
         assert_eq!(
             schema["properties"]["cites"],
             json!({"type": "array", "items": {"type": "string"}})
@@ -777,12 +778,121 @@ fn cite_some_holds_no_count_when_nothing_is_shown() {
 #[test]
 fn a_plain_cite_holds_no_count() {
     with_showing(3, 0, |showing| {
-        let schema = schema_of::<Whole<Note>>(showing, Pointers::Enum);
+        let schema = schema_of::<Whole<Note>>(showing, Held::Enums);
         assert_eq!(
             schema["properties"]["cites"],
             json!({"type": "array", "items": {"type": "string", "enum": ["s1", "s2", "s3"]}})
         );
     });
+}
+
+static STEPS: Count = Count("steps");
+
+/// A statement with a list whose length the request sets.
+#[derive(Debug, PartialEq)]
+struct Stepped {
+    steps: Vec<Inner>,
+}
+
+impl Authored for Stepped {
+    fn form() -> Form {
+        Form::new().counted::<Inner>("steps", &STEPS)
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Stepped {
+            steps: fields.list("steps")?,
+        })
+    }
+}
+
+fn asking(ask: impl FnOnce(&mut Showing<'_>), body: impl FnOnce(&Showing<'_>)) {
+    let mut scope = Scope::for_question();
+    let mut showing = scope.request();
+    ask(&mut showing);
+    body(&showing);
+}
+
+#[test]
+fn a_counted_list_carries_the_length_asked_only_where_lists_are_held_to_it() {
+    asking(
+        |showing| showing.asks(&STEPS, 2..=4),
+        |showing| {
+            let counted = schema_of::<Whole<Stepped>>(showing, Held::Counts);
+            assert_eq!(counted["properties"]["steps"]["minItems"], json!(2));
+            assert_eq!(counted["properties"]["steps"]["maxItems"], json!(4));
+            for held in [Held::Enums, Held::Plain] {
+                let schema = schema_of::<Whole<Stepped>>(showing, held);
+                let steps = schema["properties"]["steps"].as_object().unwrap();
+                assert!(!steps.contains_key("minItems") && !steps.contains_key("maxItems"));
+            }
+        },
+    );
+}
+
+#[test]
+fn an_open_ended_ask_is_a_minimum_only() {
+    asking(
+        |showing| showing.asks(&STEPS, 1..),
+        |showing| {
+            let counted = schema_of::<Whole<Stepped>>(showing, Held::Counts);
+            assert_eq!(counted["properties"]["steps"]["minItems"], json!(1));
+            assert!(counted["properties"]["steps"]
+                .as_object()
+                .unwrap()
+                .get("maxItems")
+                .is_none());
+        },
+    );
+}
+
+#[test]
+fn with_nothing_asked_the_counts_schema_is_the_enums_schema() {
+    asking(
+        |_| {},
+        |showing| {
+            assert_eq!(
+                schema_of::<Whole<Stepped>>(showing, Held::Counts),
+                schema_of::<Whole<Stepped>>(showing, Held::Enums)
+            );
+            assert_eq!(
+                schema_of::<New<Inner>>(showing, Held::Counts),
+                schema_of::<New<Inner>>(showing, Held::Enums)
+            );
+        },
+    );
+}
+
+#[test]
+fn the_statements_of_a_new_answer_carry_the_length_asked_under_counts_only() {
+    asking(
+        |showing| showing.asks(&STATEMENTS, 1..=3),
+        |showing| {
+            let counted = schema_of::<New<Inner>>(showing, Held::Counts);
+            assert_eq!(counted["properties"]["items"]["minItems"], json!(1));
+            assert_eq!(counted["properties"]["items"]["maxItems"], json!(3));
+            for held in [Held::Enums, Held::Plain] {
+                let schema = schema_of::<New<Inner>>(showing, held);
+                let items = schema["properties"]["items"].as_object().unwrap();
+                assert!(!items.contains_key("minItems") && !items.contains_key("maxItems"));
+            }
+        },
+    );
+}
+
+#[test]
+fn a_list_that_names_no_count_never_carries_one() {
+    asking(
+        |showing| {
+            showing.asks(&STEPS, 2..=4);
+            showing.asks(&STATEMENTS, 1..=3);
+        },
+        |showing| {
+            let schema = schema_of::<Whole<Rich>>(showing, Held::Counts);
+            let inners = schema["properties"]["inners"].as_object().unwrap();
+            assert!(!inners.contains_key("minItems") && !inners.contains_key("maxItems"));
+        },
+    );
 }
 
 // ---- Value ----
@@ -896,7 +1006,7 @@ fn a_number_written_as_text_a_fraction_or_a_negative_is_not_read() {
 #[test]
 fn a_number_field_is_an_integer_schema_without_a_range() {
     with_showing(1, 0, |showing| {
-        let schema = schema_of::<Whole<Amount>>(showing, Pointers::Enum);
+        let schema = schema_of::<Whole<Amount>>(showing, Held::Enums);
         assert_eq!(schema["properties"]["amount"], json!({"type": "integer"}));
         assert_dialect(&schema);
     });
@@ -1982,7 +2092,7 @@ fn via_after(text: &str, showing: &Showing<'_>) -> Settled<After> {
 #[test]
 fn a_change_after_has_no_start_in_either_anchor() {
     with_showing(3, 0, |showing| {
-        for pointers in [Pointers::Enum, Pointers::Plain] {
+        for pointers in [Held::Enums, Held::Plain] {
             let schema = schema_of::<Whole<After>>(showing, pointers);
             let edit = &schema["properties"]["edit"]["properties"];
             let anchors = [
@@ -1991,8 +2101,10 @@ fn a_change_after_has_no_start_in_either_anchor() {
             ];
             for anchor in anchors {
                 match pointers {
-                    Pointers::Enum => assert_eq!(anchor["enum"], json!(["s1", "s2", "s3"])),
-                    Pointers::Plain => assert_eq!(
+                    Held::Enums | Held::Counts => {
+                        assert_eq!(anchor["enum"], json!(["s1", "s2", "s3"]))
+                    }
+                    Held::Plain => assert_eq!(
                         anchor,
                         &json!({"type": "string", "description": PLAIN_NOTE})
                     ),
@@ -2006,7 +2118,7 @@ fn a_change_after_has_no_start_in_either_anchor() {
 #[test]
 fn a_change_still_offers_start() {
     with_showing(3, 0, |showing| {
-        let schema = schema_of::<Change<Sheet, String>>(showing, Pointers::Enum);
+        let schema = schema_of::<Change<Sheet, String>>(showing, Held::Enums);
         let edit = &schema["properties"];
         assert_eq!(
             edit["insert"]["items"]["properties"]["after"]["enum"],

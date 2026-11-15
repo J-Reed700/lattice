@@ -4,7 +4,7 @@ use crate::practice::coding::proof::fakes::{Behaviour, FakeRunner};
 use crate::practice::kinds::program::toolchain::FakeToolchains;
 use crate::practice::kinds::program::{kind, KIND};
 use crate::practice::session::kind::Kinds;
-use lattice_core::application::services::model_contract::shape::{Pointers, Shape};
+use lattice_core::application::services::model_contract::shape::{Held, Shape};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -53,7 +53,7 @@ async fn golden_fit() {
     let mut scope = Scope::for_question();
     let mut showing = scope.request();
     let says = PracticeFit::says(&input, &mut showing).expect("the request says");
-    let schema = <<PracticeFit as Answered>::Answer as Shape>::schema(&showing, Pointers::Enum)
+    let schema = <<PracticeFit as Answered>::Answer as Shape>::schema(&showing, Held::Enums)
         .expect("a schema");
     let mut golden = Golden::default();
     golden.add("system", &says.instructions);

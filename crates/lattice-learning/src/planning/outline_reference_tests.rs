@@ -1356,6 +1356,59 @@ async fn the_reference_plan_schema_bounds_no_text_but_a_blank_one() -> Result<()
     Ok(())
 }
 
+/// A backend that holds every answer to its schema.
+struct Enforcing<'a>(&'a dyn lattice_core::application::ports::LLMPort);
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::LLMPort for Enforcing<'_> {
+    async fn complete(
+        &self,
+        request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        self.0.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.0.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.0.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.0.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        self.0.is_ready().await
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        true
+    }
+}
+
+#[tokio::test]
+async fn the_reference_plan_schema_holds_the_subtopics_to_the_modules_the_depth_asks() -> Result<()>
+{
+    let request = request(LearningCourseDepth::Focused);
+    let (_, max_modules, _, _) = LearningCourseDepth::bounds(request.course_depth);
+    let llm = model(vec![plan_output(&[(
+        "Randomized comparison",
+        &["randomized controlled trial design documentation"],
+    )])]);
+    let enforcing = Enforcing(&llm);
+    let recording = crate::content_caps_tests::Recording::new(&enforcing);
+    outline_references::plan(&recording, &request, &[], &OutlineProgress::default()).await?;
+    let schemas = recording.schemas_naming("needs");
+    assert!(!schemas.is_empty(), "the plan's schema was sent");
+    for schema in &schemas {
+        let subtopics = &schema["properties"]["items"];
+        assert_eq!(subtopics["minItems"], json!(1), "{schema}");
+        assert_eq!(subtopics["maxItems"], json!(max_modules), "{schema}");
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn the_reference_plan_schema_lists_the_registries_a_package_search_may_name() -> Result<()> {
     fn ecosystem(value: &Value) -> Option<&Value> {

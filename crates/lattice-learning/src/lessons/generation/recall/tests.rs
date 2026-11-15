@@ -3,7 +3,7 @@ use super::*;
 use crate::dto::{LearningBlockDto, LearningProgramDto};
 use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
-use lattice_core::application::services::model_contract::shape::Pointers;
+use lattice_core::application::services::model_contract::shape::Held;
 use lattice_core::application::services::model_contract::test_support::samples::schema_of;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
@@ -358,7 +358,7 @@ fn a_cut_of_the_passages_keeps_the_best_first() {
 
 #[test]
 fn the_answer_points_at_what_is_shown_and_bounds_no_text() {
-    let schema = schema_of::<RecallDrafts>(&two_sources(), Pointers::Enum)
+    let schema = schema_of::<RecallDrafts>(&two_sources(), Held::Enums)
         .unwrap()
         .as_json()
         .to_string();
