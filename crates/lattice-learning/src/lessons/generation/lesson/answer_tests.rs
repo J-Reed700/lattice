@@ -147,7 +147,7 @@ fn the_request_shows_what_the_model_is_told_and_nothing_internal() {
             covering: marks.internal(vec!["source-harbour-17".to_owned()]),
         }],
         after: marks.told(json!({"referenceCatalog": []})),
-        lengths: Told(StandardShape.lengths()),
+        lengths: StandardShape.lengths(),
     };
     holds::<LessonWriter>(&input, &marks);
 }

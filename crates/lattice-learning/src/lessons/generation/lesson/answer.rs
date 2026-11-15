@@ -72,7 +72,8 @@ pub(crate) struct Input {
     sources: Vec<Source>,
     topics: Vec<Topic>,
     after: Told<Value>,
-    lengths: Told<Lengths>,
+    /// The list lengths the answer is held to. The request's words say them from the same shape policy.
+    lengths: Lengths,
 }
 
 impl Input {
@@ -118,7 +119,7 @@ impl Input {
                 .collect(),
             topics,
             after: Told(Value::Object(after)),
-            lengths: Told(lengths),
+            lengths,
         })
     }
 }
@@ -467,7 +468,7 @@ impl Answered for LessonWriter {
     const ALONE: Alone = Alone::Fails;
 
     fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
-        let lengths = input.lengths.0;
+        let lengths = input.lengths;
         showing.asks(&IDEAS, lengths.ideas.0..=lengths.ideas.1);
         showing.asks(&SECTIONS, lengths.sections.0..=lengths.sections.1);
         showing.asks(&QUESTIONS, lengths.questions.0..=lengths.questions.1);

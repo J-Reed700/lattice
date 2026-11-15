@@ -15,12 +15,11 @@ use lattice_core::shared::error::Result;
 
 use super::planner::CorrectionRequest;
 use super::prompt::PLANNER_OUTPUT_TOKENS;
-use super::{CORRECTION_INSTRUCTION, PLANNER_SYSTEM};
+use super::{CORRECTION_INSTRUCTION, MAX_QUERIES, PLANNER_SYSTEM};
 
 pub(super) struct PlanContract;
 
 const QUERIES: Count = Count("queries");
-const MAX_QUERIES: usize = 3;
 
 impl Contract for PlanContract {
     const ID: ContractId = ContractId::new("corpus-plan");
