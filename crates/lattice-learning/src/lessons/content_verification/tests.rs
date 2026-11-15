@@ -511,22 +511,12 @@ fn verdict_last(reply: &str, ids: &[String]) -> String {
 /// are, and an item judge that finds nothing in any item.
 pub(crate) fn question_review_response(prompt: &str) -> Option<String> {
     if prompt.starts_with("Solve quiz questions independently") {
-        let answers: Vec<Value> = fixture_task(prompt).unwrap()["questions"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|question| json!({"index":question["index"],"reason":"The fixture's key.","correctIndices":[0],"answer":"","blankAnswers":[],"matches":[],"orderedValues":[]}))
-            .collect();
-        return Some(json!({"answers":answers}).to_string());
+        let task = fixture_task(prompt).unwrap();
+        return Some(crate::key_review::scripted::solved(&task, |_| vec![0]).to_string());
     }
     if prompt.starts_with("Review quiz questions one at a time") {
-        let checks: Vec<Value> = fixture_task(prompt).unwrap()["items"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|item| json!({"id":item["id"],"finding":"","hasDefect":false,"repeats":[]}))
-            .collect();
-        return Some(json!({"checks":checks}).to_string());
+        let task = fixture_task(prompt).unwrap();
+        return Some(crate::assessment::item_review::scripted::sound(&task).to_string());
     }
     None
 }

@@ -273,19 +273,4 @@ impl Debriefer for CodingDebriefer<'_> {
 }
 
 #[cfg(test)]
-fn system() -> String {
-    engine::system(&program_kind(), Form::Build)
-}
-
-#[cfg(test)]
-fn schema() -> Value {
-    engine::schema(&program_kind(), Form::Build)
-}
-
-#[cfg(test)]
-fn prompt(evidence: &SessionEvidence) -> Result<String> {
-    engine::prompt(&program_kind(), &engine_session(evidence)?)
-}
-
-#[cfg(test)]
 mod tests;

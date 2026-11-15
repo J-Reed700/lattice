@@ -1133,8 +1133,8 @@ async fn the_review_after_cuts_with_no_claim_left_asks_for_no_count_the_cuts_spe
     lesson["questions"].as_array_mut().unwrap().pop();
     let without = Going::new([2]).out_of(&lesson);
     let questions = without["questions"].as_array().unwrap().len();
-    let solved = json!({"answers":(0..questions).map(|index| json!({"index":index,"reason":"The fixture's key.","correctIndices":[0],"answer":"","blankAnswers":[],"matches":[],"orderedValues":[]})).collect::<Vec<_>>()});
-    let judged = json!({"checks":(0..questions).map(|index| json!({"id":format!("new-{index}"),"finding":"","hasDefect":false,"repeats":[]})).collect::<Vec<_>>()});
+    let solved = crate::key_review::scripted::solved_static(questions, 4, 0);
+    let judged = crate::assessment::item_review::scripted::sound_static(questions);
     let review = json!({"issues":[],"sectionDefects":[]});
     let llm = model(&[solved, judged, review]);
     let sources = sources();

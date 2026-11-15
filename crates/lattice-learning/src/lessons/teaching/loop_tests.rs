@@ -2202,18 +2202,19 @@ fn shaped_lesson_after_a_cut() -> Value {
 
 /// The blind solver's answers for the lesson's questions: each picks the first option.
 fn shaped_solutions(candidate: &Value) -> String {
-    let count = candidate["questions"].as_array().unwrap().len();
-    json!({"answers":(0..count).map(|index| json!({"index":index,"reason":"The fixture's key.","correctIndices":[0],"answer":"","blankAnswers":[],"matches":[],"orderedValues":[]})).collect::<Vec<_>>()}).to_string()
+    let options: Vec<usize> = candidate["questions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|question| question["options"].as_array().map_or(0, Vec::len))
+        .collect();
+    crate::key_review::scripted::solved_each(&options, 0).to_string()
 }
 
 /// The item judge's checks for the lesson's questions: sound, except `fault`'s question.
 fn shaped_judgement(candidate: &Value, fault: Option<(usize, &str)>) -> String {
     let count = candidate["questions"].as_array().unwrap().len();
-    let checks = (0..count).map(|index| {
-        let finding = fault.filter(|(at, _)| *at == index).map_or("", |(_, text)| text);
-        json!({"id":format!("new-{index}"),"finding":finding,"hasDefect":!finding.is_empty(),"repeats":[]})
-    });
-    json!({"checks":checks.collect::<Vec<_>>()}).to_string()
+    crate::assessment::item_review::scripted::judged_static(count, fault).to_string()
 }
 
 async fn waiting_after_review(candidate: &Value, protected: bool) -> Result<Vec<String>> {

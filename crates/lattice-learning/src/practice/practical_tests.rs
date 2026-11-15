@@ -1514,7 +1514,7 @@ impl lattice_core::application::ports::LLMPort for Authors {
         let evaluator = request
             .schema()
             .map(|schema| schema.as_json())
-            .is_some_and(|schema| schema.pointer("/properties/checkFiles").is_some());
+            .is_some_and(|schema| schema.pointer("/properties/entries").is_some());
         Ok(CompletionResponse::from_text(if evaluator {
             self.checks.clone()
         } else {
@@ -1542,7 +1542,7 @@ fn activity_reply(
     starter_files: serde_json::Value,
 ) -> String {
     serde_json::json!({
-        "title": title, "brief": brief, "sourceVersionIds": [],
+        "title": title, "brief": brief, "sources": [],
         "rubric": [
             {"title": rubric.0, "description": rubric.1, "maxPoints": 3},
             {"title": "Verification", "description": "Checks the result against the stated constraints.", "maxPoints": 3}
@@ -1641,8 +1641,8 @@ async fn a_large_evaluator_reply_is_read_not_refused() -> Result<()> {
         ("Reasoning", "Explains the relevant tradeoffs."),
         starter,
     );
-    let checks = serde_json::json!({"checkFiles": [{
-        "path": "checks/evaluate.py", "content": "# a check\n".repeat(10_000)
+    let checks = serde_json::json!({"entries": [{
+        "of": "e1", "content": "# a check\n".repeat(10_000)
     }]})
     .to_string();
     let llm = Authors { activity, checks };
@@ -1700,9 +1700,7 @@ async fn a_long_simulation_turn_is_read_not_refused() -> Result<()> {
     let session = simulation_session("I would isolate the variable first.");
     let passage = "The passage states one condition after another. ".repeat(20);
     let sources = [passage_source(&passage)];
-    let cited = serde_json::json!(
-        [{"sourceId": "logical-source", "versionId": "version-1", "quote": passage}]
-    );
+    let cited = serde_json::json!(["u1"]);
     let turn = |content: &str, citations: serde_json::Value| {
         serde_json::json!({"content": content, "citations": citations}).to_string()
     };
@@ -1716,7 +1714,7 @@ async fn a_long_simulation_turn_is_read_not_refused() -> Result<()> {
     for (what, reply) in [
         ("a short turn", turn(short, serde_json::json!([]))),
         ("turn", turn(&long, serde_json::json!([]))),
-        ("citation quote", turn(short, cited)),
+        ("a cited sentence", turn(short, cited)),
         ("whitespace around the reply", padded),
     ] {
         let llm = Reply::new(reply);

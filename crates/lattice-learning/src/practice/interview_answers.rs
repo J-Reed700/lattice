@@ -261,7 +261,7 @@ pub fn source_catalog(llm: &dyn LLMPort, sources: &[LearningSourceVersionDto]) -
     let mut remaining = llm.max_context_tokens() / 16;
     sources.iter().filter_map(|source| {
         let entry = json!({
-        "sourceId":source.source_id,"versionId":source.version.id,"title":source.version.title,
+        "title":source.version.title,
         "url":source.version.resolved_url,"publisher":source.version.publisher,
         "learnerProvidedNotes":source.version.extraction_version == crate::source_library::PASTED_TEXT_EXTRACTION,
         });
@@ -283,7 +283,7 @@ async fn standard_for_question(
 ) -> Result<AnswerStandard> {
     // Preliminary plan hints are not an answer key. Solve the actual task from
     // captured evidence without anchoring on its unverified probes or signals.
-    let task = json!({"id":question.id,"round":question.round,"question":question.question});
+    let task = json!({"round":question.round,"question":question.question});
     let round_instructions = match question.round {
         LearningInterviewRoundKind::Behavioral => "This is a BEHAVIORAL question. You are writing an evidence outline and assessment standard, not answering as a candidate. Describe conditionally what a strong real example would demonstrate. Never invent a first-person past job, project, action, metric or result. Accept relevant transferable experience instead of prescribing the company's domain as a fictional biography.",
         LearningInterviewRoundKind::SystemDesign => "This is a SYSTEM DESIGN question. Offer one conditional design with concrete data fields when requested. Explain how its operations meet the requirements, including failures and verification. State assumptions; do not assert unmeasured performance guarantees. Label these deductions reasoning with empty citations. Score required outcomes and justified tradeoffs; do not require your example architecture, protocol or tool. Accept alternatives that demonstrate the same properties.",

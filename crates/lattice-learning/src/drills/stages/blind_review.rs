@@ -2,10 +2,8 @@
 //! review against a key, judges its findings. A finding the grader calls a valid extra is described as an entry of
 //! the key, so that a learner who finds it is credited; how findable each planted issue was is kept as evidence.
 
-use super::ask::{
-    ask_request, describe_fault, normalise, path_schema, refuse, render_files, severity_schema,
-    text_schema,
-};
+use super::ask::normalise;
+use super::code_units::{CodeFile, CodeUnits, Weight};
 use super::outputs::{
     Baseline, BlindReview, Findability, LessonChecked, Proved, ReviewedFinding, Trail,
 };
@@ -13,60 +11,324 @@ use super::DrillBuild;
 use crate::drills::budget;
 use crate::drills::grader::Review;
 use crate::drills::spec::DrillSpec;
-use crate::generation::parse_json;
+use crate::lessons::structured_call::Asking;
 use crate::model_call;
+use lattice_core::application::services::model_contract::ask::{
+    ask, ask_new, failed, Alone, Answered, Refusal, Says, Settled, Why,
+};
+use lattice_core::application::services::model_contract::edit::Consistent;
+use lattice_core::application::services::model_contract::shape::{
+    Authored, Fields, Form, New, Union, Value,
+};
+use lattice_core::application::services::model_contract::shown::{
+    Drawn, Internal, Kind, Picked, Scope, Showing, Told,
+};
+use lattice_core::application::services::model_contract::units::{Grain, Unit, Units};
+use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::domain::learning::drills::{
-    apply, overlaps, patterns_for, validate, Drill, DrillFile, Edit, Finding, FindingOutcome,
-    KeyIssue, LineSpan, Origin, Pattern, Proof, Severity,
+    apply, overlaps, patterns_for, validate, Drill, DrillFile, Edit, EditFault, Finding,
+    FindingOutcome, KeyIssue, LineSpan, Origin, Pattern, Proof,
 };
 use lattice_core::shared::error::{AppError, Result};
-use serde::Deserialize;
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Raw {
-    path: String,
-    quote: String,
+/// Said after the reviewer's wording: the form of its answer.
+const REVIEW_FORM: &str = " Answer with an object whose `items` list holds one object for each finding, with the fields `from`, `to`, `comment` and `severity`. `severity` is one of critical, major, minor, nit. With no findings, `items` is empty.";
+
+/// Said after the describer's wording: the form of its answer.
+const ENTRY_FORM: &str = " Answer with an object whose `entry` is an object with the field `kind`, which is `none` or `issue`. An `issue` has the fields `pattern`, `severity`, `consequence`, `fix` and `explanation`; `severity` is one of critical, major, minor, nit, and `fix` is the change to the lines of the file that repairs the problem.";
+
+/// The call that reviews the drill's files without knowing the key.
+struct BlindReviewAsk;
+
+impl Contract for BlindReviewAsk {
+    const ID: ContractId = ContractId::new("blind-review");
+    type Input = ReviewInput;
+}
+
+/// What one blind review reads.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ReviewInput {
+    wording: Told<String>,
+    subject: Told<String>,
+    files: Vec<CodeFile>,
+    output_tokens: Internal<usize>,
+}
+
+/// A finding of the reviewer: the lines it is about, and what is wrong with them.
+#[derive(Debug, Clone)]
+struct Remark {
+    from: Picked<Unit>,
+    to: Picked<Unit>,
     comment: String,
-    severity: Severity,
+    severity: Weight,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Reviewed {
-    findings: Vec<Raw>,
+impl Authored for Remark {
+    fn form() -> Form {
+        Form::new()
+            .point::<Unit>("from")
+            .point::<Unit>("to")
+            .text("comment")
+            .word::<Weight>("severity")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Self {
+            from: fields.point::<Unit>("from")?,
+            to: fields.point::<Unit>("to")?,
+            comment: fields.text("comment")?,
+            severity: fields.word::<Weight>("severity")?,
+        })
+    }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Fix {
-    path: String,
-    before: String,
-    after: String,
+/// The lines of one file a remark is about, counting from zero.
+struct Block {
+    file: usize,
+    first: usize,
+    last: usize,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Entry {
-    pattern: String,
-    severity: Severity,
-    consequence: String,
-    fix: Fix,
-    explanation: String,
+/// The file a shown line is in, and its place there counting from zero.
+fn place(files: &[CodeFile], line: &Picked<Unit>) -> Option<(usize, usize)> {
+    let file = files.iter().position(|file| {
+        Units::of(&file.text.0, Grain::Line)
+            .text_of(line.reference)
+            .is_some()
+    })?;
+    Some((file, line.reference.index()))
+}
+
+impl Remark {
+    /// The lines it is about, when both ends are lines of one file and the first is not after the last.
+    fn block(&self, files: &[CodeFile]) -> Option<Block> {
+        let (file, first) = place(files, &self.from)?;
+        let (other, last) = place(files, &self.to)?;
+        (file == other && first <= last).then_some(Block { file, first, last })
+    }
+}
+
+impl Answered for BlindReviewAsk {
+    type Answer = New<Remark>;
+    const ALONE: Alone = Alone::Fails;
+
+    fn says(input: &ReviewInput, showing: &mut Showing<'_>) -> Result<Says> {
+        let files = CodeUnits::of(&input.files).rendered(showing)?;
+        let mut says = Says::new(
+            format!("{}{REVIEW_FORM}", input.wording.0),
+            format!("{}\n\n{files}", input.subject.0),
+        );
+        says.output_tokens = *input.output_tokens.value();
+        Ok(says)
+    }
+
+    fn accept(input: &ReviewInput, remark: &Remark) -> std::result::Result<(), Refusal> {
+        match remark.block(&input.files) {
+            Some(_) => Ok(()),
+            None => Err(Refusal(
+                "`from` and `to` must be lines of one file, with `from` not after `to`.".into(),
+            )),
+        }
+    }
+}
+
+/// A pattern of the catalogue the describer may name.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Candidate {
+    id: Internal<String>,
+    name: Told<String>,
+    definition: Told<String>,
+}
+
+impl Candidate {
+    fn of(pattern: &Pattern) -> Self {
+        Self {
+            id: Internal::of(pattern.id.to_owned()),
+            name: Told(pattern.name.to_owned()),
+            definition: Told(pattern.definition.to_owned()),
+        }
+    }
+}
+
+impl Kind for Candidate {
+    const PREFIX: &'static str = "p";
+    const DRAWN: Drawn = Drawn::Itself;
+    type Ref = String;
+
+    fn reference(&self) -> String {
+        self.id.value().clone()
+    }
+}
+
+/// The call that describes a finding the grader called a valid extra as an entry of the key.
+struct KeyEntryAsk;
+
+impl Contract for KeyEntryAsk {
+    const ID: ContractId = ContractId::new("key-entry");
+    type Input = EntryInput;
+}
+
+/// What one description reads.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct EntryInput {
+    wording: Told<String>,
+    subject: Told<String>,
+    heading: Told<String>,
+    files: Vec<CodeFile>,
+    path: Told<String>,
+    quote: Told<String>,
+    comment: Told<String>,
+    reason: Told<String>,
+    patterns: Vec<Candidate>,
+    output_tokens: Internal<usize>,
 }
 
 /// What a described finding comes to.
+#[derive(Debug, Clone)]
 enum Described {
     /// An instance of no pattern of the catalogue: nothing joins the key.
     Nothing,
     Issue {
-        pattern: String,
-        severity: Severity,
+        pattern: Picked<Candidate>,
+        severity: Weight,
         consequence: String,
-        fix: Edit,
+        fix: Consistent<Unit, String>,
         explanation: String,
     },
+}
+
+impl Union for Described {
+    fn forms() -> Vec<(&'static str, Form)> {
+        vec![
+            ("none", Form::new()),
+            (
+                "issue",
+                Form::new()
+                    .point::<Candidate>("pattern")
+                    .word::<Weight>("severity")
+                    .text("consequence")
+                    .change::<Unit, String>("fix")
+                    .text("explanation"),
+            ),
+        ]
+    }
+
+    fn read(kind: &str, fields: &mut Fields<'_, '_>) -> Option<Self> {
+        match kind {
+            "none" => Some(Self::Nothing),
+            "issue" => Some(Self::Issue {
+                pattern: fields.point::<Candidate>("pattern")?,
+                severity: fields.word::<Weight>("severity")?,
+                consequence: fields.text("consequence")?,
+                fix: fields.change::<Unit, String>("fix")?,
+                explanation: fields.text("explanation")?,
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// The entry of the key a described finding is.
+#[derive(Debug, Clone)]
+struct Entry(Described);
+
+impl Authored for Entry {
+    fn form() -> Form {
+        Form::new().one_of::<Described>("entry")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        fields.one_of::<Described>("entry").map(Self)
+    }
+}
+
+/// The edit a fix makes to the files, with the lines around it that make it occur once, or what to tell the model about a fix that cannot be one.
+fn fix_of(
+    files: &[CodeFile],
+    fix: &Consistent<Unit, String>,
+) -> std::result::Result<Edit, Refusal> {
+    let units = CodeUnits::of(files);
+    units.file_of(fix.change())?;
+    if units.changes_nothing(fix.change()) {
+        return Err(Refusal("The fix changes nothing.".into()));
+    }
+    if let Settled::Unanswered(Why::Contradicted(told)) =
+        CodeUnits::of(files).apply(fix.clone())
+    {
+        return Err(Refusal(told));
+    }
+    let Some(rewrite) = CodeUnits::of(files).rewrite(fix.clone()) else {
+        return Err(Refusal(
+            "The fix does not apply to the code. Change the lines shown.".into(),
+        ));
+    };
+    let drill: Vec<DrillFile> = files
+        .iter()
+        .map(|file| DrillFile {
+            path: file.path.0.clone(),
+            text: file.text.0.clone(),
+        })
+        .collect();
+    for extra in 0..=rewrite.lines() {
+        let Some(edit) = rewrite.edit(extra) else {
+            break;
+        };
+        match apply(&drill, std::slice::from_ref(&edit)) {
+            Ok(_) => return Ok(edit),
+            Err(EditFault::Ambiguous { .. }) => {}
+            Err(_) => break,
+        }
+    }
+    Err(Refusal(
+        "The fix does not apply to the code. Change the lines shown.".into(),
+    ))
+}
+
+impl Answered for KeyEntryAsk {
+    type Answer = Value<Entry>;
+    const ALONE: Alone = Alone::Pending;
+
+    fn says(input: &EntryInput, showing: &mut Showing<'_>) -> Result<Says> {
+        let files = CodeUnits::of(&input.files).rendered(showing)?;
+        let patterns = showing.show(&input.patterns)?;
+        let mut task = format!(
+            "{}\n\n{}\n\n{files}\n\nThe comment, on {}:\n<quote>\n{}\n</quote>\n<comment>\n{}\n</comment>\nThe judge's reason: {}\n\nThe patterns:\n",
+            input.subject.0,
+            input.heading.0,
+            input.path.0,
+            input.quote.0,
+            input.comment.0,
+            input.reason.0,
+        );
+        for (handle, pattern) in patterns.iter() {
+            task.push_str(&format!(
+                "- {} ({}): {}\n",
+                handle.bracketed(),
+                pattern.name.0,
+                pattern.definition.0
+            ));
+        }
+        let mut says = Says::new(format!("{}{ENTRY_FORM}", input.wording.0), task);
+        says.output_tokens = *input.output_tokens.value();
+        Ok(says)
+    }
+
+    fn accept(input: &EntryInput, entry: &Entry) -> std::result::Result<(), Refusal> {
+        let Described::Issue {
+            consequence,
+            explanation,
+            fix,
+            ..
+        } = &entry.0
+        else {
+            return Ok(());
+        };
+        if consequence.trim().is_empty() || explanation.trim().is_empty() {
+            return Err(Refusal("Give the consequence and the explanation.".into()));
+        }
+        fix_of(&input.files, fix).map(|_| ())
+    }
 }
 
 impl DrillBuild<'_> {
@@ -97,15 +359,34 @@ impl DrillBuild<'_> {
             Some(context) => format!("{}\n\n{context}", wording.subject),
             None => wording.subject.clone(),
         };
-        let request = model_call::structured(
-            wording.reviewer,
-            format!("{subject}\n\n{}", render_files(&proved.files)),
-            review_schema(&proved.files),
-            budget::findings(spec.lines),
-        );
-        let asked = ask_request(self.llm, request, |raw| read_findings(raw, &proved.files)).await?;
+        let files: Vec<CodeFile> = proved.files.iter().map(CodeFile::of).collect();
+        let asking = Asking {
+            progress: None,
+            reasoning: None,
+        };
+        let found = ask_new::<BlindReviewAsk>(
+            self.llm,
+            &asking,
+            &mut Scope::for_question(),
+            ReviewInput {
+                wording: Told(wording.reviewer.to_owned()),
+                subject: Told(subject.clone()),
+                files: files.clone(),
+                output_tokens: Internal::of(budget::findings(spec.lines)),
+            },
+            |_| None,
+            &model_call::answer_options(),
+        )
+        .await?;
+        if let Some(why) = &found.rest {
+            return Err(failed(why));
+        }
         trail.call("blind review", &model);
-        let reviewed = asked.value;
+        let reviewed: Vec<ReviewedFinding> = found
+            .items
+            .iter()
+            .filter_map(|remark| reviewed_of(&files, remark))
+            .collect();
         let findings: Vec<Finding> = reviewed
             .iter()
             .map(|finding| Finding {
@@ -145,7 +426,7 @@ impl DrillBuild<'_> {
                 reason: reason.clone(),
             })
             .collect();
-        let patterns: Vec<&'static Pattern> = patterns_for(&spec.material).collect();
+        let patterns: Vec<Candidate> = patterns_for(&spec.material).map(Candidate::of).collect();
         let mut extras: Vec<KeyIssue> = Vec::new();
         for (position, (outcome, reason)) in assessment.findings.iter().enumerate() {
             if !matches!(outcome, FindingOutcome::ValidExtra) {
@@ -154,35 +435,36 @@ impl DrillBuild<'_> {
             let Some(finding) = reviewed.get(position) else {
                 continue;
             };
-            let request = model_call::structured(
-                wording.describer,
-                describer_prompt(
-                    &subject,
-                    wording.files,
-                    &proved.files,
-                    finding,
-                    reason,
-                    &patterns,
-                ),
-                entry_schema(&patterns, &proved.files),
-                budget::key_entry(),
-            );
-            let asked = ask_request(self.llm, request, |raw| {
-                describe(raw, &proved.files, &patterns)
-            })
-            .await;
-            let described = match asked {
-                Ok(asked) => {
+            let settled = ask::<KeyEntryAsk>(
+                self.llm,
+                &asking,
+                &mut Scope::for_question(),
+                &EntryInput {
+                    wording: Told(wording.describer.to_owned()),
+                    subject: Told(subject.clone()),
+                    heading: Told(wording.files.to_owned()),
+                    files: files.clone(),
+                    path: Told(finding.path.clone()),
+                    quote: Told(finding.quote.clone()),
+                    comment: Told(finding.comment.clone()),
+                    reason: Told(reason.clone()),
+                    patterns: patterns.clone(),
+                    output_tokens: Internal::of(budget::key_entry()),
+                },
+                &model_call::answer_options(),
+            )
+            .await?;
+            let described = match settled {
+                Settled::Answered(entry) => {
                     trail.call("key entry", &model);
-                    asked.value
+                    entry.0
                 }
-                Err(AppError::ModelAnswerUnusable(_) | AppError::AnswerCutOff(_)) => {
+                Settled::Unanswered(_) => {
                     // An entry that cannot be described exactly is not added; a learner who finds the problem is
                     // still credited as a valid extra by the grader.
                     trail.call("key entry (not used)", &model);
                     continue;
                 }
-                Err(error) => return Err(error),
             };
             let Described::Issue {
                 pattern,
@@ -194,9 +476,13 @@ impl DrillBuild<'_> {
             else {
                 continue;
             };
+            let Ok(fix) = fix_of(&files, &fix) else {
+                continue;
+            };
             let Some(span) = lines_of(&proved.files, &fix.path, &fix.before) else {
                 continue;
             };
+            let pattern = pattern.reference;
             let known = planted.iter().chain(&extras).any(|issue| {
                 issue.fix == fix || (issue.pattern == pattern && overlaps(&issue.span, &span))
             });
@@ -206,7 +492,7 @@ impl DrillBuild<'_> {
             extras.push(KeyIssue {
                 id: format!("review-{}", extras.len() + 1),
                 pattern,
-                severity,
+                severity: severity.0,
                 span,
                 consequence,
                 fix,
@@ -228,49 +514,28 @@ impl DrillBuild<'_> {
     }
 }
 
-fn review_schema(files: &[DrillFile]) -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["findings"],
-        "properties": {
-            "findings": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["path", "quote", "comment", "severity"],
-                    "properties": {
-                        "path": path_schema(files),
-                        "quote": text_schema(),
-                        "comment": text_schema(),
-                        "severity": severity_schema()
-                    }
-                }
-            }
-        }
+/// The finding a remark is: its lines as the app shows them, with their span.
+fn reviewed_of(files: &[CodeFile], remark: &Remark) -> Option<ReviewedFinding> {
+    let block = remark.block(files)?;
+    let file = files.get(block.file)?;
+    let quote: Vec<&str> = file
+        .text
+        .0
+        .lines()
+        .skip(block.first)
+        .take(block.last.saturating_sub(block.first).saturating_add(1))
+        .collect();
+    Some(ReviewedFinding {
+        path: file.path.0.clone(),
+        quote: normalise(&quote.join("\n")),
+        comment: remark.comment.clone(),
+        severity: remark.severity.0,
+        span: Some(LineSpan {
+            path: file.path.0.clone(),
+            start: u32::try_from(block.first.saturating_add(1)).ok()?,
+            end: u32::try_from(block.last.saturating_add(1)).ok()?,
+        }),
     })
-}
-
-/// Reads the findings. A quote is located with the identity edit through `apply` and gives the finding's span; a
-/// quote that is not found, or is found more than once, gives none.
-fn read_findings(raw: &str, files: &[DrillFile]) -> Result<Vec<ReviewedFinding>> {
-    let reviewed: Reviewed = parse_json(raw)?;
-    Ok(reviewed
-        .findings
-        .into_iter()
-        .map(|finding| {
-            let quote = normalise(&finding.quote);
-            let span = lines_of(files, &finding.path, &quote);
-            ReviewedFinding {
-                path: finding.path,
-                quote,
-                comment: finding.comment,
-                severity: finding.severity,
-                span,
-            }
-        })
-        .collect())
 }
 
 /// The lines `text` occupies in the file at `path`, when it is there once.
@@ -285,96 +550,6 @@ fn lines_of(files: &[DrillFile], path: &str, text: &str) -> Option<LineSpan> {
         .and_then(|(_, spans)| spans.into_iter().next())
 }
 
-fn describer_prompt(
-    subject: &str,
-    heading: &str,
-    files: &[DrillFile],
-    finding: &ReviewedFinding,
-    reason: &str,
-    patterns: &[&Pattern],
-) -> String {
-    let mut prompt = format!(
-        "{subject}\n\n{heading}\n\n{}\n\nThe comment, on {}:\n<quote>\n{}\n</quote>\n<comment>\n{}\n</comment>\nThe judge's reason: {reason}\n\nThe patterns:\n",
-        render_files(files),
-        finding.path,
-        finding.quote,
-        finding.comment,
-    );
-    for pattern in patterns {
-        prompt.push_str(&format!(
-            "- {} ({}): {}\n",
-            pattern.id, pattern.name, pattern.definition
-        ));
-    }
-    prompt
-}
-
-fn entry_schema(patterns: &[&Pattern], files: &[DrillFile]) -> Value {
-    let mut ids: Vec<&str> = patterns.iter().map(|pattern| pattern.id).collect();
-    ids.push("none");
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["pattern", "severity", "consequence", "fix", "explanation"],
-        "properties": {
-            "pattern": {"type": "string", "enum": ids},
-            "severity": severity_schema(),
-            "consequence": text_schema(),
-            "fix": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["path", "before", "after"],
-                "properties": {
-                    "path": path_schema(files),
-                    "before": text_schema(),
-                    "after": {"type": "string"}
-                }
-            },
-            "explanation": text_schema()
-        }
-    })
-}
-
-/// Reads the entry of the key: `none` adds nothing; otherwise the pattern must be one for the material and the fix
-/// must apply alone to the drill's files.
-fn describe(raw: &str, files: &[DrillFile], patterns: &[&Pattern]) -> Result<Described> {
-    let entry: Entry = parse_json(raw)?;
-    if entry.pattern == "none" {
-        return Ok(Described::Nothing);
-    }
-    if !patterns.iter().any(|pattern| pattern.id == entry.pattern) {
-        return Err(refuse(format!(
-            "{} is not one of the patterns listed. Use the id of one of them, or none.",
-            entry.pattern
-        )));
-    }
-    if entry.consequence.trim().is_empty() || entry.explanation.trim().is_empty() {
-        return Err(refuse("Give the consequence and the explanation."));
-    }
-    let fix = Edit {
-        path: entry.fix.path,
-        before: normalise(&entry.fix.before),
-        after: normalise(&entry.fix.after),
-    };
-    if fix.before == fix.after {
-        return Err(refuse(
-            "The fix changes nothing: its `before` and `after` are the same.",
-        ));
-    }
-    let paths: Vec<String> = files.iter().map(|file| file.path.clone()).collect();
-    apply(files, std::slice::from_ref(&fix)).map_err(|fault| {
-        refuse(describe_fault(
-            fault,
-            std::slice::from_ref(&fix),
-            &["The fix".to_owned()],
-            &paths,
-        ))
-    })?;
-    Ok(Described::Issue {
-        pattern: entry.pattern,
-        severity: entry.severity,
-        consequence: entry.consequence,
-        fix,
-        explanation: entry.explanation,
-    })
-}
+#[cfg(test)]
+#[path = "blind_review/tests.rs"]
+mod tests;

@@ -18,6 +18,7 @@ use crate::drills::repository::{self, NewDrill, StoredDrill};
 use crate::drills::runner::{CodeRunner, RunOutcome};
 use crate::drills::schedules;
 use crate::drills::spec::DrillSpec;
+use crate::lessons::structured_call::is_draft_request;
 use crate::persistence::now;
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{
@@ -25,8 +26,9 @@ use lattice_core::application::ports::llm_port::{
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{
-    apply, Assessment, Drill, DrillFile, Edit, Finding, FindingOutcome, IssueOutcome, KeyIssue,
-    LessonBrief, LessonSentence, LineSpan, Material, PatternDue, Proof, Severity,
+    apply, patterns_for, Assessment, Drill, DrillFile, Edit, Finding, FindingOutcome, IssueOutcome,
+    KeyIssue, LessonBrief, LessonSentence, LineSpan, Material, PatternDue, Proof,
+    Severity,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Database;
@@ -73,6 +75,10 @@ pub(super) fn last(request: &CompletionRequest) -> String {
 pub(super) fn purpose(request: &CompletionRequest) -> &'static str {
     let system = system(request);
     for (needle, name) in [
+        (
+            "Some findings are about no issue of the key; for every one of them",
+            "grade extras",
+        ),
         (
             "You decide whether a passage from a course's sources",
             "passage check",
@@ -174,6 +180,11 @@ impl ScriptedModel {
 #[async_trait]
 impl LLMPort for ScriptedModel {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        if is_draft_request(request) {
+            return Ok(CompletionResponse::from_text(
+                "The answer is worked through in prose.".to_owned(),
+            ));
+        }
         if let Ok(mut requests) = self.requests.lock() {
             requests.push(request.clone());
         }
@@ -361,6 +372,21 @@ impl ReviewGrader for FakeGrader {
     }
 }
 
+/// The handle a request shows the first line of `file` that reads `line`, when the files are shown as lines in
+/// order, each line under the next `u` number.
+pub(super) fn handle_of(files: &[DrillFile], file: &str, line: &str) -> String {
+    let mut number = 0;
+    for shown in files {
+        for text in shown.text.split_inclusive('\n') {
+            number += 1;
+            if shown.path == file && text.trim_end_matches('\n') == line {
+                return format!("u{number}");
+            }
+        }
+    }
+    "none".to_owned()
+}
+
 /// Lines joined with `\n`, the last one ended.
 pub(super) fn text(lines: &[&str]) -> String {
     let mut text = lines.join("\n");
@@ -522,27 +548,32 @@ pub(super) fn clean_code_answer() -> String {
 }
 
 pub(super) fn review_answer(issues: Vec<Value>) -> String {
-    json!({"issues": issues}).to_string()
+    json!({"items": issues}).to_string()
 }
 
-/// What the model answers to the plant call for [`spec`].
+/// What the model answers to the plant call for [`spec`]: the operator changed on line 13 of the first file under
+/// the first pattern, the magic number on line 8 of the second under the second.
 pub(super) fn plant_answer() -> String {
-    json!({"mutations": [
+    let files = files();
+    let at = |path: &str, line: usize| line_handle(&files, path, line);
+    json!({"entries": [
         {
-            "pattern": OPERATOR, "path": "src/limiter.py",
-            "before": OPERATOR_BEFORE, "after": OPERATOR_AFTER,
+            "of": "t1",
+            "change": replacing(&at("src/limiter.py", 13), OPERATOR_AFTER.trim_end_matches('\n')),
             "severity": "major",
             "consequence": "A caller gets one call more than the limit.",
             "explanation": "The comparison lets one call too many through. It should refuse at the limit.",
-            "killingTest": KILLING_TEST, "noTestBecause": ""
+            "killingTest": KILLING_TEST, "noTestBecause": "",
+            "lessonSentences": [], "lessonPattern": "none"
         },
         {
-            "pattern": LITERALS, "path": "src/config.py",
-            "before": LITERALS_BEFORE, "after": LITERALS_AFTER,
+            "of": "t2",
+            "change": replacing(&at("src/config.py", 8), LITERALS_AFTER.trim_end_matches('\n')),
             "severity": "nit",
             "consequence": "The default limit and window are written twice, so they can drift.",
             "explanation": "The constants are no longer used. Use them so the defaults change in one place.",
-            "killingTest": "", "noTestBecause": ""
+            "killingTest": "", "noTestBecause": "",
+            "lessonSentences": [], "lessonPattern": "none"
         }
     ]})
     .to_string()
@@ -693,14 +724,39 @@ pub fn proved() -> Proved {
     }
 }
 
-/// What the blind reviewer says: a finding on the changed operator, one whose quote is in the file twice, one on
-/// `forget` that the grader will call a real extra, and one whose quote is nowhere.
+/// The name the reviewer is shown for line `line` of the file at `path`, among the lines of `files` in order.
+pub(super) fn line_handle(files: &[DrillFile], path: &str, line: usize) -> String {
+    let before: usize = files
+        .iter()
+        .take_while(|file| file.path != path)
+        .map(|file| file.text.lines().count())
+        .sum();
+    format!("u{}", before + line)
+}
+
+/// The name the describer is shown for the pattern `id` among the patterns of `material`.
+pub(super) fn pattern_handle(material: &Material, id: &str) -> String {
+    let at = patterns_for(material)
+        .position(|pattern| pattern.id == id)
+        .expect("the pattern is in the catalogue");
+    format!("p{}", at + 1)
+}
+
+/// A change that replaces one line.
+pub(super) fn replacing(at: &str, with: &str) -> Value {
+    json!({"replace": [{"at": at, "with": with}], "insert": [], "remove": [], "move": []})
+}
+
+/// What the blind reviewer says: a finding on the changed operator, one on a line the file has twice, one on
+/// `forget` that the grader will call a real extra, and one on the last line of the second file.
 pub(super) fn blind_answer() -> String {
-    json!({"findings": [
-        {"path": "src/limiter.py", "quote": "if len(recent) > self.limit:", "comment": "This lets one call more than the limit through.", "severity": "major"},
-        {"path": "src/limiter.py", "quote": "self.hits[key] = recent", "comment": "The dictionary is written twice.", "severity": "nit"},
-        {"path": "src/limiter.py", "quote": "self.hits.pop(key, None)", "comment": "Nothing calls forget, so the dictionary grows without bound.", "severity": "minor"},
-        {"path": "src/limiter.py", "quote": "this text is not in the file", "comment": "Something is wrong here.", "severity": "nit"}
+    let files = proved().files;
+    let at = |path: &str, line: usize| line_handle(&files, path, line);
+    json!({"items": [
+        {"from": at("src/limiter.py", 13), "to": at("src/limiter.py", 13), "comment": "This lets one call more than the limit through.", "severity": "major"},
+        {"from": at("src/limiter.py", 17), "to": at("src/limiter.py", 17), "comment": "The dictionary is written twice.", "severity": "nit"},
+        {"from": at("src/limiter.py", 21), "to": at("src/limiter.py", 21), "comment": "Nothing calls forget, so the dictionary grows without bound.", "severity": "minor"},
+        {"from": at("src/config.py", 8), "to": at("src/config.py", 8), "comment": "Something is wrong here.", "severity": "nit"}
     ]})
     .to_string()
 }
@@ -721,7 +777,7 @@ pub(super) fn blind_assessment() -> Assessment {
         findings: vec![
             (
                 FindingOutcome::Matches { issues: vec![0] },
-                "It is the changed operator.".into(),
+                "The comment names the operator.".into(),
             ),
             (
                 FindingOutcome::FalsePositive,
@@ -739,41 +795,51 @@ pub(super) fn blind_assessment() -> Assessment {
 /// What the judge answers when asked to grade the findings of [`blind_answer`] against the key of [`proved`]: the
 /// assessment [`blind_assessment`] is.
 pub(super) fn grade_answer() -> String {
-    json!({
-        "issues": [
-            {
-                "issue": 1, "reason": "The comment names the operator.", "outcome": "found",
-                "finding": 1, "quote": "lets one call more than the limit through"
-            },
-            {
-                "issue": 2, "reason": "No comment mentions the literals.", "outcome": "missed",
-                "finding": null, "quote": null
-            }
-        ],
-        "findings": [
-            {"finding": 1, "reason": "It is the changed operator.", "outcome": "matches", "issues": [1]},
-            {"finding": 2, "reason": "That is how the code is meant to read.", "outcome": "false_positive", "issues": []},
-            {"finding": 3, "reason": "The dictionary really does grow without bound.", "outcome": "valid_extra", "issues": []},
-            {"finding": 4, "reason": "It names nothing.", "outcome": "false_positive", "issues": []}
-        ]
-    })
+    json!({"entries": [
+        {
+            "of": "i1", "reason": "The comment names the operator.", "outcome": "found",
+            "finding": "f1", "findings": []
+        },
+        {
+            "of": "i2", "reason": "No comment mentions the literals.", "outcome": "missed",
+            "finding": null, "findings": []
+        }
+    ]})
+    .to_string()
+}
+
+/// What the judge answers when asked about the findings of [`blind_answer`] that no issue claims.
+pub(super) fn grade_extras_answer() -> String {
+    json!({"entries": [
+        {"of": "f2", "reason": "That is how the code is meant to read.", "outcome": "false_positive"},
+        {"of": "f3", "reason": "The dictionary really does grow without bound.", "outcome": "valid_extra"},
+        {"of": "f4", "reason": "It names nothing.", "outcome": "false_positive"}
+    ]})
+    .to_string()
+}
+
+/// An entry of the key as the model writes it: an instance of the pattern `pattern` that the one line `line` of
+/// src/limiter.py becomes `with` repairs.
+pub(super) fn entry_for(pattern_id: &str, line: usize, with: &str) -> String {
+    let at = line_handle(&proved().files, "src/limiter.py", line);
+    json!({"entry": {
+        "kind": "issue",
+        "pattern": pattern_handle(&Material::code("python"), pattern_id),
+        "severity": "minor",
+        "consequence": "Every key ever seen stays in memory.",
+        "fix": replacing(&at, with),
+        "explanation": "The dictionary only grows. Drop keys whose window has passed."
+    }})
     .to_string()
 }
 
 /// What the model answers when asked to describe the extra finding as an entry of the key.
 pub(super) fn entry_answer() -> String {
-    json!({
-        "pattern": "resources.unbounded_growth",
-        "severity": "minor",
-        "consequence": "Every key ever seen stays in memory.",
-        "fix": {
-            "path": "src/limiter.py",
-            "before": "        self.hits.pop(key, None)\n",
-            "after": "        self.hits.pop(key, None)\n        self.hits = {k: v for k, v in self.hits.items() if v}\n"
-        },
-        "explanation": "The dictionary only grows. Drop keys whose window has passed."
-    })
-    .to_string()
+    entry_for(
+        "resources.unbounded_growth",
+        21,
+        "        self.hits.clear()",
+    )
 }
 
 /// A pool with every migration, and a drill build job queued for [`spec`] and claimed, as the runtime would.
@@ -1378,21 +1444,22 @@ pub(super) fn reversed_mutation() -> Mutation {
     }
 }
 
-/// What the model answers to the plant call of [`passage_spec`]: the figure planted as a minor error.
+/// What the model answers to the plant call of [`passage_spec`]: the figure planted as a minor error on the first
+/// sentence, the direction reversed on the third.
 pub(super) fn passage_plant_answer() -> String {
     let figure = figure_mutation();
     let reversed = reversed_mutation();
-    json!({"mutations": [
+    json!({"entries": [
         {
-            "pattern": FIGURE, "path": "explanation.md",
-            "before": figure.edit.before, "after": figure.edit.after,
+            "of": "t1",
+            "change": replacing("u1", FIRST_PLANTED),
             "severity": "minor",
             "consequence": figure.consequence,
             "explanation": figure.explanation
         },
         {
-            "pattern": REVERSED, "path": "explanation.md",
-            "before": reversed.edit.before, "after": reversed.edit.after,
+            "of": "t2",
+            "change": replacing("u3", THIRD_PLANTED),
             "severity": "major",
             "consequence": reversed.consequence,
             "explanation": reversed.explanation
