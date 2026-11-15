@@ -352,16 +352,17 @@ fn review_instructions(
     parts.join("\n")
 }
 
-/// Quotations restored to their sources' bytes, and a revised lesson's
-/// re-anchored to the nearest real passage; true when either changed it.
+/// `settle_quotes_in` where the excerpts `authoring` supplies are both tables.
 fn settle_lesson_quotes(candidate: &mut Value, authoring: &Value, attempt: usize) -> bool {
-    authored(authoring).is_some_and(|table| settle_quotes_in(candidate, &table, attempt))
+    authored(authoring).is_some_and(|table| settle_quotes_in(candidate, &table, &table, attempt))
 }
 
-/// `settle_lesson_quotes` against the sources in `table`.
-fn settle_quotes_in(candidate: &mut Value, table: &Table, attempt: usize) -> bool {
+/// Quotations restored to the bytes of `checked`, the texts they are checked
+/// against, and a revised lesson's re-anchored to the nearest real passage of
+/// `shown`; true when either changed it.
+fn settle_quotes_in(candidate: &mut Value, checked: &Table, shown: &Table, attempt: usize) -> bool {
     let mut changed = false;
-    let restored = restore_quotes_in(candidate, table);
+    let restored = restore_quotes_in(candidate, checked);
     if restored > 0 {
         crate::lesson_progress::stage("Restoring exact saved-source quotations");
         tracing::info!(
@@ -371,7 +372,7 @@ fn settle_quotes_in(candidate: &mut Value, table: &Table, attempt: usize) -> boo
         changed = true;
     }
     if attempt > 0 {
-        let reanchored = reanchor_quotes_in(candidate, table);
+        let reanchored = reanchor_quotes_in(candidate, checked, shown);
         if reanchored > 0 {
             crate::lesson_progress::stage(
                 "Citing the saved passages the revised quotations referred to",

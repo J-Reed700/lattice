@@ -8,7 +8,8 @@ fn restore_lesson_quotes(candidate: &mut Value, authoring: &Value) -> usize {
 }
 
 fn reanchor_lesson_quotes(candidate: &mut Value, authoring: &Value) -> usize {
-    reanchor_quotes_in(candidate, &authored(authoring).unwrap())
+    let table = authored(authoring).unwrap();
+    reanchor_quotes_in(candidate, &table, &table)
 }
 
 const EXCERPT: &str = "This saved reference describes the exact behavior of the example tool.";

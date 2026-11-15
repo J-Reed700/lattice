@@ -1,7 +1,7 @@
 //! The lesson as a subject of the review.
 use super::super::contract;
 use super::super::passes::{Next, Outcome, Passes};
-use super::super::quotes::{numbered, quote_checks_in, QuoteCheck};
+use super::super::quotes::{checked, numbered, quote_checks_in, QuoteCheck};
 use super::super::repair::{self, Repaired};
 use super::super::standing::{versions, Standing};
 use super::super::{
@@ -199,11 +199,16 @@ impl Subject for LessonSubject<'_> {
     }
 
     fn settle_quotes(&self, candidate: &mut Value, _authoring: &Value, attempt: usize) -> bool {
-        settle_quotes_in(candidate, &numbered(self.numbered), attempt)
+        settle_quotes_in(
+            candidate,
+            &checked(self.numbered, self.references),
+            &numbered(self.numbered),
+            attempt,
+        )
     }
 
     fn quote_checks(&self, candidate: &Value, _authoring: &Value) -> Vec<QuoteCheck> {
-        quote_checks_in(candidate, &numbered(self.numbered))
+        quote_checks_in(candidate, &checked(self.numbered, self.references))
     }
 
     async fn find(&mut self, llm: &dyn LLMPort, pass: &Pass<'_>) -> Result<Found> {

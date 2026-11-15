@@ -670,19 +670,10 @@ pub async fn prepare_lesson_with_references<'a>(
     )
     .await?;
     let value: serde_json::Value = parse_json(&raw).map_err(unusable)?;
-    // A repaired citation may quote any part of the source it names, not
-    // only the passages the writer was shown: a quotation is checked against
-    // the whole saved text of the source it cites.
+    // The lesson is saved with the texts its quotations were checked against.
     let sources: Vec<_> = numbered
         .iter()
-        .map(|source| {
-            references
-                .sources
-                .iter()
-                .find(|saved| saved.id == source.id)
-                .cloned()
-                .unwrap_or_else(|| source.clone())
-        })
+        .map(|source| crate::teaching::quotes::saved(references, source).clone())
         .collect();
     // The lesson's own rules do not stop it here: what the teaching review could
     // not repair, and any citation that does not match its source, waits for the
