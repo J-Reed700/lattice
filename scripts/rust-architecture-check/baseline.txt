@@ -99,9 +99,7 @@ old-model-call lattice-learning/lessons/generation/evidence.rs legacy 4
 old-model-call lattice-learning/lessons/generation/lesson.rs legacy 2
 old-model-call lattice-learning/lessons/generation/recall.rs legacy 2
 old-model-call lattice-learning/lessons/reference_collection/snapshots.rs legacy 2
-old-model-call lattice-learning/lessons/review_evidence.rs legacy 2
 old-model-call lattice-learning/lessons/structured_call.rs answer 3
-old-model-call lattice-learning/lessons/structured_call.rs legacy 1
 old-model-call lattice-learning/model_call.rs legacy 3
 old-model-call lattice-learning/planning/outline_linking.rs legacy 4
 old-model-call lattice-learning/practice/interview_answer_review.rs legacy 2

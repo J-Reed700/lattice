@@ -30,8 +30,8 @@ pub(crate) use lesson_rules::{
     lesson_rules, prose_sentences, split_check, teaching_sentences, CHECK_REVEAL,
 };
 pub(crate) use outline::{
-    decode_outline, draft_outline, module_rules, outline_schema, GeneratedEvidenceText,
-    GeneratedModule, GeneratedOutlineLesson, Titles,
+    decode_outline, draft_outline, module_rules, GeneratedEvidenceText, GeneratedModule,
+    GeneratedOutlineLesson, Titles,
 };
 pub use outline::{generate_outline, generate_outline_with_progress};
 pub(crate) use recall::recall_output_tokens;

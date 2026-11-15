@@ -995,7 +995,7 @@ async fn prompt_snapshot_teaching_review() {
     ];
     let present = quoted(1, "present", "Alpha holds the line.");
     let resolved = quoted(2, "resolved", "");
-    let scripted = model(vec![answer_of(vec![present, resolved], vec![check(0)])]);
+    let scripted = model(vec![answer_of(vec![present, resolved])]);
     let log = crate::lessons::course_generation_tests::RequestLog::new(&scripted);
     super::review(
         &log,
@@ -1006,6 +1006,7 @@ async fn prompt_snapshot_teaching_review() {
             sections: Some(&[0]),
             asked: Some(&asked),
         },
+        Remit::Open,
         None,
     )
     .await

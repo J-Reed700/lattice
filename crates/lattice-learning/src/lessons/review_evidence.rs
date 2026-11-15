@@ -691,7 +691,7 @@ pub async fn check(
 /// The last task a review-evidence prompt carries: a re-ask restates it for the findings still open.
 #[cfg(test)]
 pub(crate) fn task_of(prompt: &str) -> Option<Value> {
-    prompt.split("\n\n").rev().find_map(|chunk| {
+    prompt.rsplit("\n\n").find_map(|chunk| {
         serde_json::from_str::<Value>(chunk)
             .ok()
             .filter(|task| task.get("proposals").is_some())

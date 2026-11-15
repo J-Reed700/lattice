@@ -87,7 +87,7 @@ impl LLMPort for Routed<'_> {
             && !crate::lessons::structured_call::is_draft_request(request)
         {
             self.confirmed.lock().unwrap().push(user.to_owned());
-            if let Some(schema) = &request.json_schema {
+            if let Some(schema) = request.schema().map(|schema| schema.as_json()) {
                 self.confirmed_schemas.lock().unwrap().push(schema.clone());
             }
             let reply = self
@@ -1895,7 +1895,7 @@ mod used_once;
 
 #[tokio::test]
 async fn prompt_snapshot_lesson_contract_check() -> Result<()> {
-    let scripted = scripted(vec![reviewed(3)]);
+    let scripted = scripted(vec![reviewed()]);
     let reported = answer(
         json!([
             taught("idea-0", "A terminal takes typed commands."),

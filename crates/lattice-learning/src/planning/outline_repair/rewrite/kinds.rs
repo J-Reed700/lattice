@@ -27,7 +27,7 @@ pub(super) enum Place {
 }
 
 /// One text of the module under repair.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(super) struct Row {
     pub place: Place,
     pub text: Told<String>,

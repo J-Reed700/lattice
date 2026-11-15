@@ -5,6 +5,7 @@ use super::kinds::{
     About, Citation, Entry, Estimate, Lesson, Module, NewLesson, Place, Prerequisites, Row,
 };
 use super::*;
+use crate::generation::GeneratedModule;
 use crate::lessons::content_verification::tests::fixture_prompts;
 use crate::lessons::course_generation_tests::request;
 use futures::future::BoxFuture;
