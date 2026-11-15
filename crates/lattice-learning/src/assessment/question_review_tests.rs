@@ -465,7 +465,7 @@ fn the_item_review_system_names_the_passage_quote() {
     assert!(!ITEM_REVIEW_SYSTEM.contains("referenceQuote"));
     assert!(ITEM_REVIEW_SYSTEM.contains("the lesson passage it rests on (quote)"));
     assert!(ITEM_REVIEW_SYSTEM.contains("never its quote and never independentSolution"));
-    assert!(ITEM_REVIEW_SYSTEM.contains("quote is one passage of what the learner was taught, not all of it: a statement is not untrue or unsupported because quote does not contain it."));
+    assert!(ITEM_REVIEW_SYSTEM.contains("quote is part of what the learner was taught, not all of it: a statement is not untrue or unsupported because quote does not contain it."));
 }
 
 #[test]
