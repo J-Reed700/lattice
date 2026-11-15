@@ -9,7 +9,7 @@ use super::document;
 use super::Value as Whole;
 use super::{
     Authored, Each, Ended, Fields, Flagged, Form, Found, Lead, Led, Listed, New, PerItem, Pick,
-    PickSome, Pointers, Settled, Shape, Single, Union, Vocabulary, Why, Written,
+    PickSome, Place, Pointers, Settled, Shape, Single, Union, Vocabulary, Why, Written,
 };
 
 // ---- kinds and statements ----
@@ -235,7 +235,7 @@ impl Authored for Backed {
 /// A statement that holds where the model wrote it.
 #[derive(Debug, PartialEq)]
 struct Placed {
-    place: usize,
+    place: Place,
 }
 
 impl Authored for Placed {
@@ -1154,6 +1154,10 @@ fn an_empty_cite_some_is_answered_when_nothing_is_shown() {
 
 // ---- place ----
 
+fn first_request(entry: usize) -> Place {
+    Place { request: 0, entry }
+}
+
 #[test]
 fn a_mark_holds_the_place_it_was_written_at() {
     with_showing(3, 0, |showing| {
@@ -1161,7 +1165,7 @@ fn a_mark_holds_the_place_it_was_written_at() {
             r#"{"marks":[{"at":"s3","note":"a"},{"at":"s1","note":"b"},{"at":"s2","note":"c"}]}"#;
         let rows =
             <Flagged<Sheet, Placed> as PerItem>::read(&written(text, Ended::Complete), showing);
-        let places: Vec<(String, usize)> = rows
+        let places: Vec<(String, Place)> = rows
             .into_iter()
             .map(|(item, settled)| match settled {
                 Settled::Answered(Some(placed)) => (item.handle.written(), placed.place),
@@ -1171,9 +1175,9 @@ fn a_mark_holds_the_place_it_was_written_at() {
         assert_eq!(
             places,
             vec![
-                ("s1".to_owned(), 1),
-                ("s2".to_owned(), 2),
-                ("s3".to_owned(), 0)
+                ("s1".to_owned(), first_request(1)),
+                ("s2".to_owned(), first_request(2)),
+                ("s3".to_owned(), first_request(0))
             ]
         );
     });
@@ -1186,7 +1190,12 @@ fn a_place_counts_the_elements_that_were_skipped() {
         let rows =
             <Flagged<Sheet, Placed> as PerItem>::read(&written(text, Ended::Complete), showing);
         let second = rows.into_iter().nth(1).map(|(_, settled)| settled);
-        assert_eq!(second, Some(Settled::Answered(Some(Placed { place: 1 }))));
+        assert_eq!(
+            second,
+            Some(Settled::Answered(Some(Placed {
+                place: first_request(1)
+            })))
+        );
     });
 }
 
@@ -1195,7 +1204,17 @@ fn a_new_item_holds_the_place_it_was_written_at() {
     with_showing(1, 0, |showing| {
         let text = r#"{"items":[{"note":"a"},{"note":"b"}]}"#;
         let found = <New<Placed> as Listed>::read(&written(text, Ended::Complete), showing);
-        assert_eq!(found.items, vec![Placed { place: 0 }, Placed { place: 1 }]);
+        assert_eq!(
+            found.items,
+            vec![
+                Placed {
+                    place: first_request(0)
+                },
+                Placed {
+                    place: first_request(1)
+                }
+            ]
+        );
     });
 }
 

@@ -285,6 +285,8 @@ pub struct Scope {
     /// The one kind of a stored scope a person sees as a bare number.
     numbered: Option<String>,
     fresh: Vec<Record>,
+    /// The requests started so far.
+    requests: usize,
 }
 
 impl Scope {
@@ -339,8 +341,11 @@ impl Scope {
 
     /// Starts a request. What the request shows is what its answer may point at.
     pub fn request(&mut self) -> Showing<'_> {
+        let request = self.requests;
+        self.requests = request.saturating_add(1);
         Showing {
             scope: self,
+            request,
             top: BTreeMap::new(),
             under: BTreeMap::new(),
         }
@@ -420,12 +425,18 @@ fn picked<K: Kind>(
 #[derive(Debug)]
 pub struct Showing<'s> {
     scope: &'s mut Scope,
+    /// Which of its scope's requests this is, counted from 0.
+    request: usize,
     /// The ordinals this request shows as pointable, by prefix, in the order shown.
     top: BTreeMap<String, Vec<u32>>,
     under: BTreeMap<Name, BTreeMap<String, Vec<u32>>>,
 }
 
 impl Showing<'_> {
+    pub(super) fn request(&self) -> usize {
+        self.request
+    }
+
     /// Shows `things` as pointable: mints a name for each, or takes the one it has.
     pub fn show<'a, K: Kind>(&mut self, things: &'a [K]) -> Result<Shown<'a, K>> {
         let mut handles = Vec::with_capacity(things.len());

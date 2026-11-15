@@ -7,6 +7,15 @@ use super::super::edit::{consistent, Anchor, Change, Consistent, Content};
 use super::super::shown::{Kind, Name, Picked, Showing};
 use super::{Authored, Union, Vocabulary, Why};
 
+/// Where the model wrote an entry among everything it answered to one question: an entry of a
+/// later request comes after every entry of an earlier one, and the entries of one answer keep
+/// the order of their list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Place {
+    pub(super) request: usize,
+    pub(super) entry: usize,
+}
+
 /// The fields of one statement as the model wrote them. An accessor returns
 /// `None` when its field cannot be used and records why; the first reason
 /// recorded is the statement's.
@@ -42,10 +51,12 @@ impl<'r, 's> Fields<'r, 's> {
         self
     }
 
-    /// Where the model wrote this entry among the entries of its list, counted from 0: a contract that asks
-    /// for an order reads it here.
-    pub fn place(&self) -> usize {
-        self.place
+    /// Where the model wrote this entry: a contract that asks for an order reads it here.
+    pub fn place(&self) -> Place {
+        Place {
+            request: self.showing.request(),
+            entry: self.place,
+        }
     }
 
     /// Why the statement is unanswered, once an accessor returned `None`.

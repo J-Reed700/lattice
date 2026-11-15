@@ -12,7 +12,9 @@ use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::application::services::model_contract::ask::{
     self, ask_each, Alone, Answered, Refusal, Says, Settled,
 };
-use lattice_core::application::services::model_contract::shape::{Authored, Fields, Flagged, Form};
+use lattice_core::application::services::model_contract::shape::{
+    Authored, Fields, Flagged, Form, Place,
+};
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Kind, Scope, Showing, Told,
 };
@@ -129,7 +131,7 @@ impl Input {
 #[derive(Debug, Clone)]
 pub(crate) struct Keep {
     reason: String,
-    place: usize,
+    place: Place,
 }
 
 impl PartialEq for Keep {
@@ -277,7 +279,7 @@ async fn select_noted(
         }
         Err(error) => return Err(error),
     };
-    let mut kept: Vec<(usize, WebSearchResult, String)> = candidates
+    let mut kept: Vec<(Place, WebSearchResult, String)> = candidates
         .into_iter()
         .zip(marks)
         .filter_map(|(candidate, mark)| match mark {

@@ -27,7 +27,7 @@ mod shapes;
 #[cfg(test)]
 mod tests;
 
-pub use fields::Fields;
+pub use fields::{Fields, Place};
 pub use form::Form;
 
 /// The answer schema a request carries. Made by a shape, by a tool's
