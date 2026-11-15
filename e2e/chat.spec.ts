@@ -1,6 +1,7 @@
 import { expect, type Page } from '@playwright/test';
 import { ANSWER_CHUNKS, CONVERSATION, PASSAGES, QUESTION, installChatFixture } from './fixtures/chat';
 import { argsOf, journeyTest, type ShellBackend } from './fixtures/shell';
+import type { ReplyPieceDto } from '../src/lib/bindings';
 
 const test = journeyTest(installChatFixture);
 
@@ -15,11 +16,14 @@ async function ask(page: Page, backend: ShellBackend) {
   return String(argsOf(backend, 'chat_with_conversation')[before].requestId);
 }
 
-/** Delivers one streamed piece of the answer, as the backend's llm-stream event does. */
-async function stream(page: Page, requestId: string, content: string) {
-  await page.evaluate(({ conversationId, requestId, content }) => {
-    window.__LATTICE_IPC__.emit('llm-stream', { conversationId, requestId, content, done: false });
-  }, { conversationId: CONVERSATION.id!, requestId, content });
+/** Delivers streamed pieces of the answer as the backend's llm-stream events do: each a text delta or one reference. */
+async function stream(page: Page, requestId: string, pieces: ReplyPieceDto[]) {
+  await page.evaluate(({ conversationId, requestId, pieces }) => {
+    for (const piece of pieces) {
+      const part = piece.type === 'text' ? { content: piece.text } : { reference: piece.reference };
+      window.__LATTICE_IPC__.emit('llm-stream', { conversationId, requestId, done: false, ...part });
+    }
+  }, { conversationId: CONVERSATION.id!, requestId, pieces });
 }
 
 test('a question streams its answer in, and each citation opens the passage it cites', async ({ page, backend }) => {
@@ -75,7 +79,7 @@ test('stopping a question before the answer starts hands the question back to th
   // Asking again runs a fresh turn to the end.
   const retryId = await ask(page, backend);
   expect(retryId).not.toBe(requestId);
-  await stream(page, retryId, ANSWER_CHUNKS.join(''));
+  await stream(page, retryId, ANSWER_CHUNKS.flat());
   backend.state.finish.release();
   await expect(page.locator('#message-msg-answer')).toContainText('It comes down to silica.');
 });
