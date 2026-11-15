@@ -112,8 +112,15 @@ impl PlannedNeed {
     /// which not every model provider enforces.
     pub(crate) fn searches(self) -> Result<Vec<Self>, Vec<Outside>> {
         let (query, named) = lift_sites(&self.query);
+        let mut site_broken = false;
         let sites: Vec<Option<Origin>> = match filled(self.site.clone()) {
-            Some(site) => vec![Some(Origin::parse(&site).ok_or(vec![Outside::Site])?)],
+            Some(site) => match Origin::parse(&site).filter(|origin| origin.host().contains('.')) {
+                Some(origin) => vec![Some(origin)],
+                None => {
+                    site_broken = true;
+                    vec![None]
+                }
+            },
             None if named.is_empty() => vec![None],
             None => named.into_iter().map(Some).collect(),
         };
@@ -128,7 +135,18 @@ impl PlannedNeed {
             site: None,
             ..self
         }
-        .checked()?;
+        .checked();
+        let need = match (need, site_broken) {
+            (Ok(need), false) => need,
+            (Ok(_), true) => return Err(vec![Outside::Site]),
+            (Err(mut broken), site_broken) => {
+                if site_broken {
+                    broken.push(Outside::Site);
+                    broken.sort();
+                }
+                return Err(broken);
+            }
+        };
         Ok(sites
             .into_iter()
             .map(|site| Self {
@@ -181,28 +199,31 @@ impl PlannedNeed {
             None => true,
             Some(_) => after.is_none() && identifier.as_deref().is_some_and(is_page_address),
         };
-        if query.is_empty() {
-            return Err(vec![Outside::Query]);
-        }
-        if alternatives.iter().any(|rewording| rewording.is_empty()) {
-            return Err(vec![Outside::Rewording]);
-        }
-        if !PLANNED_KINDS.contains(&self.kind) {
-            return Err(vec![Outside::Kind]);
-        }
-        if ecosystem
-            .as_deref()
-            .is_some_and(|registry| Ecosystem::parse(registry).is_none())
-        {
-            return Err(vec![Outside::Registry]);
-        }
-        if after.as_ref().is_some_and(Option::is_none)
-            || as_of.as_ref().is_some_and(Option::is_none)
-        {
-            return Err(vec![Outside::Date]);
-        }
-        if !dated_read_named {
-            return Err(vec![Outside::DatedRead]);
+        let broken: Vec<Outside> = [
+            (query.is_empty(), Outside::Query),
+            (
+                alternatives.iter().any(|rewording| rewording.is_empty()),
+                Outside::Rewording,
+            ),
+            (!PLANNED_KINDS.contains(&self.kind), Outside::Kind),
+            (
+                ecosystem
+                    .as_deref()
+                    .is_some_and(|registry| Ecosystem::parse(registry).is_none()),
+                Outside::Registry,
+            ),
+            (
+                after.as_ref().is_some_and(Option::is_none)
+                    || as_of.as_ref().is_some_and(Option::is_none),
+                Outside::Date,
+            ),
+            (!dated_read_named, Outside::DatedRead),
+        ]
+        .into_iter()
+        .filter_map(|(is_broken, rule)| is_broken.then_some(rule))
+        .collect();
+        if !broken.is_empty() {
+            return Err(broken);
         }
         Ok(Self {
             query,
@@ -285,17 +306,23 @@ impl Vocabulary for PlannedKind {
 struct PlannedRegistry(Option<Ecosystem>);
 
 impl Vocabulary for PlannedRegistry {
-    const WORDS: &'static [(&'static str, Self)] = &[
-        ("none", PlannedRegistry(None)),
-        ("crates", PlannedRegistry(Some(Ecosystem::Crates))),
-        ("pypi", PlannedRegistry(Some(Ecosystem::PyPi))),
-        ("npm", PlannedRegistry(Some(Ecosystem::Npm))),
-        ("nuget", PlannedRegistry(Some(Ecosystem::NuGet))),
-        ("rubygems", PlannedRegistry(Some(Ecosystem::RubyGems))),
-        ("maven", PlannedRegistry(Some(Ecosystem::Maven))),
-        ("go", PlannedRegistry(Some(Ecosystem::Go))),
-    ];
+    const WORDS: &'static [(&'static str, Self)] = &REGISTRY_WORDS;
 }
+
+/// `none`, then every registry under the name the schemas give it.
+const REGISTRY_WORDS: [(&str, PlannedRegistry); 8] = {
+    let [a, b, c, d, e, f, g] = Ecosystem::ALL;
+    [
+        ("none", PlannedRegistry(None)),
+        (a.as_str(), PlannedRegistry(Some(a))),
+        (b.as_str(), PlannedRegistry(Some(b))),
+        (c.as_str(), PlannedRegistry(Some(c))),
+        (d.as_str(), PlannedRegistry(Some(d))),
+        (e.as_str(), PlannedRegistry(Some(e))),
+        (f.as_str(), PlannedRegistry(Some(f))),
+        (g.as_str(), PlannedRegistry(Some(g))),
+    ]
+};
 
 /// One rewording of a query.
 struct Rewording(String);
@@ -357,10 +384,10 @@ impl Authored for PlannedNeed {
 
 /// What a search planner is told about a field of its answer that does not apply.
 pub(crate) const UNSET_FIELD: &str =
-    "Write every field of every entry; leave a text field empty when it does not apply, and write none as the ecosystem of a search that is not for a software package.";
+    "Write every field of every entry; leave a text field empty when it does not apply, and write none as the ecosystem of a search that is not for a software package or whose package is in none of the listed registries.";
 
 /// The rule of a search that a planned need breaks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Outside {
     Query,
     Rewording,
@@ -380,7 +407,7 @@ impl Outside {
             Self::Kind => "A search asks for one of the listed kinds.",
             Self::Registry => "A package search names one of the listed registries as its ecosystem.",
             Self::Site => "A site is the address of one host, such as docs.example.org; leave site empty to search everywhere.",
-            Self::Date => "A date is written as YYYY-MM-DD.",
+            Self::Date => "A date is written as YYYY-MM-DD; leave after and asOf empty for a search that needs no date.",
             Self::DatedRead => "A search with asOf gives the page's full address as its identifier and sets no after.",
         }
     }

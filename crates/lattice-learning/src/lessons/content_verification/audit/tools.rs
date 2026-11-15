@@ -339,8 +339,8 @@ impl Call<'_> {
                     web_research::outside_a_search(&broken).0
                 );
             }
-            Err(_) => {
-                return "Search not run: give a query and one of the listed kinds.".into();
+            Err(error) => {
+                return format!("Search not run: the arguments are not a search ({error}).");
             }
         };
         // A query naming several sites is one search per site, sharing

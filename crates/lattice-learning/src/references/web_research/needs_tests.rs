@@ -139,18 +139,6 @@ fn the_kinds_the_planner_may_write_are_the_kinds_a_search_may_ask_for() {
     }
 }
 
-#[test]
-fn the_registries_the_planner_may_write_are_the_registries_a_package_search_may_name() {
-    let (none, registries) = PlannedRegistry::WORDS.split_first().unwrap();
-    assert_eq!(none.0, "none");
-    assert!(none.1 .0.is_none());
-    let written: Vec<Ecosystem> = registries.iter().filter_map(|(_, word)| word.0).collect();
-    assert_eq!(written, Ecosystem::ALL);
-    for (word, registry) in registries {
-        assert_eq!(Some(*word), registry.0.map(Ecosystem::as_str));
-    }
-}
-
 #[tokio::test]
 async fn a_package_search_reads_its_registry_and_any_other_search_reads_none() -> Result<()> {
     let model = ScriptedModel::new().on_request::<ReferenceNeeds>(|_, _| {
