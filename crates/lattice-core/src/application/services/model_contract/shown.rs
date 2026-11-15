@@ -73,12 +73,19 @@ impl Name {
         format!("{}{}", self.prefix, self.ordinal)
     }
 
-    /// `s4` or `[s4]` as a name; `None` unless letters then a 1-based ordinal.
-    fn read(written: &str) -> Option<Self> {
-        let written = written
+    /// The name a field or an argument holds, written bare or in the square
+    /// brackets it is shown in.
+    fn pointed(written: &str) -> Option<Self> {
+        let written = written.trim();
+        let bare = written
             .strip_prefix('[')
             .and_then(|inner| inner.strip_suffix(']'))
-            .unwrap_or(written);
+            .map_or(written, str::trim);
+        Self::read(bare)
+    }
+
+    /// `s4` as a name. `None` for anything that is not a prefix of letters and a 1-based ordinal.
+    fn read(written: &str) -> Option<Self> {
         let digits = written.find(|c: char| c.is_ascii_digit())?;
         let (prefix, ordinal) = written.split_at(digits);
         let well_formed = !prefix.is_empty()
@@ -339,10 +346,10 @@ impl Scope {
         }
     }
 
-    /// What a reply or a tool call wrote, against everything the scope holds:
-    /// the transcript still shows it.
+    /// What a tool call wrote, against everything the scope holds: the
+    /// transcript still shows it.
     pub(super) fn resolve<K: Kind>(&self, written: &str) -> Option<Picked<K>> {
-        let name = Name::read(written).filter(|name| name.prefix == K::PREFIX)?;
+        let name = Name::pointed(written).filter(|name| name.prefix == K::PREFIX)?;
         let reference = self.top.get(K::PREFIX)?.reference(name.ordinal)?;
         picked(name, None, reference)
     }
@@ -462,7 +469,7 @@ impl Showing<'_> {
 
     /// The thing of kind `K` this request shows under `written`.
     pub(super) fn resolve<K: Kind>(&self, written: &str) -> Option<Picked<K>> {
-        let name = Name::read(written).filter(|name| name.prefix == K::PREFIX)?;
+        let name = Name::pointed(written).filter(|name| name.prefix == K::PREFIX)?;
         self.top
             .get(K::PREFIX)?
             .contains(&name.ordinal)
@@ -473,7 +480,7 @@ impl Showing<'_> {
 
     /// The own thing of `of` this request shows under `written`.
     pub(super) fn resolve_under<C: Kind>(&self, of: &Name, written: &str) -> Option<Picked<C>> {
-        let name = Name::read(written).filter(|name| name.prefix == C::PREFIX)?;
+        let name = Name::pointed(written).filter(|name| name.prefix == C::PREFIX)?;
         self.under
             .get(of)?
             .get(C::PREFIX)?

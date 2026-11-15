@@ -721,7 +721,7 @@ proptest! {
             let kept = cites.clone();
             cites.insert(0, "s99".to_owned());
             cites.push("zz".to_owned());
-            cites.push("[s1]".to_owned());
+            cites.push("[[s1]]".to_owned());
             if let Some(first) = kept.first() {
                 cites.push(first.clone());
             }
@@ -1538,6 +1538,9 @@ fn lead_reads_verdict_text_and_pointer() {
 
         let read = via_lead("yes:\ns1", Ended::Complete, showing);
         assert!(matches!(read, Settled::Answered(led) if led.text.is_empty()));
+
+        let read = via_lead("yes\nwords\n[s1]", Ended::Complete, showing);
+        assert!(matches!(read, Settled::Answered(led) if led.pointer.is_some()));
     });
 }
 
@@ -1549,7 +1552,7 @@ fn lead_reasons() {
             ("Yes\nwords\ns1", Ended::Complete, Why::NotRead),
             ("", Ended::Complete, Why::NotRead),
             ("yes\nwords\ns99", Ended::Complete, Why::Unplaced),
-            ("yes\nwords\n[s1]", Ended::Complete, Why::Unplaced),
+            ("yes\nwords\n[[s1]]", Ended::Complete, Why::Unplaced),
             (
                 "yes\nwords\nThe answer is s1",
                 Ended::Complete,

@@ -276,12 +276,7 @@ impl<'a> Arguments<'a> {
     }
 
     fn resolve<K: Kind>(&self, name: &str, written: &str) -> Result<Picked<K>, ArgumentError> {
-        let bare = written
-            .strip_prefix('[')
-            .and_then(|inner| inner.strip_suffix(']'))
-            .unwrap_or(written)
-            .trim();
-        self.scope.resolve::<K>(bare).ok_or_else(|| {
+        self.scope.resolve::<K>(written).ok_or_else(|| {
             ArgumentError(format!(
                 "`{name}` was `{written}`, which names nothing shown in this conversation. \
                  A handle is a bracketed name such as [{}4] in an earlier tool result; \
