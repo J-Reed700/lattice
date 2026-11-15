@@ -72,7 +72,10 @@ fn a_need_is_checked_against_what_a_search_allows() {
         ecosystem: Some("cpan".into()),
         ..need("Moose", NeedKind::Package)
     };
-    assert_eq!(unknown_registry.clone().searches(), Err(Outside::Registry));
+    assert_eq!(
+        unknown_registry.clone().searches(),
+        Err(vec![Outside::Registry])
+    );
     assert_eq!(unknown_registry.one(), None);
 }
 
@@ -237,10 +240,24 @@ fn a_site_the_planner_set_is_the_scope_and_is_written_as_an_address() {
         site: Some("the official docs".into()),
         ..need("Span<T> async", NeedKind::OfficialDocs)
     };
-    assert_eq!(not_an_address.searches(), Err(Outside::Site));
+    assert_eq!(not_an_address.searches(), Err(vec![Outside::Site]));
+    let not_a_host = PlannedNeed {
+        site: Some("none".into()),
+        ..need("Span<T> async", NeedKind::OfficialDocs)
+    };
+    assert_eq!(not_a_host.searches(), Err(vec![Outside::Site]));
+    let two_broken = PlannedNeed {
+        site: Some("the official docs".into()),
+        after: Some("last spring".into()),
+        ..need("Span<T> async", NeedKind::OfficialDocs)
+    };
+    assert_eq!(
+        two_broken.searches(),
+        Err(vec![Outside::Site, Outside::Date])
+    );
     assert_eq!(
         need("site:react.dev", NeedKind::Web).searches(),
-        Err(Outside::Query),
+        Err(vec![Outside::Query]),
         "no terms are left to search once the site is lifted out"
     );
 }

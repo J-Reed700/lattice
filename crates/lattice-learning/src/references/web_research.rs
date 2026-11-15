@@ -110,10 +110,10 @@ impl PlannedNeed {
     /// place a search's scope is kept: `site:` operators in a query become one
     /// search per site named. The rule broken when the need breaks [`need_schema`],
     /// which not every model provider enforces.
-    pub(crate) fn searches(self) -> Result<Vec<Self>, Outside> {
+    pub(crate) fn searches(self) -> Result<Vec<Self>, Vec<Outside>> {
         let (query, named) = lift_sites(&self.query);
         let sites: Vec<Option<Origin>> = match filled(self.site.clone()) {
-            Some(site) => vec![Some(Origin::parse(&site).ok_or(Outside::Site)?)],
+            Some(site) => vec![Some(Origin::parse(&site).ok_or(vec![Outside::Site])?)],
             None if named.is_empty() => vec![None],
             None => named.into_iter().map(Some).collect(),
         };
@@ -165,7 +165,7 @@ impl PlannedNeed {
 
     /// The need trimmed, with empty fields dropped, when its fields keep to
     /// the schema; its site is [`Self::searches`]'s to decide.
-    fn checked(self) -> Result<Self, Outside> {
+    fn checked(self) -> Result<Self, Vec<Outside>> {
         let query = self.query.trim().to_owned();
         let ecosystem = filled(self.ecosystem);
         let identifier = filled(self.identifier);
@@ -182,27 +182,27 @@ impl PlannedNeed {
             Some(_) => after.is_none() && identifier.as_deref().is_some_and(is_page_address),
         };
         if query.is_empty() {
-            return Err(Outside::Query);
+            return Err(vec![Outside::Query]);
         }
         if alternatives.iter().any(|rewording| rewording.is_empty()) {
-            return Err(Outside::Rewording);
+            return Err(vec![Outside::Rewording]);
         }
         if !PLANNED_KINDS.contains(&self.kind) {
-            return Err(Outside::Kind);
+            return Err(vec![Outside::Kind]);
         }
         if ecosystem
             .as_deref()
             .is_some_and(|registry| Ecosystem::parse(registry).is_none())
         {
-            return Err(Outside::Registry);
+            return Err(vec![Outside::Registry]);
         }
         if after.as_ref().is_some_and(Option::is_none)
             || as_of.as_ref().is_some_and(Option::is_none)
         {
-            return Err(Outside::Date);
+            return Err(vec![Outside::Date]);
         }
         if !dated_read_named {
-            return Err(Outside::DatedRead);
+            return Err(vec![Outside::DatedRead]);
         }
         Ok(Self {
             query,
@@ -483,7 +483,7 @@ impl Answered for ReferenceNeeds {
             .clone()
             .searches()
             .map(|_| ())
-            .map_err(|outside| outside_a_search(&[outside]))
+            .map_err(|broken| outside_a_search(&broken))
     }
 }
 

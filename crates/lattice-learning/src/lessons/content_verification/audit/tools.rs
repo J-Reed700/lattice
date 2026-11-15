@@ -333,7 +333,12 @@ impl Call<'_> {
             .map(PlannedNeed::searches)
         {
             Ok(Ok(searches)) => searches,
-            Ok(Err(outside)) => return format!("Search not run. {}", outside.says()),
+            Ok(Err(broken)) => {
+                return format!(
+                    "Search not run. {}",
+                    web_research::outside_a_search(&broken).0
+                );
+            }
             Err(_) => {
                 return "Search not run: give a query and one of the listed kinds.".into();
             }

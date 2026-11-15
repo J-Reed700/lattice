@@ -1184,9 +1184,9 @@ async fn a_plan_longer_than_the_course_depth_keeps_its_first_subtopics() -> Resu
     Ok(())
 }
 
-/// A subtopic the app cannot use is left out on its own; the others stand.
+/// A subtopic left with no usable search is left out on its own; the others stand.
 #[tokio::test]
-async fn a_subtopic_with_an_unusable_search_is_left_out_and_the_others_stand() -> Result<()> {
+async fn a_subtopic_with_no_usable_search_is_left_out_and_the_others_stand() -> Result<()> {
     let request = request(LearningCourseDepth::Focused);
     let unusable = json!({"title":"Harbour gates","needs":[crate::references::web_research::written_need(&json!({
         "query": "harbour gate opening times", "kind": "web", "after": "last spring"

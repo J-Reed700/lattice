@@ -193,13 +193,13 @@ impl Answered for OutlineReferencePlan {
         if subtopic.title.trim().is_empty() {
             return Err(Refusal("Give this subtopic a title.".into()));
         }
-        let broken: Vec<web_research::Outside> = subtopic
+        let broken: Vec<Vec<web_research::Outside>> = subtopic
             .needs
             .iter()
             .filter_map(|need| need.clone().searches().err())
             .collect();
         if !broken.is_empty() && broken.len() == subtopic.needs.len() {
-            return Err(web_research::outside_a_search(&broken));
+            return Err(web_research::outside_a_search(&broken.concat()));
         }
         Ok(())
     }
@@ -258,11 +258,11 @@ pub(crate) async fn plan(
         for need in subtopic.needs {
             let searches = match need.searches() {
                 Ok(searches) => searches,
-                Err(outside) => {
+                Err(broken) => {
                     unusable += 1;
                     tracing::warn!(
                         subtopic = title,
-                        rule = ?outside,
+                        rules = ?broken,
                         "Dropped a reference search outside what a search allows"
                     );
                     continue;

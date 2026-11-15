@@ -169,8 +169,8 @@ async fn a_package_search_reads_its_registry_and_any_other_search_reads_none() -
     Ok(())
 }
 
-#[tokio::test]
-async fn a_refused_search_is_told_the_rule_it_broke_and_no_other() -> Result<()> {
+/// What the planner is asked a second time after its first answer is `refused`.
+async fn correction_after(refused: Value) -> Result<String> {
     let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     let model = ScriptedModel::new().on_request::<ReferenceNeeds>({
         let seen = seen.clone();
@@ -188,7 +188,7 @@ async fn a_refused_search_is_told_the_rule_it_broke_and_no_other() -> Result<()>
             let mut seen = seen.lock().unwrap();
             seen.push(last);
             let search = if seen.len() == 1 {
-                json!({"gap": 0, "query": "harbour gate opening times", "kind": "web", "site": "the harbour office pages"})
+                refused.clone()
             } else {
                 json!({"gap": 1, "query": "tide table revision schedule", "kind": "web"})
             };
@@ -198,12 +198,41 @@ async fn a_refused_search_is_told_the_rule_it_broke_and_no_other() -> Result<()>
     plan_needs(&model, "harbour", &gaps(), json!([]), &[]).await?;
     let seen = seen.lock().unwrap();
     assert_eq!(seen.len(), 2, "one correction");
+    Ok(seen[1].clone())
+}
+
+#[tokio::test]
+async fn a_refused_search_is_told_the_rule_it_broke_and_no_other() -> Result<()> {
+    let correction = correction_after(
+        json!({"gap": 0, "query": "harbour gate opening times", "kind": "web", "site": "the harbour office pages"}),
+    )
+    .await?;
     assert!(
-        seen[1].contains("A site is the address of one host"),
-        "{}",
-        seen[1]
+        correction.ends_with(&format!("{} Answer again.", Outside::Site.says())),
+        "{correction}"
     );
-    assert!(!seen[1].contains("YYYY-MM-DD"), "{}", seen[1]);
+    for other in [
+        Outside::Query,
+        Outside::Rewording,
+        Outside::Kind,
+        Outside::Registry,
+        Outside::Date,
+        Outside::DatedRead,
+    ] {
+        assert!(!correction.contains(other.says()), "{correction}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_search_breaking_two_rules_is_told_both() -> Result<()> {
+    let correction = correction_after(
+        json!({"gap": 0, "query": "harbour gate opening times", "kind": "web", "site": "the harbour office pages", "after": "last spring"}),
+    )
+    .await?;
+    for rule in [Outside::Site, Outside::Date] {
+        assert_eq!(correction.matches(rule.says()).count(), 1, "{correction}");
+    }
     Ok(())
 }
 
