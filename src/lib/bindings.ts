@@ -9495,8 +9495,7 @@ metadata: string | null;
  */
 status: string;
 /**
- * The reply as pieces, text and resolved references in reply order.
- * Assistant messages only.
+ * An assistant message as text between references; absent for any other message.
  */
 reply?: ReplyPieceDto[] | null }
 /**
@@ -10222,7 +10221,6 @@ export type ReopenCauseDto = { cause: "sentence_changed" } | { cause: "source_de
 export type RepairAttemptDto = { attempt: number; escalated: boolean; before: string; after: string | null; outcome: RepairOutcomeDto; at: number }
 export type RepairLearningOutlineRequestDto = { programId: string; expectedRevision: number }
 export type RepairOutcomeDto = { outcome: "rewritten" } | { outcome: "removed" } | { outcome: "rejected"; reason: string } | { outcome: "superseded_by_user" }
-export type ReportLearningQuizItemRequestDto = { operationId: string; programId: string; formId: string; itemId: string; note: string }
 /**
  * One piece of a reply, in order.
  */
@@ -10247,6 +10245,7 @@ number: number; lines?: LinesDto | null;
  * What a kind drawn by name shows: a file's path.
  */
 name?: string | null }
+export type ReportLearningQuizItemRequestDto = { operationId: string; programId: string; formId: string; itemId: string; note: string }
 export type ReprofileLearningClaimRequestDto = { programId: string;
 /**
  * A claim of one of the course's lesson reviews.
@@ -10963,7 +10962,11 @@ annotation: string }
  */
 export type SimilarDocumentDto = { documentId: string; title: string; filePath: string | null; score: number }
 export type SkipLearningDiagnosticRequestDto = { operationId: string; programId: string; expectedRevision: number }
-export type SnapshotMessageDto = { id: string; role: string; content: string; createdAt: string; metadata?: string | null; reply?: ReplyPieceDto[] | null }
+export type SnapshotMessageDto = { id: string; role: string; content: string; createdAt: string; metadata?: string | null;
+/**
+ * The message as text between references, when it was saved with them.
+ */
+reply?: ReplyPieceDto[] | null }
 /**
  * Where the frozen copy of an attached page stands.
  */
