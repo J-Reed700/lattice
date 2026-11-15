@@ -3,13 +3,13 @@
 use super::*;
 
 impl Rows {
-    /// The units of the text at `field` of `part` (a path inside the part) that overlap an occurrence of `quote` in it as shown.
-    pub(crate) fn units_over(&self, part: &str, field: &str, quote: &str) -> Vec<UnitRef> {
-        let pointer = format!("{part}/{field}");
+    /// The units of the text at `pointer` that overlap an occurrence of `quote` in it as shown.
+    pub(crate) fn units_over(&self, pointer: &str, quote: &str) -> Vec<UnitRef> {
+        let quote = quote.trim();
         let Some(held) = self.fields.iter().find(|held| held.pointer == pointer) else {
             return Vec::new();
         };
-        let Some(text) = self.base.pointer(&pointer).and_then(Value::as_str) else {
+        let Some(text) = self.base.pointer(pointer).and_then(Value::as_str) else {
             return Vec::new();
         };
         if quote.is_empty() {
@@ -38,21 +38,6 @@ impl Rows {
             .find(|held| held.at == *at)
             .map(|held| held.covers.clone())
             .unwrap_or_default()
-    }
-
-    /// The written handles `shown` gave `units`, in the order of `units`.
-    pub(crate) fn handles_of(shown: &ShownRows<'_>, units: &[UnitRef]) -> Vec<String> {
-        units
-            .iter()
-            .filter_map(|unit| {
-                shown
-                    .units
-                    .iter()
-                    .flat_map(|texts| texts.iter())
-                    .find(|(_, held)| held.reference() == *unit)
-                    .map(|(handle, _)| handle.written())
-            })
-            .collect()
     }
 }
 

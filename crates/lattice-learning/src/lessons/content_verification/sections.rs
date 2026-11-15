@@ -593,14 +593,18 @@ fn flow_check(input: &FlowInput, of: usize, fix: &Fix) -> std::result::Result<()
     let beside = |sentence: &Option<String>| {
         sentence
             .as_deref()
-            .and_then(|text| rows.sentence_at(&input.pointer(&gap.field), text))
+            .and_then(|text| rows.units_over(&input.pointer(&gap.field), text).into_iter().next())
     };
     let (before, after) = (beside(&gap.before), beside(&gap.after));
     let verified: Vec<_> = input
         .verified
         .value()
         .iter()
-        .filter_map(|item| rows.sentence_at(&input.pointer(&item.field), &item.quote))
+        .filter_map(|item| {
+            rows.units_over(&input.pointer(&item.field), &item.quote)
+                .into_iter()
+                .next()
+        })
         .collect();
     let change = edits.sentences.change();
     let named = change
@@ -657,7 +661,9 @@ impl Answered for FlowRepair {
         let rows = Rows::of_part(&material, input.part.value());
         let shown = rows.shown(showing)?;
         let label = |field: &str, sentence: &str| {
-            rows.sentence_at(&input.pointer(field), sentence)
+            rows.units_over(&input.pointer(field), sentence)
+                .into_iter()
+                .next()
                 .and_then(|unit| shown.handle_of(unit))
                 .map(|handle| handle.written())
         };
