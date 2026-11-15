@@ -458,10 +458,9 @@ impl Subject for LessonSubject<'_> {
         match class {
             ErrorClass::DoesNotFit => {
                 tracing::warn!(%reason, "The teaching repair did not fit the window; its findings wait for the user");
-                self.passes.hold(
-                    send.iter().map(ReviewFinding::id),
-                    "its repair did not fit the window",
-                );
+                for finding in send {
+                    self.passes.charge(finding, Outcome::NoRoom);
+                }
             }
             _ => {
                 tracing::warn!(%reason, "The teaching repair could not be used");

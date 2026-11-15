@@ -1207,8 +1207,12 @@ async fn a_plan_with_no_usable_subtopic_is_malformed() {
     let unusable = json!({"title":"Harbour gates","needs":[crate::references::web_research::written_need(&json!({
         "query": "harbour gate opening times", "kind": "web", "after": "last spring"
     }))]});
-    for answer in [json!({"items":[unusable]}), json!({"items":[]})] {
-        let llm = model(vec![answer]);
+    // A plan whose every subtopic is refused is asked for once more.
+    for answers in [
+        vec![json!({"items":[unusable]}); 2],
+        vec![json!({"items":[]})],
+    ] {
+        let llm = model(answers);
         let error = outline_references::plan(&llm, &request, &[], &OutlineProgress::default())
             .await
             .unwrap_err();

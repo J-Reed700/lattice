@@ -231,7 +231,7 @@ impl LLMPort for Figures {
             .iter()
             .any(|prompt| prompt.starts_with("Source passages:"))
         {
-            let correcting = asked_again_with(request).is_some();
+            let correcting = !fixture_correction(request).is_empty();
             let ask = if correcting {
                 self.asks.load(Ordering::Relaxed)
             } else {

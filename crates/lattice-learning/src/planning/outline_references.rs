@@ -19,7 +19,7 @@ use futures::StreamExt;
 use lattice_core::application::contracts::web::WebSearchResult;
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::application::services::model_contract::ask::{
-    ask_new, Alone, Answered, Refusal, Says,
+    self, ask_new, Alone, Answered, Refusal, Says, Why,
 };
 use lattice_core::application::services::model_contract::shape::{Authored, Fields, Form, New};
 use lattice_core::application::services::model_contract::shown::{Scope, Showing, Told};
@@ -165,7 +165,7 @@ impl Contract for OutlineReferencePlan {
 
 impl Answered for OutlineReferencePlan {
     type Answer = New<Subtopic>;
-    const ALONE: Alone = Alone::Fails;
+    const ALONE: Alone = Alone::Pending;
 
     fn says(input: &PlanInput, _showing: &mut Showing<'_>) -> Result<Says> {
         let mut payload = json!({
@@ -239,7 +239,11 @@ pub(crate) async fn plan(
     )
     .await?;
     if found.items.is_empty() {
-        return Err(malformed());
+        // No subtopic, or none the app can use, is a malformed plan; an answer never read fails as that.
+        return Err(match &found.rest {
+            Some(why) if !matches!(why, Why::Refused(_)) => ask::failed(why),
+            _ => malformed(),
+        });
     }
     let private = [request.goal.as_str(), request.prior_knowledge.as_str()];
     let mut planned = 0;

@@ -114,8 +114,8 @@ pub(super) struct Mended {
 }
 
 impl Mended {
-    /// Why nothing changed, finding by finding, for material that fails closed.
-    pub(super) fn unmade(&self) -> String {
+    /// Why nothing changed, finding by finding: the error of material that fails closed.
+    pub(super) fn unmade(&self) -> AppError {
         let mut said: Vec<String> = Vec::new();
         for outcome in &self.outcomes {
             let words = outcome.in_words();
@@ -123,7 +123,12 @@ impl Mended {
                 said.push(words);
             }
         }
-        format!("The repair changed nothing: {}", said.join(" | "))
+        let reason = format!("The repair changed nothing: {}", said.join(" | "));
+        if self.outcomes.contains(&Outcome::NoRoom) {
+            AppError::WindowTooSmall(reason)
+        } else {
+            AppError::ModelAnswerUnusable(reason)
+        }
     }
 }
 
@@ -530,6 +535,7 @@ impl Taking<'_, '_> {
             Settled::Unanswered(Why::Refused(reason) | Why::Contradicted(reason)) => {
                 return Ok((Outcome::NotApplied(vec![reason]), Vec::new()));
             }
+            Settled::Unanswered(Why::NoRoom) => return Ok((Outcome::NoRoom, Vec::new())),
             Settled::Unanswered(why) => {
                 let reason = structured_call::refusal(&ask::failed(&why));
                 return Ok((Outcome::Unusable(reason), Vec::new()));

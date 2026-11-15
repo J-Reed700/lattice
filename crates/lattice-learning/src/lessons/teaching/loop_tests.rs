@@ -1679,7 +1679,11 @@ async fn the_repair_may_answer_only_for_the_findings_sent() -> Result<()> {
     let schemas = recorder.schemas.lock().unwrap();
     let schema = schemas
         .iter()
-        .find(|schema| schema.pointer("/properties/entries").is_some())
+        .find(|schema| {
+            schema
+                .pointer("/properties/entries/items/properties/edits")
+                .is_some()
+        })
         .unwrap();
     assert!(schema["properties"].get("edits").is_none());
     let asked = repair_requests(&scripted);

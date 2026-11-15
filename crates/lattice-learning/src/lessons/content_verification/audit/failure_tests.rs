@@ -480,7 +480,7 @@ async fn an_audit_item_correction_quotes_the_refusal() {
         "{second}"
     );
     assert!(
-        second.contains("the answer is not the audit's JSON"),
+        second.contains("Your answer could not be read."),
         "{second}"
     );
 }

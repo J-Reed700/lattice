@@ -59,6 +59,8 @@ pub(super) enum Outcome {
     Unusable(String),
     /// Its edit overlapped another finding's and was left out: not an attempt.
     Deferred,
+    /// Its repair does not fit the model's window: not an attempt, it waits for the user.
+    NoRoom,
 }
 
 impl Outcome {
@@ -86,9 +88,12 @@ impl Outcome {
             }
             Self::Unusable(reason) => format!("the repair's answer could not be used: {reason}"),
             Self::Deferred => "its edit overlapped another finding's and was left out".to_owned(),
+            Self::NoRoom => NO_ROOM.to_owned(),
         }
     }
 }
+
+const NO_ROOM: &str = "its repair did not fit the window";
 
 /// What a finding's repairs came to, for the log of one the user is left with.
 pub(super) struct Account {
@@ -324,7 +329,8 @@ impl Passes {
     /// repair is charged to it, unless its edit was only left out for
     /// overlapping another finding's, or the attempt was a miss and the one
     /// before it (not counting those left out) was not. Of two attempts in a
-    /// row one is charged, so the review still ends.
+    /// row one is charged, so the review still ends. A finding whose repair
+    /// does not fit is not charged: it waits for the user.
     pub fn charge(&mut self, finding: &ReviewFinding, outcome: Outcome) {
         trace::decided_finding(
             Stage::TeachingRepair,
@@ -333,6 +339,10 @@ impl Passes {
             &format!("{outcome:?}"),
         );
         let id = finding.id();
+        if outcome == Outcome::NoRoom {
+            self.hold([id], NO_ROOM);
+            return;
+        }
         let attempts = self.attempts.entry(id.clone()).or_default();
         let missed_before = attempts
             .iter()
@@ -378,6 +388,7 @@ impl Passes {
                 format!("The last repair's answer could not be used: {reason}")
             }
             Outcome::Deferred => "The last repair's edit for this finding overlapped an edit for another finding and was left out; give it again.".to_owned(),
+            Outcome::NoRoom => "The last repair for this finding did not fit the window.".to_owned(),
         })
     }
 

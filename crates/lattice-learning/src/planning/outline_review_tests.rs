@@ -278,8 +278,9 @@ async fn factual_findings_on_plan_items_are_recorded_as_plan_findings() -> Resul
 async fn the_reviewer_cannot_raise_a_course_wide_finding() -> Result<()> {
     let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     // The empty path is not an allowed path on any pass: the schema enum
-    // excludes it and a finding that uses it anyway is dropped, so nothing is
-    // saved from it and no module is rewritten for it.
+    // excludes it and a finding that uses it anyway is refused, so the
+    // reviewer is asked once more; nothing is saved from it and no module is
+    // rewritten for it.
     let llm = model(vec![
         candidate(),
         findings(vec![plan_finding(
@@ -287,6 +288,7 @@ async fn the_reviewer_cannot_raise_a_course_wide_finding() -> Result<()> {
             "The course claims to cover experimental design in four modules.",
             "Four modules cannot cover the stated scope.",
         )]),
+        findings(vec![]),
     ]);
     let program = generate(&repo, &llm).await?;
     let review = program.outline_review.as_ref().unwrap();
@@ -297,7 +299,7 @@ async fn the_reviewer_cannot_raise_a_course_wide_finding() -> Result<()> {
         review.note
     );
     assert!(review.issues.is_empty());
-    assert_eq!(llm.prompts.lock().unwrap().len(), 2);
+    assert_eq!(llm.prompts.lock().unwrap().len(), 3);
     Ok(())
 }
 

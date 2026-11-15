@@ -183,7 +183,7 @@ impl Subject for MaterialSubject {
         if mended.changed {
             return Ok(Settled::Changed(mended.candidate.to_string()));
         }
-        Err(AppError::ModelAnswerUnusable(mended.unmade()))
+        Err(mended.unmade())
     }
 
     fn settle_rewrite(
