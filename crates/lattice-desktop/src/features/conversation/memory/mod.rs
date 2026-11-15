@@ -33,12 +33,9 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use lattice_core::application::ports::conversation_memory::{MemoryCommitError, SourceReadLimits};
-use lattice_core::application::ports::llm_port::{
-    CompletionInput, InferencePriority, SamplingOverride,
-};
+use lattice_core::application::ports::llm_port::{InferencePriority, SamplingOverride};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::CallOptions;
-use lattice_core::application::services::model_contract::{legacy, tagged, ContractCall};
 use lattice_core::domain::conversation::memory::{
     MemoryCommit, MemorySnapshot, MemoryValidationError, SummaryRefold,
 };

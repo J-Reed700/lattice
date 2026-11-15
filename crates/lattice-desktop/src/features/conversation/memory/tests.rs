@@ -845,7 +845,10 @@ fn as_items(scripted: &str, prompt: &str, existing: &[String]) -> String {
         let superseded = transition["state"] == "superseded";
         let proposal = match (candidate(&transition["item_id"]), replacement) {
             (Some(earlier), Some(later)) if superseded => {
-                nested.extend([earlier["candidate_id"].clone(), later["candidate_id"].clone()]);
+                nested.extend([
+                    earlier["candidate_id"].clone(),
+                    later["candidate_id"].clone(),
+                ]);
                 serde_json::json!({
                     "kind": "correct",
                     "evidence": grounds,
@@ -1006,8 +1009,7 @@ impl FakeLlm {
     /// whole summary: every line the request shows under `key` removed, the
     /// text inserted at the start.
     fn rewriting(prompt: &str, key: &str, text: &str) -> String {
-        let payload: serde_json::Value =
-            serde_json::from_str(prompt).expect("summary prompt JSON");
+        let payload: serde_json::Value = serde_json::from_str(prompt).expect("summary prompt JSON");
         let shown: Vec<&str> = payload[key]
             .as_str()
             .unwrap_or_default()
@@ -1274,10 +1276,9 @@ fn the_extractor_prompt_states_every_rule_the_design_requires() {
 /// exceeds its repetition threshold, so no schema bound may.
 #[test]
 fn every_schema_bound_stays_within_the_llama_cpp_grammar_repetition_limit() {
-    for (name, schema) in [(
-        "turn intent",
-        crate::features::conversation::chat::intent::intent_schema(),
-    )] {
+    {
+        let name = "turn intent";
+        let schema = crate::features::conversation::chat::intent::intent_schema();
         let (bound, path) =
             lattice_core::application::ports::llm_port::largest_repetition_bound(&schema);
         assert!(
@@ -1304,7 +1305,10 @@ fn properties_holding<'a>(
         serde_json::Value::Object(map) => map
             .get("properties")
             .filter(|properties| properties.get(key).is_some())
-            .or_else(|| map.values().find_map(|child| properties_holding(child, key))),
+            .or_else(|| {
+                map.values()
+                    .find_map(|child| properties_holding(child, key))
+            }),
         serde_json::Value::Array(items) => items
             .iter()
             .find_map(|child| properties_holding(child, key)),
@@ -1317,10 +1321,12 @@ fn properties_holding<'a>(
 #[test]
 fn the_extraction_grammar_asks_for_the_grounds_before_the_decision() {
     use lattice_core::application::services::model_contract::shape::{Pointers, Shape};
-    let mut scope = lattice_core::application::services::model_contract::shown::Scope::for_question();
+    let mut scope =
+        lattice_core::application::services::model_contract::shown::Scope::for_question();
     let showing = scope.request();
     type Answer = <super::extract::MemoryExtraction as lattice_core::application::services::model_contract::ask::Answered>::Answer;
-    let schema = <Answer as Shape>::schema(&showing, Pointers::Plain).expect("the extraction schema");
+    let schema =
+        <Answer as Shape>::schema(&showing, Pointers::Plain).expect("the extraction schema");
     let addition = properties_holding(schema.as_json(), "label").expect("an addition");
     assert_eq!(object_keys(Some(addition)), ["evidence", "kind", "label"]);
 }
@@ -1339,7 +1345,8 @@ fn the_extraction_request_ends_with_the_passages_to_extract() {
     );
     let segments = segment_message(&source, 512, 32);
     let input = Input::of(&segments, &[source], &[], &[]);
-    let mut scope = lattice_core::application::services::model_contract::shown::Scope::for_question();
+    let mut scope =
+        lattice_core::application::services::model_contract::shown::Scope::for_question();
     let mut showing = scope.request();
     let says = MemoryExtraction::says(&input, &mut showing).expect("the extraction request");
     let payload: serde_json::Value =
@@ -1358,7 +1365,9 @@ fn the_extraction_request_ends_with_the_passages_to_extract() {
     sorted_segment_keys.sort_unstable();
     assert_eq!(segment_keys, sorted_segment_keys);
     assert_eq!(
-        payload.pointer("/segments/0/text").and_then(serde_json::Value::as_str),
+        payload
+            .pointer("/segments/0/text")
+            .and_then(serde_json::Value::as_str),
         Some("[s1] Never deploy to production on a Friday.")
     );
 }
@@ -1507,7 +1516,11 @@ async fn an_unreadable_answer_is_asked_for_once_more_and_then_commits_nothing() 
         .expect_err("an unparseable patch cannot be committed");
     assert!(error.to_string().contains("rejected"), "{error}");
 
-    assert_eq!(llm.count(Task::Extract), 2, "the answer and its one correction");
+    assert_eq!(
+        llm.count(Task::Extract),
+        2,
+        "the answer and its one correction"
+    );
     assert_eq!(
         llm.count(Task::Summarize),
         0,
@@ -1629,10 +1642,7 @@ async fn a_correction_here_reaches_a_fact_from_another_chat() {
             )],
             &PREFIX_SEGMENTS,
         ))],
-        vec![Ok(verdict_response(&[(
-            "r1",
-            "supported",
-        )]))],
+        vec![Ok(verdict_response(&[("r1", "supported")]))],
         vec![Ok("Deployment is now allowed on staging.".to_string())],
     );
     let job = job(port.clone(), llm.clone(), small_config());
@@ -1679,10 +1689,7 @@ async fn an_unclear_correction_to_a_shared_item_quotes_only_this_chat() {
             )],
             &PREFIX_SEGMENTS,
         ))],
-        vec![Ok(verdict_response(&[(
-            "r1",
-            "ambiguous",
-        )]))],
+        vec![Ok(verdict_response(&[("r1", "ambiguous")]))],
         vec![Ok("Deployment may have changed.".to_string())],
     );
     let job = job(port.clone(), llm.clone(), small_config());
@@ -1748,10 +1755,7 @@ async fn an_unsupported_retirement_is_dropped_without_stalling_source_coverage()
             )],
             &PREFIX_SEGMENTS,
         ))],
-        vec![Ok(verdict_response(&[(
-            "r1",
-            "unsupported",
-        )]))],
+        vec![Ok(verdict_response(&[("r1", "unsupported")]))],
         vec![Ok("Staging exception raised but unresolved.".to_string())],
     );
     let job = job(port.clone(), llm.clone(), small_config());
@@ -2323,7 +2327,11 @@ async fn a_regenerated_answer_refolds_the_turns_the_dropped_summary_covered() {
     let second: serde_json::Value =
         serde_json::from_str(&llm.prompts_for(Task::Extract).pop().unwrap()).unwrap();
     let segments = second["segments"].as_array().expect("segments");
-    assert_eq!(segments.len(), 1, "the covered turns must not be re-extracted");
+    assert_eq!(
+        segments.len(),
+        1,
+        "the covered turns must not be re-extracted"
+    );
     assert!(segments[0]["text"]
         .as_str()
         .is_some_and(|text| text.contains("Noted again: staging only.")));
@@ -2855,10 +2863,9 @@ async fn a_summary_line_restating_a_forgotten_value_is_not_kept() {
     let llm = FakeLlm::new(
         vec![Ok(extraction_response(vec![], vec![], &["k5:s0", "k6:s0"]))],
         vec![],
-        vec![Ok(
-            "The locker was rekeyed, scratch 4471.
-The rekeying is noted.".to_string(),
-        )],
+        vec![Ok("The locker was rekeyed, scratch 4471.
+The rekeying is noted."
+            .to_string())],
     );
     llm.restating("4471");
     let job = job(port.clone(), llm.clone(), small_config());
@@ -3417,7 +3424,10 @@ async fn a_verdict_for_a_change_the_request_did_not_show_is_not_read() {
     let llm = FakeLlm::new(
         two_constraints(),
         vec![
-            Ok(verdict_response(&[("r1", "supported"), ("r9", "supported")])),
+            Ok(verdict_response(&[
+                ("r1", "supported"),
+                ("r9", "supported"),
+            ])),
             Ok(verdict_response(&[("r2", "unsupported")])),
         ],
         summary_reply(),
@@ -3434,7 +3444,10 @@ async fn a_verdict_for_a_change_the_request_did_not_show_is_not_read() {
     assert_eq!(reviewed_ids(&prompts[1]), ["r2"]);
     assert!(!outcome.review_degraded);
     let [kept] = outcome.commit.inserts.as_slice() else {
-        panic!("expected the supported addition alone: {:?}", outcome.commit.inserts);
+        panic!(
+            "expected the supported addition alone: {:?}",
+            outcome.commit.inserts
+        );
     };
     assert_eq!(kept.label, "Deployment requires approval");
 }
@@ -3539,9 +3552,7 @@ fn the_surrounding_text_is_cut_to_the_room_the_window_leaves() {
 fn the_review_request_holds_no_identity_of_the_app() {
     use super::verify::{Excerpt, Input, MemoryReview, Passage, Review, Subject};
     use lattice_core::application::services::model_contract::shown::Told;
-    use lattice_core::application::services::model_contract::test_support::taint::{
-        holds, Marks,
-    };
+    use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
     let mut marks = Marks::new();
     let passage = Passage {
         message_id: marks.told("message-quay-3".to_owned()),
@@ -3603,7 +3614,10 @@ async fn a_proposal_the_rules_refuse_is_left_out_and_the_others_stand() {
         .unwrap();
 
     assert_eq!(outcome.commit.inserts.len(), 1);
-    assert_eq!(outcome.commit.inserts[0].label, "Deployment requires approval");
+    assert_eq!(
+        outcome.commit.inserts[0].label,
+        "Deployment requires approval"
+    );
     assert!(port.errors().is_empty());
     assert_eq!(port.watermark(), 4);
 }
@@ -3697,9 +3711,7 @@ async fn a_supersede_proposal_retires_the_existing_item_by_its_handle() {
 fn the_extraction_request_holds_no_identity_of_the_app() {
     use super::extract::{Context, Input, Memory, MemoryExtraction, Place, Segment, Sentence};
     use lattice_core::application::services::model_contract::shown::{Internal, Told};
-    use lattice_core::application::services::model_contract::test_support::taint::{
-        holds, Marks,
-    };
+    use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
     let mut marks = Marks::new();
     let sentence = |marks: &mut Marks, passage: usize, words: &str| Sentence {
         place: marks.internal(Place {
