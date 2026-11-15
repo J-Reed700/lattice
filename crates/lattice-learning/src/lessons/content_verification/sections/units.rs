@@ -21,7 +21,7 @@ pub(super) fn set_unit(lesson: &mut Value, unit: usize, section: Value) -> bool 
 
 /// A section's title, or a question's prompt: what a record of it is checked
 /// against.
-pub(super) fn unit_label(lesson: &Value, unit: usize) -> Option<String> {
+pub(in super::super) fn unit_label(lesson: &Value, unit: usize) -> Option<String> {
     let (list, _) = FindingSite::in_candidate(lesson, unit).array()?;
     let field = if list == "blocks" { "title" } else { "prompt" };
     unit_at(lesson, unit)?
@@ -32,7 +32,7 @@ pub(super) fn unit_label(lesson: &Value, unit: usize) -> Option<String> {
 
 /// The sections `cuts` leaves with too little to teach in `lesson`, whatever
 /// else of it could be published.
-pub(super) fn left_with_too_little(
+pub(in super::super) fn left_with_too_little(
     lesson: &Value,
     cuts: &Cuts,
     shape: &dyn ShapePolicy,
@@ -44,7 +44,7 @@ pub(super) fn left_with_too_little(
 
 /// Puts `units` of `lesson` back as they are in `from`, and what `cuts` took
 /// from them back as it is in `earlier`.
-pub(super) fn restore_units(
+pub(in super::super) fn restore_units(
     (lesson, cuts): (&mut Value, &mut Cuts),
     (from, earlier): (&Value, &Cuts),
     units: &[usize],

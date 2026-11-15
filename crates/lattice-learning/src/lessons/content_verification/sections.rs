@@ -32,9 +32,10 @@ use lattice_core::domain::learning::claim_review::ClaimId;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod units;
-pub(super) use units::{
-    left_with_too_little, restore_units, send_out, set_unit, too_little, unit_at, unit_label,
-};
+pub(super) use units::{left_with_too_little, restore_units, unit_label};
+use units::{send_out, set_unit, unit_at};
+#[cfg(test)]
+use units::too_little;
 
 /// What the flow repair is told besides the form of its answer.
 const FLOW: &str = "Sentences were taken out of this lesson section because they were shown to be wrong. Restore the flow of what is left: fix a word that now points at nothing (\"this\", \"these\", \"as above\", a step number) and join the sentences on either side of a gap if they no longer follow, changing as little as you can. gaps lists, for each place a sentence was taken out, the labels of the sentence kept before it and the one kept after it: change only those sentences, or add a short connecting sentence between them. verifiedSentences lists the labels of sentences that are checked and must stay exactly as they are; connect around them. Add no statement of fact: no new claim, figure, name, quotation, cause or consequence. Give an entry with no edits for a gap that reads well as it is.";
