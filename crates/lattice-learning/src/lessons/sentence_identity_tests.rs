@@ -142,26 +142,20 @@ fn the_prompts_state_the_floor_the_validator_enforces() {
     use crate::generation::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
     let schema = crate::generation::lesson_schema(2);
     let floor = format!("{MIN_QUOTE_CHARS} characters and {MIN_QUOTE_WORDS} words");
-    for (who, text) in [(
-        "claim repair",
-        super::text_edits::rewrite_instructions(&schema),
-    )] {
-        assert!(text.contains(&floor), "{who}: {text}");
-    }
+    let who = "claim repair";
+    let text = super::text_edits::rewrite_instructions(&schema);
+    assert!(text.contains(&floor), "{who}: {text}");
 }
 
 #[test]
 fn the_writer_and_the_claim_repair_are_told_never_to_paste_the_quote_as_the_sentence() {
     let schema = crate::generation::lesson_schema(2);
-    for (who, text) in [(
-        "claim repair",
-        super::text_edits::rewrite_instructions(&schema),
-    )] {
-        assert!(
-            text.contains("never paste the quote as the sentence"),
-            "{who}"
-        );
-    }
+    let who = "claim repair";
+    let text = super::text_edits::rewrite_instructions(&schema);
+    assert!(
+        text.contains("never paste the quote as the sentence"),
+        "{who}"
+    );
 }
 
 #[test]

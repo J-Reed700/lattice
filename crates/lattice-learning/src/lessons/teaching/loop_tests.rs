@@ -3625,12 +3625,6 @@ async fn an_outline_revision_whose_quote_matches_no_reference_is_repaired() {
     assert!(result.is_ok(), "{result:?}");
 }
 
-/// A review of the lesson's one section that reports `issues` about the
-/// lesson as a whole.
-fn judged_issues(issues: &[&str]) -> String {
-    review_reply(issues, vec![], &[])
-}
-
 const ALPHA: &str = "Alpha is first.";
 const GAMMA: &str = "Gamma is third.";
 
