@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::edit::{Applied, Consistent, Edited, Laid};
 use super::shape::Settled;
-use super::shown::{Drawn, Kind, Showing, Shown};
+use super::shown::{Drawn, Handle, Kind, Picked, Showing, Shown};
 use crate::shared::error::Result;
 use crate::shared::hash::sha256_prefix;
 use crate::shared::text::sentences;
@@ -106,6 +106,21 @@ impl Held for Quoted {
     fn unit(&self) -> &Unit {
         &self.0
     }
+}
+
+/// A unit's label in a row and in a marked text: its bracketed handle, then a space.
+fn label<K>(handle: &Handle<K>) -> String {
+    format!("{} ", handle.bracketed())
+}
+
+/// A replacement as text. One written as its row, the replaced unit's own label before it, is the text.
+fn unlabelled(unit: &Picked<Unit>, with: String) -> String {
+    let text = with.trim_start();
+    let Some(rest) = text.strip_prefix(&label(&unit.handle)) else {
+        return with;
+    };
+    let lead = with.strip_suffix(text).unwrap_or_default();
+    format!("{lead}{rest}")
 }
 
 /// A text as units, with what the app keeps between them.
@@ -206,7 +221,7 @@ impl Units {
                     Grain::Sentence => unit.text.replace(['\r', '\n'], " "),
                     Grain::Line => unit.text.clone(),
                 };
-                format!("{} {text}", handle.bracketed())
+                format!("{}{text}", label(handle))
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -222,7 +237,7 @@ impl Units {
 
     /// Applies a change whole, or not at all.
     pub fn apply(&mut self, change: Consistent<Unit, String>) -> Settled<Applied<Unit>> {
-        self.edited.apply(change)
+        self.edited.apply(change.map_replaced(unlabelled))
     }
 
     /// The text as it stands after the changes applied so far. New content is
@@ -269,8 +284,7 @@ impl Units {
         let mut out = self.gaps.first().cloned().unwrap_or_default();
         for (index, unit) in self.shown.iter().enumerate() {
             if let Some((handle, _)) = shown.iter().find(|(_, held)| held.unit().at == unit.at) {
-                out.push_str(&handle.bracketed());
-                out.push(' ');
+                out.push_str(&label(handle));
             }
             out.push_str(&unit.text);
             out.push_str(

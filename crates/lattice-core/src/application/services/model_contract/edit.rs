@@ -122,6 +122,20 @@ impl<K: Kind, W> Consistent<K, W> {
         })
     }
 
+    /// The same edits, each replacement made into another beside the thing it replaces.
+    pub fn map_replaced(mut self, mut to: impl FnMut(&Picked<K>, W) -> W) -> Self {
+        self.0.replace = self
+            .0
+            .replace
+            .into_iter()
+            .map(|(thing, with)| {
+                let with = to(&thing, with);
+                (thing, with)
+            })
+            .collect();
+        self
+    }
+
     /// One change for each group of the things it names, the groups in the order first named (replace,
     /// insert, remove, move, as written). For a change over the units of several texts shown in one request.
     pub fn split_by<G: PartialEq>(
