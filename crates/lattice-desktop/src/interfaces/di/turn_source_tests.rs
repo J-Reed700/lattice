@@ -51,7 +51,10 @@ async fn a_turn_gets_the_course_or_folder_its_chat_is_bound_to() -> anyhow::Resu
     )
     .await?;
 
-    assert!(container.turn_source("plain", None, names()).await.is_none());
+    assert!(container
+        .turn_source("plain", None, names())
+        .await
+        .is_none());
 
     let folder = container
         .turn_source("folder", None, names())

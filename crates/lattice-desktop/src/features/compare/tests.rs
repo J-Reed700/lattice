@@ -120,7 +120,6 @@ fn every_named_column_is_kept_whole() {
     assert!(columns.contains(&long.trim().to_string()));
 }
 
-
 const KILN: &str = "The kiln is fired at dawn.";
 const CRANES: &str = "The quay holds two cranes.";
 
@@ -333,9 +332,8 @@ async fn a_blank_value_is_corrected_alone() {
 /// not fill; the row is not an error.
 #[tokio::test]
 async fn a_column_that_stays_unanswered_is_named_on_the_row() {
-    let model = Arc::new(
-        ScriptedModel::new().on_request::<CompareRow>(|_, _| reply(entries(Vec::new()))),
-    );
+    let model =
+        Arc::new(ScriptedModel::new().on_request::<CompareRow>(|_, _| reply(entries(Vec::new()))));
     let row = row_of(&model, &row_columns()).await.unwrap();
 
     assert_eq!(row.cells.len(), 2);

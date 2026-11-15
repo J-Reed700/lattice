@@ -238,8 +238,8 @@ impl CourseTurn {
         let arguments = &call.arguments;
         match call.name.as_str() {
             TOOL_SEARCH_COURSE => {
-                let query =
-                    self.read_arguments(&search_parameters(), arguments, |args| args.text("query"))?;
+                let query = self
+                    .read_arguments(&search_parameters(), arguments, |args| args.text("query"))?;
                 let found = self.search_course(&query, max_chars).await?;
                 serde_json::to_value(found)
                     .map_err(|error| AppError::InternalError(error.to_string()))
@@ -288,7 +288,11 @@ impl CourseTurn {
                         Ok((card, rating, option))
                     })?;
                 let recorded = self
-                    .rate_card(&card.reference, rating, option.map(|option| option.reference))
+                    .rate_card(
+                        &card.reference,
+                        rating,
+                        option.map(|option| option.reference),
+                    )
                     .await?;
                 Ok(Value::String(recorded))
             }
@@ -320,7 +324,10 @@ impl CourseTurn {
                         ))
                     })?;
                 let saved = self
-                    .save_note(lesson.as_ref().map(|lesson| lesson.reference.as_str()), &summary)
+                    .save_note(
+                        lesson.as_ref().map(|lesson| lesson.reference.as_str()),
+                        &summary,
+                    )
                     .await?;
                 Ok(Value::String(saved))
             }

@@ -143,20 +143,19 @@ impl CourseTurn {
             ));
         }
         let multiple_choice = card.format == "multiple_choice";
-        let selected_option = match (multiple_choice, chosen) {
-            (true, Some(chosen)) if chosen.card == card_id => Some(chosen.index),
-            (true, Some(_)) => {
-                return Err(invalid(
+        let selected_option =
+            match (multiple_choice, chosen) {
+                (true, Some(chosen)) if chosen.card == card_id => Some(chosen.index),
+                (true, Some(_)) => return Err(invalid(
                     "That option belongs to another card. Give an option listed under this card.",
-                ))
-            }
-            (true, None) => {
-                return Err(invalid(
-                    "That card is multiple choice: pass the option the learner chose.",
-                ))
-            }
-            (false, _) => None,
-        };
+                )),
+                (true, None) => {
+                    return Err(invalid(
+                        "That card is multiple choice: pass the option the learner chose.",
+                    ))
+                }
+                (false, _) => None,
+            };
         let rating = match (rating, multiple_choice) {
             (Some(rating), _) => rating,
             (None, true) => StudyRating::Good,

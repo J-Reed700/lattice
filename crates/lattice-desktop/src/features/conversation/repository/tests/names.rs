@@ -88,12 +88,23 @@ async fn a_fork_has_the_names_of_its_parent_and_a_continuation_too() {
     .await
     .unwrap();
 
-    repo.fork(&conversation_id, Some("m2"), "conv-branch", "Thread · branch")
-        .await
-        .unwrap();
-    repo.create_continuation(&conversation_id, "conv-next", "Thread · next", "Summary", "{}")
-        .await
-        .unwrap();
+    repo.fork(
+        &conversation_id,
+        Some("m2"),
+        "conv-branch",
+        "Thread · branch",
+    )
+    .await
+    .unwrap();
+    repo.create_continuation(
+        &conversation_id,
+        "conv-next",
+        "Thread · next",
+        "Summary",
+        "{}",
+    )
+    .await
+    .unwrap();
 
     for copy in ["conv-branch", "conv-next"] {
         let names = repo.names(copy).await.unwrap();

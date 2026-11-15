@@ -56,11 +56,7 @@ pub fn without_citation_markers(text: &str) -> String {
     out
 }
 
-fn markers_outside_inline_code<'a>(
-    piece: &'a str,
-    offset: usize,
-    found: &mut Vec<OldMarker<'a>>,
-) {
+fn markers_outside_inline_code<'a>(piece: &'a str, offset: usize, found: &mut Vec<OldMarker<'a>>) {
     let mut at = offset;
     for (index, part) in piece.split('`').enumerate() {
         if index % 2 == 0 {
@@ -161,10 +157,7 @@ mod tests {
             .iter()
             .map(|marker| (&text[marker.range.clone()], marker.labels.clone()))
             .collect();
-        assert_eq!(
-            places,
-            vec![("[2]", vec!["2"]), ("[1, 3]", vec!["1", "3"])]
-        );
+        assert_eq!(places, vec![("[2]", vec!["2"]), ("[1, 3]", vec!["1", "3"])]);
         assert_eq!(&text[found[0].spaces_from..found[0].range.end], " [2]");
     }
 }

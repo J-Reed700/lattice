@@ -439,7 +439,9 @@ mod citable_tests {
             10_000,
             &ToolHandles::new(),
         );
-        assert!(text.text.contains("Citable passage [s1] — Page A (https://example.com/a)"));
+        assert!(text
+            .text
+            .contains("Citable passage [s1] — Page A (https://example.com/a)"));
         assert!(!text.text.contains("rebuilt after the fire"));
         assert_eq!(left, 10_000 - text.text.chars().count());
 

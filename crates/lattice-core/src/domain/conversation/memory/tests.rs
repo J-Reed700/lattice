@@ -1396,7 +1396,10 @@ fn an_item_from_an_answer_with_references_quotes_no_handle() {
 
     let view = stored.memory_view();
     assert_eq!(view.content, "Keep it short and plain.");
-    assert_eq!(view.content_digest, compute_digest("Keep it short and plain."));
+    assert_eq!(
+        view.content_digest,
+        compute_digest("Keep it short and plain.")
+    );
     assert!(view.digest_matches());
     assert!(view.references.is_empty());
 

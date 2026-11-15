@@ -20,7 +20,9 @@ use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
 use lattice_core::application::ports::turn_source::{
     SourcePassage, SourcePassages, TurnSourcePort,
 };
-use lattice_core::application::services::model_contract::kept::{KeptNames, MemoryNames, TurnNames};
+use lattice_core::application::services::model_contract::kept::{
+    KeptNames, MemoryNames, TurnNames,
+};
 use lattice_core::shared::persistence::Database;
 use lattice_store::workspace_notes::DailyNotesRepository;
 use serde_json::{json, Value};
@@ -402,7 +404,11 @@ async fn search_course_labels_each_passage_module_lesson_source_as_a_citation() 
         passage.label
     );
     assert!(passage.label.ends_with(" [r1]"), "{}", passage.label);
-    assert!(!passage.label.contains(&course.version), "{}", passage.label);
+    assert!(
+        !passage.label.contains(&course.version),
+        "{}",
+        passage.label
+    );
     assert!(passage.source.content.contains("sums one over k plus rank"));
     assert_eq!(
         passage.source.document_id,
@@ -847,7 +853,11 @@ async fn a_multiple_choice_card_is_rated_by_the_option_the_learner_chose() {
             json!({ "card": name, "rating": "easy", "option": "[o1]" }),
         )
         .await;
-    assert_eq!(course.rating_of(&card).await, "again", "a wrong choice is a miss");
+    assert_eq!(
+        course.rating_of(&card).await,
+        "again",
+        "a wrong choice is a miss"
+    );
 }
 
 /// The option is named, not counted: the one the learner chose is the one
@@ -867,10 +877,7 @@ async fn a_multiple_choice_option_names_the_option_and_not_its_position() {
     let option = name_before(&asked, "A larger k");
 
     course
-        .text(
-            "record_recall",
-            json!({ "card": name, "option": option }),
-        )
+        .text("record_recall", json!({ "card": name, "option": option }))
         .await;
 
     assert_eq!(course.rating_of(&card).await, "good");
@@ -892,7 +899,10 @@ async fn an_option_of_another_card_is_refused() {
     let foreign = name_before(&asked, "Seven");
 
     let result = course
-        .call("record_recall", json!({ "card": larger, "option": foreign }))
+        .call(
+            "record_recall",
+            json!({ "card": larger, "option": foreign }),
+        )
         .await;
 
     assert!(!result.success);
@@ -1223,8 +1233,15 @@ fn no_tool_asks_the_model_for_an_id_an_offset_or_a_position() {
             .expect("properties");
         for key in properties.keys() {
             assert!(
-                !["card_id", "source_id", "source_ids", "lesson_id", "offset", "selected_option"]
-                    .contains(&key.as_str()),
+                ![
+                    "card_id",
+                    "source_id",
+                    "source_ids",
+                    "lesson_id",
+                    "offset",
+                    "selected_option"
+                ]
+                .contains(&key.as_str()),
                 "{} takes {key}",
                 definition.name
             );
@@ -1253,8 +1270,10 @@ async fn no_tool_result_shows_an_id() {
         .expect("labels"),
         course.turn().await.context_block(4_000, true, None).await,
     ]
-    .join("
-");
+    .join(
+        "
+",
+    );
     for id in [
         card,
         course.version.clone(),

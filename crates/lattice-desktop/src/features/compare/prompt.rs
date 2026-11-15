@@ -206,9 +206,7 @@ impl Answered for CompareRow {
                     .sentences
                     .iter()
                     .filter_map(|_| rows.next())
-                    .map(|(handle, sentence)| {
-                        format!("{} {}", handle.bracketed(), sentence.text.0)
-                    })
+                    .map(|(handle, sentence)| format!("{} {}", handle.bracketed(), sentence.text.0))
                     .collect::<Vec<_>>()
                     .join("\n");
                 let id = passage.sentences.first()?.chunk_id.clone();

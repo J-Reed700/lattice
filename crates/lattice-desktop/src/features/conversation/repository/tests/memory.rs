@@ -2109,7 +2109,10 @@ async fn memory_reads_an_answer_without_its_references_and_a_legacy_message_as_s
         .read_memory_messages(&conversation_id, &ids, SourceReadLimits::DEFAULT)
         .await
         .unwrap();
-    assert_eq!(raw[0].content, stored, "the turn's own readers keep the handles");
+    assert_eq!(
+        raw[0].content, stored,
+        "the turn's own readers keep the handles"
+    );
     assert_eq!(raw[0].references.len(), 2);
 
     let spans = [SourceSpanRef {
@@ -2121,7 +2124,10 @@ async fn memory_reads_an_answer_without_its_references_and_a_legacy_message_as_s
         .read_memory_source_spans(&conversation_id, &spans, SourceReadLimits::DEFAULT)
         .await
         .unwrap();
-    assert_eq!(resolved[0].text.as_deref(), Some("Deploys need approval from"));
+    assert_eq!(
+        resolved[0].text.as_deref(),
+        Some("Deploys need approval from")
+    );
 }
 
 #[tokio::test]

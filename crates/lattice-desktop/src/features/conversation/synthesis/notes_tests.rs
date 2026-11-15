@@ -131,7 +131,13 @@ fn the_map_request_shows_what_the_model_is_told_and_nothing_internal() {
     let mut marks = Marks::new();
     let title = "Harbour log";
     let transcript = "USER: when is high tide";
-    for told in [title, transcript, "tide-table.pdf", "Tide table passage", "Spring tides"] {
+    for told in [
+        title,
+        transcript,
+        "tide-table.pdf",
+        "Tide table passage",
+        "Spring tides",
+    ] {
         marks.told(told.to_string());
     }
     marks.told("2026-09-05T10:00:00.000Z".to_string());
@@ -181,7 +187,11 @@ async fn an_entry_is_noted_with_its_own_title_and_the_numbers_of_the_sources_it_
         let entries = handles(&prompt, "e");
         let sources = handles(&prompt, "s");
         reply(entries_answer(&[
-            (entries[0].as_str(), "High tide is at six", vec![sources[0].as_str(), "s9"]),
+            (
+                entries[0].as_str(),
+                "High tide is at six",
+                vec![sources[0].as_str(), "s9"],
+            ),
             (entries[1].as_str(), "The kiln holds heat", vec![]),
         ]))
     });
@@ -211,7 +221,10 @@ async fn the_transcript_markers_are_the_labels_the_model_is_shown() {
     write_notes(&model, &two_parts(), 0, 1).await.unwrap();
 
     let prompt = prompt_of(&model.sent()[0]);
-    assert!(prompt.contains("ASSISTANT: high tide is at six [s1]"), "{prompt}");
+    assert!(
+        prompt.contains("ASSISTANT: high tide is at six [s1]"),
+        "{prompt}"
+    );
     assert!(prompt.contains("[s1] tide-table.pdf"), "{prompt}");
     assert!(!prompt.contains("[3]"), "{prompt}");
     assert!(!prompt.contains("[Entry:"), "{prompt}");
@@ -223,9 +236,17 @@ async fn an_entry_left_out_is_asked_for_alone_and_the_others_stand() {
         let prompt = prompt_of(sent);
         let entries = handles(&prompt, "e");
         if nth == 0 {
-            reply(entries_answer(&[(entries[0].as_str(), "High tide is at six", vec![])]))
+            reply(entries_answer(&[(
+                entries[0].as_str(),
+                "High tide is at six",
+                vec![],
+            )]))
         } else {
-            reply(entries_answer(&[(entries[0].as_str(), "The kiln holds heat", vec![])]))
+            reply(entries_answer(&[(
+                entries[0].as_str(),
+                "The kiln holds heat",
+                vec![],
+            )]))
         }
     });
 
@@ -236,7 +257,10 @@ async fn an_entry_left_out_is_asked_for_alone_and_the_others_stand() {
     let second = prompt_of(&sent[1]);
     assert!(second.contains("Kiln notes") && !second.contains("Harbour log"));
     assert_eq!(
-        notes.iter().map(|note| note.entries.clone()).collect::<Vec<_>>(),
+        notes
+            .iter()
+            .map(|note| note.entries.clone())
+            .collect::<Vec<_>>(),
         [vec![0], vec![1]]
     );
 }
@@ -265,22 +289,39 @@ async fn a_merged_bullet_has_the_entries_and_sources_of_the_bullets_it_merges() 
         )
     });
 
-    let merged = merge_notes(&model, &chunks(), &titles(), 1, 1).await.unwrap();
+    let merged = merge_notes(&model, &chunks(), &titles(), 1, 1)
+        .await
+        .unwrap();
 
     assert_eq!(
         merged,
-        [note(Section::Highlights, &[1, 0], "Both logs agree", &[5, 3])]
+        [note(
+            Section::Highlights,
+            &[1, 0],
+            "Both logs agree",
+            &[5, 3]
+        )]
     );
     let prompt = prompt_of(&model.sent()[0]);
-    assert!(prompt.contains("[Entry: Harbour log] High tide is at six"), "{prompt}");
-    assert!(!prompt.contains("[3]") && !prompt.contains("[5]"), "{prompt}");
+    assert!(
+        prompt.contains("[Entry: Harbour log] High tide is at six"),
+        "{prompt}"
+    );
+    assert!(
+        !prompt.contains("[3]") && !prompt.contains("[5]"),
+        "{prompt}"
+    );
 }
 
 #[tokio::test]
 async fn a_merged_bullet_that_names_no_bullet_is_corrected() {
     let model = ScriptedModel::new().on_request::<MergeNotes>(|sent, nth| {
         let notes = handles(&prompt_of(sent), "n");
-        let from: Vec<&String> = if nth == 0 { Vec::new() } else { vec![&notes[0]] };
+        let from: Vec<&String> = if nth == 0 {
+            Vec::new()
+        } else {
+            vec![&notes[0]]
+        };
         reply(
             json!({
                 "highlights": [{ "text": "Both logs agree", "from": from }],
@@ -293,7 +334,9 @@ async fn a_merged_bullet_that_names_no_bullet_is_corrected() {
         )
     });
 
-    let merged = merge_notes(&model, &chunks(), &titles(), 1, 1).await.unwrap();
+    let merged = merge_notes(&model, &chunks(), &titles(), 1, 1)
+        .await
+        .unwrap();
 
     assert_eq!(model.sent().len(), 2);
     assert_eq!(
@@ -324,20 +367,25 @@ async fn the_brief_cites_by_bullet_and_the_app_writes_the_source_numbers() {
         "## Executive Summary\nHigh tide is at six [3]. Unknown [n9]. Code `[n1]`."
     );
     let prompt = prompt_of(&model.sent()[0]);
-    assert!(prompt.contains("- [n1] [Entry: Harbour log] High tide is at six"), "{prompt}");
+    assert!(
+        prompt.contains("- [n1] [Entry: Harbour log] High tide is at six"),
+        "{prompt}"
+    );
     assert!(prompt.contains("CHUNK SYNTHESIS 2"), "{prompt}");
 }
 
 #[tokio::test]
 async fn a_section_without_bullets_says_none_identified() {
-    let model = ScriptedModel::new().on_request::<WriteBrief>(|_, _| {
-        reply(json!({ "brief": "A brief" }).to_string())
-    });
+    let model = ScriptedModel::new()
+        .on_request::<WriteBrief>(|_, _| reply(json!({ "brief": "A brief" }).to_string()));
 
     write_brief(&model, &chunks(), &titles()).await.unwrap();
 
     let prompt = prompt_of(&model.sent()[0]);
-    assert!(prompt.contains("### Practical Details\n- None identified."), "{prompt}");
+    assert!(
+        prompt.contains("### Practical Details\n- None identified."),
+        "{prompt}"
+    );
 }
 
 #[tokio::test]
@@ -370,7 +418,9 @@ async fn prompt_snapshot_journal_merge() {
             .to_string(),
         )
     });
-    merge_notes(&model, &chunks(), &titles(), 1, 1).await.unwrap();
+    merge_notes(&model, &chunks(), &titles(), 1, 1)
+        .await
+        .unwrap();
     let requests: Vec<_> = model.sent().into_iter().map(|sent| sent.request).collect();
     assert_requests(env!("CARGO_MANIFEST_DIR"), "journal-merge", &requests);
 }
