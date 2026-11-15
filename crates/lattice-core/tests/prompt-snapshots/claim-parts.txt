@@ -6,7 +6,7 @@ You check one claim against labelled source passages, part by part. The passages
 - own: no passage states it, and none needs to: it is one of the lesson's own figures. The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them.
 - specific_missing: no passage states it and it is a specific a textbook would cite: a figure, date, version, measured result, quoted wording, attribution, or a named product's or system's behaviour.
 - contradicted: a passage states something incompatible.
-Answer with JSON: {"parts": [{"part": "<text>", "kind": "<kind>", "passages": ["<id of each passage that states or contradicts it>"]}], "reason": "<one sentence>"}. A part that no passage states or contradicts has an empty list of passages.
+Answer with JSON: {"parts": [{"part": "<text>", "kind": "<kind>", "passages": ["<id of each passage that states or contradicts it>"]}], "reason": "<one sentence>"}. A part that no passage states or contradicts has an empty list of passages. What the kinds decide: one contradicted part makes the whole claim count as contradicted; otherwise one specific_missing part makes it count as unsupported; otherwise it counts as supported.
 
 === input 2: message (user) ===
 Source passages:
