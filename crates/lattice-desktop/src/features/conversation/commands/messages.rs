@@ -39,8 +39,40 @@ pub async fn get_conversation_messages_impl(
                 message.metadata.take(),
             )
             .await;
+        message.metadata = claims_without_old_markers(message.metadata.take());
     }
     Ok(messages)
+}
+
+/// A message saved before references stored each checked sentence with its old
+/// `[n]` markers; they are taken out of those sentences here, for the frontend.
+fn claims_without_old_markers(metadata: Option<String>) -> Option<String> {
+    let raw = metadata.as_deref()?;
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return metadata;
+    };
+    if value.get("references").is_some() {
+        return metadata;
+    }
+    let Some(verdicts) = value
+        .get_mut("verification")
+        .and_then(|verification| verification.get_mut("claimVerdicts"))
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return metadata;
+    };
+    let mut changed = false;
+    for verdict in verdicts {
+        let Some(serde_json::Value::String(sentence)) = verdict.get_mut("sentence") else {
+            continue;
+        };
+        let clean = lattice_core::shared::citation_markers::without_citation_markers(sentence);
+        if clean != *sentence {
+            *sentence = clean;
+            changed = true;
+        }
+    }
+    changed.then(|| value.to_string()).or(metadata)
 }
 
 /// What each assistant message is as the frontend draws it, by message id: its

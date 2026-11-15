@@ -9,6 +9,7 @@ struct MessageBookmarkRow {
     message_id: String,
     message_role: String,
     message_preview: String,
+    message_metadata: Option<String>,
     title: Option<String>,
     note: Option<String>,
     created_at: String,
@@ -243,6 +244,7 @@ impl ConversationRepository {
             b.message_id,
             m.role AS message_role,
             m.content AS message_preview,
+            m.metadata AS message_metadata,
             b.title,
             b.note,
             b.created_at
@@ -289,7 +291,11 @@ impl ConversationRepository {
                 space_id: row.space_id,
                 message_id: row.message_id,
                 message_role: row.message_role,
-                message_preview: row.message_preview,
+                message_preview: lattice_core::shared::stored_references::text_without_references(
+                    &row.message_preview,
+                    row.message_metadata.as_deref(),
+                )
+                .into_owned(),
                 title: row.title,
                 note: row.note,
                 created_at: row.created_at,

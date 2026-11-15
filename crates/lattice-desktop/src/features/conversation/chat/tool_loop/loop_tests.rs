@@ -343,6 +343,32 @@ struct Turn<'a> {
     source: Option<crate::features::conversation::chat::TurnSource>,
 }
 
+/// Gives the turn's scope the numbers its sources are labelled with, so a reply citing `[s7]` names one.
+fn number_as_labelled(
+    names: &lattice_core::application::services::model_contract::kept::TurnNames,
+    sources: &[SourceDto],
+) {
+    let Some(template) = sources.first() else {
+        return;
+    };
+    let top = sources.iter().filter_map(|source| source.citation_id).max().unwrap_or(0);
+    let mut ordered: Vec<SourceDto> = (1..=top)
+        .map(|number| {
+            sources
+                .iter()
+                .find(|source| source.citation_id == Some(number))
+                .cloned()
+                .unwrap_or_else(|| {
+                    let mut filler = template.clone();
+                    filler.document_id = format!("filler-{number}");
+                    filler.chunk_id = format!("filler-{number}");
+                    filler
+                })
+        })
+        .collect();
+    crate::features::conversation::chat::retrieval::source_names::name_sources(names, &mut ordered);
+}
+
 /// Time enough that no test here meets the deadline unless it means to.
 const TURN_TIME: Duration = Duration::from_secs(60);
 
@@ -370,6 +396,8 @@ async fn run_turn(
         excerpt_chars: 300,
         ..ToolOutputSettingsDto::default()
     };
+    let names = Arc::new(lattice_core::application::services::model_contract::kept::TurnNames::unstored());
+    number_as_labelled(&names, &turn.sources);
     let mut sources = turn.sources;
     let mut trace = None;
     let source = turn.source;
@@ -385,7 +413,7 @@ async fn run_turn(
             highlight_terms: &[],
             focus: &FocusScope::default(),
             recorder: &recorder,
-            names: &std::sync::Arc::new(lattice_core::application::services::model_contract::kept::TurnNames::unstored()),
+            names: &names,
         },
         &sink,
         LoopRequest {

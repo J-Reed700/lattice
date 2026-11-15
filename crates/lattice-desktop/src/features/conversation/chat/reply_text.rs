@@ -17,7 +17,7 @@ use lattice_core::shared::citation_markers::old_markers;
 use lattice_core::shared::stored_references::{cut, stored_places};
 use serde_json::{json, Value};
 
-use super::dto::{LinesDto, ReplyPieceDto, ReplyReferenceDto};
+use super::dto::{ReplyPieceDto, ReplyReferenceDto};
 use super::retrieval::source_names::{name_sources, Source};
 use crate::features::explorer::file_refs::FolderFile;
 
@@ -199,29 +199,6 @@ impl Placed {
                 lines,
             },
         })
-    }
-}
-
-impl From<&Reference> for ReplyReferenceDto {
-    fn from(reference: &Reference) -> Self {
-        let kind = match reference.drawn {
-            Drawn::Number => "source",
-            Drawn::Name => "file",
-            Drawn::Itself => "picture",
-        };
-        let name = match reference.drawn {
-            Drawn::Name => reference.reference.as_str().map(str::to_owned),
-            Drawn::Number | Drawn::Itself => None,
-        };
-        Self {
-            written: written(reference),
-            kind: kind.to_owned(),
-            number: reference.number,
-            lines: reference
-                .lines
-                .map(|Lines { first, last }| LinesDto { first, last }),
-            name,
-        }
     }
 }
 

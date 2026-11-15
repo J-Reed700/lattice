@@ -7,6 +7,7 @@ pub mod images;
 pub mod notes;
 pub mod recent_documents;
 pub mod references;
+pub mod replies;
 pub mod search;
 pub mod settings;
 pub mod sources;

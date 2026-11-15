@@ -291,7 +291,10 @@ mod tests {
             conversation_id: "conversation-1".to_string(),
             request_id: "request-1".to_string(),
             message_id: "message-1".to_string(),
-            response: "A completed answer.".to_string(),
+            reply: ReplyText {
+                text: "A completed answer.".to_string(),
+                ..Default::default()
+            },
             sources: vec![],
             verifies_cited_only: false,
             drops_session_talk: false,

@@ -20,6 +20,7 @@ pub(super) struct ConversationListRow {
     pub(super) pinned_at: Option<String>,
     pub(super) archived_at: Option<String>,
     pub(super) last_message_preview: Option<String>,
+    pub(super) last_message_metadata: Option<String>,
     pub(super) forked_from_conversation_id: Option<String>,
     pub(super) forked_from_message_id: Option<String>,
     pub(super) explorer_root: Option<String>,
@@ -50,7 +51,13 @@ impl ConversationListRow {
             bookmarked_at: self.bookmarked_at,
             pinned_at: self.pinned_at,
             archived_at: self.archived_at,
-            last_message_preview: self.last_message_preview,
+            last_message_preview: self.last_message_preview.map(|content| {
+                lattice_core::shared::stored_references::text_without_references(
+                    &content,
+                    self.last_message_metadata.as_deref(),
+                )
+                .into_owned()
+            }),
             compaction: None,
             forked_from_conversation_id: self.forked_from_conversation_id,
             forked_from_message_id: self.forked_from_message_id,
@@ -136,7 +143,14 @@ impl<'a> ConversationListing<'a> {
                 WHERE m.conversation_id = c.id
                 ORDER BY m.created_at DESC
                 LIMIT 1
-            ) AS last_message_preview
+            ) AS last_message_preview,
+            (
+                SELECT m.metadata
+                FROM conversation_messages m
+                WHERE m.conversation_id = c.id
+                ORDER BY m.created_at DESC
+                LIMIT 1
+            ) AS last_message_metadata
         FROM conversations c
         WHERE c.tangent_parent_id IS NULL
         "#,

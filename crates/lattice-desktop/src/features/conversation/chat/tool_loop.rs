@@ -628,11 +628,17 @@ pub(super) async fn run_agentic_tool_loop(
             // A last round answers at a limit, and adds nothing after it.
             if let Some(notes) = notes.as_ref().filter(|_| last_round.is_none()) {
                 let coverage_start = Instant::now();
+                let answered = super::reply_text::ReplyText::read(
+                    names,
+                    super::reply_text::markers(source.is_some()),
+                    &response_text,
+                );
                 reading::add_what_was_left_out(
                     llm.as_ref(),
                     &mut native_request,
                     notes,
                     &mut response_text,
+                    &answered,
                     &emitter,
                     recorder,
                     &turn_cancel,
