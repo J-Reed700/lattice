@@ -2,7 +2,7 @@ import { Editor } from '@tiptap/core';
 import { Markdown } from 'tiptap-markdown';
 import { describe, expect, it } from 'vitest';
 
-import { reply } from '@/tests/replyFixtures';
+import { cites, filePiece, said } from '@/tests/replyFixtures';
 import { drawReply, findReplyMarks } from '@/utils/replyPieces';
 
 import { createExtensions } from '../extensions';
@@ -15,14 +15,15 @@ import type { DecorationSet } from '@tiptap/pm/view';
 
 // A diagram's labels look like citations (`A[1]`), file references and
 // sentences; none of them may be drawn over.
-const ANSWER = drawReply(reply(
-  'Requests go through the gateway ', 1, '. See src/main.rs:12 for the entry point.\n\n',
-  '```mermaid\nflowchart LR\n  A', 7, ' --> B[2]\n',
-  '  B --> C["see src/main.rs:12"]\n',
-  '  C --> D[Requests go through the gateway.]\n',
-  '```\n\n',
-  'Then the worker answers ', 2, '.',
-));
+const ANSWER = drawReply([
+  said('Requests go through the gateway '), cites(1), said('. See '), filePiece(1, 'src/main.rs', 12, 12),
+  said(' for the entry point.\n\n'),
+  said('```mermaid\nflowchart LR\n  A'), cites(7), said(' --> B[2]\n'),
+  said('  B --> C["see src/main.rs:12"]\n'),
+  said('  C --> D[Requests go through the gateway.]\n'),
+  said('```\n\n'),
+  said('Then the worker answers '), cites(2), said('.'),
+], true);
 
 describe('marks skip code blocks', () => {
   it('draws no citation, claim or file-reference mark inside a fence', () => {
@@ -33,7 +34,7 @@ describe('marks skip code blocks', () => {
         ClaimMarks.configure({
           getClaims: () => [{ sentence: 'Requests go through the gateway.', verdict: 'supported' }],
         }),
-        CodeRefMarks.configure({ isEnabled: () => true }),
+        CodeRefMarks.configure({ isEnabled: () => true, getFiles: () => ANSWER.files }),
         Markdown.configure({ html: false }),
       ],
       content: ANSWER.markdown,

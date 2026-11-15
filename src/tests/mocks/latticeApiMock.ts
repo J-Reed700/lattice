@@ -99,7 +99,7 @@ export function createVaultAPIMock() {
         },
       },
       router: {
-        enabled: true,
+        enabled: false,
         model: 'qwen3.5-4b-q4_k_m',
         timeoutMs: 350,
         maxTokens: 120,
@@ -107,9 +107,9 @@ export function createVaultAPIMock() {
         ambiguityThreshold: 0.62,
         preferLastDocument: true,
         promptTemplate:
-          'You are a routing assistant for a knowledge base chat.\nReturn ONLY valid JSON with the fields:\n- action: "use_last_document" | "new_search" | "clarify"\n- confidence: number from 0 to 1\n- clarify_question: string or null\n- rationale: short string\n\nUser query: {query}\nHas recent document: {has_recent_document}\nRecent document title: {recent_document_title}\nRecent document id: {recent_document_id}\n\nDecide whether the user is referring to the recent document or wants a new search. If uncertain, choose "clarify".\nJSON:',
+          'You are a routing assistant for a knowledge base chat.\nReturn ONLY valid JSON with the fields:\n- action: "use_last_document" | "new_search" | "clarify"\n- confidence: number from 0 to 1\n- clarify_question: string or null\n- rationale: short string\n\nUser query: {query}\nHas recent document: {has_recent_document}\nRecent document title: {recent_document_title}\n\nDecide whether the user is referring to the recent document or wants a new search. If uncertain, choose "clarify".\nJSON:',
         clarifyPromptTemplate:
-          'Are you asking about the previous document ({recent_document_title}), or do you want me to search for a different document?',
+          'Are you asking about the recent document ({recent_document_title}), or should I search for something else?',
       },
       externalModelDirectories: [],
       customTools: [],

@@ -7,7 +7,11 @@ import { drawReply, replyOf, type DrawnReply } from '@/utils/replyPieces';
 export function useDrawnReply(
   message: { content: string; reply?: readonly ReplyPieceDto[] | null },
   enabled = true,
+  folder = false,
 ): DrawnReply | null {
   const { content, reply } = message;
-  return useMemo(() => (enabled ? drawReply(replyOf({ content, reply })) : null), [enabled, content, reply]);
+  return useMemo(
+    () => (enabled ? drawReply(replyOf({ content, reply }), folder) : null),
+    [enabled, folder, content, reply],
+  );
 }

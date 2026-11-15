@@ -18,7 +18,7 @@ describe('the notes citation marker', () => {
     const marks = findNoteMarks('Kale [1] and chard [22].');
 
     expect(marks.map((mark) => mark.number)).toEqual([1, 22]);
-    expect(marks.map((mark) => mark.index)).toEqual([5, 20]);
+    expect(marks.map((mark) => mark.index)).toEqual([5, 19]);
     expect(findNoteMarks('No markers [x] or [] here.')).toEqual([]);
   });
 
@@ -27,16 +27,16 @@ describe('the notes citation marker', () => {
     expect(noteSentencesCiting(NOTE, 2)).toEqual([
       'Kale outgrows chard in cool weather.',
       'Chard bolts in heat.',
-      'Beets want a deep pot.',
+      'Skip grid lookups; beets want a deep pot.',
     ]);
     expect(noteSentencesCiting(NOTE, 9)).toEqual([]);
   });
 
-  it('answers each marker of a source with its own sentence, in reading order', () => {
+  it('answers each chip of a source with its own sentence, in reading order, and counts no marker in code', () => {
     expect(noteSentencesByOccurrence(NOTE, 2)).toEqual([
       'Kale outgrows chard in cool weather.',
       'Chard bolts in heat.',
-      'Beets want a deep pot.',
+      'Skip lookups; beets want a deep pot.',
     ]);
   });
 

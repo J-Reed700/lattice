@@ -15,6 +15,17 @@ const BLOCK_PREFIX = /^\s*(?:[-*+]\s+|\d{1,3}[.)]\s+|#{1,6}\s+|>\s*|\|\s*)/;
 /** The opening or closing line of a fenced code block. */
 const FENCE = /^\s*(?:```|~~~)/;
 
+/** Inline code, whose `[n]` a chip is never drawn over. */
+const INLINE_CODE = /`[^`\n]*`/g;
+
+/** `text` with its inline code blanked; a fence line is left so the splitter still sees the block open. */
+export function withoutInlineCode(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => (FENCE.test(line) ? line : line.replace(INLINE_CODE, ' ')))
+    .join('\n');
+}
+
 /** Emphasis markers, which are punctuation to a reader and noise to a matcher. */
 const EMPHASIS = /(\*\*|__|\*|_|`)/g;
 

@@ -3,6 +3,7 @@ import {
   citing,
   closeGaps,
   sentencesOf,
+  withoutInlineCode,
   type ReferenceReader,
 } from '@/features/reading/model/answerSentences';
 import { findNoteMarks, NOTE_MARKER } from '@/utils/noteCitations';
@@ -17,7 +18,10 @@ export function noteSentencesCiting(note: string, citationNumber: number): strin
   return citing(sentencesOf(note, noteReader), citationNumber);
 }
 
-/** Entry `k` is the sentence holding the k-th `[n]` of source `citationNumber` in the note. */
+/**
+ * Entry `k` is the sentence holding the k-th `[n]` chip of source `citationNumber` in the note. A chip is
+ * never drawn inside code, so a `[n]` there is not counted.
+ */
 export function noteSentencesByOccurrence(note: string, citationNumber: number): string[] {
-  return byOccurrence(sentencesOf(note, noteReader), citationNumber);
+  return byOccurrence(sentencesOf(withoutInlineCode(note), noteReader), citationNumber);
 }

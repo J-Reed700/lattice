@@ -1,4 +1,4 @@
-import type { ReplyPieceDto, ReplyReferenceDto } from '@/lib/bindings';
+import type { LinesDto, ReplyPieceDto, ReplyReferenceDto } from '@/lib/bindings';
 import { normalizeAssistantMarkdown } from '@/utils/assistantMarkdown';
 import type { FoundMark } from '@/utils/foundMark';
 
@@ -9,17 +9,50 @@ export type ReplyReference = ReplyReferenceDto;
  * A source reference travels through markdown as private-use characters: a
  * start, the index of the reference among the reply's source references in
  * decimal digits (each its own private-use character), an end. The viewer
- * draws a chip over it; nothing reads the reply's own text to find it.
+ * draws a chip over it; nothing reads the reply's own text to find it. A file
+ * reference travels the same way with its own start and end, in front of the
+ * text it is shown as.
  */
 const MARK_START = '\uE000';
 const MARK_END = '\uE00B';
+const FILE_START = '\uE00C';
+const FILE_END = '\uE00D';
 const DIGIT_BASE = 0xe001;
 
 export const MARK = /\uE000([\uE001-\uE00A]+)\uE00B/g;
+export const FILE_MARK = /\uE00C([\uE001-\uE00A]+)\uE00D/g;
+
+function digitsOf(index: number): string {
+  return Array.from(String(index), (digit) => String.fromCharCode(DIGIT_BASE + Number(digit))).join('');
+}
 
 export function markFor(index: number): string {
-  const digits = Array.from(String(index), (digit) => String.fromCharCode(DIGIT_BASE + Number(digit)));
-  return `${MARK_START}${digits.join('')}${MARK_END}`;
+  return `${MARK_START}${digitsOf(index)}${MARK_END}`;
+}
+
+export function fileMarkFor(index: number): string {
+  return `${FILE_START}${digitsOf(index)}${FILE_END}`;
+}
+
+/** A file a reply points at, and the lines of it when it names some. */
+export interface FileTarget {
+  name: string;
+  lines: LinesDto | null;
+}
+
+/** How a file reference reads: `name:first-last`, `name:first`, or `name` alone. */
+export function fileLabel({ name, lines }: FileTarget): string {
+  if (!lines) return name;
+  return lines.first === lines.last ? `${name}:${lines.first}` : `${name}:${lines.first}-${lines.last}`;
+}
+
+function fileOf({ name, lines, written }: ReplyReference): FileTarget {
+  return { name: name ?? written, lines: lines ?? null };
+}
+
+function inlineCode(text: string): string {
+  const fence = '`'.repeat(Math.max(0, ...Array.from(text.matchAll(/`+/g), (run) => run[0].length)) + 1);
+  return `${fence}${text}${fence}`;
 }
 
 /** The index a match of `MARK` stands for, from its captured digits. */
@@ -57,9 +90,16 @@ export function writtenOf(part: ReplyPiece): string {
   return part.type === 'text' ? part.text : part.reference.written;
 }
 
-/** The reply as markdown with a mark in place of each source reference, and the number each mark stands for. */
-export function markReply(reply: readonly ReplyPiece[]): { raw: string; numbers: number[] } {
+/**
+ * The reply as markdown with a mark in place of each source reference, and the number each mark stands for.
+ * A file reference is inline code; in a folder's reply (`folder`) it carries a mark the viewer draws a chip from.
+ */
+export function markReply(
+  reply: readonly ReplyPiece[],
+  folder = false,
+): { raw: string; numbers: number[]; files: FileTarget[] } {
   const numbers: number[] = [];
+  const files: FileTarget[] = [];
   let raw = '';
   for (const piece of reply) {
     if (piece.type === 'text') {
@@ -68,10 +108,12 @@ export function markReply(reply: readonly ReplyPiece[]): { raw: string; numbers:
       raw += markFor(numbers.length);
       numbers.push(piece.reference.number);
     } else {
-      raw += piece.reference.written;
+      const file = fileOf(piece.reference);
+      raw += inlineCode(`${folder ? fileMarkFor(files.length) : ''}${fileLabel(file)}`);
+      if (folder) files.push(file);
     }
   }
-  return { raw, numbers };
+  return { raw, numbers, files };
 }
 
 /** The marks of a drawn reply found in a run of its text; `numbers` is the list `drawReply` gave. */
@@ -85,12 +127,14 @@ export function findReplyMarks(text: string, numbers: readonly number[]): FoundM
   return found;
 }
 
-/** Text of a drawn reply with each mark written as its number in brackets. */
+/** Text of a drawn reply with each source mark written as its number in brackets and each file mark dropped. */
 export function writeMarksAsNumbers(text: string, numbers: readonly number[]): string {
-  return text.replace(MARK, (_mark, captured: string) => {
-    const number = numbers[markIndex(captured)];
-    return number === undefined ? '' : `[${number}]`;
-  });
+  return text
+    .replace(MARK, (_mark, captured: string) => {
+      const number = numbers[markIndex(captured)];
+      return number === undefined ? '' : `[${number}]`;
+    })
+    .replace(FILE_MARK, '');
 }
 
 export interface DrawnReply {
@@ -100,12 +144,14 @@ export interface DrawnReply {
   readable: string;
   /** The source number of each mark, by the index the mark carries. */
   numbers: number[];
+  /** The file of each file mark, by the index the mark carries; empty unless the reply is a folder's. */
+  files: FileTarget[];
 }
 
-export function drawReply(reply: readonly ReplyPiece[]): DrawnReply {
-  const { raw, numbers } = markReply(reply);
+export function drawReply(reply: readonly ReplyPiece[], folder = false): DrawnReply {
+  const { raw, numbers, files } = markReply(reply, folder);
   const markdown = normalizeAssistantMarkdown(raw);
-  return { markdown, readable: writeMarksAsNumbers(markdown, numbers), numbers };
+  return { markdown, readable: writeMarksAsNumbers(markdown, numbers), numbers, files };
 }
 
 /**
@@ -122,7 +168,7 @@ export function replyPlainText(reply: readonly ReplyPiece[]): string {
       dropped = true;
       continue;
     }
-    const text = writtenOf(piece);
+    const text = piece.type === 'reference' ? fileLabel(fileOf(piece.reference)) : piece.text;
     if (dropped && /^[\s.,;:!?]/.test(text)) out = out.replace(/[ \t]+$/, '');
     dropped = false;
     out += text;
