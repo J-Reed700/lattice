@@ -1,6 +1,7 @@
 //! The answer bubble's stream: every event tagged with the turn it belongs to.
 
-use super::super::{ChatEventSink, ChatStreamEventDto, ReplyReferenceDto};
+use super::super::{ChatEventSink, ChatStreamEventDto};
+use lattice_core::application::contracts::replies::ReplyReferenceDto;
 use lattice_core::application::services::model_contract::kept::TurnNames;
 use lattice_core::application::services::model_contract::reply::{Markers, Piece, Splitter};
 use lattice_core::shared::error::Result;

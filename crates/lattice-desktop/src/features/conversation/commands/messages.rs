@@ -2,8 +2,8 @@
 
 use crate::features::conversation::chat::ports::ChatRuntime;
 use crate::features::conversation::chat::reply_text::ReplyText;
-use crate::features::conversation::chat::ReplyPieceDto;
 use crate::interfaces::di::container::Container;
+use lattice_core::application::contracts::replies::ReplyPieceDto;
 use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::domain::conversation::MessageRole;
 use lattice_core::domain::ConversationMessage;

@@ -1,6 +1,6 @@
 //! Conversation DTOs for creating, updating and managing conversations.
 
-use crate::features::conversation::chat::ReplyPieceDto;
+use lattice_core::application::contracts::replies::ReplyPieceDto;
 use lattice_core::domain::conversation::ChatModelChoice;
 use serde::{Deserialize, Serialize};
 

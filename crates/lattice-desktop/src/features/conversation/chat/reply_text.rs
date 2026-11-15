@@ -17,9 +17,9 @@ use lattice_core::shared::citation_markers::old_markers;
 use lattice_core::shared::stored_references::{cut, stored_places};
 use serde_json::{json, Value};
 
-use super::dto::{ReplyPieceDto, ReplyReferenceDto};
 use super::retrieval::source_names::{name_sources, Source};
 use crate::features::explorer::file_refs::FolderFile;
+use lattice_core::application::contracts::replies::{ReplyPieceDto, ReplyReferenceDto};
 
 #[cfg(test)]
 mod tests;

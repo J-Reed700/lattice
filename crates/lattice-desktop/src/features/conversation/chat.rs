@@ -164,8 +164,8 @@ mod turn;
 
 use dto::{trace_counts, TraceCounts};
 pub use dto::{
-    ChatResponse, ChatStreamEventDto, ConversationFlowTimingMetrics, ConversationMessage, LinesDto,
-    ReplyPieceDto, ReplyReferenceDto, RetrievalTraceDto, ToolPreferences,
+    ChatResponse, ChatStreamEventDto, ConversationFlowTimingMetrics, ConversationMessage,
+    RetrievalTraceDto, ToolPreferences,
 };
 use prompt_settings::*;
 use routing::*;
