@@ -1357,11 +1357,12 @@ fn quoted_span(source: &SourceMessage, quote: &str) -> EvidenceSpan {
     let sources = SourceIndex::new(&messages);
     let validated = validate_patch(
         &patch(
-            vec![constraint(
-                "c1",
-                "A rule",
-                vec![evidence(&source.id, quote, "assertion")],
-            )],
+            vec![ProposedItem {
+                candidate_id: "c1".into(),
+                kind: "established_fact".into(),
+                label: "A rule".into(),
+                evidence: vec![evidence(&source.id, quote, "assertion")],
+            }],
             vec![],
         ),
         &sources,

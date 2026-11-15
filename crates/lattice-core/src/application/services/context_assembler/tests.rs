@@ -834,7 +834,8 @@ fn an_item_from_a_message_saved_before_references_resolves_while_its_replay_is_r
 
     assert_eq!(plan.accounting.active_mandatory_count, 1);
     let (_, last) = rendered.last().expect("a final message");
-    assert!(last.contains("Per the notes [1], keep the code private."));
+    assert!(last.contains("Per the notes, keep the code private."));
+    assert!(!last.contains("[1]"));
     assert!(rendered
         .iter()
         .any(|(role, text)| role == "assistant" && text.contains("[s4]")));
